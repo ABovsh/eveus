@@ -1,23 +1,23 @@
 {
     "config": {
-        "abort": {
-            "already_configured": "Device is already configured"
-        },
-        "error": {
-            "cannot_connect": "Failed to connect",
-            "invalid_auth": "Invalid authentication",
-            "unknown": "Unexpected error"
-        },
         "step": {
             "user": {
+                "title": "Connect to Eveus Charger",
+                "description": "Set up your Eveus EV charger integration.",
                 "data": {
-                    "host": "Host",
+                    "host": "IP Address",
                     "username": "Username",
                     "password": "Password"
-                },
-                "description": "Enter your Eveus charger connection details.",
-                "title": "Connect to Eveus Charger"
+                }
             }
+        },
+        "error": {
+            "cannot_connect": "Failed to connect, please check the IP address and try again",
+            "invalid_auth": "Invalid username or password",
+            "unknown": "Unexpected error occurred"
+        },
+        "abort": {
+            "already_configured": "This Eveus charger is already configured"
         }
     }
 }
