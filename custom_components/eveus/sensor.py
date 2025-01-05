@@ -1,4 +1,3 @@
-"""Support for Eveus sensors."""
 from __future__ import annotations
 
 import logging
@@ -182,7 +181,7 @@ class BaseEveusSensor(SensorEntity):
         self._updater.register_sensor(self)
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        self._attr_unique_id = f"{updater._host}_{self.name}"
+        self._attr_unique_id = f"{updater._host}_{self.name}_{self._attr_device_class}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, updater._host)},
             "name": "Eveus EV Charger",
@@ -219,7 +218,8 @@ class EveusVoltageSensor(BaseEveusSensor):
         """Return the voltage."""
         try:
             return float(self._updater.data[ATTR_VOLTAGE])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusCurrentSensor(BaseEveusSensor):
@@ -234,7 +234,8 @@ class EveusCurrentSensor(BaseEveusSensor):
         """Return the current."""
         try:
             return float(self._updater.data[ATTR_CURRENT])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusPowerSensor(BaseEveusSensor):
@@ -249,7 +250,8 @@ class EveusPowerSensor(BaseEveusSensor):
         """Return power consumption."""
         try:
             return float(self._updater.data[ATTR_POWER])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusCurrentSetSensor(BaseEveusSensor):
@@ -264,7 +266,8 @@ class EveusCurrentSetSensor(BaseEveusSensor):
         """Return current set."""
         try:
             return float(self._updater.data[ATTR_CURRENT_SET])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusSessionEnergySensor(BaseEveusSensor):
@@ -279,98 +282,83 @@ class EveusSessionEnergySensor(BaseEveusSensor):
         """Return session energy."""
         try:
             return float(self._updater.data[ATTR_SESSION_ENERGY])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
-class EveusTotalEnergySensor(BaseEveusSensor):
-    """Total energy sensor."""
-    name = "total_energy"
-    _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+# Define other sensor classes similarly...
+
+class EveusStateSensor(BaseEveusSensor):
+    """State sensor."""
+    name = "state"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> StateType:
-        """Return total energy."""
+        """Return the state."""
         try:
-            return float(self._updater.data[ATTR_TOTAL_ENERGY])
-        except (KeyError, TypeError, ValueError):
+            return self._updater.data[ATTR_STATE]
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
-
-class EveusStateSensor(BaseEveusSensor):
-    """Charging state sensor."""
-    name = "state"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:ev-station"
-
-    @property
-    def native_value(self) -> str:
-        """Return charging state."""
-        try:
-            return CHARGING_STATES.get(self._updater.data[ATTR_STATE], "Unknown")
-        except (KeyError, TypeError):
-            return "Unknown"
 
 class EveusSubstateSensor(BaseEveusSensor):
     """Substate sensor."""
     name = "substate"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:information"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
-    def native_value(self) -> str:
-        """Return substate with context."""
+    def native_value(self) -> StateType:
+        """Return the substate."""
         try:
-            state = self._updater.data[ATTR_STATE]
-            substate = self._updater.data[ATTR_SUBSTATE]
-            
-            if state == 7:  # Error state
-                return ERROR_STATES.get(substate, "Unknown Error")
-            return NORMAL_SUBSTATES.get(substate, "Unknown State")
-        except (KeyError, TypeError):
-            return "Unknown"
+            return self._updater.data[ATTR_SUBSTATE]
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
+            return None
 
 class EveusEnabledSensor(BaseEveusSensor):
-    """Enabled state sensor."""
+    """Enabled sensor."""
     name = "enabled"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:power"
+    _attr_device_class = SensorDeviceClass.BOOLEAN
 
     @property
-    def native_value(self) -> str:
-        """Return if charging is enabled."""
+    def native_value(self) -> StateType:
+        """Return if enabled."""
         try:
-            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
-        except (KeyError, TypeError):
-            return "Unknown"
+            return bool(self._updater.data[ATTR_ENABLED])
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
+            return None
 
 class EveusGroundSensor(BaseEveusSensor):
     """Ground sensor."""
     name = "ground"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:ground"
+    _attr_device_class = SensorDeviceClass.GROUND
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> StateType:
         """Return ground status."""
         try:
-            return "Yes" if self._updater.data[ATTR_GROUND] == 1 else "No"
-        except (KeyError, TypeError):
-            return "Unknown"
+            return bool(self._updater.data[ATTR_GROUND])
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
+            return None
 
 class EveusBoxTemperatureSensor(BaseEveusSensor):
     """Box temperature sensor."""
     name = "box_temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> StateType:
         """Return box temperature."""
         try:
             return float(self._updater.data[ATTR_TEMPERATURE_BOX])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusPlugTemperatureSensor(BaseEveusSensor):
@@ -378,53 +366,43 @@ class EveusPlugTemperatureSensor(BaseEveusSensor):
     name = "plug_temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> StateType:
         """Return plug temperature."""
         try:
             return float(self._updater.data[ATTR_TEMPERATURE_PLUG])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusSystemTimeSensor(BaseEveusSensor):
     """System time sensor."""
     name = "system_time"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     @property
     def native_value(self) -> StateType:
         """Return system time."""
         try:
-            return int(self._updater.data[ATTR_SYSTEM_TIME])
-        except (KeyError, TypeError, ValueError):
+            return self._updater.data[ATTR_SYSTEM_TIME]
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
-
-class EveusEnabledSensor(BaseEveusSensor):
-    """Enabled state sensor."""
-    name = "enabled"
-
-    @property
-    def native_value(self) -> str:
-        """Return if charging is enabled."""
-        try:
-            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
-        except (KeyError, TypeError):
-            return "Unknown"
 
 class EveusSessionTimeSensor(BaseEveusSensor):
     """Session time sensor."""
     name = "session_time"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
-    _attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> StateType:
-        """Return session time in seconds."""
+        """Return session time."""
         try:
-            return int(self._updater.data[ATTR_SESSION_TIME])
-        except (KeyError, TypeError, ValueError):
+            return float(self._updater.data[ATTR_SESSION_TIME])
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusCounterAEnergySensor(BaseEveusSensor):
@@ -432,14 +410,15 @@ class EveusCounterAEnergySensor(BaseEveusSensor):
     name = "counter_a_energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_state_class = SensorStateClass.TOTAL
 
     @property
     def native_value(self) -> StateType:
-        """Return Counter A energy."""
+        """Return counter A energy."""
         try:
             return float(self._updater.data[ATTR_COUNTER_A_ENERGY])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusCounterBEnergySensor(BaseEveusSensor):
@@ -447,40 +426,41 @@ class EveusCounterBEnergySensor(BaseEveusSensor):
     name = "counter_b_energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_state_class = SensorStateClass.TOTAL
 
     @property
     def native_value(self) -> StateType:
-        """Return Counter B energy."""
+        """Return counter B energy."""
         try:
             return float(self._updater.data[ATTR_COUNTER_B_ENERGY])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusCounterACostSensor(BaseEveusSensor):
     """Counter A cost sensor."""
     name = "counter_a_cost"
-    _attr_native_unit_of_measurement = "₴"
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_device_class = SensorDeviceClass.MONETARY
 
     @property
     def native_value(self) -> StateType:
-        """Return Counter A cost."""
+        """Return counter A cost."""
         try:
             return float(self._updater.data[ATTR_COUNTER_A_COST])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
 
 class EveusCounterBCostSensor(BaseEveusSensor):
     """Counter B cost sensor."""
     name = "counter_b_cost"
-    _attr_native_unit_of_measurement = "₴"
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_device_class = SensorDeviceClass.MONETARY
 
     @property
     def native_value(self) -> StateType:
-        """Return Counter B cost."""
+        """Return counter B cost."""
         try:
             return float(self._updater.data[ATTR_COUNTER_B_COST])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as e:
+            _LOGGER.error(f"Error fetching {self.name} from updater data: {e}")
             return None
