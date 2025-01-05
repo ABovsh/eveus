@@ -345,15 +345,21 @@ class EveusSessionTimeSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_class = SensorDeviceClass.DURATION
         self._attr_native_unit_of_measurement = UnitOfTime.SECONDS
         self._attr_has_entity_name = True
+        self._attr_state_class = SensorStateClass.TOTAL
 
     @property
-    def native_value(self) -> str:
-        """Return formatted session time."""
+    def native_value(self) -> int | None:
+        """Return session time in seconds."""
+        try:
+            return int(self.coordinator.data["sessionTime"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Return formatted time as an attribute."""
         try:
             seconds = int(self.coordinator.data["sessionTime"])
-            if seconds == 0:
-                return "No active session"
-                
             days = seconds // 86400
             hours = (seconds % 86400) // 3600
             minutes = (seconds % 3600) // 60
@@ -366,9 +372,11 @@ class EveusSessionTimeSensor(CoordinatorEntity, SensorEntity):
             if minutes > 0:
                 parts.append(f"{minutes}m")
                 
-            return " ".join(parts) if parts else "0m"
+            return {
+                "formatted_duration": " ".join(parts) if parts else "0m"
+            }
         except (KeyError, TypeError, ValueError):
-            return "Unknown"
+            return {"formatted_duration": "Unknown"}
 
 class EveusEnabledSensor(CoordinatorEntity, SensorEntity):
     """Representation of Eveus enabled sensor."""
