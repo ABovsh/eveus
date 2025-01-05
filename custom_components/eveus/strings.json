@@ -3,21 +3,21 @@
         "step": {
             "user": {
                 "title": "Connect to Eveus Charger",
-                "description": "Enter your Eveus charger connection details.",
+                "description": "Set up your Eveus EV charger connection.",
                 "data": {
-                    "host": "[%key:common::config_flow::data::host%]",
-                    "username": "[%key:common::config_flow::data::username%]",
-                    "password": "[%key:common::config_flow::data::password%]"
+                    "host": "IP Address",
+                    "username": "Username",
+                    "password": "Password"
                 }
             }
         },
         "error": {
-            "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-            "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-            "unknown": "[%key:common::config_flow::error::unknown%]"
+            "cannot_connect": "Failed to connect to the charger",
+            "invalid_auth": "Invalid username or password",
+            "unknown": "Unexpected error occurred"
         },
         "abort": {
-            "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+            "already_configured": "This Eveus charger is already configured"
         }
     }
 }
