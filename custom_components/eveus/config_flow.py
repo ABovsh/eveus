@@ -8,58 +8,44 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.const import (
-    CONF_HOST,
-    CONF_PASSWORD,
-    CONF_USERNAME,
-)
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN
 
-DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
-    }
-)
+_LOGGER = logging.getLogger(__name__)
+
+DATA_SCHEMA = vol.Schema({
+    vol.Required(CONF_HOST): str,
+    vol.Required(CONF_USERNAME): str,
+    vol.Required(CONF_PASSWORD): str,
+})
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from DATA_SCHEMA with values provided by the user.
-    """
-    session = async_get_clientsession(hass)
-
+    """Validate the user input allows us to connect."""
+    
     try:
-        async with session.post(
-            f"http://{data[CONF_HOST]}/main",
-            auth=aiohttp.BasicAuth(data[CONF_USERNAME], data[CONF_PASSWORD]),
-            timeout=10,
-        ) as response:
-            if response.status == 401:
-                raise InvalidAuth
-            response.raise_for_status()
-            await response.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"http://{data[CONF_HOST]}/main",
+                auth=aiohttp.BasicAuth(data[CONF_USERNAME], data[CONF_PASSWORD]),
+                timeout=10
+            ) as response:
+                if response.status == 401:
+                    raise InvalidAuth
+                response.raise_for_status()
+                await response.json()
 
     except aiohttp.ClientResponseError as error:
-        LOGGER.error("Response error from Eveus: %s", error)
+        _LOGGER.error("Response error from Eveus: %s", error)
         if error.status == 401:
             raise InvalidAuth from error
         raise CannotConnect from error
     except (aiohttp.ClientError, TimeoutError) as error:
-        LOGGER.error("Connection error to Eveus: %s", error)
+        _LOGGER.error("Connection error to Eveus: %s", error)
         raise CannotConnect from error
-    except ValueError as error:
-        LOGGER.error("Value error from Eveus: %s", error)
-        raise CannotConnect from error
-    except Exception as error:
-        LOGGER.exception("Unexpected exception: %s", error)
-        raise UnknownError from error
 
     # Return info that you want to store in the config entry.
     return {"title": f"Eveus Charger ({data[CONF_HOST]})"}
@@ -82,7 +68,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
-            except UnknownError:
+            except Exception:
+                _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
                 return self.async_create_entry(title=info["title"], data=user_input)
@@ -91,14 +78,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=DATA_SCHEMA, errors=errors
         )
 
-
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
 
-
 class InvalidAuth(HomeAssistantError):
     """Error to indicate there is invalid auth."""
-
-
-class UnknownError(HomeAssistantError):
-    """Error to indicate an unknown error occurred."""
