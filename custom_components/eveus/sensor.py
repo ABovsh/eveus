@@ -9,6 +9,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -186,8 +187,15 @@ class BaseEveusSensor(SensorEntity):
             "identifiers": {(DOMAIN, updater._host)},
             "name": "Eveus EV Charger",
             "manufacturer": "Eveus",
+            "model": f"Eveus ({updater._host})",
+            "sw_version": updater.data.get("verFWMain", "Unknown"),
         }
         _LOGGER.debug("Initialized sensor: %s", self.name)
+
+    @property
+    def name(self) -> str:
+        """Return the display name of the sensor."""
+        return f"Eveus {self.name.replace('_', ' ').title()}"
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
@@ -292,6 +300,8 @@ class EveusTotalEnergySensor(BaseEveusSensor):
 class EveusStateSensor(BaseEveusSensor):
     """Charging state sensor."""
     name = "state"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:ev-station"
 
     @property
     def native_value(self) -> str:
@@ -304,6 +314,8 @@ class EveusStateSensor(BaseEveusSensor):
 class EveusSubstateSensor(BaseEveusSensor):
     """Substate sensor."""
     name = "substate"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:information"
 
     @property
     def native_value(self) -> str:
@@ -318,9 +330,25 @@ class EveusSubstateSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
+class EveusEnabledSensor(BaseEveusSensor):
+    """Enabled state sensor."""
+    name = "enabled"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:power"
+
+    @property
+    def native_value(self) -> str:
+        """Return if charging is enabled."""
+        try:
+            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
+        except (KeyError, TypeError):
+            return "Unknown"
+
 class EveusGroundSensor(BaseEveusSensor):
     """Ground sensor."""
     name = "ground"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:ground"
 
     @property
     def native_value(self) -> str:
