@@ -7,7 +7,7 @@ SCAN_INTERVAL = timedelta(seconds=30)  # Reduced from 60 to 30 seconds for more 
 
 # Configuration
 DEFAULT_HOST = "192.168.3.39"  # Default IP address
-DEFAULT_USERNAME = "admin"      # Default username
+DEFAULT_USERNAME = "eveus"      # Default username
 
 # Logger
 LOGGER = logging.getLogger(__name__)
