@@ -61,6 +61,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Eveus sensors."""
+    _LOGGER.debug("Setting up Eveus sensors")
+    
     updater = EveusUpdater(
         host=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
@@ -69,31 +71,20 @@ async def async_setup_entry(
     )
 
     entities = [
-        # Electrical measurements
         EveusVoltageSensor(updater),
         EveusCurrentSensor(updater),
         EveusPowerSensor(updater),
         EveusCurrentSetSensor(updater),
-        
-        # Energy measurements
         EveusSessionEnergySensor(updater),
         EveusTotalEnergySensor(updater),
-        
-        # State information
         EveusStateSensor(updater),
         EveusSubstateSensor(updater),
         EveusEnabledSensor(updater),
         EveusGroundSensor(updater),
-        
-        # Temperature sensors
         EveusBoxTemperatureSensor(updater),
         EveusPlugTemperatureSensor(updater),
-        
-        # System information
         EveusSystemTimeSensor(updater),
         EveusSessionTimeSensor(updater),
-        
-        # Counters
         EveusCounterAEnergySensor(updater),
         EveusCounterBEnergySensor(updater),
         EveusCounterACostSensor(updater),
@@ -101,6 +92,7 @@ async def async_setup_entry(
     ]
     
     async_add_entities(entities)
+    _LOGGER.debug("Added %s Eveus entities", len(entities))
 
 class EveusUpdater:
     """Class to handle Eveus data updates."""
@@ -115,7 +107,14 @@ class EveusUpdater:
         self._available = True
         self._update_task = None
         self._sensors = []
-        self._session = aiohttp.ClientSession()
+        self._session = None
+        _LOGGER.debug("Initialized updater for host: %s", host)
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create client session."""
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
     async def start_updates(self) -> None:
         """Start the update loop."""
@@ -124,17 +123,23 @@ class EveusUpdater:
 
         async def update_loop() -> None:
             """Handle updates."""
-            while True:
-                try:
-                    await self._update()
-                    for sensor in self._sensors:
-                        sensor.async_write_ha_state()
-                except Exception as err:
-                    self._available = False
-                    _LOGGER.error("Error updating Eveus data: %s", err)
-                await asyncio.sleep(SCAN_INTERVAL.total_seconds())
+            try:
+                while True:
+                    try:
+                        await self._update()
+                        for sensor in self._sensors:
+                            sensor.async_write_ha_state()
+                    except Exception as err:
+                        self._available = False
+                        _LOGGER.error("Error updating Eveus data: %s", err)
+                    await asyncio.sleep(SCAN_INTERVAL.total_seconds())
+            finally:
+                if self._session:
+                    await self._session.close()
+                    self._session = None
 
         self._update_task = self._hass.loop.create_task(update_loop())
+        _LOGGER.debug("Started update loop")
 
     def register_sensor(self, sensor: "BaseEveusSensor") -> None:
         """Register a sensor for updates."""
@@ -143,7 +148,8 @@ class EveusUpdater:
     async def _update(self) -> None:
         """Update the data."""
         try:
-            async with self._session.post(
+            session = await self._get_session()
+            async with session.post(
                 f"http://{self._host}/main",
                 auth=aiohttp.BasicAuth(self._username, self._password),
                 timeout=10
@@ -170,13 +176,18 @@ class BaseEveusSensor(SensorEntity):
     """Base implementation for all Eveus sensors."""
 
     def __init__(self, updater: EveusUpdater) -> None:
-        """Initialize the base sensor."""
+        """Initialize the sensor."""
         self._updater = updater
         self._updater.register_sensor(self)
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        self._attr_unique_id = f"{updater._host}_{self.entity_id}"
-        self._attr_name = f"eveus_{self.name}"
+        self._attr_unique_id = f"{updater._host}_{self.name}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, updater._host)},
+            "name": "Eveus EV Charger",
+            "manufacturer": "Eveus",
+        }
+        _LOGGER.debug("Initialized sensor: %s", self.name)
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
@@ -187,15 +198,6 @@ class BaseEveusSensor(SensorEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         return self._updater.available
-
-    @property
-    def device_info(self):
-        """Return device information."""
-        return {
-            "identifiers": {(DOMAIN, self._updater._host)},
-            "name": "Eveus EV Charger",
-            "manufacturer": "Eveus",
-        }
 
 class EveusVoltageSensor(BaseEveusSensor):
     """Voltage sensor."""
