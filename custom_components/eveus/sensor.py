@@ -253,6 +253,27 @@ class EveusSensor(CoordinatorEntity, SensorEntity):
         except (KeyError, TypeError, ValueError):
             return None
 
+    @property
+    def device_info(self):
+        """Return device info."""
+        return {
+            "identifiers": {(DOMAIN, self.coordinator.host)},
+            "name": "Eveus EV Charger",
+            "manufacturer": "Eveus",
+            "model": self.coordinator.data.get("typeEvse", "Unknown"),
+            "sw_version": str(self.coordinator.data.get("systemTime", "Unknown")),
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.last_update_success
+
+    @property
+    def should_poll(self) -> bool:
+        """Return True if entity has to be polled for state."""
+        return False
+
 class EveusStateSensor(CoordinatorEntity, SensorEntity):
     """Implementation of Eveus state sensor."""
 
