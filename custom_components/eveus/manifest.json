@@ -1,0 +1,14 @@
+{
+    "domain": "eveus",
+    "name": "Eveus EV Charger",
+    "codeowners": ["@ABovsh"],
+    "config_flow": true,
+    "dependencies": [],
+    "documentation": "https://github.com/ABovsh/eveus",
+    "homeassistant": "2024.1.0",
+    "integration_type": "hub",
+    "iot_class": "local_polling",
+    "issue_tracker": "https://github.com/ABovsh/eveus/issues",
+    "requirements": [],
+    "version": "1.0.0"
+}
