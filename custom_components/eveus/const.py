@@ -2,7 +2,7 @@
 from datetime import timedelta
 
 DOMAIN = "eveus"
-SCAN_INTERVAL = timedelta(seconds=30)
+SCAN_INTERVAL = timedelta(seconds=60)
 
 # Default connection settings
 DEFAULT_HOST = "192.168.3.39"
