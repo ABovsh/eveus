@@ -140,37 +140,3 @@ class EveusSensor(CoordinatorEntity, SensorEntity):
             return self.coordinator.data[self._key]
         except KeyError:
             return None
-
-// File: hacs.json
-{
-    "name": "Eveus EV Charger",
-    "content_in_root": false,
-    "render_readme": true,
-    "homeassistant": "2024.1.0"
-}
-
-// File: .github/workflows/validate.yaml
-name: Validate
-
-on:
-  push:
-  pull_request:
-  schedule:
-    - cron: "0 0 * * *"
-  workflow_dispatch:
-
-jobs:
-  validate-hacs:
-    runs-on: "ubuntu-latest"
-    steps:
-      - uses: "actions/checkout@v3"
-      - name: HACS validation
-        uses: "hacs/action@main"
-        with:
-          category: "integration"
-
-  validate-hassfest:
-    runs-on: "ubuntu-latest"
-    steps:
-      - uses: "actions/checkout@v3"
-      - uses: home-assistant/actions/hassfest@master
