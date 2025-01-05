@@ -2,7 +2,7 @@
 from datetime import timedelta
 
 DOMAIN = "eveus"
-SCAN_INTERVAL = timedelta(seconds=60)
+SCAN_INTERVAL = timedelta(seconds=30)
 
 # Default connection settings
 DEFAULT_HOST = "192.168.3.39"
@@ -46,4 +46,38 @@ CHARGING_STATES = {
     5: STATE_COMPLETE,
     6: STATE_PAUSED,
     7: STATE_ERROR
+}
+
+# Error states mapping
+ERROR_STATES = {
+    0: "No Error",
+    1: "Grounding Error",
+    2: "Current Leak High",
+    3: "Relay Error",
+    4: "Current Leak Low",
+    5: "Box Overheat",
+    6: "Plug Overheat",
+    7: "Pilot Error",
+    8: "Low Voltage",
+    9: "Diode Error",
+    10: "Overcurrent",
+    11: "Interface Timeout",
+    12: "Software Failure",
+    13: "GFCI Test Failure",
+    14: "High Voltage"
+}
+
+# Normal substates mapping
+NORMAL_SUBSTATES = {
+    0: "No Limits",
+    1: "Limited by User",
+    2: "Energy Limit",
+    3: "Time Limit",
+    4: "Cost Limit",
+    5: "Schedule 1 Limit",
+    6: "Schedule 1 Energy Limit",
+    7: "Schedule 2 Limit",
+    8: "Schedule 2 Energy Limit",
+    9: "Waiting for Activation",
+    10: "Paused by Adaptive Mode"
 }
