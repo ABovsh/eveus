@@ -3,7 +3,7 @@
         "step": {
             "user": {
                 "title": "Connect to Eveus Charger",
-                "description": "Set up your Eveus EV charger integration.",
+                "description": "Enter your Eveus charger connection details.",
                 "data": {
                     "host": "IP Address",
                     "username": "Username",
@@ -12,12 +12,12 @@
             }
         },
         "error": {
-            "cannot_connect": "Failed to connect, please check the IP address and try again",
+            "cannot_connect": "Failed to connect to charger, please verify the IP address",
             "invalid_auth": "Invalid username or password",
             "unknown": "Unexpected error occurred"
         },
         "abort": {
-            "already_configured": "This Eveus charger is already configured"
+            "already_configured": "Device is already configured"
         }
     }
 }
