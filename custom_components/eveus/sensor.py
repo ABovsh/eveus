@@ -244,6 +244,21 @@ class EveusPowerSensor(BaseEveusSensor):
         except (KeyError, TypeError, ValueError):
             return None
 
+class EveusCurrentSetSensor(BaseEveusSensor):
+    """Current set sensor."""
+    name = "current_set"
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> StateType:
+        """Return current set."""
+        try:
+            return float(self._updater.data[ATTR_CURRENT_SET])
+        except (KeyError, TypeError, ValueError):
+            return None
+
 class EveusSessionEnergySensor(BaseEveusSensor):
     """Session energy sensor."""
     name = "session_energy"
@@ -274,42 +289,6 @@ class EveusTotalEnergySensor(BaseEveusSensor):
         except (KeyError, TypeError, ValueError):
             return None
 
-class EveusSessionTimeSensor(BaseEveusSensor):
-    """Session time sensor."""
-    name = "session_time"
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    @property
-    def native_value(self) -> StateType:
-        """Return session time in seconds."""
-        try:
-            return int(self._updater.data[ATTR_SESSION_TIME])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str]:
-        """Return formatted time as attribute."""
-        try:
-            seconds = int(self._updater.data[ATTR_SESSION_TIME])
-            days = seconds // 86400
-            hours = (seconds % 86400) // 3600
-            minutes = (seconds % 3600) // 60
-            
-            parts = []
-            if days > 0:
-                parts.append(f"{days}d")
-            if hours > 0:
-                parts.append(f"{hours}h")
-            if minutes > 0:
-                parts.append(f"{minutes}m")
-                
-            return {"formatted_time": " ".join(parts) if parts else "0m"}
-        except (KeyError, TypeError, ValueError):
-            return {"formatted_time": "unknown"}
-
 class EveusStateSensor(BaseEveusSensor):
     """Charging state sensor."""
     name = "state"
@@ -339,30 +318,15 @@ class EveusSubstateSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
-class EveusCurrentSetSensor(BaseEveusSensor):
-    """Current set sensor."""
-    name = "current_set"
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    @property
-    def native_value(self) -> StateType:
-        """Return current set point."""
-        try:
-            return float(self._updater.data[ATTR_CURRENT_SET])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusEnabledSensor(BaseEveusSensor):
-    """Enabled state sensor."""
-    name = "enabled"
+class EveusGroundSensor(BaseEveusSensor):
+    """Ground sensor."""
+    name = "ground"
 
     @property
     def native_value(self) -> str:
-        """Return if charging is enabled."""
+        """Return ground status."""
         try:
-            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
+            return "Yes" if self._updater.data[ATTR_GROUND] == 1 else "No"
         except (KeyError, TypeError):
             return "Unknown"
 
@@ -405,6 +369,33 @@ class EveusSystemTimeSensor(BaseEveusSensor):
         """Return system time."""
         try:
             return int(self._updater.data[ATTR_SYSTEM_TIME])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+class EveusEnabledSensor(BaseEveusSensor):
+    """Enabled state sensor."""
+    name = "enabled"
+
+    @property
+    def native_value(self) -> str:
+        """Return if charging is enabled."""
+        try:
+            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
+        except (KeyError, TypeError):
+            return "Unknown"
+
+class EveusSessionTimeSensor(BaseEveusSensor):
+    """Session time sensor."""
+    name = "session_time"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> StateType:
+        """Return session time in seconds."""
+        try:
+            return int(self._updater.data[ATTR_SESSION_TIME])
         except (KeyError, TypeError, ValueError):
             return None
 
