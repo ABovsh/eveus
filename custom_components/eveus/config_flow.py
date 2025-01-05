@@ -13,25 +13,24 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN
+from .const import DOMAIN, DEFAULT_HOST
 
 _LOGGER = logging.getLogger(__name__)
 
 DATA_SCHEMA = vol.Schema({
-    vol.Required(CONF_HOST): str,
+    vol.Required(CONF_HOST, default=DEFAULT_HOST): str,
     vol.Required(CONF_USERNAME): str,
     vol.Required(CONF_PASSWORD): str,
 })
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
-    
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"http://{data[CONF_HOST]}/main",
                 auth=aiohttp.BasicAuth(data[CONF_USERNAME], data[CONF_PASSWORD]),
-                timeout=10
+                timeout=10,
             ) as response:
                 if response.status == 401:
                     raise InvalidAuth
@@ -39,15 +38,12 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                 await response.json()
 
     except aiohttp.ClientResponseError as error:
-        _LOGGER.error("Response error from Eveus: %s", error)
         if error.status == 401:
             raise InvalidAuth from error
         raise CannotConnect from error
     except (aiohttp.ClientError, TimeoutError) as error:
-        _LOGGER.error("Connection error to Eveus: %s", error)
         raise CannotConnect from error
 
-    # Return info that you want to store in the config entry.
     return {"title": f"Eveus Charger ({data[CONF_HOST]})"}
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
