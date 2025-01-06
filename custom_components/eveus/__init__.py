@@ -16,13 +16,10 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Eveus from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-    
-    try:
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        return True
-    except Exception as err:
-        _LOGGER.error("Error setting up Eveus integration: %s", err)
-        return False
+    hass.data[DOMAIN][entry.entry_id] = {
+        "config": entry.data
+    }
+    return await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
