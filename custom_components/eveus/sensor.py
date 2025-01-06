@@ -71,12 +71,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Eveus sensors."""
     _LOGGER.debug("Setting up Eveus sensors for %s", entry.data[CONF_HOST])
-
+    
     updater = EveusUpdater(
         host=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
         hass=hass,
+        entry_id=entry.entry_id
     )
 
     entities = [
@@ -98,20 +99,25 @@ async def async_setup_entry(
         EveusCounterBEnergySensor(updater),
         EveusCounterACostSensor(updater),
         EveusCounterBCostSensor(updater),
+        EveusBatteryVoltageSensor(updater),
+        EveusStateOfChargeKwhSensor(updater),
+        EveusStateOfChargePercentSensor(updater),
+        EveusTimeToTargetSensor(updater),
     ]
-    
+
     async_add_entities(entities)
     _LOGGER.debug("Added %s Eveus entities", len(entities))
 
 class EveusUpdater:
     """Class to handle Eveus data updates."""
 
-    def __init__(self, host: str, username: str, password: str, hass: HomeAssistant) -> None:
+    def __init__(self, host: str, username: str, password: str, hass: HomeAssistant, entry_id: str) -> None:
         """Initialize the updater."""
         self._host = host
         self._username = username
         self._password = password
         self._hass = hass
+        self._entry_id = entry_id
         self._data = {}
         self._available = True
         self._update_task = None
@@ -165,6 +171,7 @@ class EveusUpdater:
                 ) as response:
                     response.raise_for_status()
                     data = await response.json()
+                    data["battery_capacity"] = self._hass.data[DOMAIN][self._entry_id]["config"].get("battery_capacity", 75)
                     _LOGGER.debug(
                         "Updated data for %s: State=%s, Power=%sW", 
                         self._host,
@@ -243,7 +250,7 @@ class BaseEveusSensor(SensorEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state:
             try:
-                if self._attr_device_class in [
+                if hasattr(self, '_attr_device_class') and self._attr_device_class in [
                     SensorDeviceClass.CURRENT,
                     SensorDeviceClass.VOLTAGE,
                     SensorDeviceClass.POWER,
@@ -380,19 +387,14 @@ class EveusSubstateSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
-class EveusGroundSensor(BaseEveusSensor):
-    """Ground sensor."""
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:ground"
-    name = "Eveus Ground"
-
-    @property
-    def native_value(self) -> str:
-        """Return ground status."""
-        try:
-            return "Yes" if self._updater.data[ATTR_GROUND] == 1 else "No"
-        except (KeyError, TypeError):
-            return "Unknown"
+class EveusBatteryVoltageSensor(EveusNumericSensor):
+    """Battery voltage sensor."""
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:battery"
+    _key = "vBat"
+    name = "Eveus Battery Voltage"
 
 class EveusGroundSensor(BaseEveusSensor):
     """Ground sensor."""
@@ -454,38 +456,6 @@ class EveusEnabledSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
-class EveusSessionTimeSensor(EveusNumericSensor):
-    """Session time sensor."""
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:timer"
-    _key = ATTR_SESSION_TIME
-    name = "Eveus Session Time"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return formatted time as attribute."""
-        attrs = super().extra_state_attributes
-        try:
-            seconds = int(self._updater.data[self._key])
-            days = seconds // 86400
-            hours = (seconds % 86400) // 3600
-            minutes = (seconds % 3600) // 60
-            
-            parts = []
-            if days > 0:
-                parts.append(f"{days}d")
-            if hours > 0:
-                parts.append(f"{hours}h")
-            if minutes > 0:
-                parts.append(f"{minutes}m")
-                
-            attrs["formatted_time"] = " ".join(parts) if parts else "0m"
-        except (KeyError, TypeError, ValueError):
-            attrs["formatted_time"] = "unknown"
-        return attrs
-
 class EveusCounterAEnergySensor(EveusEnergyBaseSensor):
     """Counter A energy sensor."""
     _key = ATTR_COUNTER_A_ENERGY
@@ -511,3 +481,47 @@ class EveusCounterBCostSensor(EveusNumericSensor):
     _attr_icon = "mdi:currency-uah"
     _key = ATTR_COUNTER_B_COST
     name = "Eveus Counter B Cost"
+
+class EveusTimeToTargetSensor(BaseEveusSensor):
+    """Time to target SOC sensor."""
+    name = "Eveus Time to Target"
+    _attr_icon = "mdi:timer"
+
+    @property
+    def native_value(self) -> str:
+        """Calculate time to target SOC."""
+        try:
+            if self._updater.data[ATTR_STATE] != 4:  # Not charging
+                return "Not charging"
+
+            current_soc = float(self.hass.states.get("input_number.eveus_initial_soc").state)
+            if not 0 <= current_soc <= 100:
+                return "unknown"
+
+            target_soc = float(self.hass.states.get("input_number.eveus_target_soc").state)
+            if target_soc <= current_soc:
+                return "Target reached"
+
+            power_meas = float(self._updater.data[ATTR_POWER])
+            if power_meas < 100:
+                return "Insufficient power"
+
+            battery_capacity = self._updater.data.get("battery_capacity", 75)
+            correction = float(self.hass.states.get("input_number.eveus_soc_correction").state)
+            
+            remaining_kwh = (target_soc - current_soc) * battery_capacity / 100
+            power_kw = power_meas * (1 - correction / 100) / 1000
+            total_minutes = round(remaining_kwh / power_kw * 60)
+
+            if total_minutes < 1:
+                return "Less than 1m"
+            
+            hours = total_minutes // 60
+            minutes = total_minutes % 60
+            
+            if hours > 0:
+                return f"{hours}h{' ' + str(minutes) + 'm' if minutes > 0 else ''}"
+            return f"{minutes}m"
+            
+        except Exception:
+            return "unknown"
