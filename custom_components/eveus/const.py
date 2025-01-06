@@ -4,10 +4,7 @@ from datetime import timedelta
 DOMAIN = "eveus"
 SCAN_INTERVAL = timedelta(seconds=30)
 
-# Default connection settings
-DEFAULT_HOST = "192.168.3.39"
-
-# Attributes from API response
+# API Attributes
 ATTR_VOLTAGE = "voltMeas1"
 ATTR_CURRENT = "curMeas1"
 ATTR_POWER = "powerMeas"
@@ -27,28 +24,18 @@ ATTR_COUNTER_A_COST = "IEM1_money"
 ATTR_COUNTER_B_COST = "IEM2_money"
 ATTR_GROUND = "ground"
 
-# State mapping
-STATE_STARTUP = "Startup"
-STATE_SYSTEM_TEST = "System Test"
-STATE_STANDBY = "Standby"
-STATE_CONNECTED = "Connected"
-STATE_CHARGING = "Charging"
-STATE_COMPLETE = "Charge Complete"
-STATE_PAUSED = "Paused"
-STATE_ERROR = "Error"
-
+# State Mappings
 CHARGING_STATES = {
-    0: STATE_STARTUP,
-    1: STATE_SYSTEM_TEST,
-    2: STATE_STANDBY,
-    3: STATE_CONNECTED,
-    4: STATE_CHARGING,
-    5: STATE_COMPLETE,
-    6: STATE_PAUSED,
-    7: STATE_ERROR
+    0: "Startup",
+    1: "System Test",
+    2: "Standby",
+    3: "Connected",
+    4: "Charging",
+    5: "Charge Complete",
+    6: "Paused",
+    7: "Error"
 }
 
-# Error states mapping
 ERROR_STATES = {
     0: "No Error",
     1: "Grounding Error",
@@ -67,7 +54,6 @@ ERROR_STATES = {
     14: "High Voltage"
 }
 
-# Normal substates mapping
 NORMAL_SUBSTATES = {
     0: "No Limits",
     1: "Limited by User",
