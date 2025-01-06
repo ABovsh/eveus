@@ -80,7 +80,6 @@ async def async_setup_entry(
             hass=hass,
             entry_id=entry.entry_id
         )
-
         entities = [
             EveusVoltageSensor(updater),
             EveusCurrentSensor(updater),
@@ -101,7 +100,6 @@ async def async_setup_entry(
             EveusCounterBCostSensor(updater),
             EveusBatteryVoltageSensor(updater),
         ]
-
         async_add_entities(entities)
         _LOGGER.debug("Added %s Eveus entities", len(entities))
         return True  # Return True to indicate successful setup
