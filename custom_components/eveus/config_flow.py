@@ -4,8 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import voluptuous as vol
 import aiohttp
+import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
@@ -27,7 +27,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             "icon": "mdi:car"
         }): vol.All(
             vol.Coerce(int), 
-            vol.Range(min=10, max=200)
+            vol.Range(min=10, max=100)
         ),
     }
 )
