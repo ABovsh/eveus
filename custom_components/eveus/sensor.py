@@ -1,3 +1,4 @@
+# sensor.py
 """Support for Eveus sensors."""
 from __future__ import annotations
 
@@ -55,14 +56,58 @@ from .const import (
     ATTR_COUNTER_A_COST,
     ATTR_COUNTER_B_COST,
     ATTR_GROUND,
+    ATTR_BATTERY_VOLTAGE,  # Import the constant
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Constants for error handling
-MAX_FAILED_ATTEMPTS = 3
-RETRY_DELAY = 30
-DEFAULT_TIMEOUT = 10
+class EveusBatteryVoltageSensor(EveusNumericSensor):
+    """Battery voltage sensor."""
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:battery"
+    _key = ATTR_BATTERY_VOLTAGE
+    name = "Eveus Battery Voltage"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the sensor value."""
+        try:
+            value = float(self._updater.data[self._key])
+            self._previous_value = value
+            return round(value, 2)  # Round to 2 decimal places
+        except (KeyError, TypeError, ValueError):
+            return self._previous_value
+
+class EveusSessionTimeSensor(EveusNumericSensor):
+    """Session time sensor with improved formatting."""
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer"
+    _key = ATTR_SESSION_TIME
+    name = "Eveus Session Time"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return formatted time as attribute."""
+        attrs = super().extra_state_attributes
+        try:
+            seconds = int(self._updater.data[self._key])
+            days = seconds // 86400
+            hours = (seconds % 86400) // 3600
+            minutes = (seconds % 3600) // 60
+            
+            if days > 0:
+                attrs["formatted_time"] = f"{days}d {hours:02d}h {minutes:02d}m"
+            elif hours > 0:
+                attrs["formatted_time"] = f"{hours}h {minutes:02d}m"
+            else:
+                attrs["formatted_time"] = f"{minutes}m"
+        except (KeyError, TypeError, ValueError):
+            attrs["formatted_time"] = "unknown"
+        return attrs
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -71,7 +116,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Eveus sensors."""
     _LOGGER.debug("Setting up Eveus sensors for %s", entry.data[CONF_HOST])
-
+    
     updater = EveusUpdater(
         host=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
@@ -90,7 +135,6 @@ async def async_setup_entry(
         EveusSubstateSensor(updater),
         EveusEnabledSensor(updater),
         EveusGroundSensor(updater),
-        EveusBatteryVoltageSensor(updater),
         EveusBoxTemperatureSensor(updater),
         EveusPlugTemperatureSensor(updater),
         EveusSystemTimeSensor(updater),
@@ -99,6 +143,7 @@ async def async_setup_entry(
         EveusCounterBEnergySensor(updater),
         EveusCounterACostSensor(updater),
         EveusCounterBCostSensor(updater),
+        EveusBatteryVoltageSensor(updater),  # Added to entities list
     ]
     
     async_add_entities(entities)
