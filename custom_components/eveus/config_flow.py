@@ -27,7 +27,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             "icon": "mdi:car"
         }): vol.All(
             vol.Coerce(int), 
-            vol.Range(min=10, max=100)
+            vol.Range(min=10, max=200)
         ),
     }
 )
