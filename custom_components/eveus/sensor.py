@@ -4,12 +4,15 @@ from __future__ import annotations
 import logging
 import asyncio
 import aiohttp
+from datetime import datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -56,14 +59,19 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Constants for error handling
+MAX_FAILED_ATTEMPTS = 3
+RETRY_DELAY = 30
+DEFAULT_TIMEOUT = 10
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Eveus sensors."""
-    _LOGGER.debug("Setting up Eveus sensors")
-    
+    _LOGGER.debug("Setting up Eveus sensors for %s", entry.data[CONF_HOST])
+
     updater = EveusUpdater(
         host=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
@@ -109,11 +117,12 @@ class EveusUpdater:
         self._update_task = None
         self._sensors = []
         self._session = None
+        self._last_update = None
         _LOGGER.debug("Initialized updater for host: %s", host)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create client session."""
-        if self._session is None:
+        if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
 
@@ -128,6 +137,7 @@ class EveusUpdater:
                 while True:
                     try:
                         await self._update()
+                        self._last_update = dt_util.utcnow()
                         for sensor in self._sensors:
                             sensor.async_write_ha_state()
                     except Exception as err:
@@ -135,33 +145,61 @@ class EveusUpdater:
                         _LOGGER.error("Error updating Eveus data: %s", err)
                     await asyncio.sleep(SCAN_INTERVAL.total_seconds())
             finally:
-                if self._session:
+                if self._session and not self._session.closed:
                     await self._session.close()
                     self._session = None
 
         self._update_task = self._hass.loop.create_task(update_loop())
-        _LOGGER.debug("Started update loop")
+        _LOGGER.debug("Started update loop for %s", self._host)
+
+    async def _update(self) -> None:
+        """Update the data with retry mechanism."""
+        failed_attempts = 0
+        while failed_attempts < MAX_FAILED_ATTEMPTS:
+            try:
+                session = await self._get_session()
+                async with session.post(
+                    f"http://{self._host}/main",
+                    auth=aiohttp.BasicAuth(self._username, self._password),
+                    timeout=DEFAULT_TIMEOUT
+                ) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    _LOGGER.debug(
+                        "Updated data for %s: State=%s, Power=%sW", 
+                        self._host,
+                        data.get("state"), 
+                        data.get("powerMeas")
+                    )
+                    self._data = data
+                    self._available = True
+                    return
+            except aiohttp.ClientError as err:
+                failed_attempts += 1
+                self._available = False
+                _LOGGER.error("Connection error for %s: %s", self._host, err)
+                if failed_attempts == MAX_FAILED_ATTEMPTS:
+                    raise
+                await asyncio.sleep(RETRY_DELAY)
+            except Exception as err:
+                failed_attempts += 1
+                self._available = False
+                _LOGGER.exception("Unexpected error for %s: %s", self._host, err)
+                if failed_attempts == MAX_FAILED_ATTEMPTS:
+                    raise
+                await asyncio.sleep(RETRY_DELAY)
 
     def register_sensor(self, sensor: "BaseEveusSensor") -> None:
         """Register a sensor for updates."""
         self._sensors.append(sensor)
 
-    async def _update(self) -> None:
-        """Update the data."""
-        try:
-            session = await self._get_session()
-            async with session.post(
-                f"http://{self._host}/main",
-                auth=aiohttp.BasicAuth(self._username, self._password),
-                timeout=10
-            ) as response:
-                response.raise_for_status()
-                self._data = await response.json()
-                self._available = True
-                _LOGGER.debug("Data updated successfully")
-        except Exception as err:
-            self._available = False
-            raise
+    async def async_shutdown(self) -> None:
+        """Shutdown the updater."""
+        if self._update_task:
+            self._update_task.cancel()
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     @property
     def data(self) -> dict[str, Any]:
@@ -173,16 +211,21 @@ class EveusUpdater:
         """Return if updater is available."""
         return self._available
 
-class BaseEveusSensor(SensorEntity):
+    @property
+    def last_update(self) -> datetime | None:
+        """Return the last update timestamp."""
+        return self._last_update
+
+class BaseEveusSensor(SensorEntity, RestoreEntity):
     """Base implementation for all Eveus sensors."""
 
     def __init__(self, updater: EveusUpdater) -> None:
         """Initialize the sensor."""
         self._updater = updater
         self._updater.register_sensor(self)
-        self._attr_has_entity_name = True
+        self._attr_has_entity_name = False
         self._attr_should_poll = False
-        self._attr_unique_id = f"{updater._host}_{self.name}"
+        self._attr_unique_id = f"{updater._host}_{self.name.lower().replace(' ', '_')}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, updater._host)},
             "name": "Eveus EV Charger",
@@ -190,118 +233,125 @@ class BaseEveusSensor(SensorEntity):
             "model": f"Eveus ({updater._host})",
             "sw_version": updater.data.get("verFWMain", "Unknown"),
         }
+        self._previous_value = None
         _LOGGER.debug("Initialized sensor: %s", self.name)
-
-    @property
-    def name(self) -> str:
-        """Return the display name of the sensor."""
-        return f"Eveus {self.name.replace('_', ' ').title()}"
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
+        # Restore previous state
+        last_state = await self.async_get_last_state()
+        if last_state:
+            try:
+                if self._attr_device_class in [
+                    SensorDeviceClass.CURRENT,
+                    SensorDeviceClass.VOLTAGE,
+                    SensorDeviceClass.POWER,
+                    SensorDeviceClass.ENERGY,
+                    SensorDeviceClass.TEMPERATURE,
+                ]:
+                    self._previous_value = float(last_state.state)
+                else:
+                    self._previous_value = last_state.state
+            except (TypeError, ValueError):
+                self._previous_value = None
         await self._updater.start_updates()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Handle removal of entity."""
+        await super().async_will_remove_from_hass()
+        await self._updater.async_shutdown()
 
     @property
     def available(self) -> bool:
         """Return if entity is available."""
         return self._updater.available
 
-class EveusVoltageSensor(BaseEveusSensor):
-    """Voltage sensor."""
-    name = "voltage"
-    _attr_device_class = SensorDeviceClass.VOLTAGE
-    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        attrs = {
+            "last_update": self._updater.last_update,
+            "host": self._updater._host,
+            "firmware": self._updater.data.get("verFWMain", "Unknown"),
+        }
+        if self._previous_value is not None:
+            attrs["previous_value"] = self._previous_value
+        return attrs
+
+class EveusNumericSensor(BaseEveusSensor):
+    """Base class for numeric sensors."""
+
+    _attr_suggested_display_precision = 2
 
     @property
     def native_value(self) -> StateType:
-        """Return the voltage."""
+        """Return the sensor value."""
         try:
-            return float(self._updater.data[ATTR_VOLTAGE])
+            value = float(self._updater.data[self._key])
+            self._previous_value = value
+            return round(value, self._attr_suggested_display_precision)
         except (KeyError, TypeError, ValueError):
-            return None
+            return self._previous_value
 
-class EveusCurrentSensor(BaseEveusSensor):
-    """Current sensor."""
-    name = "current"
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
+class EveusEnergyBaseSensor(EveusNumericSensor):
+    """Base energy sensor with statistics."""
 
-    @property
-    def native_value(self) -> StateType:
-        """Return the current."""
-        try:
-            return float(self._updater.data[ATTR_CURRENT])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusPowerSensor(BaseEveusSensor):
-    """Power sensor."""
-    name = "power"
-    _attr_device_class = SensorDeviceClass.POWER
-    _attr_native_unit_of_measurement = UnitOfPower.WATT
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    @property
-    def native_value(self) -> StateType:
-        """Return power consumption."""
-        try:
-            return float(self._updater.data[ATTR_POWER])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusCurrentSetSensor(BaseEveusSensor):
-    """Current set sensor."""
-    name = "current_set"
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    @property
-    def native_value(self) -> StateType:
-        """Return current set."""
-        try:
-            return float(self._updater.data[ATTR_CURRENT_SET])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusSessionEnergySensor(BaseEveusSensor):
-    """Session energy sensor."""
-    name = "session_energy"
-    _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.TOTAL
-
-    @property
-    def native_value(self) -> StateType:
-        """Return session energy."""
-        try:
-            return float(self._updater.data[ATTR_SESSION_ENERGY])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusTotalEnergySensor(BaseEveusSensor):
-    """Total energy sensor."""
-    name = "total_energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
-    @property
-    def native_value(self) -> StateType:
-        """Return total energy."""
-        try:
-            return float(self._updater.data[ATTR_TOTAL_ENERGY])
-        except (KeyError, TypeError, ValueError):
-            return None
+class EveusVoltageSensor(EveusNumericSensor):
+    """Voltage sensor."""
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:voltage-ac"
+    _key = ATTR_VOLTAGE
+    name = "Eveus Voltage"
+
+class EveusCurrentSensor(EveusNumericSensor):
+    """Current sensor."""
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:current-ac"
+    _key = ATTR_CURRENT
+    name = "Eveus Current"
+
+class EveusPowerSensor(EveusNumericSensor):
+    """Power sensor."""
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:flash"
+    _key = ATTR_POWER
+    name = "Eveus Power"
+
+class EveusCurrentSetSensor(EveusNumericSensor):
+    """Current set sensor."""
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:current-ac"
+    _key = ATTR_CURRENT_SET
+    name = "Eveus Current Set"
+
+class EveusSessionEnergySensor(EveusEnergyBaseSensor):
+    """Session energy sensor."""
+    _key = ATTR_SESSION_ENERGY
+    name = "Eveus Session Energy"
+
+class EveusTotalEnergySensor(EveusEnergyBaseSensor):
+    """Total energy sensor."""
+    _key = ATTR_TOTAL_ENERGY
+    name = "Eveus Total Energy"
 
 class EveusStateSensor(BaseEveusSensor):
     """Charging state sensor."""
-    name = "state"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:ev-station"
+    name = "Eveus State"
 
     @property
     def native_value(self) -> str:
@@ -313,9 +363,9 @@ class EveusStateSensor(BaseEveusSensor):
 
 class EveusSubstateSensor(BaseEveusSensor):
     """Substate sensor."""
-    name = "substate"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:information"
+    name = "Eveus Substate"
 
     @property
     def native_value(self) -> str:
@@ -330,25 +380,11 @@ class EveusSubstateSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
-class EveusEnabledSensor(BaseEveusSensor):
-    """Enabled state sensor."""
-    name = "enabled"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:power"
-
-    @property
-    def native_value(self) -> str:
-        """Return if charging is enabled."""
-        try:
-            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
-        except (KeyError, TypeError):
-            return "Unknown"
-
 class EveusGroundSensor(BaseEveusSensor):
     """Ground sensor."""
-    name = "ground"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:ground"
+    name = "Eveus Ground"
 
     @property
     def native_value(self) -> str:
@@ -358,51 +394,43 @@ class EveusGroundSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
-class EveusBoxTemperatureSensor(BaseEveusSensor):
+class EveusBoxTemperatureSensor(EveusNumericSensor):
     """Box temperature sensor."""
-    name = "box_temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:thermometer"
+    _key = ATTR_TEMPERATURE_BOX
+    name = "Eveus Temperature 1"
 
-    @property
-    def native_value(self) -> StateType:
-        """Return box temperature."""
-        try:
-            return float(self._updater.data[ATTR_TEMPERATURE_BOX])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusPlugTemperatureSensor(BaseEveusSensor):
+class EveusPlugTemperatureSensor(EveusNumericSensor):
     """Plug temperature sensor."""
-    name = "plug_temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
-
-    @property
-    def native_value(self) -> StateType:
-        """Return plug temperature."""
-        try:
-            return float(self._updater.data[ATTR_TEMPERATURE_PLUG])
-        except (KeyError, TypeError, ValueError):
-            return None
+    _attr_icon = "mdi:thermometer"
+    _key = ATTR_TEMPERATURE_PLUG
+    name = "Eveus Temperature 2"
 
 class EveusSystemTimeSensor(BaseEveusSensor):
     """System time sensor."""
-    name = "system_time"
+    _key = ATTR_SYSTEM_TIME
+    _attr_icon = "mdi:clock"
+    name = "Eveus System Time"
 
     @property
     def native_value(self) -> StateType:
         """Return system time."""
         try:
-            return int(self._updater.data[ATTR_SYSTEM_TIME])
+            return int(self._updater.data[self._key])
         except (KeyError, TypeError, ValueError):
             return None
 
 class EveusEnabledSensor(BaseEveusSensor):
     """Enabled state sensor."""
-    name = "enabled"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:power"
+    name = "Eveus Enabled"
 
     @property
     def native_value(self) -> str:
@@ -412,75 +440,60 @@ class EveusEnabledSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
-class EveusSessionTimeSensor(BaseEveusSensor):
+class EveusSessionTimeSensor(EveusNumericSensor):
     """Session time sensor."""
-    name = "session_time"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer"
+    _key = ATTR_SESSION_TIME
+    name = "Eveus Session Time"
 
     @property
-    def native_value(self) -> StateType:
-        """Return session time in seconds."""
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return formatted time as attribute."""
+        attrs = super().extra_state_attributes
         try:
-            return int(self._updater.data[ATTR_SESSION_TIME])
+            seconds = int(self._updater.data[self._key])
+            days = seconds // 86400
+            hours = (seconds % 86400) // 3600
+            minutes = (seconds % 3600) // 60
+            
+            parts = []
+            if days > 0:
+                parts.append(f"{days}d")
+            if hours > 0:
+                parts.append(f"{hours}h")
+            if minutes > 0:
+                parts.append(f"{minutes}m")
+                
+            attrs["formatted_time"] = " ".join(parts) if parts else "0m"
         except (KeyError, TypeError, ValueError):
-            return None
+            attrs["formatted_time"] = "unknown"
+        return attrs
 
-class EveusCounterAEnergySensor(BaseEveusSensor):
+class EveusCounterAEnergySensor(EveusEnergyBaseSensor):
     """Counter A energy sensor."""
-    name = "counter_a_energy"
-    _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _key = ATTR_COUNTER_A_ENERGY
+    name = "Eveus Counter A Energy"
 
-    @property
-    def native_value(self) -> StateType:
-        """Return Counter A energy."""
-        try:
-            return float(self._updater.data[ATTR_COUNTER_A_ENERGY])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusCounterBEnergySensor(BaseEveusSensor):
+class EveusCounterBEnergySensor(EveusEnergyBaseSensor):
     """Counter B energy sensor."""
-    name = "counter_b_energy"
-    _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _key = ATTR_COUNTER_B_ENERGY
+    name = "Eveus Counter B Energy"
 
-    @property
-    def native_value(self) -> StateType:
-        """Return Counter B energy."""
-        try:
-            return float(self._updater.data[ATTR_COUNTER_B_ENERGY])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusCounterACostSensor(BaseEveusSensor):
+class EveusCounterACostSensor(EveusNumericSensor):
     """Counter A cost sensor."""
-    name = "counter_a_cost"
     _attr_native_unit_of_measurement = "₴"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:currency-uah"
+    _key = ATTR_COUNTER_A_COST
+    name = "Eveus Counter A Cost"
 
-    @property
-    def native_value(self) -> StateType:
-        """Return Counter A cost."""
-        try:
-            return float(self._updater.data[ATTR_COUNTER_A_COST])
-        except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusCounterBCostSensor(BaseEveusSensor):
+class EveusCounterBCostSensor(EveusNumericSensor):
     """Counter B cost sensor."""
-    name = "counter_b_cost"
     _attr_native_unit_of_measurement = "₴"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-
-    @property
-    def native_value(self) -> StateType:
-        """Return Counter B cost."""
-        try:
-            return float(self._updater.data[ATTR_COUNTER_B_COST])
-        except (KeyError, TypeError, ValueError):
-            return None
+    _attr_icon = "mdi:currency-uah"
+    _key = ATTR_COUNTER_B_COST
+    name = "Eveus Counter B Cost"
