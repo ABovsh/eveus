@@ -100,9 +100,6 @@ async def async_setup_entry(
             EveusCounterACostSensor(updater),
             EveusCounterBCostSensor(updater),
             EveusBatteryVoltageSensor(updater),
-            EveusStateOfChargeKwhSensor(updater),
-            EveusStateOfChargePercentSensor(updater),
-            EveusTimeToTargetSensor(updater),
         ]
 
         async_add_entities(entities)
@@ -485,47 +482,3 @@ class EveusCounterBCostSensor(EveusNumericSensor):
     _attr_icon = "mdi:currency-uah"
     _key = ATTR_COUNTER_B_COST
     name = "Eveus Counter B Cost"
-
-class EveusTimeToTargetSensor(BaseEveusSensor):
-    """Time to target SOC sensor."""
-    name = "Eveus Time to Target"
-    _attr_icon = "mdi:timer"
-
-    @property
-    def native_value(self) -> str:
-        """Calculate time to target SOC."""
-        try:
-            if self._updater.data[ATTR_STATE] != 4:  # Not charging
-                return "Not charging"
-
-            current_soc = float(self.hass.states.get("input_number.eveus_initial_soc").state)
-            if not 0 <= current_soc <= 100:
-                return "unknown"
-
-            target_soc = float(self.hass.states.get("input_number.eveus_target_soc").state)
-            if target_soc <= current_soc:
-                return "Target reached"
-
-            power_meas = float(self._updater.data[ATTR_POWER])
-            if power_meas < 100:
-                return "Insufficient power"
-
-            battery_capacity = self._updater.data.get("battery_capacity", 75)
-            correction = float(self.hass.states.get("input_number.eveus_soc_correction").state)
-            
-            remaining_kwh = (target_soc - current_soc) * battery_capacity / 100
-            power_kw = power_meas * (1 - correction / 100) / 1000
-            total_minutes = round(remaining_kwh / power_kw * 60)
-
-            if total_minutes < 1:
-                return "Less than 1m"
-            
-            hours = total_minutes // 60
-            minutes = total_minutes % 60
-            
-            if hours > 0:
-                return f"{hours}h{' ' + str(minutes) + 'm' if minutes > 0 else ''}"
-            return f"{minutes}m"
-            
-        except Exception:
-            return "unknown"
