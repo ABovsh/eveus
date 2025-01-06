@@ -76,6 +76,7 @@ async def async_setup_entry(
         host=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
+        data["battery_capacity"] = self._hass.data[DOMAIN][entry.entry_id]["config"].get("battery_capacity", 75)
         hass=hass,
     )
 
