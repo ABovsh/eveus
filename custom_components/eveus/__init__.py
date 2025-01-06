@@ -5,19 +5,17 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import Platform, PERCENTAGE, UnitOfMeasurement
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_platform
 from homeassistant.components.input_number import (
     DOMAIN as INPUT_NUMBER_DOMAIN,
-    InputNumber,
     CONF_MIN,
     CONF_MAX,
     CONF_STEP,
     CONF_MODE,
     CONF_INITIAL,
     CONF_ICON,
-    ATTR_UNIT_OF_MEASUREMENT,
 )
 
 from .const import DOMAIN
@@ -33,7 +31,7 @@ INPUT_NUMBERS = {
         CONF_MAX: 100,
         CONF_STEP: 1,
         CONF_MODE: "slider",
-        ATTR_UNIT_OF_MEASUREMENT: "%",
+        "unit_of_measurement": PERCENTAGE,
         CONF_ICON: "mdi:battery-charging",
     },
     "eveus_target_soc": {
@@ -43,7 +41,7 @@ INPUT_NUMBERS = {
         CONF_STEP: 10,
         CONF_INITIAL: 80,
         CONF_MODE: "slider",
-        ATTR_UNIT_OF_MEASUREMENT: "%",
+        "unit_of_measurement": PERCENTAGE,
         CONF_ICON: "mdi:battery-charging-high",
     },
     "eveus_soc_correction": {
@@ -53,7 +51,7 @@ INPUT_NUMBERS = {
         CONF_STEP: 0.1,
         CONF_INITIAL: 7.5,
         CONF_MODE: "slider",
-        ATTR_UNIT_OF_MEASUREMENT: "%",
+        "unit_of_measurement": PERCENTAGE,
         CONF_ICON: "mdi:tune-variant",
     },
 }
@@ -80,7 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "max": config[CONF_MAX],
                 "step": config[CONF_STEP],
                 "mode": config[CONF_MODE],
-                "unit_of_measurement": config.get(ATTR_UNIT_OF_MEASUREMENT),
+                "unit_of_measurement": config.get("unit_of_measurement"),
                 "icon": config.get(CONF_ICON),
             }
             
@@ -88,10 +86,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 input_config["initial"] = config[CONF_INITIAL]
 
             try:
-                component = hass.data[INPUT_NUMBER_DOMAIN]
-                entity = InputNumber(hass, input_id, input_config)
-                if hasattr(component, "async_add_entities"):
-                    await component.async_add_entities([entity])
+                await hass.services.async_call(
+                    INPUT_NUMBER_DOMAIN,
+                    "setup",
+                    {
+                        "id": input_id,
+                        **input_config,
+                    },
+                    blocking=True,
+                )
                 _LOGGER.debug("Successfully created input_number: %s", input_entity_id)
             except Exception as err:
                 _LOGGER.error("Failed to create input_number %s: %s", input_entity_id, err)
