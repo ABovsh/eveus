@@ -1,0 +1,27 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <!-- Improved version of the provided U icon -->
+    <defs>
+        <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#34c759;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#30d158;stop-opacity:1" />
+        </linearGradient>
+    </defs>
+    <!-- Base shape - modernized U -->
+    <path d="M7 2C5.34315 2 4 3.34315 4 5V15C4 18.3137 6.68629 21 10 21H14C17.3137 21 20 18.3137 20 15V5C20 3.34315 18.6569 2 17 2C15.3431 2 14 3.34315 14 5V15C14 16.1046 13.1046 17 12 17C10.8954 17 10 16.1046 10 15V5C10 3.34315 8.65685 2 7 2Z" 
+          fill="url(#grad)">
+        <animate attributeName="opacity" 
+                 values="1;0.7;1" 
+                 dur="2s" 
+                 repeatCount="indefinite"/>
+    </path>
+    <!-- Lightning bolt for EV charging -->
+    <path d="M12 7L9 13H12L10 17L15 11H12L14 7H12Z" 
+          fill="white" 
+          stroke="white" 
+          stroke-width="0.5">
+        <animate attributeName="opacity" 
+                 values="0.8;1;0.8" 
+                 dur="1.5s" 
+                 repeatCount="indefinite"/>
+    </path>
+</svg>
