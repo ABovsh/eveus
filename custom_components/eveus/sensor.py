@@ -68,55 +68,50 @@ async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
-) -> bool:
+) -> None:
     """Set up the Eveus sensors."""
     _LOGGER.debug("Setting up Eveus sensors for %s", entry.data[CONF_HOST])
+
+    updater = EveusUpdater(
+        host=entry.data[CONF_HOST],
+        username=entry.data[CONF_USERNAME],
+        password=entry.data[CONF_PASSWORD],
+        hass=hass,
+    )
+
+    entities = [
+        EveusVoltageSensor(updater),
+        EveusCurrentSensor(updater),
+        EveusPowerSensor(updater),
+        EveusCurrentSetSensor(updater),
+        EveusSessionEnergySensor(updater),
+        EveusTotalEnergySensor(updater),
+        EveusStateSensor(updater),
+        EveusSubstateSensor(updater),
+        EveusEnabledSensor(updater),
+        EveusGroundSensor(updater),
+        EveusBoxTemperatureSensor(updater),
+        EveusPlugTemperatureSensor(updater),
+        EveusSystemTimeSensor(updater),
+        EveusSessionTimeSensor(updater),
+        EveusCounterAEnergySensor(updater),
+        EveusCounterBEnergySensor(updater),
+        EveusCounterACostSensor(updater),
+        EveusCounterBCostSensor(updater),
+    ]
     
-    try:
-        updater = EveusUpdater(
-            host=entry.data[CONF_HOST],
-            username=entry.data[CONF_USERNAME],
-            password=entry.data[CONF_PASSWORD],
-            hass=hass,
-            entry_id=entry.entry_id
-        )
-        entities = [
-            EveusVoltageSensor(updater),
-            EveusCurrentSensor(updater),
-            EveusPowerSensor(updater),
-            EveusCurrentSetSensor(updater),
-            EveusSessionEnergySensor(updater),
-            EveusTotalEnergySensor(updater),
-            EveusStateSensor(updater),
-            EveusSubstateSensor(updater),
-            EveusEnabledSensor(updater),
-            EveusGroundSensor(updater),
-            EveusBoxTemperatureSensor(updater),
-            EveusPlugTemperatureSensor(updater),
-            EveusSystemTimeSensor(updater),
-            EveusCounterAEnergySensor(updater),
-            EveusCounterBEnergySensor(updater),
-            EveusCounterACostSensor(updater),
-            EveusCounterBCostSensor(updater),
-            EveusBatteryVoltageSensor(updater),
-        ]
-        async_add_entities(entities)
-        _LOGGER.debug("Added %s Eveus entities", len(entities))
-        return True  # Return True to indicate successful setup
-    except Exception as e:
-        _LOGGER.error("Error setting up Eveus sensors: %s", e)
-        return False  # Return False if an error occurs
+    async_add_entities(entities)
+    _LOGGER.debug("Added %s Eveus entities", len(entities))
 
 class EveusUpdater:
     """Class to handle Eveus data updates."""
 
-    def __init__(self, host: str, username: str, password: str, hass: HomeAssistant, entry_id: str) -> None:
+    def __init__(self, host: str, username: str, password: str, hass: HomeAssistant) -> None:
         """Initialize the updater."""
         self._host = host
         self._username = username
         self._password = password
         self._hass = hass
-        self._entry_id = entry_id
         self._data = {}
         self._available = True
         self._update_task = None
@@ -170,7 +165,6 @@ class EveusUpdater:
                 ) as response:
                     response.raise_for_status()
                     data = await response.json()
-                    data["battery_capacity"] = self._hass.data[DOMAIN][self._entry_id]["config"].get("battery_capacity", 75)
                     _LOGGER.debug(
                         "Updated data for %s: State=%s, Power=%sW", 
                         self._host,
@@ -249,7 +243,7 @@ class BaseEveusSensor(SensorEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         if last_state:
             try:
-                if hasattr(self, '_attr_device_class') and self._attr_device_class in [
+                if self._attr_device_class in [
                     SensorDeviceClass.CURRENT,
                     SensorDeviceClass.VOLTAGE,
                     SensorDeviceClass.POWER,
@@ -386,15 +380,6 @@ class EveusSubstateSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
-class EveusBatteryVoltageSensor(EveusNumericSensor):
-    """Battery voltage sensor."""
-    _attr_device_class = SensorDeviceClass.VOLTAGE
-    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:battery"
-    _key = "vBat"
-    name = "Eveus Battery Voltage"
-
 class EveusGroundSensor(BaseEveusSensor):
     """Ground sensor."""
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -454,6 +439,38 @@ class EveusEnabledSensor(BaseEveusSensor):
             return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
         except (KeyError, TypeError):
             return "Unknown"
+
+class EveusSessionTimeSensor(EveusNumericSensor):
+    """Session time sensor."""
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer"
+    _key = ATTR_SESSION_TIME
+    name = "Eveus Session Time"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return formatted time as attribute."""
+        attrs = super().extra_state_attributes
+        try:
+            seconds = int(self._updater.data[self._key])
+            days = seconds // 86400
+            hours = (seconds % 86400) // 3600
+            minutes = (seconds % 3600) // 60
+            
+            parts = []
+            if days > 0:
+                parts.append(f"{days}d")
+            if hours > 0:
+                parts.append(f"{hours}h")
+            if minutes > 0:
+                parts.append(f"{minutes}m")
+                
+            attrs["formatted_time"] = " ".join(parts) if parts else "0m"
+        except (KeyError, TypeError, ValueError):
+            attrs["formatted_time"] = "unknown"
+        return attrs
 
 class EveusCounterAEnergySensor(EveusEnergyBaseSensor):
     """Counter A energy sensor."""
