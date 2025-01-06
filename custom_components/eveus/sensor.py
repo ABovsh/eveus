@@ -1,3 +1,4 @@
+"""Support for Eveus sensors."""
 from __future__ import annotations
 
 import logging
@@ -181,12 +182,12 @@ class BaseEveusSensor(SensorEntity):
         self._updater.register_sensor(self)
         self._attr_has_entity_name = True
         self._attr_should_poll = False
-        self._attr_unique_id = f"eveus_{self.name}"
+        self._attr_unique_id = f"{updater._host}_{self.name}"
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, "eveus")},
+            "identifiers": {(DOMAIN, updater._host)},
             "name": "Eveus EV Charger",
             "manufacturer": "Eveus",
-            "model": f"Eveus (eveus)",
+            "model": f"Eveus ({updater._host})",
             "sw_version": updater.data.get("verFWMain", "Unknown"),
         }
         _LOGGER.debug("Initialized sensor: %s", self.name)
@@ -206,30 +207,12 @@ class BaseEveusSensor(SensorEntity):
         """Return if entity is available."""
         return self._updater.available
 
-# Define other sensor classes similarly with the correct device class
-
-class EveusEnabledSensor(BaseEveusSensor):
-    """Enabled sensor."""
-    name = "enabled"
-    _attr_device_class = SensorDeviceClass.ENUM  # Use ENUM for boolean-like states
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_enabled"
-
-    @property
-    def native_value(self) -> StateType:
-        """Return the enabled state."""
-        try:
-            return bool(self._updater.data[ATTR_ENABLED])
-        except (KeyError, TypeError, ValueError):
-            return None
-
 class EveusVoltageSensor(BaseEveusSensor):
     """Voltage sensor."""
     name = "voltage"
     _attr_device_class = SensorDeviceClass.VOLTAGE
     _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_voltage"
 
     @property
     def native_value(self) -> StateType:
@@ -239,15 +222,12 @@ class EveusVoltageSensor(BaseEveusSensor):
         except (KeyError, TypeError, ValueError):
             return None
 
-# Repeat for other sensors, ensuring device classes are correctly assigned
-
 class EveusCurrentSensor(BaseEveusSensor):
     """Current sensor."""
     name = "current"
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_current"
 
     @property
     def native_value(self) -> StateType:
@@ -263,11 +243,10 @@ class EveusPowerSensor(BaseEveusSensor):
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_power"
 
     @property
     def native_value(self) -> StateType:
-        """Return the power."""
+        """Return power consumption."""
         try:
             return float(self._updater.data[ATTR_POWER])
         except (KeyError, TypeError, ValueError):
@@ -279,11 +258,10 @@ class EveusCurrentSetSensor(BaseEveusSensor):
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_current_set"
 
     @property
     def native_value(self) -> StateType:
-        """Return the current set."""
+        """Return current set."""
         try:
             return float(self._updater.data[ATTR_CURRENT_SET])
         except (KeyError, TypeError, ValueError):
@@ -294,12 +272,11 @@ class EveusSessionEnergySensor(BaseEveusSensor):
     name = "session_energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_session_energy"
+    _attr_state_class = SensorStateClass.TOTAL
 
     @property
     def native_value(self) -> StateType:
-        """Return the session energy."""
+        """Return session energy."""
         try:
             return float(self._updater.data[ATTR_SESSION_ENERGY])
         except (KeyError, TypeError, ValueError):
@@ -310,61 +287,76 @@ class EveusTotalEnergySensor(BaseEveusSensor):
     name = "total_energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_total_energy"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def native_value(self) -> StateType:
-        """Return the total energy."""
+        """Return total energy."""
         try:
             return float(self._updater.data[ATTR_TOTAL_ENERGY])
         except (KeyError, TypeError, ValueError):
             return None
 
 class EveusStateSensor(BaseEveusSensor):
-    """State sensor."""
+    """Charging state sensor."""
     name = "state"
-    _attr_device_class = SensorDeviceClass.ENUM  # ENUM for states
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_state"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:ev-station"
 
     @property
-    def native_value(self) -> StateType:
-        """Return the state."""
+    def native_value(self) -> str:
+        """Return charging state."""
         try:
-            return str(self._updater.data[ATTR_STATE])
-        except (KeyError, TypeError, ValueError):
-            return None
+            return CHARGING_STATES.get(self._updater.data[ATTR_STATE], "Unknown")
+        except (KeyError, TypeError):
+            return "Unknown"
 
 class EveusSubstateSensor(BaseEveusSensor):
     """Substate sensor."""
     name = "substate"
-    _attr_device_class = SensorDeviceClass.ENUM  # ENUM for states
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_substate"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:information"
 
     @property
-    def native_value(self) -> StateType:
-        """Return the substate."""
+    def native_value(self) -> str:
+        """Return substate with context."""
         try:
-            return str(self._updater.data[ATTR_SUBSTATE])
-        except (KeyError, TypeError, ValueError):
-            return None
+            state = self._updater.data[ATTR_STATE]
+            substate = self._updater.data[ATTR_SUBSTATE]
+            
+            if state == 7:  # Error state
+                return ERROR_STATES.get(substate, "Unknown Error")
+            return NORMAL_SUBSTATES.get(substate, "Unknown State")
+        except (KeyError, TypeError):
+            return "Unknown"
+
+class EveusEnabledSensor(BaseEveusSensor):
+    """Enabled state sensor."""
+    name = "enabled"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:power"
+
+    @property
+    def native_value(self) -> str:
+        """Return if charging is enabled."""
+        try:
+            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
+        except (KeyError, TypeError):
+            return "Unknown"
 
 class EveusGroundSensor(BaseEveusSensor):
     """Ground sensor."""
     name = "ground"
-    _attr_device_class = SensorDeviceClass.PROBLEM  # Use PROBLEM for safety-related issues
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_ground"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:ground"
 
     @property
-    def native_value(self) -> StateType:
-        """Return the ground status."""
+    def native_value(self) -> str:
+        """Return ground status."""
         try:
-            return bool(self._updater.data[ATTR_GROUND])
-        except (KeyError, TypeError, ValueError):
-            return None
+            return "Yes" if self._updater.data[ATTR_GROUND] == 1 else "No"
+        except (KeyError, TypeError):
+            return "Unknown"
 
 class EveusBoxTemperatureSensor(BaseEveusSensor):
     """Box temperature sensor."""
@@ -372,11 +364,10 @@ class EveusBoxTemperatureSensor(BaseEveusSensor):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_box_temperature"
 
     @property
     def native_value(self) -> StateType:
-        """Return the box temperature."""
+        """Return box temperature."""
         try:
             return float(self._updater.data[ATTR_TEMPERATURE_BOX])
         except (KeyError, TypeError, ValueError):
@@ -388,11 +379,10 @@ class EveusPlugTemperatureSensor(BaseEveusSensor):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_plug_temperature"
 
     @property
     def native_value(self) -> StateType:
-        """Return the plug temperature."""
+        """Return plug temperature."""
         try:
             return float(self._updater.data[ATTR_TEMPERATURE_PLUG])
         except (KeyError, TypeError, ValueError):
@@ -401,17 +391,26 @@ class EveusPlugTemperatureSensor(BaseEveusSensor):
 class EveusSystemTimeSensor(BaseEveusSensor):
     """System time sensor."""
     name = "system_time"
-    _attr_device_class = SensorDeviceClass.TIMESTAMP  # Use timestamp for time
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_system_time"
 
     @property
     def native_value(self) -> StateType:
-        """Return the system time."""
+        """Return system time."""
         try:
-            return str(self._updater.data[ATTR_SYSTEM_TIME])
+            return int(self._updater.data[ATTR_SYSTEM_TIME])
         except (KeyError, TypeError, ValueError):
             return None
+
+class EveusEnabledSensor(BaseEveusSensor):
+    """Enabled state sensor."""
+    name = "enabled"
+
+    @property
+    def native_value(self) -> str:
+        """Return if charging is enabled."""
+        try:
+            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
+        except (KeyError, TypeError):
+            return "Unknown"
 
 class EveusSessionTimeSensor(BaseEveusSensor):
     """Session time sensor."""
@@ -419,11 +418,10 @@ class EveusSessionTimeSensor(BaseEveusSensor):
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_session_time"
 
     @property
     def native_value(self) -> StateType:
-        """Return the session time."""
+        """Return session time in seconds."""
         try:
             return int(self._updater.data[ATTR_SESSION_TIME])
         except (KeyError, TypeError, ValueError):
@@ -434,12 +432,11 @@ class EveusCounterAEnergySensor(BaseEveusSensor):
     name = "counter_a_energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_counter_a_energy"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def native_value(self) -> StateType:
-        """Return the counter A energy."""
+        """Return Counter A energy."""
         try:
             return float(self._updater.data[ATTR_COUNTER_A_ENERGY])
         except (KeyError, TypeError, ValueError):
@@ -450,12 +447,11 @@ class EveusCounterBEnergySensor(BaseEveusSensor):
     name = "counter_b_energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_counter_b_energy"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def native_value(self) -> StateType:
-        """Return the counter B energy."""
+        """Return Counter B energy."""
         try:
             return float(self._updater.data[ATTR_COUNTER_B_ENERGY])
         except (KeyError, TypeError, ValueError):
@@ -464,14 +460,12 @@ class EveusCounterBEnergySensor(BaseEveusSensor):
 class EveusCounterACostSensor(BaseEveusSensor):
     """Counter A cost sensor."""
     name = "counter_a_cost"
-    _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_native_unit_of_measurement = "USD"  # Change this based on your currency
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_counter_a_cost"
+    _attr_native_unit_of_measurement = "₴"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def native_value(self) -> StateType:
-        """Return the counter A cost."""
+        """Return Counter A cost."""
         try:
             return float(self._updater.data[ATTR_COUNTER_A_COST])
         except (KeyError, TypeError, ValueError):
@@ -480,14 +474,12 @@ class EveusCounterACostSensor(BaseEveusSensor):
 class EveusCounterBCostSensor(BaseEveusSensor):
     """Counter B cost sensor."""
     name = "counter_b_cost"
-    _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_native_unit_of_measurement = "USD"  # Change this based on your currency
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id = "eveus_counter_b_cost"
+    _attr_native_unit_of_measurement = "₴"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def native_value(self) -> StateType:
-        """Return the counter B cost."""
+        """Return Counter B cost."""
         try:
             return float(self._updater.data[ATTR_COUNTER_B_COST])
         except (KeyError, TypeError, ValueError):
