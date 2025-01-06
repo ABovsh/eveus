@@ -94,7 +94,6 @@ async def async_setup_entry(
         EveusBoxTemperatureSensor(updater),
         EveusPlugTemperatureSensor(updater),
         EveusSystemTimeSensor(updater),
-        EveusSessionTimeSensor(updater),
         EveusCounterAEnergySensor(updater),
         EveusCounterBEnergySensor(updater),
         EveusCounterACostSensor(updater),
