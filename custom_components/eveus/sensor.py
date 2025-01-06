@@ -68,44 +68,49 @@ async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
-) -> None:
+) -> bool:
     """Set up the Eveus sensors."""
     _LOGGER.debug("Setting up Eveus sensors for %s", entry.data[CONF_HOST])
     
-    updater = EveusUpdater(
-        host=entry.data[CONF_HOST],
-        username=entry.data[CONF_USERNAME],
-        password=entry.data[CONF_PASSWORD],
-        hass=hass,
-        entry_id=entry.entry_id
-    )
+    try:
+        updater = EveusUpdater(
+            host=entry.data[CONF_HOST],
+            username=entry.data[CONF_USERNAME],
+            password=entry.data[CONF_PASSWORD],
+            hass=hass,
+            entry_id=entry.entry_id
+        )
 
-    entities = [
-        EveusVoltageSensor(updater),
-        EveusCurrentSensor(updater),
-        EveusPowerSensor(updater),
-        EveusCurrentSetSensor(updater),
-        EveusSessionEnergySensor(updater),
-        EveusTotalEnergySensor(updater),
-        EveusStateSensor(updater),
-        EveusSubstateSensor(updater),
-        EveusEnabledSensor(updater),
-        EveusGroundSensor(updater),
-        EveusBoxTemperatureSensor(updater),
-        EveusPlugTemperatureSensor(updater),
-        EveusSystemTimeSensor(updater),
-        EveusCounterAEnergySensor(updater),
-        EveusCounterBEnergySensor(updater),
-        EveusCounterACostSensor(updater),
-        EveusCounterBCostSensor(updater),
-        EveusBatteryVoltageSensor(updater),
-        EveusStateOfChargeKwhSensor(updater),
-        EveusStateOfChargePercentSensor(updater),
-        EveusTimeToTargetSensor(updater),
-    ]
+        entities = [
+            EveusVoltageSensor(updater),
+            EveusCurrentSensor(updater),
+            EveusPowerSensor(updater),
+            EveusCurrentSetSensor(updater),
+            EveusSessionEnergySensor(updater),
+            EveusTotalEnergySensor(updater),
+            EveusStateSensor(updater),
+            EveusSubstateSensor(updater),
+            EveusEnabledSensor(updater),
+            EveusGroundSensor(updater),
+            EveusBoxTemperatureSensor(updater),
+            EveusPlugTemperatureSensor(updater),
+            EveusSystemTimeSensor(updater),
+            EveusCounterAEnergySensor(updater),
+            EveusCounterBEnergySensor(updater),
+            EveusCounterACostSensor(updater),
+            EveusCounterBCostSensor(updater),
+            EveusBatteryVoltageSensor(updater),
+            EveusStateOfChargeKwhSensor(updater),
+            EveusStateOfChargePercentSensor(updater),
+            EveusTimeToTargetSensor(updater),
+        ]
 
-    async_add_entities(entities)
-    _LOGGER.debug("Added %s Eveus entities", len(entities))
+        async_add_entities(entities)
+        _LOGGER.debug("Added %s Eveus entities", len(entities))
+        return True  # Return True to indicate successful setup
+    except Exception as e:
+        _LOGGER.error("Error setting up Eveus sensors: %s", e)
+        return False  # Return False if an error occurs
 
 class EveusUpdater:
     """Class to handle Eveus data updates."""
