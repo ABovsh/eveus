@@ -4,8 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
+import aiohttp
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
@@ -22,6 +22,13 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
+        vol.Required("battery_capacity", default=75, description={
+            "name": "EV Battery Capacity (kWh)",
+            "icon": "mdi:car"
+        }): vol.All(
+            vol.Coerce(int), 
+            vol.Range(min=10, max=100)
+        ),
     }
 )
 
@@ -38,14 +45,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                     raise InvalidAuth
                 response.raise_for_status()
                 await response.json()
-                
+
     except aiohttp.ClientResponseError as error:
         if error.status == 401:
             raise InvalidAuth from error
         raise CannotConnect from error
     except (aiohttp.ClientError, TimeoutError) as error:
         raise CannotConnect from error
-    
+
     return {"title": f"Eveus Charger ({data[CONF_HOST]})"}
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
