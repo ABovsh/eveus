@@ -354,7 +354,7 @@ class EveusSubstateSensor(BaseEveusSensor):
 class EveusGroundSensor(BaseEveusSensor):
     """Ground sensor."""
     name = "ground"
-    _attr_device_class = SensorDeviceClass.SAFETY  # Use appropriate class for safety
+    _attr_device_class = SensorDeviceClass.PROBLEM  # Use PROBLEM for safety-related issues
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_unique_id = "eveus_ground"
 
