@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+from .sensor import async_setup_entry as async_setup_sensor_entry
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
@@ -18,7 +20,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     
     try:
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        # Direct async setup instead of using forward_entry_setups
+        await async_setup_sensor_entry(hass, entry, lambda x: None)
         return True
     except Exception as err:
         _LOGGER.error("Error setting up Eveus integration: %s", err)
