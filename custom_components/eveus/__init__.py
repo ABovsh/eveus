@@ -1,90 +1,106 @@
-"""Config flow for Eveus."""
+"""The Eveus integration."""
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-import aiohttp
-import voluptuous as vol
-
-from homeassistant import config_entries
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
+from homeassistant.components.input_number import (
+    DOMAIN as INPUT_NUMBER_DOMAIN,
+    InputNumber,
+    CONF_MIN,
+    CONF_MAX,
+    CONF_STEP,
+    CONF_MODE,
+    CONF_INITIAL,
+    CONF_ICON,
+    ATTR_UNIT_OF_MEASUREMENT,
+)
 
 from .const import DOMAIN
 
+PLATFORMS: list[Platform] = [Platform.SENSOR]
+
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Required("battery_capacity", default=75, description={
-            "name": "EV Battery Capacity (kWh)",
-            "icon": "mdi:car"
-        }): vol.All(
-            vol.Coerce(int), 
-            vol.Range(min=10, max=200)
-        ),
+INPUT_NUMBERS = {
+    "eveus_initial_soc": {
+        "name": "Initial EV State of Charge",
+        CONF_MIN: 0,
+        CONF_MAX: 100,
+        CONF_STEP: 1,
+        CONF_MODE: "slider",
+        ATTR_UNIT_OF_MEASUREMENT: "%",
+        CONF_ICON: "mdi:battery-charging",
+    },
+    "eveus_target_soc": {
+        "name": "Target SOC",
+        CONF_MIN: 80,
+        CONF_MAX: 100,
+        CONF_STEP: 10,
+        CONF_INITIAL: 80,
+        CONF_MODE: "slider",
+        ATTR_UNIT_OF_MEASUREMENT: "%",
+        CONF_ICON: "mdi:battery-charging-high",
+    },
+    "eveus_soc_correction": {
+        "name": "SOC Correction Factor",
+        CONF_MIN: 0,
+        CONF_MAX: 10,
+        CONF_STEP: 0.1,
+        CONF_INITIAL: 7.5,
+        CONF_MODE: "slider",
+        ATTR_UNIT_OF_MEASUREMENT: "%",
+        CONF_ICON: "mdi:tune-variant",
+    },
+}
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Eveus from a config entry."""
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = {
+        "config": entry.data
     }
-)
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"http://{data[CONF_HOST]}/main",
-                auth=aiohttp.BasicAuth(data[CONF_USERNAME], data[CONF_PASSWORD]),
-                timeout=10
-            ) as response:
-                if response.status == 401:
-                    raise InvalidAuth
-                response.raise_for_status()
-                await response.json()
+    # Create input_number entities
+    for input_id, config in INPUT_NUMBERS.items():
+        input_entity_id = f"input_number.{input_id}"
+        
+        # Check if input_number already exists
+        if input_entity_id not in hass.states.async_entity_ids(INPUT_NUMBER_DOMAIN):
+            _LOGGER.debug("Creating input_number entity: %s", input_entity_id)
+            
+            input_config = {
+                "platform": INPUT_NUMBER_DOMAIN,
+                "name": config["name"],
+                "min": config[CONF_MIN],
+                "max": config[CONF_MAX],
+                "step": config[CONF_STEP],
+                "mode": config[CONF_MODE],
+                "unit_of_measurement": config.get(ATTR_UNIT_OF_MEASUREMENT),
+                "icon": config.get(CONF_ICON),
+            }
+            
+            if CONF_INITIAL in config:
+                input_config["initial"] = config[CONF_INITIAL]
 
-    except aiohttp.ClientResponseError as error:
-        if error.status == 401:
-            raise InvalidAuth from error
-        raise CannotConnect from error
-    except (aiohttp.ClientError, TimeoutError) as error:
-        raise CannotConnect from error
-
-    return {"title": f"Eveus Charger ({data[CONF_HOST]})"}
-
-class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Eveus."""
-
-    VERSION = 1
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the initial step."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
             try:
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except Exception:
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-            else:
-                return self.async_create_entry(title=info["title"], data=user_input)
+                component = hass.data[INPUT_NUMBER_DOMAIN]
+                entity = InputNumber(hass, input_id, input_config)
+                if hasattr(component, "async_add_entities"):
+                    await component.async_add_entities([entity])
+                _LOGGER.debug("Successfully created input_number: %s", input_entity_id)
+            except Exception as err:
+                _LOGGER.error("Failed to create input_number %s: %s", input_entity_id, err)
 
-        return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
-        )
+    return await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
-
-class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id)
+    return unload_ok
