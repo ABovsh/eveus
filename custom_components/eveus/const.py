@@ -1,3 +1,4 @@
+# const.py
 """Constants for the Eveus integration."""
 from datetime import timedelta
 
@@ -23,7 +24,7 @@ ATTR_COUNTER_B_ENERGY = "IEM2"
 ATTR_COUNTER_A_COST = "IEM1_money"
 ATTR_COUNTER_B_COST = "IEM2_money"
 ATTR_GROUND = "ground"
-ATTR_BATTERY_VOLTAGE = "vBat"
+ATTR_BATTERY_VOLTAGE = "vBat"  # Added missing constant
 
 # State Mappings
 CHARGING_STATES = {
