@@ -72,6 +72,10 @@ async def async_setup_entry(
     """Set up the Eveus sensors."""
     _LOGGER.debug("Setting up Eveus sensors for %s", entry.data[CONF_HOST])
     
+    if entry.entry_id in hass.data[DOMAIN]:
+        _LOGGER.debug("Config entry already setup")
+        return
+
     updater = EveusUpdater(
         host=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
@@ -81,24 +85,37 @@ async def async_setup_entry(
     )
 
     entities = [
+        # Basic measurements
         EveusVoltageSensor(updater),
         EveusCurrentSensor(updater),
         EveusPowerSensor(updater),
         EveusCurrentSetSensor(updater),
+        
+        # Energy measurements
         EveusSessionEnergySensor(updater),
         EveusTotalEnergySensor(updater),
-        EveusStateSensor(updater),
-        EveusSubstateSensor(updater),
-        EveusEnabledSensor(updater),
-        EveusGroundSensor(updater),
-        EveusBoxTemperatureSensor(updater),
-        EveusPlugTemperatureSensor(updater),
-        EveusSystemTimeSensor(updater),
-        EveusSessionTimeSensor(updater),
         EveusCounterAEnergySensor(updater),
         EveusCounterBEnergySensor(updater),
+        
+        # Time and state
+        EveusSystemTimeSensor(updater),
+        EveusSessionTimeSensor(updater),
+        EveusStateSensor(updater),
+        EveusSubstateSensor(updater),
+        
+        # Status sensors
+        EveusEnabledSensor(updater),
+        EveusGroundSensor(updater),
+        
+        # Temperature sensors
+        EveusBoxTemperatureSensor(updater),
+        EveusPlugTemperatureSensor(updater),
+        
+        # Cost sensors
         EveusCounterACostSensor(updater),
         EveusCounterBCostSensor(updater),
+        
+        # Battery sensors
         EveusBatteryVoltageSensor(updater),
         EveusStateOfChargeKwhSensor(updater),
         EveusStateOfChargePercentSensor(updater),
@@ -107,6 +124,7 @@ async def async_setup_entry(
 
     async_add_entities(entities)
     _LOGGER.debug("Added %s Eveus entities", len(entities))
+    return True
 
 class EveusUpdater:
     """Class to handle Eveus data updates."""
