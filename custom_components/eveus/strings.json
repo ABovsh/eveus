@@ -3,37 +3,22 @@
         "step": {
             "user": {
                 "title": "Connect to Eveus Charger",
-                "description": "Enter your Eveus charger connection details.",
+                "description": "Set up your Eveus charger connection and EV battery capacity.",
                 "data": {
                     "host": "IP Address",
                     "username": "Username",
-                    "password": "Password"
+                    "password": "Password",
+                    "battery_capacity": "EV Battery Capacity (kWh)"
                 }
             }
         },
         "error": {
-            "cannot_connect": "Failed to connect to charger, please verify the IP address",
+            "cannot_connect": "Failed to connect to charger",
             "invalid_auth": "Invalid username or password",
             "unknown": "Unexpected error occurred"
         },
         "abort": {
             "already_configured": "Device is already configured"
-        }
-    },
-    "entity": {
-        "sensor": {
-            "state": {
-                "state": {
-                    "Startup": "Startup",
-                    "System Test": "System Test",
-                    "Standby": "Standby",
-                    "Connected": "Connected",
-                    "Charging": "Charging",
-                    "Charge Complete": "Charge Complete",
-                    "Paused": "Paused",
-                    "Error": "Error"
-                }
-            }
         }
     }
 }
