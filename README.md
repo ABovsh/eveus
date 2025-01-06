@@ -1,47 +1,83 @@
-Integration for Eveus EV charger in Home Assistant
-Installation
+# README.md - Updated
+# Eveus EV Charger Integration for Home Assistant
 
-Using HACS (recommended):
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
 
-Add this repository to HACS as a custom repository:
+This custom integration allows you to monitor and control your Eveus EV charger in Home Assistant.
 
-Open HACS in your Home Assistant instance
-Click on the three dots in the top right corner
-Select "Custom repositories"
-Add https://github.com/ABovsh/eveus with category "Integration"
+## Features
 
+- Real-time monitoring of:
+  - Voltage, Current, and Power
+  - Session and Total Energy
+  - Charging State and Status
+  - Temperatures (Box and Plug)
+  - Session Time and Battery Voltage
+  - Counter A/B Energy and Cost
+- Automatic error recovery
+- State restoration after restarts
+- Comprehensive diagnostic data
 
-Install the integration from HACS
+## Installation
 
+### HACS (Recommended)
 
-Manual Installation:
+1. Add this repository to HACS as a custom repository:
+   - Repository: `https://github.com/ABovsh/eveus`
+   - Category: `Integration`
+2. Click Install
+3. Restart Home Assistant
 
-Copy the custom_components/eveus directory from this repository to your Home Assistant's custom_components directory
-Restart Home Assistant
+### Manual Installation
 
+1. Copy the `custom_components/eveus` directory to your Home Assistant's `custom_components` folder
+2. Restart Home Assistant
 
+## Configuration
 
-Configuration
+1. Go to Configuration → Integrations
+2. Click "+ Add Integration"
+3. Search for "Eveus"
+4. Enter your:
+   - IP Address
+   - Username
+   - Password
 
-Go to Settings → Devices & Services
-Click the "+ ADD INTEGRATION" button
-Search for "Eveus"
-Enter your Eveus charger's:
+## Available Sensors
 
-IP address
-Username
-Password
+| Sensor | Description | Unit |
+|--------|-------------|------|
+| Voltage | Current voltage | V |
+| Current | Charging current | A |
+| Power | Charging power | W |
+| Session Energy | Energy used in current session | kWh |
+| Total Energy | Total energy delivered | kWh |
+| State | Charger state | - |
+| Substate | Detailed status | - |
+| Box Temperature | Internal temperature | °C |
+| Plug Temperature | Plug temperature | °C |
+| Battery Voltage | Internal battery voltage | V |
+| Counter A/B Energy | Energy counters | kWh |
+| Counter A/B Cost | Cost counters | ₴ |
+| Session Time | Current session duration | - |
 
+## States
 
+The charger reports the following states:
 
-Features
-Currently supports the following sensors:
+- Startup
+- System Test
+- Standby
+- Connected
+- Charging
+- Charge Complete
+- Paused
+- Error
 
-Current (A)
-Voltage (V)
-Power (W)
-Session Energy (kWh)
-Box Temperature (°C)
+## Support
 
-Issues & Suggestions
-If you find any issues or have suggestions for improvements, please create an issue.
+For bugs and feature requests, please open an issue on GitHub.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
