@@ -5,17 +5,12 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform, PERCENTAGE, UnitOfMeasurement
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_platform
 from homeassistant.components.input_number import (
     DOMAIN as INPUT_NUMBER_DOMAIN,
-    CONF_MIN,
-    CONF_MAX,
-    CONF_STEP,
-    CONF_MODE,
-    CONF_INITIAL,
-    CONF_ICON,
+    SERVICE_SET_VALUE,
 )
 
 from .const import DOMAIN
@@ -27,32 +22,32 @@ _LOGGER = logging.getLogger(__name__)
 INPUT_NUMBERS = {
     "eveus_initial_soc": {
         "name": "Initial EV State of Charge",
-        CONF_MIN: 0,
-        CONF_MAX: 100,
-        CONF_STEP: 1,
-        CONF_MODE: "slider",
-        "unit_of_measurement": PERCENTAGE,
-        CONF_ICON: "mdi:battery-charging",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "mode": "slider",
+        "unit_of_measurement": "%",
+        "icon": "mdi:battery-charging",
     },
     "eveus_target_soc": {
         "name": "Target SOC",
-        CONF_MIN: 80,
-        CONF_MAX: 100,
-        CONF_STEP: 10,
-        CONF_INITIAL: 80,
-        CONF_MODE: "slider",
-        "unit_of_measurement": PERCENTAGE,
-        CONF_ICON: "mdi:battery-charging-high",
+        "min": 80,
+        "max": 100,
+        "step": 10,
+        "initial": 80,
+        "mode": "slider",
+        "unit_of_measurement": "%",
+        "icon": "mdi:battery-charging-high",
     },
     "eveus_soc_correction": {
         "name": "SOC Correction Factor",
-        CONF_MIN: 0,
-        CONF_MAX: 10,
-        CONF_STEP: 0.1,
-        CONF_INITIAL: 7.5,
-        CONF_MODE: "slider",
-        "unit_of_measurement": PERCENTAGE,
-        CONF_ICON: "mdi:tune-variant",
+        "min": 0,
+        "max": 10,
+        "step": 0.1,
+        "initial": 7.5,
+        "mode": "slider",
+        "unit_of_measurement": "%",
+        "icon": "mdi:tune-variant",
     },
 }
 
@@ -65,39 +60,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Create input_number entities
     for input_id, config in INPUT_NUMBERS.items():
-        input_entity_id = f"input_number.{input_id}"
-        
-        # Check if input_number already exists
-        if input_entity_id not in hass.states.async_entity_ids(INPUT_NUMBER_DOMAIN):
-            _LOGGER.debug("Creating input_number entity: %s", input_entity_id)
+        try:
+            await hass.services.async_call(
+                "input_number",
+                "reload",
+                target={
+                    "entity_id": f"input_number.{input_id}"
+                },
+            )
             
+            # Create the input_number configuration in configuration.yaml
             input_config = {
-                "platform": INPUT_NUMBER_DOMAIN,
-                "name": config["name"],
-                "min": config[CONF_MIN],
-                "max": config[CONF_MAX],
-                "step": config[CONF_STEP],
-                "mode": config[CONF_MODE],
-                "unit_of_measurement": config.get("unit_of_measurement"),
-                "icon": config.get(CONF_ICON),
+                input_id: {
+                    "name": config["name"],
+                    "min": config["min"],
+                    "max": config["max"],
+                    "step": config["step"],
+                    "mode": config["mode"],
+                    "unit_of_measurement": config["unit_of_measurement"],
+                    "icon": config["icon"],
+                }
             }
-            
-            if CONF_INITIAL in config:
-                input_config["initial"] = config[CONF_INITIAL]
+            if "initial" in config:
+                input_config[input_id]["initial"] = config["initial"]
 
-            try:
-                await hass.services.async_call(
-                    INPUT_NUMBER_DOMAIN,
-                    "setup",
-                    {
-                        "id": input_id,
-                        **input_config,
-                    },
-                    blocking=True,
-                )
-                _LOGGER.debug("Successfully created input_number: %s", input_entity_id)
-            except Exception as err:
-                _LOGGER.error("Failed to create input_number %s: %s", input_entity_id, err)
+            await hass.services.async_call(
+                "input_number",
+                "setup",
+                service_data=input_config,
+                blocking=True,
+            )
+            _LOGGER.debug("Created input_number: %s", input_id)
+        except Exception as err:
+            _LOGGER.error("Error creating input_number %s: %s", input_id, err)
 
     return await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
