@@ -90,6 +90,7 @@ async def async_setup_entry(
         EveusSubstateSensor(updater),
         EveusEnabledSensor(updater),
         EveusGroundSensor(updater),
+        EveusBatteryVoltageSensor(updater),
         EveusBoxTemperatureSensor(updater),
         EveusPlugTemperatureSensor(updater),
         EveusSystemTimeSensor(updater),
@@ -337,6 +338,15 @@ class EveusCurrentSetSensor(EveusNumericSensor):
     _key = ATTR_CURRENT_SET
     name = "Eveus Current Set"
 
+class EveusBatteryVoltageSensor(EveusNumericSensor):
+    """Battery voltage sensor."""
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:battery-50"
+    _key = ATTR_BATTERY_VOLTAGE
+    name = "Eveus Battery Voltage"
+
 class EveusSessionEnergySensor(EveusEnergyBaseSensor):
     """Session energy sensor."""
     _key = ATTR_SESSION_ENERGY
@@ -441,7 +451,7 @@ class EveusEnabledSensor(BaseEveusSensor):
             return "Unknown"
 
 class EveusSessionTimeSensor(EveusNumericSensor):
-    """Session time sensor."""
+    """Session time sensor with improved formatting."""
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -459,15 +469,12 @@ class EveusSessionTimeSensor(EveusNumericSensor):
             hours = (seconds % 86400) // 3600
             minutes = (seconds % 3600) // 60
             
-            parts = []
             if days > 0:
-                parts.append(f"{days}d")
-            if hours > 0:
-                parts.append(f"{hours}h")
-            if minutes > 0:
-                parts.append(f"{minutes}m")
-                
-            attrs["formatted_time"] = " ".join(parts) if parts else "0m"
+                attrs["formatted_time"] = f"{days}d {hours}h {minutes}m"
+            elif hours > 0:
+                attrs["formatted_time"] = f"{hours}h {minutes}m"
+            else:
+                attrs["formatted_time"] = f"{minutes}m"
         except (KeyError, TypeError, ValueError):
             attrs["formatted_time"] = "unknown"
         return attrs
