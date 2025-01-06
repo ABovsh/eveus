@@ -12,5 +12,6 @@
         "aiohttp>=3.0.0",
         "voluptuous>=0.13.1"
     ],
+    "icon": "mdi:ev-station",
     "version": "1.0.0"
 }
