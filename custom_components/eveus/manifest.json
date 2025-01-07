@@ -1,9 +1,3 @@
-# Directory structure needed:
-# custom_components/eveus/brands/
-# custom_components/eveus/brands/icon.png
-# custom_components/eveus/brands/icon@2x.png
-
-# manifest.json
 {
     "domain": "eveus",
     "name": "Eveus EV Charger",
