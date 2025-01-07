@@ -1,24 +1,18 @@
+# File: custom_components/eveus/strings.json
+
 {
     "config": {
         "step": {
             "user": {
                 "title": "Connect to Eveus Charger",
-                "description": "Set up your Eveus charger connection and EV battery capacity.",
+                "description": "Set up your Eveus charger connection.",
                 "data": {
                     "host": "IP Address",
                     "username": "Username",
                     "password": "Password",
-                    "battery_capacity": "EV Battery Capacity (kWh)"
+                    "model": "Charger Model (16A or 32A)"
                 }
             }
         },
         "error": {
-            "cannot_connect": "Failed to connect to charger",
-            "invalid_auth": "Invalid username or password",
-            "unknown": "Unexpected error occurred"
-        },
-        "abort": {
-            "already_configured": "Device is already configured"
-        }
-    }
-}
+            "cannot_connect": "Faile
