@@ -5,10 +5,11 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
 
-PLATFORMS: list[Platform] = [
+PLATFORMS = [
     Platform.SENSOR,
     Platform.SWITCH,
     Platform.NUMBER,
@@ -16,24 +17,32 @@ PLATFORMS: list[Platform] = [
 
 _LOGGER = logging.getLogger(__name__)
 
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the Eveus component."""
+    hass.data.setdefault(DOMAIN, {})
+    return True
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Eveus from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     
-    try:
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        return True
-    except Exception as err:
-        _LOGGER.error("Error setting up Eveus integration: %s", err)
-        return False
+    # Store the entry for future use
+    hass.data[DOMAIN][entry.entry_id] = {
+        "title": entry.title,
+        "options": entry.options,
+    }
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    try:
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-        if unload_ok:
-            hass.data[DOMAIN].pop(entry.entry_id, None)
-        return unload_ok
-    except Exception as err:
-        _LOGGER.error("Error unloading Eveus integration: %s", err)
-        return False
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id)
+    return unload_ok
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload config entry."""
+    await async_unload_entry(hass, entry)
+    await async_setup_entry(hass, entry)
