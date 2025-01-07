@@ -25,14 +25,16 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
 )
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    MODEL_MAX_CURRENT,
+    MIN_CURRENT,
+    CONF_MODEL,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 # Constants
-MIN_CURRENT = 8.0
-MAX_CURRENT = 16.0
-DEFAULT_CURRENT = 16.0
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 
@@ -45,9 +47,10 @@ async def async_setup_entry(
     host = entry.data[CONF_HOST]
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
+    model = entry.data[CONF_MODEL]
 
     entities = [
-        EveusCurrentNumber(host, username, password),
+        EveusCurrentNumber(host, username, password, model),
     ]
     
     async_add_entities(entities)
@@ -55,8 +58,6 @@ async def async_setup_entry(
 class EveusCurrentNumber(RestoreNumber):
     """Representation of Eveus current control."""
 
-    _attr_native_min_value = MIN_CURRENT
-    _attr_native_max_value = MAX_CURRENT
     _attr_native_step = 1.0
     _attr_mode = NumberMode.SLIDER
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
@@ -66,19 +67,24 @@ class EveusCurrentNumber(RestoreNumber):
     _attr_icon = "mdi:current-ac"
     _attr_entity_category = EntityCategory.CONFIG
 
-    def __init__(self, host: str, username: str, password: str) -> None:
+    def __init__(self, host: str, username: str, password: str, model: str) -> None:
         """Initialize the current control."""
         super().__init__()
         self._host = host
         self._username = username
         self._password = password
+        self._model = model
         self._attr_unique_id = f"{host}_charging_current"
         self._session = None
-        self._value = DEFAULT_CURRENT
         self._last_update = 0
         self._update_lock = asyncio.Lock()
         self._command_lock = asyncio.Lock()
         self._attr_available = True
+
+        # Set min/max values based on model
+        self._attr_native_min_value = float(MIN_CURRENT)
+        self._attr_native_max_value = float(MODEL_MAX_CURRENT[model])
+        self._value = min(self._attr_native_max_value, 16.0)  # Default to 16A or max if lower
 
     @property
     def device_info(self) -> dict[str, Any]:
@@ -87,7 +93,7 @@ class EveusCurrentNumber(RestoreNumber):
             "identifiers": {(DOMAIN, self._host)},
             "name": "Eveus EV Charger",
             "manufacturer": "Eveus",
-            "model": f"Eveus ({self._host})",
+            "model": f"Eveus {self._model} ({self._host})",
         }
 
     @property
@@ -104,7 +110,7 @@ class EveusCurrentNumber(RestoreNumber):
     async def async_set_native_value(self, value: float) -> None:
         """Set new current value with retry logic."""
         # Ensure value is within bounds
-        value = min(MAX_CURRENT, max(MIN_CURRENT, value))
+        value = min(self._attr_native_max_value, max(self._attr_native_min_value, value))
         
         async with self._command_lock:
             for attempt in range(MAX_RETRIES):
@@ -158,7 +164,8 @@ class EveusCurrentNumber(RestoreNumber):
                         response.raise_for_status()
                         data = await response.json()
                         if "currentSet" in data:
-                            self._value = min(MAX_CURRENT, max(MIN_CURRENT, float(data["currentSet"])))
+                            self._value = min(self._attr_native_max_value, 
+                                           max(self._attr_native_min_value, float(data["currentSet"])))
                             self._attr_available = True
                             return
                 except Exception as error:
@@ -186,6 +193,7 @@ class EveusCurrentNumber(RestoreNumber):
         if last_state and last_state.state not in ('unknown', 'unavailable'):
             try:
                 restored_value = float(last_state.state)
-                self._value = min(MAX_CURRENT, max(MIN_CURRENT, restored_value))
+                self._value = min(self._attr_native_max_value, 
+                               max(self._attr_native_min_value, restored_value))
             except (TypeError, ValueError):
-                self._value = DEFAULT_CURRENT
+                self._value = min(self._attr_native_max_value, 16.0)  # Default to 16A or max if lower
