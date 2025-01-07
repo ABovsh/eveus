@@ -484,20 +484,19 @@ class EveusSessionTimeSensor(EveusNumericSensor):
             attrs["formatted_time"] = "unknown"
         return attrs
 
-# Modified SOC sensor classes
-
 class EVSocKwhSensor(BaseEveusSensor):
     """EV State of Charge energy sensor."""
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:battery-charging"
     _attr_suggested_display_precision = 2
-    name = "SOC Energy"  # Changed name
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    name = "SOC Energy"
 
     @property
     def unique_id(self) -> str:
         """Return a unique ID."""
-        return f"{self._updater._host}_soc_kwh"  # Explicit unique ID
+        return f"{self._updater._host}_soc_kwh"
 
     def _get_input_values(self) -> dict:
         """Get all required input values."""
@@ -512,22 +511,47 @@ class EVSocKwhSensor(BaseEveusSensor):
             _LOGGER.debug("Error getting input values: %s", err)
             return {}
 
-    # Rest of the class remains the same...
+    def _is_valid_input(self, data: dict) -> bool:
+        """Validate input values."""
+        return (data.get('initial_soc', -1) >= 0 and
+                data.get('initial_soc', 101) <= 100 and
+                data.get('max_capacity', 0) > 0 and
+                isinstance(data.get('energy_charged', None), (int, float)))
+
+    @property
+    def native_value(self) -> float | None:
+        """Calculate and return state of charge in kWh."""
+        data = self._get_input_values()
+        
+        if not self._is_valid_input(data):
+            return None
+
+        try:
+            initial_kwh = (data['initial_soc'] / 100) * data['max_capacity']
+            efficiency = (1 - data['correction'] / 100)
+            charged_kwh = data['energy_charged'] * efficiency
+            total_kwh = initial_kwh + charged_kwh
+            
+            return round(max(0, min(total_kwh, data['max_capacity'])), 2)
+        except Exception as err:
+            _LOGGER.debug("Error calculating SOC kWh: %s", err)
+            return None
 
 class EVSocPercentSensor(BaseEveusSensor):
     """EV State of Charge percentage sensor."""
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:battery-charging"
-    name = "SOC Percent"  # Changed name
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    name = "SOC Percent"
 
     @property
     def unique_id(self) -> str:
         """Return a unique ID."""
-        return f"{self._updater._host}_soc_percent"  # Explicit unique ID
+        return f"{self._updater._host}_soc_percent"
 
     @property
-    def native_value(self) -> float | str:
+    def native_value(self) -> float | None:
         """Return the state of charge percentage."""
         try:
             current_kwh = float(self._updater._hass.states.get("sensor.ev_soc_kwh").state)
@@ -536,9 +560,9 @@ class EVSocPercentSensor(BaseEveusSensor):
             if current_kwh >= 0 and max_capacity > 0:
                 percentage = round((current_kwh / max_capacity * 100), 0)
                 return max(0, min(percentage, 100))
-            return "unknown"
+            return None
         except (AttributeError, TypeError, ValueError):
-            return "unknown"
+            return None
 
 class TimeToTargetSocSensor(BaseEveusSensor):
     """Time to target SOC sensor."""
@@ -548,10 +572,10 @@ class TimeToTargetSocSensor(BaseEveusSensor):
     @property
     def unique_id(self) -> str:
         """Return a unique ID."""
-        return f"{self._updater._host}_time_to_target"  # Explicit unique ID
+        return f"{self._updater._host}_time_to_target"
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> str | None:
         """Calculate and return time to target SOC."""
         try:
             if self._updater.data.get("state") != 4:  # Not charging (4 is charging state)
@@ -559,13 +583,13 @@ class TimeToTargetSocSensor(BaseEveusSensor):
 
             soc = self._updater._hass.states.get("sensor.ev_soc_percent")
             if soc is None or soc.state in ["unknown", "unavailable", "none"]:
-                return "unknown"
+                return None
             
             current_soc = float(soc.state)
             if current_soc < 0 or current_soc > 100:
-                return "unknown"
+                return None
 
-            target_soc = float(self.hass.states.get("input_number.target_soc").state)
+            target_soc = float(self._updater._hass.states.get("input_number.target_soc").state)
             if target_soc <= current_soc:
                 return "Target reached"
 
@@ -573,8 +597,8 @@ class TimeToTargetSocSensor(BaseEveusSensor):
             if power_meas < 100:
                 return "Insufficient power"
 
-            battery_capacity = float(self.hass.states.get("input_number.ev_battery_capacity").state)
-            correction = float(self.hass.states.get("input_number.ev_soc_correction").state)
+            battery_capacity = float(self._updater._hass.states.get("input_number.ev_battery_capacity").state)
+            correction = float(self._updater._hass.states.get("input_number.ev_soc_correction").state)
 
             remaining_kwh = (target_soc - current_soc) * battery_capacity / 100
             power_kw = power_meas * (1 - correction / 100) / 1000
@@ -593,21 +617,7 @@ class TimeToTargetSocSensor(BaseEveusSensor):
 
         except (AttributeError, TypeError, ValueError) as err:
             _LOGGER.debug("Error calculating time to target: %s", err)
-            return "unknown"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional attributes about the calculation."""
-        attrs = super().extra_state_attributes
-        try:
-            attrs["current_soc"] = self.hass.states.get("sensor.ev_soc_percent").state
-            attrs["target_soc"] = self.hass.states.get("input_number.target_soc").state
-            attrs["power"] = self._updater.data.get("powerMeas")
-            attrs["battery_capacity"] = self.hass.states.get("input_number.ev_battery_capacity").state
-            attrs["correction"] = self.hass.states.get("input_number.ev_soc_correction").state
-        except (AttributeError, TypeError, ValueError):
-            pass
-        return attrs
+            return None
 
 class EveusCounterAEnergySensor(EveusEnergyBaseSensor):
     """Counter A energy sensor."""
