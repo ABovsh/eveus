@@ -502,7 +502,7 @@ class EVSocKwhSensor(BaseEveusSensor):
         """Get all required input values."""
         try:
             return {
-                'initial_soc': float(self._updater._hass.states.get("input_number.initial_ev_soc").state),
+                'initial_soc': float(self._updater._hass.states.get("input_number.ev_initial_soc").state),
                 'max_capacity': float(self._updater._hass.states.get("input_number.ev_battery_capacity").state),
                 'energy_charged': float(self._updater.data.get("IEM1", 0)),
                 'correction': float(self._updater._hass.states.get("input_number.ev_soc_correction").state)
@@ -554,7 +554,7 @@ class EVSocPercentSensor(BaseEveusSensor):
     def native_value(self) -> float | None:
         """Return the state of charge percentage."""
         try:
-            current_kwh = float(self._updater._hass.states.get("sensor.ev_soc_kwh").state)
+            current_kwh = float(self._updater._hass.states.get("sensor.eveus_ev_charger_soc_kwh").state)
             max_capacity = float(self._updater._hass.states.get("input_number.ev_battery_capacity").state)
             
             if current_kwh >= 0 and max_capacity > 0:
@@ -581,7 +581,7 @@ class TimeToTargetSocSensor(BaseEveusSensor):
             if self._updater.data.get("state") != 4:  # Not charging (4 is charging state)
                 return "Not charging"
 
-            soc = self._updater._hass.states.get("sensor.ev_soc_percent")
+            soc = self._updater._hass.states.get("sensor.eveus_ev_charger_soc_percent")
             if soc is None or soc.state in ["unknown", "unavailable", "none"]:
                 return None
             
@@ -589,7 +589,7 @@ class TimeToTargetSocSensor(BaseEveusSensor):
             if current_soc < 0 or current_soc > 100:
                 return None
 
-            target_soc = float(self._updater._hass.states.get("input_number.target_soc").state)
+            target_soc = float(self._updater._hass.states.get("input_number.ev_target_soc").state)
             if target_soc <= current_soc:
                 return "Target reached"
 
