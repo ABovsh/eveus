@@ -554,7 +554,7 @@ class EVSocPercentSensor(BaseEveusSensor):
     def native_value(self) -> float | None:
         """Return the state of charge percentage."""
         try:
-            current_kwh = float(self._updater._hass.states.get("sensor.eveus_ev_charger_soc_kwh").state)
+            current_kwh = float(self._updater._hass.states.get("sensor.eveus_ev_charger_soc_energy").state)
             max_capacity = float(self._updater._hass.states.get("input_number.ev_battery_capacity").state)
             
             if current_kwh >= 0 and max_capacity > 0:
