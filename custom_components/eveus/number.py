@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import aiohttp
 from typing import Any
 
@@ -25,6 +26,13 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Constants for current control
+MIN_CURRENT = 8
+MAX_CURRENT = 16
+DEFAULT_CURRENT = 16
+MAX_RETRIES = 3
+RETRY_DELAY = 2
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -44,8 +52,8 @@ async def async_setup_entry(
 class EveusCurrentNumber(NumberEntity):
     """Representation of Eveus current control."""
 
-    _attr_min_value = 8
-    _attr_max_value = 16
+    _attr_min_value = MIN_CURRENT
+    _attr_max_value = MAX_CURRENT
     _attr_step = 1
     _attr_mode = NumberMode.SLIDER
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
@@ -63,7 +71,10 @@ class EveusCurrentNumber(NumberEntity):
         self._attr_unique_id = f"{host}_charging_current"
         self._session = None
         self._available = True
-        self._value = self._attr_max_value
+        self._value = DEFAULT_CURRENT
+        self._last_update = 0
+        self._update_lock = asyncio.Lock()
+        self._command_lock = asyncio.Lock()
 
     @property
     def available(self) -> bool:
@@ -92,55 +103,75 @@ class EveusCurrentNumber(NumberEntity):
         return self._session
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set new current value."""
-        try:
-            session = await self._get_session()
-            async with session.post(
-                f"http://{self._host}/pageEvent",
-                auth=aiohttp.BasicAuth(self._username, self._password),
-                headers={"Content-type": "application/x-www-form-urlencoded"},
-                data=f"currentSet={int(value)}",
-                timeout=10,
-            ) as response:
-                response.raise_for_status()
-                self._value = value
-                self._available = True
-                _LOGGER.debug(
-                    "Successfully set charging current to %s A for %s",
-                    value,
-                    self._host,
-                )
-        except Exception as error:
+        """Set new current value with retry logic."""
+        async with self._command_lock:
+            for attempt in range(MAX_RETRIES):
+                try:
+                    session = await self._get_session()
+                    async with session.post(
+                        f"http://{self._host}/pageEvent",
+                        auth=aiohttp.BasicAuth(self._username, self._password),
+                        headers={"Content-type": "application/x-www-form-urlencoded"},
+                        data=f"currentSet={int(value)}",
+                        timeout=5,
+                    ) as response:
+                        response.raise_for_status()
+                        self._value = value
+                        self._available = True
+                        _LOGGER.debug(
+                            "Successfully set charging current to %s A for %s",
+                            value,
+                            self._host,
+                        )
+                        return
+                except Exception as error:
+                    _LOGGER.warning(
+                        "Attempt %d: Failed to set charging current for %s: %s",
+                        attempt + 1,
+                        self._host,
+                        error,
+                    )
+                    if attempt + 1 < MAX_RETRIES:
+                        await asyncio.sleep(RETRY_DELAY)
+            
             self._available = False
             _LOGGER.error(
-                "Failed to set charging current for %s: %s",
+                "Failed to set charging current after %d attempts for %s",
+                MAX_RETRIES,
                 self._host,
-                error,
             )
 
     async def async_update(self) -> None:
-        """Update the current value."""
-        try:
-            session = await self._get_session()
-            async with session.post(
-                f"http://{self._host}/main",
-                auth=aiohttp.BasicAuth(self._username, self._password),
-                timeout=10,
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                if "currentSet" in data:
-                    self._value = float(data["currentSet"])
-                    self._available = True
-                    _LOGGER.debug(
-                        "Current charging current for %s: %s A",
-                        self._host,
-                        self._value,
-                    )
-        except Exception as error:
-            self._available = False
-            _LOGGER.error(
-                "Failed to get charging current for %s: %s",
-                self._host,
-                error,
-            )
+        """Update the current value with retry logic."""
+        async with self._update_lock:
+            for attempt in range(MAX_RETRIES):
+                try:
+                    session = await self._get_session()
+                    async with session.post(
+                        f"http://{self._host}/main",
+                        auth=aiohttp.BasicAuth(self._username, self._password),
+                        timeout=5,
+                    ) as response:
+                        response.raise_for_status()
+                        data = await response.json()
+                        if "currentSet" in data:
+                            self._value = float(data["currentSet"])
+                            self._available = True
+                            return
+                except Exception as error:
+                    if attempt + 1 < MAX_RETRIES:
+                        _LOGGER.debug(
+                            "Attempt %d: Failed to get charging current for %s: %s",
+                            attempt + 1,
+                            self._host,
+                            error,
+                        )
+                        await asyncio.sleep(RETRY_DELAY)
+                    else:
+                        self._available = False
+                        _LOGGER.warning(
+                            "Failed to get charging current after %d attempts for %s: %s",
+                            MAX_RETRIES,
+                            self._host,
+                            error,
+                        )
