@@ -61,7 +61,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 class EveusUpdater:
-    """Class to handle Eveus data updates."""
+    """Class to handle Eveus data updates with improved error handling."""
 
     def __init__(self, host: str, username: str, password: str, hass: HomeAssistant) -> None:
         """Initialize the updater."""
@@ -75,6 +75,8 @@ class EveusUpdater:
         self._sensors = []
         self._session = None
         self._last_update = None
+        self._consecutive_errors = 0
+        self._max_consecutive_errors = 3
         _LOGGER.debug("Initialized updater for host: %s", host)
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -110,7 +112,7 @@ class EveusUpdater:
         _LOGGER.debug("Started update loop for %s", self._host)
 
     async def _update(self) -> None:
-        """Update the data with retry mechanism."""
+        """Update the data with improved error handling."""
         session = await self._get_session()
         try:
             async with session.post(
@@ -121,6 +123,7 @@ class EveusUpdater:
                 response.raise_for_status()
                 self._data = await response.json()
                 self._available = True
+                self._consecutive_errors = 0
                 _LOGGER.debug(
                     "Updated data for %s: State=%s, Power=%sW", 
                     self._host,
@@ -128,12 +131,18 @@ class EveusUpdater:
                     self._data.get("powerMeas")
                 )
         except aiohttp.ClientError as err:
+            self._consecutive_errors += 1
             self._available = False
             _LOGGER.error("Connection error for %s: %s", self._host, err)
+            if self._consecutive_errors >= self._max_consecutive_errors:
+                _LOGGER.warning("Multiple consecutive errors, may need attention")
             raise
         except Exception as err:
+            self._consecutive_errors += 1
             self._available = False
             _LOGGER.error("Unexpected error for %s: %s", self._host, err)
+            if self._consecutive_errors >= self._max_consecutive_errors:
+                _LOGGER.warning("Multiple consecutive errors, may need attention")
             raise
 
     def register_sensor(self, sensor: "BaseEveusSensor") -> None:
@@ -198,7 +207,6 @@ class BaseEveusSensor(SensorEntity, RestoreEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle removal of entity."""
-        await super().async_will_remove_from_hass()
         await self._updater.async_shutdown()
 
     @property
@@ -234,36 +242,39 @@ class EveusNumericSensor(BaseEveusSensor):
             return self._previous_value
 
 class EveusEnergyBaseSensor(EveusNumericSensor):
-    """Base energy sensor with statistics."""
-
+    """Base energy sensor with improved precision."""
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 2
 
 class EveusVoltageSensor(EveusNumericSensor):
-    """Voltage sensor."""
+    """Voltage sensor with improved precision."""
     _attr_device_class = SensorDeviceClass.VOLTAGE
     _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:flash"
+    _attr_icon = "mdi:lightning-bolt"
+    _attr_suggested_display_precision = 1
     _key = ATTR_VOLTAGE
     name = "Voltage"
 
 class EveusCurrentSensor(EveusNumericSensor):
-    """Current sensor."""
+    """Current sensor with improved precision."""
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:current-ac"
+    _attr_suggested_display_precision = 1
     _key = ATTR_CURRENT
     name = "Current"
 
 class EveusPowerSensor(EveusNumericSensor):
-    """Power sensor."""
+    """Power sensor with zero decimal places."""
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:flash"
+    _attr_suggested_display_precision = 0
     _key = ATTR_POWER
     name = "Power"
 
@@ -322,18 +333,32 @@ class EveusSubstateSensor(BaseEveusSensor):
             return "Unknown"
 
 class EveusGroundSensor(BaseEveusSensor):
-    """Ground sensor."""
+    """Ground sensor for electricity safety."""
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:ground"
+    _attr_icon = "mdi:electric-switch"
     name = "Ground"
-
+    
     @property
     def native_value(self) -> str:
-        """Return ground status."""
+        """Return ground status with improved description."""
         try:
-            return "Yes" if self._updater.data[ATTR_GROUND] == 1 else "No"
+            is_grounded = self._updater.data[ATTR_GROUND] == 1
+            return "Connected" if is_grounded else "Not Connected"
         except (KeyError, TypeError):
             return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        attrs = super().extra_state_attributes
+        try:
+            is_grounded = self._updater.data[ATTR_GROUND] == 1
+            attrs["status"] = "Normal" if is_grounded else "Warning"
+            attrs["safety_check"] = "Passed" if is_grounded else "Failed"
+        except (KeyError, TypeError):
+            attrs["status"] = "Unknown"
+            attrs["safety_check"] = "Unknown"
+        return attrs
 
 class EveusBoxTemperatureSensor(EveusNumericSensor):
     """Box temperature sensor."""
@@ -356,33 +381,34 @@ class EveusPlugTemperatureSensor(EveusNumericSensor):
 class EveusSystemTimeSensor(BaseEveusSensor):
     """System time sensor."""
     _key = ATTR_SYSTEM_TIME
-    _attr_icon = "mdi:clock"
+    _attr_icon = "mdi:clock-outline"
     name = "System Time"
 
     @property
-    def native_value(self) -> StateType:
-        """Return system time."""
+    def native_value(self) -> str:
+        """Return formatted system time."""
         try:
-            return int(self._updater.data[self._key])
+            timestamp = int(self._updater.data.get(self._key, 0))
+            dt = datetime.fromtimestamp(timestamp)
+            return dt.strftime("%H:%M")
         except (KeyError, TypeError, ValueError):
-            return None
-
-class EveusEnabledSensor(BaseEveusSensor):
-    """Enabled state sensor."""
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:power"
-    name = "Enabled"
+            return "unknown"
 
     @property
-    def native_value(self) -> str:
-        """Return if charging is enabled."""
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        attrs = super().extra_state_attributes
         try:
-            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
-        except (KeyError, TypeError):
-            return "Unknown"
+            timestamp = int(self._updater.data.get(self._key, 0))
+            dt = datetime.fromtimestamp(timestamp)
+            attrs["full_date"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+            attrs["raw_timestamp"] = timestamp
+        except (KeyError, TypeError, ValueError):
+            pass
+        return attrs
 
 class EveusSessionTimeSensor(BaseEveusSensor):
-    """Session time sensor with proper formatting."""
+    """Session time sensor."""
     _attr_icon = "mdi:timer"
     _key = ATTR_SESSION_TIME
     name = "Session Time"
@@ -404,11 +430,6 @@ class EveusSessionTimeSensor(BaseEveusSensor):
                 return f"{minutes}m"
         except (KeyError, TypeError, ValueError):
             return "unknown"
-
-    @property
-    def native_unit_of_measurement(self) -> str | None:
-        """Return None as unit since we're returning formatted string."""
-        return None
 
 class EveusCounterAEnergySensor(EveusEnergyBaseSensor):
     """Counter A energy sensor."""
