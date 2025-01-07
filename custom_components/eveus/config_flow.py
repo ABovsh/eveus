@@ -1,3 +1,5 @@
+# File: custom_components/eveus/config_flow.py
+
 """Config flow for Eveus."""
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN
+from .const import DOMAIN, MODEL_16A, MODEL_32A, CONF_MODEL, MODELS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +24,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
+        vol.Required(CONF_MODEL, default=MODEL_16A): vol.In(MODELS),
     }
 )
 
