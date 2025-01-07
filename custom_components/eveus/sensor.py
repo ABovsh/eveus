@@ -381,34 +381,34 @@ class EveusEnabledSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
-class EveusSessionTimeSensor(EveusNumericSensor):
-    """Session time sensor."""
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
-    _attr_state_class = SensorStateClass.MEASUREMENT
+class EveusSessionTimeSensor(BaseEveusSensor):
+    """Session time sensor with proper formatting."""
     _attr_icon = "mdi:timer"
     _key = ATTR_SESSION_TIME
     name = "Session Time"
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return formatted time as attribute."""
-        attrs = super().extra_state_attributes
+    def native_value(self) -> str:
+        """Return formatted session time."""
         try:
-            seconds = int(self._updater.data[self._key])
+            seconds = int(self._updater.data.get(self._key, 0))
             days = seconds // 86400
             hours = (seconds % 86400) // 3600
             minutes = (seconds % 3600) // 60
             
             if days > 0:
-                attrs["formatted_time"] = f"{days}d {hours:02d}h {minutes:02d}m"
+                return f"{days}d {hours:02d}h {minutes:02d}m"
             elif hours > 0:
-                attrs["formatted_time"] = f"{hours}h {minutes:02d}m"
+                return f"{hours}h {minutes:02d}m"
             else:
-                attrs["formatted_time"] = f"{minutes}m"
+                return f"{minutes}m"
         except (KeyError, TypeError, ValueError):
-            attrs["formatted_time"] = "unknown"
-        return attrs
+            return "unknown"
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Return None as unit since we're returning formatted string."""
+        return None
 
 class EveusCounterAEnergySensor(EveusEnergyBaseSensor):
     """Counter A energy sensor."""
