@@ -1,4 +1,3 @@
-# __init__.py
 """The Eveus integration."""
 from __future__ import annotations
 
@@ -9,22 +8,19 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the Eveus component."""
-    hass.data.setdefault(DOMAIN, {})
-    return True
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Eveus from a config entry."""
+    hass.data.setdefault(DOMAIN, {})
+    
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         return True
     except Exception as err:
-        _LOGGER.exception("Error setting up Eveus integration: %s", err)
+        _LOGGER.error("Error setting up Eveus integration: %s", err)
         return False
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
