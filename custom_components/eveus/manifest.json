@@ -1,3 +1,9 @@
+# Directory structure needed:
+# custom_components/eveus/brands/
+# custom_components/eveus/brands/icon.png
+# custom_components/eveus/brands/icon@2x.png
+
+# manifest.json
 {
     "domain": "eveus",
     "name": "Eveus EV Charger",
@@ -12,6 +18,5 @@
         "aiohttp>=3.0.0",
         "voluptuous>=0.13.1"
     ],
-    "icon": "mdi:ev-station",
     "version": "1.0.0"
 }
