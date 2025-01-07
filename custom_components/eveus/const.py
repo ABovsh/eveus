@@ -17,6 +17,7 @@ MODEL_MAX_CURRENT = {
 MIN_CURRENT = 8
 
 # Configuration
+CONF_BATTERY_CAPACITY = "battery_capacity"
 CONF_MODEL = "model"
 
 # API Attributes
