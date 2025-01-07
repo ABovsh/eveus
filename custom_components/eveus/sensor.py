@@ -56,10 +56,12 @@ from .const import (
     ATTR_COUNTER_A_COST,
     ATTR_COUNTER_B_COST,
     ATTR_GROUND,
-    ATTR_BATTERY_VOLTAGE,  # Import the constant
+    ATTR_BATTERY_VOLTAGE,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
 
 class EveusBatteryVoltageSensor(EveusNumericSensor):
     """Battery voltage sensor."""
@@ -115,15 +117,13 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Eveus sensors."""
-    _LOGGER.debug("Setting up Eveus sensors for %s", entry.data[CONF_HOST])
-    
     updater = EveusUpdater(
         host=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
         hass=hass,
     )
-
+    # Create and add all sensor entities
     entities = [
         EveusVoltageSensor(updater),
         EveusCurrentSensor(updater),
@@ -265,13 +265,13 @@ class EveusUpdater:
 class BaseEveusSensor(SensorEntity, RestoreEntity):
     """Base implementation for all Eveus sensors."""
 
-    def __init__(self, updater: EveusUpdater) -> None:
+    def __init__(self, updater: 'EveusUpdater') -> None:
         """Initialize the sensor."""
         self._updater = updater
         self._updater.register_sensor(self)
-        self._attr_has_entity_name = False
+        self._attr_has_entity_name = True
         self._attr_should_poll = False
-        self._attr_unique_id = f"{updater._host}_{self.name.lower().replace(' ', '_')}"
+        self._attr_unique_id = f"{updater._host}_{self.name}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, updater._host)},
             "name": "Eveus EV Charger",
@@ -280,27 +280,16 @@ class BaseEveusSensor(SensorEntity, RestoreEntity):
             "sw_version": updater.data.get("verFWMain", "Unknown"),
         }
         self._previous_value = None
-        _LOGGER.debug("Initialized sensor: %s", self.name)
 
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
-        # Restore previous state
-        last_state = await self.async_get_last_state()
-        if last_state:
+        state = await self.async_get_last_state()
+        if state and state.state not in ('unknown', 'unavailable'):
             try:
-                if self._attr_device_class in [
-                    SensorDeviceClass.CURRENT,
-                    SensorDeviceClass.VOLTAGE,
-                    SensorDeviceClass.POWER,
-                    SensorDeviceClass.ENERGY,
-                    SensorDeviceClass.TEMPERATURE,
-                ]:
-                    self._previous_value = float(last_state.state)
-                else:
-                    self._previous_value = last_state.state
+                self._previous_value = float(state.state)
             except (TypeError, ValueError):
-                self._previous_value = None
+                self._previous_value = state.state
         await self._updater.start_updates()
 
     async def async_will_remove_from_hass(self) -> None:
@@ -327,17 +316,17 @@ class BaseEveusSensor(SensorEntity, RestoreEntity):
 
 class EveusNumericSensor(BaseEveusSensor):
     """Base class for numeric sensors."""
-
+    
     _attr_suggested_display_precision = 2
 
     @property
     def native_value(self) -> StateType:
         """Return the sensor value."""
         try:
-            value = float(self._updater.data[self._key])
+            value = float(self._updater.data.get(self._key, 0))
             self._previous_value = value
             return round(value, self._attr_suggested_display_precision)
-        except (KeyError, TypeError, ValueError):
+        except (TypeError, ValueError):
             return self._previous_value
 
 class EveusEnergyBaseSensor(EveusNumericSensor):
@@ -388,7 +377,7 @@ class EveusBatteryVoltageSensor(EveusNumericSensor):
     _attr_device_class = SensorDeviceClass.VOLTAGE
     _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:battery-50"
+    _attr_icon = "mdi:battery"
     _key = ATTR_BATTERY_VOLTAGE
     name = "Eveus Battery Voltage"
 
