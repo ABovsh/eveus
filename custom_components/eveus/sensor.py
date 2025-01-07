@@ -484,13 +484,27 @@ class EveusSessionTimeSensor(EveusNumericSensor):
             attrs["formatted_time"] = "unknown"
         return attrs
 
-class EVSocKwhSensor(BaseEveusSensor):
+class EVSocBaseSensor(BaseEveusSensor):
+    """Base class for SOC-related sensors."""
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        """Return device information."""
+        return {
+            "identifiers": {(DOMAIN, f"{self._updater._host}_soc")},
+            "name": "EV State of Charge",
+            "manufacturer": "Eveus",
+            "model": "SOC Calculator",
+            "via_device": (DOMAIN, self._updater._host),  # Links to main device
+        }
+
+class EVSocKwhSensor(EVSocBaseSensor):
     """EV State of Charge energy sensor."""
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:battery-charging"
     _attr_suggested_display_precision = 2
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = SensorStateClass.TOTAL
     name = "SOC Energy"
 
     @property
@@ -537,7 +551,7 @@ class EVSocKwhSensor(BaseEveusSensor):
             _LOGGER.debug("Error calculating SOC kWh: %s", err)
             return None
 
-class EVSocPercentSensor(BaseEveusSensor):
+class EVSocPercentSensor(EVSocBaseSensor):
     """EV State of Charge percentage sensor."""
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_native_unit_of_measurement = "%"
@@ -564,10 +578,10 @@ class EVSocPercentSensor(BaseEveusSensor):
         except (AttributeError, TypeError, ValueError):
             return None
 
-class TimeToTargetSocSensor(BaseEveusSensor):
+class TimeToTargetSocSensor(EVSocBaseSensor):
     """Time to target SOC sensor."""
     _attr_icon = "mdi:timer"
-    name = "Time to Target SOC"
+    name = "Time to Target"
 
     @property
     def unique_id(self) -> str:
