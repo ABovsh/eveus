@@ -354,6 +354,33 @@ class EveusSubstateSensor(BaseEveusSensor):
         except (KeyError, TypeError):
             return "Unknown"
 
+class EveusEnabledSensor(BaseEveusSensor):
+    """Enabled state sensor."""
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:power"
+    name = "Enabled"
+
+    @property
+    def native_value(self) -> str:
+        """Return if charging is enabled."""
+        try:
+            return "Yes" if self._updater.data[ATTR_ENABLED] == 1 else "No"
+        except (KeyError, TypeError):
+            return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        attrs = super().extra_state_attributes
+        try:
+            is_enabled = self._updater.data[ATTR_ENABLED] == 1
+            attrs["status"] = "Active" if is_enabled else "Inactive"
+            attrs["charging_allowed"] = is_enabled
+        except (KeyError, TypeError):
+            attrs["status"] = "Unknown"
+            attrs["charging_allowed"] = None
+        return attrs
+
 class EveusGroundSensor(BaseEveusSensor):
     """Ground sensor."""
     _attr_entity_category = EntityCategory.DIAGNOSTIC
