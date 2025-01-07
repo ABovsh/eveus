@@ -1,3 +1,5 @@
+# File: custom_components/eveus/config_flow.py
+
 """Config flow for Eveus."""
 from __future__ import annotations
 
@@ -12,16 +14,8 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
-import homeassistant.helpers.config_validation as cv
 
-from .const import (
-    DOMAIN,
-    MODEL_16A,
-    MODEL_32A,
-    CONF_MODEL,
-    CONF_BATTERY_CAPACITY,
-    MODELS,
-)
+from .const import DOMAIN, MODEL_16A, MODEL_32A, CONF_MODEL, MODELS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,10 +25,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Required(CONF_MODEL, default=MODEL_16A): vol.In(MODELS),
-        vol.Required(CONF_BATTERY_CAPACITY, default=60): vol.All(
-            vol.Coerce(int),
-            vol.Range(min=10, max=160)
-        ),
     }
 )
 
@@ -51,20 +41,6 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                     raise InvalidAuth
                 response.raise_for_status()
                 await response.json()
-                
-                # Create helper entity for battery capacity
-                hass.states.async_set(
-                    f"input_number.ev_battery_capacity",
-                    data[CONF_BATTERY_CAPACITY],
-                    {
-                        "friendly_name": "EV Battery Capacity",
-                        "unit_of_measurement": "kWh",
-                        "icon": "mdi:car-battery",
-                        "min": 10,
-                        "max": 160,
-                        "step": 1,
-                    }
-                )
                 
     except aiohttp.ClientResponseError as error:
         if error.status == 401:
