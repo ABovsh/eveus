@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import aiohttp
 from typing import Any
 
@@ -19,6 +20,11 @@ from homeassistant.const import (
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+# Constants for retry mechanism
+MAX_RETRIES = 3
+RETRY_DELAY = 2
+COMMAND_TIMEOUT = 5
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -50,6 +56,7 @@ class BaseEveusSwitch(SwitchEntity):
         self._session = None
         self._is_on = False
         self._attr_has_entity_name = True
+        self._command_lock = asyncio.Lock()
 
     @property
     def unique_id(self) -> str:
@@ -82,67 +89,119 @@ class BaseEveusSwitch(SwitchEntity):
             self._session = aiohttp.ClientSession()
         return self._session
 
-   async def _send_command(self, command: str, value: int) -> bool:
-        """Send command to the device with improved error handling and retries."""
+    async def _send_command(self, command: str, value: int) -> bool:
+        """Send command to the device with retry logic."""
+        async with self._command_lock:
+            for attempt in range(MAX_RETRIES):
+                try:
+                    session = await self._get_session()
+                    async with session.post(
+                        f"http://{self._host}/pageEvent",
+                        auth=aiohttp.BasicAuth(self._username, self._password),
+                        headers={"Content-type": "application/x-www-form-urlencoded"},
+                        data=f"pageevent={command}&{command}={value}",
+                        timeout=COMMAND_TIMEOUT,
+                    ) as response:
+                        response.raise_for_status()
+                        self._available = True
+                        _LOGGER.debug(
+                            "Successfully sent command %s=%s to %s",
+                            command,
+                            value,
+                            self._host,
+                        )
+                        return True
+                except aiohttp.ClientResponseError as error:
+                    if attempt + 1 < MAX_RETRIES:
+                        _LOGGER.debug(
+                            "Attempt %d: HTTP error sending command to %s: %s [status=%s]",
+                            attempt + 1,
+                            self._host,
+                            error.message,
+                            error.status,
+                        )
+                        await asyncio.sleep(RETRY_DELAY)
+                    else:
+                        self._available = False
+                        _LOGGER.error(
+                            "HTTP error sending command to %s after %d attempts: %s [status=%s]",
+                            self._host,
+                            MAX_RETRIES,
+                            error.message,
+                            error.status,
+                        )
+                except aiohttp.ClientError as error:
+                    if attempt + 1 < MAX_RETRIES:
+                        _LOGGER.debug(
+                            "Attempt %d: Connection error sending command to %s: %s",
+                            attempt + 1,
+                            self._host,
+                            str(error),
+                        )
+                        await asyncio.sleep(RETRY_DELAY)
+                    else:
+                        self._available = False
+                        _LOGGER.error(
+                            "Connection error sending command to %s after %d attempts: %s",
+                            self._host,
+                            MAX_RETRIES,
+                            str(error),
+                        )
+                except Exception as error:
+                    if attempt + 1 < MAX_RETRIES:
+                        _LOGGER.debug(
+                            "Attempt %d: Unexpected error sending command to %s: %s",
+                            attempt + 1,
+                            self._host,
+                            str(error),
+                        )
+                        await asyncio.sleep(RETRY_DELAY)
+                    else:
+                        self._available = False
+                        _LOGGER.error(
+                            "Unexpected error sending command to %s after %d attempts: %s",
+                            self._host,
+                            MAX_RETRIES,
+                            str(error),
+                        )
+            return False
+
+    async def _get_state(self, attribute: str) -> bool | None:
+        """Get state from the device with retry logic."""
         for attempt in range(MAX_RETRIES):
             try:
                 session = await self._get_session()
                 async with session.post(
-                    f"http://{self._host}/pageEvent",
+                    f"http://{self._host}/main",
                     auth=aiohttp.BasicAuth(self._username, self._password),
-                    headers={"Content-type": "application/x-www-form-urlencoded"},
-                    data=f"pageevent={command}&{command}={value}",
-                    timeout=5,
+                    timeout=COMMAND_TIMEOUT,
                 ) as response:
                     response.raise_for_status()
+                    data = await response.json()
+                    if attribute not in data:
+                        _LOGGER.warning(
+                            "Attribute %s not found in response from %s",
+                            attribute,
+                            self._host,
+                        )
+                        return None
+                    
+                    value = data[attribute]
+                    if not isinstance(value, (int, float, str)):
+                        _LOGGER.warning(
+                            "Invalid value type for %s from %s: %s",
+                            attribute,
+                            self._host,
+                            type(value),
+                        )
+                        return None
+                    
                     self._available = True
-                    _LOGGER.debug(
-                        "Successfully sent command %s=%s to %s",
-                        command,
-                        value,
-                        self._host,
-                    )
-                    return True
-            except aiohttp.ClientResponseError as error:
-                if attempt + 1 < MAX_RETRIES:
-                    _LOGGER.debug(
-                        "Attempt %d: HTTP error sending command to %s: %s [status=%s]",
-                        attempt + 1,
-                        self._host,
-                        error.message,
-                        error.status,
-                    )
-                    await asyncio.sleep(RETRY_DELAY)
-                else:
-                    self._available = False
-                    _LOGGER.error(
-                        "HTTP error sending command to %s after %d attempts: %s [status=%s]",
-                        self._host,
-                        MAX_RETRIES,
-                        error.message,
-                        error.status,
-                    )
-            except aiohttp.ClientError as error:
-                if attempt + 1 < MAX_RETRIES:
-                    _LOGGER.debug(
-                        "Attempt %d: Connection error sending command to %s: %s",
-                        attempt + 1,
-                        self._host,
-                        str(error),
-                    )
-                    await asyncio.sleep(RETRY_DELAY)
-                else:
-                    self._available = False
-                    _LOGGER.error(
-                        "Connection error sending command to %s after %d attempts: %s",
-                        self._host,
-                        MAX_RETRIES,
-                        str(error),
-                    )
+                    return value == 1
             except Exception as error:
                 if attempt + 1 < MAX_RETRIES:
                     _LOGGER.debug(
-                        "Attempt %d: Unexpected error sending command to %s: %s",
+                        "Attempt %d: Failed to get state from %s: %s",
                         attempt + 1,
                         self._host,
                         str(error),
@@ -150,35 +209,14 @@ class BaseEveusSwitch(SwitchEntity):
                     await asyncio.sleep(RETRY_DELAY)
                 else:
                     self._available = False
-                    _LOGGER.error(
-                        "Unexpected error sending command to %s after %d attempts: %s",
+                    _LOGGER.warning(
+                        "Failed to get state from %s after %d attempts: %s",
                         self._host,
                         MAX_RETRIES,
                         str(error),
                     )
-        return False
-
-    async def _get_state(self, attribute: str) -> bool | None:
-        """Get state from the device."""
-        try:
-            session = await self._get_session()
-            async with session.post(
-                f"http://{self._host}/main",
-                auth=aiohttp.BasicAuth(self._username, self._password),
-                timeout=10,
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                self._available = True
-                return data.get(attribute) == 1
-        except Exception as error:
-            self._available = False
-            _LOGGER.error(
-                "Failed to get state from %s: %s",
-                self._host,
-                error,
-            )
-            return None
+                    return None
+        return None
 
 class EveusStopChargingSwitch(BaseEveusSwitch):
     """Representation of Eveus charging control switch."""
@@ -236,7 +274,7 @@ class EveusResetCounterASwitch(BaseEveusSwitch):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Reset counter A."""
         if await self._send_command("rstEM1", 0):
-            self._is_on = False
+            self._is_on = False  # Always false as it's a momentary switch
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """No-op for reset switch."""
@@ -244,4 +282,4 @@ class EveusResetCounterASwitch(BaseEveusSwitch):
 
     async def async_update(self) -> None:
         """Update state."""
-        self._is_on = False
+        self._is_on = False  # Always false as it's a momentary switch
