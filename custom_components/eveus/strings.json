@@ -15,4 +15,12 @@
             }
         },
         "error": {
-            "cannot_connect": "Faile
+            "cannot_connect": "Failed to connect to charger",
+            "invalid_auth": "Invalid username or password",
+            "unknown": "Unexpected error occurred"
+        },
+        "abort": {
+            "already_configured": "Device is already configured"
+        }
+    }
+}
