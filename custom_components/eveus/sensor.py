@@ -398,18 +398,16 @@ class EveusPlugTemperatureSensor(EveusNumericSensor):
 
 class EveusSystemTimeSensor(BaseEveusSensor):
     """System time sensor."""
-    _key = ATTR_SYSTEM_TIME
+    _attr_name = "System Time"
     _attr_icon = "mdi:clock-outline"
-    name = "System Time"
 
     @property
     def native_value(self) -> str:
         """Return formatted system time."""
         try:
-            timestamp = int(self._updater.data.get(self._key, 0))
-            dt = datetime.fromtimestamp(timestamp)
-            return dt.strftime("%H:%M")
-        except (KeyError, TypeError, ValueError):
+            timestamp = int(self._updater.data.get(ATTR_SYSTEM_TIME, 0))
+            return datetime.fromtimestamp(timestamp).strftime("%H:%M")
+        except (TypeError, ValueError):
             return "unknown"
 
     @property
@@ -417,11 +415,11 @@ class EveusSystemTimeSensor(BaseEveusSensor):
         """Return additional attributes."""
         attrs = super().extra_state_attributes
         try:
-            timestamp = int(self._updater.data.get(self._key, 0))
+            timestamp = int(self._updater.data.get(ATTR_SYSTEM_TIME, 0))
             dt = datetime.fromtimestamp(timestamp)
             attrs["full_date"] = dt.strftime("%Y-%m-%d %H:%M:%S")
             attrs["raw_timestamp"] = timestamp
-        except (KeyError, TypeError, ValueError):
+        except (TypeError, ValueError):
             pass
         return attrs
 
