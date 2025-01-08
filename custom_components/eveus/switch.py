@@ -49,9 +49,11 @@ async def async_setup_entry(
     # Initialize entities dict if needed
     if "entities" not in hass.data[DOMAIN][entry.entry_id]:
         hass.data[DOMAIN][entry.entry_id]["entities"] = {}
-    
-    # Store switch references
-    hass.data[DOMAIN][entry.entry_id]["entities"]["switches"] = switches
+        
+    # Store switch references as dict
+    hass.data[DOMAIN][entry.entry_id]["entities"]["switch"] = {
+        switch.unique_id: switch for switch in switches
+    }
 
     async_add_entities(switches)
 
@@ -74,8 +76,6 @@ class BaseEveusSwitch(SwitchEntity):
         self._state_data = {}
         self._error_count = 0
         self._max_errors = 3
-        
-        # Add entity registry configuration
         self._attr_entity_registry_enabled_default = True
         self._attr_entity_registry_visible_default = True
 
@@ -102,32 +102,14 @@ class BaseEveusSwitch(SwitchEntity):
             "name": "Eveus EV Charger",
             "manufacturer": "Eveus",
             "model": f"Eveus ({self._host})",
-            "hw_version": self._state_data.get("verHW", "Unknown"),
-            "sw_version": self._state_data.get("verFWMain", "Unknown"),
-        }
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
-        return {
-            "last_update": self._last_update,
-            "last_command": self._last_command_time,
-            "error_count": self._error_count,
         }
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create client session with proper configuration."""
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=10, connect=5)
-            connector = aiohttp.TCPConnector(
-                limit=1, 
-                force_close=True,
-                enable_cleanup_closed=True
-            )
-            self._session = aiohttp.ClientSession(
-                timeout=timeout,
-                connector=connector
-            )
+            connector = aiohttp.TCPConnector(limit=1, force_close=True)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
 
     async def _send_command(self, command: str, value: int) -> bool:
@@ -149,12 +131,11 @@ class BaseEveusSwitch(SwitchEntity):
                     ) as response:
                         response.raise_for_status()
                         
-                        # Get response text instead of trying to parse JSON
-                        response_text = await response.text()
-                        if "error" in response_text.lower():
-                            raise ValueError(f"Error in response: {response_text}")
+                        # No need to parse JSON, just check if response is OK
+                        if response.status != 200:
+                            raise ValueError(f"Invalid response status: {response.status}")
 
-                        # Verify command success
+                        # Verify command success via main endpoint
                         async with session.post(
                             f"http://{self._host}/main",
                             auth=aiohttp.BasicAuth(self._username, self._password),
@@ -168,17 +149,25 @@ class BaseEveusSwitch(SwitchEntity):
                         self._available = True
                         self._last_command_time = current_time
                         self._error_count = 0
-                        _LOGGER.debug(
-                            "Successfully sent command %s=%s to %s",
-                            command,
-                            value,
-                            self._host,
-                        )
                         return True
 
+                except aiohttp.ClientError as err:
+                    if "Connection reset by peer" in str(err) or "Server disconnected" in str(err):
+                        if attempt + 1 < MAX_RETRIES:
+                            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
+                            continue
+                    raise
+
                 except Exception as error:
-                    await self._handle_command_error(error, attempt)
                     if attempt + 1 >= MAX_RETRIES:
+                        self._error_count += 1
+                        self._available = False if self._error_count >= self._max_errors else True
+                        _LOGGER.error(
+                            "Failed to send command after %d attempts to %s: %s",
+                            MAX_RETRIES,
+                            self._host,
+                            str(error),
+                        )
                         return False
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
 
@@ -189,7 +178,6 @@ class BaseEveusSwitch(SwitchEntity):
         if not isinstance(response_data, dict):
             return False
 
-        # Add specific validation logic based on command type
         try:
             if command == "evseEnabled":
                 return response_data.get("evseEnabled") == value
@@ -197,7 +185,6 @@ class BaseEveusSwitch(SwitchEntity):
                 return response_data.get("oneCharge") == value
             elif command == "rstEM1":
                 return True  # Reset commands don't have a specific response to validate
-            
         except Exception as err:
             _LOGGER.debug("Validation error for command %s: %s", command, str(err))
             return False
@@ -221,33 +208,26 @@ class BaseEveusSwitch(SwitchEntity):
                     ) as response:
                         response.raise_for_status()
                         self._state_data = await response.json()
-                        self._validate_state_data()
                         self._available = True
                         self._error_count = 0
                         self._last_update = current_time
                         return
 
                 except aiohttp.ClientError as err:
-                    if "Connection reset by peer" in str(err):
+                    if "Connection reset by peer" in str(err) or "Server disconnected" in str(err):
                         if attempt + 1 < MAX_RETRIES:
-                            await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
                             continue
                     self._error_count += 1
                     self._available = False if self._error_count >= self._max_errors else True
                     _LOGGER.error("Error updating state for %s: %s", self.name, str(err))
+                    break
 
                 except Exception as err:
                     self._error_count += 1
                     self._available = False if self._error_count >= self._max_errors else True
                     _LOGGER.error("Unexpected error updating state for %s: %s", self.name, str(err))
                     break
-                
-    def _validate_state_data(self) -> None:
-        """Validate received state data."""
-        required_fields = ["state", "evseEnabled", "oneCharge"]
-        for field in required_fields:
-            if field not in self._state_data:
-                raise ValueError(f"Missing required field: {field}")
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up resources when entity is removed."""
