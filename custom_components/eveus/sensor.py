@@ -8,12 +8,15 @@ from typing import Any
 
 import aiohttp
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity import EntityCategory, DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util import dt as dt_util
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -650,37 +653,71 @@ async def async_setup_entry(
         hass=hass,
     )
 
-    entities = [
+    # Create all sensor entities
+    sensors = [
+        # Basic measurements
         EveusVoltageSensor(updater),
         EveusCurrentSensor(updater),
         EveusPowerSensor(updater),
+        EveusCurrentSetSensor(updater),
         EveusSessionEnergySensor(updater),
         EveusTotalEnergySensor(updater),
+        
+        # Diagnostic sensors
         EveusStateSensor(updater),
         EveusSubstateSensor(updater),
         EveusEnabledSensor(updater),
         EveusGroundSensor(updater),
+        
+        # Temperature sensors
         EveusBoxTemperatureSensor(updater),
         EveusPlugTemperatureSensor(updater),
+        EveusBatteryVoltageSensor(updater),
+        
+        # Time and session sensors
+        EveusSystemTimeSensor(updater),
         EveusSessionTimeSensor(updater),
+        
+        # Energy and cost counters
         EveusCounterAEnergySensor(updater),
         EveusCounterBEnergySensor(updater),
         EveusCounterACostSensor(updater),
         EveusCounterBCostSensor(updater),
+        
+        # EV-specific sensors
         EVSocKwhSensor(updater),
         EVSocPercentSensor(updater),
         TimeToTargetSocSensor(updater),
     ]
 
-    # Set visibility and enabled defaults
-    for entity in entities:
-        entity._attr_entity_registry_enabled_default = True
-        entity._attr_entity_registry_visible_default = True
-        entity._attr_has_entity_name = True
+    # Configure each sensor
+    for sensor in sensors:
+        # Basic configuration
+        sensor._attr_has_entity_name = True
+        sensor._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.data[CONF_HOST])},
+            name="Eveus EV Charger",
+            manufacturer="Eveus",
+            model=f"Eveus ({entry.data[CONF_HOST]})",
+            sw_version=updater.data.get("verFWMain", "Unknown"),
+            hw_version=updater.data.get("verHW", "Unknown"),
+        )
+        
+        # Set visibility and enabled state
+        sensor._attr_entity_registry_enabled_default = True
+        sensor._attr_entity_registry_visible_default = True
 
-    async_add_entities(entities)
+        # Set diagnostic category for appropriate sensors
+        if any(isinstance(sensor, cls) for cls in [
+            EveusStateSensor, EveusSubstateSensor, EveusEnabledSensor,
+            EveusGroundSensor, EveusSystemTimeSensor
+        ]):
+            sensor._attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    # Store references
-    hass.data[DOMAIN][entry.entry_id]["entities"] = {
-        "sensor": entities
-    }
+    async_add_entities(sensors)
+    
+    # Store entities reference
+    hass.data[DOMAIN][entry.entry_id]["entities"] = sensors
+
+    # Start the update process
+    await updater.async_start_updates()
