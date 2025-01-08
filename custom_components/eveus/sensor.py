@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import time
+from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -12,11 +13,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory, DeviceInfo
+from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.util import dt as dt_util
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
