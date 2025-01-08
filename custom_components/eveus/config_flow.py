@@ -68,15 +68,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                 if missing_fields:
                     _LOGGER.error("Missing required fields in response: %s", missing_fields)
                     raise CannotConnect
-
-                # Get firmware version if available
-                firmware = result.get("verFWMain", "Unknown")
-                hardware = result.get("verHW", "Unknown")
                 
                 return {
                     "title": f"Eveus Charger ({data[CONF_HOST]})",
-                    "firmware": firmware,
-                    "hardware": hardware,
                 }
 
         except aiohttp.ClientResponseError as err:
@@ -124,8 +118,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     title=info["title"],
                     data={
                         **user_input,
-                        "firmware_version": info.get("firmware", "Unknown"),
-                        "hardware_version": info.get("hardware", "Unknown"),
                     }
                 )
                 
