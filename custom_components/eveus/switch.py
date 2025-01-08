@@ -113,8 +113,15 @@ class BaseEveusSwitch(SwitchEntity):
         """Get or create client session with proper configuration."""
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=10, connect=5)
-            connector = aiohttp.TCPConnector(limit=1, force_close=True)
-            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+            connector = aiohttp.TCPConnector(
+                limit=1, 
+                force_close=True,
+                enable_cleanup_closed=True
+            )
+            self._session = aiohttp.ClientSession(
+                timeout=timeout,
+                connector=connector
+            )
         return self._session
 
     async def _send_command(self, command: str, value: int) -> bool:
@@ -204,7 +211,7 @@ class BaseEveusSwitch(SwitchEntity):
     async def async_update(self) -> None:
         """Update device state."""
         current_time = time.time()
-        if self._last_update is not None and current_time - self._last_update < MIN_UPDATE_INTERVAL:
+        if self._last_update and current_time - self._last_update < MIN_UPDATE_INTERVAL:
             return
 
         async with self._update_lock:
@@ -217,16 +224,20 @@ class BaseEveusSwitch(SwitchEntity):
                 ) as response:
                     response.raise_for_status()
                     self._state_data = await response.json()
-                    self._validate_state_data()
                     self._available = True
                     self._error_count = 0
                     self._last_update = current_time
 
-            except Exception as error:
+            except aiohttp.ClientError as error:
                 self._error_count += 1
                 self._available = False if self._error_count >= self._max_errors else True
                 _LOGGER.error("Error updating state for %s: %s", self.name, str(error))
 
+            except Exception as error:
+                self._error_count += 1
+                self._available = False if self._error_count >= self._max_errors else True
+                _LOGGER.error("Unexpected error updating state for %s: %s", self.name, str(error))
+                
     def _validate_state_data(self) -> None:
         """Validate received state data."""
         required_fields = ["state", "evseEnabled", "oneCharge"]
