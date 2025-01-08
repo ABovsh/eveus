@@ -206,9 +206,10 @@ class EveusCurrentNumber(RestoreNumber):
                         return
 
                 except aiohttp.ClientError as err:
-                    if "Connection reset by peer" in str(err) and attempt + 1 < MAX_RETRIES:
-                        await asyncio.sleep(RETRY_DELAY * (attempt + 1))
-                        continue
+                    if "Server disconnected" in str(err) or "Connection reset by peer" in str(err):
+                        if attempt + 1 < MAX_RETRIES:
+                            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))  # Exponential backoff
+                            continue
                     self._error_count += 1
                     self._attr_available = False if self._error_count >= self._max_errors else True
                     _LOGGER.error("Error updating charging current: %s", str(err))
