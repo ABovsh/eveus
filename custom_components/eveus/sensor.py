@@ -78,7 +78,7 @@ class EveusUpdater:
         self._session = None
         self._sensors = []
         self._update_task = None
-        self._last_update = time.time()
+        self._last_update_time = time.time()
         self._update_lock = asyncio.Lock()
         self._error_count = 0
         self._max_errors = 3
@@ -86,6 +86,21 @@ class EveusUpdater:
     def register_sensor(self, sensor: "BaseEveusSensor") -> None:
         """Register a sensor for updates."""
         self._sensors.append(sensor)
+
+    @property
+    def last_update(self) -> float:
+        """Return the last update timestamp."""
+        return self._last_update_time
+
+    @property
+    def data(self) -> dict:
+        """Return the latest data."""
+        return self._data
+
+    @property
+    def available(self) -> bool:
+        """Return if updater is available."""
+        return self._available
 
     async def async_start_updates(self) -> None:
         """Start the update loop."""
@@ -107,7 +122,9 @@ class EveusUpdater:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create client session."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=10, connect=5)
+            connector = aiohttp.TCPConnector(limit=1, force_close=True)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
 
     async def _update(self) -> None:
@@ -122,7 +139,7 @@ class EveusUpdater:
                 response.raise_for_status()
                 self._data = await response.json()
                 self._available = True
-                self._last_update = time.time()
+                self._last_update_time = time.time()
                 self._error_count = 0
                 
                 # Update all sensor states
@@ -142,16 +159,6 @@ class EveusUpdater:
             self._available = False if self._error_count >= self._max_errors else True
             _LOGGER.error("Error updating data: %s", str(err))
 
-    @property
-    def data(self) -> dict:
-        """Return the latest data."""
-        return self._data
-
-    @property
-    def available(self) -> bool:
-        """Return if updater is available."""
-        return self._available
-
     async def async_shutdown(self) -> None:
         """Shutdown the updater."""
         if self._update_task:
@@ -162,6 +169,8 @@ class EveusUpdater:
                 pass
         if self._session and not self._session.closed:
             await self._session.close()
+
+
 class BaseEveusSensor(SensorEntity, RestoreEntity):
     """Base implementation for all Eveus sensors."""
 
@@ -184,16 +193,11 @@ class BaseEveusSensor(SensorEntity, RestoreEntity):
                     self._previous_value = state.state
             except (TypeError, ValueError):
                 self._previous_value = state.state
-        await self._updater.start_updates()
+        await self._updater.async_start_updates()
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle removal of entity."""
         await self._updater.async_shutdown()
-
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        return self._updater.available
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
