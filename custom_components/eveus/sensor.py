@@ -245,7 +245,7 @@ class EveusEnergyBaseSensor(EveusNumericSensor):
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_suggested_display_precision = 2
+    _attr_suggested_display_precision = 1
 
 class EveusVoltageSensor(EveusNumericSensor):
     """Voltage sensor."""
@@ -253,7 +253,7 @@ class EveusVoltageSensor(EveusNumericSensor):
     _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:lightning-bolt"
-    _attr_suggested_display_precision = 1
+    _attr_suggested_display_precision = 0
     _key = ATTR_VOLTAGE
 
     def __init__(self, updater: EveusUpdater) -> None:
@@ -297,6 +297,7 @@ class EveusCurrentSetSensor(EveusNumericSensor):
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
     _attr_icon = "mdi:current-ac"
     _key = ATTR_CURRENT_SET
 
@@ -331,7 +332,7 @@ class EveusTotalEnergySensor(EveusEnergyBaseSensor):
 class EveusStateSensor(BaseEveusSensor):
     """Charging state sensor."""
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:ev-station"
+    _attr_icon = "mdi:information"
 
     def __init__(self, updater: EveusUpdater) -> None:
         """Initialize the sensor."""
@@ -414,7 +415,9 @@ class EveusBoxTemperatureSensor(EveusNumericSensor):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
     _attr_icon = "mdi:thermometer"
+    
     _key = ATTR_TEMPERATURE_BOX
 
     def __init__(self, updater: EveusUpdater) -> None:
@@ -428,6 +431,7 @@ class EveusPlugTemperatureSensor(EveusNumericSensor):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
     _attr_icon = "mdi:thermometer-high"
     _key = ATTR_TEMPERATURE_PLUG
 
@@ -461,6 +465,7 @@ class EveusSessionTimeSensor(BaseEveusSensor):
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
     _attr_icon = "mdi:timer"
 
     def __init__(self, updater: EveusUpdater) -> None:
@@ -504,6 +509,7 @@ class EveusSessionTimeSensor(BaseEveusSensor):
 class EveusCounterAEnergySensor(EveusEnergyBaseSensor):
     """Counter A energy sensor."""
     _key = ATTR_COUNTER_A_ENERGY
+    _attr_suggested_display_precision = 1
     _attr_icon = "mdi:counter"
 
     def __init__(self, updater: EveusUpdater) -> None:
@@ -515,6 +521,7 @@ class EveusCounterAEnergySensor(EveusEnergyBaseSensor):
 class EveusCounterBEnergySensor(EveusEnergyBaseSensor):
     """Counter B energy sensor."""
     _key = ATTR_COUNTER_B_ENERGY
+    _attr_suggested_display_precision = 1
     _attr_icon = "mdi:counter"
 
     def __init__(self, updater: EveusUpdater) -> None:
@@ -527,6 +534,7 @@ class EveusCounterACostSensor(EveusNumericSensor):
     """Counter A cost sensor."""
     _attr_native_unit_of_measurement = "₴"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 0
     _attr_icon = "mdi:currency-uah"
     _key = ATTR_COUNTER_A_COST
 
@@ -540,6 +548,7 @@ class EveusCounterBCostSensor(EveusNumericSensor):
     """Counter B cost sensor."""
     _attr_native_unit_of_measurement = "₴"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 0
     _attr_icon = "mdi:currency-uah"
     _key = ATTR_COUNTER_B_COST
 
@@ -568,7 +577,7 @@ class EVSocKwhSensor(BaseEveusSensor):
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:battery-charging"
-    _attr_suggested_display_precision = 2
+    _attr_suggested_display_precision = 0
     _attr_state_class = SensorStateClass.TOTAL
 
     def __init__(self, updater: EveusUpdater) -> None:
@@ -604,6 +613,8 @@ class EVSocPercentSensor(BaseEveusSensor):
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:battery-charging"
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+    
 
     def __init__(self, updater: EveusUpdater) -> None:
         """Initialize the sensor."""
