@@ -65,8 +65,11 @@ async def async_setup_entry(
     async_add_entities(entities)
 
     # Store references
-    hass.data[DOMAIN][entry.entry_id]["entities"] = {
-        "number": entities
+    if "entities" not in hass.data[DOMAIN][entry.entry_id]:
+        hass.data[DOMAIN][entry.entry_id]["entities"] = {}
+    # Store as dict with unique_id as key
+    hass.data[DOMAIN][entry.entry_id]["entities"]["number"] = {
+        entity.unique_id: entity for entity in entities
     }
 
 class EveusCurrentNumber(RestoreNumber):
