@@ -49,8 +49,8 @@ async def async_setup_entry(
     # Initialize entities dict if needed
     if "entities" not in hass.data[DOMAIN][entry.entry_id]:
         hass.data[DOMAIN][entry.entry_id]["entities"] = {}
-        
-    # Store switch references as dict
+
+    # Store switch references with unique_id as key
     hass.data[DOMAIN][entry.entry_id]["entities"]["switch"] = {
         switch.unique_id: switch for switch in switches
     }
