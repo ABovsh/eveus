@@ -514,33 +514,40 @@ class EveusSystemTimeSensor(BaseEveusSensor):
             pass
         return attrs
 
-class EveusSessionTimeSensor(EveusNumericSensor):
+class EveusSessionTimeSensor(BaseEveusSensor):
     """Session time sensor."""
     _attr_device_class = SensorDeviceClass.DURATION
-    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
-    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:timer"
-    _key = ATTR_SESSION_TIME
     name = "Session Time"
-
+    
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return formatted time as attribute."""
-        attrs = super().extra_state_attributes
+    def native_value(self) -> str:
+        """Return the formatted session time."""
         try:
-            seconds = int(self._updater.data[self._key])
+            seconds = int(self._updater.data.get(ATTR_SESSION_TIME, 0))
             days = seconds // 86400
             hours = (seconds % 86400) // 3600
             minutes = (seconds % 3600) // 60
-            
+
             if days > 0:
-                attrs["formatted_time"] = f"{days}d {hours:02d}h {minutes:02d}m"
+                return f"{days}d {hours:02d}h {minutes:02d}m"
             elif hours > 0:
-                attrs["formatted_time"] = f"{hours}h {minutes:02d}m"
+                return f"{hours}h {minutes:02d}m"
             else:
-                attrs["formatted_time"] = f"{minutes}m"
-        except (KeyError, TypeError, ValueError):
-            attrs["formatted_time"] = "unknown"
+                return f"{minutes}m"
+        except (TypeError, ValueError) as err:
+            _LOGGER.debug("Error formatting session time: %s", err)
+            return "0m"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        attrs = super().extra_state_attributes
+        try:
+            seconds = int(self._updater.data.get(ATTR_SESSION_TIME, 0))
+            attrs["raw_seconds"] = seconds
+        except (TypeError, ValueError):
+            attrs["raw_seconds"] = 0
         return attrs
 
 class EVSocKwhSensor(BaseEveusSensor):
