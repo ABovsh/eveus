@@ -54,7 +54,7 @@ async def async_setup_entry(
     async_add_entities(switches)
 
 class BaseEveusSwitch(SwitchEntity):
-    """Base class for Eveus switches with improved error handling."""
+    """Base class for Eveus switches."""
 
     def __init__(self, host: str, username: str, password: str) -> None:
         """Initialize the switch."""
@@ -68,10 +68,14 @@ class BaseEveusSwitch(SwitchEntity):
         self._command_lock = asyncio.Lock()
         self._update_lock = asyncio.Lock()
         self._last_command_time = 0
-        self._last_update = time.time()  # Initialize with current time
+        self._last_update = time.time()
         self._state_data = {}
         self._error_count = 0
         self._max_errors = 3
+        
+        # Add entity registry configuration
+        self._attr_entity_registry_enabled_default = True
+        self._attr_entity_registry_visible_default = True
 
     @property
     def unique_id(self) -> str:
