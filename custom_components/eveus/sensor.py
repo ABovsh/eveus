@@ -3,6 +3,7 @@
 """Support for Eveus sensors."""
 from __future__ import annotations
 
+import time
 import logging
 import asyncio
 import aiohttp
