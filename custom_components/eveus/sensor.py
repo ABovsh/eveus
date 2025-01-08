@@ -645,7 +645,9 @@ async def async_setup_entry(
         hass=hass,
     )
 
-    entities = [
+    entities = []
+
+    for sensor_class in [
         EveusVoltageSensor(updater),
         EveusCurrentSensor(updater),
         EveusPowerSensor(updater),
@@ -668,7 +670,15 @@ async def async_setup_entry(
         EVSocKwhSensor(updater),
         EVSocPercentSensor(updater),
         TimeToTargetSocSensor(updater),
-    ]
-    
-    async_add_entities(entities)
-    _LOGGER.debug("Added %s Eveus entities", len(entities))
+    ]:
+        sensor = sensor_class(updater)
+        sensor._attr_entity_registry_enabled_default = True
+        sensor._attr_entity_registry_visible_default = True
+        entities.append(sensor)
+
+    async_add_entities(entities, True)  # Add True for update before adding
+
+    # Store references
+    if "entities" not in hass.data[DOMAIN][entry.entry_id]:
+        hass.data[DOMAIN][entry.entry_id]["entities"] = {}
+    hass.data[DOMAIN][entry.entry_id]["entities"]["sensor"] = entities
