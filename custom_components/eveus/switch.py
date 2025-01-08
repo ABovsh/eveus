@@ -46,10 +46,12 @@ async def async_setup_entry(
         EveusResetCounterASwitch(host, username, password),
     ]
 
-    # Store switch references for cleanup
+    # Initialize entities dict if needed
     if "entities" not in hass.data[DOMAIN][entry.entry_id]:
         hass.data[DOMAIN][entry.entry_id]["entities"] = {}
-    hass.data[DOMAIN][entry.entry_id]["entities"]["switch"] = switches
+    
+    # Store switch references
+    hass.data[DOMAIN][entry.entry_id]["entities"]["switches"] = switches
 
     async_add_entities(switches)
 
