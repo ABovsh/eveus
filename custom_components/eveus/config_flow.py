@@ -36,84 +36,111 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     }
 )
 
-"""Improved validation for config flow."""
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
-    # Validate IP address format
-    ip_parts = data[CONF_HOST].split('.')
-    if len(ip_parts) != 4 or not all(
-        part.isdigit() and 0 <= int(part) <= 255 for part in ip_parts
-    ):
-        raise InvalidInput("Invalid IP address format")
-
-    # Set proper timeout and connection handling
-    timeout = aiohttp.ClientTimeout(total=10, connect=5)
-    connector = aiohttp.TCPConnector(limit=1, force_close=True)
-    
     try:
-        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-            # Test basic connectivity first
-            async with session.get(
-                f"http://{data[CONF_HOST]}",
-                timeout=5
-            ) as response:
-                if response.status == 404:
-                    # 404 is acceptable as it means the server is responding
-                    pass
-                elif response.status != 200:
-                    raise CannotConnect
-            
-            # Now test authentication
+        # Create session with timeout
+        session = aiohttp_client.async_get_clientsession(hass)
+        timeout = aiohttp.ClientTimeout(total=30)  # Increased timeout
+
+        # First try POST with auth to get device data
+        try:
             async with session.post(
                 f"http://{data[CONF_HOST]}/main",
                 auth=aiohttp.BasicAuth(data[CONF_USERNAME], data[CONF_PASSWORD]),
-                timeout=10
+                timeout=timeout,
             ) as response:
                 if response.status == 401:
+                    _LOGGER.error("Authentication failed - invalid credentials")
                     raise InvalidAuth
+                
                 response.raise_for_status()
+                result = await response.json()
+
+                # Basic validation of response
+                if not isinstance(result, dict):
+                    _LOGGER.error("Invalid response from device - not a JSON object")
+                    raise CannotConnect
                 
-                # Validate response data
-                try:
-                    response_data = await response.json()
-                    validate_device_data(response_data)
-                except ValueError as err:
-                    raise InvalidDeviceData(str(err))
-                
-                # Get device info for title
-                model = data[CONF_MODEL]
-                firmware = response_data.get("verFWMain", "Unknown")
+                # Verify we have required fields
+                required_fields = ["state", "currentSet", "evseEnabled"]
+                missing_fields = [field for field in required_fields if field not in result]
+                if missing_fields:
+                    _LOGGER.error("Missing required fields in response: %s", missing_fields)
+                    raise CannotConnect
                 
                 return {
-                    "title": f"Eveus {model} ({data[CONF_HOST]})",
-                    "firmware": firmware,
+                    "title": f"Eveus Charger ({data[CONF_HOST]})",
                 }
+
+        except aiohttp.ClientResponseError as err:
+            if err.status == 401:
+                _LOGGER.error("Authentication error: %s", str(err))
+                raise InvalidAuth from err
+            _LOGGER.error("HTTP error: %s", str(err))
+            raise CannotConnect from err
+            
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Connection error during auth: %s", str(err))
+            raise CannotConnect from err
+            
+        except ValueError as err:
+            _LOGGER.error("Data validation error: %s", str(err))
+            raise CannotConnect from err
+
+    except asyncio.TimeoutError as err:
+        _LOGGER.error("Timeout connecting to device at %s: %s", data[CONF_HOST], str(err))
+        raise CannotConnect from err
+        
+    except Exception as err:
+        _LOGGER.exception("Unexpected error during validation: %s", str(err))
+        raise CannotConnect from err
+
+class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Eveus."""
+
+    VERSION = 1
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the initial step."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            try:
+                # Check if already configured
+                self._async_abort_entries_match({CONF_HOST: user_input[CONF_HOST]})
                 
-    except aiohttp.ClientResponseError as error:
-        if error.status == 401:
-            raise InvalidAuth from error
-        raise CannotConnect from error
-    except (aiohttp.ClientError, TimeoutError) as error:
-        raise CannotConnect from error
-    finally:
-        if connector and not connector.closed:
-            await connector.close()
+                info = await validate_input(self.hass, user_input)
+                
+                return self.async_create_entry(
+                    title=info["title"],
+                    data={
+                        **user_input,
+                    }
+                )
+                
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+                
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+                
+            except Exception as err:
+                _LOGGER.exception("Unexpected exception: %s", err)
+                errors["base"] = "unknown"
 
-def validate_device_data(data: dict) -> None:
-    """Validate device response data."""
-    required_fields = ["state", "currentSet", "evseEnabled"]
-    for field in required_fields:
-        if field not in data:
-            raise ValueError(f"Missing required field: {field}")
+        return self.async_show_form(
+            step_id="user",
+            data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
 
-    # Validate device type if available
-    if "typeEvse" in data:
-        evse_type = data["typeEvse"]
-        if not isinstance(evse_type, (int, float)) or evse_type not in [1, 2]:
-            raise ValueError(f"Invalid EVSE type: {evse_type}")
 
-class InvalidDeviceData(HomeAssistantError):
-    """Error to indicate invalid device data."""
+class CannotConnect(HomeAssistantError):
+    """Error to indicate we cannot connect."""
 
-class InvalidInput(HomeAssistantError):
-    """Error to indicate invalid user input."""
+
+class InvalidAuth(HomeAssistantError):
+    """Error to indicate there is invalid auth."""
