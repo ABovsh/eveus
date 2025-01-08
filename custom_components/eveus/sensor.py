@@ -62,6 +62,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+"""Improved implementation for EveusUpdater class."""
 class EveusUpdater:
     """Class to handle Eveus data updates with improved error handling."""
 
@@ -77,150 +78,107 @@ class EveusUpdater:
         self._sensors = []
         self._session = None
         self._last_update = None
+        self._update_lock = asyncio.Lock()  # Add lock for updates
         self._consecutive_errors = 0
         self._max_consecutive_errors = 3
         self._retry_backoff = 1
         self._max_retry_backoff = 300
+        self._min_update_interval = 5  # Minimum seconds between updates
+        self._last_successful_update = 0
         _LOGGER.debug("Initialized updater for host: %s", host)
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create client session."""
+        """Get or create client session with proper timeout and limits."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=10, connect=5)
+            connector = aiohttp.TCPConnector(limit=1, force_close=True)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
-
-    async def start_updates(self) -> None:
-        """Start the update loop."""
-        if self._update_task:
-            return
-
-        async def update_loop() -> None:
-            """Handle updates with improved error handling."""
-            try:
-                while True:
-                    try:
-                        await self._update()
-                        self._last_update = dt_util.utcnow()
-                        for sensor in self._sensors:
-                            try:
-                                sensor.async_write_ha_state()
-                            except Exception as sensor_err:
-                                _LOGGER.error(
-                                    "Error updating sensor state for %s: %s",
-                                    getattr(sensor, 'name', 'unknown'),
-                                    str(sensor_err),
-                                    exc_info=True
-                                )
-                    except Exception as update_err:
-                        self._available = False
-                        if str(update_err):
-                            _LOGGER.error(
-                                "Error updating Eveus data: %s",
-                                str(update_err),
-                                exc_info=True
-                            )
-                        else:
-                            _LOGGER.error(
-                                "Unknown error updating Eveus data",
-                                exc_info=True
-                            )
-                    await asyncio.sleep(SCAN_INTERVAL.total_seconds())
-            except asyncio.CancelledError:
-                _LOGGER.debug("Update loop cancelled for %s", self._host)
-            except Exception as err:
-                _LOGGER.error(
-                    "Fatal error in update loop for %s: %s",
-                    self._host,
-                    str(err) if str(err) else "Unknown error",
-                    exc_info=True
-                )
-            finally:
-                if self._session and not self._session.closed:
-                    await self._session.close()
-                    self._session = None
-
-        self._update_task = self._hass.loop.create_task(update_loop())
-        _LOGGER.debug("Started update loop for %s", self._host)
 
     async def _update(self) -> None:
         """Update the data with comprehensive error handling."""
-        try:
-            session = await self._get_session()
-            async with session.post(
-                f"http://{self._host}/main",
-                auth=aiohttp.BasicAuth(self._username, self._password),
-                timeout=10
-            ) as response:
-                response.raise_for_status()
+        current_time = time.time()
+        if current_time - self._last_successful_update < self._min_update_interval:
+            return
+
+        async with self._update_lock:  # Prevent concurrent updates
+            try:
+                session = await self._get_session()
+                async with session.post(
+                    f"http://{self._host}/main",
+                    auth=aiohttp.BasicAuth(self._username, self._password),
+                    timeout=10
+                ) as response:
+                    response.raise_for_status()
+                    try:
+                        self._data = await response.json()
+                        self._validate_data()  # Add data validation
+                        
+                        self._available = True
+                        self._consecutive_errors = 0
+                        self._retry_backoff = 1
+                        self._last_successful_update = current_time
+                        _LOGGER.debug(
+                            "Updated data for %s: State=%s, Power=%sW", 
+                            self._host,
+                            self._data.get("state"), 
+                            self._data.get("powerMeas")
+                        )
+                    except aiohttp.ContentTypeError as json_err:
+                        response_text = await response.text()
+                        raise ValueError(f"Invalid JSON response: {str(json_err)}. Text: {response_text[:200]}...")
+
+            except Exception as err:
+                self._handle_error(err)
+                raise
+
+    def _validate_data(self) -> None:
+        """Validate received data structure."""
+        required_fields = ["state", "powerMeas", "currentSet", "voltMeas1"]
+        for field in required_fields:
+            if field not in self._data:
+                _LOGGER.warning("Missing required field %s in response from %s", field, self._host)
+
+        # Validate numeric fields
+        numeric_fields = {
+            "powerMeas": (0, 10000),  # 0-10kW
+            "currentSet": (0, 32),    # 0-32A
+            "voltMeas1": (180, 260),  # 180-260V
+        }
+
+        for field, (min_val, max_val) in numeric_fields.items():
+            value = self._data.get(field)
+            if value is not None:
                 try:
-                    self._data = await response.json()
-                except aiohttp.ContentTypeError as json_err:
-                    # Handle invalid JSON response
-                    response_text = await response.text()
-                    raise ValueError(
-                        f"Invalid JSON response from device: {str(json_err)}. "
-                        f"Response text: {response_text[:200]}..."
-                    ) from json_err
-                
-                self._available = True
-                self._consecutive_errors = 0
-                self._retry_backoff = 1
-                _LOGGER.debug(
-                    "Updated data for %s: State=%s, Power=%sW", 
-                    self._host,
-                    self._data.get("state"), 
-                    self._data.get("powerMeas")
-                )
+                    num_value = float(value)
+                    if not min_val <= num_value <= max_val:
+                        _LOGGER.warning(
+                            "Field %s value %f outside expected range [%f, %f] for %s",
+                            field, num_value, min_val, max_val, self._host
+                        )
+                except (TypeError, ValueError):
+                    _LOGGER.warning("Invalid numeric value for field %s: %s", field, value)
 
-        except aiohttp.ClientConnectorError as conn_err:
-            self._handle_connection_error("Connection error", conn_err)
-            raise
-
-        except aiohttp.ClientResponseError as resp_err:
-            self._handle_connection_error(
-                f"HTTP error {resp_err.status}", 
-                resp_err
-            )
-            raise
-
-        except asyncio.TimeoutError as timeout_err:
-            self._handle_connection_error("Timeout error", timeout_err)
-            raise
-
-        except Exception as err:
-            self._consecutive_errors += 1
-            self._available = False
-            error_message = str(err) if str(err) else "Unknown error"
-            _LOGGER.error(
-                "Unexpected error updating data for %s: %s",
-                self._host,
-                error_message,
-                exc_info=True
-            )
-            raise
-
-    def _handle_connection_error(self, error_type: str, error: Exception) -> None:
-        """Handle connection errors with proper logging and retry logic."""
+    def _handle_error(self, error: Exception) -> None:
+        """Handle errors with proper logging and retry logic."""
         self._consecutive_errors += 1
         self._available = False
         
         retry_delay = min(self._retry_backoff * 2, self._max_retry_backoff)
         self._retry_backoff = retry_delay
 
-        error_message = str(error) if str(error) else "No details available"
+        error_message = str(error) if str(error) else "Unknown error"
         
         if self._consecutive_errors >= self._max_consecutive_errors:
             _LOGGER.error(
-                "%s for %s: %s. Multiple consecutive errors detected.",
-                error_type,
+                "Multiple consecutive errors for %s: %s",
                 self._host,
                 error_message,
                 exc_info=True
             )
         else:
             _LOGGER.warning(
-                "%s for %s: %s. Will retry in %d seconds.",
-                error_type,
+                "Error updating %s: %s. Will retry in %d seconds.",
                 self._host,
                 error_message,
                 retry_delay
