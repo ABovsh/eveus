@@ -1,11 +1,9 @@
-# File: custom_components/eveus/strings.json
-
 {
     "config": {
         "step": {
             "user": {
                 "title": "Connect to Eveus Charger",
-                "description": "Set up your Eveus charger connection.",
+                "description": "Enter your Eveus charger connection details.",
                 "data": {
                     "host": "IP Address",
                     "username": "Username",
@@ -15,12 +13,12 @@
             }
         },
         "error": {
-            "cannot_connect": "Failed to connect to charger",
-            "invalid_auth": "Invalid username or password",
-            "unknown": "Unexpected error occurred"
+            "cannot_connect": "Failed to connect to the charger. Please verify the IP address and ensure the device is online.",
+            "invalid_auth": "Invalid username or password. Please verify your credentials.",
+            "unknown": "An unexpected error occurred. Please check the logs."
         },
         "abort": {
-            "already_configured": "Device is already configured"
+            "already_configured": "This device is already configured"
         }
     }
 }
