@@ -83,6 +83,10 @@ class EveusUpdater:
         self._error_count = 0
         self._max_errors = 3
 
+    def register_sensor(self, sensor: "BaseEveusSensor") -> None:
+        """Register a sensor for updates."""
+        self._sensors.append(sensor)
+
     async def async_start_updates(self) -> None:
         """Start the update loop."""
         if self._update_task is None:
@@ -166,15 +170,6 @@ class BaseEveusSensor(SensorEntity, RestoreEntity):
         self._updater = updater
         self._updater.register_sensor(self)
         self._attr_has_entity_name = True
-        self._attr_should_poll = False
-        self._attr_unique_id = f"{updater._host}_{self.name}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, updater._host)},
-            "name": "Eveus EV Charger",
-            "manufacturer": "Eveus",
-            "model": f"Eveus ({updater._host})",
-            "sw_version": updater.data.get("verFWMain", "Unknown"),
-        }
         self._previous_value = None
 
     async def async_added_to_hass(self) -> None:
