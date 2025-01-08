@@ -1,14 +1,12 @@
-# File: custom_components/eveus/sensor.py
-
 """Support for Eveus sensors."""
 from __future__ import annotations
 
-import time
 import logging
 import asyncio
-import aiohttp
-from datetime import datetime
+import time
 from typing import Any
+
+import aiohttp
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -32,7 +30,6 @@ from homeassistant.const import (
     CONF_USERNAME,
     CONF_PASSWORD,
 )
-from homeassistant.helpers.typing import StateType
 
 from .const import (
     DOMAIN,
@@ -235,23 +232,31 @@ class EveusEnergyBaseSensor(EveusNumericSensor):
 
 class EveusVoltageSensor(EveusNumericSensor):
     """Voltage sensor."""
-    _attr_device_class = SensorDeviceClass.VOLTAGE
-    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:lightning-bolt"
-    _attr_suggested_display_precision = 1
-    _key = ATTR_VOLTAGE
-    name = "Voltage"
+    def __init__(self, updater: EveusUpdater) -> None:
+        """Initialize the sensor."""
+        super().__init__(updater)
+        self._attr_device_class = SensorDeviceClass.VOLTAGE
+        self._attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_suggested_display_precision = 1
+        self._attr_icon = "mdi:lightning-bolt"
+        self._attr_name = "Voltage"
+        self._attr_unique_id = f"{updater._host}_voltage"
+        self._key = ATTR_VOLTAGE
 
 class EveusCurrentSensor(EveusNumericSensor):
     """Current sensor."""
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:current-ac"
-    _attr_suggested_display_precision = 1
-    _key = ATTR_CURRENT
-    name = "Current"
+    def __init__(self, updater: EveusUpdater) -> None:
+        """Initialize the sensor."""
+        super().__init__(updater)
+        self._attr_device_class = SensorDeviceClass.CURRENT
+        self._attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_suggested_display_precision = 1
+        self._attr_icon = "mdi:current-ac"
+        self._attr_name = "Current"
+        self._attr_unique_id = f"{updater._host}_current"
+        self._key = ATTR_CURRENT
 
 class EveusPowerSensor(EveusNumericSensor):
     """Power sensor."""
@@ -645,13 +650,10 @@ async def async_setup_entry(
         hass=hass,
     )
 
-    entities = []
-
-    for sensor_class in [
+    entities = [
         EveusVoltageSensor(updater),
         EveusCurrentSensor(updater),
         EveusPowerSensor(updater),
-        EveusCurrentSetSensor(updater),
         EveusSessionEnergySensor(updater),
         EveusTotalEnergySensor(updater),
         EveusStateSensor(updater),
@@ -660,25 +662,25 @@ async def async_setup_entry(
         EveusGroundSensor(updater),
         EveusBoxTemperatureSensor(updater),
         EveusPlugTemperatureSensor(updater),
-        EveusSystemTimeSensor(updater),
         EveusSessionTimeSensor(updater),
         EveusCounterAEnergySensor(updater),
         EveusCounterBEnergySensor(updater),
         EveusCounterACostSensor(updater),
         EveusCounterBCostSensor(updater),
-        EveusBatteryVoltageSensor(updater),
         EVSocKwhSensor(updater),
         EVSocPercentSensor(updater),
         TimeToTargetSocSensor(updater),
-    ]:
-        sensor = sensor_class(updater)
-        sensor._attr_entity_registry_enabled_default = True
-        sensor._attr_entity_registry_visible_default = True
-        entities.append(sensor)
+    ]
 
-    async_add_entities(entities, True)  # Add True for update before adding
+    # Set visibility and enabled defaults
+    for entity in entities:
+        entity._attr_entity_registry_enabled_default = True
+        entity._attr_entity_registry_visible_default = True
+        entity._attr_has_entity_name = True
+
+    async_add_entities(entities)
 
     # Store references
-    if "entities" not in hass.data[DOMAIN][entry.entry_id]:
-        hass.data[DOMAIN][entry.entry_id]["entities"] = {}
-    hass.data[DOMAIN][entry.entry_id]["entities"]["sensor"] = entities
+    hass.data[DOMAIN][entry.entry_id]["entities"] = {
+        "sensor": entities
+    }
