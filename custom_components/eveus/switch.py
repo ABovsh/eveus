@@ -143,16 +143,21 @@ class BaseEveusSwitch(SwitchEntity):
                     ) as response:
                         response.raise_for_status()
                         
-                        # Validate response
-                        try:
-                            response_data = await response.json()
-                            if not self._validate_command_response(response_data, command, value):
-                                raise ValueError("Invalid command response")
-                        except Exception as validation_err:
-                            _LOGGER.warning(
-                                "Command validation failed: %s", str(validation_err)
-                            )
-                            raise
+                        # Get response text instead of trying to parse JSON
+                        response_text = await response.text()
+                        if "error" in response_text.lower():
+                            raise ValueError(f"Error in response: {response_text}")
+
+                        # Verify command success
+                        async with session.post(
+                            f"http://{self._host}/main",
+                            auth=aiohttp.BasicAuth(self._username, self._password),
+                            timeout=COMMAND_TIMEOUT,
+                        ) as verify_response:
+                            verify_response.raise_for_status()
+                            verify_data = await verify_response.json()
+                            if not self._validate_command_response(verify_data, command, value):
+                                raise ValueError("Command verification failed")
 
                         self._available = True
                         self._last_command_time = current_time
@@ -178,65 +183,58 @@ class BaseEveusSwitch(SwitchEntity):
         if not isinstance(response_data, dict):
             return False
 
-        if command == "evseEnabled":
-            return response_data.get("evseEnabled") == value
-        elif command == "oneCharge":
-            return response_data.get("oneCharge") == value
-        elif command == "rstEM1":
-            return True  # Reset commands don't have a specific response to validate
+        # Add specific validation logic based on command type
+        try:
+            if command == "evseEnabled":
+                return response_data.get("evseEnabled") == value
+            elif command == "oneCharge":
+                return response_data.get("oneCharge") == value
+            elif command == "rstEM1":
+                return True  # Reset commands don't have a specific response to validate
+            
+        except Exception as err:
+            _LOGGER.debug("Validation error for command %s: %s", command, str(err))
+            return False
 
         return False
 
-    async def _handle_command_error(self, error: Exception, attempt: int) -> None:
-        """Handle command errors with proper logging."""
-        self._error_count += 1
-        error_message = str(error) if str(error) else "Unknown error"
-        
-        if attempt + 1 < MAX_RETRIES:
-            _LOGGER.debug(
-                "Attempt %d: Failed to send command to %s: %s",
-                attempt + 1,
-                self._host,
-                error_message,
-            )
-        else:
-            self._available = False if self._error_count >= self._max_errors else True
-            _LOGGER.error(
-                "Failed to send command after %d attempts to %s: %s",
-                MAX_RETRIES,
-                self._host,
-                error_message,
-            )
-
     async def async_update(self) -> None:
-        """Update device state."""
+        """Update device state with retries."""
         current_time = time.time()
         if self._last_update and current_time - self._last_update < MIN_UPDATE_INTERVAL:
             return
 
         async with self._update_lock:
-            try:
-                session = await self._get_session()
-                async with session.post(
-                    f"http://{self._host}/main",
-                    auth=aiohttp.BasicAuth(self._username, self._password),
-                    timeout=UPDATE_TIMEOUT,
-                ) as response:
-                    response.raise_for_status()
-                    self._state_data = await response.json()
-                    self._available = True
-                    self._error_count = 0
-                    self._last_update = current_time
+            for attempt in range(MAX_RETRIES):
+                try:
+                    session = await self._get_session()
+                    async with session.post(
+                        f"http://{self._host}/main",
+                        auth=aiohttp.BasicAuth(self._username, self._password),
+                        timeout=UPDATE_TIMEOUT,
+                    ) as response:
+                        response.raise_for_status()
+                        self._state_data = await response.json()
+                        self._validate_state_data()
+                        self._available = True
+                        self._error_count = 0
+                        self._last_update = current_time
+                        return
 
-            except aiohttp.ClientError as error:
-                self._error_count += 1
-                self._available = False if self._error_count >= self._max_errors else True
-                _LOGGER.error("Error updating state for %s: %s", self.name, str(error))
+                except aiohttp.ClientError as err:
+                    if "Connection reset by peer" in str(err):
+                        if attempt + 1 < MAX_RETRIES:
+                            await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                            continue
+                    self._error_count += 1
+                    self._available = False if self._error_count >= self._max_errors else True
+                    _LOGGER.error("Error updating state for %s: %s", self.name, str(err))
 
-            except Exception as error:
-                self._error_count += 1
-                self._available = False if self._error_count >= self._max_errors else True
-                _LOGGER.error("Unexpected error updating state for %s: %s", self.name, str(error))
+                except Exception as err:
+                    self._error_count += 1
+                    self._available = False if self._error_count >= self._max_errors else True
+                    _LOGGER.error("Unexpected error updating state for %s: %s", self.name, str(err))
+                    break
                 
     def _validate_state_data(self) -> None:
         """Validate received state data."""
