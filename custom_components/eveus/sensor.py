@@ -62,8 +62,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# In sensor.py, update the EveusUpdater class:
-
 class EveusUpdater:
     """Class to handle Eveus data updates with improved error handling."""
 
@@ -84,6 +82,12 @@ class EveusUpdater:
         self._retry_backoff = 1
         self._max_retry_backoff = 300
         _LOGGER.debug("Initialized updater for host: %s", host)
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create client session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
     async def start_updates(self) -> None:
         """Start the update loop."""
@@ -109,7 +113,7 @@ class EveusUpdater:
                                 )
                     except Exception as update_err:
                         self._available = False
-                        if str(update_err):  # Check if error message is not empty
+                        if str(update_err):
                             _LOGGER.error(
                                 "Error updating Eveus data: %s",
                                 str(update_err),
