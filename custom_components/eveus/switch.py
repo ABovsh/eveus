@@ -68,7 +68,7 @@ class BaseEveusSwitch(SwitchEntity):
         self._command_lock = asyncio.Lock()
         self._update_lock = asyncio.Lock()
         self._last_command_time = 0
-        self._last_update = None
+        self._last_update = time.time()  # Initialize with current time
         self._state_data = {}
         self._error_count = 0
         self._max_errors = 3
@@ -204,7 +204,7 @@ class BaseEveusSwitch(SwitchEntity):
     async def async_update(self) -> None:
         """Update device state."""
         current_time = time.time()
-        if current_time - self._last_update < MIN_UPDATE_INTERVAL:
+        if self._last_update is not None and current_time - self._last_update < MIN_UPDATE_INTERVAL:
             return
 
         async with self._update_lock:
@@ -225,7 +225,7 @@ class BaseEveusSwitch(SwitchEntity):
             except Exception as error:
                 self._error_count += 1
                 self._available = False if self._error_count >= self._max_errors else True
-                _LOGGER.error("Error updating state: %s", str(error))
+                _LOGGER.error("Error updating state for %s: %s", self.name, str(error))
 
     def _validate_state_data(self) -> None:
         """Validate received state data."""
