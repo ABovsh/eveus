@@ -62,15 +62,16 @@ async def async_setup_entry(
         entity._attr_entity_registry_visible_default = True
         entity._attr_has_entity_name = True
 
-    async_add_entities(entities)
-
-    # Store references
+    # Initialize entities dict if needed
     if "entities" not in hass.data[DOMAIN][entry.entry_id]:
         hass.data[DOMAIN][entry.entry_id]["entities"] = {}
+
     # Store as dict with unique_id as key
     hass.data[DOMAIN][entry.entry_id]["entities"]["number"] = {
         entity.unique_id: entity for entity in entities
     }
+    
+    async_add_entities(entities)
 
 class EveusCurrentNumber(RestoreNumber):
     """Representation of Eveus current control."""
