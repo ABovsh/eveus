@@ -64,7 +64,7 @@ _LOGGER = logging.getLogger(__name__)
 
 """Improved implementation for EveusUpdater class."""
 class EveusUpdater:
-    """Class to handle Eveus data updates with improved error handling."""
+    """Class to handle Eveus data updates."""
 
     def __init__(self, host: str, username: str, password: str, hass: HomeAssistant) -> None:
         """Initialize the updater."""
@@ -74,130 +74,71 @@ class EveusUpdater:
         self._hass = hass
         self._data = {}
         self._available = True
-        self._update_task = None
-        self._sensors = []
         self._session = None
-        self._last_update = None
-        self._update_lock = asyncio.Lock()  # Add lock for updates
-        self._consecutive_errors = 0
-        self._max_consecutive_errors = 3
-        self._retry_backoff = 1
-        self._max_retry_backoff = 300
-        self._min_update_interval = 5  # Minimum seconds between updates
-        self._last_successful_update = 0
-        _LOGGER.debug("Initialized updater for host: %s", host)
+        self._sensors = []
+        self._update_task = None
+        self._last_update = time.time()
+        self._update_lock = asyncio.Lock()
+        self._error_count = 0
+        self._max_errors = 3
+
+    async def async_start_updates(self) -> None:
+        """Start the update loop."""
+        if self._update_task is None:
+            self._update_task = asyncio.create_task(self._update_loop())
+
+    async def _update_loop(self) -> None:
+        """Handle updates with improved error handling."""
+        while True:
+            try:
+                await self._update()
+                await asyncio.sleep(SCAN_INTERVAL.total_seconds())
+            except asyncio.CancelledError:
+                break
+            except Exception as err:
+                _LOGGER.error("Error in update loop: %s", str(err))
+                await asyncio.sleep(SCAN_INTERVAL.total_seconds())
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create client session with proper timeout and limits."""
+        """Get or create client session."""
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=10, connect=5)
-            connector = aiohttp.TCPConnector(limit=1, force_close=True)
-            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+            self._session = aiohttp.ClientSession()
         return self._session
 
     async def _update(self) -> None:
-        """Update the data with comprehensive error handling."""
-        current_time = time.time()
-        if current_time - self._last_successful_update < self._min_update_interval:
-            return
+        """Update the data."""
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"http://{self._host}/main",
+                auth=aiohttp.BasicAuth(self._username, self._password),
+                timeout=10
+            ) as response:
+                response.raise_for_status()
+                self._data = await response.json()
+                self._available = True
+                self._last_update = time.time()
+                self._error_count = 0
+                
+                # Update all sensor states
+                for sensor in self._sensors:
+                    if hasattr(sensor, 'async_write_ha_state'):
+                        try:
+                            sensor.async_write_ha_state()
+                        except Exception as sensor_err:
+                            _LOGGER.error(
+                                "Error updating sensor %s: %s",
+                                getattr(sensor, 'name', 'unknown'),
+                                str(sensor_err)
+                            )
 
-        async with self._update_lock:  # Prevent concurrent updates
-            try:
-                session = await self._get_session()
-                async with session.post(
-                    f"http://{self._host}/main",
-                    auth=aiohttp.BasicAuth(self._username, self._password),
-                    timeout=10
-                ) as response:
-                    response.raise_for_status()
-                    try:
-                        self._data = await response.json()
-                        self._validate_data()  # Add data validation
-                        
-                        self._available = True
-                        self._consecutive_errors = 0
-                        self._retry_backoff = 1
-                        self._last_successful_update = current_time
-                        _LOGGER.debug(
-                            "Updated data for %s: State=%s, Power=%sW", 
-                            self._host,
-                            self._data.get("state"), 
-                            self._data.get("powerMeas")
-                        )
-                    except aiohttp.ContentTypeError as json_err:
-                        response_text = await response.text()
-                        raise ValueError(f"Invalid JSON response: {str(json_err)}. Text: {response_text[:200]}...")
-
-            except Exception as err:
-                self._handle_error(err)
-                raise
-
-    def _validate_data(self) -> None:
-        """Validate received data structure."""
-        required_fields = ["state", "powerMeas", "currentSet", "voltMeas1"]
-        for field in required_fields:
-            if field not in self._data:
-                _LOGGER.warning("Missing required field %s in response from %s", field, self._host)
-
-        # Validate numeric fields
-        numeric_fields = {
-            "powerMeas": (0, 10000),  # 0-10kW
-            "currentSet": (0, 32),    # 0-32A
-            "voltMeas1": (180, 260),  # 180-260V
-        }
-
-        for field, (min_val, max_val) in numeric_fields.items():
-            value = self._data.get(field)
-            if value is not None:
-                try:
-                    num_value = float(value)
-                    if not min_val <= num_value <= max_val:
-                        _LOGGER.warning(
-                            "Field %s value %f outside expected range [%f, %f] for %s",
-                            field, num_value, min_val, max_val, self._host
-                        )
-                except (TypeError, ValueError):
-                    _LOGGER.warning("Invalid numeric value for field %s: %s", field, value)
-
-    def _handle_error(self, error: Exception) -> None:
-        """Handle errors with proper logging and retry logic."""
-        self._consecutive_errors += 1
-        self._available = False
-        
-        retry_delay = min(self._retry_backoff * 2, self._max_retry_backoff)
-        self._retry_backoff = retry_delay
-
-        error_message = str(error) if str(error) else "Unknown error"
-        
-        if self._consecutive_errors >= self._max_consecutive_errors:
-            _LOGGER.error(
-                "Multiple consecutive errors for %s: %s",
-                self._host,
-                error_message,
-                exc_info=True
-            )
-        else:
-            _LOGGER.warning(
-                "Error updating %s: %s. Will retry in %d seconds.",
-                self._host,
-                error_message,
-                retry_delay
-            )
-
-    def register_sensor(self, sensor: "BaseEveusSensor") -> None:
-        """Register a sensor for updates."""
-        self._sensors.append(sensor)
-
-    async def async_shutdown(self) -> None:
-        """Shutdown the updater."""
-        if self._update_task:
-            self._update_task.cancel()
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        except Exception as err:
+            self._error_count += 1
+            self._available = False if self._error_count >= self._max_errors else True
+            _LOGGER.error("Error updating data: %s", str(err))
 
     @property
-    def data(self) -> dict[str, Any]:
+    def data(self) -> dict:
         """Return the latest data."""
         return self._data
 
@@ -206,11 +147,16 @@ class EveusUpdater:
         """Return if updater is available."""
         return self._available
 
-    @property
-    def last_update(self) -> datetime | None:
-        """Return the last update timestamp."""
-        return self._last_update
-
+    async def async_shutdown(self) -> None:
+        """Shutdown the updater."""
+        if self._update_task:
+            self._update_task.cancel()
+            try:
+                await self._update_task
+            except asyncio.CancelledError:
+                pass
+        if self._session and not self._session.closed:
+            await self._session.close()
 class BaseEveusSensor(SensorEntity, RestoreEntity):
     """Base implementation for all Eveus sensors."""
 
