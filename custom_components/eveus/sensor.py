@@ -62,8 +62,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# In sensor.py, update the EveusUpdater class:
+
 class EveusUpdater:
-    """Class to handle Eveus data updates."""
+    """Class to handle Eveus data updates with improved error handling."""
 
     def __init__(self, host: str, username: str, password: str, hass: HomeAssistant) -> None:
         """Initialize the updater."""
@@ -79,13 +81,9 @@ class EveusUpdater:
         self._last_update = None
         self._consecutive_errors = 0
         self._max_consecutive_errors = 3
+        self._retry_backoff = 1
+        self._max_retry_backoff = 300
         _LOGGER.debug("Initialized updater for host: %s", host)
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create client session."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
 
     async def start_updates(self) -> None:
         """Start the update loop."""
@@ -93,18 +91,45 @@ class EveusUpdater:
             return
 
         async def update_loop() -> None:
-            """Handle updates."""
+            """Handle updates with improved error handling."""
             try:
                 while True:
                     try:
                         await self._update()
                         self._last_update = dt_util.utcnow()
                         for sensor in self._sensors:
-                            sensor.async_write_ha_state()
-                    except Exception as err:
+                            try:
+                                sensor.async_write_ha_state()
+                            except Exception as sensor_err:
+                                _LOGGER.error(
+                                    "Error updating sensor state for %s: %s",
+                                    getattr(sensor, 'name', 'unknown'),
+                                    str(sensor_err),
+                                    exc_info=True
+                                )
+                    except Exception as update_err:
                         self._available = False
-                        _LOGGER.error("Error updating Eveus data: %s", err)
+                        if str(update_err):  # Check if error message is not empty
+                            _LOGGER.error(
+                                "Error updating Eveus data: %s",
+                                str(update_err),
+                                exc_info=True
+                            )
+                        else:
+                            _LOGGER.error(
+                                "Unknown error updating Eveus data",
+                                exc_info=True
+                            )
                     await asyncio.sleep(SCAN_INTERVAL.total_seconds())
+            except asyncio.CancelledError:
+                _LOGGER.debug("Update loop cancelled for %s", self._host)
+            except Exception as err:
+                _LOGGER.error(
+                    "Fatal error in update loop for %s: %s",
+                    self._host,
+                    str(err) if str(err) else "Unknown error",
+                    exc_info=True
+                )
             finally:
                 if self._session and not self._session.closed:
                     await self._session.close()
@@ -114,7 +139,7 @@ class EveusUpdater:
         _LOGGER.debug("Started update loop for %s", self._host)
 
     async def _update(self) -> None:
-        """Update the data with improved error handling."""
+        """Update the data with comprehensive error handling."""
         try:
             session = await self._get_session()
             async with session.post(
@@ -123,49 +148,79 @@ class EveusUpdater:
                 timeout=10
             ) as response:
                 response.raise_for_status()
-                self._data = await response.json()
+                try:
+                    self._data = await response.json()
+                except aiohttp.ContentTypeError as json_err:
+                    # Handle invalid JSON response
+                    response_text = await response.text()
+                    raise ValueError(
+                        f"Invalid JSON response from device: {str(json_err)}. "
+                        f"Response text: {response_text[:200]}..."
+                    ) from json_err
+                
                 self._available = True
                 self._consecutive_errors = 0
+                self._retry_backoff = 1
                 _LOGGER.debug(
                     "Updated data for %s: State=%s, Power=%sW", 
                     self._host,
                     self._data.get("state"), 
                     self._data.get("powerMeas")
                 )
-        except aiohttp.ClientResponseError as error:
-            self._consecutive_errors += 1
-            self._available = False
-            _LOGGER.error(
-                "HTTP error updating data for %s: %s [status=%s]",
-                self._host,
-                error.message,
-                error.status,
-            )
-            if self._consecutive_errors >= self._max_consecutive_errors:
-                _LOGGER.warning("Multiple consecutive HTTP errors, may need attention")
+
+        except aiohttp.ClientConnectorError as conn_err:
+            self._handle_connection_error("Connection error", conn_err)
             raise
-        except aiohttp.ClientError as error:
-            self._consecutive_errors += 1
-            self._available = False
-            _LOGGER.error(
-                "Connection error updating data for %s: %s",
-                self._host,
-                str(error),
+
+        except aiohttp.ClientResponseError as resp_err:
+            self._handle_connection_error(
+                f"HTTP error {resp_err.status}", 
+                resp_err
             )
-            if self._consecutive_errors >= self._max_consecutive_errors:
-                _LOGGER.warning("Multiple consecutive connection errors, may need attention")
             raise
-        except Exception as error:
+
+        except asyncio.TimeoutError as timeout_err:
+            self._handle_connection_error("Timeout error", timeout_err)
+            raise
+
+        except Exception as err:
             self._consecutive_errors += 1
             self._available = False
+            error_message = str(err) if str(err) else "Unknown error"
             _LOGGER.error(
                 "Unexpected error updating data for %s: %s",
                 self._host,
-                str(error),
+                error_message,
+                exc_info=True
             )
-            if self._consecutive_errors >= self._max_consecutive_errors:
-                _LOGGER.warning("Multiple consecutive errors, may need attention")
             raise
+
+    def _handle_connection_error(self, error_type: str, error: Exception) -> None:
+        """Handle connection errors with proper logging and retry logic."""
+        self._consecutive_errors += 1
+        self._available = False
+        
+        retry_delay = min(self._retry_backoff * 2, self._max_retry_backoff)
+        self._retry_backoff = retry_delay
+
+        error_message = str(error) if str(error) else "No details available"
+        
+        if self._consecutive_errors >= self._max_consecutive_errors:
+            _LOGGER.error(
+                "%s for %s: %s. Multiple consecutive errors detected.",
+                error_type,
+                self._host,
+                error_message,
+                exc_info=True
+            )
+        else:
+            _LOGGER.warning(
+                "%s for %s: %s. Will retry in %d seconds.",
+                error_type,
+                self._host,
+                error_message,
+                retry_delay
+            )
 
     def register_sensor(self, sensor: "BaseEveusSensor") -> None:
         """Register a sensor for updates."""
