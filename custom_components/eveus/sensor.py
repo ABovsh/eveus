@@ -726,9 +726,13 @@ async def async_setup_entry(
         TimeToTargetSocSensor(updater),
     ]
 
-    # Store entities reference
+    # Initialize entities dict if needed
     if "entities" not in hass.data[DOMAIN][entry.entry_id]:
         hass.data[DOMAIN][entry.entry_id]["entities"] = {}
-    hass.data[DOMAIN][entry.entry_id]["entities"]["sensor"] = sensors
+
+    # Store sensor references with unique_id as key
+    hass.data[DOMAIN][entry.entry_id]["entities"]["sensor"] = {
+        sensor.unique_id: sensor for sensor in sensors
+    }
 
     async_add_entities(sensors)
