@@ -116,13 +116,13 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     # First check helper entities
     helpers_valid, invalid_helpers = await _validate_helper_entities(hass)
     if not helpers_valid:
-        # Create detailed error message
-        error_details = []
-        for helper in invalid_helpers:
-            if helper["error"] == "missing":
-                error_details.append(f"Missing: {helper['name']}")
-            else:
-                error_details.append(f"{helper['name']}: {helper['error']}")
+        message = (
+            "Required helper entities check failed:\n\n"
+            "• " + "\n• ".join(error_details) +
+            "\n\nPlease create these helpers before continuing. "
+            "See documentation for setup instructions."
+        )
+        raise InvalidHelperEntities(message)
         
         message = (
             "\n\nHelper entity issues:\n• " + 
@@ -197,8 +197,8 @@ async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
-        errors: dict[str, str] = {}
-        error_detail = ""  # Initialize empty error detail
+        errors = {}
+        error_msg = "\n"  # Initialize with newline
 
         if user_input is not None:
             try:
@@ -217,8 +217,7 @@ async def async_step_user(
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except InvalidHelperEntities as err:
-                errors["base"] = "invalid_helper_entities"
-                error_detail = str(err)
+                error_msg = f"\n⚠️ {str(err)}\n\n"
             except Exception as err:
                 _LOGGER.exception("Unexpected exception: %s", err)
                 errors["base"] = "unknown"
@@ -228,7 +227,7 @@ async def async_step_user(
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
             description_placeholders={
-                "error_detail": error_detail
+                "error_msg": error_msg
             }
         )
 
