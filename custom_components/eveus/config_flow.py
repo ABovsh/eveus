@@ -193,11 +193,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(
+async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
+        error_detail = ""  # Initialize empty error detail
 
         if user_input is not None:
             try:
@@ -217,21 +218,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except InvalidHelperEntities as err:
                 errors["base"] = "invalid_helper_entities"
-                # Store the error message for the UI
-                self.context["error_detail"] = str(err)
+                error_detail = str(err)
             except Exception as err:
                 _LOGGER.exception("Unexpected exception: %s", err)
                 errors["base"] = "unknown"
 
-        # Include error detail in the form data if available
-        error_detail = self.context.get("error_detail", "")
-        
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
             description_placeholders={
-                "error_detail": error_detail,
+                "error_detail": error_detail
             }
         )
 
