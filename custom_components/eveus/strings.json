@@ -3,7 +3,7 @@
         "step": {
             "user": {
                 "title": "Connect to Eveus Charger",
-                "description": "Enter your Eveus charger connection details.",
+                "description": "Set up your Eveus charger connection.{error_detail}",
                 "data": {
                     "host": "IP Address",
                     "username": "Username",
@@ -14,12 +14,12 @@
         },
         "error": {
             "cannot_connect": "Failed to connect to the charger. Please verify the IP address and ensure the device is online.",
-            "invalid_auth": "Invalid username or password. Please check your credentials and try again.",
-            "unknown": "An unexpected error occurred. Please check the Home Assistant logs."
+            "invalid_auth": "Invalid username or password. Please check your credentials.",
+            "invalid_helper_entities": "Missing required helper entities. See error details above.",
+            "unknown": "An unexpected error occurred. Please check the logs."
         },
         "abort": {
-            "already_configured": "This Eveus charger is already configured",
-            "reauth_successful": "Re-authentication was successful"
+            "already_configured": "This device is already configured"
         }
     }
 }
