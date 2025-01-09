@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
@@ -36,38 +37,99 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     }
 )
 
-REQUIRED_HELPERS = [
-    "input_number.ev_battery_capacity",
-    "input_number.ev_initial_soc",
-    "input_number.ev_soc_correction",
-    "input_number.ev_target_soc",
-]
+# Helper entity requirements with validation
+REQUIRED_HELPERS = {
+    "input_number.ev_battery_capacity": {
+        "name": "EV Battery Capacity",
+        "min": 10,
+        "max": 160,
+        "unit": "kWh",
+    },
+    "input_number.ev_initial_soc": {
+        "name": "Initial SOC",
+        "min": 0,
+        "max": 100,
+        "unit": "%",
+    },
+    "input_number.ev_soc_correction": {
+        "name": "SOC Correction",
+        "min": 0,
+        "max": 10,
+        "unit": "%",
+    },
+    "input_number.ev_target_soc": {
+        "name": "Target SOC",
+        "min": 80,
+        "max": 100,
+        "unit": "%",
+    },
+}
 
-async def _validate_helper_entities(hass: HomeAssistant) -> tuple[bool, list[str]]:
-    """Validate that required helper entities exist."""
-    missing_entities = []
+async def _validate_helper_entities(hass: HomeAssistant) -> tuple[bool, list[dict[str, Any]]]:
+    """Validate that required helper entities exist and have correct configuration."""
+    missing_or_invalid = []
     
-    # Check for entities in both states and entity registry
-    for entity_id in REQUIRED_HELPERS:
-        if (not hass.states.get(entity_id) and 
-            not hass.helpers.entity_registry.async_get(entity_id)):
-            missing_entities.append(entity_id)
+    for entity_id, requirements in REQUIRED_HELPERS.items():
+        state = hass.states.get(entity_id)
+        
+        if not state:
+            missing_or_invalid.append({
+                "entity_id": entity_id,
+                "name": requirements["name"],
+                "error": "missing",
+            })
+            continue
+        
+        attrs = state.attributes
+        # Check minimum value
+        if "min" in attrs and attrs["min"] > requirements["min"]:
+            missing_or_invalid.append({
+                "entity_id": entity_id,
+                "name": requirements["name"],
+                "error": f"minimum should be {requirements['min']} or higher",
+            })
+            continue
 
-    return not bool(missing_entities), missing_entities
+        # Check maximum value
+        if "max" in attrs and attrs["max"] < requirements["max"]:
+            missing_or_invalid.append({
+                "entity_id": entity_id,
+                "name": requirements["name"],
+                "error": f"maximum should be {requirements['max']} or lower",
+            })
+            continue
+
+        # Check unit of measurement
+        if ("unit_of_measurement" not in attrs or 
+            attrs["unit_of_measurement"] != requirements["unit"]):
+            missing_or_invalid.append({
+                "entity_id": entity_id,
+                "name": requirements["name"],
+                "error": f"should have unit {requirements['unit']}",
+            })
+            continue
+
+    return not bool(missing_or_invalid), missing_or_invalid
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
     # First check helper entities
-    helpers_valid, missing_helpers = await _validate_helper_entities(hass)
+    helpers_valid, invalid_helpers = await _validate_helper_entities(hass)
     if not helpers_valid:
-        readable_names = [entity.split('.')[1].replace('_', ' ').title() 
-                         for entity in missing_helpers]
+        # Create detailed error message
+        error_details = []
+        for helper in invalid_helpers:
+            if helper["error"] == "missing":
+                error_details.append(f"Missing: {helper['name']}")
+            else:
+                error_details.append(f"{helper['name']}: {helper['error']}")
+        
         message = (
-            f"Missing required helper entities: {', '.join(readable_names)}. "
-            "Please create these helpers before adding the integration. "
-            "See documentation for setup instructions."
+            "\n\nHelper entity issues:\n• " + 
+            "\n• ".join(error_details) +
+            "\n\nPlease fix these issues and try again. See documentation for setup requirements."
         )
-        _LOGGER.error(message)
+        _LOGGER.error("Helper validation failed: %s", message)
         raise InvalidHelperEntities(message)
 
     try:
@@ -180,4 +242,4 @@ class InvalidAuth(HomeAssistantError):
     """Error to indicate there is invalid auth."""
 
 class InvalidHelperEntities(HomeAssistantError):
-    """Error to indicate missing helper entities."""
+    """Error to indicate missing or misconfigured helper entities."""
