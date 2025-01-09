@@ -3,7 +3,7 @@
         "step": {
             "user": {
                 "title": "Connect to Eveus Charger",
-                "description": "{error_msg}Enter your Eveus charger connection details.",
+                "description": "Enter your Eveus charger connection details.",
                 "data": {
                     "host": "IP Address",
                     "username": "Username",
@@ -15,6 +15,7 @@
         "error": {
             "cannot_connect": "Failed to connect to charger, please verify the IP address",
             "invalid_auth": "Invalid username or password",
+            "input_missing": "Required input_number entities missing. Please create them first.",
             "unknown": "Unexpected error occurred"
         },
         "abort": {
