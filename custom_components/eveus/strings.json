@@ -15,7 +15,7 @@
         "error": {
             "cannot_connect": "Failed to connect to the charger. Please verify the IP address and ensure the device is online.",
             "invalid_auth": "Invalid username or password. Please check your credentials.",
-            "invalid_helper_entities": "Missing required helper entities. See error details above.",
+            "invalid_helper_entities": "{error_detail}",
             "unknown": "An unexpected error occurred. Please check the logs."
         },
         "abort": {
