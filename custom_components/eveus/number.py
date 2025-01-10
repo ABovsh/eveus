@@ -56,12 +56,6 @@ async def async_setup_entry(
         EveusCurrentNumber(host, username, password, model),
     ]
 
-    # Add entity configuration
-    for entity in entities:
-        entity._attr_entity_registry_enabled_default = True
-        entity._attr_entity_registry_visible_default = True
-        entity._attr_has_entity_name = True
-
     # Initialize entities dict if needed
     if "entities" not in hass.data[DOMAIN][entry.entry_id]:
         hass.data[DOMAIN][entry.entry_id]["entities"] = {}
@@ -70,7 +64,7 @@ async def async_setup_entry(
     hass.data[DOMAIN][entry.entry_id]["entities"]["number"] = {
         entity.unique_id: entity for entity in entities
     }
-    
+
     async_add_entities(entities)
 
 class EveusCurrentNumber(RestoreNumber):
@@ -101,6 +95,7 @@ class EveusCurrentNumber(RestoreNumber):
         self._error_count = 0
         self._max_errors = 3
         self._attr_unique_id = f"{host}_charging_current"
+        self._last_valid_value = None  # Store last known good value
 
         # Set min/max values based on model
         self._attr_native_min_value = float(MIN_CURRENT)
@@ -141,13 +136,11 @@ class EveusCurrentNumber(RestoreNumber):
                         timeout=COMMAND_TIMEOUT,
                     ) as response:
                         response.raise_for_status()
-
-                        # Get response text instead of trying to parse JSON
                         response_text = await response.text()
                         if "error" in response_text.lower():
                             raise ValueError(f"Error in response: {response_text}")
 
-                        # Verify command success via main endpoint
+                        # Verify command success
                         async with session.post(
                             f"http://{self._host}/main",
                             auth=aiohttp.BasicAuth(self._username, self._password),
@@ -155,18 +148,27 @@ class EveusCurrentNumber(RestoreNumber):
                         ) as verify_response:
                             verify_response.raise_for_status()
                             verify_data = await verify_response.json()
-                            if abs(float(verify_data.get("currentSet", 0)) - value) > 0.1:
-                                raise ValueError("Command verification failed")
+                            if "currentSet" in verify_data:
+                                set_value = float(verify_data["currentSet"])
+                                if abs(set_value - value) > 0.1:
+                                    raise ValueError("Command verification failed")
+                                self._value = set_value
+                                self._last_valid_value = set_value
+                                self._attr_available = True
+                                self._error_count = 0
+                                return
 
                         self._value = value
+                        self._last_valid_value = value
                         self._attr_available = True
                         self._error_count = 0
                         return
 
                 except aiohttp.ClientError as err:
-                    if "Connection reset by peer" in str(err) and attempt + 1 < MAX_RETRIES:
-                        await asyncio.sleep(RETRY_DELAY * (attempt + 1))
-                        continue
+                    if "Connection reset by peer" in str(err) or "Server disconnected" in str(err):
+                        if attempt + 1 < MAX_RETRIES:
+                            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
+                            continue
                     raise
 
                 except Exception as error:
@@ -179,6 +181,9 @@ class EveusCurrentNumber(RestoreNumber):
                             self._host,
                             str(error),
                         )
+                        # Keep last valid value if available
+                        if self._last_valid_value is not None:
+                            self._value = self._last_valid_value
                         return
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
 
@@ -199,26 +204,48 @@ class EveusCurrentNumber(RestoreNumber):
                     ) as response:
                         response.raise_for_status()
                         data = await response.json()
+                        
+                        # Extract and validate current value
                         if "currentSet" in data:
-                            self._value = min(
-                                self._attr_native_max_value,
-                                max(self._attr_native_min_value, float(data["currentSet"]))
-                            )
-                        self._attr_available = True
-                        self._error_count = 0
-                        self._last_update = current_time
-                        return
+                            try:
+                                current_value = float(data["currentSet"])
+                                # Validate the value is within bounds
+                                if self._attr_native_min_value <= current_value <= self._attr_native_max_value:
+                                    self._value = current_value
+                                    self._last_valid_value = current_value
+                                    self._attr_available = True
+                                    self._error_count = 0
+                                    self._last_update = current_time
+                                    return
+                                else:
+                                    _LOGGER.warning(
+                                        "Current value %s outside valid range [%s-%s]",
+                                        current_value,
+                                        self._attr_native_min_value,
+                                        self._attr_native_max_value,
+                                    )
+                            except (TypeError, ValueError) as err:
+                                _LOGGER.debug("Error converting current value: %s", err)
+                                if self._last_valid_value is not None:
+                                    self._value = self._last_valid_value
+                                    return
 
                 except aiohttp.ClientError as err:
                     if "Server disconnected" in str(err) or "Connection reset by peer" in str(err):
                         if attempt + 1 < MAX_RETRIES:
-                            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))  # Exponential backoff
+                            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
                             continue
+                    if self._last_valid_value is not None:
+                        self._value = self._last_valid_value
+                        return
                     self._error_count += 1
                     self._attr_available = False if self._error_count >= self._max_errors else True
                     _LOGGER.error("Error updating charging current: %s", str(err))
 
                 except Exception as err:
+                    if self._last_valid_value is not None:
+                        self._value = self._last_valid_value
+                        return
                     self._error_count += 1
                     self._attr_available = False if self._error_count >= self._max_errors else True
                     _LOGGER.error("Unexpected error updating charging current: %s", str(err))
@@ -228,3 +255,17 @@ class EveusCurrentNumber(RestoreNumber):
         """Clean up resources."""
         if self._session and not self._session.closed:
             await self._session.close()
+
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        state = await self.async_get_last_state()
+        if state and state.state not in ('unknown', 'unavailable'):
+            try:
+                restored_value = float(state.state)
+                # Validate restored value
+                if self._attr_native_min_value <= restored_value <= self._attr_native_max_value:
+                    self._value = restored_value
+                    self._last_valid_value = restored_value
+            except (TypeError, ValueError):
+                pass
