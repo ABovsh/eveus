@@ -76,8 +76,6 @@ class BaseEveusSwitch(SwitchEntity):
         self._state_data = {}
         self._error_count = 0
         self._max_errors = 3
-        self._attr_entity_registry_enabled_default = True
-        self._attr_entity_registry_visible_default = True
 
     @property
     def unique_id(self) -> str:
@@ -131,11 +129,12 @@ class BaseEveusSwitch(SwitchEntity):
                     ) as response:
                         response.raise_for_status()
                         
-                        # No need to parse JSON, just check if response is OK
-                        if response.status != 200:
-                            raise ValueError(f"Invalid response status: {response.status}")
+                        # Get response text
+                        response_text = await response.text()
+                        if "error" in response_text.lower():
+                            raise ValueError(f"Error in response: {response_text}")
 
-                        # Verify command success via main endpoint
+                        # Verify command via main endpoint
                         async with session.post(
                             f"http://{self._host}/main",
                             auth=aiohttp.BasicAuth(self._username, self._password),
@@ -149,6 +148,12 @@ class BaseEveusSwitch(SwitchEntity):
                         self._available = True
                         self._last_command_time = current_time
                         self._error_count = 0
+                        _LOGGER.debug(
+                            "Successfully sent command %s=%s to %s",
+                            command,
+                            value,
+                            self._host,
+                        )
                         return True
 
                 except aiohttp.ClientError as err:
@@ -300,4 +305,12 @@ class EveusResetCounterASwitch(BaseEveusSwitch):
     async def async_update(self) -> None:
         """Update state."""
         await super().async_update()
-        self._is_on = False  # Always false as it's a momentary switch
+        try:
+            counter_value = self._state_data.get("IEM1")
+            if counter_value in (None, "null", "", "undefined"):
+                self._is_on = False
+            else:
+                # Check if counter has value
+                self._is_on = float(counter_value) != 0
+        except (TypeError, ValueError):
+            self._is_on = False
