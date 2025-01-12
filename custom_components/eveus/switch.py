@@ -295,13 +295,38 @@ class EveusResetCounterASwitch(BaseEveusSwitch):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Reset counter A."""
-        # Send reset command without verification since it's a momentary action
-        await self._send_command("rstEM1", 0, verify_command=False)
-        self._is_on = False  # Always false as it's a momentary switch
+        # Match the exact command format from working YAML implementation
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"http://{self._host}/pageEvent",
+                auth=aiohttp.BasicAuth(self._username, self._password),
+                headers={"Content-type": "application/x-www-form-urlencoded"},
+                data="pageevent=rstEM1&rstEM1=0",
+                timeout=COMMAND_TIMEOUT,
+            ) as response:
+                response.raise_for_status()
+                self._is_on = False  # Always false as it's a momentary switch
+        except Exception as error:
+            _LOGGER.error("Failed to reset counter: %s", str(error))
+            self._available = False
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """No-op for reset switch."""
-        self._is_on = False
+        """Reset command for off state - matches on command for consistency."""
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"http://{self._host}/pageEvent",
+                auth=aiohttp.BasicAuth(self._username, self._password),
+                headers={"Content-type": "application/x-www-form-urlencoded"},
+                data="pageevent=rstEM1&rstEM1=0",
+                timeout=COMMAND_TIMEOUT,
+            ) as response:
+                response.raise_for_status()
+                self._is_on = False
+        except Exception as error:
+            _LOGGER.error("Failed to reset counter: %s", str(error))
+            self._available = False
 
     async def async_update(self) -> None:
         """Update state."""
