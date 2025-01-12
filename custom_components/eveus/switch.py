@@ -110,7 +110,7 @@ class BaseEveusSwitch(SwitchEntity):
             self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
 
-    async def _send_command(self, command: str, value: int) -> bool:
+    async def _send_command(self, command: str, value: int, verify_command: bool = True) -> bool:
         """Send command with improved retry logic and rate limiting."""
         current_time = time.time()
         if current_time - self._last_command_time < MIN_COMMAND_INTERVAL:
@@ -128,22 +128,22 @@ class BaseEveusSwitch(SwitchEntity):
                         timeout=COMMAND_TIMEOUT,
                     ) as response:
                         response.raise_for_status()
-                        
-                        # Get response text
                         response_text = await response.text()
+                        
                         if "error" in response_text.lower():
                             raise ValueError(f"Error in response: {response_text}")
 
-                        # Verify command via main endpoint
-                        async with session.post(
-                            f"http://{self._host}/main",
-                            auth=aiohttp.BasicAuth(self._username, self._password),
-                            timeout=COMMAND_TIMEOUT,
-                        ) as verify_response:
-                            verify_response.raise_for_status()
-                            verify_data = await verify_response.json()
-                            if not self._validate_command_response(verify_data, command, value):
-                                raise ValueError("Command verification failed")
+                        if verify_command:
+                            # Verify command via main endpoint
+                            async with session.post(
+                                f"http://{self._host}/main",
+                                auth=aiohttp.BasicAuth(self._username, self._password),
+                                timeout=COMMAND_TIMEOUT,
+                            ) as verify_response:
+                                verify_response.raise_for_status()
+                                verify_data = await verify_response.json()
+                                if not self._validate_command_response(verify_data, command, value):
+                                    raise ValueError("Command verification failed")
 
                         self._available = True
                         self._last_command_time = current_time
@@ -189,7 +189,7 @@ class BaseEveusSwitch(SwitchEntity):
             elif command == "oneCharge":
                 return response_data.get("oneCharge") == value
             elif command == "rstEM1":
-                return True  # Reset commands don't have a specific response to validate
+                return True  # Reset commands don't need validation
         except Exception as err:
             _LOGGER.debug("Validation error for command %s: %s", command, str(err))
             return False
@@ -295,8 +295,9 @@ class EveusResetCounterASwitch(BaseEveusSwitch):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Reset counter A."""
-        if await self._send_command("rstEM1", 0):
-            self._is_on = False  # Always false as it's a momentary switch
+        # Send reset command without verification since it's a momentary action
+        await self._send_command("rstEM1", 0, verify_command=False)
+        self._is_on = False  # Always false as it's a momentary switch
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """No-op for reset switch."""
@@ -305,12 +306,13 @@ class EveusResetCounterASwitch(BaseEveusSwitch):
     async def async_update(self) -> None:
         """Update state."""
         await super().async_update()
-        try:
-            counter_value = self._state_data.get("IEM1")
-            if counter_value in (None, "null", "", "undefined"):
+        if self._available:
+            try:
+                iem1_value = self._state_data.get("IEM1")
+                if iem1_value in (None, "null", "", "undefined", "ERROR"):
+                    self._is_on = False
+                else:
+                    # Convert to float and check if non-zero
+                    self._is_on = float(iem1_value) != 0
+            except (TypeError, ValueError):
                 self._is_on = False
-            else:
-                # Check if counter has value
-                self._is_on = float(counter_value) != 0
-        except (TypeError, ValueError):
-            self._is_on = False
