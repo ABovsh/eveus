@@ -647,21 +647,21 @@ class TimeToTargetSocSensor(BaseEveusSensor):
         self._attr_unique_id = f"{updater._host}_time_to_target"
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> str | None:
         """Calculate and return time to target SOC."""
         try:
             if self._updater.data.get(ATTR_STATE) != 4:  # Not charging
-                return "Not charging"
+                return "No Data"
 
             current_soc = float(self.hass.states.get("sensor.eveus_ev_charger_soc_percent").state)
             target_soc = float(self.hass.states.get("input_number.ev_target_soc").state)
             
             if current_soc >= target_soc:
-                return "Target reached"
+                return "0h"
 
             power_meas = float(self._updater.data.get(ATTR_POWER, 0))
             if power_meas < 100:
-                return "Insufficient power"
+                return "No Data"
 
             battery_capacity = float(self.hass.states.get("input_number.ev_battery_capacity").state)
             correction = float(self.hass.states.get("input_number.ev_soc_correction").state)
@@ -669,23 +669,28 @@ class TimeToTargetSocSensor(BaseEveusSensor):
             remaining_kwh = (target_soc - current_soc) * battery_capacity / 100
             efficiency = (1 - correction / 100)
             power_kw = power_meas * efficiency / 1000
-            total_minutes = round((remaining_kwh / power_kw * 60), 0)
+            
+            if power_kw <= 0:
+                return "No Data"
 
+            total_minutes = round((remaining_kwh / power_kw * 60), 0)
+            
             if total_minutes < 1:
-                return "Less than 1m"
+                return "0h"
 
             days = int(total_minutes // 1440)
             hours = int((total_minutes % 1440) // 60)
             minutes = int(total_minutes % 60)
 
             if days > 0:
-                return f"{days}d {hours}h {minutes}m"
+                return f"{days}d {hours}h"
             elif hours > 0:
-                return f"{hours}h {minutes}m"
-            return f"{minutes}m"
+                return f"{hours}h"
+            else:
+                return "0h"
 
         except (TypeError, ValueError, AttributeError):
-            return None
+            return "No Data"
 
 async def async_setup_entry(
     hass: HomeAssistant,
