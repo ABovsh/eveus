@@ -16,6 +16,8 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
+from homeassistant.helpers.template import Template
+from homeassistant.components.text import TextEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -636,19 +638,21 @@ class EVSocPercentSensor(BaseEveusSensor):
         except (TypeError, ValueError, AttributeError):
             return None
 
-class TimeToTargetSocSensor(BaseEveusSensor):
-   """Time to target SOC sensor."""
+class TimeToTargetSocSensor(TextEntity):
+   """Time to target SOC text entity."""
    _attr_icon = "mdi:timer"
+   _attr_pattern = None
+   _attr_mode = "text"
 
    def __init__(self, updater: EveusUpdater) -> None:
-       """Initialize the sensor."""
-       super().__init__(updater)
+       """Initialize the text entity."""
+       self._updater = updater
        self._attr_name = "Time to Target"
        self._attr_unique_id = f"{updater._host}_time_to_target"
 
    @property
-   def native_value(self) -> str | None:
-       """Calculate and return time to target SOC."""
+   def native_value(self) -> str:
+       """Calculate and return formatted time to target."""
        try:
            current_soc = float(self.hass.states.get("sensor.eveus_ev_charger_soc_percent").state)
            target_soc = float(self.hass.states.get("input_number.ev_target_soc").state)
@@ -661,26 +665,29 @@ class TimeToTargetSocSensor(BaseEveusSensor):
            power_kw = power_meas * efficiency / 1000
            
            if power_kw <= 0:
-               return "0h"
+               return "-"
 
            total_minutes = round((remaining_kwh / power_kw * 60), 0)
            
            if total_minutes < 1:
-               return "0h"
+               return "< 1m"
 
            days = int(total_minutes // 1440)
            hours = int((total_minutes % 1440) // 60)
            minutes = int(total_minutes % 60)
 
+           parts = []
            if days > 0:
-               return f"{days}d {hours}h"
-           elif hours > 0:
-               return f"{hours}h"
-           else:
-               return "0h"
+               parts.append(f"{days}d")
+           if hours > 0:
+               parts.append(f"{hours}h")
+           if minutes > 0 or not parts:
+               parts.append(f"{minutes}m")
+
+           return " ".join(parts)
 
        except (TypeError, ValueError, AttributeError):
-           return "0h"
+           return "-"
 
 async def async_setup_entry(
     hass: HomeAssistant,
