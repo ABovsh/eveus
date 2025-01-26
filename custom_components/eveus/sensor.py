@@ -650,19 +650,9 @@ class TimeToTargetSocSensor(BaseEveusSensor):
    def native_value(self) -> str | None:
        """Calculate and return time to target SOC."""
        try:
-           if self._updater.data.get(ATTR_STATE) != 4:  # Not charging
-               return "No Data"
-
            current_soc = float(self.hass.states.get("sensor.eveus_ev_charger_soc_percent").state)
            target_soc = float(self.hass.states.get("input_number.ev_target_soc").state)
-           
-           if current_soc >= target_soc:
-               return "No Data"
-
            power_meas = float(self._updater.data.get(ATTR_POWER, 0))
-           if power_meas < 100:
-               return "No Data"
-
            battery_capacity = float(self.hass.states.get("input_number.ev_battery_capacity").state)
            correction = float(self.hass.states.get("input_number.ev_soc_correction").state)
 
@@ -671,7 +661,7 @@ class TimeToTargetSocSensor(BaseEveusSensor):
            power_kw = power_meas * efficiency / 1000
            
            if power_kw <= 0:
-               return "No Data"
+               return "0h"
 
            total_minutes = round((remaining_kwh / power_kw * 60), 0)
            
@@ -685,17 +675,12 @@ class TimeToTargetSocSensor(BaseEveusSensor):
            if days > 0:
                return f"{days}d {hours}h"
            elif hours > 0:
-               if minutes > 0:
-                   return f"{hours}h"
-               else:
-                   return f"{hours}h"
+               return f"{hours}h"
            else:
-               if minutes > 0:
-                   return f"{minutes} min"
                return "0h"
 
        except (TypeError, ValueError, AttributeError):
-           return "No Data"
+           return "0h"
 
 async def async_setup_entry(
     hass: HomeAssistant,
