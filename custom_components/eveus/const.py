@@ -1,47 +1,75 @@
-# File: custom_components/eveus/const.py
-
 """Constants for the Eveus integration."""
 from datetime import timedelta
+from typing import Final, Dict, List, TypedDict, Literal
 
-DOMAIN = "eveus"
-SCAN_INTERVAL = timedelta(seconds=30)
+DOMAIN: Final[str] = "eveus"
+SCAN_INTERVAL: Final[timedelta] = timedelta(seconds=30)
 
-# Model constants
-MODEL_16A = "16A"
-MODEL_32A = "32A"
-MODELS = [MODEL_16A, MODEL_32A]
-MODEL_MAX_CURRENT = {
+# Current limits
+MIN_CURRENT: Final[int] = 7
+MODEL_16A: Final[str] = "16A"
+MODEL_32A: Final[str] = "32A"
+MODELS: Final[List[str]] = [MODEL_16A, MODEL_32A]
+
+# Model specifications
+MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
     MODEL_16A: 16,
-    MODEL_32A: 32,
+    MODEL_32A: 32
 }
-MIN_CURRENT = 8
 
 # Configuration
-CONF_MODEL = "model"
+CONF_MODEL: Final[str] = "model"
 
 # API Attributes
-ATTR_VOLTAGE = "voltMeas1"
-ATTR_CURRENT = "curMeas1"
-ATTR_POWER = "powerMeas"
-ATTR_SESSION_ENERGY = "sessionEnergy"
-ATTR_TOTAL_ENERGY = "totalEnergy"
-ATTR_SESSION_TIME = "sessionTime"
-ATTR_STATE = "state"
-ATTR_SUBSTATE = "subState"
-ATTR_CURRENT_SET = "currentSet"
-ATTR_ENABLED = "evseEnabled"
-ATTR_TEMPERATURE_BOX = "temperature1"
-ATTR_TEMPERATURE_PLUG = "temperature2"
-ATTR_SYSTEM_TIME = "systemTime"
-ATTR_COUNTER_A_ENERGY = "IEM1"
-ATTR_COUNTER_B_ENERGY = "IEM2"
-ATTR_COUNTER_A_COST = "IEM1_money"
-ATTR_COUNTER_B_COST = "IEM2_money"
-ATTR_GROUND = "ground"
-ATTR_BATTERY_VOLTAGE = "vBat"
+class DeviceAttributes(TypedDict, total=False):
+    """Device attributes type definitions."""
+    voltMeas1: float
+    curMeas1: float
+    powerMeas: float
+    sessionEnergy: float
+    totalEnergy: float
+    sessionTime: int
+    state: int
+    subState: int
+    currentSet: int
+    evseEnabled: int
+    temperature1: float
+    temperature2: float
+    systemTime: int
+    IEM1: float
+    IEM2: float
+    IEM1_money: float
+    IEM2_money: float
+    ground: int
+    vBat: float
+
+# Attribute Constants
+ATTR_VOLTAGE: Final[str] = "voltMeas1"
+ATTR_CURRENT: Final[str] = "curMeas1"
+ATTR_POWER: Final[str] = "powerMeas"
+ATTR_SESSION_ENERGY: Final[str] = "sessionEnergy"
+ATTR_TOTAL_ENERGY: Final[str] = "totalEnergy"
+ATTR_SESSION_TIME: Final[str] = "sessionTime"
+ATTR_STATE: Final[str] = "state"
+ATTR_SUBSTATE: Final[str] = "subState"
+ATTR_CURRENT_SET: Final[str] = "currentSet"
+ATTR_ENABLED: Final[str] = "evseEnabled"
+ATTR_TEMPERATURE_BOX: Final[str] = "temperature1"
+ATTR_TEMPERATURE_PLUG: Final[str] = "temperature2"
+ATTR_SYSTEM_TIME: Final[str] = "systemTime"
+ATTR_COUNTER_A_ENERGY: Final[str] = "IEM1"
+ATTR_COUNTER_B_ENERGY: Final[str] = "IEM2"
+ATTR_COUNTER_A_COST: Final[str] = "IEM1_money"
+ATTR_COUNTER_B_COST: Final[str] = "IEM2_money"
+ATTR_GROUND: Final[str] = "ground"
+ATTR_BATTERY_VOLTAGE: Final[str] = "vBat"
 
 # State Mappings
-CHARGING_STATES = {
+DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]
+ErrorState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+SubState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+CHARGING_STATES: Final[Dict[DeviceState, str]] = {
     0: "Startup",
     1: "System Test",
     2: "Standby",
@@ -52,7 +80,7 @@ CHARGING_STATES = {
     7: "Error"
 }
 
-ERROR_STATES = {
+ERROR_STATES: Final[Dict[ErrorState, str]] = {
     0: "No Error",
     1: "Grounding Error",
     2: "Current Leak High",
@@ -70,7 +98,7 @@ ERROR_STATES = {
     14: "High Voltage"
 }
 
-NORMAL_SUBSTATES = {
+NORMAL_SUBSTATES: Final[Dict[SubState, str]] = {
     0: "No Limits",
     1: "Limited by User",
     2: "Energy Limit",
