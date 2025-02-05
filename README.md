@@ -1,10 +1,10 @@
 # Eveus EV Charger Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-2.0.0-blue)
 ![Stability](https://img.shields.io/badge/stability-stable-green)
 
-This custom integration provides comprehensive monitoring and control of Eveus EV chargers in Home Assistant, featuring advanced state tracking, current control, and energy monitoring.
+This custom integration provides comprehensive monitoring and control of Eveus EV chargers in Home Assistant, featuring advanced state tracking, current control, energy monitoring, and improved SOC tracking.
 
 ## Prerequisites
 
@@ -74,13 +74,26 @@ Alternatively, you can add these helpers via YAML by adding the above configurat
 - Ground connection safety monitoring
 - Battery voltage monitoring
 - Energy counters with cost tracking (in UAH)
+- Enhanced session time formatting with days, hours, and minutes
+- Improved measurement precision
 
 ### 🚗 Advanced EV Features
 - Accurate State of Charge monitoring (kWh and percentage)
-- Dynamic time-to-target calculation
-- Charging efficiency calculation
+- Dynamic time-to-target calculation with real-time updates
+- Charging efficiency calculation and correction
 - Comprehensive session time tracking
+- Smart SOC estimation based on charging patterns
+- Real-time efficiency adjustments during charging
+- Accurate remaining time calculations based on current conditions
+
+### 🛡️ Reliability Features
+- Connection quality monitoring and reporting
 - Automatic error recovery with exponential backoff
+- Smart state restoration after system restarts
+- Enhanced error tracking and diagnostics
+- Improved network interruption handling
+- Detailed connection status reporting
+- Automatic recovery from temporary failures
 
 ### 🎮 Control Features
 - Dynamic charging current control (8-16A or 8-32A based on model)
@@ -88,6 +101,17 @@ Alternatively, you can add these helpers via YAML by adding the above configurat
 - One charge mode support
 - Counter reset functionality
 - Current adjustment with safety limits
+- Improved state persistence
+- Enhanced command reliability
+
+### 📊 Diagnostic Features
+- Connection quality metrics
+- Detailed error tracking and reporting
+- Temperature monitoring with improved accuracy
+- Ground connection monitoring
+- Enhanced status reporting
+- Comprehensive error logging
+- System performance monitoring
 
 ## Installation
 
@@ -120,7 +144,7 @@ Alternatively, you can add these helpers via YAML by adding the above configurat
 
 ### Available Entities
 
-Basic Sensors:
+#### Basic Sensors
 | Entity | Name | Description | Unit |
 |--------|------|-------------|------|
 | sensor.eveus_ev_charger_voltage | Voltage | Current voltage | V |
@@ -133,28 +157,29 @@ Basic Sensors:
 | sensor.eveus_ev_charger_counter_a_cost | Counter A Cost | Cost counter A | ₴ |
 | sensor.eveus_ev_charger_counter_b_cost | Counter B Cost | Cost counter B | ₴ |
 
-SOC Sensors:
+#### SOC Sensors
 | Entity | Name | Description | Unit |
 |--------|------|-------------|------|
 | sensor.eveus_ev_charger_soc_energy | SOC Energy | Current battery charge | kWh |
 | sensor.eveus_ev_charger_soc_percent | SOC Percent | Current battery charge | % |
-| sensor.eveus_ev_charger_time_to_target | Time to Target | Time until target SOC | - |
+| sensor.eveus_ev_charger_time_to_target | Time to Target | Estimated charging time remaining | - |
 
-Diagnostic Sensors:
+#### Diagnostic Sensors
 | Entity | Name | Description |
 |--------|------|-------------|
 | sensor.eveus_ev_charger_state | State | Charger state |
 | sensor.eveus_ev_charger_substate | Substate | Detailed status |
 | sensor.eveus_ev_charger_ground | Ground | Ground connection status |
 | sensor.eveus_ev_charger_enabled | Enabled | Charging enabled status |
+| sensor.eveus_ev_charger_connection_errors | Connection Errors | Connection reliability monitoring |
 
-Temperature Sensors:
+#### Temperature Sensors
 | Entity | Name | Description | Unit |
 |--------|------|-------------|------|
 | sensor.eveus_ev_charger_box_temperature | Box Temperature | Internal temperature | °C |
 | sensor.eveus_ev_charger_plug_temperature | Plug Temperature | Plug temperature | °C |
 
-Controls:
+#### Controls
 | Entity | Name | Description |
 |--------|------|-------------|
 | number.eveus_ev_charger_charging_current | Charging Current | Control charging current (8-16A/32A) |
@@ -163,28 +188,32 @@ Controls:
 | switch.eveus_ev_charger_reset_counter_a | Reset Counter A | Reset energy counter A |
 
 ### Usage Tips
-1. Before starting a charging session:
-   - Set the correct EV battery capacity
-   - Set the current state of charge (initial_soc)
-   - Adjust the efficiency correction if needed
-   - Set your desired target SOC
 
-2. During charging:
-   - Monitor the charging progress via SOC sensors
-   - Use the time to target sensor for completion estimates
-   - Adjust current if needed using the slider
+#### 1. Before Starting a Charging Session
+- Set the correct EV battery capacity
+- Set the current state of charge (initial_soc)
+- Adjust the efficiency correction if needed
+- Set your desired target SOC
 
-3. After charging:
-   - Reset Counter A before starting a new session
-   - Record efficiency for future reference
-   - Check total energy usage in session history
+#### 2. During Charging
+- Monitor charging progress with improved SOC sensors
+- Check the new time-to-target estimation
+- Monitor connection stability with the new error sensor
+- Adjust current if needed using the slider
+
+#### 3. After Charging
+- Reset Counter A before starting a new session
+- Record efficiency for future reference
+- Check total energy usage in session history
+- Review connection quality metrics
 
 ### Troubleshooting
 If you encounter issues:
 1. Check all helper entities are properly configured
-2. Verify network connectivity to the charger
-3. Check the logs for detailed error messages
-4. Restart the integration if needed
+2. Monitor the connection_errors sensor for network issues
+3. Verify network connectivity to the charger
+4. Check the logs for detailed error messages
+5. Restart the integration if needed
 
 ## Support
 
