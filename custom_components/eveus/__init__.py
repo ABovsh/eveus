@@ -85,8 +85,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Initialize data structure
         hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][entry.entry_id] = {
+            "title": entry.title,
+            "host": entry.data[CONF_HOST],
+            "username": entry.data[CONF_USERNAME],
+            "password": entry.data[CONF_PASSWORD],
+            "entities": {},
+        }
         
-        # Create updater instance with retry mechanism
+        # Create updater instance
         try:
             updater = EveusUpdater(
                 host=entry.data[CONF_HOST],
@@ -94,41 +101,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 password=entry.data[CONF_PASSWORD],
                 hass=hass,
             )
+            hass.data[DOMAIN][entry.entry_id]["updater"] = updater
         except Exception as err:
             raise ConfigEntryNotReady(f"Failed to initialize updater: {err}")
 
-        # Store entry data with validation
-        entry_data = {
-            "title": entry.title,
-            "updater": updater,
-            "host": entry.data[CONF_HOST],
-            "username": entry.data[CONF_USERNAME],
-            "password": entry.data[CONF_PASSWORD],
-            "entities": {},
-        }
+        # Set up platforms
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         
-        hass.data[DOMAIN][entry.entry_id] = entry_data
-
-        # Set up platforms with error handling
-        setup_tasks = []
-        for platform in PLATFORMS:
-            try:
-                setup_tasks.append(
-                    hass.config_entries.async_forward_entry_setup(entry, platform)
-                )
-            except Exception as err:
-                _LOGGER.error(
-                    "Failed to setup platform %s: %s", 
-                    platform, 
-                    str(err)
-                )
-                # Continue with other platforms even if one fails
-                continue
-        
-        if setup_tasks:
-            await asyncio.gather(*setup_tasks)
-        
-        # Register update listener for config changes
+        # Register update listener
         entry.async_on_unload(entry.add_update_listener(update_listener))
         
         return True
@@ -169,18 +149,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return True
 
         # Unload platforms
-        unload_ok = await asyncio.gather(
-            *(
-                hass.config_entries.async_forward_entry_unload(entry, platform)
-                for platform in PLATFORMS
-            ),
-            return_exceptions=True
-        )
-        
-        # Check for any platform unload failures
-        if any(isinstance(result, Exception) for result in unload_ok):
-            _LOGGER.error("Error unloading platforms: %s", unload_ok)
-            return False
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         
         if updater:
             try:
@@ -188,9 +157,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as err:
                 _LOGGER.error("Error shutting down updater: %s", err)
         
-        hass.data[DOMAIN].pop(entry.entry_id)
+        if unload_ok:
+            hass.data[DOMAIN].pop(entry.entry_id)
         
-        return True
+        return unload_ok
 
     except Exception as ex:
         _LOGGER.error(
