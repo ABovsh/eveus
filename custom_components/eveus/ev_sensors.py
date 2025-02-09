@@ -4,15 +4,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.text import TextEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.components.text import TextEntity
 from homeassistant.const import UnitOfEnergy
 
-from .common import BaseEveusEntity, EveusSensorBase, EveusUpdater
+from .common import EveusSensorBase
+from .utils import get_safe_value, validate_required_values, calculate_remaining_time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,12 +29,18 @@ class EVSocKwhSensor(EveusSensorBase):
     def native_value(self) -> float | None:
         """Calculate and return state of charge in kWh."""
         try:
-            initial_soc = float(self.hass.states.get("input_number.ev_initial_soc").state)
-            max_capacity = float(self.hass.states.get("input_number.ev_battery_capacity").state)
-            energy_charged = float(self._updater.data.get("IEM1", 0))
-            correction = float(self.hass.states.get("input_number.ev_soc_correction").state)
+            initial_soc = get_safe_value(
+                self.hass.states.get("input_number.ev_initial_soc")
+            )
+            max_capacity = get_safe_value(
+                self.hass.states.get("input_number.ev_battery_capacity")
+            )
+            correction = get_safe_value(
+                self.hass.states.get("input_number.ev_soc_correction")
+            )
+            energy_charged = get_safe_value(self._updater.data, "IEM1", default=0)
 
-            if None in (initial_soc, max_capacity, energy_charged, correction):
+            if not validate_required_values(initial_soc, max_capacity, correction):
                 _LOGGER.debug("Missing required values for SOC calculation")
                 return None
 
@@ -50,7 +55,7 @@ class EVSocKwhSensor(EveusSensorBase):
             
             return round(max(0, min(total_kwh, max_capacity)), 2)
 
-        except (TypeError, ValueError, AttributeError) as err:
+        except Exception as err:
             _LOGGER.error("Error calculating SOC in kWh: %s", err)
             return None
 
@@ -68,83 +73,55 @@ class EVSocPercentSensor(EveusSensorBase):
     def native_value(self) -> float | None:
         """Return the state of charge percentage."""
         try:
-            soc_kwh = float(self.hass.states.get("sensor.eveus_ev_charger_soc_energy").state)
-            max_capacity = float(self.hass.states.get("input_number.ev_battery_capacity").state)
+            soc_kwh = get_safe_value(
+                self.hass.states.get("sensor.eveus_ev_charger_soc_energy")
+            )
+            max_capacity = get_safe_value(
+                self.hass.states.get("input_number.ev_battery_capacity")
+            )
             
-            if None in (soc_kwh, max_capacity) or max_capacity <= 0:
+            if not validate_required_values(soc_kwh, max_capacity) or max_capacity <= 0:
                 _LOGGER.debug("Missing or invalid values for SOC percentage calculation")
                 return None
 
             percentage = round((soc_kwh / max_capacity * 100), 0)
             return max(0, min(percentage, 100))
-        except (TypeError, ValueError, AttributeError) as err:
+        except Exception as err:
             _LOGGER.error("Error calculating SOC percentage: %s", err)
             return None
 
-class TimeToTargetSocSensor(TextEntity, BaseEveusEntity):
-    """Time to target SOC text entity."""
+class TimeToTargetSocSensor(EveusSensorBase):
+    """Time to target SOC sensor."""
     
     ENTITY_NAME = "Time to Target SOC"
     _attr_icon = "mdi:timer"
-    _attr_pattern = None
-    _attr_mode = "text"
 
     @property
     def native_value(self) -> str:
         """Calculate and return formatted time to target."""
         try:
-            # Get state values with validation
-            current_soc = float(self.hass.states.get("sensor.eveus_ev_charger_soc_percent").state)
-            target_soc = float(self.hass.states.get("input_number.ev_target_soc").state)
-            power_meas = float(self._updater.data.get("powerMeas", 0))
-            battery_capacity = float(self.hass.states.get("input_number.ev_battery_capacity").state)
-            correction = float(self.hass.states.get("input_number.ev_soc_correction").state)
+            current_soc = get_safe_value(
+                self.hass.states.get("sensor.eveus_ev_charger_soc_percent")
+            )
+            target_soc = get_safe_value(
+                self.hass.states.get("input_number.ev_target_soc")
+            )
+            battery_capacity = get_safe_value(
+                self.hass.states.get("input_number.ev_battery_capacity")
+            )
+            correction = get_safe_value(
+                self.hass.states.get("input_number.ev_soc_correction")
+            )
+            power_meas = get_safe_value(self._updater.data, "powerMeas", default=0)
 
-            # Validate inputs
-            if any(x is None for x in [current_soc, target_soc, power_meas, battery_capacity, correction]):
-                _LOGGER.debug("Missing required values for time to target calculation")
-                return "Not charging"
+            return calculate_remaining_time(
+                current_soc,
+                target_soc,
+                power_meas,
+                battery_capacity,
+                correction
+            )
 
-            if power_meas <= 0:
-                return "Not charging"
-
-            # Calculate remaining energy needed
-            remaining_kwh = (target_soc - current_soc) * battery_capacity / 100
-            
-            if remaining_kwh <= 0:
-                return "Target reached"
-
-            # Calculate time with efficiency correction
-            efficiency = (1 - correction / 100)
-            power_kw = power_meas * efficiency / 1000
-            
-            if power_kw <= 0:
-                return "Not charging"
-
-            # Calculate time components
-            total_minutes = round((remaining_kwh / power_kw * 60), 0)
-            
-            if total_minutes < 1:
-                return "< 1m"
-
-            days = int(total_minutes // 1440)
-            hours = int((total_minutes % 1440) // 60)
-            minutes = int(total_minutes % 60)
-
-            # Format time string with validation
-            parts = []
-            if days > 0:
-                parts.append(f"{days}d")
-            if hours > 0:
-                parts.append(f"{hours}h")
-            if minutes > 0 or not parts:
-                parts.append(f"{minutes}m")
-
-            return " ".join(parts)
-
-        except (TypeError, ValueError, AttributeError) as err:
-            _LOGGER.debug("Error calculating time to target: %s", err)
-            return "Not charging"
         except Exception as err:
-            _LOGGER.error("Unexpected error calculating time to target: %s", err)
-            return "Error"
+            _LOGGER.debug("Error calculating time to target: %s", err)
+            return "unavailable"
