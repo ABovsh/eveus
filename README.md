@@ -4,7 +4,16 @@
 ![Version](https://img.shields.io/badge/version-2.0.0-blue)
 ![Stability](https://img.shields.io/badge/stability-stable-green)
 
-This custom integration provides comprehensive monitoring and control of Eveus EV chargers in Home Assistant, featuring advanced state tracking, current control, energy monitoring, and improved SOC tracking.
+This custom integration provides comprehensive monitoring and control of Eveus EV chargers in Home Assistant, featuring advanced state tracking, dynamic update intervals, smart current control, energy monitoring, and improved SOC tracking.
+
+## New in Version 2.0.0
+- **Dynamic Update Frequency**: 30-second updates when charging, 60-second updates when idle
+- **Enhanced State Management**: Immediate and reliable switch state updates
+- **Performance Optimizations**: Reduced network traffic with efficient data caching
+- **Smart Error Handling**: Automatic recovery with exponential backoff
+- **Improved Device Info**: Accurate firmware version display and better identification
+- **Modular Architecture**: Better maintainability and reliability
+- **Zero Breaking Changes**: Full backward compatibility maintained
 
 ## Prerequisites
 
@@ -61,48 +70,45 @@ input_number:
     # Adjust based on your charging needs
 ```
 
-Alternatively, you can add these helpers via YAML by adding the above configuration to your `configuration.yaml`.
-
 > **Important**: The integration will verify these helpers exist during setup and display an error if any are missing or incorrectly configured.
 
 ## Features
 
 ### 🔌 Basic Monitoring
-- Real-time voltage, current, and power monitoring
-- Session and total energy tracking
-- Temperature monitoring (box and plug)
+- Real-time voltage, current, and power monitoring with improved accuracy
+- Session and total energy tracking with persistent storage
+- Temperature monitoring (box and plug) with enhanced precision
 - Ground connection safety monitoring
 - Battery voltage monitoring
 - Energy counters with cost tracking (in UAH)
 - Enhanced session time formatting with days, hours, and minutes
-- Improved measurement precision
+- Smart data caching to minimize device queries
 
 ### 🚗 Advanced EV Features
 - Accurate State of Charge monitoring (kWh and percentage)
-- Dynamic time-to-target calculation with real-time updates
-- Charging efficiency calculation and correction
+- Dynamic time-to-target calculation with efficiency correction
 - Comprehensive session time tracking
 - Smart SOC estimation based on charging patterns
 - Real-time efficiency adjustments during charging
 - Accurate remaining time calculations based on current conditions
 
 ### 🛡️ Reliability Features
-- Connection quality monitoring and reporting
-- Automatic error recovery with exponential backoff
-- Smart state restoration after system restarts
-- Enhanced error tracking and diagnostics
-- Improved network interruption handling
-- Detailed connection status reporting
-- Automatic recovery from temporary failures
+- Dynamic update intervals based on charging state
+- Smart retry logic with exponential backoff
+- Efficient state caching and restoration
+- Enhanced error handling and recovery
+- Comprehensive connection monitoring
+- Automatic recovery from network issues
+- Detailed diagnostic reporting
 
 ### 🎮 Control Features
 - Dynamic charging current control (8-16A or 8-32A based on model)
-- Start/Stop charging control
+- Reliable start/stop charging control
 - One charge mode support
 - Counter reset functionality
 - Current adjustment with safety limits
-- Improved state persistence
-- Enhanced command reliability
+- Improved command reliability
+- Immediate state feedback
 
 ### 📊 Diagnostic Features
 - Connection quality metrics
@@ -162,7 +168,7 @@ Alternatively, you can add these helpers via YAML by adding the above configurat
 |--------|------|-------------|------|
 | sensor.eveus_ev_charger_soc_energy | SOC Energy | Current battery charge | kWh |
 | sensor.eveus_ev_charger_soc_percent | SOC Percent | Current battery charge | % |
-| sensor.eveus_ev_charger_time_to_target | Time to Target | Estimated charging time remaining | - |
+| sensor.eveus_ev_charger_time_to_target_soc | Time to Target SOC | Estimated charging time remaining | - |
 
 #### Diagnostic Sensors
 | Entity | Name | Description |
