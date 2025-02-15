@@ -3,7 +3,15 @@ from datetime import timedelta
 from typing import Final, Dict, List, TypedDict, Literal
 
 DOMAIN: Final[str] = "eveus"
+
+# Update intervals
 SCAN_INTERVAL: Final[timedelta] = timedelta(seconds=30)
+CHARGING_UPDATE_INTERVAL: Final[int] = 30  # 30 seconds when charging
+IDLE_UPDATE_INTERVAL: Final[int] = 60      # 60 seconds when idle
+RETRY_DELAY: Final[int] = 15
+UPDATE_TIMEOUT: Final[int] = 20
+COMMAND_TIMEOUT: Final[int] = 25
+ERROR_COOLDOWN: Final[int] = 300  # 5 minutes
 
 # Current limits
 MIN_CURRENT: Final[int] = 7
@@ -42,27 +50,6 @@ class DeviceAttributes(TypedDict, total=False):
     IEM2_money: float
     ground: int
     vBat: float
-
-# Attribute Constants
-ATTR_VOLTAGE: Final[str] = "voltMeas1"
-ATTR_CURRENT: Final[str] = "curMeas1"
-ATTR_POWER: Final[str] = "powerMeas"
-ATTR_SESSION_ENERGY: Final[str] = "sessionEnergy"
-ATTR_TOTAL_ENERGY: Final[str] = "totalEnergy"
-ATTR_SESSION_TIME: Final[str] = "sessionTime"
-ATTR_STATE: Final[str] = "state"
-ATTR_SUBSTATE: Final[str] = "subState"
-ATTR_CURRENT_SET: Final[str] = "currentSet"
-ATTR_ENABLED: Final[str] = "evseEnabled"
-ATTR_TEMPERATURE_BOX: Final[str] = "temperature1"
-ATTR_TEMPERATURE_PLUG: Final[str] = "temperature2"
-ATTR_SYSTEM_TIME: Final[str] = "systemTime"
-ATTR_COUNTER_A_ENERGY: Final[str] = "IEM1"
-ATTR_COUNTER_B_ENERGY: Final[str] = "IEM2"
-ATTR_COUNTER_A_COST: Final[str] = "IEM1_money"
-ATTR_COUNTER_B_COST: Final[str] = "IEM2_money"
-ATTR_GROUND: Final[str] = "ground"
-ATTR_BATTERY_VOLTAGE: Final[str] = "vBat"
 
 # State Mappings
 DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]

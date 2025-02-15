@@ -54,13 +54,31 @@ def get_safe_value(
 
 def get_device_info(host: str, data: dict) -> dict[str, Any]:
     """Get standardized device information."""
+    # Get firmware and hardware versions
+    firmware = data.get('verFWMain', '').strip()
+    hardware = data.get('verFWWifi', '').strip()
+    
+    # If firmware is missing or empty, try alternate keys
+    if not firmware:
+        firmware = data.get('firmware', '').strip()
+    
+    # If hardware is missing or empty, try alternate keys
+    if not hardware:
+        hardware = data.get('hardware', '').strip()
+    
+    # Ensure versions have minimum length and format
+    if len(firmware) < 2:
+        firmware = "Unknown"
+    if len(hardware) < 2:
+        hardware = "Unknown"
+        
     return {
         "identifiers": {(DOMAIN, host)},
         "name": "Eveus EV Charger",
         "manufacturer": "Eveus",
         "model": "Eveus EV Charger",
-        "sw_version": data.get('verFWMain', 'Unknown').strip(),
-        "hw_version": data.get('verFWWifi', 'Unknown').strip(),
+        "sw_version": firmware,
+        "hw_version": hardware,
         "configuration_url": f"http://{host}",
     }
 
