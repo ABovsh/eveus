@@ -185,7 +185,10 @@ class EveusBatteryVoltageSensor(EveusDiagnosticSensor):
     @property
     def native_value(self) -> float | None:
         """Return battery voltage."""
-        return get_safe_value(self._updater.data, self.DATA_KEY)
+        value = get_safe_value(self._updater.data, self.DATA_KEY)
+        if value is not None:
+            return round(value, 2)
+        return None
 
 class EveusSystemTimeSensor(EveusDiagnosticSensor):
     """System time sensor."""

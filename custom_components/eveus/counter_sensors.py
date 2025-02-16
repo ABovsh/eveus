@@ -10,7 +10,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfEnergy
 
-from .common import EveusSensorBase, EveusUpdater
+from .common import EveusSensorBase
+from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,17 +23,17 @@ class EveusCounterAEnergySensor(EveusSensorBase):
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:counter"
-    _attr_suggested_display_precision = 1
+    _attr_suggested_display_precision = 2
 
     @property
     def native_value(self) -> float | None:
         """Return counter A energy."""
         try:
-            value = self._updater.data.get("IEM1")
+            value = get_safe_value(self._updater.data, "IEM1")
             if value is None:
                 return None
-            return float(value)
-        except (TypeError, ValueError) as err:
+            return round(value, 2)
+        except Exception as err:
             _LOGGER.error("Error getting counter A energy: %s", err)
             return None
 
@@ -49,11 +50,11 @@ class EveusCounterACostSensor(EveusSensorBase):
     def native_value(self) -> float | None:
         """Return counter A cost."""
         try:
-            value = self._updater.data.get("IEM1_money")
+            value = get_safe_value(self._updater.data, "IEM1_money")
             if value is None:
                 return None
-            return float(value)
-        except (TypeError, ValueError) as err:
+            return round(value, 2)
+        except Exception as err:
             _LOGGER.error("Error getting counter A cost: %s", err)
             return None
 
@@ -65,17 +66,17 @@ class EveusCounterBEnergySensor(EveusSensorBase):
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:counter"
-    _attr_suggested_display_precision = 1
+    _attr_suggested_display_precision = 2
 
     @property
     def native_value(self) -> float | None:
         """Return counter B energy."""
         try:
-            value = self._updater.data.get("IEM2")
+            value = get_safe_value(self._updater.data, "IEM2")
             if value is None:
                 return None
-            return float(value)
-        except (TypeError, ValueError) as err:
+            return round(value, 2)
+        except Exception as err:
             _LOGGER.error("Error getting counter B energy: %s", err)
             return None
 
@@ -92,10 +93,10 @@ class EveusCounterBCostSensor(EveusSensorBase):
     def native_value(self) -> float | None:
         """Return counter B cost."""
         try:
-            value = self._updater.data.get("IEM2_money")
+            value = get_safe_value(self._updater.data, "IEM2_money")
             if value is None:
                 return None
-            return float(value)
-        except (TypeError, ValueError) as err:
+            return round(value, 2)
+        except Exception as err:
             _LOGGER.error("Error getting counter B cost: %s", err)
             return None
