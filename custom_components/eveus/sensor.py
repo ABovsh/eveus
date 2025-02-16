@@ -39,6 +39,14 @@ from .counter_sensors import (
     EveusCounterBEnergySensor,
     EveusCounterBCostSensor,
 )
+from .rate_sensors import (
+    EveusPrimaryRateCostSensor,
+    EveusActiveRateCostSensor,
+    EveusRate2CostSensor,
+    EveusRate3CostSensor,
+    EveusRate2StatusSensor,
+    EveusRate3StatusSensor,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +89,14 @@ async def async_setup_entry(
         EVSocKwhSensor(updater),
         EVSocPercentSensor(updater),
         TimeToTargetSocSensor(updater),
+        
+        # Rate sensors
+        EveusPrimaryRateCostSensor(updater),
+        EveusActiveRateCostSensor(updater),
+        EveusRate2CostSensor(updater),
+        EveusRate3CostSensor(updater),
+        EveusRate2StatusSensor(updater),
+        EveusRate3StatusSensor(updater),
     ]
 
     async_add_entities(sensors)

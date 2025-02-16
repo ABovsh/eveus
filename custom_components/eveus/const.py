@@ -28,6 +28,13 @@ MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
 # Configuration
 CONF_MODEL: Final[str] = "model"
 
+# Rate States
+RATE_STATES: Final[Dict[int, str]] = {
+    0: "Primary Rate",
+    1: "Rate 2",
+    2: "Rate 3"
+}
+
 # API Attributes
 class DeviceAttributes(TypedDict, total=False):
     """Device attributes type definitions."""
@@ -50,6 +57,16 @@ class DeviceAttributes(TypedDict, total=False):
     IEM2_money: float
     ground: int
     vBat: float
+    tarif: float
+    activeTarif: int
+    tarifAEnable: int
+    tarifBEnable: int
+    tarifAValue: float
+    tarifBValue: float
+    tarifAStart: int
+    tarifAStop: int
+    tarifBStart: int
+    tarifBStop: int
 
 # State Mappings
 DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]
