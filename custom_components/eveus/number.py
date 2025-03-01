@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
-from typing import Any
+from typing import Any, Optional
 
 from homeassistant.components.number import (
     NumberEntity,
@@ -27,11 +27,8 @@ from .const import (
     MIN_CURRENT,
     CONF_MODEL,
 )
-from .common import (
-    BaseEveusEntity,
-    EveusUpdater,
-    send_eveus_command,
-)
+from .common import BaseEveusEntity
+from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +38,7 @@ class EveusNumberEntity(BaseEveusEntity, NumberEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     
-    def __init__(self, updater: EveusUpdater) -> None:
+    def __init__(self, updater) -> None:
         """Initialize the entity."""
         super().__init__(updater)
         self._attr_native_value = None
@@ -49,14 +46,12 @@ class EveusNumberEntity(BaseEveusEntity, NumberEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
-        state = await self.async_get_last_state()
-        if state:
-            await self._async_restore_state(state)
         
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
+
 
 class EveusCurrentNumber(EveusNumberEntity):
     """Representation of Eveus current control."""
@@ -70,7 +65,7 @@ class EveusCurrentNumber(EveusNumberEntity):
     _attr_entity_category = EntityCategory.CONFIG
     _command = "currentSet"
 
-    def __init__(self, updater: EveusUpdater, model: str) -> None:
+    def __init__(self, updater, model: str) -> None:
         """Initialize the current control."""
         super().__init__(updater)
         self._model = model
@@ -84,14 +79,10 @@ class EveusCurrentNumber(EveusNumberEntity):
     @property
     def native_value(self) -> float | None:
         """Return the current value."""
-        try:
-            value = self._updater.data.get(self._command)
-            if value is not None:
-                self._attr_native_value = float(value)
-            return self._attr_native_value
-        except (TypeError, ValueError) as err:
-            _LOGGER.error("Error getting current value: %s", err)
-            return self._attr_native_value
+        value = get_safe_value(self._updater.data, self._command)
+        if value is not None:
+            self._attr_native_value = float(value)
+        return self._attr_native_value
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new current value."""
@@ -104,17 +95,6 @@ class EveusCurrentNumber(EveusNumberEntity):
             except Exception as err:
                 _LOGGER.error("Failed to set current value: %s", err)
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        try:
-            value = self._updater.data.get(self._command)
-            if value is not None:
-                self._attr_native_value = float(value)
-            self.async_write_ha_state()
-        except (TypeError, ValueError) as err:
-            _LOGGER.error("Error handling update: %s", err)
-
     async def _async_restore_state(self, state) -> None:
         """Restore previous state."""
         try:
@@ -124,6 +104,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                     await self.async_set_native_value(restored_value)
         except (TypeError, ValueError) as err:
             _LOGGER.warning("Could not restore number state: %s", err)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,

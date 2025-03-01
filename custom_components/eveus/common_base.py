@@ -1,10 +1,11 @@
 """Base entity classes for Eveus integration."""
-from typing import Any
+from typing import Any, Optional
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.helpers.entity import EntityCategory
 
 from .utils import get_device_info
 
@@ -15,7 +16,7 @@ class BaseEveusEntity(RestoreEntity, Entity):
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, updater: "EveusUpdater") -> None:
+    def __init__(self, updater) -> None:
         """Initialize the entity."""
         super().__init__()
         self._updater = updater
@@ -40,14 +41,24 @@ class BaseEveusEntity(RestoreEntity, Entity):
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
+        
+        # Restore previous state if available
         state = await self.async_get_last_state()
         if state:
             await self._async_restore_state(state)
+            
+        # Start updates if needed
         await self._updater.async_start_updates()
 
     async def _async_restore_state(self, state) -> None:
-        """Restore previous state."""
+        """Restore previous state - overridden by child classes."""
         pass
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
 
 class EveusSensorBase(BaseEveusEntity, SensorEntity):
     """Base sensor entity for Eveus."""
@@ -58,6 +69,12 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
         self._attr_native_value = None
 
     @property
-    def native_value(self) -> Any | None:
+    def native_value(self) -> Any:
         """Return sensor value."""
         return self._attr_native_value
+
+
+class EveusDiagnosticSensor(EveusSensorBase):
+    """Base diagnostic sensor."""
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:information"

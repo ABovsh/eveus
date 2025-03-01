@@ -29,7 +29,6 @@ class BaseSwitchEntity(BaseEveusEntity, SwitchEntity):
         super().__init__(updater)
         self._command_lock = asyncio.Lock()
         self._pending_state = None
-        self._initial_update = False
 
     @property
     def is_on(self) -> bool:
@@ -67,10 +66,10 @@ class BaseSwitchEntity(BaseEveusEntity, SwitchEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        self._initial_update = True
         # Clear pending state and use actual device state
         self._pending_state = None
         self.async_write_ha_state()
+
 
 class EveusStopChargingSwitch(BaseSwitchEntity):
     """Representation of Eveus charging control switch."""
@@ -88,6 +87,7 @@ class EveusStopChargingSwitch(BaseSwitchEntity):
         """Turn off charging."""
         await self._async_send_command(0)
 
+
 class EveusOneChargeSwitch(BaseSwitchEntity):
     """Representation of Eveus one charge switch."""
 
@@ -103,6 +103,7 @@ class EveusOneChargeSwitch(BaseSwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable one charge mode."""
         await self._async_send_command(0)
+
 
 class EveusResetCounterASwitch(BaseSwitchEntity):
     """Representation of Eveus reset counter A switch with safe handling."""
@@ -126,6 +127,7 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
     async def _disable_safe_mode(self) -> None:
         """Disable safe mode after first successful update."""
         await self._updater.async_start_updates()
+        await asyncio.sleep(5)  # Give time for first update
         self._safe_mode = False
 
     @property
@@ -160,6 +162,7 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
         self._pending_reset = state.state == "on"
         self._pending_state = self._pending_reset
         self.async_write_ha_state()
+
 
 async def async_setup_entry(
     hass: HomeAssistant,

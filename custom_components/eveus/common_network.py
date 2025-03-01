@@ -3,11 +3,11 @@ import logging
 import asyncio
 import time
 import json
-from typing import Any, Optional
+from typing import Any, Optional, Set, Dict
 from collections import deque, Counter
 
 import aiohttp
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import aiohttp_client
 
 from .const import (
@@ -22,21 +22,24 @@ from .common_command import CommandManager
 
 _LOGGER = logging.getLogger(__name__)
 
+# Updated part of common_network.py to track connection quality history
+
 class NetworkManager:
     """Network resilience management."""
-    def __init__(self, updater: "EveusUpdater"):
+    def __init__(self, host: str) -> None:
         """Initialize network manager."""
-        self._updater = updater
-        self._offline_commands = []
+        self.host = host
         self._last_successful_state = None
         self._reconnect_attempts = 0
         self._quality_metrics = {
-            'latency': deque(maxlen=100),
-            'success_rate': deque(maxlen=100),
+            'latency': deque(maxlen=20),
+            'success_rate': deque(maxlen=20),
+            'success_rate_history': deque(maxlen=100),  # Added success rate history
             'error_types': Counter(),
-            'last_errors': deque(maxlen=10)
+            'last_errors': deque(maxlen=10),
+            'last_successful_connection': time.time(),  # Added timestamp tracking
         }
-        self._request_timestamps = deque(maxlen=100)
+        self._request_timestamps = deque(maxlen=30)
 
     @property
     def connection_quality(self) -> dict:
@@ -46,18 +49,29 @@ class NetworkManager:
                 'latency_avg': 0,
                 'success_rate': 100,
                 'recent_errors': 0,
-                'requests_per_minute': 0
+                'requests_per_minute': 0,
+                'success_rate_history': list(self._quality_metrics['success_rate_history']),
+                'last_successful_connection': self._quality_metrics.get('last_successful_connection', time.time())
             }
 
         now = time.time()
         recent_requests = sum(1 for t in self._request_timestamps 
                             if now - t < 60)
+        
+        # Calculate success rate
+        success_rate = (sum(self._quality_metrics['success_rate']) / 
+                     max(len(self._quality_metrics['success_rate']), 1)) * 100
+                     
+        # Store in history
+        self._quality_metrics['success_rate_history'].append(success_rate)
 
         return {
-            'latency_avg': sum(self._quality_metrics['latency']) / len(self._quality_metrics['latency']),
-            'success_rate': (sum(self._quality_metrics['success_rate']) / len(self._quality_metrics['success_rate'])) * 100,
+            'latency_avg': sum(self._quality_metrics['latency']) / max(len(self._quality_metrics['latency']), 1),
+            'success_rate': success_rate,
             'recent_errors': len(self._quality_metrics['last_errors']),
-            'requests_per_minute': recent_requests
+            'requests_per_minute': recent_requests,
+            'success_rate_history': list(self._quality_metrics['success_rate_history']),
+            'last_successful_connection': self._quality_metrics.get('last_successful_connection', time.time())
         }
 
     def update_metrics(self, response_time: float, success: bool, error_type: str = None) -> None:
@@ -66,6 +80,9 @@ class NetworkManager:
         self._quality_metrics['success_rate'].append(1 if success else 0)
         self._request_timestamps.append(time.time())
         
+        if success:
+            self._quality_metrics['last_successful_connection'] = time.time()
+            
         if not success and error_type:
             self._quality_metrics['error_types'][error_type] += 1
             self._quality_metrics['last_errors'].append({
@@ -77,12 +94,7 @@ class NetworkManager:
         """Cache last known good state."""
         self._last_successful_state = {
             'timestamp': time.time(),
-            'data': state_data.copy(),
-            'charging_state': state_data.get('state'),
-            'critical_values': {
-                'current': state_data.get('currentSet'),
-                'enabled': state_data.get('evseEnabled')
-            }
+            'data': state_data.copy()
         }
 
     def get_cached_state(self) -> dict | None:
@@ -96,6 +108,7 @@ class NetworkManager:
             
         return self._last_successful_state['data']
 
+
 class EveusUpdater:
     """Main updater class with enhanced network handling."""
 
@@ -105,14 +118,15 @@ class EveusUpdater:
         self.username = username
         self.password = password
         self._hass = hass
-        self._data: dict = {}
+        self._data: Dict[str, Any] = {}
         self._available = True
         self._session: Optional[aiohttp.ClientSession] = None
-        self._entities = set()
+        self._entities: Set[Any] = set()
         self._update_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
         self._command_manager = CommandManager(self)
-        self._network = NetworkManager(self)
+        self._network = NetworkManager(host)
+        self._entity_update_callbacks = []
 
     @property
     def data(self) -> dict:
@@ -124,6 +138,11 @@ class EveusUpdater:
         """Return if updater is available."""
         return self._available
 
+    @property
+    def hass(self) -> HomeAssistant:
+        """Return Home Assistant instance."""
+        return self._hass
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create client session."""
         if not self._session or self._session.closed:
@@ -134,7 +153,35 @@ class EveusUpdater:
         """Register an entity for updates."""
         if entity not in self._entities:
             self._entities.add(entity)
-            _LOGGER.debug("Registered entity: %s", entity.name)
+
+    def register_update_callback(self, callback_fn: callback) -> None:
+        """Register callback for data updates."""
+        if callback_fn not in self._entity_update_callbacks:
+            self._entity_update_callbacks.append(callback_fn)
+    
+    def unregister_update_callback(self, callback_fn: callback) -> None:
+        """Unregister callback for data updates."""
+        if callback_fn in self._entity_update_callbacks:
+            self._entity_update_callbacks.remove(callback_fn)
+
+    def notify_entities(self) -> None:
+        """Notify all registered entities of data update."""
+        for entity in self._entities:
+            if hasattr(entity, 'hass') and entity.hass:
+                try:
+                    entity.async_write_ha_state()
+                except Exception as err:
+                    _LOGGER.error(
+                        "Error updating entity %s: %s",
+                        getattr(entity, 'name', 'unknown'),
+                        str(err)
+                    )
+        
+        for callback_fn in self._entity_update_callbacks:
+            try:
+                callback_fn()
+            except Exception as err:
+                _LOGGER.error("Error in update callback: %s", str(err))
 
     async def send_command(self, command: str, value: Any) -> bool:
         """Send command to device."""
@@ -154,30 +201,27 @@ class EveusUpdater:
                 response.raise_for_status()
                 text = await response.text()
                 
-                data = json.loads(text)
-                if not isinstance(data, dict):
-                    raise ValueError(f"Unexpected data type: {type(data)}")
-                
-                if data != self._data:
-                    self._data = data
-                    self._available = True
-                    self._network.cache_state(data)
+                try:
+                    data = json.loads(text)
+                    if not isinstance(data, dict):
+                        raise ValueError(f"Unexpected data type: {type(data)}")
+                    
+                    if data != self._data:
+                        self._data = data
+                        self._available = True
+                        self._network.cache_state(data)
+                        self._network.update_metrics(
+                            response_time=time.time() - start_time,
+                            success=True
+                        )
+                        self.notify_entities()
+                except ValueError as err:
+                    _LOGGER.error("Error parsing JSON: %s", err)
                     self._network.update_metrics(
                         response_time=time.time() - start_time,
-                        success=True
+                        success=False,
+                        error_type="JSONDecodeError"
                     )
-
-                    # Update all registered entities
-                    for entity in self._entities:
-                        if hasattr(entity, 'hass') and entity.hass:
-                            try:
-                                entity.async_write_ha_state()
-                            except Exception as err:
-                                _LOGGER.error(
-                                    "Error updating entity %s: %s",
-                                    getattr(entity, 'name', 'unknown'),
-                                    str(err)
-                                )
                 
         except Exception as err:
             self._network.update_metrics(
@@ -188,7 +232,13 @@ class EveusUpdater:
             # Try to use cached state
             cached_state = self._network.get_cached_state()
             if cached_state:
-                self._data = cached_state
+                if self._data != cached_state:
+                    self._data = cached_state
+                    self.notify_entities()
+            else:
+                self._available = False
+                self.notify_entities()
+            
             _LOGGER.error("Update failed: %s", str(err))
 
     async def async_start_updates(self) -> None:
