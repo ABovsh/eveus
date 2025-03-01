@@ -68,6 +68,20 @@ class DeviceAttributes(TypedDict, total=False):
     tarifBStart: int
     tarifBStop: int
 
+# Rate Commands
+RATE_COMMANDS = {
+    "RATE2_ENABLE": "tarifAEnable",
+    "RATE3_ENABLE": "tarifBEnable",
+    "PRIMARY_RATE": "tarif",
+    "RATE2_START": "tarifAStart",
+    "RATE2_STOP": "tarifAStop",
+    "RATE3_START": "tarifBStart",
+    "RATE3_STOP": "tarifBStop",
+}
+
+# Command Endpoints
+CMD_ENDPOINT = "pageEvent"
+
 # State Mappings
 DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]
 ErrorState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
