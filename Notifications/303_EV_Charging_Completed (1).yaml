@@ -1,62 +1,64 @@
 alias: 303_EV_Charging_Completed
 description: |
   # EV Charging Monitor - Session Complete
-  Version: 1.7.0
-  Last Updated: 2025-03-02
-  
+  Version: 2.0.0
+  Last Updated: 2025-03-07
   ## Functions:
   1. Detects charging session completion
-  2. Validates final charging states
-  3. Records final session metrics
-  4. Provides cost and energy summaries
+  2. Records final session metrics
+  3. Provides cost and energy summaries
 triggers:
-  - platform: state
-    entity_id: sensor.eveus_ev_charger_state
+  - entity_id: sensor.eveus_ev_charger_state
     from: Charging
-    id: charging_complete
-conditions:
-  - condition: template
-    value_template: >
-      {{ trigger.to_state.state != 'Charging' and
-         trigger.to_state.state not in ['unknown', 'unavailable'] }}
-  - condition: numeric_state
-    entity_id: sensor.eveus_ev_charger_power
-    below: 100
-  - condition: template
-    value_template: >
-      {% set final = states('sensor.eveus_ev_charger_soc_percent')|float(0) %}
-      {% set initial = states('input_number.ev_initial_soc')|float(0) %}
-      {{ final > initial and final > 0 }}
+    to:
+      - Charge Complete
+      - Standby
+      - Connected
+    trigger: state
+conditions: []
 actions:
   - data:
       title: EV 🔋 Charging Completed
       message: >
-        🕒 Session Time: {{ session_data.time }} 🔋 SoC: {{
-        session_data.initial_soc }}% → {{ session_data.final_soc }}% (+{{
-        session_data.soc_increase }}%) ⚡ Energy: {{ session_data.initial_kwh
-        }}kWh → {{ session_data.final_kwh }}kWh (+{{ session_data.added_kwh
-        }}kWh) 💸 Cost: {{ session_data.cost }}₴
+        🕒 Session Time: {{ session_data.time }}
+
+        🔋 SoC: {{ session_data.initial_soc }}% → {{ session_data.final_soc }}%
+        (+{{ session_data.soc_increase }}%)
+
+        ⚡ Energy: {{ session_data.initial_kwh }}kWh → {{ session_data.final_kwh
+        }}kWh (+{{ session_data.added_kwh }}kWh)
+
+        💸 Cost: {{ session_data.cost }}₴
     action: notify.harold
 variables:
   session_data:
     time: >
-      {{ states('sensor.eveus_ev_charger_session_time')|default('0m') }}
+      {% set seconds =
+      states('sensor.eveus_ev_charger_session_time')|float(0)|int %} {% if
+      seconds > 0 %}
+        {% set hours = (seconds / 3600)|int %}
+        {% set minutes = ((seconds % 3600) / 60)|int %}
+        {{ hours }}h {{ minutes }}m
+      {% else %}
+        0m
+      {% endif %}
     initial_soc: "{{ states('input_number.ev_initial_soc')|float(0)|round(0) }}"
     final_soc: "{{ states('sensor.eveus_ev_charger_soc_percent')|float(0)|round(0) }}"
-    soc_increase: >
-      {{ (states('sensor.eveus_ev_charger_soc_percent')|float(0) -
-      states('input_number.ev_initial_soc')|float(0))|round(0) }}
-    capacity: "{{ states('input_number.ev_battery_capacity')|float(80) }}"
-    initial_kwh: >
-      {{ (states('input_number.ev_battery_capacity')|float(80) *
-      states('input_number.ev_initial_soc')|float(0) / 100)|round(1) }}
-    final_kwh: >
-      {{ (states('input_number.ev_battery_capacity')|float(80) *
-      states('sensor.eveus_ev_charger_soc_percent')|float(0) / 100)|round(1) }}
-    added_kwh: >
-      {{ ((states('input_number.ev_battery_capacity')|float(80) *
-      states('sensor.eveus_ev_charger_soc_percent')|float(0) / 100) - 
-          (states('input_number.ev_battery_capacity')|float(80) * states('input_number.ev_initial_soc')|float(0) / 100))|round(1) }}
+    soc_increase: |
+      {{ (states('sensor.eveus_ev_charger_soc_percent')|float(0) - 
+          states('input_number.ev_initial_soc')|float(0))|round(0) }}
+    capacity: "{{ states('input_number.ev_battery_capacity')|float(70) }}"
+    initial_kwh: |
+      {{ (states('input_number.ev_battery_capacity')|float(70) * 
+          states('input_number.ev_initial_soc')|float(0) / 100)|round(1) }}
+    final_kwh: |
+      {{ (states('input_number.ev_battery_capacity')|float(70) * 
+          states('sensor.eveus_ev_charger_soc_percent')|float(0) / 100)|round(1) }}
+    added_kwh: |
+      {{ ((states('input_number.ev_battery_capacity')|float(70) * 
+           states('sensor.eveus_ev_charger_soc_percent')|float(0) / 100) - 
+          (states('input_number.ev_battery_capacity')|float(70) * 
+           states('input_number.ev_initial_soc')|float(0) / 100))|round(1) }}
     cost: "{{ states('sensor.eveus_ev_charger_counter_a_cost')|float(0)|round(0) }}"
 mode: single
 max_exceeded: silent
