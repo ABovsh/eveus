@@ -1,7 +1,7 @@
 alias: 301_EV_Charging_Started
 description: |
   # EV Charging Monitor - Session Started
-  Version: 2.4.0
+  Version: 2.5.0
   Last Updated: 2025-03-11
   ## Functions:
   1. Tracks charging session initialization
@@ -25,39 +25,49 @@ variables:
                    (states('input_number.ev_battery_capacity')|float * states('sensor.eveus_ev_charger_soc_percent')|float / 100))|round(1) }}"
   time_data:
     eta: >
-      {% set power = states('sensor.eveus_ev_charger_power')|float %}
+      {% set current_soc = states('sensor.eveus_ev_charger_soc_percent')|float %}
+      {% set target_soc = states('input_number.ev_target_soc')|float %}
+      {% set battery_capacity = states('input_number.ev_battery_capacity')|float %}
       {% set correction = states('input_number.ev_soc_correction')|float %}
-      {% set remaining_kwh = ((states('input_number.ev_target_soc')|float - 
-                              states('sensor.eveus_ev_charger_soc_percent')|float) * 
-                              states('input_number.ev_battery_capacity')|float / 100) %}
+      {% set power_meas = states('sensor.eveus_ev_charger_power')|float %}
       
-      {% set power_kw = power / 1000 %}
-      {% set efficiency = (100 - correction) / 100 %}
-      {% set charging_hours = remaining_kwh / (power_kw * efficiency) %}
-      {% set charging_minutes = (charging_hours * 60)|round(0) %}
+      {% set remaining_kwh = ((target_soc - current_soc) * battery_capacity / 100) %}
+      {% set efficiency = (1 - correction / 100) %}
+      {% set power_kw = power_meas * efficiency / 1000 %}
       
-      {% set completion = now() + timedelta(minutes=charging_minutes) %}
-      {{ completion.strftime('%H:%M %d.%m.%Y') }}
-    duration: >
-      {% set power = states('sensor.eveus_ev_charger_power')|float %}
-      {% set correction = states('input_number.ev_soc_correction')|float %}
-      {% set remaining_kwh = ((states('input_number.ev_target_soc')|float - 
-                              states('sensor.eveus_ev_charger_soc_percent')|float) * 
-                              states('input_number.ev_battery_capacity')|float / 100) %}
-      
-      {% set power_kw = power / 1000 %}
-      {% set efficiency = (100 - correction) / 100 %}
-      {% set charging_hours = remaining_kwh / (power_kw * efficiency) %}
-      {% set charging_minutes = (charging_hours * 60)|round(0) %}
-      
-      {% set days = (charging_minutes / 1440)|int %}
-      {% set hours = ((charging_minutes % 1440) / 60)|int %}
-      {% set mins = (charging_minutes % 60)|int %}
-      
-      {% if days > 0 %}
-        {{ days }}d {{ hours }}h {{ '%02d'|format(mins) }}m
+      {% if power_kw > 0 %}
+        {% set total_minutes = (remaining_kwh / power_kw * 60)|round(0) %}
+        {% set completion = now() + timedelta(minutes=total_minutes) %}
+        {{ completion.strftime('%H:%M %d.%m.%Y') }}
       {% else %}
-        {{ hours }}h {{ '%02d'|format(mins) }}m
+        Unknown
+      {% endif %}
+    duration: >
+      {% set current_soc = states('sensor.eveus_ev_charger_soc_percent')|float %}
+      {% set target_soc = states('input_number.ev_target_soc')|float %}
+      {% set battery_capacity = states('input_number.ev_battery_capacity')|float %}
+      {% set correction = states('input_number.ev_soc_correction')|float %}
+      {% set power_meas = states('sensor.eveus_ev_charger_power')|float %}
+      
+      {% set remaining_kwh = ((target_soc - current_soc) * battery_capacity / 100) %}
+      {% set efficiency = (1 - correction / 100) %}
+      {% set power_kw = power_meas * efficiency / 1000 %}
+      
+      {% if power_kw > 0 %}
+        {% set total_minutes = (remaining_kwh / power_kw * 60)|round(0) %}
+        {% set days = (total_minutes / 1440)|int %}
+        {% set hours = ((total_minutes % 1440) / 60)|int %}
+        {% set mins = (total_minutes % 60)|int %}
+        
+        {% if days > 0 %}
+          {{ days }}d {{ hours }}h {{ '%02d'|format(mins) }}m
+        {% elif hours > 0 %}
+          {{ hours }}h {{ '%02d'|format(mins) }}m
+        {% else %}
+          {{ mins }}m
+        {% endif %}
+      {% else %}
+        Unknown
       {% endif %}
 action:
   - service: notify.harold
