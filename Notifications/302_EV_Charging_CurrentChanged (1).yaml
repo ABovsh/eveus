@@ -1,30 +1,50 @@
 alias: 302_EV_Charging_CurrentChanged
 description: |
   # EV Charging Monitor - Current Changes
-  Version: 1.7.0
-  Last Updated: 2025-03-02
-  
+  Version: 1.6.1
+  Last Updated: 2025-03-15
+
   ## Functions:
   1. Monitors charging current adjustments
   2. Validates charging parameters
   3. Tracks real-time charging estimates
   4. Provides updated charging metrics
+
+  ## Dependencies:
+  - sensor.eveus_ev_charger_state
+  - sensor.eveus_ev_charger_soc_percent
+  - sensor.eveus_ev_charger_power 
+  - number.eveus_ev_charger_charging_current
+  - input_number.ev_target_soc
+  - input_number.ev_battery_capacity
+  - input_number.ev_soc_correction
 triggers:
-  - platform: state
-    entity_id: number.eveus_ev_charger_charging_current
+  - entity_id: number.eveus_ev_charger_charging_current
     id: current_trigger
+    trigger: state
 conditions:
   - condition: state
     entity_id: sensor.eveus_ev_charger_state
     state: Charging
   - condition: template
     value_template: >
-      {% set current = states('number.eveus_ev_charger_charging_current')|float(0) %}
-      {% set prev = trigger.from_state.state|float(0) if trigger.from_state is not none else 0 %}
-      {{ current != prev and current >= 6 }}
-  - condition: numeric_state
-    entity_id: sensor.eveus_ev_charger_power
-    above: 100
+      {% set current =
+      states('number.eveus_ev_charger_charging_current')|float(0) %} {% set prev
+      = trigger.from_state.state|float(0) if trigger.from_state else 0 %} {{
+      current != prev and 6 <= current <= 32 and prev > 0 }}
+  - condition: template
+    value_template: |
+      {% set entities = [
+        'sensor.eveus_ev_charger_soc_percent',
+        'sensor.eveus_ev_charger_power',
+        'input_number.ev_target_soc',
+        'input_number.ev_battery_capacity'
+      ] %} {% set available = true %} {% for entity in entities %}
+        {% if states(entity) in ['unknown', 'unavailable', 'none'] %}
+          {% set available = false %}
+          {% break %}
+        {% endif %}
+      {% endfor %} {{ available }}
 actions:
   - data:
       title: "*EV* 🔌 *Current Changed* | {{ current_amps|round(0)|int }}A"
@@ -39,44 +59,44 @@ variables:
   current_amps: "{{ states('number.eveus_ev_charger_charging_current')|float(0) }}"
   soc_data:
     current: "{{ states('sensor.eveus_ev_charger_soc_percent')|float(0) }}"
-    target: "{{ states('input_number.ev_target_soc')|float(80) }}"
+    target: "{{ states('input_number.ev_target_soc')|float(0) }}"
     increase: >
-      {{ states('input_number.ev_target_soc')|float(80) -
+      {{ states('input_number.ev_target_soc')|float(0) -
       states('sensor.eveus_ev_charger_soc_percent')|float(0) }}
-    capacity: "{{ states('input_number.ev_battery_capacity')|float(80) }}"
+    capacity: "{{ states('input_number.ev_battery_capacity')|float(0) }}"
     current_kwh: >
-      {{ (states('input_number.ev_battery_capacity')|float(80) *
-      states('sensor.eveus_ev_charger_soc_percent')|float(0) / 100)|round(1) }}
+      {{ (states('input_number.ev_battery_capacity')|float(0) *
+      states('sensor.eveus_ev_charger_soc_percent')|float(0) / 100)|int }}
     target_kwh: >
-      {{ (states('input_number.ev_battery_capacity')|float(80) *
-      states('input_number.ev_target_soc')|float(80) / 100)|round(1) }}
+      {{ (states('input_number.ev_battery_capacity')|float(0) *
+      states('input_number.ev_target_soc')|float(0) / 100)|int }}
     added_kwh: >
-      {{ ((states('input_number.ev_battery_capacity')|float(80) *
-      states('input_number.ev_target_soc')|float(80) / 100) - 
-          (states('input_number.ev_battery_capacity')|float(80) * states('sensor.eveus_ev_charger_soc_percent')|float(0) / 100))|round(1) }}
+      {{ ((states('input_number.ev_battery_capacity')|float(0) *
+      states('input_number.ev_target_soc')|float(0) / 100) - 
+          (states('input_number.ev_battery_capacity')|float(0) * states('sensor.eveus_ev_charger_soc_percent')|float(0) / 100))|int }}
   time_data:
     eta: >
-      {% set correction = states('input_number.ev_soc_correction')|float(7.5) %}
-      {% set remaining_kwh = ((states('input_number.ev_target_soc')|float(80) -
+      {% set correction = states('input_number.ev_soc_correction')|float(0) %}
+      {% set remaining_kwh = ((states('input_number.ev_target_soc')|float(0) -
                              states('sensor.eveus_ev_charger_soc_percent')|float(0)) * 
-                             states('input_number.ev_battery_capacity')|float(80) / 100) %}
-      {% set adjusted_power = 230 * states('number.eveus_ev_charger_charging_current')|float(0) * 0.9 / 1000 %}
-      {% set power_kw = adjusted_power * (1 - correction / 100) %}
-      {% set power_kw = power_kw if power_kw > 0 else 1 %}
-      {% set total_minutes = (remaining_kwh / power_kw * 60)|round(0) %}
-      {% set completion = now() + timedelta(minutes=total_minutes) %}
+                             states('input_number.ev_battery_capacity')|float(0) / 100) %}
+      {% set adjusted_power = 230 *
+                             states('number.eveus_ev_charger_charging_current')|float(0) * 0.9 / 1000 %}
+      {% set power_kw = adjusted_power * (1 - correction / 100) %} {% set
+      total_minutes = (remaining_kwh / power_kw * 60)|round(0) if power_kw > 0
+      else 0 %} {% set completion = now() + timedelta(minutes=total_minutes) %}
       {{ completion.strftime('%H:%M %d.%m.%Y') }}
     duration: >
-      {% set correction = states('input_number.ev_soc_correction')|float(7.5) %}
-      {% set remaining_kwh = ((states('input_number.ev_target_soc')|float(80) -
+      {% set correction = states('input_number.ev_soc_correction')|float(0) %}
+      {% set remaining_kwh = ((states('input_number.ev_target_soc')|float(0) -
                              states('sensor.eveus_ev_charger_soc_percent')|float(0)) * 
-                             states('input_number.ev_battery_capacity')|float(80) / 100) %}
-      {% set adjusted_power = 230 * states('number.eveus_ev_charger_charging_current')|float(0) * 0.9 / 1000 %}
-      {% set power_kw = adjusted_power * (1 - correction / 100) %}
-      {% set power_kw = power_kw if power_kw > 0 else 1 %}
-      {% set total_minutes = (remaining_kwh / power_kw * 60)|round(0) %}
-      {% set hours = (total_minutes / 60)|int %}
-      {% set mins = (total_minutes % 60)|int %}
-      {{ hours|string + 'h ' + ('%02d'|format(mins)) + 'm' }}
+                             states('input_number.ev_battery_capacity')|float(0) / 100) %}
+      {% set adjusted_power = 230 *
+                             states('number.eveus_ev_charger_charging_current')|float(0) * 0.9 / 1000 %}
+      {% set power_kw = adjusted_power * (1 - correction / 100) %} {% set
+      total_minutes = (remaining_kwh / power_kw * 60)|round(0) if power_kw > 0
+      else 0 %} {% set hours = (total_minutes / 60)|int %} {% set mins =
+      (total_minutes % 60)|int %} {{ hours|string + 'h ' + ('%02d'|format(mins))
+      + 'm' }}
 mode: restart
 max_exceeded: silent
