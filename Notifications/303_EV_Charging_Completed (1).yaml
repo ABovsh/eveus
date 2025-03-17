@@ -29,7 +29,7 @@ actions:
         }}kWh (+{{ session_data.added_kwh }})
 
         💸 Cost: {{ session_data.cost }}₴
-    action: notify.harold
+    action: notify.notify
 variables:
   session_data:
     time: |
