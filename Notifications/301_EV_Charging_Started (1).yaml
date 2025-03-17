@@ -23,7 +23,7 @@ actions:
 
         ⚡ Energy: {{ soc_data.current_kwh }}kWh → {{ soc_data.target_kwh }}kWh
         (+{{ soc_data.added_kwh }})
-    action: notify.harold
+    action: notify.notify
 variables:
   current_amps: "{{ states('number.eveus_ev_charger_charging_current')|float }}"
   soc_data:
