@@ -122,14 +122,35 @@ input_number:
 ## Installation
 
 ### Method 1: HACS (Recommended)
-1. Add this repository to HACS as a custom repository:
-   ```
-   Repository: https://github.com/ABovsh/eveus
-   Category: Integration
-   ```
-2. Click Install
-3. Restart Home Assistant
+1. Access HACS
+   - Open your Home Assistant dashboard
+   - On the sidebar menu, find and click on "HACS"
+   - This will open the HACS main page
+2. Add Custom Repository
+   - In the top-right corner of the HACS page, click on the three vertical dots (⋮) menu
+   - From the dropdown menu, select "Custom repositories"
+   - A dialog box will appear asking for repository information
+   - Fill in the following information:
+      In the "Repository" field, paste this URL: https://github.com/ABovsh/eveus
+      In the "Category" dropdown menu, select "Integration"
+   - Click the "ADD" button
 
+3. Install the Integration
+   - After adding the repository, go back to the HACS main page
+   - Click on the "Integrations" section
+   - In the search box at the top, type "Eveus"
+   - The Eveus EV Charger integration should appear in the results
+   - Click on the "Eveus EV Charger" card
+   - On the integration detail page, click the "DOWNLOAD" button in the bottom-right corner
+   - A confirmation dialog will appear - click "DOWNLOAD" again
+   - Wait for the download to complete (this should only take a few seconds)
+4. Restart Home Assistant
+   - After successful installation, you need to restart Home Assistant
+   - Go to your Home Assistant main menu (sidebar)
+   - Click on "Configuration"
+   - Click on "Server Controls"
+   - Under the "Server management" section, click the "RESTART" button
+   - Wait for Home Assistant to restart completely (this may take several minutes)
 ### Method 2: Manual Installation
 1. Download the repository
 2. Copy the `custom_components/eveus` directory to your Home Assistant's `custom_components` folder
