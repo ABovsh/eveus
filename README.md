@@ -347,7 +347,7 @@ For a more interactive and visually appealing control experience, you can use th
 #### Installation:
 
 1. **Install Required Cards**:
-   - Go to HACS → Frontend
+   - Go to HACS
    - Search for and install "Slider Button Card" and "Button Card"
    - Restart Home Assistant
 
