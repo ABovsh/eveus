@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -106,7 +107,7 @@ class EveusOneChargeSwitch(BaseSwitchEntity):
 
 
 class EveusResetCounterASwitch(BaseSwitchEntity):
-    """Representation of Eveus reset counter A switch with safe handling."""
+    """Representation of Eveus reset counter A switch with direct reset action."""
 
     ENTITY_NAME = "Reset Counter A"
     _attr_icon = "mdi:refresh-circle"
@@ -116,8 +117,8 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
     def __init__(self, updater) -> None:
         """Initialize with safety flags."""
         super().__init__(updater)
-        self._pending_reset = False
         self._safe_mode = True
+        self._last_reset_time = 0
 
     async def async_added_to_hass(self) -> None:
         """Handle entity addition with delayed safe mode disable."""
@@ -132,36 +133,33 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return True if counter needs reset."""
+        """Return True if counter has a value."""
         if self._safe_mode:
-            return self._pending_reset
+            return False
             
         value = get_safe_value(self._updater.data, self._state_key, float, 0)
-        return value > 0 or self._pending_reset
+        return value > 0
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Mark reset needed (visual only)."""
-        if self._safe_mode:
-            return
-        self._pending_reset = True
-        self._pending_state = True
-        self.async_write_ha_state()
+        """No action needed for turn_on - switch state represents counter status."""
+        # Do nothing on turn_on as it's just a representation of counter status
+        pass
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Perform actual reset command."""
-        if self._safe_mode or not self._pending_reset:
+        """Perform reset command whenever switch is turned off."""
+        if self._safe_mode:
             return
 
+        # Always send the reset command when turned off, regardless of previous state
         if await self._updater.send_command(self._command, 0):
-            self._pending_reset = False
-            self._pending_state = False
+            # Reset happened; the counter value should update in the next data refresh
+            self._last_reset_time = time.time()
             self.async_write_ha_state()
 
     async def _async_restore_state(self, state: State) -> None:
-        """Restore state without immediate action."""
-        self._pending_reset = state.state == "on"
-        self._pending_state = self._pending_reset
-        self.async_write_ha_state()
+        """No action needed on restore - state is determined by counter value."""
+        # Let the normal is_on logic determine the state based on counter value
+        pass
 
 
 async def async_setup_entry(
