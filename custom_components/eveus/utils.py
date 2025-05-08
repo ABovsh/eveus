@@ -77,7 +77,7 @@ def is_dst(timezone_str: str, dt: datetime) -> bool:
     """Check if the given datetime is in DST for the timezone."""
     try:
         tz = pytz.timezone(timezone_str)
-        return dt.astimezone(tz).dst() != timedelta(0)
+        return bool(dt.astimezone(tz).dst())
     except Exception as err:
         _LOGGER.error("Error checking DST: %s", err)
         return False

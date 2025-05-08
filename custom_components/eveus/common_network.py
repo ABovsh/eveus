@@ -22,8 +22,6 @@ from .common_command import CommandManager
 
 _LOGGER = logging.getLogger(__name__)
 
-# Updated part of common_network.py to track connection quality history
-
 class NetworkManager:
     """Network resilience management."""
     def __init__(self, host: str) -> None:
@@ -32,45 +30,39 @@ class NetworkManager:
         self._last_successful_state = None
         self._reconnect_attempts = 0
         self._quality_metrics = {
-            'latency': deque(maxlen=20),
-            'success_rate': deque(maxlen=20),
-            'success_rate_history': deque(maxlen=100),  # Added success rate history
+            'latency': deque(maxlen=10),  # Reduced from 20
+            'success_rate': deque(maxlen=10),  # Reduced from 20
+            'success_rate_history': None,  # Removed history tracking
             'error_types': Counter(),
-            'last_errors': deque(maxlen=10),
-            'last_successful_connection': time.time(),  # Added timestamp tracking
+            'last_errors': deque(maxlen=5),  # Reduced from 10
+            'last_successful_connection': time.time(),
         }
-        self._request_timestamps = deque(maxlen=30)
+        self._request_timestamps = deque(maxlen=15)  # Reduced from 30
 
     @property
     def connection_quality(self) -> dict:
         """Get connection quality metrics."""
+        # Modified to not include history data
         if not self._quality_metrics['latency']:
             return {
                 'latency_avg': 0,
                 'success_rate': 100,
                 'recent_errors': 0,
                 'requests_per_minute': 0,
-                'success_rate_history': list(self._quality_metrics['success_rate_history']),
                 'last_successful_connection': self._quality_metrics.get('last_successful_connection', time.time())
             }
 
+        # Calculate only the necessary metrics
         now = time.time()
-        recent_requests = sum(1 for t in self._request_timestamps 
-                            if now - t < 60)
-        
-        # Calculate success rate
+        recent_requests = sum(1 for t in self._request_timestamps if now - t < 60)
         success_rate = (sum(self._quality_metrics['success_rate']) / 
                      max(len(self._quality_metrics['success_rate']), 1)) * 100
-                     
-        # Store in history
-        self._quality_metrics['success_rate_history'].append(success_rate)
 
         return {
             'latency_avg': sum(self._quality_metrics['latency']) / max(len(self._quality_metrics['latency']), 1),
             'success_rate': success_rate,
             'recent_errors': len(self._quality_metrics['last_errors']),
             'requests_per_minute': recent_requests,
-            'success_rate_history': list(self._quality_metrics['success_rate_history']),
             'last_successful_connection': self._quality_metrics.get('last_successful_connection', time.time())
         }
 
@@ -193,10 +185,12 @@ class EveusUpdater:
             start_time = time.time()
             session = await self._get_session()
             
+            # Use a keep-alive session to reduce connection overhead
             async with session.post(
                 f"http://{self.host}/main",
                 auth=aiohttp.BasicAuth(self.username, self.password),
                 timeout=UPDATE_TIMEOUT,
+                headers={"Connection": "keep-alive"}
             ) as response:
                 response.raise_for_status()
                 text = await response.text()
@@ -251,18 +245,30 @@ class EveusUpdater:
 
     async def update_loop(self) -> None:
         """Handle update loop with dynamic intervals."""
+        retry_count = 0
+        max_retries = 5
+        
         while not self._shutdown_event.is_set():
             try:
                 await self._update()
+                # Reset retry count on successful update
+                retry_count = 0
+                
                 # Use shorter interval if charging
                 is_charging = get_safe_value(self._data, "state", int) == 4
                 interval = CHARGING_UPDATE_INTERVAL if is_charging else IDLE_UPDATE_INTERVAL
                 await asyncio.sleep(interval)
+                
             except asyncio.CancelledError:
                 break
             except Exception as err:
                 _LOGGER.error("Error in update loop: %s", str(err))
-                await asyncio.sleep(RETRY_DELAY)
+                # Implement exponential backoff for retries
+                retry_count += 1
+                backoff_delay = min(RETRY_DELAY * (2 ** (retry_count - 1)), 300)  # Max 5 minutes
+                _LOGGER.info("Retry attempt %s/%s in %s seconds", 
+                             retry_count, max_retries, backoff_delay)
+                await asyncio.sleep(backoff_delay)
 
     async def async_shutdown(self) -> None:
         """Shutdown the updater."""

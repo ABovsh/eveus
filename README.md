@@ -1,14 +1,14 @@
 # Eveus EV Charger Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-2.0.0-blue)
+![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![Stability](https://img.shields.io/badge/stability-stable-green)
 
 This custom integration provides comprehensive monitoring and control of Eveus EV chargers in Home Assistant, featuring advanced state tracking, dynamic update intervals, smart current control, energy monitoring, and improved SOC tracking.
 
 ## Table of Contents
 
-- [New in Version 2.0.0](#new-in-version-200)
+- [New in Version 2.1.0](#new-in-version-210)
 - [Prerequisites](#prerequisites)
   - [Required Helper Entities](#required-helper-entities)
 - [Features](#features)
@@ -36,11 +36,33 @@ This custom integration provides comprehensive monitoring and control of Eveus E
 - [Support](#support)
 - [License](#license)
 
-## New in Version 2.0.0
+## New in Version 2.1.0
+
+### ⚡ Performance Optimizations
+- **Immediate SOC updates** when input numbers change - no more waiting for refresh cycles
+- **Optimized SOC calculations** with intelligent caching for faster response times
+- **Reduced memory usage** through optimized data structures and smarter caching
+- **Smoother sensor updates** with improved data processing pipelines
+- **Enhanced network efficiency** using persistent connections and keep-alive
+- **Lower CPU usage** through cached lookups and consolidated operations
+
+### 🔄 Network & Connectivity
+- **Improved connection persistence** - fewer "device unavailable" errors
+- **Smart retry logic with exponential backoff** - automatic recovery from network issues
+- **Enhanced connection monitoring** - detailed visibility of charger connectivity
+- **Keep-alive connections** maintain stable communication longer
+- **Optimized error handling** for better recovery from network issues
+  
+### 🛠️ Code Quality & Reliability
+- **Consolidated duplicate code** for more efficient operation
+- **Standardized entity management** ensuring consistent behavior
+- **Better error messages** making troubleshooting easier
+- **Fixed timezone handling** for accurate time displays
+- **Streamlined sensor creation** reduces code complexity
+
+### 🔧 From Version 2.0.0
 - **Dynamic Update Frequency**: 30-second updates when charging, 60-second updates when idle
 - **Enhanced State Management**: Immediate and reliable switch state updates
-- **Performance Optimizations**: Reduced network traffic with efficient data caching
-- **Smart Error Handling**: Automatic recovery with exponential backoff
 - **Improved Device Info**: Accurate firmware version display and better identification
 - **Modular Architecture**: Better maintainability and reliability
 - **Zero Breaking Changes**: Full backward compatibility maintained
@@ -65,7 +87,9 @@ input_number:
     unit_of_measurement: "kWh"
     mode: slider      # Optional but recommended
     icon: mdi:car-battery
-    # Initial value should match your EV's battery capacity
+    # This is the total usable capacity of your EV's battery (e.g., 80 kWh for Tesla Model 3 LR)
+    # Used to calculate accurate SOC percentages and remaining charging time
+    # Should match the value in your EV's manual or settings
 
   ev_initial_soc:
     name: "Initial EV State of Charge"
@@ -75,7 +99,9 @@ input_number:
     unit_of_measurement: "%"
     mode: slider      # Optional but recommended
     icon: mdi:battery-charging-40
-    # Set this before each charging session
+    # This should be set to your EV's current SOC displayed on the dashboard before starting to charge
+    # Must be updated at the beginning of each charging session for accurate calculations
+    # This acts as your starting point for SOC tracking
 
   ev_soc_correction:
     name: "Charging Efficiency Loss"
@@ -86,7 +112,9 @@ input_number:
     unit_of_measurement: "%"
     mode: slider      # Optional but recommended
     icon: mdi:chart-bell-curve
-    # Adjust based on your observed charging efficiency
+    # Accounts for energy lost during charging due to heat, cable resistance, etc.
+    # Typical values are 5-10% (7.5% is a good starting point)
+    # Adjust this value based on comparing the integration's SOC with your EV's actual SOC
 
   ev_target_soc:
     name: "Target SOC"
@@ -97,7 +125,9 @@ input_number:
     unit_of_measurement: "%"
     mode: slider      # Optional but recommended
     icon: mdi:battery-charging-high
-    # Adjust based on your charging needs
+    # Set the desired SOC you want to reach for this charging session
+    # Used to calculate "Time to Target SOC" and can be used for automation triggers
+    # Many users set this to 80-90% for daily charging to preserve battery health
 ```
 
 > **Important**: The integration will verify these helpers exist during setup and display an error if any are missing or incorrectly configured.
@@ -210,15 +240,17 @@ input_number:
 #### Basic Sensors
 | Entity | Name | Description | Unit |
 |--------|------|-------------|------|
-| sensor.eveus_ev_charger_voltage | Voltage | Current voltage | V |
-| sensor.eveus_ev_charger_current | Current | Charging current | A |
-| sensor.eveus_ev_charger_power | Power | Charging power | W |
-| sensor.eveus_ev_charger_session_energy | Session Energy | Energy used in session | kWh |
-| sensor.eveus_ev_charger_total_energy | Total Energy | Total energy delivered | kWh |
-| sensor.eveus_ev_charger_counter_a_energy | Counter A Energy | Energy counter A | kWh |
-| sensor.eveus_ev_charger_counter_b_energy | Counter B Energy | Energy counter B | kWh |
-| sensor.eveus_ev_charger_counter_a_cost | Counter A Cost | Cost counter A | ₴ |
-| sensor.eveus_ev_charger_counter_b_cost | Counter B Cost | Cost counter B | ₴ |
+| sensor.eveus_ev_charger_voltage | Voltage | Current voltage measurement | V |
+| sensor.eveus_ev_charger_current | Current | Actual charging current | A |
+| sensor.eveus_ev_charger_power | Power | Current charging power | W |
+| sensor.eveus_ev_charger_current_set | Current Set | Configured charging current limit | A |
+| sensor.eveus_ev_charger_session_energy | Session Energy | Energy used in current session | kWh |
+| sensor.eveus_ev_charger_session_time | Session Time | Duration of current charging session | - |
+| sensor.eveus_ev_charger_total_energy | Total Energy | Total lifetime energy delivered | kWh |
+| sensor.eveus_ev_charger_counter_a_energy | Counter A Energy | Primary energy counter | kWh |
+| sensor.eveus_ev_charger_counter_b_energy | Counter B Energy | Secondary energy counter | kWh |
+| sensor.eveus_ev_charger_counter_a_cost | Counter A Cost | Primary counter cost | ₴ |
+| sensor.eveus_ev_charger_counter_b_cost | Counter B Cost | Secondary counter cost | ₴ |
 
 #### SOC Sensors
 | Entity | Name | Description | Unit |
@@ -230,11 +262,12 @@ input_number:
 #### Diagnostic Sensors
 | Entity | Name | Description |
 |--------|------|-------------|
-| sensor.eveus_ev_charger_state | State | Charger state |
-| sensor.eveus_ev_charger_substate | Substate | Detailed status |
+| sensor.eveus_ev_charger_state | State | Current charger state (Standby, Connected, Charging, etc.) |
+| sensor.eveus_ev_charger_substate | Substate | Detailed status (Limited by User, Energy Limit, etc.) |
 | sensor.eveus_ev_charger_ground | Ground | Ground connection status |
-| sensor.eveus_ev_charger_enabled | Enabled | Charging enabled status |
-| sensor.eveus_ev_charger_connection_errors | Connection Errors | Connection reliability monitoring |
+| sensor.eveus_ev_charger_connection_quality | Connection Quality | Network connection reliability percentage |
+| sensor.eveus_ev_charger_system_time | System Time | Charger's internal time |
+| sensor.eveus_ev_charger_battery_voltage | Battery Voltage | Charger's backup battery voltage | V |
 
 #### Temperature Sensors
 | Entity | Name | Description | Unit |
@@ -242,27 +275,38 @@ input_number:
 | sensor.eveus_ev_charger_box_temperature | Box Temperature | Internal temperature | °C |
 | sensor.eveus_ev_charger_plug_temperature | Plug Temperature | Plug temperature | °C |
 
-#### Controls
+#### Control Entities
 | Entity | Name | Description |
 |--------|------|-------------|
-| number.eveus_ev_charger_charging_current | Charging Current | Control charging current (8-16A/32A) |
-| switch.eveus_ev_charger_stop_charging | Stop Charging | Control charging state |
-| switch.eveus_ev_charger_one_charge | One Charge | Enable one charge mode |
-| switch.eveus_ev_charger_reset_counter_a | Reset Counter A | Reset energy counter A |
+| number.eveus_ev_charger_charging_current | Charging Current | Set charging current limit (8-16A or 8-32A based on model) |
+| switch.eveus_ev_charger_stop_charging | Stop Charging | Start/stop charging (inverted: off=charging, on=stopped) |
+| switch.eveus_ev_charger_one_charge | One Charge | Enable single charge session mode |
+| switch.eveus_ev_charger_reset_counter_a | Reset Counter A | Clear primary energy counter |
+
+#### Rate Control Entities
+| Entity | Name | Description |
+|--------|------|-------------|
+| sensor.eveus_ev_charger_primary_rate_cost | Primary Rate Cost | Base electricity rate | ₴/kWh |
+| sensor.eveus_ev_charger_active_rate_cost | Active Rate Cost | Currently active rate with name | ₴/kWh |
+| sensor.eveus_ev_charger_rate_2_cost | Rate 2 Cost | Secondary time-based rate | ₴/kWh |
+| sensor.eveus_ev_charger_rate_3_cost | Rate 3 Cost | Tertiary time-based rate | ₴/kWh |
+| sensor.eveus_ev_charger_rate_2_status | Rate 2 Status | Schedule 2 enabled/disabled state | - |
+| sensor.eveus_ev_charger_rate_3_status | Rate 3 Status | Schedule 3 enabled/disabled state | - |
 
 ### Usage Tips
 
 #### 1. Before Starting a Charging Session
 - Set the correct EV battery capacity
-- Set the current state of charge (initial_soc)
+- Set the current state of charge (initial_soc) - **changes are now reflected immediately!**
 - Adjust the efficiency correction if needed
 - Set your desired target SOC
 
 #### 2. During Charging
 - Monitor charging progress with improved SOC sensors
 - Check the new time-to-target estimation
-- Monitor connection stability with the new error sensor
+- Monitor connection stability with the connection quality sensor
 - Adjust current if needed using the slider
+- **Any changes to input numbers (initial SOC, target SOC, etc.) are reflected immediately**
 
 #### 3. After Charging
 - Reset Counter A before starting a new session
@@ -660,7 +704,7 @@ This automation notifies you when charging is complete:
 
 If you encounter issues:
 1. Check all helper entities are properly configured
-2. Monitor the connection_errors sensor for network issues
+2. Monitor the connection_quality sensor for network issues
 3. Verify network connectivity to the charger
 4. Check the logs for detailed error messages
 5. Restart the integration if needed
@@ -785,9 +829,11 @@ Cannot perform calculations due to missing inputs.
 |-------|-------------------|
 | SOC sensors show "unknown" | Verify all required helper entities are created with exact names |
 | "Missing input entity" error | Check that all input_number entities exist and have valid values |
+| SOC calculations don't update immediately | This issue has been fixed - SOC updates happen instantly when you change input values |
 | Automation errors | Update entity names in automations to match integration's naming pattern (eveus_ev_charger_*) |
 | Connection failures | Verify network connectivity, check IP address, username, and password |
 | Incorrect SOC calculations | Set initial SOC to match your EV's current charge level |
+| Wrong time display | Integration now handles timezone correctly including DST; restart HA if issues persist |
 
 ### Reset Procedure
 
