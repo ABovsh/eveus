@@ -4,17 +4,29 @@ from __future__ import annotations
 import logging
 import traceback
 from typing import Any
+from functools import lru_cache
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
 from homeassistant.const import UnitOfEnergy
+from homeassistant.core import callback, Event
+from homeassistant.helpers.event import async_track_state_change_event
 
 from .common import EveusSensorBase
 from .utils import get_safe_value, validate_required_values, calculate_remaining_time
 
 _LOGGER = logging.getLogger(__name__)
+
+@lru_cache(maxsize=8)
+def calculate_soc_kwh(initial_soc, max_capacity, energy_charged, correction):
+    """Cached SOC calculation in kWh."""
+    initial_kwh = (initial_soc / 100) * max_capacity
+    efficiency = (1 - correction / 100)
+    charged_kwh = energy_charged * efficiency
+    total_kwh = initial_kwh + charged_kwh
+    return round(max(0, min(total_kwh, max_capacity)), 2)
 
 class EVSocKwhSensor(EveusSensorBase):
     """Sensor for state of charge in kWh."""
@@ -25,6 +37,40 @@ class EVSocKwhSensor(EveusSensorBase):
     _attr_icon = "mdi:battery-charging"
     _attr_suggested_display_precision = 1
     _attr_state_class = SensorStateClass.TOTAL
+    
+    def __init__(self, updater) -> None:
+        """Initialize the sensor."""
+        super().__init__(updater)
+        self._stop_listen = None
+
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        
+        # Listen for input_number changes to update immediately
+        self._stop_listen = async_track_state_change_event(
+            self.hass,
+            [
+                "input_number.ev_initial_soc",
+                "input_number.ev_battery_capacity",
+                "input_number.ev_soc_correction"
+            ],
+            self._on_input_changed
+        )
+
+    @callback
+    def _on_input_changed(self, event: Event) -> None:
+        """Handle input number state changes."""
+        _LOGGER.debug("Input changed: %s, updating SOC", event.data["entity_id"])
+        # Force recalculation by clearing the cache
+        calculate_soc_kwh.cache_clear()
+        # Update the sensor state
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Handle entity removal."""
+        if self._stop_listen:
+            self._stop_listen()
 
     @property
     def native_value(self) -> float | None:
@@ -77,20 +123,8 @@ class EVSocKwhSensor(EveusSensorBase):
                               initial_soc, max_capacity)
                 return None
 
-            # Calculation details
-            initial_kwh = (initial_soc / 100) * max_capacity
-            _LOGGER.debug("Calculated initial energy: %s kWh", initial_kwh)
-            
-            efficiency = (1 - correction / 100)
-            _LOGGER.debug("Calculated efficiency factor: %s", efficiency)
-            
-            charged_kwh = energy_charged * efficiency
-            _LOGGER.debug("Calculated charged energy: %s kWh", charged_kwh)
-            
-            total_kwh = initial_kwh + charged_kwh
-            _LOGGER.debug("Calculated total energy: %s kWh", total_kwh)
-            
-            result = round(max(0, min(total_kwh, max_capacity)), 2)
+            # Use cached calculation
+            result = calculate_soc_kwh(initial_soc, max_capacity, energy_charged, correction)
             _LOGGER.info("SOC Energy calculation result: %s kWh", result)
             return result
 
@@ -109,6 +143,39 @@ class EVSocPercentSensor(EveusSensorBase):
     _attr_icon = "mdi:battery-charging"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 0
+    
+    def __init__(self, updater) -> None:
+        """Initialize the sensor."""
+        super().__init__(updater)
+        self._stop_listen = None
+
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        
+        # Listen for input_number and SOC sensor changes
+        self._stop_listen = async_track_state_change_event(
+            self.hass,
+            [
+                "input_number.ev_initial_soc",
+                "input_number.ev_battery_capacity",
+                "input_number.ev_soc_correction",
+                "sensor.eveus_ev_charger_soc_energy"
+            ],
+            self._on_input_changed
+        )
+
+    @callback
+    def _on_input_changed(self, event: Event) -> None:
+        """Handle input number or SOC energy state changes."""
+        _LOGGER.debug("Input changed: %s, updating SOC", event.data["entity_id"])
+        # Update the sensor state
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Handle entity removal."""
+        if self._stop_listen:
+            self._stop_listen()
 
     @property
     def native_value(self) -> float | None:
@@ -204,6 +271,40 @@ class TimeToTargetSocSensor(EveusSensorBase):
     
     ENTITY_NAME = "Time to Target SOC"
     _attr_icon = "mdi:timer"
+    
+    def __init__(self, updater) -> None:
+        """Initialize the sensor."""
+        super().__init__(updater)
+        self._stop_listen = None
+
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        
+        # Listen for input_number and SOC changes
+        self._stop_listen = async_track_state_change_event(
+            self.hass,
+            [
+                "input_number.ev_initial_soc",
+                "input_number.ev_battery_capacity",
+                "input_number.ev_soc_correction",
+                "input_number.ev_target_soc",
+                "sensor.eveus_ev_charger_soc_percent"
+            ],
+            self._on_input_changed
+        )
+
+    @callback
+    def _on_input_changed(self, event: Event) -> None:
+        """Handle input number or SOC changes."""
+        _LOGGER.debug("Input changed: %s, updating time to target", event.data["entity_id"])
+        # Update the sensor state
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Handle entity removal."""
+        if self._stop_listen:
+            self._stop_listen()
 
     @property
     def native_value(self) -> str:
@@ -282,27 +383,14 @@ class TimeToTargetSocSensor(EveusSensorBase):
             if power_meas <= 0:
                 return "Not charging"
                 
-            # Calculate time remaining
-            remaining_kwh = ((target_soc - current_soc) * battery_capacity / 100)
-            if remaining_kwh <= 0:
-                return "Target reached"
-                
-            efficiency = (1 - correction / 100)
-            power_kw = power_meas * efficiency / 1000
-            
-            total_minutes = round((remaining_kwh / power_kw * 60), 0)
-            
-            if total_minutes < 1:
-                return "< 1m"
-                
-            # Format duration
-            hours = int(total_minutes // 60)
-            mins = int(total_minutes % 60)
-            
-            if hours > 0:
-                result = f"{hours}h {mins:02d}m"
-            else:
-                result = f"{mins}m"
+            # Use the utility function to calculate remaining time
+            result = calculate_remaining_time(
+                current_soc=current_soc,
+                target_soc=target_soc,
+                power_meas=power_meas,
+                battery_capacity=battery_capacity,
+                correction=correction
+            )
                 
             _LOGGER.debug("Time to target calculation result: %s", result)
             return result

@@ -1,6 +1,7 @@
 """Constants for the Eveus integration."""
 from datetime import timedelta
 from typing import Final, Dict, List, TypedDict, Literal
+from functools import lru_cache
 
 DOMAIN: Final[str] = "eveus"
 
@@ -129,3 +130,19 @@ NORMAL_SUBSTATES: Final[Dict[SubState, str]] = {
     9: "Waiting for Activation",
     10: "Paused by Adaptive Mode"
 }
+
+# Add caching for state mapping lookups
+@lru_cache(maxsize=32)
+def get_charging_state(state_value: int) -> str:
+    """Get cached charging state mapping."""
+    return CHARGING_STATES.get(state_value, "Unknown")
+
+@lru_cache(maxsize=32)
+def get_error_state(state_value: int) -> str:
+    """Get cached error state mapping."""
+    return ERROR_STATES.get(state_value, "Unknown Error")
+
+@lru_cache(maxsize=32)
+def get_normal_substate(state_value: int) -> str:
+    """Get cached normal substate mapping."""
+    return NORMAL_SUBSTATES.get(state_value, "Unknown State")

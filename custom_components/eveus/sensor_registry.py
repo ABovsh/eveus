@@ -27,6 +27,9 @@ from .const import (
     ERROR_STATES,
     NORMAL_SUBSTATES,
     RATE_STATES,
+    get_charging_state,  # New cached lookup function
+    get_error_state,     # New cached lookup function
+    get_normal_substate, # New cached lookup function
 )
 from .utils import (
     get_safe_value,
@@ -179,7 +182,8 @@ def get_charger_state(updater, hass) -> str:
     """Get charger state."""
     state_value = get_safe_value(updater.data, "state", int)
     if state_value is not None:
-        return CHARGING_STATES.get(state_value, "Unknown")
+        # Use the cached function from const.py
+        return get_charging_state(state_value)
     return None
 
 def get_charger_substate(updater, hass) -> str:
@@ -191,8 +195,8 @@ def get_charger_substate(updater, hass) -> str:
         return None
         
     if state == 7:  # Error state
-        return ERROR_STATES.get(substate, "Unknown Error")
-    return NORMAL_SUBSTATES.get(substate, "Unknown State")
+        return get_error_state(substate)
+    return get_normal_substate(substate)
 
 def get_ground_status(updater, hass) -> str:
     """Get ground status."""
@@ -233,7 +237,7 @@ def get_system_time(updater, hass) -> str:
         # Get local timezone
         local_tz = pytz.timezone(ha_timezone)
         
-        # Check if we're in DST
+        # Check if we're in DST - the charger seems to need special handling
         offset = 7200  # Base offset (2 hours)
         if is_dst(ha_timezone, dt_utc):
             offset += 3600  # Add 1 hour during DST
@@ -337,19 +341,19 @@ def get_connection_attrs(updater, hass) -> dict:
         }
         
         # Only store last errors with expanded details
-        last_errors = list(updater._network._quality_metrics['last_errors'])[-10:]
-        attrs["last_errors"] = [
-            {
-                "type": err["type"],
-                "time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(err["timestamp"])),
-                "age": f"{(now - err['timestamp']):.0f}s ago",
-                "details": err.get("details", "No details available")
-            }
-            for err in last_errors
-        ]
+        if hasattr(updater._network, '_quality_metrics') and 'last_errors' in updater._network._quality_metrics:
+            last_errors = list(updater._network._quality_metrics['last_errors'])[-5:]  # Reduced from 10
+            attrs["last_errors"] = [
+                {
+                    "type": err["type"],
+                    "time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(err["timestamp"])),
+                    "age": f"{(now - err['timestamp']):.0f}s ago"
+                }
+                for err in last_errors
+            ]
         
         # Add uptime info
-        if 'last_successful_connection' in updater._network._quality_metrics:
+        if hasattr(updater._network, '_quality_metrics') and 'last_successful_connection' in updater._network._quality_metrics:
             last_success = updater._network._quality_metrics['last_successful_connection']
             attrs["last_successful_connection"] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_success))
             attrs["uptime_duration"] = format_duration(int(now - last_success))
@@ -360,173 +364,231 @@ def get_connection_attrs(updater, hass) -> dict:
         _LOGGER.error("Error getting connection attributes: %s", err)
         return {}
 
-# Create sensor definitions registry
+# Create sensor definition groups using a parametric approach
+def create_measurement_sensors():
+    """Create standard measurement sensors with common patterns."""
+    measurements = [
+        {
+            "name": "Voltage", 
+            "fn": get_voltage,
+            "icon": "mdi:flash",
+            "device_class": SensorDeviceClass.VOLTAGE,
+            "state_class": SensorStateClass.MEASUREMENT,
+            "unit": UnitOfElectricPotential.VOLT,
+            "precision": 0
+        },
+        {
+            "name": "Current", 
+            "fn": get_current,
+            "icon": "mdi:current-ac",
+            "device_class": SensorDeviceClass.CURRENT,
+            "state_class": SensorStateClass.MEASUREMENT,
+            "unit": UnitOfElectricCurrent.AMPERE,
+            "precision": 1
+        },
+        {
+            "name": "Power", 
+            "fn": get_power,
+            "icon": "mdi:flash",
+            "device_class": SensorDeviceClass.POWER,
+            "state_class": SensorStateClass.MEASUREMENT,
+            "unit": UnitOfPower.WATT,
+            "precision": 1
+        },
+        {
+            "name": "Current Set", 
+            "fn": get_current_set,
+            "icon": "mdi:current-ac",
+            "device_class": SensorDeviceClass.CURRENT,
+            "state_class": SensorStateClass.MEASUREMENT,
+            "unit": UnitOfElectricCurrent.AMPERE,
+            "precision": 0
+        }
+    ]
+    
+    return [
+        SensorDefinition(
+            entity_name=sensor["name"],
+            value_fn=sensor["fn"],
+            icon=sensor.get("icon"),
+            device_class=sensor.get("device_class"),
+            state_class=sensor.get("state_class"),
+            unit=sensor.get("unit"),
+            precision=sensor.get("precision")
+        ) for sensor in measurements
+    ]
+
+def create_energy_sensors():
+    """Create energy-related sensors."""
+    sensors = [
+        {
+            "name": "Session Energy",
+            "fn": get_session_energy,
+            "icon": "mdi:transmission-tower-export",
+            "device_class": SensorDeviceClass.ENERGY,
+            "state_class": SensorStateClass.TOTAL,
+            "unit": UnitOfEnergy.KILO_WATT_HOUR,
+            "precision": 2
+        },
+        {
+            "name": "Total Energy",
+            "fn": get_total_energy,
+            "icon": "mdi:transmission-tower",
+            "device_class": SensorDeviceClass.ENERGY,
+            "state_class": SensorStateClass.TOTAL_INCREASING,
+            "unit": UnitOfEnergy.KILO_WATT_HOUR,
+            "precision": 2
+        },
+        {
+            "name": "Counter A Energy",
+            "fn": get_counter_a_energy,
+            "icon": "mdi:counter",
+            "device_class": SensorDeviceClass.ENERGY,
+            "state_class": SensorStateClass.TOTAL_INCREASING,
+            "unit": UnitOfEnergy.KILO_WATT_HOUR,
+            "precision": 2
+        },
+        {
+            "name": "Counter B Energy",
+            "fn": get_counter_b_energy,
+            "icon": "mdi:counter",
+            "device_class": SensorDeviceClass.ENERGY,
+            "state_class": SensorStateClass.TOTAL_INCREASING,
+            "unit": UnitOfEnergy.KILO_WATT_HOUR,
+            "precision": 2
+        }
+    ]
+    
+    return [
+        SensorDefinition(
+            entity_name=sensor["name"],
+            value_fn=sensor["fn"],
+            icon=sensor.get("icon"),
+            device_class=sensor.get("device_class"),
+            state_class=sensor.get("state_class"),
+            unit=sensor.get("unit"),
+            precision=sensor.get("precision")
+        ) for sensor in sensors
+    ]
+
+def create_diagnostic_sensors():
+    """Create diagnostic sensors."""
+    sensors = [
+        {
+            "name": "State",
+            "fn": get_charger_state,
+            "icon": "mdi:state-machine",
+            "category": EntityCategory.DIAGNOSTIC
+        },
+        {
+            "name": "Substate",
+            "fn": get_charger_substate,
+            "icon": "mdi:information-variant",
+            "category": EntityCategory.DIAGNOSTIC
+        },
+        {
+            "name": "Ground",
+            "fn": get_ground_status,
+            "icon": "mdi:electric-switch",
+            "category": EntityCategory.DIAGNOSTIC
+        },
+        {
+            "name": "Box Temperature",
+            "fn": get_box_temperature,
+            "icon": "mdi:thermometer",
+            "device_class": SensorDeviceClass.TEMPERATURE,
+            "state_class": SensorStateClass.MEASUREMENT,
+            "unit": UnitOfTemperature.CELSIUS,
+            "precision": 0,
+            "category": EntityCategory.DIAGNOSTIC
+        },
+        {
+            "name": "Plug Temperature",
+            "fn": get_plug_temperature,
+            "icon": "mdi:thermometer-high",
+            "device_class": SensorDeviceClass.TEMPERATURE,
+            "state_class": SensorStateClass.MEASUREMENT,
+            "unit": UnitOfTemperature.CELSIUS,
+            "precision": 0,
+            "category": EntityCategory.DIAGNOSTIC
+        },
+        {
+            "name": "Battery Voltage",
+            "fn": get_battery_voltage,
+            "icon": "mdi:battery",
+            "device_class": SensorDeviceClass.VOLTAGE,
+            "state_class": SensorStateClass.MEASUREMENT,
+            "unit": "V",
+            "precision": 2,
+            "category": EntityCategory.DIAGNOSTIC
+        },
+        {
+            "name": "System Time",
+            "fn": get_system_time,
+            "icon": "mdi:clock-outline",
+            "category": EntityCategory.DIAGNOSTIC
+        },
+        {
+            "name": "Connection Quality",
+            "fn": get_connection_quality,
+            "icon": "mdi:connection",
+            "state_class": SensorStateClass.MEASUREMENT,
+            "unit": "%",
+            "precision": 0,
+            "category": EntityCategory.DIAGNOSTIC,
+            "attributes_fn": get_connection_attrs
+        }
+    ]
+    
+    return [
+        SensorDefinition(
+            entity_name=sensor["name"],
+            value_fn=sensor["fn"],
+            icon=sensor.get("icon"),
+            device_class=sensor.get("device_class"),
+            state_class=sensor.get("state_class"),
+            unit=sensor.get("unit"),
+            precision=sensor.get("precision"),
+            category=sensor.get("category"),
+            attributes_fn=sensor.get("attributes_fn")
+        ) for sensor in sensors
+    ]
+
+# Special cases that don't fit the standard pattern
+def create_special_sensors():
+    """Create sensors with special handling."""
+    return [
+        SensorDefinition(
+            entity_name="Session Time",
+            value_fn=get_session_time,
+            icon="mdi:timer",
+            attributes_fn=get_session_time_attrs,
+        ),
+        SensorDefinition(
+            entity_name="Counter A Cost",
+            value_fn=get_counter_a_cost,
+            icon="mdi:currency-uah",
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            unit="₴",
+            precision=2,
+        ),
+        SensorDefinition(
+            entity_name="Counter B Cost",
+            value_fn=get_counter_b_cost,
+            icon="mdi:currency-uah",
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            unit="₴",
+            precision=2,
+        )
+    ]
+
+# Create all sensor definitions
 SENSOR_DEFINITIONS = [
-    # Basic sensors
-    SensorDefinition(
-        entity_name="Voltage",
-        value_fn=get_voltage,
-        icon="mdi:flash",
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfElectricPotential.VOLT,
-        precision=0,
-    ),
-    SensorDefinition(
-        entity_name="Current",
-        value_fn=get_current,
-        icon="mdi:current-ac",
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfElectricCurrent.AMPERE,
-        precision=1,
-    ),
-    SensorDefinition(
-        entity_name="Power",
-        value_fn=get_power,
-        icon="mdi:flash",
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfPower.WATT,
-        precision=1,
-    ),
-    SensorDefinition(
-        entity_name="Current Set",
-        value_fn=get_current_set,
-        icon="mdi:current-ac",
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfElectricCurrent.AMPERE,
-        precision=0,
-    ),
-    SensorDefinition(
-        entity_name="Session Time",
-        value_fn=get_session_time,
-        icon="mdi:timer",
-        attributes_fn=get_session_time_attrs,
-    ),
-    SensorDefinition(
-        entity_name="Session Energy",
-        value_fn=get_session_energy,
-        icon="mdi:transmission-tower-export",
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL,
-        unit=UnitOfEnergy.KILO_WATT_HOUR,
-        precision=2,
-    ),
-    SensorDefinition(
-        entity_name="Total Energy",
-        value_fn=get_total_energy,
-        icon="mdi:transmission-tower",
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        unit=UnitOfEnergy.KILO_WATT_HOUR,
-        precision=2,
-    ),
-    
-    # Counter sensors
-    SensorDefinition(
-        entity_name="Counter A Energy",
-        value_fn=get_counter_a_energy,
-        icon="mdi:counter",
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        unit=UnitOfEnergy.KILO_WATT_HOUR,
-        precision=2,
-    ),
-    SensorDefinition(
-        entity_name="Counter A Cost",
-        value_fn=get_counter_a_cost,
-        icon="mdi:currency-uah",
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        unit="₴",
-        precision=2,
-    ),
-    SensorDefinition(
-        entity_name="Counter B Energy",
-        value_fn=get_counter_b_energy,
-        icon="mdi:counter",
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        unit=UnitOfEnergy.KILO_WATT_HOUR,
-        precision=2,
-    ),
-    SensorDefinition(
-        entity_name="Counter B Cost",
-        value_fn=get_counter_b_cost,
-        icon="mdi:currency-uah",
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        unit="₴",
-        precision=2,
-    ),
-    
-    # Diagnostic sensors
-    SensorDefinition(
-        entity_name="State",
-        value_fn=get_charger_state,
-        icon="mdi:state-machine",
-        category=EntityCategory.DIAGNOSTIC,
-    ),
-    SensorDefinition(
-        entity_name="Substate",
-        value_fn=get_charger_substate,
-        icon="mdi:information-variant",
-        category=EntityCategory.DIAGNOSTIC,
-    ),
-    SensorDefinition(
-        entity_name="Ground",
-        value_fn=get_ground_status,
-        icon="mdi:electric-switch",
-        category=EntityCategory.DIAGNOSTIC,
-    ),
-    SensorDefinition(
-        entity_name="Box Temperature",
-        value_fn=get_box_temperature,
-        icon="mdi:thermometer",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfTemperature.CELSIUS,
-        precision=0,
-        category=EntityCategory.DIAGNOSTIC,
-    ),
-    SensorDefinition(
-        entity_name="Plug Temperature",
-        value_fn=get_plug_temperature,
-        icon="mdi:thermometer-high",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit=UnitOfTemperature.CELSIUS,
-        precision=0,
-        category=EntityCategory.DIAGNOSTIC,
-    ),
-    SensorDefinition(
-        entity_name="Battery Voltage",
-        value_fn=get_battery_voltage,
-        icon="mdi:battery",
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        unit="V",
-        precision=2,
-        category=EntityCategory.DIAGNOSTIC,
-    ),
-    SensorDefinition(
-        entity_name="System Time",
-        value_fn=get_system_time,
-        icon="mdi:clock-outline",
-        category=EntityCategory.DIAGNOSTIC,
-    ),
-    SensorDefinition(
-        entity_name="Connection Quality",
-        value_fn=get_connection_quality,
-        icon="mdi:connection",
-        state_class=SensorStateClass.MEASUREMENT,
-        unit="%",  # Add percentage unit
-        precision=0,
-        category=EntityCategory.DIAGNOSTIC,
-        attributes_fn=get_connection_attrs,
-    ),
-    
-    # Rate sensors
+    *create_measurement_sensors(),
+    *create_energy_sensors(),
+    *create_diagnostic_sensors(),
+    *create_special_sensors(),
+    # Rate sensors - still defined individually as they have unique logic
     SensorDefinition(
         entity_name="Primary Rate Cost",
         value_fn=get_primary_rate_cost,
