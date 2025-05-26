@@ -6,6 +6,7 @@ from functools import lru_cache
 from typing import Any, Callable, TypeVar, Optional, Union
 from datetime import datetime, timedelta
 import pytz
+from zoneinfo import ZoneInfo
 
 from homeassistant.core import State
 
@@ -76,7 +77,7 @@ def validate_required_values(*values: Any) -> bool:
 def is_dst(timezone_str: str, dt: datetime) -> bool:
     """Check if the given datetime is in DST for the timezone."""
     try:
-        tz = pytz.timezone(timezone_str)
+        tz = ZoneInfo(timezone_str)
         return bool(dt.astimezone(tz).dst())
     except Exception as err:
         _LOGGER.error("Error checking DST: %s", err)

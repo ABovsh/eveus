@@ -5,6 +5,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 from datetime import datetime
 import time
+from zoneinfo import ZoneInfo
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -235,7 +236,7 @@ def get_system_time(updater, hass) -> str:
         dt_utc = datetime.fromtimestamp(timestamp, tz=pytz.UTC)
         
         # Get local timezone
-        local_tz = pytz.timezone(ha_timezone)
+        local_tz = ZoneInfo(ha_timezone)
         
         # Check if we're in DST - the charger seems to need special handling
         offset = 7200  # Base offset (2 hours)
