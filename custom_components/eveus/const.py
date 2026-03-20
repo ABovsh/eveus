@@ -14,16 +14,26 @@ UPDATE_TIMEOUT: Final[int] = 20
 COMMAND_TIMEOUT: Final[int] = 25
 ERROR_COOLDOWN: Final[int] = 300  # 5 minutes
 
+# Availability and resilience - optimized for WiFi connections
+# WiFi disconnects are typically brief, so we use shorter timeouts
+AVAILABILITY_GRACE_PERIOD: Final[int] = 60        # 1 minute for sensors (handles brief WiFi drops)
+CONTROL_GRACE_PERIOD: Final[int] = 30             # 30 seconds for switches/numbers - safety first!
+ERROR_LOG_RATE_LIMIT: Final[int] = 300            # Log errors max every 5 minutes
+STATE_CACHE_TTL: Final[int] = 60                  # Cache sensor state for 1 minute (WiFi reconnect window)
+CONTROL_CACHE_TTL: Final[int] = 0                 # NO caching for control entities - safety!
+
 # Current limits
 MIN_CURRENT: Final[int] = 7
 MODEL_16A: Final[str] = "16A"
 MODEL_32A: Final[str] = "32A"
-MODELS: Final[List[str]] = [MODEL_16A, MODEL_32A]
+MODEL_48A: Final[str] = "48A"
+MODELS: Final[List[str]] = [MODEL_16A, MODEL_32A, MODEL_48A]
 
 # Model specifications
 MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
     MODEL_16A: 16,
-    MODEL_32A: 32
+    MODEL_32A: 32,
+    MODEL_48A: 48
 }
 
 # Configuration

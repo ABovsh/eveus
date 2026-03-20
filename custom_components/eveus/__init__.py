@@ -16,6 +16,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, MODEL_MAX_CURRENT, CONF_MODEL
 from .common import EveusUpdater, EveusConnectionError
+from .utils import get_next_device_number
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,6 +87,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Validate connection
         await async_validate_connection(hass, host, username, password)
         
+        # Determine device number for multi-device support
+        device_number = entry.data.get("device_number")
+        if device_number is None:
+            # This is a new device, assign next available number
+            device_number = get_next_device_number(hass)
+            
+            # Update config entry with device number for future use
+            new_data = entry.data.copy()
+            new_data["device_number"] = device_number
+            hass.config_entries.async_update_entry(entry, data=new_data)
+            
+            _LOGGER.info("Assigned device number %d to %s", device_number, host)
+        
         # Initialize data structure
         hass.data.setdefault(DOMAIN, {})
         hass.data[DOMAIN][entry.entry_id] = {
@@ -93,6 +107,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "host": host,
             "username": username,
             "password": password,
+            "device_number": device_number,
             "entities": {},
         }
         
