@@ -8,7 +8,7 @@
                     "host": "IP Address",
                     "username": "Username",
                     "password": "Password",
-                    "model": "Charger Model (16A or 32A)"
+                    "model": "Charger Model (16A, 32A or 48A)"
                 }
             }
         },
