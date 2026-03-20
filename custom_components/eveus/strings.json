@@ -15,7 +15,8 @@
         "error": {
             "cannot_connect": "Failed to connect to charger, please verify the IP address",
             "invalid_auth": "Invalid username or password",
-            "input_missing": "Required input_number entities missing. Please create them first.",
+            "invalid_input": "Invalid input provided, please check your entries",
+            "invalid_device": "Device validation failed, please check the charger model",
             "unknown": "Unexpected error occurred"
         },
         "abort": {
