@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import logging
-import time
 from functools import lru_cache
 from typing import Any, Callable, TypeVar, Optional, Union, Dict
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-import pytz
 from homeassistant.core import State, HomeAssistant
 
 from .const import DOMAIN
@@ -127,8 +126,8 @@ def is_dst(timezone_str: str, timestamp: float) -> bool:
 def _is_dst_cached(timezone_str: str, hour_bucket: int) -> bool:
     """Cached DST check keyed by hour bucket for effective cache reuse."""
     try:
-        tz = pytz.timezone(timezone_str)
-        dt = datetime.fromtimestamp(hour_bucket * 3600, tz=pytz.UTC)
+        tz = ZoneInfo(timezone_str)
+        dt = datetime.fromtimestamp(hour_bucket * 3600, tz=timezone.utc)
         return bool(dt.astimezone(tz).dst())
     except Exception as err:
         _LOGGER.error("Error checking DST for %s: %s", timezone_str, err)
