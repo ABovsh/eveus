@@ -1,81 +1,52 @@
 # Eveus EV Charger Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-2.1.0-blue)
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
 ![Stability](https://img.shields.io/badge/stability-stable-green)
 
-This custom integration provides comprehensive monitoring and control of Eveus EV chargers in Home Assistant, featuring advanced state tracking, dynamic update intervals, smart current control, energy monitoring, and improved SOC tracking.
+Custom integration for monitoring and controlling Eveus EV chargers in Home Assistant. Supports real-time monitoring, smart current control, energy tracking, multi-rate billing, and SOC estimation.
 
-## Table of Contents
+## What's New in 3.0.0
 
-- [New in Version 2.1.0](#new-in-version-210)
-- [Prerequisites](#prerequisites)
-  - [Required Helper Entities](#required-helper-entities)
-- [Features](#features)
-  - [Basic Monitoring](#-basic-monitoring)
-  - [Advanced EV Features](#-advanced-ev-features)
-  - [Reliability Features](#-reliability-features)
-  - [Control Features](#-control-features)
-  - [Diagnostic Features](#-diagnostic-features)
-- [Installation](#installation)
-  - [HACS (Recommended)](#method-1-hacs-recommended)
-  - [Manual Installation](#method-2-manual-installation)
-- [Configuration](#configuration)
-  - [Initial Setup](#initial-setup)
-  - [Available Entities](#available-entities)
-  - [Usage Tips](#usage-tips)
-- [UI Configuration](#ui-configuration)
-  - [Basic Entities Card](#basic-entities-card)
-  - [Interactive Control Panel](#interactive-control-panel)
-- [Notifications](#notifications)
-  - [Setting Up Notifications](#setting-up-notifications)
-- [Troubleshooting](#troubleshooting)
-  - [Advanced Debugging](#advanced-debugging)
-  - [Common Issues and Solutions](#common-issues-and-solutions)
-  - [Reset Procedure](#reset-procedure)
-- [Support](#support)
-- [License](#license)
+### Multi-Device Support
+You can now add **multiple Eveus chargers** to the same Home Assistant instance. Each charger gets its own device entry, entities, and unique IDs. Existing single-charger setups are fully backward compatible — no reconfiguration needed.
 
-## New in Version 2.1.0
+### 48A Model Support
+Added support for the **48A charger model** alongside existing 16A and 32A models.
 
-### ⚡ Performance Optimizations
-- **Immediate SOC updates** when input numbers change - no more waiting for refresh cycles
-- **Optimized SOC calculations** with intelligent caching for faster response times
-- **Reduced memory usage** through optimized data structures and smarter caching
-- **Smoother sensor updates** with improved data processing pipelines
-- **Enhanced network efficiency** using persistent connections and keep-alive
-- **Lower CPU usage** through cached lookups and consolidated operations
+### Safer Restarts
+Switches and number controls **no longer send commands to the charger on Home Assistant restart**. Previously, HA would re-apply the last known state on boot, which could override manual changes made on the charger itself. Now only the display value is restored.
 
-### 🔄 Network & Connectivity
-- **Improved connection persistence** - fewer "device unavailable" errors
-- **Smart retry logic with exponential backoff** - automatic recovery from network issues
-- **Enhanced connection monitoring** - detailed visibility of charger connectivity
-- **Keep-alive connections** maintain stable communication longer
-- **Optimized error handling** for better recovery from network issues
-  
-### 🛠️ Code Quality & Reliability
-- **Consolidated duplicate code** for more efficient operation
-- **Standardized entity management** ensuring consistent behavior
-- **Better error messages** making troubleshooting easier
-- **Fixed timezone handling** for accurate time displays
-- **Streamlined sensor creation** reduces code complexity
+### Optimistic UI for Controls
+The current slider and charging switches now provide **instant visual feedback** when you interact with them, then reconcile with the actual device state within seconds. No more waiting 30–60 seconds to see your changes reflected.
 
-### 🔧 From Version 2.0.0
-- **Dynamic Update Frequency**: 30-second updates when charging, 60-second updates when idle
-- **Enhanced State Management**: Immediate and reliable switch state updates
-- **Improved Device Info**: Accurate firmware version display and better identification
-- **Modular Architecture**: Better maintainability and reliability
-- **Zero Breaking Changes**: Full backward compatibility maintained
+### Smarter Offline Handling
+- **Silent mode**: When the charger is powered off for an extended period, the integration stops flooding logs and quietly waits for it to come back.
+- **Grace periods**: Brief WiFi drops (under 60 seconds) no longer cause sensors to flicker to "Unavailable".
+- **Control safety**: Switches and current controls use a shorter 30-second grace period — if the device is offline, controls become unavailable quickly to prevent stale commands.
+
+### Leaner Codebase
+The integration was refactored from **19 files / ~3,500 lines** down to **15 files / ~3,200 lines** while gaining all the features above. Five modules were removed (`entity_registry.py`, `fallback_creator.py`, `input_status_sensor.py`, `network_utils.py`, and the old `sensor_registry.py`), with their useful functionality consolidated into the remaining files.
+
+### Bug Fixes
+- Fixed connection validation checking HTTP 401 after already raising an exception (dead code).
+- Fixed `is_dst()` cache that never actually reused entries (keyed on raw float timestamps).
+- Fixed entity updates being silently skipped when only temperature, cost, or rate data changed.
+- Fixed randomized backoff using a deterministic clock instead of actual randomness.
+- Fixed config flow and setup both assigning device numbers (potential race condition).
+- Removed `aiohttp` and `voluptuous` from `manifest.json` requirements (they are HA core dependencies).
+- Network session now uses Home Assistant's shared HTTP session instead of a custom one, preventing orphaned connections.
+
+### Optional EV Helpers
+The SOC helper entities (`input_number.ev_*`) are now **fully optional**. If they're missing, the integration works normally — you just won't see SOC and time-to-target sensors. Previously, missing helpers could cause warnings in logs.
+
+---
 
 ## Prerequisites
 
-### Required Helper Entities
-Before installing the integration, you must create these helper entities in Home Assistant:
+### Optional Helper Entities
 
-1. Go to Settings → Devices & Services → Helpers
-2. Click the "+ CREATE HELPER" button
-3. Choose "Number"
-4. Create each of these helpers with the exact input_number names:
+For SOC tracking features (battery percentage, time to target), create these helper entities in **Settings → Devices & Services → Helpers → + Create Helper → Number**:
 
 ```yaml
 input_number:
@@ -84,323 +55,180 @@ input_number:
     min: 10
     max: 160
     step: 1
+    initial: 80
     unit_of_measurement: "kWh"
-    mode: slider      # Optional but recommended
+    mode: slider
     icon: mdi:car-battery
-    # This is the total usable capacity of your EV's battery (e.g., 80 kWh for Tesla Model 3 LR)
-    # Used to calculate accurate SOC percentages and remaining charging time
-    # Should match the value in your EV's manual or settings
 
   ev_initial_soc:
     name: "Initial EV State of Charge"
     min: 0
     max: 100
     step: 1
+    initial: 20
     unit_of_measurement: "%"
-    mode: slider      # Optional but recommended
+    mode: slider
     icon: mdi:battery-charging-40
-    # This should be set to your EV's current SOC displayed on the dashboard before starting to charge
-    # Must be updated at the beginning of each charging session for accurate calculations
-    # This acts as your starting point for SOC tracking
 
   ev_soc_correction:
     name: "Charging Efficiency Loss"
     min: 0
-    max: 10
+    max: 15
     step: 0.1
-    initial: 7.5     # Default efficiency loss
+    initial: 7.5
     unit_of_measurement: "%"
-    mode: slider      # Optional but recommended
+    mode: slider
     icon: mdi:chart-bell-curve
-    # Accounts for energy lost during charging due to heat, cable resistance, etc.
-    # Typical values are 5-10% (7.5% is a good starting point)
-    # Adjust this value based on comparing the integration's SOC with your EV's actual SOC
 
   ev_target_soc:
     name: "Target SOC"
-    min: 80
+    min: 0
     max: 100
-    step: 10
-    initial: 80      # Default target
+    step: 5
+    initial: 80
     unit_of_measurement: "%"
-    mode: slider      # Optional but recommended
+    mode: slider
     icon: mdi:battery-charging-high
-    # Set the desired SOC you want to reach for this charging session
-    # Used to calculate "Time to Target SOC" and can be used for automation triggers
-    # Many users set this to 80-90% for daily charging to preserve battery health
 ```
 
-> **Important**: The integration will verify these helpers exist during setup and display an error if any are missing or incorrectly configured.
+> **Note**: The integration will work without these helpers. The "Input Entities Status" diagnostic sensor shows which helpers are present and provides setup instructions for any that are missing.
 
 ## Features
 
-### 🔌 Basic Monitoring
-- Real-time voltage, current, and power monitoring with improved accuracy
-- Session and total energy tracking with persistent storage
-- Temperature monitoring (box and plug) with enhanced precision
-- Ground connection safety monitoring
-- Battery voltage monitoring
-- Energy counters with cost tracking (in UAH)
-- Enhanced session time formatting with days, hours, and minutes
-- Smart data caching to minimize device queries
+**Monitoring** — Real-time voltage, current, power, energy, temperatures, and ground status. Session and lifetime energy counters with cost tracking in UAH.
 
-### 🚗 Advanced EV Features
-- Accurate State of Charge monitoring (kWh and percentage)
-- Dynamic time-to-target calculation with efficiency correction
-- Comprehensive session time tracking
-- Smart SOC estimation based on charging patterns
-- Real-time efficiency adjustments during charging
-- Accurate remaining time calculations based on current conditions
+**EV Tracking** — SOC estimation in kWh and percent, time-to-target calculation with efficiency correction, all updating instantly when you change input values.
 
-### 🛡️ Reliability Features
-- Dynamic update intervals based on charging state
-- Smart retry logic with exponential backoff
-- Efficient state caching and restoration
-- Enhanced error handling and recovery
-- Comprehensive connection monitoring
-- Automatic recovery from network issues
-- Detailed diagnostic reporting
+**Controls** — Charging current slider (model-aware limits), start/stop charging, one-charge mode, counter reset.
 
-### 🎮 Control Features
-- Dynamic charging current control (8-16A or 8-32A based on model)
-- Reliable start/stop charging control
-- One charge mode support
-- Counter reset functionality
-- Current adjustment with safety limits
-- Improved command reliability
-- Immediate state feedback
+**Reliability** — Adaptive polling (30s charging / 60s idle), exponential backoff on errors, silent offline mode, WiFi-optimized grace periods, connection quality monitoring.
 
-### 📊 Diagnostic Features
-- Connection quality metrics
-- Detailed error tracking and reporting
-- Temperature monitoring with improved accuracy
-- Ground connection monitoring
-- Enhanced status reporting
-- Comprehensive error logging
-- System performance monitoring
+**Multi-Rate Billing** — Primary rate, Rate 2, and Rate 3 cost tracking with schedule enable/disable status.
+
+**Multi-Device** — Run multiple chargers on the same HA instance with independent entities and device entries.
 
 ## Installation
 
-### Method 1: HACS (Recommended)
+### HACS (Recommended)
 
-#### Step-by-Step Instructions for Adding to HACS
+1. Open HACS → click ⋮ → **Custom repositories**
+2. Add `https://github.com/ABovsh/eveus` as an **Integration**
+3. Search "Eveus" in HACS Integrations and install
+4. Restart Home Assistant
 
-1. **Access HACS**
-   - Open your Home Assistant dashboard
-   - On the sidebar menu, find and click on "HACS"
-   - This will open the HACS main page
+### Manual
 
-2. **Add Custom Repository**
-   - In the top-right corner of the HACS page, click on the three vertical dots (⋮) menu
-   - From the dropdown menu, select "Custom repositories"
-   - A dialog box will appear asking for repository information
-   - Fill in the following information:
-     - In the "Repository" field, paste this URL: `https://github.com/ABovsh/eveus`
-     - In the "Category" dropdown menu, select "Integration"
-   - Click the "ADD" button
-
-3. **Install the Integration**
-   - After adding the repository, go back to the HACS main page
-   - Click on the "Integrations" section
-   - In the search box at the top, type "Eveus"
-   - The Eveus EV Charger integration should appear in the results
-   - Click on the "Eveus EV Charger" card
-   - On the integration detail page, click the "DOWNLOAD" button in the bottom-right corner
-   - A confirmation dialog will appear - click "DOWNLOAD" again
-   - Wait for the download to complete (this should only take a few seconds)
-
-4. **Restart Home Assistant**
-   - After successful installation, you need to restart Home Assistant
-   - Go to your Home Assistant main menu (sidebar)
-   - Click on "Configuration"
-   - Click on "Server Controls"
-   - Under the "Server management" section, click the "RESTART" button
-   - Wait for Home Assistant to restart completely (this may take several minutes)
-
-### Method 2: Manual Installation
-1. Download the repository
-2. Copy the `custom_components/eveus` directory to your Home Assistant's `custom_components` folder
-3. Restart Home Assistant
+1. Copy `custom_components/eveus` to your HA `custom_components` folder
+2. Restart Home Assistant
 
 ## Configuration
 
-### Initial Setup
-1. Create all required helper entities as described in Prerequisites
-2. Go to Configuration → Integrations
-3. Click "+ Add Integration"
-4. Search for "Eveus"
-5. Enter the following details:
-   - IP Address
-   - Username
-   - Password
-   - Charger Model (16A or 32A)
+1. Go to **Settings → Devices & Services → + Add Integration**
+2. Search for **Eveus**
+3. Enter your charger's IP address, username, password, and model (16A, 32A, or 48A)
 
-### Available Entities
+To add a second charger, repeat the steps with the other charger's IP address.
 
-#### Basic Sensors
-| Entity | Name | Description | Unit |
-|--------|------|-------------|------|
-| sensor.eveus_ev_charger_voltage | Voltage | Current voltage measurement | V |
-| sensor.eveus_ev_charger_current | Current | Actual charging current | A |
-| sensor.eveus_ev_charger_power | Power | Current charging power | W |
-| sensor.eveus_ev_charger_current_set | Current Set | Configured charging current limit | A |
-| sensor.eveus_ev_charger_session_energy | Session Energy | Energy used in current session | kWh |
-| sensor.eveus_ev_charger_session_time | Session Time | Duration of current charging session | - |
-| sensor.eveus_ev_charger_total_energy | Total Energy | Total lifetime energy delivered | kWh |
-| sensor.eveus_ev_charger_counter_a_energy | Counter A Energy | Primary energy counter | kWh |
-| sensor.eveus_ev_charger_counter_b_energy | Counter B Energy | Secondary energy counter | kWh |
-| sensor.eveus_ev_charger_counter_a_cost | Counter A Cost | Primary counter cost | ₴ |
-| sensor.eveus_ev_charger_counter_b_cost | Counter B Cost | Secondary counter cost | ₴ |
+## Available Entities
 
-#### SOC Sensors
-| Entity | Name | Description | Unit |
-|--------|------|-------------|------|
-| sensor.eveus_ev_charger_soc_energy | SOC Energy | Current battery charge | kWh |
-| sensor.eveus_ev_charger_soc_percent | SOC Percent | Current battery charge | % |
-| sensor.eveus_ev_charger_time_to_target_soc | Time to Target SOC | Estimated charging time remaining | - |
+### Sensors
 
-#### Diagnostic Sensors
-| Entity | Name | Description |
-|--------|------|-------------|
-| sensor.eveus_ev_charger_state | State | Current charger state (Standby, Connected, Charging, etc.) |
-| sensor.eveus_ev_charger_substate | Substate | Detailed status (Limited by User, Energy Limit, etc.) |
-| sensor.eveus_ev_charger_ground | Ground | Ground connection status |
-| sensor.eveus_ev_charger_connection_quality | Connection Quality | Network connection reliability percentage |
-| sensor.eveus_ev_charger_system_time | System Time | Charger's internal time |
-| sensor.eveus_ev_charger_battery_voltage | Battery Voltage | Charger's backup battery voltage | V |
+| Entity | Description | Unit |
+|--------|-------------|------|
+| Voltage | Current voltage | V |
+| Current | Charging current | A |
+| Power | Charging power | W |
+| Current Set | Configured current limit | A |
+| Session Energy | Energy in current session | kWh |
+| Session Time | Duration of current session | — |
+| Total Energy | Lifetime energy delivered | kWh |
+| Counter A / B Energy | Energy counters | kWh |
+| Counter A / B Cost | Cost counters | ₴ |
+| SOC Energy | Battery charge level (requires helpers) | kWh |
+| SOC Percent | Battery charge level (requires helpers) | % |
+| Time to Target SOC | Estimated time remaining (requires helpers) | — |
 
-#### Temperature Sensors
-| Entity | Name | Description | Unit |
-|--------|------|-------------|------|
-| sensor.eveus_ev_charger_box_temperature | Box Temperature | Internal temperature | °C |
-| sensor.eveus_ev_charger_plug_temperature | Plug Temperature | Plug temperature | °C |
+### Diagnostics
 
-#### Control Entities
-| Entity | Name | Description |
-|--------|------|-------------|
-| number.eveus_ev_charger_charging_current | Charging Current | Set charging current limit (8-16A or 8-32A based on model) |
-| switch.eveus_ev_charger_stop_charging | Stop Charging | Start/stop charging (inverted: off=charging, on=stopped) |
-| switch.eveus_ev_charger_one_charge | One Charge | Enable single charge session mode |
-| switch.eveus_ev_charger_reset_counter_a | Reset Counter A | Clear primary energy counter |
+| Entity | Description |
+|--------|-------------|
+| State | Charger state (Standby, Connected, Charging, etc.) |
+| Substate | Detailed status / error info |
+| Ground | Ground connection status |
+| Box / Plug Temperature | Internal and plug temperatures |
+| Battery Voltage | Backup battery voltage |
+| System Time | Charger internal clock |
+| Connection Quality | Network reliability percentage |
+| Input Entities Status | Shows which SOC helpers are configured |
 
-#### Rate Control Entities
-| Entity | Name | Description |
-|--------|------|-------------|
-| sensor.eveus_ev_charger_primary_rate_cost | Primary Rate Cost | Base electricity rate | ₴/kWh |
-| sensor.eveus_ev_charger_active_rate_cost | Active Rate Cost | Currently active rate with name | ₴/kWh |
-| sensor.eveus_ev_charger_rate_2_cost | Rate 2 Cost | Secondary time-based rate | ₴/kWh |
-| sensor.eveus_ev_charger_rate_3_cost | Rate 3 Cost | Tertiary time-based rate | ₴/kWh |
-| sensor.eveus_ev_charger_rate_2_status | Rate 2 Status | Schedule 2 enabled/disabled state | - |
-| sensor.eveus_ev_charger_rate_3_status | Rate 3 Status | Schedule 3 enabled/disabled state | - |
+### Rate Sensors
 
-### Usage Tips
+| Entity | Description |
+|--------|-------------|
+| Primary / Active Rate Cost | Current electricity rate |
+| Rate 2 / 3 Cost | Time-based rates |
+| Rate 2 / 3 Status | Schedule enabled/disabled |
 
-#### 1. Before Starting a Charging Session
-- Set the correct EV battery capacity
-- Set the current state of charge (initial_soc) - **changes are now reflected immediately!**
-- Adjust the efficiency correction if needed
-- Set your desired target SOC
+### Controls
 
-#### 2. During Charging
-- Monitor charging progress with improved SOC sensors
-- Check the new time-to-target estimation
-- Monitor connection stability with the connection quality sensor
-- Adjust current if needed using the slider
-- **Any changes to input numbers (initial SOC, target SOC, etc.) are reflected immediately**
+| Entity | Description |
+|--------|-------------|
+| Charging Current | Set current limit (slider, model-aware min/max) |
+| Stop Charging | Enable/disable EVSE |
+| One Charge | Single charge session mode |
+| Reset Counter A | Clear primary energy counter |
 
-#### 3. After Charging
-- Reset Counter A before starting a new session
-- Record efficiency for future reference
-- Check total energy usage in session history
-- Review connection quality metrics
+## UI Examples
 
-## UI Configuration
+### Entities Card
 
-### Basic Entities Card
 ![Basic Entities Card](https://github.com/user-attachments/assets/b79ee8b2-8604-4d31-aba2-76b08b320daf)
-
-This card provides a comprehensive view of all charging information and controls in a clean, organized layout:
 
 ```yaml
 type: entities
 entities:
   - entity: sensor.eveus_ev_charger_soc_percent
     name: SOC (%)
-    icon: mdi:battery-charging-80
   - entity: sensor.eveus_ev_charger_soc_energy
     name: SOC (kWh)
-    icon: mdi:battery
   - entity: sensor.eveus_ev_charger_time_to_target_soc
     name: Time to Target
-    icon: mdi:clock-time-four
   - type: divider
   - entity: sensor.eveus_ev_charger_state
     name: Charger State
-    icon: mdi:car-electric
   - entity: sensor.eveus_ev_charger_substate
     name: Substate
-    icon: mdi:car-cog
   - type: divider
   - entity: sensor.eveus_ev_charger_power
     name: Power (W)
-    icon: mdi:flash
   - entity: sensor.eveus_ev_charger_counter_a_energy
     name: Session Energy (kWh)
-    icon: mdi:counter
   - type: divider
   - entity: number.eveus_ev_charger_charging_current
     name: Current (A)
-    icon: mdi:current-ac
   - entity: input_number.ev_initial_soc
     name: Initial SOC (%)
-    icon: mdi:calendar-clock
   - entity: input_number.ev_target_soc
     name: Target SOC (%)
-    icon: mdi:target
   - entity: input_number.ev_soc_correction
     name: SOC Correction (%)
-    icon: mdi:chart-bell-curve
   - entity: input_number.ev_battery_capacity
     name: Battery Capacity (kWh)
-    icon: mdi:car-battery
   - type: divider
   - entity: switch.eveus_ev_charger_one_charge
     name: One Charge Mode
-    icon: mdi:power-plug
   - entity: switch.eveus_ev_charger_stop_charging
     name: Stop Charging
-    icon: mdi:stop-circle
   - entity: switch.eveus_ev_charger_reset_counter_a
     name: Reset Energy Counter
-    icon: mdi:reload
 show_header_toggle: false
 ```
 
 ### Interactive Control Panel
+
 ![Interactive Control Panel](https://github.com/user-attachments/assets/afac498a-03d9-44a2-8fcd-602d5e1a64e9)
 
-For a more interactive and visually appealing control experience, you can use this advanced control panel with sliders and buttons:
-
-#### Features:
-- **Interactive sliders** for precise control of charging current and initial SOC
-- **One-touch buttons** for common actions like resetting counters or stopping charging
-- **Visual feedback** with animations and color changes
-- **Confirmation dialogs** for critical actions to prevent accidents
-- **Haptic feedback** for touch devices (phones/tablets)
-
-#### Installation:
-
-1. **Install Required Cards**:
-   - Go to HACS
-   - Search for and install "Slider Button Card" and "Button Card"
-   - Restart Home Assistant
-
-2. **Add the YAML Configuration**:
-   - Go to your dashboard
-   - Click the three dots in the top right → Edit Dashboard
-   - Click the + button to add a new card
-   - Select "Manual" card
-   - Paste this code:
+Requires [Slider Button Card](https://github.com/custom-cards/slider-button-card) and [Button Card](https://github.com/custom-cards/button-card) from HACS.
 
 ```yaml
 type: vertical-stack
@@ -424,32 +252,24 @@ cards:
           icon: mdi:flash
           tap_action:
             action: more-info
-            haptic: light
         show_name: true
         show_state: true
         unit: " A"
-        show_attribute: false
         action_button:
           show: false
         styles:
           slider:
             height: 35px
             width: 95%
-            background: rgba(var(--rgb-primary-text-color), 0.1)
           card:
             padding: 4px
             height: 55px
-            border-radius: var(--ha-card-border-radius, 12px)
-            box-shadow: var(--ha-card-box-shadow, none)
           name:
             font-size: 12px
             font-weight: bold
-            padding-top: 4px
-            color: var(--primary-text-color)
           state:
             font-size: 16px
             font-weight: bold
-            color: var(--primary-text-color)
       - type: custom:slider-button-card
         entity: input_number.ev_initial_soc
         name: Init SOC
@@ -467,32 +287,24 @@ cards:
           icon: mdi:battery
           tap_action:
             action: more-info
-            haptic: light
         show_name: true
         show_state: true
         unit: "%"
-        show_attribute: false
         action_button:
           show: false
         styles:
           slider:
             height: 35px
             width: 95%
-            background: rgba(var(--rgb-primary-text-color), 0.1)
           card:
             padding: 4px
             height: 55px
-            border-radius: var(--ha-card-border-radius, 12px)
-            box-shadow: var(--ha-card-box-shadow, none)
           name:
             font-size: 12px
             font-weight: bold
-            padding-top: 4px
-            color: var(--primary-text-color)
           state:
             font-size: 16px
             font-weight: bold
-            color: var(--primary-text-color)
   - type: horizontal-stack
     cards:
       - type: custom:button-card
@@ -500,354 +312,129 @@ cards:
         name: Reset Counter
         icon: mdi:restart
         size: 30%
-        color_type: card
-        color: var(--info-color, "#3949AB")
         tap_action:
           action: toggle
           confirmation:
             text: Reset the energy counter?
-            exemptions: []
-          haptic: success
-        hold_action:
-          action: more-info
-          haptic: light
         styles:
           card:
-            - border-radius: var(--ha-card-border-radius, 12px)
             - height: 45px
             - padding: 4px
-            - margin: 2px
-            - box-shadow: var(--ha-card-box-shadow, none)
-            - transition: all 0.2s ease-in-out
           name:
             - font-size: 12px
             - font-weight: bold
-            - padding-top: 2px
-            - color: var(--primary-text-color)
-            - transition: color 0.2s ease-in-out
-          icon:
-            - width: 20px
-            - color: var(--primary-text-color)
-            - transition: color 0.2s ease-in-out
-        state:
-          - value: "off"
-            styles:
-              card:
-                - background-color: var(--card-background-color)
-                - border: 1px solid var(--divider-color)
-                - transform: scale(1)
-          - value: "on"
-            styles:
-              card:
-                - opacity: 0.9
-                - background-color: var(--info-color)
-                - transform: scale(0.95)
-              name:
-                - color: var(--primary-background-color)
-              icon:
-                - color: var(--primary-background-color)
       - type: custom:button-card
         entity: switch.eveus_ev_charger_one_charge
         name: OneCharge
         icon: mdi:ev-station
         size: 35%
-        color_type: card
-        color: var(--success-color, "#2E7D32")
         tap_action:
           action: toggle
-          haptic: success
-        hold_action:
-          action: more-info
-          haptic: light
         styles:
           card:
-            - border-radius: var(--ha-card-border-radius, 12px)
             - height: 45px
             - padding: 4px
-            - margin: 2px
-            - box-shadow: var(--ha-card-box-shadow, none)
-            - transition: all 0.2s ease-in-out
           name:
             - font-size: 12px
             - font-weight: bold
-            - padding-top: 2px
-            - color: var(--primary-text-color)
-            - transition: color 0.2s ease-in-out
-          icon:
-            - width: 22px
-            - color: var(--primary-text-color)
-            - transition: color 0.2s ease-in-out
-        state:
-          - value: "off"
-            styles:
-              card:
-                - background-color: var(--card-background-color)
-                - border: 1px solid var(--divider-color)
-                - transform: scale(1)
-          - value: "on"
-            styles:
-              card:
-                - background-color: var(--success-color)
-                - animation: pulse 2s infinite
-                - transform: scale(0.95)
-              name:
-                - color: var(--primary-background-color)
-              icon:
-                - color: var(--primary-background-color)
       - type: custom:button-card
         entity: switch.eveus_ev_charger_stop_charging
         name: Stop Charging
         icon: mdi:stop-circle
         size: 35%
-        color_type: card
-        color: var(--error-color, "#C62828")
         tap_action:
           action: toggle
           confirmation:
             text: Stop charging session?
-            exemptions: []
-          haptic: warning
-        hold_action:
-          action: more-info
-          haptic: light
         styles:
           card:
-            - border-radius: var(--ha-card-border-radius, 12px)
             - height: 45px
             - padding: 4px
-            - margin: 2px
-            - box-shadow: var(--ha-card-box-shadow, none)
-            - transition: all 0.2s ease-in-out
           name:
             - font-size: 12px
             - font-weight: bold
-            - padding-top: 2px
-            - color: var(--primary-text-color)
-            - transition: color 0.2s ease-in-out
-          icon:
-            - width: 22px
-            - color: var(--primary-text-color)
-            - transition: color 0.2s ease-in-out
-        state:
-          - value: "off"
-            styles:
-              card:
-                - background-color: var(--card-background-color)
-                - border: 1px solid var(--divider-color)
-                - transform: scale(1)
-          - value: "on"
-            styles:
-              card:
-                - background-color: var(--error-color)
-                - animation: pulse 1s infinite
-                - transform: scale(0.95)
-              name:
-                - color: var(--primary-background-color)
-              icon:
-                - color: var(--primary-background-color)
 ```
 
-> **Note**: You may need to adjust the charging current slider's min and max values based on your charger model (8-16A for 16A models or 8-32A for 32A models).
-
-> **Tip**: For the best experience, place this control panel on your mobile dashboard for easy access when near your vehicle.
+> **Tip**: Adjust the current slider max to match your model (16, 32, or 48).
 
 ## Notifications
 
-You can set up automations to receive notifications about your EV charging status. These will alert you when charging starts, completes, or when the current changes.
+You can set up automations for charging events. Example notification automations are available in the repository's [Notifications](https://github.com/ABovsh/eveus/tree/main/Notifications) folder:
 
-![Notifications Example](https://github.com/user-attachments/assets/d2bf4866-bf4e-4bc0-8415-e3c6d6d7b0e9)
-
-### Setting Up Notifications
-
-1. Go to Settings > Automations & Scenes
-2. Click "+ Create Automation"
-3. Choose "Create new automation" and select "Start with an empty automation"
-4. Set up the following automations:
-
-#### 1. Session Start Notification
-
-This automation notifies you when your EV begins charging:
-
-1. Download the YAML from [301_EV_Charging_Started.yaml](https://github.com/ABovsh/eveus/blob/main/Notifications/301_EV_Charging_Started%20(1).yaml)
-2. Open the file in a text editor and copy all the content
-3. In Home Assistant, after creating an empty automation:
-   - Click the three dots in the top right corner
-   - Select "Edit in YAML"
-   - Delete any default content
-   - Paste the YAML content from the downloaded file
-   - Replace `notify.notify` or similar with your notification service (e.g., `notify.mobile_app_your_phone`)
-   - Click "Save"
-
-#### 2. Current Change Notification
-
-This automation notifies you when the charging current changes:
-
-1. Download the YAML from [302_EV_Charging_CurrentChanged.yaml](https://github.com/ABovsh/eveus/blob/main/Notifications/302_EV_Charging_CurrentChanged%20(1).yaml)
-2. Create a new empty automation as described above
-3. Edit in YAML mode and paste the content from the downloaded file
-4. Replace the notification service with your preferred notification method
-5. Click "Save"
-
-#### 3. Session Complete Notification
-
-This automation notifies you when charging is complete:
-
-1. Download the YAML from [303_EV_Charging_Completed.yaml](https://github.com/ABovsh/eveus/blob/main/Notifications/303_EV_Charging_Completed%20(1).yaml)
-2. Create a new empty automation as described above
-3. Edit in YAML mode and paste the content from the downloaded file
-4. Replace the notification service with your preferred notification method
-5. Click "Save"
-
-> **Tip**: If you're using Telegram, set your notification service to `notify.telegram` or your specific Telegram notification service name in each automation.
+- **Session Started** — notifies when charging begins
+- **Current Changed** — notifies when charging current changes
+- **Session Complete** — notifies when charging finishes
 
 ## Troubleshooting
 
-If you encounter issues:
-1. Check all helper entities are properly configured
-2. Monitor the connection_quality sensor for network issues
-3. Verify network connectivity to the charger
-4. Check the logs for detailed error messages
-5. Restart the integration if needed
+### Quick Checks
 
-### Advanced Debugging
+1. Verify the charger is reachable on your network (try `http://<IP>` in a browser)
+2. Check the **Connection Quality** sensor for connectivity issues
+3. Check the **Input Entities Status** sensor for missing SOC helpers
+4. Review HA logs for `eveus` entries
 
-If you're experiencing issues with the SOC calculations or other sensors, follow these debugging steps:
-
-#### 1. Enable Enhanced Logging
-
-Add the following to your `configuration.yaml` file:
+### Enable Debug Logging
 
 ```yaml
 logger:
   default: info
   logs:
-    custom_components.eveus.ev_sensors: debug
-    custom_components.eveus.utils: debug
-    custom_components.eveus.sensor: debug
-    custom_components.eveus: warning
+    custom_components.eveus: debug
 ```
 
-Restart Home Assistant and check the logs for detailed information about sensor calculations.
+### Diagnostic Template
 
-#### 2. Use the Diagnostic Template
-
-Copy and paste this template into Developer Tools > Template to get a comprehensive diagnostic report:
+Paste this in **Developer Tools → Template** to check the integration state:
 
 ```yaml
-{# Debug template for Eveus SOC Sensors #}
-{% set debug_data = {
-    'inputs': {
-        'initial_soc': states('input_number.ev_initial_soc'),
-        'battery_capacity': states('input_number.ev_battery_capacity'),
-        'soc_correction': states('input_number.ev_soc_correction'),
-        'target_soc': states('input_number.ev_target_soc')
-    },
-    'sensors': {
-        'iem1': states('sensor.eveus_ev_charger_counter_a_energy'),
-        'soc_energy': states('sensor.eveus_ev_charger_soc_energy'),
-        'soc_percent': states('sensor.eveus_ev_charger_soc_percent'),
-        'time_to_target': states('sensor.eveus_ev_charger_time_to_target_soc'),
-        'power': states('sensor.eveus_ev_charger_power')
-    }
+{% set inputs = {
+    'initial_soc': states('input_number.ev_initial_soc'),
+    'battery_capacity': states('input_number.ev_battery_capacity'),
+    'soc_correction': states('input_number.ev_soc_correction'),
+    'target_soc': states('input_number.ev_target_soc')
+} %}
+{% set sensors = {
+    'counter_a': states('sensor.eveus_ev_charger_counter_a_energy'),
+    'soc_energy': states('sensor.eveus_ev_charger_soc_energy'),
+    'soc_percent': states('sensor.eveus_ev_charger_soc_percent'),
+    'time_to_target': states('sensor.eveus_ev_charger_time_to_target_soc'),
+    'power': states('sensor.eveus_ev_charger_power'),
+    'state': states('sensor.eveus_ev_charger_state'),
+    'connection': states('sensor.eveus_ev_charger_connection_quality')
 } %}
 
-{# Calculation Preparation #}
-{% set initial_soc       = debug_data.inputs.initial_soc|float(0) %}
-{% set battery_capacity  = debug_data.inputs.battery_capacity|float(0) %}
-{% set soc_correction    = debug_data.inputs.soc_correction|float(0) %}
-{% set energy_charged    = debug_data.sensors.iem1|float(0) %}
-
-{# Validity Check #}
-{% set input_valid = (
-    initial_soc != 0 and
-    battery_capacity != 0 and
-    energy_charged != 'unknown' and
-    energy_charged != 'unavailable'
-) %}
-
-{# Calculations #}
-{% if input_valid %}
-  {% set initial_kwh = (initial_soc / 100) * battery_capacity %}
-  {% set efficiency  = (1 - soc_correction / 100) %}
-  {% set charged_kwh = energy_charged * efficiency %}
-  {% set total_kwh   = initial_kwh + charged_kwh %}
-
-  {% set soc_energy  = total_kwh|round(2) %}
-  {% set soc_percent = ((total_kwh / battery_capacity) * 100)|round(0) %}
-{% else %}
-  {% set soc_energy  = 'Cannot calculate - missing inputs' %}
-  {% set soc_percent = 'Cannot calculate - missing inputs' %}
-{% endif %}
-
-### Eveus SOC Sensor Debug Report ###
-
-## Required Input Entities ##
-{% for name, value in debug_data.inputs.items() %}
-- input_number.ev_{{ name }}: {{ value }}
+### Input Helpers ###
+{% for k, v in inputs.items() %}
+- {{ k }}: {{ v }}
 {% endfor %}
 
-## Sensor Values ##
-{% for name, value in debug_data.sensors.items() %}
-- {{ name }}: {{ value }}
+### Sensors ###
+{% for k, v in sensors.items() %}
+- {{ k }}: {{ v }}
 {% endfor %}
-
-## Entity Existence Check ##
-{% set check_entities = [
-  'input_number.ev_initial_soc',
-  'input_number.ev_battery_capacity',
-  'input_number.ev_soc_correction',
-  'input_number.ev_target_soc',
-  'sensor.eveus_ev_charger_counter_a_energy',
-  'sensor.eveus_ev_charger_power'
-] %}
-{% for entity_id in check_entities %}
-- {{ entity_id }}: {{ states(entity_id) != 'unknown' and states(entity_id) != 'unavailable' }}
-{% endfor %}
-
-## Expected Values ##
-- Expected SOC Energy: {{ soc_energy }}
-- Expected SOC Percent: {{ soc_percent }}
-
-## Calculation Details ##
-{% if input_valid %}
-Initial SOC: {{ initial_soc }}%
-Battery Capacity: {{ battery_capacity }} kWh
-Efficiency Correction: {{ soc_correction }}%
-Energy Charged: {{ energy_charged }} kWh
-Initial Energy: {{ initial_kwh }} kWh
-Efficiency Factor: {{ efficiency }}
-Charged Energy (with efficiency): {{ charged_kwh }} kWh
-Total Energy: {{ total_kwh }} kWh
-{% else %}
-Cannot perform calculations due to missing inputs.
-{% endif %}
 ```
 
-### Common Issues and Solutions
+### Common Issues
 
-| Issue | Possible Solution |
-|-------|-------------------|
-| SOC sensors show "unknown" | Verify all required helper entities are created with exact names |
-| "Missing input entity" error | Check that all input_number entities exist and have valid values |
-| SOC calculations don't update immediately | This issue has been fixed - SOC updates happen instantly when you change input values |
-| Automation errors | Update entity names in automations to match integration's naming pattern (eveus_ev_charger_*) |
-| Connection failures | Verify network connectivity, check IP address, username, and password |
-| Incorrect SOC calculations | Set initial SOC to match your EV's current charge level |
-| Wrong time display | Integration now handles timezone correctly including DST; restart HA if issues persist |
+| Issue | Solution |
+|-------|----------|
+| SOC sensors show "Unavailable" | Create the required `input_number` helpers (see Prerequisites) |
+| Controls don't respond | Check that the charger is online (Connection Quality sensor) |
+| Entity names changed after update | Entity unique IDs are preserved — display names may differ but automations using entity IDs still work |
+| Multiple chargers show same data | Each charger must have a unique IP address |
 
 ### Reset Procedure
 
 If you encounter persistent issues:
-1. Remove the integration
+1. Remove the integration from **Settings → Devices & Services**
 2. Restart Home Assistant
-3. Delete any remaining eveus entities (if any)
-4. Add the integration again
-5. Recreate any missing input_number entities
+3. Re-add the integration
 
 ## Support
 
-For bugs and feature requests, please open an issue on GitHub.
+For bugs and feature requests, open an issue on [GitHub](https://github.com/ABovsh/eveus/issues).
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License — see LICENSE file for details.
