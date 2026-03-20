@@ -1,26 +1,25 @@
 """Constants for the Eveus integration."""
 from datetime import timedelta
-from typing import Final, Dict, List, TypedDict, Literal
+from typing import Final, Dict, List, Literal
 from functools import lru_cache
 
 DOMAIN: Final[str] = "eveus"
 
 # Update intervals
 SCAN_INTERVAL: Final[timedelta] = timedelta(seconds=30)
-CHARGING_UPDATE_INTERVAL: Final[int] = 30  # 30 seconds when charging
-IDLE_UPDATE_INTERVAL: Final[int] = 60      # 60 seconds when idle
+CHARGING_UPDATE_INTERVAL: Final[int] = 30
+IDLE_UPDATE_INTERVAL: Final[int] = 60
 RETRY_DELAY: Final[int] = 15
 UPDATE_TIMEOUT: Final[int] = 20
 COMMAND_TIMEOUT: Final[int] = 25
-ERROR_COOLDOWN: Final[int] = 300  # 5 minutes
+ERROR_COOLDOWN: Final[int] = 300
 
 # Availability and resilience - optimized for WiFi connections
-# WiFi disconnects are typically brief, so we use shorter timeouts
-AVAILABILITY_GRACE_PERIOD: Final[int] = 60        # 1 minute for sensors (handles brief WiFi drops)
-CONTROL_GRACE_PERIOD: Final[int] = 30             # 30 seconds for switches/numbers - safety first!
-ERROR_LOG_RATE_LIMIT: Final[int] = 300            # Log errors max every 5 minutes
-STATE_CACHE_TTL: Final[int] = 60                  # Cache sensor state for 1 minute (WiFi reconnect window)
-CONTROL_CACHE_TTL: Final[int] = 0                 # NO caching for control entities - safety!
+AVAILABILITY_GRACE_PERIOD: Final[int] = 60
+CONTROL_GRACE_PERIOD: Final[int] = 30
+ERROR_LOG_RATE_LIMIT: Final[int] = 300
+STATE_CACHE_TTL: Final[int] = 60
+CONTROL_CACHE_TTL: Final[int] = 0
 
 # Current limits
 MIN_CURRENT: Final[int] = 7
@@ -29,11 +28,10 @@ MODEL_32A: Final[str] = "32A"
 MODEL_48A: Final[str] = "48A"
 MODELS: Final[List[str]] = [MODEL_16A, MODEL_32A, MODEL_48A]
 
-# Model specifications
 MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
     MODEL_16A: 16,
     MODEL_32A: 32,
-    MODEL_48A: 48
+    MODEL_48A: 48,
 }
 
 # Configuration
@@ -43,41 +41,8 @@ CONF_MODEL: Final[str] = "model"
 RATE_STATES: Final[Dict[int, str]] = {
     0: "Primary Rate",
     1: "Rate 2",
-    2: "Rate 3"
+    2: "Rate 3",
 }
-
-# API Attributes
-class DeviceAttributes(TypedDict, total=False):
-    """Device attributes type definitions."""
-    voltMeas1: float
-    curMeas1: float
-    powerMeas: float
-    sessionEnergy: float
-    totalEnergy: float
-    sessionTime: int
-    state: int
-    subState: int
-    currentSet: int
-    evseEnabled: int
-    temperature1: float
-    temperature2: float
-    systemTime: int
-    IEM1: float
-    IEM2: float
-    IEM1_money: float
-    IEM2_money: float
-    ground: int
-    vBat: float
-    tarif: float
-    activeTarif: int
-    tarifAEnable: int
-    tarifBEnable: int
-    tarifAValue: float
-    tarifBValue: float
-    tarifAStart: int
-    tarifAStop: int
-    tarifBStart: int
-    tarifBStop: int
 
 # Rate Commands
 RATE_COMMANDS = {
@@ -106,7 +71,7 @@ CHARGING_STATES: Final[Dict[DeviceState, str]] = {
     4: "Charging",
     5: "Charge Complete",
     6: "Paused",
-    7: "Error"
+    7: "Error",
 }
 
 ERROR_STATES: Final[Dict[ErrorState, str]] = {
@@ -124,7 +89,7 @@ ERROR_STATES: Final[Dict[ErrorState, str]] = {
     11: "Interface Timeout",
     12: "Software Failure",
     13: "GFCI Test Failure",
-    14: "High Voltage"
+    14: "High Voltage",
 }
 
 NORMAL_SUBSTATES: Final[Dict[SubState, str]] = {
@@ -138,19 +103,21 @@ NORMAL_SUBSTATES: Final[Dict[SubState, str]] = {
     7: "Schedule 2 Limit",
     8: "Schedule 2 Energy Limit",
     9: "Waiting for Activation",
-    10: "Paused by Adaptive Mode"
+    10: "Paused by Adaptive Mode",
 }
 
-# Add caching for state mapping lookups
+
 @lru_cache(maxsize=32)
 def get_charging_state(state_value: int) -> str:
     """Get cached charging state mapping."""
     return CHARGING_STATES.get(state_value, "Unknown")
 
+
 @lru_cache(maxsize=32)
 def get_error_state(state_value: int) -> str:
     """Get cached error state mapping."""
     return ERROR_STATES.get(state_value, "Unknown Error")
+
 
 @lru_cache(maxsize=32)
 def get_normal_substate(state_value: int) -> str:
