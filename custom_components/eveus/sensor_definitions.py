@@ -4,9 +4,10 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -20,8 +21,6 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.helpers.entity import EntityCategory
-
-import pytz
 
 from .common import EveusSensorBase
 from .const import (
@@ -175,13 +174,6 @@ def _make_value_getter(key: str, precision: int = 0, transform: Callable = None)
     return getter
 
 
-def _make_int_getter(key: str):
-    """Factory for integer data getter functions."""
-    def getter(updater, hass):
-        return _get_data_value(updater, key, int)
-    return getter
-
-
 # Measurement getters
 get_voltage = _make_value_getter("voltMeas1", precision=0)
 get_current = _make_value_getter("curMeas1", precision=1)
@@ -271,8 +263,8 @@ def get_system_time(updater, hass) -> Optional[str]:
             offset += 3600
 
         corrected_timestamp = timestamp - offset
-        dt_corrected = datetime.fromtimestamp(corrected_timestamp, tz=pytz.UTC)
-        local_tz = pytz.timezone(ha_timezone)
+        dt_corrected = datetime.fromtimestamp(corrected_timestamp, tz=timezone.utc)
+        local_tz = ZoneInfo(ha_timezone)
         dt_local = dt_corrected.astimezone(local_tz)
         return dt_local.strftime("%H:%M")
 
