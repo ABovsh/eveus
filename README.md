@@ -1,12 +1,12 @@
 # Eveus EV Charger Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Version](https://img.shields.io/badge/version-3.0.3-blue)
 ![Stability](https://img.shields.io/badge/stability-stable-green)
 
 Custom integration for monitoring and controlling Eveus EV chargers in Home Assistant. Supports real-time monitoring, smart current control, energy tracking, multi-rate billing, and SOC estimation.
 
-## What's New in 3.0.0
+## What's New in 3.0.3
 
 ### Multi-Device Support
 You can now add **multiple Eveus chargers** to the same Home Assistant instance. Each charger gets its own device entry, entities, and unique IDs. Existing single-charger setups are fully backward compatible — no reconfiguration needed.
@@ -36,6 +36,10 @@ The integration was refactored from **19 files / ~3,500 lines** down to **15 fil
 - Fixed config flow and setup both assigning device numbers (potential race condition).
 - Removed `aiohttp` and `voluptuous` from `manifest.json` requirements (they are HA core dependencies).
 - Network session now uses Home Assistant's shared HTTP session instead of a custom one, preventing orphaned connections.
+- Fixed an issue where the EV Battery Sensor would fail to report a completely empty battery (0 kWh), incorrectly showing the last known value instead.
+- Fixed a logic error in network monitoring. The integration will now correctly log and notify you when a device appears to be offline.
+- Updated English translations to correctly reflect support for 48A charging models.
+- Synced missing error strings (invalid_input, invalid_device) to ensure clear feedback when configuration issues occur.
 
 ### Optional EV Helpers
 The SOC helper entities (`input_number.ev_*`) are now **fully optional**. If they're missing, the integration works normally — you just won't see SOC and time-to-target sensors. Previously, missing helpers could cause warnings in logs.
