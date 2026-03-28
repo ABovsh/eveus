@@ -244,7 +244,7 @@ class EVSocKwhSensor(BaseEVHelperSensor):
         result = _soc_calculator.get_soc_kwh(self.hass, self._get_energy_charged())
         if result is not None:
             self._cached_value = result
-        return result or self._cached_value
+        return result if result is not None else self._cached_value
 
 
 class EVSocPercentSensor(BaseEVHelperSensor):
