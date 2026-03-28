@@ -223,18 +223,22 @@ class EveusUpdater:
         self._available = False
 
         if was_available:
+            # First failure after being online — clear data and notify entities
             self._data = {}
 
-            if self._is_likely_offline:
-                if not self._offline_announced:
-                    _LOGGER.info("Device %s appears offline", self.host)
-                    self._offline_announced = True
-            elif not self._silent_mode and self._should_log():
+            if not self._silent_mode and self._should_log():
                 _LOGGER.debug(
                     "Connection issue with %s: %s", self.host, type(error).__name__
                 )
 
             self._notify_entities()
+
+        elif self._is_likely_offline and not self._offline_announced:
+            # Prolonged failure — announce offline once, then go silent
+            _LOGGER.info(
+                "Device %s appears offline, reducing poll frequency", self.host
+            )
+            self._offline_announced = True
 
     # -- Lifecycle ------------------------------------------------------------
 
