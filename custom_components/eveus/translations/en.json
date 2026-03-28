@@ -8,13 +8,15 @@
                     "host": "IP Address",
                     "username": "Username",
                     "password": "Password",
-                    "model": "Charger Model (16A or 32A)"
+                    "model": "Charger Model (16A, 32A or 48A)"
                 }
             }
         },
         "error": {
             "cannot_connect": "Failed to connect to charger, please verify the IP address",
             "invalid_auth": "Invalid username or password",
+            "invalid_input": "Invalid input provided, please check your entries",
+            "invalid_device": "Device validation failed, please check the charger model",
             "unknown": "Unexpected error occurred"
         },
         "abort": {
