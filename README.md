@@ -6,7 +6,7 @@
 
 Custom integration for monitoring and controlling Eveus EV chargers in Home Assistant. Supports real-time monitoring, smart current control, energy tracking, multi-rate billing, and SOC estimation.
 
-## What's New in 3.0.3
+## What's New in v3
 
 ### Multi-Device Support
 You can now add **multiple Eveus chargers** to the same Home Assistant instance. Each charger gets its own device entry, entities, and unique IDs. Existing single-charger setups are fully backward compatible — no reconfiguration needed.
