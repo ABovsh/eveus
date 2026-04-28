@@ -6,13 +6,13 @@ import asyncio
 import time
 from typing import Any, Optional
 
-from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 
-from .const import DOMAIN, CONTROL_GRACE_PERIOD
+from . import EveusConfigEntry
+from .const import CONTROL_GRACE_PERIOD
 from .common import BaseEveusEntity
 from .utils import get_safe_value
 
@@ -22,17 +22,57 @@ _LOGGER = logging.getLogger(__name__)
 OPTIMISTIC_STATE_TTL = 120
 
 
+class EveusSwitchEntityDescription(SwitchEntityDescription, frozen_or_thawed=True):
+    """Description for Eveus switch entities."""
+
+    command: str
+    state_key: str
+
+
+SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
+    EveusSwitchEntityDescription(
+        key="stop_charging",
+        name="Stop Charging",
+        icon="mdi:ev-station",
+        entity_category=EntityCategory.CONFIG,
+        command="evseEnabled",
+        state_key="evseEnabled",
+    ),
+    EveusSwitchEntityDescription(
+        key="one_charge",
+        name="One Charge",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.CONFIG,
+        command="oneCharge",
+        state_key="oneCharge",
+    ),
+    EveusSwitchEntityDescription(
+        key="reset_counter_a",
+        name="Reset Counter A",
+        icon="mdi:refresh-circle",
+        entity_category=EntityCategory.CONFIG,
+        command="rstEM1",
+        state_key="IEM1",
+    ),
+)
+
+
 class BaseSwitchEntity(BaseEveusEntity, SwitchEntity):
     """Base switch entity with responsive UI and safety."""
 
-    _attr_entity_category = EntityCategory.CONFIG
-    _command: str = None
-    _state_key: str = None
-
-    def __init__(self, updater, device_number: int = 1) -> None:
+    def __init__(
+        self,
+        updater,
+        entity_description: EveusSwitchEntityDescription,
+        device_number: int = 1,
+    ) -> None:
         """Initialize the switch."""
+        self.entity_description = entity_description
+        self.ENTITY_NAME = entity_description.name
         super().__init__(updater, device_number)
         self._command_lock = asyncio.Lock()
+        self._command = entity_description.command
+        self._state_key = entity_description.state_key
 
         # State management for responsive UI
         self._pending_command: Optional[bool] = None
@@ -154,27 +194,25 @@ class BaseSwitchEntity(BaseEveusEntity, SwitchEntity):
 class EveusStopChargingSwitch(BaseSwitchEntity):
     """Representation of Eveus charging control switch."""
 
-    ENTITY_NAME = "Stop Charging"
-    _attr_icon = "mdi:ev-station"
-    _command = "evseEnabled"
-    _state_key = "evseEnabled"
+    def __init__(self, updater, device_number: int = 1) -> None:
+        """Initialize the switch."""
+        super().__init__(updater, SWITCH_DESCRIPTIONS[0], device_number)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn on charging (enable EVSE)."""
+        """Turn on the device stop-charging option."""
         await self._async_send_command(1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn off charging (disable EVSE)."""
+        """Turn off the device stop-charging option."""
         await self._async_send_command(0)
 
 
 class EveusOneChargeSwitch(BaseSwitchEntity):
     """Representation of Eveus one charge switch."""
 
-    ENTITY_NAME = "One Charge"
-    _attr_icon = "mdi:lightning-bolt"
-    _command = "oneCharge"
-    _state_key = "oneCharge"
+    def __init__(self, updater, device_number: int = 1) -> None:
+        """Initialize the switch."""
+        super().__init__(updater, SWITCH_DESCRIPTIONS[1], device_number)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable one charge mode."""
@@ -188,14 +226,9 @@ class EveusOneChargeSwitch(BaseSwitchEntity):
 class EveusResetCounterASwitch(BaseSwitchEntity):
     """Representation of Eveus reset counter A switch."""
 
-    ENTITY_NAME = "Reset Counter A"
-    _attr_icon = "mdi:refresh-circle"
-    _command = "rstEM1"
-    _state_key = "IEM1"
-
     def __init__(self, updater, device_number: int = 1) -> None:
         """Initialize with special reset behavior."""
-        super().__init__(updater, device_number)
+        super().__init__(updater, SWITCH_DESCRIPTIONS[2], device_number)
         self._safe_mode = True
         self._last_reset_time = 0
 
@@ -206,7 +239,6 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
 
     async def _disable_safe_mode(self) -> None:
         """Disable safe mode after first successful update."""
-        await self._updater.async_start_updates()
         await asyncio.sleep(5)
         self._safe_mode = False
 
@@ -247,25 +279,18 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: EveusConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Eveus switches."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    updater = data["updater"]
-    device_number = data.get("device_number", 1)
+    runtime_data = entry.runtime_data
+    updater = runtime_data.updater
+    device_number = runtime_data.device_number
 
     switches = [
         EveusStopChargingSwitch(updater, device_number),
         EveusOneChargeSwitch(updater, device_number),
         EveusResetCounterASwitch(updater, device_number),
     ]
-
-    if "entities" not in data:
-        data["entities"] = {}
-
-    data["entities"]["switch"] = {
-        switch.unique_id: switch for switch in switches
-    }
 
     async_add_entities(switches)

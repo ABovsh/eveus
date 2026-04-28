@@ -1,65 +1,59 @@
 """Base entity classes for Eveus integration."""
+from __future__ import annotations
+
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import callback
-from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import State, callback
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .utils import get_device_info, get_device_suffix
 from .const import AVAILABILITY_GRACE_PERIOD, ERROR_LOG_RATE_LIMIT, STATE_CACHE_TTL
+from .utils import get_device_info, get_device_suffix
 
-_LOGGER = logging.getLogger(__name__)
-
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .common_network import EveusUpdater
 
+_LOGGER = logging.getLogger(__name__)
 
-class BaseEveusEntity(RestoreEntity):
+
+class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     """Base implementation for Eveus entities with state persistence."""
 
-    ENTITY_NAME: str = None
+    ENTITY_NAME: str | None = None
     _attr_has_entity_name = True
     _attr_should_poll = False
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the entity."""
-        super().__init__()
+        super().__init__(updater)
         self._updater = updater
         self._device_number = device_number
-        self._updater.register_entity(self)
 
-        # State persistence
         self._state_restored = False
-
-        # Availability tracking with grace period
-        self._last_available_log = 0
+        self._last_available_log = 0.0
         self._last_known_available = True
-        self._unavailable_since = None
-
-        # State caching for brief WiFi outages
-        self._cached_data = None
-        self._cached_data_time = 0
+        self._unavailable_since: float | None = None
+        self._cached_data: dict[str, Any] | None = None
+        self._cached_data_time = 0.0
 
         if self.ENTITY_NAME is None:
             raise NotImplementedError("ENTITY_NAME must be defined in child class")
 
         self._attr_name = self.ENTITY_NAME
-
         device_suffix = get_device_suffix(device_number)
-        entity_key = self.ENTITY_NAME.lower().replace(' ', '_')
+        entity_key = self.ENTITY_NAME.lower().replace(" ", "_")
         self._attr_unique_id = f"eveus{device_suffix}_{entity_key}"
 
     @property
     def available(self) -> bool:
-        """Return if entity is available with grace period (WiFi optimized)."""
-        current_updater_available = self._updater.available
+        """Return if entity is available with grace period."""
         current_time = time.time()
 
-        if current_updater_available:
+        if self._updater.available:
             if self._unavailable_since is not None:
                 if self._should_log_availability():
                     _LOGGER.debug("Entity %s connection restored", self.unique_id)
@@ -67,7 +61,6 @@ class BaseEveusEntity(RestoreEntity):
             self._last_known_available = True
             return True
 
-        # Device reports unavailable — check grace period
         if self._unavailable_since is None:
             self._unavailable_since = current_time
             return True
@@ -76,11 +69,11 @@ class BaseEveusEntity(RestoreEntity):
         if unavailable_duration < AVAILABILITY_GRACE_PERIOD:
             return True
 
-        # Grace period expired
         if self._last_known_available and self._should_log_availability():
             _LOGGER.info(
                 "Entity %s unavailable after grace period (%.0fs)",
-                self.unique_id, unavailable_duration,
+                self.unique_id,
+                unavailable_duration,
             )
         self._last_known_available = False
         self._cached_data = None
@@ -97,11 +90,11 @@ class BaseEveusEntity(RestoreEntity):
 
     def get_cached_data_value(self, key: str, default: Any = None) -> Any:
         """Get value from current data or cached data as fallback."""
-        if self._updater.data and key in self._updater.data:
-            # Store reference — safe because updater replaces dict, not mutates
-            self._cached_data = self._updater.data
+        data = self._updater.data or {}
+        if key in data:
+            self._cached_data = data
             self._cached_data_time = time.time()
-            return self._updater.data[key]
+            return data[key]
 
         if (
             self._cached_data
@@ -134,11 +127,6 @@ class BaseEveusEntity(RestoreEntity):
         await super().async_added_to_hass()
 
         try:
-            await self._updater.async_start_updates()
-        except Exception as err:
-            _LOGGER.debug("Could not start updates for %s: %s", self.unique_id, err)
-
-        try:
             state = await self.async_get_last_state()
             if state:
                 _LOGGER.debug("Restoring state for %s: %s", self.unique_id, state.state)
@@ -147,36 +135,33 @@ class BaseEveusEntity(RestoreEntity):
         except Exception as err:
             _LOGGER.debug("Could not restore state for %s: %s", self.unique_id, err)
 
-    async def _async_restore_state(self, state) -> None:
-        """Restore previous state — overridden by child classes."""
+    async def _async_restore_state(self, state: State) -> None:
+        """Restore previous state - overridden by child classes."""
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        try:
-            self.async_write_ha_state()
-        except Exception as err:
-            _LOGGER.debug("Could not write state for %s: %s", self.unique_id, err)
+        self.async_write_ha_state()
 
 
 class EveusSensorBase(BaseEveusEntity, SensorEntity):
-    """Base sensor entity — immediately unavailable when offline."""
+    """Base sensor entity."""
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the sensor."""
         super().__init__(updater, device_number)
         self._attr_native_value = None
         self._last_valid_value = None
-        self._last_error_log = 0
+        self._last_error_log = 0.0
 
     @property
     def available(self) -> bool:
-        """Sensors are immediately unavailable when updater is offline."""
+        """Sensors are immediately unavailable when the coordinator fails."""
         return self._updater.available
 
     @property
     def native_value(self) -> Any:
-        """Return sensor value — None when unavailable."""
+        """Return sensor value."""
         if not self.available:
             return None
 
@@ -193,11 +178,12 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
             return None
 
     def _get_sensor_value(self) -> Any:
-        """Get sensor value — to be overridden by subclasses."""
+        """Get sensor value - overridden by subclasses."""
         return self._attr_native_value
 
 
 class EveusDiagnosticSensor(EveusSensorBase):
     """Base diagnostic sensor for backward compatibility."""
+
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:information"

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
-import socket
+import ipaddress
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -33,18 +33,22 @@ _LOGGER = logging.getLogger(__name__)
 def _is_valid_ip(ip: str) -> bool:
     """Check if string is a valid IP address."""
     try:
-        socket.inet_aton(ip)
+        ipaddress.ip_address(ip)
         return True
-    except socket.error:
+    except ValueError:
         return False
 
 
 def _is_valid_hostname(hostname: str) -> bool:
     """Validate hostname."""
+    if not hostname:
+        return False
     if len(hostname) > 255:
         return False
     if hostname[-1] == ".":
         hostname = hostname[:-1]
+    if not hostname:
+        return False
     allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
     return all(allowed.match(x) for x in hostname.split("."))
 
@@ -78,23 +82,73 @@ def validate_credentials(username: str, password: str) -> tuple[str, str]:
     return username, password
 
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Required(CONF_MODEL, default=MODEL_16A): vol.In(MODELS),
+def validate_device_response(
+    result: Any,
+    model: str,
+) -> dict[str, Any]:
+    """Validate that /main returned an Eveus-compatible payload."""
+    if not isinstance(result, dict):
+        raise CannotConnect("Invalid response format")
+
+    if "currentSet" not in result:
+        raise InvalidDevice("Device response is missing currentSet")
+
+    try:
+        current_set = float(result["currentSet"])
+    except (TypeError, ValueError) as err:
+        raise InvalidDevice("Device reports invalid current format") from err
+
+    if current_set < MIN_CURRENT:
+        raise InvalidDevice("Device reports invalid current setting")
+
+    max_current = MODEL_MAX_CURRENT.get(model)
+    if max_current and current_set > max_current:
+        raise InvalidDevice(
+            f"Device current ({current_set}A) exceeds model maximum ({max_current}A)"
+        )
+
+    return {
+        "current_set": current_set,
+        "firmware": result.get("verFWMain", "Unknown"),
     }
-)
+
+
+def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize config-flow input before connection validation and storage."""
+    host = validate_host(data[CONF_HOST])
+    username, password = validate_credentials(data[CONF_USERNAME], data[CONF_PASSWORD])
+
+    return {
+        CONF_HOST: host,
+        CONF_USERNAME: username,
+        CONF_PASSWORD: password,
+        CONF_MODEL: data[CONF_MODEL],
+    }
+
+
+def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Build config-flow schema with optional defaults."""
+    defaults = defaults or {}
+    return vol.Schema(
+        {
+            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST)): str,
+            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
+            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): str,
+            vol.Required(
+                CONF_MODEL,
+                default=defaults.get(CONF_MODEL, MODEL_16A),
+            ): vol.In(MODELS),
+        }
+    )
+
+
+STEP_USER_DATA_SCHEMA = build_user_data_schema()
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
     try:
-        host = validate_host(data[CONF_HOST])
-        username, password = validate_credentials(
-            data[CONF_USERNAME], data[CONF_PASSWORD]
-        )
+        normalized_data = normalize_user_input(data)
     except vol.Invalid as err:
         raise InvalidInput(str(err))
 
@@ -103,8 +157,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         timeout = aiohttp.ClientTimeout(total=10)
 
         async with session.post(
-            f"http://{host}/main",
-            auth=aiohttp.BasicAuth(username, password),
+            f"http://{normalized_data[CONF_HOST]}/main",
+            auth=aiohttp.BasicAuth(
+                normalized_data[CONF_USERNAME],
+                normalized_data[CONF_PASSWORD],
+            ),
             timeout=timeout,
         ) as response:
             if response.status == 401:
@@ -116,30 +173,12 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             except ValueError:
                 raise CannotConnect("Invalid response format")
 
-            if not isinstance(result, dict):
-                raise CannotConnect("Invalid response format")
-
-            current_set = result.get("currentSet")
-            if current_set is not None:
-                try:
-                    current_set = float(current_set)
-                    if current_set < MIN_CURRENT:
-                        raise InvalidDevice("Device reports invalid current setting")
-                except ValueError:
-                    raise InvalidDevice("Device reports invalid current format")
-
-            max_current = MODEL_MAX_CURRENT.get(data[CONF_MODEL])
-            if max_current and current_set and current_set > max_current:
-                raise InvalidDevice(
-                    f"Device current ({current_set}A) exceeds model maximum ({max_current}A)"
-                )
+            device_info = validate_device_response(result, normalized_data[CONF_MODEL])
 
             return {
-                "title": f"Eveus Charger ({host})",
-                "device_info": {
-                    "current_set": current_set,
-                    "firmware": result.get("verFWMain", "Unknown"),
-                },
+                "title": f"Eveus Charger ({normalized_data[CONF_HOST]})",
+                "data": normalized_data,
+                "device_info": device_info,
             }
 
     except aiohttp.ClientResponseError as err:
@@ -175,7 +214,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 info = await validate_input(self.hass, user_input)
 
-                self._host = user_input[CONF_HOST]
+                entry_data = info["data"]
+                self._host = entry_data[CONF_HOST]
                 await self.async_set_unique_id(self._host)
                 self._abort_if_unique_id_configured()
 
@@ -183,7 +223,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 return self.async_create_entry(
                     title=info["title"],
-                    data=user_input,
+                    data=entry_data,
                 )
 
             except CannotConnect:
@@ -203,6 +243,49 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Allow users to reconfigure connection details."""
+        entry = self._get_reconfigure_entry()
+        errors = {}
+
+        if user_input is not None:
+            try:
+                info = await validate_input(self.hass, user_input)
+                entry_data = info["data"]
+
+                await self.async_set_unique_id(entry_data[CONF_HOST])
+                if entry.unique_id != entry_data[CONF_HOST]:
+                    self._abort_if_unique_id_configured()
+
+                return self.async_update_reload_and_abort(
+                    entry,
+                    unique_id=entry_data[CONF_HOST],
+                    title=info["title"],
+                    data=entry_data,
+                )
+
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except InvalidInput as err:
+                errors["base"] = "invalid_input"
+                _LOGGER.error("Invalid reconfigure input: %s", str(err))
+            except InvalidDevice as err:
+                errors["base"] = "invalid_device"
+                _LOGGER.error("Invalid reconfigure device: %s", str(err))
+            except Exception:
+                _LOGGER.exception("Unexpected reconfigure exception")
+                errors["base"] = "unknown"
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=build_user_data_schema(entry.data),
             errors=errors,
         )
 

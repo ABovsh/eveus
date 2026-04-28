@@ -10,20 +10,17 @@ from homeassistant.components.number import (
     NumberEntity,
     NumberMode,
     NumberDeviceClass,
+    NumberEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, State
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.const import (
-    CONF_HOST,
-    CONF_USERNAME,
-    CONF_PASSWORD,
     UnitOfElectricCurrent,
 )
 
+from . import EveusConfigEntry
 from .const import (
-    DOMAIN,
     MODEL_MAX_CURRENT,
     MIN_CURRENT,
     CONF_MODEL,
@@ -37,6 +34,17 @@ _LOGGER = logging.getLogger(__name__)
 # How long to trust user's command before requiring device confirmation
 OPTIMISTIC_VALUE_TTL = 120
 
+CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
+    key="charging_current",
+    name="Charging Current",
+    icon="mdi:current-ac",
+    entity_category=EntityCategory.CONFIG,
+    native_step=1.0,
+    mode=NumberMode.SLIDER,
+    native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+    device_class=NumberDeviceClass.CURRENT,
+)
+
 
 class EveusNumberEntity(BaseEveusEntity, NumberEntity):
     """Base number entity with responsive UI and safety."""
@@ -44,8 +52,15 @@ class EveusNumberEntity(BaseEveusEntity, NumberEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, updater, device_number: int = 1) -> None:
+    def __init__(
+        self,
+        updater,
+        entity_description: NumberEntityDescription,
+        device_number: int = 1,
+    ) -> None:
         """Initialize the entity."""
+        self.entity_description = entity_description
+        self.ENTITY_NAME = entity_description.name
         super().__init__(updater, device_number)
 
         self._pending_value: Optional[float] = None
@@ -94,17 +109,11 @@ class EveusCurrentNumber(EveusNumberEntity):
     """Representation of Eveus current control with responsive UI."""
 
     ENTITY_NAME = "Charging Current"
-    _attr_native_step = 1.0
-    _attr_mode = NumberMode.SLIDER
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_device_class = NumberDeviceClass.CURRENT
-    _attr_icon = "mdi:current-ac"
-    _attr_entity_category = EntityCategory.CONFIG
     _command = "currentSet"
 
     def __init__(self, updater, model: str, device_number: int = 1) -> None:
         """Initialize the current control."""
-        super().__init__(updater, device_number)
+        super().__init__(updater, CHARGING_CURRENT_DESCRIPTION, device_number)
         self._model = model
         self._command_lock = asyncio.Lock()
 
@@ -207,17 +216,13 @@ class EveusCurrentNumber(EveusNumberEntity):
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: EveusConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Eveus number entities."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    updater = data.get("updater")
-    device_number = data.get("device_number", 1)
-
-    if not updater:
-        _LOGGER.error("No updater found in data")
-        return
+    runtime_data = entry.runtime_data
+    updater = runtime_data.updater
+    device_number = runtime_data.device_number
 
     model = entry.data.get(CONF_MODEL)
     if not model:
@@ -227,12 +232,5 @@ async def async_setup_entry(
     entities = [
         EveusCurrentNumber(updater, model, device_number),
     ]
-
-    if "entities" not in data:
-        data["entities"] = {}
-
-    data["entities"]["number"] = {
-        entity.unique_id: entity for entity in entities
-    }
 
     async_add_entities(entities)
