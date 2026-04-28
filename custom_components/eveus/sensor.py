@@ -5,10 +5,9 @@ import logging
 from typing import List
 
 from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from . import EveusConfigEntry
 from .sensor_definitions import get_sensor_specifications
 from .ev_sensors import (
     EVSocKwhSensor,
@@ -21,19 +20,14 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: EveusConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Eveus sensors with optimized factory pattern."""
     try:
-        # Get updater and device info from stored data
-        data = hass.data[DOMAIN][entry.entry_id]
-        updater = data["updater"]
-        device_number = data.get("device_number", 1)  # Default to 1 for backward compatibility
-        
-        if not updater:
-            _LOGGER.error("No updater found for entry %s", entry.entry_id)
-            return
+        runtime_data = entry.runtime_data
+        updater = runtime_data.updater
+        device_number = runtime_data.device_number
 
         # Create all sensors efficiently using factory pattern
         sensors = []
@@ -51,14 +45,6 @@ async def async_setup_entry(
             InputEntitiesStatusSensor(updater, device_number),
         ]
         sensors.extend(ev_sensors)
-        
-        # Register entities in data store for tracking
-        if "entities" not in data:
-            data["entities"] = {}
-        
-        data["entities"]["sensor"] = {
-            sensor.unique_id: sensor for sensor in sensors
-        }
         
         # Add all sensors at once for efficiency
         async_add_entities(sensors, update_before_add=False)

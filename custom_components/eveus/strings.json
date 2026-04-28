@@ -10,6 +10,16 @@
                     "password": "Password",
                     "model": "Charger Model (16A, 32A or 48A)"
                 }
+            },
+            "reconfigure": {
+                "title": "Update Eveus Charger",
+                "description": "Update your Eveus charger connection details.",
+                "data": {
+                    "host": "IP Address",
+                    "username": "Username",
+                    "password": "Password",
+                    "model": "Charger Model (16A, 32A or 48A)"
+                }
             }
         },
         "error": {
