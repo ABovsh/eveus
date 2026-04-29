@@ -50,7 +50,7 @@ async def async_setup_entry(
         # Add all sensors at once for efficiency
         async_add_entities(sensors, update_before_add=False)
         
-        _LOGGER.info(
+        _LOGGER.debug(
             "Successfully created %d sensors (%d standard, %d EV-specific) for %s (device %d)",
             len(sensors),
             len(standard_sensors),

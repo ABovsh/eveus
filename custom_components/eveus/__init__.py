@@ -9,7 +9,12 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady, ConfigEntryAuthFailed
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryError,
+    ConfigEntryNotReady,
+)
+from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN, MODEL_MAX_CURRENT, CONF_MODEL
 from .common import EveusUpdater
@@ -40,6 +45,41 @@ class EveusRuntimeData:
 
 
 EveusConfigEntry = ConfigEntry[EveusRuntimeData]
+
+
+def _invalid_config_issue_id(entry: ConfigEntry) -> str:
+    """Return the repair issue id for an invalid config entry."""
+    return f"invalid_config_{entry.entry_id}"
+
+
+def _create_invalid_config_issue(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    reason: str,
+) -> None:
+    """Create a repair issue for stored setup data that cannot work."""
+    try:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _invalid_config_issue_id(entry),
+            data={"entry_id": entry.entry_id, "reason": reason},
+            is_fixable=True,
+            is_persistent=True,
+            issue_domain=DOMAIN,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="invalid_config",
+        )
+    except Exception as err:
+        _LOGGER.debug("Could not create Eveus repair issue: %s", err)
+
+
+def _delete_invalid_config_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Clear the invalid-config repair issue if it exists."""
+    try:
+        ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
+    except Exception as err:
+        _LOGGER.debug("Could not delete Eveus repair issue: %s", err)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -87,13 +127,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         model = entry.data.get(CONF_MODEL)
 
         if not host:
-            raise ConfigEntryNotReady("No host specified")
+            _create_invalid_config_issue(hass, entry, "missing_host")
+            raise ConfigEntryError("No host specified")
         if not username:
-            raise ConfigEntryNotReady("No username specified")
+            _create_invalid_config_issue(hass, entry, "missing_username")
+            raise ConfigEntryError("No username specified")
         if not password:
-            raise ConfigEntryNotReady("No password specified")
+            _create_invalid_config_issue(hass, entry, "missing_password")
+            raise ConfigEntryError("No password specified")
         if model not in MODEL_MAX_CURRENT:
-            raise ConfigEntryNotReady("Invalid model specified")
+            _create_invalid_config_issue(hass, entry, "invalid_model")
+            raise ConfigEntryError("Invalid model specified")
+
+        _delete_invalid_config_issue(hass, entry)
 
         device_number = entry.data.get("device_number")
         if device_number is None:
@@ -101,7 +147,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.info("Assigned device number %d to %s", device_number, host)
+            _LOGGER.debug("Assigned device number %d to %s", device_number, host)
 
         updater = EveusUpdater(
             host=host,
@@ -127,6 +173,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         return True
 
     except ConfigEntryAuthFailed:
+        raise
+    except ConfigEntryError:
         raise
     except ConfigEntryNotReady:
         raise

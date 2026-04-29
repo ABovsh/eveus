@@ -3,19 +3,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import EveusConfigEntry
 
 TO_REDACT = {"password", "username"}
-
-
-def _redact(data: dict[str, Any]) -> dict[str, Any]:
-    """Return a redacted copy of a mapping."""
-    return {
-        key: "**REDACTED**" if key in TO_REDACT else value
-        for key, value in data.items()
-    }
+DEVICE_DIAGNOSTIC_KEYS = (
+    "verFWMain",
+    "verFWWifi",
+    "state",
+    "subState",
+    "currentSet",
+    "powerMeas",
+    "voltMeas1",
+    "curMeas1",
+    "temperature1",
+    "temperature2",
+    "ground",
+)
 
 
 async def async_get_config_entry_diagnostics(
@@ -30,7 +36,7 @@ async def async_get_config_entry_diagnostics(
     return {
         "entry": {
             "title": entry.title,
-            "data": _redact(dict(entry.data)),
+            "data": async_redact_data(dict(entry.data), TO_REDACT),
             "device_number": runtime_data.device_number,
         },
         "coordinator": {
@@ -49,5 +55,10 @@ async def async_get_config_entry_diagnostics(
             "state": data.get("state"),
             "substate": data.get("subState"),
             "current_set": data.get("currentSet"),
+            "sanitized_raw": {
+                key: data.get(key)
+                for key in DEVICE_DIAGNOSTIC_KEYS
+                if key in data
+            },
         },
     }

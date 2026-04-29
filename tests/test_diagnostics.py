@@ -38,6 +38,13 @@ def test_diagnostics_redacts_credentials_and_reports_coordinator_state() -> None
     assert diagnostics["coordinator"]["last_update_success"] is True
     assert diagnostics["coordinator"]["update_interval"] == 30
     assert diagnostics["device"]["firmware"] == "3.0.3"
+    assert diagnostics["device"]["sanitized_raw"] == {
+        "verFWMain": "3.0.3",
+        "verFWWifi": "1.0.0",
+        "state": 4,
+        "subState": 1,
+        "currentSet": 16,
+    }
 
 
 def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:
@@ -68,4 +75,5 @@ def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:
         "state": None,
         "substate": None,
         "current_set": None,
+        "sanitized_raw": {},
     }

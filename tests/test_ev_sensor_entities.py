@@ -1,9 +1,15 @@
 """Unit tests for EV helper sensor edge cases."""
 from __future__ import annotations
 
+import asyncio
+import logging
 from types import SimpleNamespace
 
+import pytest
+
+from custom_components.eveus import ev_sensors
 from custom_components.eveus.ev_sensors import (
+    BaseEVHelperSensor,
     CachedSOCCalculator,
     EVSocKwhSensor,
     EVSocPercentSensor,
@@ -58,6 +64,17 @@ def test_soc_calculator_reports_missing_and_invalid_helpers() -> None:
     assert calculator.are_helpers_available(_Hass(invalid)) is False
 
 
+def test_missing_optional_soc_helpers_are_quiet_at_normal_log_levels(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calculator = CachedSOCCalculator()
+
+    with caplog.at_level(logging.INFO, logger="custom_components.eveus.ev_sensors"):
+        assert calculator.are_helpers_available(_Hass({})) is False
+
+    assert caplog.records == []
+
+
 def test_soc_calculator_percent_and_properties() -> None:
     calculator = CachedSOCCalculator()
     hass = _Hass(HELPERS)
@@ -83,6 +100,51 @@ def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
 
     updater.data = {}
     assert kwh._get_sensor_value() == 16.0
+
+
+def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:
+    sensor = EVSocKwhSensor(_Updater({"IEM1": "0"}))
+    sensor._cached_data = {"IEM1": "12"}
+
+    assert sensor._get_energy_charged() == 0
+
+
+def test_time_to_target_uses_zero_power_instead_of_stale_cache() -> None:
+    sensor = TimeToTargetSocSensor(_Updater({"IEM1": "16", "powerMeas": "0"}))
+    sensor.hass = _Hass(HELPERS)
+    sensor._cached_data = {"powerMeas": "7000"}
+
+    assert sensor._get_sensor_value() == "Not charging"
+
+
+def test_helper_sensors_track_inputs_even_when_helpers_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracked: list[tuple[str, ...]] = []
+
+    async def noop_added_to_hass(self):
+        return None
+
+    def fake_track_state_change_event(hass, entity_ids, action):
+        tracked.append(tuple(entity_ids))
+        return lambda: None
+
+    sensor = EVSocKwhSensor(_Updater({}))
+    sensor.hass = _Hass({})
+    monkeypatch.setattr(
+        ev_sensors.EveusSensorBase,
+        "async_added_to_hass",
+        noop_added_to_hass,
+    )
+    monkeypatch.setattr(
+        ev_sensors,
+        "async_track_state_change_event",
+        fake_track_state_change_event,
+    )
+
+    asyncio.run(BaseEVHelperSensor.async_added_to_hass(sensor))
+
+    assert tracked == [sensor._tracked_inputs]
 
 
 def test_time_to_target_returns_helper_required_for_missing_helpers() -> None:
