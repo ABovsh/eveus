@@ -57,10 +57,86 @@ Version 4.0.0 is a major modernization release focused on reliability, setup val
 
 ## 3.0.3
 
-- Added multi-device support.
-- Added 48A model support.
-- Improved restart safety for switches and number controls.
-- Added optimistic UI behavior for controls.
-- Improved offline handling and connection quality reporting.
-- Refactored the codebase while preserving existing functionality.
-- Fixed multiple setup, network, billing, SOC, and translation issues.
+Version 3.0.3 focused on bug fixes, clearer setup errors, and translation consistency.
+
+### Fixed
+
+- Fixed SOC Energy behavior when the calculated battery value is `0 kWh`.
+- Fixed connectivity logging so offline charger detection is reported correctly.
+- Updated English translations to clearly include 48A model support.
+- Added missing setup error messages for invalid input and invalid device responses.
+
+## 3.0.2
+
+Version 3.0.2 improved timezone handling and removed an unnecessary dependency.
+
+### Changed
+
+- Migrated timezone handling from `pytz` to Python's built-in `zoneinfo`.
+- Removed `pytz` from external dependencies.
+
+### Fixed
+
+- Fixed manifest version metadata.
+- Added missing setup error messages for invalid input and invalid device responses.
+- Removed an unused sensor helper.
+
+## 3.0.1
+
+### Changed
+
+- Updated version metadata.
+
+## 3.0.0
+
+Version 3.0.0 added multi-charger support, 48A model support, safer restart behavior, and a large reliability refresh.
+
+### Added
+
+- Added support for multiple Eveus chargers in one Home Assistant instance.
+- Added 48A charger model support.
+- Added optimistic UI feedback for the current slider and charging switches.
+- Added optional SOC helper support. The integration works without SOC helpers.
+
+### Changed
+
+- Improved restart safety so switches and current controls no longer send commands during Home Assistant startup.
+- Improved offline handling so powered-off chargers back off quietly instead of flooding logs.
+- Improved short Wi-Fi drop handling so entities avoid unnecessary unavailable flicker.
+- Switched to Home Assistant's shared HTTP session.
+- Simplified command handling with a lock-based direct send path.
+- Reworked sensor creation with a factory pattern.
+- Reduced code size while preserving existing functionality.
+
+### Fixed
+
+- Fixed authentication validation ordering for `401` responses.
+- Fixed DST cache reuse for timezone calculations.
+- Fixed sensor updates when only temperature, cost, or rate data changed.
+- Fixed deterministic backoff timing.
+- Fixed device number assignment race conditions during setup.
+
+## 2.1.0
+
+Version 2.1.0 focused on performance, connection resilience, and SOC responsiveness.
+
+### Changed
+
+- Improved SOC updates when helper values change.
+- Optimized SOC calculations with caching.
+- Reduced memory and CPU usage through simpler data structures and cached lookups.
+- Improved connection persistence and retry behavior.
+- Improved network recovery and connection monitoring.
+- Consolidated duplicate code and streamlined sensor creation.
+
+## 2.0.1
+
+### Fixed
+
+- Simplified Reset Counter A behavior for better reliability.
+
+## 1.0
+
+### Added
+
+- Initial Eveus EV Charger integration release.

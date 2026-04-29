@@ -1,39 +1,77 @@
-# Eveus EV Charger for Home Assistant
+# Eveus EV Charger - Home Assistant Integration
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.0.1b2-blue)
-![Stability](https://img.shields.io/badge/stability-stable-green)
+![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?color=41BDF5&logo=home-assistant&label=Downloads&suffix=%20downloads&style=for-the-badge)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
+![Version](https://img.shields.io/badge/version-4.0.1-blue?style=for-the-badge)
+![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
-Home Assistant integration for monitoring and controlling Eveus EV chargers over the local network.
+Local Home Assistant integration for Eveus EV chargers. It adds charger monitoring, current control, charging mode switches, energy and cost sensors, optional EV battery estimates, diagnostics, and multi-charger support.
 
-## Highlights
+## What It Can Do
 
-- **Complete charger overview**: voltage, current, power, session energy, total energy, charging state, substate, temperatures, ground status, and connection quality.
-- **Safe charger controls**: set charging current from Home Assistant, enable One Charge mode, use the charger-side Stop Charging option, and reset Counter A.
-- **Model-aware current limits**: current control automatically follows the selected 16A, 32A, or 48A charger model.
-- **Energy and cost tracking**: monitor session/lifetime energy, Counter A/B energy, Counter A/B cost, active electricity rate, and Rate 2/3 pricing.
-- **Optional EV battery estimates**: add helper entities to estimate SOC in kWh, SOC percentage, and time remaining to target SOC.
-- **Multi-rate billing visibility**: see the active rate and whether Rate 2 or Rate 3 schedules are enabled.
-- **Connection health at a glance**: the Connection Quality sensor shows network reliability, latency, and health status so Wi-Fi issues are easier to spot.
-- **Smart diagnostic sensors**: charger state, substate, ground status, temperatures, backup battery voltage, current setpoint, rate schedule status, and SOC helper status are grouped under Diagnostics.
-- **Multiple charger support**: add more than one Eveus charger, each with separate devices, entities, controls, and diagnostic sensors.
-- **Reliable setup and maintenance**: setup validates the charger before creating the entry, and Reconfigure lets you update IP address, credentials, or model later.
+### Charger Monitoring
+
+- Live voltage, current, power, session energy, session time, and lifetime energy.
+- Charger state and substate decoding, including detailed error/substate labels.
+- Box temperature, plug temperature, ground status, system time, and backup battery voltage.
+- Connection Quality sensor with recent success rate, average latency, failure count, and health status.
+
+### Charging Controls
+
+- Charging Current slider with model-aware limits for 16A, 32A, and 48A chargers.
+- Stop Charging switch using the charger-side stop-charge option.
+- One Charge switch for single charging sessions.
+- Reset Counter A control for resetting the charger energy counter.
+- Optimistic UI feedback: controls update immediately, then reconcile with the charger response.
+
+### Energy, Cost, And Rates
+
+- Session Energy and Total Energy sensors.
+- Counter A/B energy tracking.
+- Counter A/B cost tracking.
+- Primary Rate Cost, Active Rate Cost, Rate 2 Cost, and Rate 3 Cost.
+- Rate 2 Status and Rate 3 Status diagnostics.
+
+### Optional EV Battery Estimates
+
+SOC helpers are optional. The charger works normally without them.
+
+When helper entities are created, the integration can estimate:
+
+- SOC Energy in kWh.
+- SOC Percent.
+- Time to Target SOC.
+- Missing or invalid helper status through the Input Entities Status diagnostic sensor.
+
+### Reliability And Maintenance
+
+- Multiple Eveus chargers can be added to the same Home Assistant instance.
+- Setup validates reachability and Eveus-compatible responses before creating the integration entry.
+- Reconfigure support for updating charger IP address, credentials, or model without reinstalling.
+- Reauthentication flow for credential updates if the charger rejects stored credentials.
+- Home Assistant diagnostics with sensitive fields redacted.
+- Repair flow for rare invalid stored setup data.
+- Powered-off chargers are treated as a normal condition and stay quiet in normal Home Assistant logs.
 
 ## Requirements
 
-- Home Assistant 2024.4 or newer.
-- Eveus charger reachable from Home Assistant on the local network.
-- Charger IP address, username, password, and model.
+| Requirement | Details |
+| --- | --- |
+| Home Assistant | 2024.4 or newer |
+| Charger | Eveus EV charger on the same reachable network |
+| Network | Charger IP address or local hostname |
+| Setup fields | IP/host, username, password, and charger model |
+| Supported models | 16A, 32A, 48A |
 
 ## Installation
 
 ### HACS
 
 1. Open HACS.
-2. Go to **Custom repositories**.
+2. Open **Custom repositories**.
 3. Add `https://github.com/ABovsh/eveus` as an **Integration**.
-4. Search for **Eveus EV Charger** and install it.
-5. Restart Home Assistant.
+4. Search for **Eveus EV Charger**.
+5. Install and restart Home Assistant.
 
 ### Manual
 
@@ -44,26 +82,30 @@ Home Assistant integration for monitoring and controlling Eveus EV chargers over
 
 1. Open **Settings → Devices & Services**.
 2. Select **Add Integration**.
-3. Search for **Eveus**.
-4. Enter the charger IP address, username, password, and model.
+3. Search for **Eveus EV Charger**.
+4. Enter the charger IP address or hostname.
+5. Enter the charger username and password.
+6. Select the charger model: 16A, 32A, or 48A.
 
-During setup, the integration checks that the charger is reachable, authentication works, and the `/main` response looks like an Eveus charger.
+To change connection details later, open **Settings → Devices & Services → Eveus EV Charger → Reconfigure**.
 
-To change the IP address, credentials, or model later, open **Settings → Devices & Services → Eveus → Reconfigure**.
+To add another charger, run the same setup flow again with a different charger IP address or hostname.
 
-To add another charger, run the setup flow again with the other charger IP address.
+> [!NOTE]
+> Some Eveus firmware versions may return status data from `/main` even when incorrect credentials are supplied. The integration rejects credentials when the charger returns `401`, but it cannot prove credentials are wrong if the charger still returns valid Eveus data. Commands are still sent with the stored credentials.
 
-## Entities
+## Created Entities
 
-Entity names and unique IDs are kept stable across updates.
+Entity names and unique IDs are kept stable across updates so existing dashboards and automations continue working.
 
-### Main Sensors
+### Sensors
 
 | Entity | Description |
 | --- | --- |
 | Voltage | Current line voltage |
 | Current | Current charging amperage |
 | Power | Current charging power |
+| Current Set | Current limit reported by the charger |
 | Session Energy | Energy delivered in the current session |
 | Session Time | Duration of the current session |
 | Total Energy | Lifetime delivered energy |
@@ -71,11 +113,6 @@ Entity names and unique IDs are kept stable across updates.
 | Counter B Energy | Energy counter B |
 | Counter A Cost | Cost for counter A |
 | Counter B Cost | Cost for counter B |
-
-### Rate Sensors
-
-| Entity | Description |
-| --- | --- |
 | Primary Rate Cost | Primary electricity rate |
 | Active Rate Cost | Currently active electricity rate |
 | Rate 2 Cost | Rate 2 electricity price |
@@ -83,43 +120,42 @@ Entity names and unique IDs are kept stable across updates.
 
 ### Optional SOC Sensors
 
-These appear when the optional helper entities are present.
+These sensors require the optional helper entities listed below.
 
 | Entity | Description |
 | --- | --- |
 | SOC Energy | Estimated battery energy in kWh |
 | SOC Percent | Estimated battery percentage |
-| Time to Target SOC | Estimated time until target SOC |
+| Time to Target SOC | Estimated time until the configured target SOC |
 
 ### Controls
 
-| Entity | Description |
-| --- | --- |
-| Charging Current | Current limit slider |
-| Stop Charging | Charger-side stop-charge option |
-| One Charge | Single charge session mode |
-| Reset Counter A | Reset energy counter A |
+| Entity | Type | Description |
+| --- | --- | --- |
+| Charging Current | Number | Current limit slider |
+| Stop Charging | Switch | Charger-side stop-charge option |
+| One Charge | Switch | Single charge session mode |
+| Reset Counter A | Switch | Reset energy counter A |
 
 ### Diagnostics
 
 | Entity | Description |
 | --- | --- |
-| State | Charger state |
+| State | Main charger state |
 | Substate | Detailed charger state or error |
 | Ground | Ground connection status |
-| Current Set | Current limit reported by the charger |
 | Box Temperature | Internal charger temperature |
 | Plug Temperature | Plug temperature |
 | Battery Voltage | Charger backup battery voltage |
 | System Time | Charger internal time |
-| Connection Quality | Network reliability percentage with latency and health attributes |
-| Input Entities Status | Shows missing or invalid optional SOC helpers |
+| Connection Quality | Recent network reliability, latency, and health attributes |
+| Input Entities Status | Missing or invalid optional SOC helper status |
 | Rate 2 Status | Rate 2 schedule status |
 | Rate 3 Status | Rate 3 schedule status |
 
 ## Optional SOC Helpers
 
-SOC tracking is optional. Without these helpers, charging control, energy, cost, and diagnostics continue to work normally.
+SOC tracking is optional. Without these helpers, charging controls, energy sensors, cost sensors, rate sensors, and diagnostics continue to work normally.
 
 Create these helpers in **Settings → Devices & Services → Helpers → Create Helper → Number**.
 
@@ -138,20 +174,45 @@ The **Input Entities Status** diagnostic sensor shows which helpers are missing 
 
 - Confirm the charger is powered on and connected to Wi-Fi.
 - Open `http://<charger-ip>` from a browser on the same network.
-- Check the IP address, username, password, and selected model.
+- Check the IP address or hostname.
 - Make sure Home Assistant can reach the charger network.
+- Confirm the selected charger model matches the real charger capability.
+
+### Any Username And Password Work
+
+Some Eveus firmware versions appear to allow status reads from `/main` without enforcing Basic Auth. If setup succeeds with random credentials, test the charger directly:
+
+```bash
+curl -i -X POST http://CHARGER_IP/main
+curl -i -X POST -u wrong:wrong http://CHARGER_IP/main
+curl -i -X POST -u real_login:real_password http://CHARGER_IP/main
+```
+
+If the first or second command returns `200` with Eveus JSON, the charger is accepting status reads without valid credentials. This is charger behavior, not Home Assistant credential caching.
 
 ### Controls Do Not Respond
 
 - Check **Connection Quality**.
 - Confirm the charger is online.
+- Verify the stored credentials in **Reconfigure**.
 - Wait for the next coordinator refresh after sending a command.
-- Review Home Assistant logs for `custom_components.eveus`.
 
 ### SOC Sensors Are Unavailable
 
 - Create the optional `input_number.ev_*` helpers.
 - Check **Input Entities Status** for missing or invalid helpers.
+- Confirm helper values are numeric and inside the expected range.
+
+### Charger Is Powered Off
+
+Powered-off chargers are expected. The integration backs off polling and keeps normal Home Assistant logs quiet.
+
+## Compatibility Notes
+
+- Existing entity names and unique IDs are preserved across the 4.x releases.
+- Dashboard cards and automations created for older versions should continue working after update.
+- The Stop Charging switch keeps the charger-side semantics used by previous releases.
+- Optional SOC helpers remain optional.
 
 ## Support
 
