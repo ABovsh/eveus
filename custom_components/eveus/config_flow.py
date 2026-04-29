@@ -26,6 +26,7 @@ from .const import (
     MIN_CURRENT,
     MODEL_MAX_CURRENT,
 )
+from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +66,9 @@ def validate_host(host: str) -> str:
 
     if not _is_valid_ip(host) and not _is_valid_hostname(host):
         raise vol.Invalid("Invalid IP address or hostname")
+
+    if host.endswith("."):
+        host = host[:-1]
 
     return host
 
@@ -197,7 +201,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Eveus."""
 
-    VERSION = 1
+    VERSION = CONFIG_ENTRY_VERSION
 
     def __init__(self) -> None:
         """Initialize the config flow."""

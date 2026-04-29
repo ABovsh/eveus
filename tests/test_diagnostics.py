@@ -38,3 +38,34 @@ def test_diagnostics_redacts_credentials_and_reports_coordinator_state() -> None
     assert diagnostics["coordinator"]["last_update_success"] is True
     assert diagnostics["coordinator"]["update_interval"] == 30
     assert diagnostics["device"]["firmware"] == "3.0.3"
+
+
+def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:
+    updater = SimpleNamespace(
+        data=None,
+        last_update_success=False,
+        update_interval=None,
+        connection_quality={
+            "success_rate": 25,
+            "last_error": "TimeoutError",
+        },
+        is_likely_offline=True,
+    )
+    entry = SimpleNamespace(
+        title="Eveus Charger",
+        data={"host": "192.168.1.50", "username": "admin", "password": "secret"},
+        runtime_data=SimpleNamespace(updater=updater, device_number=2),
+    )
+
+    diagnostics = asyncio.run(async_get_config_entry_diagnostics(None, entry))
+
+    assert diagnostics["entry"]["device_number"] == 2
+    assert diagnostics["coordinator"]["update_interval"] is None
+    assert diagnostics["coordinator"]["is_likely_offline"] is True
+    assert diagnostics["device"] == {
+        "firmware": None,
+        "wifi_firmware": None,
+        "state": None,
+        "substate": None,
+        "current_set": None,
+    }

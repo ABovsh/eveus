@@ -11,7 +11,12 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import AVAILABILITY_GRACE_PERIOD, ERROR_LOG_RATE_LIMIT, STATE_CACHE_TTL
+from .const import (
+    AVAILABILITY_GRACE_PERIOD,
+    CONTROL_GRACE_PERIOD,
+    ERROR_LOG_RATE_LIMIT,
+    STATE_CACHE_TTL,
+)
 from .utils import get_device_info, get_device_suffix
 
 if TYPE_CHECKING:
@@ -70,7 +75,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             return True
 
         if self._last_known_available and self._should_log_availability():
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Entity %s unavailable after grace period (%.0fs)",
                 self.unique_id,
                 unavailable_duration,
@@ -144,6 +149,50 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         self.async_write_ha_state()
 
 
+class ControlEntityMixin:
+    """Availability behavior for command-capable entities."""
+
+    _control_entity_label = "Entity"
+
+    @property
+    def available(self) -> bool:
+        """Control entities use a shorter grace period for safety."""
+        if not self._updater.available:
+            current_time = time.time()
+            if self._unavailable_since is None:
+                self._unavailable_since = current_time
+                return True
+
+            unavailable_duration = current_time - self._unavailable_since
+            if unavailable_duration < CONTROL_GRACE_PERIOD:
+                return True
+
+            if self._last_known_available and self._should_log_availability():
+                _LOGGER.debug(
+                    "%s %s unavailable (device offline %.0fs)",
+                    self._control_entity_label,
+                    self.unique_id,
+                    unavailable_duration,
+                )
+            self._last_known_available = False
+            self._clear_optimistic_state()
+            return False
+
+        if self._unavailable_since is not None:
+            if self._should_log_availability():
+                _LOGGER.debug(
+                    "%s %s connection restored",
+                    self._control_entity_label,
+                    self.unique_id,
+                )
+            self._unavailable_since = None
+        self._last_known_available = True
+        return True
+
+    def _clear_optimistic_state(self) -> None:
+        """Clear optimistic command state when the device is offline."""
+
+
 class EveusSensorBase(BaseEveusEntity, SensorEntity):
     """Base sensor entity."""
 
@@ -156,8 +205,8 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Sensors are immediately unavailable when the coordinator fails."""
-        return self._updater.available
+        """Return if the sensor is available with the base grace period."""
+        return super().available
 
     @property
     def native_value(self) -> Any:

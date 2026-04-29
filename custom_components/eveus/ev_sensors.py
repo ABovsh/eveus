@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Optional, Dict, Set, List
-from functools import lru_cache
+from typing import Any, Optional, Dict, Set
 from dataclasses import dataclass
 
 from homeassistant.components.sensor import (
@@ -17,7 +16,12 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.entity import EntityCategory
 
 from .common import EveusSensorBase
-from .utils import get_safe_value, calculate_remaining_time
+from .utils import (
+    calculate_remaining_time,
+    calculate_soc_kwh_cached,
+    calculate_soc_percent_cached,
+    get_safe_value,
+)
 from .const import STATE_CACHE_TTL
 
 _LOGGER = logging.getLogger(__name__)
@@ -113,21 +117,12 @@ class CachedSOCCalculator:
             self._input_cache.helpers_available = False
             return False
 
-    @lru_cache(maxsize=32)
-    def _calculate_soc_kwh(self, initial_soc: float, capacity: float,
-                           energy_charged: float, correction: float) -> float:
-        """Cached SOC calculation in kWh."""
-        initial_kwh = (initial_soc / 100) * capacity
-        charged_kwh = energy_charged * (1 - correction / 100)
-        total_kwh = initial_kwh + charged_kwh
-        return round(max(0, min(total_kwh, capacity)), 2)
-
     def get_soc_kwh(self, hass: HomeAssistant, energy_charged: float) -> Optional[float]:
         """Get SOC in kWh. Returns None if helpers not available."""
         if not self._update_input_cache(hass):
             return None
         try:
-            return self._calculate_soc_kwh(
+            return calculate_soc_kwh_cached(
                 self._input_cache.initial_soc,
                 self._input_cache.battery_capacity,
                 energy_charged,
@@ -141,25 +136,38 @@ class CachedSOCCalculator:
         """Get SOC percentage. Returns None if helpers not available."""
         if not self._update_input_cache(hass):
             return None
-        soc_kwh = self.get_soc_kwh(hass, energy_charged)
-        if soc_kwh is None or not self._input_cache.battery_capacity:
+        if not self._input_cache.battery_capacity:
             return None
-        percentage = (soc_kwh / self._input_cache.battery_capacity) * 100
-        return round(max(0, min(percentage, 100)), 0)
+        return calculate_soc_percent_cached(
+            self._input_cache.initial_soc,
+            self._input_cache.battery_capacity,
+            energy_charged,
+            self._input_cache.soc_correction or 7.5,
+        )
 
     def invalidate_cache(self):
         """Force cache invalidation."""
         self._input_cache.timestamp = 0
-        self._calculate_soc_kwh.cache_clear()
 
     def are_helpers_available(self, hass: HomeAssistant) -> bool:
         """Check if helpers are available."""
         self._update_input_cache(hass)
         return self._input_cache.helpers_available
 
+    @property
+    def battery_capacity(self) -> Optional[float]:
+        """Return cached battery capacity."""
+        return self._input_cache.battery_capacity
 
-# Global calculator instance (shared across entries — one car typically)
-_soc_calculator = CachedSOCCalculator()
+    @property
+    def soc_correction(self) -> float:
+        """Return cached SOC correction or the integration default."""
+        return self._input_cache.soc_correction or 7.5
+
+    @property
+    def target_soc(self) -> Optional[float]:
+        """Return cached target SOC."""
+        return self._input_cache.target_soc
 
 
 # =============================================================================
@@ -169,11 +177,17 @@ _soc_calculator = CachedSOCCalculator()
 class BaseEVHelperSensor(EveusSensorBase):
     """Base class for sensors that depend on input_number helpers."""
 
-    _tracked_inputs: List[str] = []
+    _tracked_inputs: tuple[str, ...] = ()
 
-    def __init__(self, updater, device_number: int = 1) -> None:
+    def __init__(
+        self,
+        updater,
+        device_number: int = 1,
+        soc_calculator: CachedSOCCalculator | None = None,
+    ) -> None:
         """Initialize EV helper sensor."""
         super().__init__(updater, device_number)
+        self._soc_calculator = soc_calculator or CachedSOCCalculator()
         self._stop_listen = None
         self._last_update_time = 0
         self._cached_value = None
@@ -182,7 +196,7 @@ class BaseEVHelperSensor(EveusSensorBase):
     async def async_added_to_hass(self) -> None:
         """Set up state tracking for helper entities."""
         await super().async_added_to_hass()
-        self._helpers_available = _soc_calculator.are_helpers_available(self.hass)
+        self._helpers_available = self._soc_calculator.are_helpers_available(self.hass)
 
         if self._helpers_available and self._tracked_inputs:
             try:
@@ -195,8 +209,8 @@ class BaseEVHelperSensor(EveusSensorBase):
     @callback
     def _on_input_changed(self, event: Event) -> None:
         """Handle input changes with rate limiting."""
-        _soc_calculator.invalidate_cache()
-        self._helpers_available = _soc_calculator.are_helpers_available(self.hass)
+        self._soc_calculator.invalidate_cache()
+        self._helpers_available = self._soc_calculator.are_helpers_available(self.hass)
 
         current_time = time.time()
         if current_time - self._last_update_time > 1:
@@ -211,7 +225,7 @@ class BaseEVHelperSensor(EveusSensorBase):
     @property
     def available(self) -> bool:
         """Available only when device is online AND helpers are present."""
-        return super().available and _soc_calculator.are_helpers_available(self.hass)
+        return super().available and self._soc_calculator.are_helpers_available(self.hass)
 
     def _get_energy_charged(self) -> float:
         """Get energy charged from updater data with fallback."""
@@ -235,13 +249,13 @@ class EVSocKwhSensor(BaseEVHelperSensor):
     _attr_suggested_display_precision = 1
     _attr_state_class = SensorStateClass.TOTAL
 
-    _tracked_inputs = [_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION]
+    _tracked_inputs = (_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION)
 
     def _get_sensor_value(self) -> Optional[float]:
         """Get SOC in kWh."""
-        if not _soc_calculator.are_helpers_available(self.hass):
+        if not self._soc_calculator.are_helpers_available(self.hass):
             return None
-        result = _soc_calculator.get_soc_kwh(self.hass, self._get_energy_charged())
+        result = self._soc_calculator.get_soc_kwh(self.hass, self._get_energy_charged())
         if result is not None:
             self._cached_value = result
         return result if result is not None else self._cached_value
@@ -257,13 +271,13 @@ class EVSocPercentSensor(BaseEVHelperSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 0
 
-    _tracked_inputs = [_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION]
+    _tracked_inputs = (_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION)
 
     def _get_sensor_value(self) -> Optional[float]:
         """Get SOC percentage."""
-        if not _soc_calculator.are_helpers_available(self.hass):
+        if not self._soc_calculator.are_helpers_available(self.hass):
             return None
-        result = _soc_calculator.get_soc_percent(self.hass, self._get_energy_charged())
+        result = self._soc_calculator.get_soc_percent(self.hass, self._get_energy_charged())
         if result is not None:
             self._cached_value = result
         return result if result is not None else self._cached_value
@@ -275,16 +289,26 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
     ENTITY_NAME = "Time to Target SOC"
     _attr_icon = "mdi:timer"
 
-    _tracked_inputs = [_INPUT_TARGET_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION]
+    _tracked_inputs = (
+        _INPUT_INITIAL_SOC,
+        _INPUT_TARGET_SOC,
+        _INPUT_BATTERY_CAPACITY,
+        _INPUT_SOC_CORRECTION,
+    )
 
-    def __init__(self, updater, device_number: int = 1) -> None:
+    def __init__(
+        self,
+        updater,
+        device_number: int = 1,
+        soc_calculator: CachedSOCCalculator | None = None,
+    ) -> None:
         """Initialize with default cached value."""
-        super().__init__(updater, device_number)
+        super().__init__(updater, device_number, soc_calculator)
         self._cached_value = "Helpers Required"
 
     def _get_sensor_value(self) -> str:
         """Calculate time to target."""
-        if not _soc_calculator.are_helpers_available(self.hass):
+        if not self._soc_calculator.are_helpers_available(self.hass):
             return "Helpers Required"
 
         try:
@@ -294,21 +318,16 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             )
             energy_charged = self._get_energy_charged()
 
-            input_values = self._get_input_values()
-            required_keys = ("initial_soc", "battery_capacity", "target_soc")
-            if not all(input_values.get(k) is not None for k in required_keys):
+            if not self._soc_calculator.are_helpers_available(self.hass):
                 return "Helpers Required"
 
-            initial_soc = input_values["initial_soc"]
-            battery_capacity = input_values["battery_capacity"]
-            soc_correction = input_values.get("soc_correction", 7.5)
-            target_soc = input_values["target_soc"]
+            battery_capacity = self._soc_calculator.battery_capacity
+            target_soc = self._soc_calculator.target_soc
+            soc_correction = self._soc_calculator.soc_correction
+            current_soc = self._soc_calculator.get_soc_percent(self.hass, energy_charged)
 
-            # Calculate current SOC
-            initial_kwh = (initial_soc / 100) * battery_capacity
-            charged_kwh = energy_charged * (1 - soc_correction / 100)
-            current_soc_kwh = max(0, min(initial_kwh + charged_kwh, battery_capacity))
-            current_soc = round(max(0, min((current_soc_kwh / battery_capacity) * 100, 100)), 0)
+            if None in (battery_capacity, target_soc, current_soc):
+                return "Helpers Required"
 
             result = calculate_remaining_time(
                 current_soc=current_soc,
@@ -328,38 +347,6 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
     def available(self) -> bool:
         """Always available to show status messages."""
         return super(BaseEVHelperSensor, self).available
-
-    def _get_input_values(self) -> Dict[str, Optional[float]]:
-        """Get all required input values."""
-        if not _soc_calculator.are_helpers_available(self.hass):
-            return {}
-
-        try:
-            entities = {
-                "initial_soc": self.hass.states.get(_INPUT_INITIAL_SOC),
-                "battery_capacity": self.hass.states.get(_INPUT_BATTERY_CAPACITY),
-                "soc_correction": self.hass.states.get(_INPUT_SOC_CORRECTION),
-                "target_soc": self.hass.states.get(_INPUT_TARGET_SOC),
-            }
-
-            values = {}
-            for key, entity in entities.items():
-                if entity is not None:
-                    try:
-                        values[key] = float(entity.state)
-                    except (ValueError, TypeError):
-                        values[key] = None
-                else:
-                    values[key] = None
-
-            if values.get("soc_correction") is None:
-                values["soc_correction"] = 7.5
-
-            return values
-
-        except Exception as err:
-            _LOGGER.debug("Error getting input values for %s: %s", self.unique_id, err)
-            return {}
 
 
 # =============================================================================

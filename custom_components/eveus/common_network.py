@@ -120,6 +120,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._success_count += 1
         self._total_count += 1
         self._consecutive_failures = 0
+        self.last_update_success = True
         self._last_success_time = time.time()
         self._latency_samples.append(response_time)
         self._silent_mode = False
@@ -135,6 +136,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Record a failed poll and tune retry cadence."""
         self._total_count += 1
         self._consecutive_failures += 1
+        self.last_update_success = False
         self._last_error = type(error).__name__
 
         if self._consecutive_failures > 20:
@@ -143,7 +145,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if self.is_likely_offline:
             self.update_interval = timedelta(seconds=min(RETRY_DELAY * 4, 300))
             if not self._offline_announced:
-                _LOGGER.info("Device %s appears offline, reducing poll frequency", self.host)
+                _LOGGER.debug("Device %s appears offline, reducing poll frequency", self.host)
                 self._offline_announced = True
         else:
             self.update_interval = timedelta(seconds=IDLE_UPDATE_INTERVAL)

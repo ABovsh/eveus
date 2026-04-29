@@ -24,9 +24,9 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     readme = (ROOT / "README.md").read_text()
     changelog = (ROOT / "CHANGELOG.md").read_text()
 
-    assert manifest["version"] == "4.0.0"
-    assert "version-4.0.0-blue" in readme
-    assert "## 4.0.0" in changelog
+    assert manifest["version"] == "4.0.1"
+    assert "version-4.0.1-blue" in readme
+    assert "## 4.0.1" in changelog
 
 
 def test_hacs_metadata_has_allowed_keys_only() -> None:
