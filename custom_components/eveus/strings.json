@@ -20,6 +20,14 @@
                     "password": "Password",
                     "model": "Charger Model (16A, 32A or 48A)"
                 }
+            },
+            "reauth_confirm": {
+                "title": "Update Eveus Credentials",
+                "description": "The Eveus charger rejected the stored username or password. Enter the updated credentials.",
+                "data": {
+                    "username": "Username",
+                    "password": "Password"
+                }
             }
         },
         "error": {
@@ -30,7 +38,40 @@
             "unknown": "Unexpected error occurred"
         },
         "abort": {
-            "already_configured": "Device is already configured"
+            "already_configured": "Device is already configured",
+            "reauth_successful": "Eveus credentials updated",
+            "reconfigure_successful": "Eveus charger settings updated",
+            "wrong_device": "The credentials belong to a different charger"
+        }
+    },
+    "issues": {
+        "invalid_config": {
+            "title": "Eveus charger setup needs attention",
+            "fix_flow": {
+                "step": {
+                    "confirm": {
+                        "title": "Update Eveus charger setup",
+                        "description": "The stored Eveus charger setup is incomplete or invalid. Enter the charger details again.",
+                        "data": {
+                            "host": "IP Address",
+                            "username": "Username",
+                            "password": "Password",
+                            "model": "Charger Model (16A, 32A or 48A)"
+                        }
+                    }
+                },
+                "error": {
+                    "cannot_connect": "Failed to connect to charger, please verify the IP address",
+                    "invalid_auth": "Invalid username or password",
+                    "invalid_input": "Invalid input provided, please check your entries",
+                    "invalid_device": "Device validation failed, please check the charger model",
+                    "unknown": "Unexpected error occurred"
+                },
+                "abort": {
+                    "entry_missing": "The Eveus charger setup no longer exists",
+                    "fixed": "Eveus charger setup updated"
+                }
+            }
         }
     }
 }

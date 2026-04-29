@@ -1,25 +1,21 @@
 """Constants for the Eveus integration."""
-from datetime import timedelta
 from typing import Final, Dict, List, Literal
 from functools import lru_cache
 
 DOMAIN: Final[str] = "eveus"
 
 # Update intervals
-SCAN_INTERVAL: Final[timedelta] = timedelta(seconds=30)
 CHARGING_UPDATE_INTERVAL: Final[int] = 30
 IDLE_UPDATE_INTERVAL: Final[int] = 60
 RETRY_DELAY: Final[int] = 15
 UPDATE_TIMEOUT: Final[int] = 20
 COMMAND_TIMEOUT: Final[int] = 25
-ERROR_COOLDOWN: Final[int] = 300
 
 # Availability and resilience - optimized for WiFi connections
 AVAILABILITY_GRACE_PERIOD: Final[int] = 60
 CONTROL_GRACE_PERIOD: Final[int] = 30
 ERROR_LOG_RATE_LIMIT: Final[int] = 300
 STATE_CACHE_TTL: Final[int] = 60
-CONTROL_CACHE_TTL: Final[int] = 0
 
 # Current limits
 MIN_CURRENT: Final[int] = 7
@@ -43,20 +39,6 @@ RATE_STATES: Final[Dict[int, str]] = {
     1: "Rate 2",
     2: "Rate 3",
 }
-
-# Rate Commands
-RATE_COMMANDS = {
-    "RATE2_ENABLE": "tarifAEnable",
-    "RATE3_ENABLE": "tarifBEnable",
-    "PRIMARY_RATE": "tarif",
-    "RATE2_START": "tarifAStart",
-    "RATE2_STOP": "tarifAStop",
-    "RATE3_START": "tarifBStart",
-    "RATE3_STOP": "tarifBStop",
-}
-
-# Command Endpoints
-CMD_ENDPOINT = "pageEvent"
 
 # State Mappings
 DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]

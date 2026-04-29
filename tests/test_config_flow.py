@@ -14,6 +14,7 @@ from custom_components.eveus.config_flow import (
     InvalidAuth,
     InvalidDevice,
     InvalidInput,
+    build_reauth_data_schema,
     normalize_user_input,
     validate_credentials,
     validate_device_response,
@@ -381,19 +382,128 @@ def test_reconfigure_flow_maps_validation_errors(
     assert result["errors"] == {"base": error_key}
 
 
-def test_options_flow_shows_empty_form_when_no_input() -> None:
-    flow = config_flow.OptionsFlowHandler(object())
+def test_reauth_schema_contains_only_credentials() -> None:
+    schema = build_reauth_data_schema(
+        {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"}
+    )
 
-    result = asyncio.run(flow.async_step_init())
-
-    assert result["type"] == "form"
-    assert result["step_id"] == "init"
+    assert set(schema.schema) == {CONF_USERNAME, CONF_PASSWORD}
 
 
-def test_options_flow_returns_empty_options_entry() -> None:
-    flow = config_flow.OptionsFlowHandler(object())
+def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_validate_input(hass, data):
+        return {
+            "title": "Eveus Charger (192.168.1.50)",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
 
-    result = asyncio.run(flow.async_step_init({}))
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(
+                **{
+                    CONF_HOST: "192.168.1.50",
+                    CONF_USERNAME: "old",
+                    CONF_PASSWORD: "old",
+                }
+            ),
+            "unique_id": "192.168.1.50",
+        },
+    )()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    flow._abort_if_unique_id_mismatch = lambda **kwargs: None
+    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
+        "type": "abort",
+        "reason": "reauth_successful",
+        **kwargs,
+    }
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
-    assert result["type"] == "create_entry"
-    assert result["data"] == {}
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"}
+        )
+    )
+
+    assert result["type"] == "abort"
+    assert result["data"][CONF_USERNAME] == "admin"
+    assert result["data"][CONF_PASSWORD] == "secret"
+    assert result["data"][CONF_HOST] == "192.168.1.50"
+
+
+def test_reauth_flow_aborts_when_host_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_validate_input(hass, data):
+        normalized = normalize_user_input(data)
+        normalized[CONF_HOST] = "192.168.1.55"
+        return {
+            "title": "Eveus Charger (192.168.1.55)",
+            "data": normalized,
+            "device_info": {"current_set": 16},
+        }
+
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: "192.168.1.50"}),
+            "unique_id": "192.168.1.50",
+        },
+    )()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    flow.async_abort = lambda *, reason: {"type": "abort", "reason": reason}
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"}
+        )
+    )
+
+    assert result == {"type": "abort", "reason": "wrong_device"}
+
+
+@pytest.mark.parametrize(
+    ("error", "error_key"),
+    [
+        (CannotConnect(), "cannot_connect"),
+        (InvalidAuth(), "invalid_auth"),
+        (InvalidInput("bad"), "invalid_input"),
+        (InvalidDevice("bad"), "invalid_device"),
+    ],
+)
+def test_reauth_flow_maps_validation_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    error_key: str,
+) -> None:
+    async def fake_validate_input(hass, data):
+        raise error
+
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: "192.168.1.50"}),
+            "unique_id": "192.168.1.50",
+        },
+    )()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"}
+        )
+    )
+
+    assert result["errors"] == {"base": error_key}

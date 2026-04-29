@@ -2,7 +2,7 @@
 
 ## 4.0.1 - 2026-04-29
 
-Version 4.0.1 is a maintenance release focused on smoother upgrades, optional SOC helper reliability, and more consistent entity behavior.
+Version 4.0.1 is a maintenance release focused on smoother upgrades, quieter normal operation, easier recovery, and more consistent entity behavior.
 
 ### Changed
 
@@ -11,6 +11,12 @@ Version 4.0.1 is a maintenance release focused on smoother upgrades, optional SO
 - Improved Time to Target SOC behavior so it uses the same SOC calculation path as the other SOC sensors.
 - Improved short offline/reconnect handling for sensors and controls.
 - Improved offline handling so powered-off chargers stay quiet in normal Home Assistant logs.
+- Improved optional SOC helper handling so missing helpers stay quiet in normal Home Assistant logs.
+- Improved optional SOC helper sensors so they react when helper entities are created after the integration is already loaded.
+- Improved connection quality reporting so it reflects recent charger connectivity instead of lifetime history.
+- Improved diagnostics with a clearer sanitized device snapshot for troubleshooting.
+- Added Home Assistant reauthentication support for updating credentials after the charger rejects the stored username or password.
+- Added a Home Assistant Repair flow for rare invalid stored setup data.
 
 ### Fixed
 
@@ -18,6 +24,7 @@ Version 4.0.1 is a maintenance release focused on smoother upgrades, optional SO
 - Fixed possible SOC calculation mix-ups when multiple chargers are configured.
 - Fixed stale sensor fallback behavior during short availability grace periods.
 - Fixed hostname normalization for trailing-dot local hostnames such as `charger.local.`.
+- Fixed optional SOC calculations so real zero values, such as `0 kWh` charged or `0 W` charging power, are not replaced by stale cached values.
 
 ## 4.0.0 - 2026-04-28
 

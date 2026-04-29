@@ -185,6 +185,20 @@ def test_failure_recording_enters_silent_mode_after_many_failures() -> None:
     assert updater._silent_mode is True
 
 
+def test_connection_quality_uses_recent_poll_window() -> None:
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater._success_count = 100
+    updater._total_count = 100
+
+    for _ in range(10):
+        updater._poll_results.append(False)
+
+    metrics = updater.connection_quality
+
+    assert metrics["success_rate"] == 0
+    assert metrics["sample_count"] == 10
+
+
 def test_offline_failure_recording_is_quiet_at_normal_log_levels(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

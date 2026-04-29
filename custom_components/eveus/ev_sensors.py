@@ -65,7 +65,6 @@ class CachedSOCCalculator:
         """Initialize with cache TTL."""
         self.cache_ttl = cache_ttl
         self._input_cache = InputEntityCache()
-        self._helpers_check_done = False
 
     def _update_input_cache(self, hass: HomeAssistant) -> bool:
         """Update input entity cache. Returns False if helpers not available."""
@@ -82,20 +81,13 @@ class CachedSOCCalculator:
 
             missing = [k for k, v in entities.items() if v is None]
             if missing:
-                if not self._helpers_check_done:
-                    self._helpers_check_done = True
-                    _LOGGER.info(
-                        "Optional EV helper entities not found: %s. "
-                        "Advanced SOC metrics will be unavailable until helpers are created.",
-                        missing,
-                    )
+                _LOGGER.debug("Optional EV helper entities not found: %s", missing)
                 self._input_cache.helpers_available = False
                 self._input_cache.timestamp = time.time()
                 return False
 
             if not self._input_cache.helpers_available:
-                _LOGGER.info("All EV helper entities found. Advanced SOC metrics are now available.")
-                self._helpers_check_done = True
+                _LOGGER.debug("All EV helper entities found. Advanced SOC metrics are available.")
 
             values: Dict[str, Any] = {"helpers_available": True}
             for key, entity in entities.items():
@@ -198,7 +190,7 @@ class BaseEVHelperSensor(EveusSensorBase):
         await super().async_added_to_hass()
         self._helpers_available = self._soc_calculator.are_helpers_available(self.hass)
 
-        if self._helpers_available and self._tracked_inputs:
+        if self._tracked_inputs:
             try:
                 self._stop_listen = async_track_state_change_event(
                     self.hass, self._tracked_inputs, self._on_input_changed,
@@ -229,10 +221,10 @@ class BaseEVHelperSensor(EveusSensorBase):
 
     def _get_energy_charged(self) -> float:
         """Get energy charged from updater data with fallback."""
-        return (
-            get_safe_value(self._updater.data, "IEM1", float, default=0)
-            or self.get_cached_data_value("IEM1", 0)
-        )
+        energy_charged = get_safe_value(self._updater.data, "IEM1", float)
+        if energy_charged is not None:
+            return energy_charged
+        return self.get_cached_data_value("IEM1", 0)
 
 
 # =============================================================================
@@ -312,10 +304,9 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             return "Helpers Required"
 
         try:
-            power_meas = (
-                get_safe_value(self._updater.data, "powerMeas", float, default=0)
-                or self.get_cached_data_value("powerMeas", 0)
-            )
+            power_meas = get_safe_value(self._updater.data, "powerMeas", float)
+            if power_meas is None:
+                power_meas = self.get_cached_data_value("powerMeas", 0)
             energy_charged = self._get_energy_charged()
 
             if not self._soc_calculator.are_helpers_available(self.hass):

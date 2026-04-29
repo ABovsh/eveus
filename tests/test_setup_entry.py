@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady
 
 import custom_components.eveus as eveus
 from custom_components.eveus.const import CONF_MODEL, MODEL_16A
@@ -22,6 +22,9 @@ class _ConfigEntries:
 
     def async_entries(self, domain: str) -> list[object]:
         return []
+
+    def async_get_entry(self, entry_id: str) -> object | None:
+        return None
 
     def async_update_entry(self, entry: object, **kwargs: object) -> None:
         self.updated.append(kwargs)
@@ -143,8 +146,32 @@ def test_async_setup_entry_wraps_unexpected_refresh_failure(
     ],
 )
 def test_async_setup_entry_rejects_invalid_stored_data(overrides: dict[str, object]) -> None:
-    with pytest.raises(ConfigEntryNotReady):
+    with pytest.raises(ConfigEntryError):
         asyncio.run(eveus.async_setup_entry(_hass(), _Entry(_data(**overrides))))
+
+
+def test_async_setup_entry_creates_repair_for_invalid_stored_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[dict[str, object]] = []
+
+    def create_issue(hass, domain, issue_id, **kwargs):
+        created.append({"domain": domain, "issue_id": issue_id, **kwargs})
+
+    monkeypatch.setattr(eveus.ir, "async_create_issue", create_issue)
+    monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *args, **kwargs: None)
+
+    with pytest.raises(ConfigEntryError):
+        asyncio.run(
+            eveus.async_setup_entry(
+                _hass(),
+                _Entry(_data(**{CONF_MODEL: "bad"})),
+            )
+        )
+
+    assert created
+    assert created[0]["translation_key"] == "invalid_config"
+    assert created[0]["is_fixable"] is True
 
 
 def test_update_listener_and_unload_entry() -> None:

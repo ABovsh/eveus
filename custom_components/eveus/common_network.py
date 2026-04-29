@@ -55,6 +55,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         self._success_count = 0
         self._total_count = 0
+        self._poll_results: deque[bool] = deque(maxlen=20)
         self._consecutive_failures = 0
         self._last_success_time = time.time()
         self._latency_samples: deque[float] = deque(maxlen=10)
@@ -72,7 +73,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def connection_quality(self) -> dict[str, Any]:
         """Connection metrics exposed for diagnostics and sensors."""
-        success_rate = (self._success_count / max(self._total_count, 1)) * 100
+        if self._poll_results:
+            success_rate = (sum(self._poll_results) / len(self._poll_results)) * 100
+        else:
+            success_rate = 100.0
         avg_latency = (
             (sum(self._latency_samples) / len(self._latency_samples))
             if self._latency_samples
@@ -85,6 +89,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             "is_healthy": success_rate > 80 and time.time() - self._last_success_time < 300,
             "last_success_time": self._last_success_time,
             "last_error": self._last_error,
+            "sample_count": len(self._poll_results),
         }
 
     @property
@@ -119,6 +124,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Record a successful poll and tune the next interval."""
         self._success_count += 1
         self._total_count += 1
+        self._poll_results.append(True)
         self._consecutive_failures = 0
         self.last_update_success = True
         self._last_success_time = time.time()
@@ -135,6 +141,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
         self._total_count += 1
+        self._poll_results.append(False)
         self._consecutive_failures += 1
         self.last_update_success = False
         self._last_error = type(error).__name__

@@ -15,6 +15,7 @@ def test_manifest_domain_matches_integration_directory() -> None:
     manifest = json.loads(manifest_path.read_text())
 
     assert manifest["domain"] == manifest_path.parent.name
+    assert manifest["integration_type"] == "device"
 
 
 def test_manifest_readme_and_changelog_versions_match() -> None:
@@ -53,6 +54,15 @@ def test_translation_state_attributes_use_dictionary_shape() -> None:
     assert state_attributes["max"] == {"name": "Maximum Current"}
 
 
+def test_repair_issue_translations_are_present() -> None:
+    translations = json.loads(
+        (ROOT / "custom_components" / "eveus" / "translations" / "en.json").read_text()
+    )
+
+    assert "invalid_config" in translations["issues"]
+    assert "fix_flow" in translations["issues"]["invalid_config"]
+
+
 def test_brand_images_are_complete_and_sized() -> None:
     brand_dir = ROOT / "custom_components" / "eveus" / "brand"
     expected_sizes = {
@@ -68,3 +78,7 @@ def test_brand_images_are_complete_and_sized() -> None:
         with Image.open(path) as image:
             assert image.size == expected_size
             assert image.mode == "RGBA"
+
+
+def test_macos_metadata_files_are_not_packaged() -> None:
+    assert not list((ROOT / "custom_components" / "eveus").rglob(".DS_Store"))
