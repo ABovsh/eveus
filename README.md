@@ -2,7 +2,7 @@
 
 ![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?color=41BDF5&logo=home-assistant&label=Downloads&suffix=%20downloads&style=for-the-badge)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.0.1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.0.1b3-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 Local Home Assistant integration for Eveus EV chargers. It adds charger monitoring, current control, charging mode switches, energy and cost sensors, optional EV battery estimates, diagnostics, and multi-charger support.
@@ -63,6 +63,13 @@ When helper entities are created, the integration can estimate:
 | Setup fields | IP/host, username, password, and charger model |
 | Supported models | 16A, 32A, 48A |
 
+---
+<img width="798" height="905" alt="image" src="https://github.com/user-attachments/assets/ccfdef56-a04e-4cad-acc7-bbb61c0879db" />
+<img width="264" height="840" alt="image" src="https://github.com/user-attachments/assets/85c35fc9-b867-440c-9d46-95b74839beb9" />
+
+
+---
+
 ## Installation
 
 ### HACS
@@ -90,9 +97,6 @@ When helper entities are created, the integration can estimate:
 To change connection details later, open **Settings → Devices & Services → Eveus EV Charger → Reconfigure**.
 
 To add another charger, run the same setup flow again with a different charger IP address or hostname.
-
-> [!NOTE]
-> Some Eveus firmware versions may return status data from `/main` even when incorrect credentials are supplied. The integration rejects credentials when the charger returns `401`, but it cannot prove credentials are wrong if the charger still returns valid Eveus data. Commands are still sent with the stored credentials.
 
 ## Created Entities
 
@@ -178,41 +182,17 @@ The **Input Entities Status** diagnostic sensor shows which helpers are missing 
 - Make sure Home Assistant can reach the charger network.
 - Confirm the selected charger model matches the real charger capability.
 
-### Any Username And Password Work
-
-Some Eveus firmware versions appear to allow status reads from `/main` without enforcing Basic Auth. If setup succeeds with random credentials, test the charger directly:
-
-```bash
-curl -i -X POST http://CHARGER_IP/main
-curl -i -X POST -u wrong:wrong http://CHARGER_IP/main
-curl -i -X POST -u real_login:real_password http://CHARGER_IP/main
-```
-
-If the first or second command returns `200` with Eveus JSON, the charger is accepting status reads without valid credentials. This is charger behavior, not Home Assistant credential caching.
-
-### Controls Do Not Respond
-
-- Check **Connection Quality**.
-- Confirm the charger is online.
-- Verify the stored credentials in **Reconfigure**.
-- Wait for the next coordinator refresh after sending a command.
-
 ### SOC Sensors Are Unavailable
 
 - Create the optional `input_number.ev_*` helpers.
 - Check **Input Entities Status** for missing or invalid helpers.
 - Confirm helper values are numeric and inside the expected range.
 
-### Charger Is Powered Off
-
-Powered-off chargers are expected. The integration backs off polling and keeps normal Home Assistant logs quiet.
-
 ## Compatibility Notes
 
 - Existing entity names and unique IDs are preserved across the 4.x releases.
 - Dashboard cards and automations created for older versions should continue working after update.
-- The Stop Charging switch keeps the charger-side semantics used by previous releases.
-- Optional SOC helpers remain optional.
+- SOC helpers remain optional.
 
 ## Support
 
