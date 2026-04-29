@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
@@ -30,24 +30,11 @@ from .const import (
     get_normal_substate,
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
+    CHARGING_UPDATE_INTERVAL,
 )
 from .utils import get_safe_value, is_dst, format_duration
 
 _LOGGER = logging.getLogger(__name__)
-
-# Rate-limited error logging
-_last_error_logs: Dict[str, float] = {}
-
-
-def _should_log_error(function_name: str) -> bool:
-    """Check if we should log errors for a function (rate limited)."""
-    current_time = time.time()
-    last_log = _last_error_logs.get(function_name, 0)
-    if current_time - last_log > ERROR_LOG_RATE_LIMIT:
-        _last_error_logs[function_name] = current_time
-        return True
-    return False
-
 
 class SensorType(Enum):
     """Sensor type enumeration."""
@@ -81,6 +68,18 @@ class SensorSpec:
 class OptimizedEveusSensor(EveusSensorBase):
     """High-performance templated sensor."""
 
+    _last_error_logs: ClassVar[Dict[str, float]] = {}
+
+    @classmethod
+    def _should_log_error(cls, function_name: str) -> bool:
+        """Check if we should log errors for a function (rate limited)."""
+        current_time = time.time()
+        last_log = cls._last_error_logs.get(function_name, 0)
+        if current_time - last_log > ERROR_LOG_RATE_LIMIT:
+            cls._last_error_logs[function_name] = current_time
+            return True
+        return False
+
     def __init__(self, updater, spec: SensorSpec, device_number: int = 1):
         """Initialize sensor from spec."""
         self.ENTITY_NAME = spec.name
@@ -89,7 +88,7 @@ class OptimizedEveusSensor(EveusSensorBase):
         self._spec = spec
         self._cached_value = None
         self._cache_timestamp = 0
-        self._cache_ttl = 30
+        self._cache_ttl = CHARGING_UPDATE_INTERVAL
 
         if spec.icon:
             self._attr_icon = spec.icon
@@ -106,12 +105,15 @@ class OptimizedEveusSensor(EveusSensorBase):
 
     def _get_sensor_value(self) -> Any:
         """Return cached or computed sensor value."""
-        if not self._updater.available:
-            self._cached_value = None
-            self._cache_timestamp = 0
-            return None
-
         current_time = time.time()
+
+        if not self._updater.available:
+            if (
+                self._cached_value is not None
+                and current_time - self._cache_timestamp < self._cache_ttl
+            ):
+                return self._cached_value
+            return None
 
         # Use cache for non-calculated sensors
         if (
@@ -128,7 +130,7 @@ class OptimizedEveusSensor(EveusSensorBase):
                 self._cache_timestamp = current_time
             return value
         except Exception as err:
-            if _should_log_error(f"sensor_{self._spec.key}"):
+            if self._should_log_error(f"sensor_{self._spec.key}"):
                 _LOGGER.debug("Error getting value for %s: %s", self.name, err)
             return None
 
@@ -147,7 +149,7 @@ class OptimizedEveusSensor(EveusSensorBase):
                     return {}
                 return self._spec.attributes_fn(self._updater, self.hass)
             except Exception as err:
-                if _should_log_error(f"attributes_{self._spec.key}"):
+                if self._should_log_error(f"attributes_{self._spec.key}"):
                     _LOGGER.debug("Error getting attributes for %s: %s", self.name, err)
         return {}
 
@@ -276,7 +278,7 @@ def get_system_time(updater, hass) -> Optional[str]:
         return dt_local.strftime("%H:%M")
 
     except Exception as err:
-        if _should_log_error("get_system_time"):
+        if OptimizedEveusSensor._should_log_error("get_system_time"):
             _LOGGER.debug("Error getting system time: %s", err)
         return None
 

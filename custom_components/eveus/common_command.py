@@ -79,17 +79,16 @@ async def send_eveus_command(
     value: Any,
 ) -> bool:
     """Standalone command function for backward compatibility."""
-    try:
-        timeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
-        async with session.post(
-            f"http://{host}/pageEvent",
-            auth=aiohttp.BasicAuth(username, password),
-            headers={"Content-type": "application/x-www-form-urlencoded"},
-            data=f"pageevent={command}&{command}={value}",
-            timeout=timeout,
-        ) as response:
-            response.raise_for_status()
-            return True
-    except Exception as err:
-        _LOGGER.debug("Legacy command %s failed: %s", command, err)
-        return False
+
+    class _LegacyUpdater:
+        """Small adapter used by the legacy command helper."""
+
+        def __init__(self) -> None:
+            self.host = host
+            self.username = username
+            self.password = password
+
+        def get_session(self) -> aiohttp.ClientSession:
+            return session
+
+    return await CommandManager(_LegacyUpdater()).send_command(command, value)

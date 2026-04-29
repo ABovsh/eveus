@@ -1,7 +1,7 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.0.0-blue)
+![Version](https://img.shields.io/badge/version-4.0.1-blue)
 ![Stability](https://img.shields.io/badge/stability-stable-green)
 
 Home Assistant integration for monitoring and controlling Eveus EV chargers over the local network.

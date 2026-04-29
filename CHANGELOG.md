@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.0.1 - 2026-04-29
+
+Version 4.0.1 is a maintenance release focused on smoother upgrades, optional SOC helper reliability, and more consistent entity behavior.
+
+### Changed
+
+- Improved upgrade handling for existing entries that were created with URL-style host values.
+- Improved optional SOC calculations for setups with more than one charger.
+- Improved Time to Target SOC behavior so it uses the same SOC calculation path as the other SOC sensors.
+- Improved short offline/reconnect handling for sensors and controls.
+- Improved offline handling so powered-off chargers stay quiet in normal Home Assistant logs.
+
+### Fixed
+
+- Fixed a migration issue that could run the same cleanup again after restart.
+- Fixed possible SOC calculation mix-ups when multiple chargers are configured.
+- Fixed stale sensor fallback behavior during short availability grace periods.
+- Fixed hostname normalization for trailing-dot local hostnames such as `charger.local.`.
+
 ## 4.0.0 - 2026-04-28
 
 Version 4.0.0 is a major modernization release focused on reliability, setup validation, diagnostics, and Home Assistant compatibility. Existing entity names and unique IDs remain intact, so dashboards and automations can continue working after the update.

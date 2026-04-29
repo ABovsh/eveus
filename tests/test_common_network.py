@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -11,7 +14,11 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
-from custom_components.eveus.const import CHARGING_UPDATE_INTERVAL, IDLE_UPDATE_INTERVAL
+from custom_components.eveus.const import (
+    CHARGING_UPDATE_INTERVAL,
+    IDLE_UPDATE_INTERVAL,
+    RETRY_DELAY,
+)
 
 
 class _Hass:
@@ -71,6 +78,15 @@ def test_update_data_fetches_payload_and_sets_charging_interval(
     assert updater.connection_quality["consecutive_failures"] == 0
 
 
+def test_coordinator_compatibility_helpers() -> None:
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+
+    assert updater.available is updater.last_update_success
+    assert asyncio.run(updater.async_shutdown()) is None
+    assert updater._should_log() is True
+    assert updater._should_log() is False
+
+
 def test_update_data_sets_idle_interval_when_device_is_not_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -107,3 +123,77 @@ def test_update_data_raises_update_failed_for_bad_json(
     assert updater.connection_quality["consecutive_failures"] == 1
     assert updater.connection_quality["last_error"] == "JSONDecodeError"
 
+
+def test_update_data_raises_update_failed_for_non_dict_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload=["not", "a", "mapping"]))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.connection_quality["consecutive_failures"] == 1
+    assert updater.connection_quality["last_error"] == "ValueError"
+
+
+def test_send_command_refreshes_data_only_after_success() -> None:
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    refreshes = 0
+
+    async def request_refresh() -> None:
+        nonlocal refreshes
+        refreshes += 1
+
+    async def successful_command(command: str, value: object) -> bool:
+        return True
+
+    async def failed_command(command: str, value: object) -> bool:
+        return False
+
+    updater.async_request_refresh = request_refresh
+    updater._command_manager = SimpleNamespace(send_command=successful_command)
+
+    assert asyncio.run(updater.send_command("currentSet", 16)) is True
+    assert refreshes == 1
+
+    updater._command_manager = SimpleNamespace(send_command=failed_command)
+
+    assert asyncio.run(updater.send_command("currentSet", 12)) is False
+    assert refreshes == 1
+
+
+def test_failure_recording_reduces_polling_when_device_appears_offline() -> None:
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater._last_success_time = time.time() - 700
+    updater._consecutive_failures = 10
+
+    updater._record_failure(asyncio.TimeoutError())
+
+    assert updater.is_likely_offline is True
+    assert updater.update_interval == timedelta(seconds=RETRY_DELAY * 4)
+    assert updater.connection_quality["last_error"] == "TimeoutError"
+
+
+def test_failure_recording_enters_silent_mode_after_many_failures() -> None:
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater._consecutive_failures = 20
+
+    updater._record_failure(asyncio.TimeoutError())
+
+    assert updater._silent_mode is True
+
+
+def test_offline_failure_recording_is_quiet_at_normal_log_levels(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater._last_success_time = time.time() - 700
+    updater._consecutive_failures = 10
+
+    with caplog.at_level(logging.INFO, logger="custom_components.eveus.common_network"):
+        updater._record_failure(asyncio.TimeoutError())
+
+    assert updater.last_update_success is False
+    assert caplog.records == []

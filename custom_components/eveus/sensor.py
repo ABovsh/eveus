@@ -28,6 +28,7 @@ async def async_setup_entry(
         runtime_data = entry.runtime_data
         updater = runtime_data.updater
         device_number = runtime_data.device_number
+        soc_calculator = runtime_data.soc_calculator
 
         # Create all sensors efficiently using factory pattern
         sensors = []
@@ -39,9 +40,9 @@ async def async_setup_entry(
         
         # Create EV-specific optimized sensors
         ev_sensors = [
-            EVSocKwhSensor(updater, device_number),
-            EVSocPercentSensor(updater, device_number),
-            TimeToTargetSocSensor(updater, device_number),
+            EVSocKwhSensor(updater, device_number, soc_calculator),
+            EVSocPercentSensor(updater, device_number, soc_calculator),
+            TimeToTargetSocSensor(updater, device_number, soc_calculator),
             InputEntitiesStatusSensor(updater, device_number),
         ]
         sensors.extend(ev_sensors)

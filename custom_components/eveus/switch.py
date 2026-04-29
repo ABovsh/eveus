@@ -13,7 +13,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from . import EveusConfigEntry
 from .const import CONTROL_GRACE_PERIOD
-from .common import BaseEveusEntity
+from .common import BaseEveusEntity, ControlEntityMixin
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,8 +57,10 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
 )
 
 
-class BaseSwitchEntity(BaseEveusEntity, SwitchEntity):
+class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
     """Base switch entity with responsive UI and safety."""
+
+    _control_entity_label = "Switch"
 
     def __init__(
         self,
@@ -82,34 +84,9 @@ class BaseSwitchEntity(BaseEveusEntity, SwitchEntity):
         self._last_command_time = 0
         self._last_successful_read = 0
 
-    @property
-    def available(self) -> bool:
-        """Control entities use shorter grace period for safety."""
-        if not self._updater.available:
-            current_time = time.time()
-            if self._unavailable_since is None:
-                self._unavailable_since = current_time
-                return True
-
-            unavailable_duration = current_time - self._unavailable_since
-            if unavailable_duration < CONTROL_GRACE_PERIOD:
-                return True
-
-            if self._last_known_available and self._should_log_availability():
-                _LOGGER.info(
-                    "Switch %s unavailable (device offline %.0fs)",
-                    self.unique_id, unavailable_duration,
-                )
-            self._last_known_available = False
-            self._optimistic_state = None
-            return False
-
-        if self._unavailable_since is not None:
-            if self._should_log_availability():
-                _LOGGER.debug("Switch %s connection restored", self.unique_id)
-            self._unavailable_since = None
-        self._last_known_available = True
-        return True
+    def _clear_optimistic_state(self) -> None:
+        """Clear optimistic state when the device is offline."""
+        self._optimistic_state = None
 
     @property
     def is_on(self) -> bool:
@@ -154,7 +131,7 @@ class BaseSwitchEntity(BaseEveusEntity, SwitchEntity):
                     self._optimistic_state = bool(command_value)
                     self._optimistic_state_time = time.time()
                 else:
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "Failed to set %s to %s",
                         self.name, "on" if command_value else "off",
                     )
@@ -264,9 +241,9 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
         success = await self._updater.send_command(self._command, 0)
         if success:
             self._last_reset_time = time.time()
-            _LOGGER.info("Successfully reset counter A")
+            _LOGGER.debug("Successfully reset counter A")
         else:
-            _LOGGER.warning("Failed to reset counter A")
+            _LOGGER.debug("Failed to reset counter A")
 
     async def _async_restore_state(self, state: State) -> None:
         """No state restoration for reset switch."""
