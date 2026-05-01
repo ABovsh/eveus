@@ -70,6 +70,7 @@ class EveusNumberEntity(ControlEntityMixin, BaseEveusEntity, NumberEntity):
         self._last_device_value: Optional[float] = None
         self._last_command_time = 0
         self._last_successful_read = 0
+        self._last_written_value: Optional[float] = None
 
     def _clear_optimistic_state(self) -> None:
         """Clear optimistic state when the device is offline."""
@@ -102,22 +103,11 @@ class EveusCurrentNumber(EveusNumberEntity):
         if self._optimistic_value is not None:
             if current_time - self._optimistic_value_time < OPTIMISTIC_VALUE_TTL:
                 return self._optimistic_value
-            self._optimistic_value = None
 
-        if self._updater.available and self._updater.data:
-            if self._command in self._updater.data:
-                device_value = get_safe_value(self._updater.data, self._command, float)
-                if device_value is not None:
-                    new_device_value = float(device_value)
-                    self._last_device_value = new_device_value
-                    self._last_successful_read = current_time
-
-                    if (
-                        self._optimistic_value is not None
-                        and abs(self._optimistic_value - new_device_value) > 0.5
-                    ):
-                        self._optimistic_value = None
-                    return new_device_value
+        if self._updater.available and self._updater.data and self._command in self._updater.data:
+            device_value = get_safe_value(self._updater.data, self._command, float)
+            if device_value is not None:
+                return float(device_value)
 
         if self._last_device_value is not None:
             if current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
@@ -147,7 +137,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                     _LOGGER.debug("Failed to set %s to %dA", self.name, int_value)
 
             except Exception as err:
-                _LOGGER.debug("Failed to set current value: %s", err)
+                _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)
             finally:
                 self._pending_value = None
                 self._last_command_time = time.time()
@@ -166,6 +156,7 @@ class EveusCurrentNumber(EveusNumberEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data — reconcile with device value."""
+        availability_changed = self._update_availability_state()
         current_time = time.time()
 
         if self._updater.available and self._updater.data:
@@ -182,7 +173,16 @@ class EveusCurrentNumber(EveusNumberEntity):
                         elif current_time - self._optimistic_value_time > 10:
                             self._optimistic_value = None
 
-        self.async_write_ha_state()
+        if (
+            self._optimistic_value is not None
+            and current_time - self._optimistic_value_time >= OPTIMISTIC_VALUE_TTL
+        ):
+            self._optimistic_value = None
+
+        current_value = self.native_value
+        if availability_changed or self._last_written_value != current_value:
+            self._last_written_value = current_value
+            self.async_write_ha_state()
 
 
 async def async_setup_entry(

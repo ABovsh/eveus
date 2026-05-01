@@ -16,7 +16,6 @@ from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.const import (
     CHARGING_UPDATE_INTERVAL,
-    IDLE_UPDATE_INTERVAL,
     RETRY_DELAY,
 )
 
@@ -46,6 +45,11 @@ class _Response:
             return self.payload
         return json.dumps(self.payload)
 
+    async def json(self, **kwargs: object) -> object:
+        if isinstance(self.payload, str):
+            return json.loads(self.payload)
+        return self.payload
+
 
 class _Session:
     def __init__(self, response: _Response) -> None:
@@ -57,6 +61,11 @@ class _Session:
         return self.response
 
 
+class _FailingSession:
+    def post(self, url: str, **kwargs: object) -> _Response:
+        raise asyncio.TimeoutError()
+
+
 @pytest.fixture
 def coordinator(monkeypatch: pytest.MonkeyPatch) -> tuple[EveusUpdater, _Session]:
     """Create a coordinator with a fake HTTP session."""
@@ -65,7 +74,7 @@ def coordinator(monkeypatch: pytest.MonkeyPatch) -> tuple[EveusUpdater, _Session
     return EveusUpdater("192.168.1.50", "admin", "secret", _Hass()), session
 
 
-def test_update_data_fetches_payload_and_sets_charging_interval(
+def test_update_data_fetches_payload_and_uses_stable_interval(
     coordinator: tuple[EveusUpdater, _Session],
 ) -> None:
     updater, session = coordinator
@@ -81,13 +90,13 @@ def test_update_data_fetches_payload_and_sets_charging_interval(
 def test_coordinator_compatibility_helpers() -> None:
     updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
 
-    assert updater.available is updater.last_update_success
+    assert updater.available is True
     assert asyncio.run(updater.async_shutdown()) is None
     assert updater._should_log() is True
     assert updater._should_log() is False
 
 
-def test_update_data_sets_idle_interval_when_device_is_not_active(
+def test_update_data_keeps_stable_interval_when_device_is_not_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _Session(_Response(payload={"state": 2, "powerMeas": 0}))
@@ -96,7 +105,7 @@ def test_update_data_sets_idle_interval_when_device_is_not_active(
 
     asyncio.run(updater._async_update_data())
 
-    assert updater.update_interval == timedelta(seconds=IDLE_UPDATE_INTERVAL)
+    assert updater.update_interval == timedelta(seconds=CHARGING_UPDATE_INTERVAL)
 
 
 def test_update_data_raises_auth_failed_on_unauthorized(
@@ -138,6 +147,24 @@ def test_update_data_raises_update_failed_for_non_dict_payload(
     assert updater.connection_quality["last_error"] == "ValueError"
 
 
+def test_update_data_marks_unavailable_and_returns_previous_data_on_network_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        common_network,
+        "async_get_clientsession",
+        lambda hass: _FailingSession(),
+    )
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater.data = {"state": 2}
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data == {"state": 2}
+    assert updater.available is False
+    assert updater.connection_quality["last_error"] == "TimeoutError"
+
+
 def test_send_command_refreshes_data_only_after_success() -> None:
     updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
     refreshes = 0
@@ -172,7 +199,7 @@ def test_failure_recording_reduces_polling_when_device_appears_offline() -> None
     updater._record_failure(asyncio.TimeoutError())
 
     assert updater.is_likely_offline is True
-    assert updater.update_interval == timedelta(seconds=RETRY_DELAY * 4)
+    assert updater._next_poll_attempt > time.time()
     assert updater.connection_quality["last_error"] == "TimeoutError"
 
 
@@ -209,5 +236,5 @@ def test_offline_failure_recording_is_quiet_at_normal_log_levels(
     with caplog.at_level(logging.INFO, logger="custom_components.eveus.common_network"):
         updater._record_failure(asyncio.TimeoutError())
 
-    assert updater.last_update_success is False
+    assert updater.available is False
     assert caplog.records == []

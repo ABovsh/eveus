@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from datetime import timedelta
-import json
 import logging
 import time
 from typing import Any
@@ -20,12 +19,9 @@ from .common_command import CommandManager
 from .const import (
     CHARGING_UPDATE_INTERVAL,
     ERROR_LOG_RATE_LIMIT,
-    IDLE_UPDATE_INTERVAL,
     RETRY_DELAY,
     UPDATE_TIMEOUT,
 )
-from .utils import get_safe_value
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -46,7 +42,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             config_entry=config_entry,
             name=f"Eveus EV Charger {host}",
-            update_interval=timedelta(seconds=IDLE_UPDATE_INTERVAL),
+            update_interval=timedelta(seconds=CHARGING_UPDATE_INTERVAL),
         )
         self.host = host
         self.username = username
@@ -64,11 +60,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._silent_mode = False
         self._offline_announced = False
         self._last_error: str | None = None
+        self._device_available = True
+        self._next_poll_attempt = 0.0
 
     @property
     def available(self) -> bool:
         """Return availability status."""
-        return self.last_update_success
+        return self._device_available
 
     @property
     def connection_quality(self) -> dict[str, Any]:
@@ -108,10 +106,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             await self.async_request_refresh()
         return success
 
-    async def async_shutdown(self) -> None:
-        """Compatibility hook for older unload code paths."""
-        return None
-
     def _should_log(self) -> bool:
         """Rate-limit availability logging."""
         current_time = time.time()
@@ -126,43 +120,43 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._total_count += 1
         self._poll_results.append(True)
         self._consecutive_failures = 0
-        self.last_update_success = True
+        self._device_available = True
+        self._next_poll_attempt = 0.0
         self._last_success_time = time.time()
         self._latency_samples.append(response_time)
         self._silent_mode = False
         self._offline_announced = False
         self._last_error = None
 
-        is_charging = get_safe_value(new_data, "state", int) == 4
-        is_active = get_safe_value(new_data, "powerMeas", float, 0) > 100
-        interval = CHARGING_UPDATE_INTERVAL if is_charging or is_active else IDLE_UPDATE_INTERVAL
-        self.update_interval = timedelta(seconds=interval)
-
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
         self._total_count += 1
         self._poll_results.append(False)
         self._consecutive_failures += 1
-        self.last_update_success = False
+        self._device_available = False
         self._last_error = type(error).__name__
 
         if self._consecutive_failures > 20:
             self._silent_mode = True
 
         if self.is_likely_offline:
-            self.update_interval = timedelta(seconds=min(RETRY_DELAY * 4, 300))
+            self._next_poll_attempt = time.time() + min(RETRY_DELAY * 4, 300)
             if not self._offline_announced:
                 _LOGGER.debug("Device %s appears offline, reducing poll frequency", self.host)
                 self._offline_announced = True
-        else:
-            self.update_interval = timedelta(seconds=IDLE_UPDATE_INTERVAL)
 
         if not self._silent_mode and self._should_log():
             _LOGGER.debug("Connection issue with %s: %s", self.host, type(error).__name__)
 
+    async def async_shutdown(self) -> None:
+        """Shut down coordinator refresh handling."""
+        await super().async_shutdown()
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
         start_time = time.time()
+        if self._next_poll_attempt > start_time:
+            return self.data or {}
 
         try:
             async with self.get_session().post(
@@ -174,8 +168,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 
-                text = await response.text()
-                new_data = json.loads(text)
+                new_data = await response.json(content_type=None)
                 if not isinstance(new_data, dict):
                     raise ValueError(f"Expected dict, got {type(new_data).__name__}")
 
@@ -184,7 +177,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         except ConfigEntryAuthFailed:
             raise
-        except (json.JSONDecodeError, ValueError) as err:
+        except ValueError as err:
             self._record_failure(err)
             raise UpdateFailed(f"Invalid response from {self.host}: {err}") from err
         except (
@@ -194,4 +187,4 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             asyncio.TimeoutError,
         ) as err:
             self._record_failure(err)
-            raise UpdateFailed(f"Connection error with {self.host}: {err}") from err
+            return self.data or {}

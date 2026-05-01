@@ -7,6 +7,7 @@ from typing import Any, Callable, ClassVar, Dict, List, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from zoneinfo import ZoneInfo
 
 from homeassistant.components.sensor import (
@@ -30,11 +31,17 @@ from .const import (
     get_normal_substate,
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
-    CHARGING_UPDATE_INTERVAL,
 )
 from .utils import get_safe_value, is_dst, format_duration
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=16)
+def _get_zone_info(timezone_name: str) -> ZoneInfo:
+    """Return cached timezone info for system-time conversion."""
+    return ZoneInfo(timezone_name)
+
 
 class SensorType(Enum):
     """Sensor type enumeration."""
@@ -86,9 +93,6 @@ class OptimizedEveusSensor(EveusSensorBase):
         super().__init__(updater, device_number)
 
         self._spec = spec
-        self._cached_value = None
-        self._cache_timestamp = 0
-        self._cache_ttl = CHARGING_UPDATE_INTERVAL
 
         if spec.icon:
             self._attr_icon = spec.icon
@@ -104,41 +108,24 @@ class OptimizedEveusSensor(EveusSensorBase):
             self._attr_entity_category = spec.category
 
     def _get_sensor_value(self) -> Any:
-        """Return cached or computed sensor value."""
-        current_time = time.time()
-
+        """Return computed sensor value from coordinator data."""
         if not self._updater.available:
-            if (
-                self._cached_value is not None
-                and current_time - self._cache_timestamp < self._cache_ttl
-            ):
-                return self._cached_value
             return None
 
-        # Use cache for non-calculated sensors
-        if (
-            self._spec.sensor_type != SensorType.CALCULATED
-            and self._cached_value is not None
-            and current_time - self._cache_timestamp < self._cache_ttl
-        ):
-            return self._cached_value
-
         try:
-            value = self._spec.value_fn(self._updater, self.hass)
-            if self._updater.available and value is not None:
-                self._cached_value = value
-                self._cache_timestamp = current_time
-            return value
+            return self._spec.value_fn(self._updater, self.hass)
         except Exception as err:
             if self._should_log_error(f"sensor_{self._spec.key}"):
-                _LOGGER.debug("Error getting value for %s: %s", self.name, err)
+                _LOGGER.debug("Error getting value for %s: %s", self.name, err, exc_info=True)
             return None
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Clear derived cache when fresh coordinator data arrives."""
-        self._cache_timestamp = 0
-        self.async_write_ha_state()
+        """Handle fresh coordinator data."""
+        availability_changed = self._update_availability_state()
+        value_changed = self._update_native_value()
+        if availability_changed or value_changed:
+            self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
@@ -150,7 +137,12 @@ class OptimizedEveusSensor(EveusSensorBase):
                 return self._spec.attributes_fn(self._updater, self.hass)
             except Exception as err:
                 if self._should_log_error(f"attributes_{self._spec.key}"):
-                    _LOGGER.debug("Error getting attributes for %s: %s", self.name, err)
+                    _LOGGER.debug(
+                        "Error getting attributes for %s: %s",
+                        self.name,
+                        err,
+                        exc_info=True,
+                    )
         return {}
 
 
@@ -273,13 +265,13 @@ def get_system_time(updater, hass) -> Optional[str]:
 
         corrected_timestamp = timestamp - offset
         dt_corrected = datetime.fromtimestamp(corrected_timestamp, tz=timezone.utc)
-        local_tz = ZoneInfo(ha_timezone)
+        local_tz = _get_zone_info(ha_timezone)
         dt_local = dt_corrected.astimezone(local_tz)
         return dt_local.strftime("%H:%M")
 
     except Exception as err:
         if OptimizedEveusSensor._should_log_error("get_system_time"):
-            _LOGGER.debug("Error getting system time: %s", err)
+            _LOGGER.debug("Error getting system time: %s", err, exc_info=True)
         return None
 
 
@@ -325,7 +317,9 @@ def get_connection_quality(updater, hass) -> float:
     try:
         metrics = updater.connection_quality
         return round(max(0, min(100, metrics.get("success_rate", 0))))
-    except Exception:
+    except Exception as err:
+        if OptimizedEveusSensor._should_log_error("get_connection_quality"):
+            _LOGGER.debug("Error getting connection quality: %s", err, exc_info=True)
         return 100
 
 
@@ -346,7 +340,9 @@ def get_connection_attrs(updater, hass) -> dict:
                 "Poor" if success_rate > 30 else "Critical"
             ),
         }
-    except Exception:
+    except Exception as err:
+        if OptimizedEveusSensor._should_log_error("get_connection_attrs"):
+            _LOGGER.debug("Error getting connection attributes: %s", err, exc_info=True)
         return {"status": "Error"}
 
 

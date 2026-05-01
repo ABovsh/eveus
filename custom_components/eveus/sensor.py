@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from typing import List
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -18,6 +17,7 @@ from .ev_sensors import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -32,12 +32,12 @@ async def async_setup_entry(
 
         # Create all sensors efficiently using factory pattern
         sensors = []
-        
+
         # Create standard sensors from specifications
         sensor_specs = get_sensor_specifications()
         standard_sensors = [spec.create_sensor(updater, device_number) for spec in sensor_specs]
         sensors.extend(standard_sensors)
-        
+
         # Create EV-specific optimized sensors
         ev_sensors = [
             EVSocKwhSensor(updater, device_number, soc_calculator),
@@ -46,19 +46,19 @@ async def async_setup_entry(
             InputEntitiesStatusSensor(updater, device_number),
         ]
         sensors.extend(ev_sensors)
-        
+
         # Add all sensors at once for efficiency
         async_add_entities(sensors, update_before_add=False)
-        
+
         _LOGGER.debug(
             "Successfully created %d sensors (%d standard, %d EV-specific) for %s (device %d)",
             len(sensors),
             len(standard_sensors),
             len(ev_sensors),
             entry.title,
-            device_number
+            device_number,
         )
-        
+
     except Exception as err:
         _LOGGER.error("Error setting up sensors for %s: %s", entry.title, err, exc_info=True)
         raise

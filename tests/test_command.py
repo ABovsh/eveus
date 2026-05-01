@@ -89,3 +89,11 @@ def test_command_manager_records_success_and_failure_counts() -> None:
     assert asyncio.run(manager.send_command("evseEnabled", 0)) is False
     assert manager._consecutive_failures == 1
 
+
+def test_command_manager_applies_rate_limit_after_failure() -> None:
+    failure_session = _Session(_Response(raise_error=True))
+    manager = CommandManager(_Updater(failure_session))
+
+    assert asyncio.run(manager.send_command("evseEnabled", 0)) is False
+
+    assert manager._last_command_time > 0

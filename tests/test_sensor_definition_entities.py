@@ -1,12 +1,10 @@
 """Unit tests for optimized sensor entity behavior."""
 from __future__ import annotations
 
-import time
 from types import SimpleNamespace
 
 from homeassistant.helpers.entity import EntityCategory
 
-from custom_components.eveus.const import CHARGING_UPDATE_INTERVAL
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
     SensorSpec,
@@ -65,7 +63,7 @@ def test_optimized_sensor_applies_description_fields() -> None:
     assert entity.extra_state_attributes == {"ok": True}
 
 
-def test_optimized_sensor_caches_non_calculated_values() -> None:
+def test_optimized_sensor_uses_fresh_coordinator_data() -> None:
     calls = 0
 
     def value_fn(updater, hass):
@@ -76,8 +74,8 @@ def test_optimized_sensor_caches_non_calculated_values() -> None:
     entity = _sensor(value_fn)
 
     assert entity.native_value == 1
-    assert entity.native_value == 1
-    assert calls == 1
+    assert entity.native_value == 2
+    assert calls == 2
 
 
 def test_optimized_sensor_recalculates_calculated_values() -> None:
@@ -94,7 +92,7 @@ def test_optimized_sensor_recalculates_calculated_values() -> None:
     assert entity.native_value == 2
 
 
-def test_optimized_sensor_cached_offline_value_expires() -> None:
+def test_optimized_sensor_returns_none_when_offline() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
@@ -109,9 +107,6 @@ def test_optimized_sensor_cached_offline_value_expires() -> None:
 
     assert entity.native_value == 10
     updater.available = False
-    assert entity.native_value == 10
-
-    entity._cache_timestamp = time.time() - CHARGING_UPDATE_INTERVAL - 1
     assert entity.native_value is None
 
 

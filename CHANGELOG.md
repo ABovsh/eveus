@@ -13,8 +13,17 @@ Version 4.0.1 is a maintenance release focused on smoother upgrades, quieter nor
 - Improved offline handling so powered-off chargers stay quiet in normal Home Assistant logs.
 - Improved optional SOC helper handling so missing helpers stay quiet in normal Home Assistant logs.
 - Improved optional SOC helper sensors so they react when helper entities are created after the integration is already loaded.
+- Improved optional SOC helper validation so out-of-range helper values are treated as invalid instead of producing misleading SOC estimates.
 - Improved connection quality reporting so it reflects recent charger connectivity instead of lifetime history.
 - Improved diagnostics with a clearer sanitized device snapshot for troubleshooting.
+- Improved Home Assistant lifecycle handling for coordinator shutdown, entity availability updates, and helper listeners.
+- Improved entity update efficiency by avoiding unnecessary state writes when values have not changed.
+- Improved command throttling so repeated failed commands still respect the cooldown.
+- Improved setup validation for chargers that return valid JSON with a nonstandard response content type.
+- Improved stored device number cleanup for entries that somehow contain a string or invalid device number.
+- Improved optimistic switch and number state reconciliation so property reads no longer mutate internal state.
+- Improved coordinator cleanup so scheduled refresh handling is shut down correctly.
+- Improved numeric validation so invalid values such as `nan` or `inf` are not exposed as sensor values.
 - Added Home Assistant reauthentication support for updating credentials after the charger rejects the stored username or password.
 - Added a Home Assistant Repair flow for rare invalid stored setup data.
 

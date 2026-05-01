@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any, Optional, Dict, Set
 from dataclasses import dataclass
@@ -38,6 +39,13 @@ _INPUT_TARGET_SOC = "input_number.ev_target_soc"
 
 _ALL_INPUTS = [_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION, _INPUT_TARGET_SOC]
 
+_INPUT_LIMITS = {
+    "initial_soc": (0, 100),
+    "battery_capacity": (10, 160),
+    "soc_correction": (0, 15),
+    "target_soc": (0, 100),
+}
+
 
 # =============================================================================
 # Shared SOC calculator
@@ -66,6 +74,13 @@ class CachedSOCCalculator:
         self.cache_ttl = cache_ttl
         self._input_cache = InputEntityCache()
 
+    def _mark_helpers_unavailable(self) -> None:
+        """Cache helper unavailability and clear stale helper values."""
+        self._input_cache = InputEntityCache(
+            timestamp=time.time(),
+            helpers_available=False,
+        )
+
     def _update_input_cache(self, hass: HomeAssistant) -> bool:
         """Update input entity cache. Returns False if helpers not available."""
         if self._input_cache.is_valid(self.cache_ttl):
@@ -82,8 +97,7 @@ class CachedSOCCalculator:
             missing = [k for k, v in entities.items() if v is None]
             if missing:
                 _LOGGER.debug("Optional EV helper entities not found: %s", missing)
-                self._input_cache.helpers_available = False
-                self._input_cache.timestamp = time.time()
+                self._mark_helpers_unavailable()
                 return False
 
             if not self._input_cache.helpers_available:
@@ -92,12 +106,17 @@ class CachedSOCCalculator:
             values: Dict[str, Any] = {"helpers_available": True}
             for key, entity in entities.items():
                 try:
-                    values[key] = float(entity.state)
+                    value = float(entity.state)
                 except (ValueError, TypeError):
-                    values["helpers_available"] = False
-                    self._input_cache.helpers_available = False
-                    self._input_cache.timestamp = time.time()
+                    self._mark_helpers_unavailable()
                     return False
+
+                minimum, maximum = _INPUT_LIMITS[key]
+                if not math.isfinite(value) or value < minimum or value > maximum:
+                    self._mark_helpers_unavailable()
+                    return False
+
+                values[key] = value
 
             for key, value in values.items():
                 setattr(self._input_cache, key, value)
@@ -105,8 +124,8 @@ class CachedSOCCalculator:
             return True
 
         except Exception as err:
-            _LOGGER.debug("Error updating input cache: %s", err)
-            self._input_cache.helpers_available = False
+            _LOGGER.debug("Error updating input cache: %s", err, exc_info=True)
+            self._mark_helpers_unavailable()
             return False
 
     def get_soc_kwh(self, hass: HomeAssistant, energy_charged: float) -> Optional[float]:
@@ -121,7 +140,7 @@ class CachedSOCCalculator:
                 self._input_cache.soc_correction or 7.5,
             )
         except Exception as err:
-            _LOGGER.debug("Error calculating SOC kWh: %s", err)
+            _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)
             return None
 
     def get_soc_percent(self, hass: HomeAssistant, energy_charged: float) -> Optional[float]:
@@ -185,27 +204,49 @@ class BaseEVHelperSensor(EveusSensorBase):
         self._cached_value = None
         self._helpers_available = False
 
+    def _refresh_helpers_available(self) -> bool:
+        """Refresh optional helper availability and return whether it changed."""
+        previous = self._helpers_available
+        self._helpers_available = self._soc_calculator.are_helpers_available(self.hass)
+        return previous != self._helpers_available
+
     async def async_added_to_hass(self) -> None:
         """Set up state tracking for helper entities."""
         await super().async_added_to_hass()
-        self._helpers_available = self._soc_calculator.are_helpers_available(self.hass)
+        self._refresh_helpers_available()
 
         if self._tracked_inputs:
             try:
-                self._stop_listen = async_track_state_change_event(
+                remove_listener = async_track_state_change_event(
                     self.hass, self._tracked_inputs, self._on_input_changed,
                 )
+                if hasattr(self, "async_on_remove"):
+                    self.async_on_remove(remove_listener)
+                else:
+                    self._stop_listen = remove_listener
             except Exception as err:
-                _LOGGER.debug("Could not set up state tracking for %s: %s", self.unique_id, err)
+                _LOGGER.debug(
+                    "Could not set up state tracking for %s: %s",
+                    self.unique_id,
+                    err,
+                    exc_info=True,
+                )
 
     @callback
     def _on_input_changed(self, event: Event) -> None:
         """Handle input changes with rate limiting."""
         self._soc_calculator.invalidate_cache()
-        self._helpers_available = self._soc_calculator.are_helpers_available(self.hass)
+        previous_available = self.available
+        helpers_changed = self._refresh_helpers_available()
+        value_changed = self._update_native_value()
 
         current_time = time.time()
-        if current_time - self._last_update_time > 1:
+        if (
+            helpers_changed
+            or previous_available != self.available
+            or value_changed
+            or current_time - self._last_update_time > 1
+        ):
             self._last_update_time = current_time
             self.async_write_ha_state()
 
@@ -213,11 +254,22 @@ class BaseEVHelperSensor(EveusSensorBase):
         """Clean up event listeners."""
         if self._stop_listen:
             self._stop_listen()
+            self._stop_listen = None
 
     @property
     def available(self) -> bool:
         """Available only when device is online AND helpers are present."""
-        return super().available and self._soc_calculator.are_helpers_available(self.hass)
+        return super().available and self._helpers_available
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle fresh coordinator data and optional helper availability."""
+        previous_available = self.available
+        self._refresh_helpers_available()
+        availability_changed = self._update_availability_state()
+        value_changed = self._update_native_value()
+        if availability_changed or previous_available != self.available or value_changed:
+            self.async_write_ha_state()
 
     def _get_energy_charged(self) -> float:
         """Get energy charged from updater data with fallback."""
@@ -331,7 +383,12 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             return result
 
         except Exception as err:
-            _LOGGER.debug("Error calculating time to target for %s: %s", self.unique_id, err)
+            _LOGGER.debug(
+                "Error calculating time to target for %s: %s",
+                self.unique_id,
+                err,
+                exc_info=True,
+            )
             return self._cached_value
 
     @property
@@ -435,7 +492,12 @@ class InputEntitiesStatusSensor(EveusSensorBase):
 
             return attrs
         except Exception as err:
-            _LOGGER.debug("Error getting attributes for %s: %s", self.unique_id, err)
+            _LOGGER.debug(
+                "Error getting attributes for %s: %s",
+                self.unique_id,
+                err,
+                exc_info=True,
+            )
             return {}
 
     def _check_inputs(self) -> None:
@@ -451,7 +513,12 @@ class InputEntitiesStatusSensor(EveusSensorBase):
                     continue
                 try:
                     value = float(state.state)
-                    if value < 0:
+                    config = self.REQUIRED_INPUTS[entity_id]
+                    if (
+                        not math.isfinite(value)
+                        or value < config["min"]
+                        or value > config["max"]
+                    ):
                         self._invalid_entities.add(entity_id)
                 except (ValueError, TypeError):
                     self._invalid_entities.add(entity_id)
@@ -463,5 +530,10 @@ class InputEntitiesStatusSensor(EveusSensorBase):
             else:
                 self._state = "All Present"
         except Exception as err:
-            _LOGGER.debug("Error checking inputs for %s: %s", self.unique_id, err)
+            _LOGGER.debug(
+                "Error checking inputs for %s: %s",
+                self.unique_id,
+                err,
+                exc_info=True,
+            )
             self._state = "Error"

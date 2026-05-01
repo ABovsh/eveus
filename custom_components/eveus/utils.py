@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+import math
 from typing import Any, Callable, TypeVar, Optional, Union, Dict
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -25,8 +26,11 @@ def get_next_device_number(hass: HomeAssistant) -> int:
     existing_numbers = set()
     for entry in hass.config_entries.async_entries(DOMAIN):
         device_number = entry.data.get("device_number")
-        if device_number is not None:
-            existing_numbers.add(device_number)
+        try:
+            if device_number is not None:
+                existing_numbers.add(int(device_number))
+        except (TypeError, ValueError):
+            continue
 
     next_number = 1
     while next_number in existing_numbers:
@@ -77,7 +81,10 @@ def get_safe_value(
         if value in (None, 'unknown', 'unavailable', ''):
             return default
 
-        return converter(value)
+        converted = converter(value)
+        if isinstance(converted, float) and not math.isfinite(converted):
+            return default
+        return converted
 
     except (TypeError, ValueError, AttributeError):
         return default
@@ -90,8 +97,8 @@ def get_safe_value(
 
 def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1) -> Dict[str, Any]:
     """Get standardized device information with multi-device support."""
-    firmware = (data.get('verFWMain') or data.get('firmware') or 'Unknown').strip()
-    hardware = (data.get('verFWWifi') or data.get('hardware') or 'Unknown').strip()
+    firmware = str(data.get('verFWMain') or data.get('firmware') or 'Unknown').strip()
+    hardware = str(data.get('verFWWifi') or data.get('hardware') or 'Unknown').strip()
 
     if len(firmware) < 2:
         firmware = "Unknown"
@@ -130,7 +137,7 @@ def _is_dst_cached(timezone_str: str, hour_bucket: int) -> bool:
         dt = datetime.fromtimestamp(hour_bucket * 3600, tz=timezone.utc)
         return bool(dt.astimezone(tz).dst())
     except Exception as err:
-        _LOGGER.error("Error checking DST for %s: %s", timezone_str, err)
+        _LOGGER.error("Error checking DST for %s: %s", timezone_str, err, exc_info=True)
         return False
 
 
@@ -158,7 +165,6 @@ def format_duration(seconds: int) -> str:
 # =============================================================================
 
 
-@lru_cache(maxsize=64)
 def calculate_soc_kwh_cached(
     initial_soc: float,
     battery_capacity: float,
@@ -167,6 +173,16 @@ def calculate_soc_kwh_cached(
 ) -> float:
     """Cached SOC calculation in kWh."""
     try:
+        if not all(
+            math.isfinite(float(value))
+            for value in (
+                initial_soc,
+                battery_capacity,
+                energy_charged,
+                efficiency_loss,
+            )
+        ):
+            return 0.0
         initial_kwh = (initial_soc / 100) * battery_capacity
         efficiency = 1 - efficiency_loss / 100
         charged_kwh = energy_charged * efficiency
@@ -176,7 +192,6 @@ def calculate_soc_kwh_cached(
         return 0.0
 
 
-@lru_cache(maxsize=64)
 def calculate_soc_percent_cached(
     initial_soc: float,
     battery_capacity: float,
@@ -185,6 +200,16 @@ def calculate_soc_percent_cached(
 ) -> float:
     """Cached SOC percentage calculation."""
     try:
+        if not all(
+            math.isfinite(float(value))
+            for value in (
+                initial_soc,
+                battery_capacity,
+                energy_charged,
+                efficiency_loss,
+            )
+        ):
+            return 0.0
         if battery_capacity <= 0:
             return initial_soc
 
