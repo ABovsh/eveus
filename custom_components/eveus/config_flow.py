@@ -30,6 +30,7 @@ from .const import (
 from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
+_HOSTNAME_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
 
 
 def _is_valid_ip(ip: str) -> bool:
@@ -51,8 +52,7 @@ def _is_valid_hostname(hostname: str) -> bool:
         hostname = hostname[:-1]
     if not hostname:
         return False
-    allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
-    return all(allowed.match(x) for x in hostname.split("."))
+    return all(_HOSTNAME_RE.match(x) for x in hostname.split("."))
 
 
 def validate_host(host: str) -> str:
@@ -77,7 +77,6 @@ def validate_host(host: str) -> str:
 def validate_credentials(username: str, password: str) -> tuple[str, str]:
     """Validate credentials input."""
     username = username.strip()
-    password = password.strip()
 
     if not username or not password:
         raise vol.Invalid("Username and password cannot be empty")

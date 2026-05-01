@@ -91,10 +91,15 @@ class EveusCurrentNumber(EveusNumberEntity):
 
         self._attr_native_min_value = float(MIN_CURRENT)
         self._attr_native_max_value = float(MODEL_MAX_CURRENT[model])
+        self._attr_native_value = self._resolve_value()
 
     @property
     def native_value(self) -> float | None:
-        """Return current value with optimistic UI."""
+        """Return cached current value without side effects."""
+        return self._attr_native_value
+
+    def _resolve_value(self) -> float | None:
+        """Resolve current value from command, optimistic, device, and restore state."""
         current_time = time.time()
 
         if self._pending_value is not None:
@@ -126,6 +131,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                 int_value = int(clamped_value)
 
                 self._pending_value = float(int_value)
+                self._attr_native_value = self._pending_value
                 self.async_write_ha_state()
 
                 success = await self._updater.send_command(self._command, int_value)
@@ -141,6 +147,7 @@ class EveusCurrentNumber(EveusNumberEntity):
             finally:
                 self._pending_value = None
                 self._last_command_time = time.time()
+                self._attr_native_value = self._resolve_value()
                 self.async_write_ha_state()
 
     async def _async_restore_state(self, state: State) -> None:
@@ -150,6 +157,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                 restored_value = float(state.state)
                 if self._attr_native_min_value <= restored_value <= self._attr_native_max_value:
                     self._last_device_value = restored_value
+                    self._attr_native_value = restored_value
         except (TypeError, ValueError) as err:
             _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)
 
@@ -179,7 +187,8 @@ class EveusCurrentNumber(EveusNumberEntity):
         ):
             self._optimistic_value = None
 
-        current_value = self.native_value
+        current_value = self._resolve_value()
+        self._attr_native_value = current_value
         if availability_changed or self._last_written_value != current_value:
             self._last_written_value = current_value
             self.async_write_ha_state()

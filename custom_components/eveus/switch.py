@@ -4,11 +4,11 @@ from __future__ import annotations
 import logging
 import asyncio
 import time
-from contextlib import suppress
 from typing import Any, Optional
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 
@@ -85,6 +85,7 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
         self._last_command_time = 0
         self._last_successful_read = 0
         self._last_written_state: Optional[bool] = None
+        self._attr_is_on = BaseSwitchEntity._resolve_state(self)
 
     def _clear_optimistic_state(self) -> None:
         """Clear optimistic state when the device is offline."""
@@ -92,7 +93,11 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return switch state with optimistic UI."""
+        """Return cached switch state without side effects."""
+        return bool(self._attr_is_on)
+
+    def _resolve_state(self) -> bool:
+        """Resolve switch state from command, optimistic, device, and restore state."""
         current_time = time.time()
 
         if self._pending_command is not None:
@@ -116,6 +121,7 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
         """Send command with optimistic state."""
         async with self._command_lock:
             self._pending_command = bool(command_value)
+            self._attr_is_on = self._pending_command
             self.async_write_ha_state()
 
             try:
@@ -134,12 +140,14 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
             finally:
                 self._pending_command = None
                 self._last_command_time = time.time()
+                self._attr_is_on = self._resolve_state()
                 self.async_write_ha_state()
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display state only — no commands sent on startup."""
         if state and state.state in ("on", "off"):
             self._last_device_state = state.state == "on"
+            self._attr_is_on = self._last_device_state
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -166,7 +174,8 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
         ):
             self._optimistic_state = None
 
-        current_state = self.is_on
+        current_state = self._resolve_state()
+        self._attr_is_on = current_state
         if availability_changed or self._last_written_state != current_state:
             self._last_written_state = current_state
             self.async_write_ha_state()
@@ -212,22 +221,28 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
         super().__init__(updater, SWITCH_DESCRIPTIONS[2], device_number)
         self._safe_mode = True
         self._last_reset_time = 0
+        self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
         """Handle entity addition with delayed safe mode disable."""
         await super().async_added_to_hass()
-        task = self.hass.async_create_task(self._disable_safe_mode())
-        if hasattr(self, "async_on_remove"):
-            self.async_on_remove(task.cancel)
+        self.async_on_remove(async_call_later(self.hass, 5, self._disable_safe_mode))
 
-    async def _disable_safe_mode(self) -> None:
+    @callback
+    def _disable_safe_mode(self, _now=None) -> None:
         """Disable safe mode after first successful update."""
-        with suppress(asyncio.CancelledError):
-            await asyncio.sleep(5)
-            self._safe_mode = False
+        self._safe_mode = False
+        current_state = self._resolve_state()
+        if self._attr_is_on != current_state:
+            self._attr_is_on = current_state
+            self.async_write_ha_state()
 
     @property
     def is_on(self) -> bool:
+        """Return cached reset-counter state."""
+        return bool(self._attr_is_on)
+
+    def _resolve_state(self) -> bool:
         """Return True if counter has a value."""
         if self._safe_mode:
             return False
@@ -259,7 +274,8 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data — state based on counter value."""
         availability_changed = self._update_availability_state()
-        current_state = self.is_on
+        current_state = self._resolve_state()
+        self._attr_is_on = current_state
         if availability_changed or self._last_written_state != current_state:
             self._last_written_state = current_state
             self.async_write_ha_state()

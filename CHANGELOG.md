@@ -22,6 +22,12 @@ Version 4.0.1 is a maintenance release focused on smoother upgrades, quieter nor
 - Improved setup validation for chargers that return valid JSON with a nonstandard response content type.
 - Improved stored device number cleanup for entries that somehow contain a string or invalid device number.
 - Improved optimistic switch and number state reconciliation so property reads no longer mutate internal state.
+- Improved sensor state handling so `native_value`, `is_on`, and control value reads are served from cached entity attributes without recomputing or mutating integration state.
+- Improved sensor attribute handling so extra attributes are refreshed during coordinator/helper updates instead of rebuilt on every property access.
+- Improved Reset Counter A safe-mode cleanup by using Home Assistant's cancellable delayed callback helper.
+- Improved credential handling so passwords are preserved exactly as entered while usernames are still trimmed.
+- Improved coordinator failure reporting after setup so Home Assistant can see failed refreshes while powered-off chargers remain supported at startup.
+- Improved sensor specification and charger system-time caching to reduce repeated work on every poll.
 - Improved coordinator cleanup so scheduled refresh handling is shut down correctly.
 - Improved numeric validation so invalid values such as `nan` or `inf` are not exposed as sensor values.
 - Added Home Assistant reauthentication support for updating credentials after the charger rejects the stored username or password.

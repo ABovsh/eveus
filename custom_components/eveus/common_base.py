@@ -53,6 +53,8 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         device_suffix = get_device_suffix(device_number)
         entity_key = self.ENTITY_NAME.lower().replace(" ", "_")
         self._attr_unique_id = f"eveus{device_suffix}_{entity_key}"
+        self._refresh_cached_data()
+        self._attr_device_info = self._build_device_info()
 
     @property
     def available(self) -> bool:
@@ -74,6 +76,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         current_time = time.time()
 
         if self._updater.available:
+            self._refresh_cached_data()
             if self._unavailable_since is not None:
                 if self._should_log_availability():
                     _LOGGER.debug("%s %s connection restored", label, self.unique_id)
@@ -115,12 +118,16 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             return True
         return False
 
+    def _refresh_cached_data(self) -> None:
+        """Snapshot coordinator data for short fallback periods."""
+        if isinstance(self._updater.data, dict) and self._updater.data:
+            self._cached_data = dict(self._updater.data)
+            self._cached_data_time = time.time()
+
     def get_cached_data_value(self, key: str, default: Any = None) -> Any:
-        """Get value from current data or cached data as fallback."""
+        """Get value from current data or cached data as fallback without mutation."""
         data = self._updater.data or {}
         if key in data:
-            self._cached_data = data
-            self._cached_data_time = time.time()
             return data[key]
 
         if (
@@ -132,27 +139,14 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
 
         return default
 
-    @property
-    def device_info(self) -> dict[str, Any]:
-        """Return device information."""
-        try:
-            data_source = self._updater.data or self._cached_data or {}
-            return get_device_info(self._updater.host, data_source, self._device_number)
-        except Exception as err:
-            if self._should_log_availability():
-                _LOGGER.debug(
-                    "Error getting device info for %s: %s",
-                    self.unique_id,
-                    err,
-                    exc_info=True,
-                )
-            device_suffix = "" if self._device_number == 1 else f" {self._device_number}"
-            return {
-                "identifiers": {("eveus", f"{self._updater.host}_{self._device_number}")},
-                "name": f"Eveus EV Charger{device_suffix}",
-                "manufacturer": "Eveus",
-                "model": "Eveus EV Charger",
-            }
+    def _build_device_info(self) -> dict[str, Any]:
+        """Build device information from the latest available snapshot."""
+        data = self._updater.data if isinstance(self._updater.data, dict) else None
+        return get_device_info(
+            self._updater.host,
+            data or self._cached_data or {},
+            self._device_number,
+        )
 
     async def async_added_to_hass(self) -> None:
         """Handle entity addition with state restoration."""
@@ -174,6 +168,9 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous state - overridden by child classes."""
+
+    def _clear_optimistic_state(self) -> None:
+        """Clear optimistic command state when supported by a subclass."""
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -200,9 +197,6 @@ class ControlEntityMixin:
             clear_optimistic_state=True,
         )
 
-    def _clear_optimistic_state(self) -> None:
-        """Clear optimistic command state when the device is offline."""
-
 
 class EveusSensorBase(BaseEveusEntity, SensorEntity):
     """Base sensor entity."""
@@ -214,6 +208,13 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
         self._last_valid_value = None
         self._last_error_log = 0.0
 
+    async def async_added_to_hass(self) -> None:
+        """Initialize cached sensor state after Home Assistant adds the entity."""
+        await super().async_added_to_hass()
+        self._update_availability_state()
+        self._update_native_value()
+        self._update_extra_state_attributes()
+
     @property
     def available(self) -> bool:
         """Return if the sensor is available with the base grace period."""
@@ -221,24 +222,10 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        """Return sensor value."""
+        """Return cached sensor value without side effects."""
         if not self.available:
             return None
-        if self._attr_native_value is not None:
-            return self._attr_native_value
-        try:
-            return self._get_sensor_value()
-        except Exception as err:
-            current_time = time.time()
-            if current_time - self._last_error_log > ERROR_LOG_RATE_LIMIT:
-                self._last_error_log = current_time
-                _LOGGER.debug(
-                    "Error getting sensor value for %s: %s",
-                    self.unique_id,
-                    err,
-                    exc_info=True,
-                )
-            return None
+        return self._attr_native_value
 
     def _update_native_value(self) -> bool:
         """Refresh sensor value from coordinator data.
@@ -272,12 +259,17 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
         """Get sensor value - overridden by subclasses."""
         return self._attr_native_value
 
+    def _update_extra_state_attributes(self) -> bool:
+        """Refresh extra attributes. Subclasses may override."""
+        return False
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         availability_changed = self._update_availability_state()
         value_changed = self._update_native_value()
-        if availability_changed or value_changed:
+        attributes_changed = self._update_extra_state_attributes()
+        if availability_changed or value_changed or attributes_changed:
             self.async_write_ha_state()
 
 

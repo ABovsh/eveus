@@ -156,7 +156,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch current device data."""
         start_time = time.time()
         if self._next_poll_attempt > start_time:
-            return self.data or {}
+            if self.data is None:
+                return {}
+            raise UpdateFailed(f"Skipping poll for {self.host} during offline backoff")
 
         try:
             async with self.get_session().post(
@@ -187,4 +189,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             asyncio.TimeoutError,
         ) as err:
             self._record_failure(err)
-            return self.data or {}
+            if self.data is None:
+                return {}
+            raise UpdateFailed(f"Connection issue with {self.host}: {type(err).__name__}") from err

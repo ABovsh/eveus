@@ -58,28 +58,22 @@ def _create_invalid_config_issue(
     reason: str,
 ) -> None:
     """Create a repair issue for stored setup data that cannot work."""
-    try:
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _invalid_config_issue_id(entry),
-            data={"entry_id": entry.entry_id, "reason": reason},
-            is_fixable=True,
-            is_persistent=True,
-            issue_domain=DOMAIN,
-            severity=ir.IssueSeverity.ERROR,
-            translation_key="invalid_config",
-        )
-    except Exception as err:
-        _LOGGER.debug("Could not create Eveus repair issue: %s", err, exc_info=True)
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _invalid_config_issue_id(entry),
+        data={"entry_id": entry.entry_id, "reason": reason},
+        is_fixable=True,
+        is_persistent=True,
+        issue_domain=DOMAIN,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="invalid_config",
+    )
 
 
 def _delete_invalid_config_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Clear the invalid-config repair issue if it exists."""
-    try:
-        ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
-    except Exception as err:
-        _LOGGER.debug("Could not delete Eveus repair issue: %s", err, exc_info=True)
+    ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:

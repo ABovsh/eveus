@@ -43,18 +43,21 @@ def test_current_number_native_value_precedence_and_restore() -> None:
     assert entity.native_value == 16
 
     entity._pending_value = 20
-    assert entity.native_value == 20
+    assert entity.native_value == 16
+    assert entity._resolve_value() == 20
 
     entity._pending_value = None
     entity._optimistic_value = 24
     entity._optimistic_value_time = time.time()
-    assert entity.native_value == 24
+    assert entity.native_value == 16
+    assert entity._resolve_value() == 24
 
     entity._optimistic_value_time = 0
     updater.data = {}
     entity._last_device_value = 18
     entity._last_successful_read = time.time()
-    assert entity.native_value == 18
+    assert entity.native_value == 16
+    assert entity._resolve_value() == 18
 
     asyncio.run(entity._async_restore_state(State("number.current", "19")))
     assert entity._last_device_value == 19
@@ -135,16 +138,19 @@ def test_switch_state_precedence_restore_and_commands() -> None:
     assert entity.is_on is False
 
     entity._pending_command = True
-    assert entity.is_on is True
+    assert entity.is_on is False
+    assert entity._resolve_state() is True
 
     entity._pending_command = None
     entity._optimistic_state = True
     entity._optimistic_state_time = time.time()
-    assert entity.is_on is True
+    assert entity.is_on is False
+    assert entity._resolve_state() is True
 
     entity._optimistic_state_time = 0
     updater.data = {"oneCharge": "1"}
-    assert entity.is_on is True
+    assert entity.is_on is False
+    assert entity._resolve_state() is True
 
     asyncio.run(entity._async_restore_state(State("switch.one", "off")))
     assert entity._last_device_state is False
@@ -210,6 +216,8 @@ def test_reset_counter_switch_status_and_reset_behavior_unchanged() -> None:
 
     assert entity.is_on is False
     entity._safe_mode = False
+    assert entity.is_on is False
+    entity._handle_coordinator_update()
     assert entity.is_on is True
 
     asyncio.run(entity.async_turn_on())

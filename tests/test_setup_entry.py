@@ -104,6 +104,12 @@ def _data(**overrides: object) -> dict[str, object]:
     return data
 
 
+@pytest.fixture(autouse=True)
+def _patch_issue_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(eveus.ir, "async_create_issue", lambda *args, **kwargs: None)
+    monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *args, **kwargs: None)
+
+
 def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatch) -> None:
     hass = _hass()
     entry = _Entry(_data())
@@ -291,21 +297,13 @@ def test_reset_counter_safe_mode_task_is_cancelled_on_remove(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     callbacks: list[object] = []
-    created_task: _Task | None = None
+    cancel_called = False
 
-    class _Task:
-        def __init__(self) -> None:
-            self.cancelled = False
-
-        def cancel(self) -> None:
-            self.cancelled = True
-
-    class _Hass:
-        def async_create_task(self, coro):
-            nonlocal created_task
-            coro.close()
-            created_task = _Task()
-            return created_task
+    def fake_async_call_later(hass, delay, action):
+        def cancel() -> None:
+            nonlocal cancel_called
+            cancel_called = True
+        return cancel
 
     async def noop_added_to_hass(self) -> None:
         return None
@@ -314,17 +312,20 @@ def test_reset_counter_safe_mode_task_is_cancelled_on_remove(
         "custom_components.eveus.common_base.BaseEveusEntity.async_added_to_hass",
         noop_added_to_hass,
     )
+    monkeypatch.setattr(
+        "custom_components.eveus.switch.async_call_later",
+        fake_async_call_later,
+    )
 
     entity = EveusResetCounterASwitch(
         _Updater(host="192.168.1.50", username="admin", password="secret"),
         1,
     )
-    entity.hass = _Hass()
+    entity.hass = object()
     entity.async_on_remove = callbacks.append
 
     asyncio.run(entity.async_added_to_hass())
 
-    assert created_task is not None
     assert len(callbacks) == 1
     callbacks[0]()
-    assert created_task.cancelled is True
+    assert cancel_called is True

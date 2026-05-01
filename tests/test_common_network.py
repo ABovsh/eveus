@@ -147,7 +147,7 @@ def test_update_data_raises_update_failed_for_non_dict_payload(
     assert updater.connection_quality["last_error"] == "ValueError"
 
 
-def test_update_data_marks_unavailable_and_returns_previous_data_on_network_failure(
+def test_update_data_marks_unavailable_and_raises_update_failed_on_network_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -158,11 +158,25 @@ def test_update_data_marks_unavailable_and_returns_previous_data_on_network_fail
     updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
     updater.data = {"state": 2}
 
-    data = asyncio.run(updater._async_update_data())
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
 
-    assert data == {"state": 2}
     assert updater.available is False
     assert updater.connection_quality["last_error"] == "TimeoutError"
+
+
+def test_initial_network_failure_returns_empty_payload_to_allow_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        common_network,
+        "async_get_clientsession",
+        lambda hass: _FailingSession(),
+    )
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+
+    assert asyncio.run(updater._async_update_data()) == {}
+    assert updater.available is False
 
 
 def test_send_command_refreshes_data_only_after_success() -> None:
