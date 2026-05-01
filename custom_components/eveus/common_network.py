@@ -143,7 +143,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             def _fire(_now) -> None:
                 if self.hass is None or self.hass.is_stopping:
                     return
-                self.hass.async_create_task(self.async_request_refresh())
+                # Use async_refresh (immediate) rather than async_request_refresh
+                # (debounced ~10s by HA's coordinator). Debouncing makes the
+                # post-command refresh effectively fire 12+ seconds late, which
+                # defeats the whole point of scheduling it.
+                self.hass.async_create_task(self.async_refresh())
             return _fire
 
         for delay in POST_COMMAND_REFRESH_DELAYS:
