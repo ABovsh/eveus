@@ -218,22 +218,23 @@ def test_send_command_schedules_delayed_refresh_only_after_success(
         return False
 
     updater._command_manager = SimpleNamespace(send_command=successful_command)
+    delays = common_network.POST_COMMAND_REFRESH_DELAYS
 
     assert asyncio.run(updater.send_command("currentSet", 16)) is True
-    assert len(scheduled) == 1
-    assert scheduled[0][0] == common_network.POST_COMMAND_REFRESH_DELAY
+    assert len(scheduled) == len(delays)
+    assert tuple(item[0] for item in scheduled) == delays
 
-    # Rapid second command should cancel the pending refresh and reschedule.
+    # Rapid second command should cancel ALL pending refreshes and reschedule.
     assert asyncio.run(updater.send_command("currentSet", 10)) is True
-    assert cancel_calls[0] == 1
-    assert len(scheduled) == 2
+    assert cancel_calls[0] == len(delays)
+    assert len(scheduled) == 2 * len(delays)
 
-    # Failure must not schedule a refresh and must not cancel the pending one.
+    # Failure must not schedule a refresh and must not cancel the pending ones.
     updater._command_manager = SimpleNamespace(send_command=failed_command)
 
     assert asyncio.run(updater.send_command("currentSet", 12)) is False
-    assert cancel_calls[0] == 1
-    assert len(scheduled) == 2
+    assert cancel_calls[0] == len(delays)
+    assert len(scheduled) == 2 * len(delays)
 
 
 def test_failure_recording_reduces_polling_when_device_appears_offline() -> None:
