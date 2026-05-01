@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.1b10 - 2026-05-02
+
+### Fixed
+
+- Post-command and force-refresh actions now fire immediately instead of being delayed ~10 s by Home Assistant's coordinator debouncer. The integration was calling `async_request_refresh` (debounced, default cooldown 10 s) which made the 2 s / 7 s post-command refreshes effectively fire 12+ seconds late — exactly matching reports of state changes appearing 14–18 s after a toggle. Switched to `async_refresh` (immediate) for both the dual post-command refresh and the Force Refresh button. State should now update within a few seconds of any switch toggle or current change.
+
 ## 4.0.1b9 - 2026-05-02
 
 ### Changed
