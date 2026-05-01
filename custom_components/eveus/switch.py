@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
@@ -130,11 +131,6 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
                 if success:
                     self._optimistic_state = bool(command_value)
                     self._optimistic_state_time = time.time()
-                else:
-                    _LOGGER.debug(
-                        "Failed to set %s to %s",
-                        self.name, "on" if command_value else "off",
-                    )
                 return success
 
             finally:
@@ -142,6 +138,15 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
                 self._last_command_time = time.time()
                 self._attr_is_on = self._resolve_state()
                 self.async_write_ha_state()
+
+    async def _async_send_command_or_raise(self, command_value: int) -> None:
+        """Send command and raise HomeAssistantError on failure so HA shows a toast."""
+        success = await self._async_send_command(command_value)
+        if not success:
+            raise HomeAssistantError(
+                f"Eveus charger did not accept '{self.name}' "
+                f"{'on' if command_value else 'off'} command"
+            )
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display state only — no commands sent on startup."""
@@ -190,11 +195,11 @@ class EveusStopChargingSwitch(BaseSwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the device stop-charging option."""
-        await self._async_send_command(1)
+        await self._async_send_command_or_raise(1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the device stop-charging option."""
-        await self._async_send_command(0)
+        await self._async_send_command_or_raise(0)
 
 
 class EveusOneChargeSwitch(BaseSwitchEntity):
@@ -206,11 +211,11 @@ class EveusOneChargeSwitch(BaseSwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable one charge mode."""
-        await self._async_send_command(1)
+        await self._async_send_command_or_raise(1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable one charge mode."""
-        await self._async_send_command(0)
+        await self._async_send_command_or_raise(0)
 
 
 class EveusResetCounterASwitch(BaseSwitchEntity):
@@ -265,7 +270,7 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
             self._last_reset_time = time.time()
             _LOGGER.debug("Successfully reset counter A")
         else:
-            _LOGGER.debug("Failed to reset counter A")
+            raise HomeAssistantError("Eveus charger did not accept reset Counter A command")
 
     async def _async_restore_state(self, state: State) -> None:
         """No state restoration for reset switch."""

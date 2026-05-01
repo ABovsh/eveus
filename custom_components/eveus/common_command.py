@@ -1,6 +1,7 @@
 """Command handling for Eveus integration."""
 import logging
 import asyncio
+import random
 import time
 from typing import Any
 
@@ -9,6 +10,14 @@ import aiohttp
 from .const import COMMAND_TIMEOUT, ERROR_LOG_RATE_LIMIT
 
 _LOGGER = logging.getLogger(__name__)
+
+# Retry transient command failures a couple of times before giving up.
+# Most failed-toggle reports are single-packet WiFi loss, not real device
+# rejections, so a tiny backoff window dramatically improves perceived
+# reliability without making real failures slow to surface.
+_COMMAND_RETRY_ATTEMPTS = 2
+_COMMAND_RETRY_BACKOFF: tuple[float, ...] = (0.5, 1.5)
+_COMMAND_RETRY_JITTER = 0.25
 
 
 class CommandManager:
@@ -31,7 +40,7 @@ class CommandManager:
         return False
 
     async def send_command(self, command: str, value: Any) -> bool:
-        """Send command with rate limiting and error handling."""
+        """Send command with rate limiting, retry/backoff, and error handling."""
         async with self._lock:
             # Rate limit: minimum 1 second between commands
             time_since_last = time.time() - self._last_command_time
@@ -39,29 +48,29 @@ class CommandManager:
                 await asyncio.sleep(1 - time_since_last)
 
             try:
-                session = self._updater.get_session()
-                timeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
+                last_error: Exception | None = None
+                for attempt in range(_COMMAND_RETRY_ATTEMPTS + 1):
+                    try:
+                        return await self._post_command(command, value)
+                    except (
+                        aiohttp.ClientResponseError,
+                        aiohttp.ClientConnectorError,
+                        aiohttp.ClientError,
+                        asyncio.TimeoutError,
+                    ) as err:
+                        last_error = err
+                        if attempt >= _COMMAND_RETRY_ATTEMPTS:
+                            break
+                        delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(
+                            0, _COMMAND_RETRY_JITTER
+                        )
+                        await asyncio.sleep(delay)
 
-                async with session.post(
-                    f"http://{self._updater.host}/pageEvent",
-                    auth=aiohttp.BasicAuth(
-                        self._updater.username,
-                        self._updater.password,
-                    ),
-                    headers={"Content-type": "application/x-www-form-urlencoded"},
-                    data=f"pageevent={command}&{command}={value}",
-                    timeout=timeout,
-                ) as response:
-                    response.raise_for_status()
-                    self._consecutive_failures = 0
-                    return True
-
-            except (aiohttp.ClientResponseError, aiohttp.ClientConnectorError,
-                    asyncio.TimeoutError) as err:
                 self._consecutive_failures += 1
                 if self._consecutive_failures <= 5 and self._should_log_error():
-                    _LOGGER.debug("Command %s failed: %s", command, err)
+                    _LOGGER.debug("Command %s failed: %s", command, last_error)
                 return False
+
             except Exception as err:
                 self._consecutive_failures += 1
                 if self._should_log_error():
@@ -75,26 +84,21 @@ class CommandManager:
             finally:
                 self._last_command_time = time.time()
 
+    async def _post_command(self, command: str, value: Any) -> bool:
+        """Issue a single HTTP request to the charger and return success."""
+        session = self._updater.get_session()
+        timeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
 
-async def send_eveus_command(
-    session: aiohttp.ClientSession,
-    host: str,
-    username: str,
-    password: str,
-    command: str,
-    value: Any,
-) -> bool:
-    """Standalone command function for backward compatibility."""
-
-    class _LegacyUpdater:
-        """Small adapter used by the legacy command helper."""
-
-        def __init__(self) -> None:
-            self.host = host
-            self.username = username
-            self.password = password
-
-        def get_session(self) -> aiohttp.ClientSession:
-            return session
-
-    return await CommandManager(_LegacyUpdater()).send_command(command, value)
+        async with session.post(
+            f"http://{self._updater.host}/pageEvent",
+            auth=aiohttp.BasicAuth(
+                self._updater.username,
+                self._updater.password,
+            ),
+            headers={"Content-type": "application/x-www-form-urlencoded"},
+            data=f"pageevent={command}&{command}={value}",
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
+            self._consecutive_failures = 0
+            return True

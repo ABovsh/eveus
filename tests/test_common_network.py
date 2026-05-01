@@ -96,10 +96,26 @@ def test_coordinator_compatibility_helpers() -> None:
     assert updater._should_log() is False
 
 
-def test_update_data_keeps_stable_interval_when_device_is_not_active(
+def test_update_data_relaxes_interval_when_device_is_idle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Idle (non-charging) state should slow the poll cadence to IDLE."""
+    from custom_components.eveus.const import IDLE_UPDATE_INTERVAL
+
     session = _Session(_Response(payload={"state": 2, "powerMeas": 0}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+
+    asyncio.run(updater._async_update_data())
+
+    assert updater.update_interval == timedelta(seconds=IDLE_UPDATE_INTERVAL)
+
+
+def test_update_data_uses_charging_interval_while_charging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Charging state must keep the fast 30s cadence."""
+    session = _Session(_Response(payload={"state": 4, "powerMeas": 7200}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
 

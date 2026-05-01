@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.0.1b7 - 2026-05-02
+
+### Added
+
+- New diagnostic **Force Refresh** button. Triggers an immediate coordinator refresh — useful for diagnostics and automations that want a fresh reading without waiting for the next scheduled poll.
+- Adaptive poll cadence. The integration now polls every 30 s while the charger is actively charging, every 60 s while idle/connected, and every 5 minutes once the charger appears offline. Halves background HTTP load on a charger that sits idle most of the day, with no impact on UI responsiveness during sessions.
+- Command-level retries with exponential backoff and jitter. Transient WiFi packet loss is retried twice (≈0.5 s and ≈1.5 s) before reporting failure, dramatically reducing spurious "command rejected" reports.
+- Lazy device-info finalization. If the charger is unreachable at Home Assistant startup, firmware/model/manufacturer fields used to be permanently shown as "Unknown" until reload; they now update in the device registry the first time the charger replies.
+
+### Changed
+
+- Failed switch/number commands now raise `HomeAssistantError` so Home Assistant surfaces a UI toast instead of silently snapping the control back. Applies to Stop Charging, One Charge, Reset Counter A, and Charging Current.
+- Updater `available` property documented as the single in-sync source of truth, kept aligned with `last_update_success` via `_record_success` / `_record_failure`.
+- Removed the dead `_LegacyUpdater` shim and `send_eveus_command` re-export. Tests exercise `CommandManager` directly with a fake updater.
+
+### Fixed
+
+- Empty `_clear_optimistic_state` stub on `BaseEveusEntity` removed; control entities are now detected via duck typing, eliminating an implicit-protocol coupling foot-gun.
+
 ## 4.0.1b6 - 2026-05-02
 
 ### Added

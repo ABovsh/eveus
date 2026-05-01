@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import State, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -55,6 +56,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         self._attr_unique_id = f"eveus{device_suffix}_{entity_key}"
         self._refresh_cached_data()
         self._attr_device_info = self._build_device_info()
+        self._device_info_finalized = self._device_info_has_firmware()
 
     @property
     def available(self) -> bool:
@@ -106,7 +108,9 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         self._cached_data = None
         self._cached_data_time = 0
         if clear_optimistic_state:
-            self._clear_optimistic_state()
+            clear = getattr(self, "_clear_optimistic_state", None)
+            if callable(clear):
+                clear()
         self._entity_available = False
         return previous_available != self._entity_available
 
@@ -148,6 +152,48 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             self._device_number,
         )
 
+    def _device_info_has_firmware(self) -> bool:
+        """Whether the cached device_info already carries real firmware."""
+        info = self._attr_device_info or {}
+        sw = info.get("sw_version")
+        return bool(sw) and sw != "Unknown"
+
+    def _maybe_finalize_device_info(self) -> None:
+        """Refresh device_info once firmware first becomes known.
+
+        device_info is built once in __init__ for performance, but if the very
+        first refresh returned an empty payload (charger offline at HA boot),
+        sw_version stays "Unknown" forever. Once a real firmware string lands
+        in coordinator data, rebuild and propagate it to the device registry.
+        """
+        if self._device_info_finalized:
+            return
+        if not self._updater.data:
+            return
+
+        new_info = self._build_device_info()
+        if not new_info.get("sw_version") or new_info["sw_version"] == "Unknown":
+            return
+
+        self._attr_device_info = new_info
+        self._device_info_finalized = True
+
+        if self.hass is None:
+            return
+        registry = dr.async_get(self.hass)
+        identifiers = new_info.get("identifiers")
+        if not identifiers:
+            return
+        device = registry.async_get_device(identifiers=identifiers)
+        if device is None:
+            return
+        registry.async_update_device(
+            device.id,
+            sw_version=new_info["sw_version"],
+            model=new_info.get("model"),
+            manufacturer=new_info.get("manufacturer"),
+        )
+
     async def async_added_to_hass(self) -> None:
         """Handle entity addition with state restoration."""
         await super().async_added_to_hass()
@@ -169,12 +215,10 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous state - overridden by child classes."""
 
-    def _clear_optimistic_state(self) -> None:
-        """Clear optimistic command state when supported by a subclass."""
-
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        self._maybe_finalize_device_info()
         if self._update_availability_state():
             self.async_write_ha_state()
 
@@ -266,6 +310,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        self._maybe_finalize_device_info()
         availability_changed = self._update_availability_state()
         value_changed = self._update_native_value()
         attributes_changed = self._update_extra_state_attributes()

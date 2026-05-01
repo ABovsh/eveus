@@ -19,7 +19,10 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .common_command import CommandManager
 from .const import (
     CHARGING_UPDATE_INTERVAL,
+    DEVICE_STATE_CHARGING,
     ERROR_LOG_RATE_LIMIT,
+    IDLE_UPDATE_INTERVAL,
+    OFFLINE_UPDATE_INTERVAL,
     RETRY_DELAY,
     UPDATE_TIMEOUT,
 )
@@ -74,7 +77,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def available(self) -> bool:
-        """Return availability status."""
+        """Return whether the most recent poll succeeded.
+
+        Kept in sync with `last_update_success` via `_record_success` /
+        `_record_failure` so the entity layer and HA's coordinator framework
+        agree on reachability. Entities layer their own grace period on top
+        of this in `BaseEveusEntity`.
+        """
         return self._device_available
 
     @property
@@ -166,6 +175,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._silent_mode = False
         self._offline_announced = False
         self._last_error = None
+        self._tune_update_interval(new_data)
 
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
@@ -180,12 +190,37 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if self.is_likely_offline:
             self._next_poll_attempt = time.time() + min(RETRY_DELAY * 4, 300)
+            self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
             if not self._offline_announced:
                 _LOGGER.debug("Device %s appears offline, reducing poll frequency", self.host)
                 self._offline_announced = True
 
         if not self._silent_mode and self._should_log():
             _LOGGER.debug("Connection issue with %s: %s", self.host, type(error).__name__)
+
+    def _tune_update_interval(self, data: dict[str, Any]) -> None:
+        """Pick a poll cadence based on charger activity.
+
+        Charging is the only state where users want fast feedback. When the
+        charger is idle/connected we relax to IDLE_UPDATE_INTERVAL to halve
+        background HTTP load, and snap back to CHARGING_UPDATE_INTERVAL the
+        moment the device starts a session.
+        """
+        try:
+            state_value = int(data.get("state")) if data.get("state") is not None else None
+        except (TypeError, ValueError):
+            state_value = None
+
+        if state_value == DEVICE_STATE_CHARGING:
+            self._set_update_interval(CHARGING_UPDATE_INTERVAL)
+        else:
+            self._set_update_interval(IDLE_UPDATE_INTERVAL)
+
+    def _set_update_interval(self, seconds: int) -> None:
+        """Apply a new poll interval if it differs from the current one."""
+        new_interval = timedelta(seconds=seconds)
+        if self.update_interval != new_interval:
+            self.update_interval = new_interval
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
