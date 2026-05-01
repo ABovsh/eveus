@@ -173,14 +173,13 @@ def calculate_soc_kwh_cached(
 ) -> float:
     """Cached SOC calculation in kWh."""
     try:
+        initial_soc = float(initial_soc)
+        battery_capacity = float(battery_capacity)
+        energy_charged = float(energy_charged)
+        efficiency_loss = float(efficiency_loss)
         if not all(
-            math.isfinite(float(value))
-            for value in (
-                initial_soc,
-                battery_capacity,
-                energy_charged,
-                efficiency_loss,
-            )
+            math.isfinite(value)
+            for value in (initial_soc, battery_capacity, energy_charged, efficiency_loss)
         ):
             return 0.0
         initial_kwh = (initial_soc / 100) * battery_capacity
@@ -200,14 +199,13 @@ def calculate_soc_percent_cached(
 ) -> float:
     """Cached SOC percentage calculation."""
     try:
+        initial_soc = float(initial_soc)
+        battery_capacity = float(battery_capacity)
+        energy_charged = float(energy_charged)
+        efficiency_loss = float(efficiency_loss)
         if not all(
-            math.isfinite(float(value))
-            for value in (
-                initial_soc,
-                battery_capacity,
-                energy_charged,
-                efficiency_loss,
-            )
+            math.isfinite(value)
+            for value in (initial_soc, battery_capacity, energy_charged, efficiency_loss)
         ):
             return 0.0
         if battery_capacity <= 0:

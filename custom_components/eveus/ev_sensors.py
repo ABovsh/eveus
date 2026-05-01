@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Any, Optional, Dict, Set
+from typing import Any, ClassVar, Optional, Dict, Set
 from dataclasses import dataclass
 
 from homeassistant.components.sensor import (
@@ -189,6 +189,7 @@ class BaseEVHelperSensor(EveusSensorBase):
     """Base class for sensors that depend on input_number helpers."""
 
     _tracked_inputs: tuple[str, ...] = ()
+    _requires_helpers: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -199,7 +200,6 @@ class BaseEVHelperSensor(EveusSensorBase):
         """Initialize EV helper sensor."""
         super().__init__(updater, device_number)
         self._soc_calculator = soc_calculator or CachedSOCCalculator()
-        self._stop_listen = None
         self._last_update_time = 0
         self._cached_value = None
         self._helpers_available = False
@@ -217,13 +217,13 @@ class BaseEVHelperSensor(EveusSensorBase):
 
         if self._tracked_inputs:
             try:
-                remove_listener = async_track_state_change_event(
-                    self.hass, self._tracked_inputs, self._on_input_changed,
+                self.async_on_remove(
+                    async_track_state_change_event(
+                        self.hass,
+                        self._tracked_inputs,
+                        self._on_input_changed,
+                    )
                 )
-                if hasattr(self, "async_on_remove"):
-                    self.async_on_remove(remove_listener)
-                else:
-                    self._stop_listen = remove_listener
             except Exception as err:
                 _LOGGER.debug(
                     "Could not set up state tracking for %s: %s",
@@ -239,27 +239,23 @@ class BaseEVHelperSensor(EveusSensorBase):
         previous_available = self.available
         helpers_changed = self._refresh_helpers_available()
         value_changed = self._update_native_value()
+        attributes_changed = self._update_extra_state_attributes()
 
         current_time = time.time()
         if (
             helpers_changed
             or previous_available != self.available
             or value_changed
+            or attributes_changed
             or current_time - self._last_update_time > 1
         ):
             self._last_update_time = current_time
             self.async_write_ha_state()
 
-    async def async_will_remove_from_hass(self) -> None:
-        """Clean up event listeners."""
-        if self._stop_listen:
-            self._stop_listen()
-            self._stop_listen = None
-
     @property
     def available(self) -> bool:
         """Available only when device is online AND helpers are present."""
-        return super().available and self._helpers_available
+        return super().available and (not self._requires_helpers or self._helpers_available)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -268,7 +264,13 @@ class BaseEVHelperSensor(EveusSensorBase):
         self._refresh_helpers_available()
         availability_changed = self._update_availability_state()
         value_changed = self._update_native_value()
-        if availability_changed or previous_available != self.available or value_changed:
+        attributes_changed = self._update_extra_state_attributes()
+        if (
+            availability_changed
+            or previous_available != self.available
+            or value_changed
+            or attributes_changed
+        ):
             self.async_write_ha_state()
 
     def _get_energy_charged(self) -> float:
@@ -332,6 +334,7 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
 
     ENTITY_NAME = "Time to Target SOC"
     _attr_icon = "mdi:timer"
+    _requires_helpers = False
 
     _tracked_inputs = (
         _INPUT_INITIAL_SOC,
@@ -391,11 +394,6 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             )
             return self._cached_value
 
-    @property
-    def available(self) -> bool:
-        """Always available to show status messages."""
-        return super(BaseEVHelperSensor, self).available
-
 
 # =============================================================================
 # Input entity status sensor
@@ -443,6 +441,26 @@ class InputEntitiesStatusSensor(EveusSensorBase):
         self._invalid_entities: Set[str] = set()
         self._last_check_time = 0
         self._check_interval = STATE_CACHE_TTL
+        self._configuration_help = self._build_configuration_help()
+        self._attr_extra_state_attributes = {}
+
+    def _build_configuration_help(self) -> Dict[str, str]:
+        """Build static helper creation hints once."""
+        help_text = {}
+        for entity_id, config in self.REQUIRED_INPUTS.items():
+            input_name = entity_id.split(".", 1)[1]
+            help_text[entity_id] = (
+                f"{input_name}:\n"
+                f"  name: '{config['name']}'\n"
+                f"  min: {config['min']}\n"
+                f"  max: {config['max']}\n"
+                f"  step: {config['step']}\n"
+                f"  initial: {config['initial']}\n"
+                f"  unit_of_measurement: '{config['unit_of_measurement']}'\n"
+                f"  mode: {config['mode']}\n"
+                f"  icon: '{config['icon']}'"
+            )
+        return help_text
 
     def _get_sensor_value(self) -> str:
         """Get input status with caching."""
@@ -452,45 +470,38 @@ class InputEntitiesStatusSensor(EveusSensorBase):
             self._last_check_time = current_time
         return self._state
 
-    @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
-        """Get status attributes."""
-        try:
-            attrs = {
-                "missing_entities": list(self._missing_entities),
-                "invalid_entities": list(self._invalid_entities),
-                "required_count": len(self.REQUIRED_INPUTS),
-                "missing_count": len(self._missing_entities),
-                "invalid_count": len(self._invalid_entities),
-                "status_summary": {
-                    eid: ("Missing" if eid in self._missing_entities
-                          else "Invalid" if eid in self._invalid_entities
-                          else "OK")
-                    for eid in self.REQUIRED_INPUTS
-                },
-                "note": "These helpers are optional. Advanced SOC metrics require them.",
+    def _build_extra_state_attributes(self) -> Dict[str, Any]:
+        """Build cached status attributes from the latest input check."""
+        attrs = {
+            "missing_entities": list(self._missing_entities),
+            "invalid_entities": list(self._invalid_entities),
+            "required_count": len(self.REQUIRED_INPUTS),
+            "missing_count": len(self._missing_entities),
+            "invalid_count": len(self._invalid_entities),
+            "status_summary": {
+                eid: ("Missing" if eid in self._missing_entities
+                      else "Invalid" if eid in self._invalid_entities
+                      else "OK")
+                for eid in self.REQUIRED_INPUTS
+            },
+            "note": "These helpers are optional. Advanced SOC metrics require them.",
+        }
+
+        if self._missing_entities:
+            attrs["configuration_help"] = {
+                entity_id: self._configuration_help[entity_id]
+                for entity_id in self._missing_entities
+                if entity_id in self._configuration_help
             }
 
-            if self._missing_entities:
-                help_text = {}
-                for entity_id in self._missing_entities:
-                    config = self.REQUIRED_INPUTS.get(entity_id)
-                    if config:
-                        input_name = entity_id.split(".", 1)[1]
-                        help_text[entity_id] = (
-                            f"{input_name}:\n"
-                            f"  name: '{config['name']}'\n"
-                            f"  min: {config['min']}\n"
-                            f"  max: {config['max']}\n"
-                            f"  step: {config['step']}\n"
-                            f"  initial: {config['initial']}\n"
-                            f"  unit_of_measurement: '{config['unit_of_measurement']}'\n"
-                            f"  mode: {config['mode']}\n"
-                            f"  icon: '{config['icon']}'"
-                        )
-                attrs["configuration_help"] = help_text
+        return attrs
 
-            return attrs
+    def _update_extra_state_attributes(self) -> bool:
+        """Refresh cached status attributes."""
+        try:
+            previous_attrs = self._attr_extra_state_attributes
+            self._attr_extra_state_attributes = self._build_extra_state_attributes()
+            return previous_attrs != self._attr_extra_state_attributes
         except Exception as err:
             _LOGGER.debug(
                 "Error getting attributes for %s: %s",
@@ -498,7 +509,8 @@ class InputEntitiesStatusSensor(EveusSensorBase):
                 err,
                 exc_info=True,
             )
-            return {}
+            self._attr_extra_state_attributes = {}
+            return True
 
     def _check_inputs(self) -> None:
         """Check all required inputs."""
@@ -529,6 +541,7 @@ class InputEntitiesStatusSensor(EveusSensorBase):
                 self._state = f"Invalid {len(self._invalid_entities)} Inputs"
             else:
                 self._state = "All Present"
+            self._update_extra_state_attributes()
         except Exception as err:
             _LOGGER.debug(
                 "Error checking inputs for %s: %s",
@@ -537,3 +550,4 @@ class InputEntitiesStatusSensor(EveusSensorBase):
                 exc_info=True,
             )
             self._state = "Error"
+            self._update_extra_state_attributes()

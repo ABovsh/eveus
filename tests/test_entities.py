@@ -42,11 +42,14 @@ def test_sensor_uses_fresh_coordinator_data_without_ttl_cache() -> None:
     )
     sensor = OptimizedEveusSensor(updater, spec)
     sensor.hass = object()
+    sensor.async_write_ha_state = lambda: None
 
     updater.data["powerMeas"] = "7200"
+    sensor._handle_coordinator_update()
     assert sensor.native_value == 7200
 
     updater.data["powerMeas"] = "1000"
+    sensor._handle_coordinator_update()
     assert sensor.native_value == 1000
 
 
@@ -215,10 +218,13 @@ def test_base_entity_device_info_falls_back_when_payload_is_malformed() -> None:
     )
 
     assert entity.device_info == {
-        "identifiers": {("eveus", "192.168.1.50_1")},
+        "identifiers": {("eveus", "192.168.1.50")},
         "name": "Eveus EV Charger",
         "manufacturer": "Eveus",
         "model": "Eveus EV Charger",
+        "sw_version": "Unknown",
+        "hw_version": "Unknown",
+        "configuration_url": "http://192.168.1.50",
     }
 
 

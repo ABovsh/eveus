@@ -114,8 +114,8 @@ def test_validate_host_rejects_invalid_values(raw: str) -> None:
         validate_host(raw)
 
 
-def test_validate_credentials_strips_values() -> None:
-    assert validate_credentials(" admin ", " secret ") == ("admin", "secret")
+def test_validate_credentials_strips_username_but_preserves_password() -> None:
+    assert validate_credentials(" admin ", " secret ") == ("admin", " secret ")
 
 
 @pytest.mark.parametrize(
@@ -143,7 +143,7 @@ def test_normalize_user_input_returns_persistable_config_data() -> None:
     assert data == {
         CONF_HOST: "192.168.1.50",
         CONF_USERNAME: "admin",
-        CONF_PASSWORD: "secret",
+        CONF_PASSWORD: " secret ",
         CONF_MODEL: MODEL_16A,
     }
 

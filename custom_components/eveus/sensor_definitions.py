@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
-from typing import Any, Callable, ClassVar, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
@@ -35,12 +36,23 @@ from .const import (
 from .utils import get_safe_value, is_dst, format_duration
 
 _LOGGER = logging.getLogger(__name__)
+_MAX_ERROR_LOG_KEYS = 64
 
 
 @lru_cache(maxsize=16)
 def _get_zone_info(timezone_name: str) -> ZoneInfo:
     """Return cached timezone info for system-time conversion."""
     return ZoneInfo(timezone_name)
+
+
+@lru_cache(maxsize=128)
+def _format_system_time(timestamp_minute: int, timezone_name: str, dst_active: bool) -> str:
+    """Return formatted charger system time for a minute bucket and timezone."""
+    offset = 7200 + (3600 if dst_active else 0)
+    corrected_timestamp = timestamp_minute * 60 - offset
+    dt_corrected = datetime.fromtimestamp(corrected_timestamp, tz=timezone.utc)
+    dt_local = dt_corrected.astimezone(_get_zone_info(timezone_name))
+    return dt_local.strftime("%H:%M")
 
 
 class SensorType(Enum):
@@ -83,6 +95,12 @@ class OptimizedEveusSensor(EveusSensorBase):
         current_time = time.time()
         last_log = cls._last_error_logs.get(function_name, 0)
         if current_time - last_log > ERROR_LOG_RATE_LIMIT:
+            if (
+                function_name not in cls._last_error_logs
+                and len(cls._last_error_logs) >= _MAX_ERROR_LOG_KEYS
+            ):
+                oldest_key = min(cls._last_error_logs, key=cls._last_error_logs.get)
+                cls._last_error_logs.pop(oldest_key, None)
             cls._last_error_logs[function_name] = current_time
             return True
         return False
@@ -106,6 +124,7 @@ class OptimizedEveusSensor(EveusSensorBase):
             self._attr_suggested_display_precision = spec.precision
         if spec.category:
             self._attr_entity_category = spec.category
+        self._attr_extra_state_attributes = {}
 
     def _get_sensor_value(self) -> Any:
         """Return computed sensor value from coordinator data."""
@@ -119,22 +138,14 @@ class OptimizedEveusSensor(EveusSensorBase):
                 _LOGGER.debug("Error getting value for %s: %s", self.name, err, exc_info=True)
             return None
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle fresh coordinator data."""
-        availability_changed = self._update_availability_state()
-        value_changed = self._update_native_value()
-        if availability_changed or value_changed:
-            self.async_write_ha_state()
-
-    @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
-        """Return attributes."""
+    def _update_extra_state_attributes(self) -> bool:
+        """Refresh cached attributes from coordinator data."""
+        previous_attrs = self._attr_extra_state_attributes
+        attrs: Dict[str, Any] = {}
         if self._spec.attributes_fn:
             try:
-                if not self._updater.available:
-                    return {}
-                return self._spec.attributes_fn(self._updater, self.hass)
+                if self._updater.available:
+                    attrs = self._spec.attributes_fn(self._updater, self.hass)
             except Exception as err:
                 if self._should_log_error(f"attributes_{self._spec.key}"):
                     _LOGGER.debug(
@@ -143,7 +154,8 @@ class OptimizedEveusSensor(EveusSensorBase):
                         err,
                         exc_info=True,
                     )
-        return {}
+        self._attr_extra_state_attributes = attrs or {}
+        return previous_attrs != self._attr_extra_state_attributes
 
 
 # =============================================================================
@@ -166,8 +178,13 @@ def _get_data_value(updater, key: str, converter=float, default=None):
 def _make_value_getter(key: str, precision: int = 0, transform: Callable = None):
     """Factory for simple data getter functions."""
     def getter(updater, hass):
-        value = _get_data_value(updater, key)
-        if value is None:
+        if not updater.available or not updater.data:
+            return None
+        try:
+            value = float(updater.data[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
             return None
         if transform:
             value = transform(value)
@@ -259,15 +276,11 @@ def get_system_time(updater, hass) -> Optional[str]:
         if not ha_timezone:
             return None
 
-        offset = 7200
-        if is_dst(ha_timezone, timestamp):
-            offset += 3600
-
-        corrected_timestamp = timestamp - offset
-        dt_corrected = datetime.fromtimestamp(corrected_timestamp, tz=timezone.utc)
-        local_tz = _get_zone_info(ha_timezone)
-        dt_local = dt_corrected.astimezone(local_tz)
-        return dt_local.strftime("%H:%M")
+        return _format_system_time(
+            timestamp // 60,
+            ha_timezone,
+            is_dst(ha_timezone, timestamp),
+        )
 
     except Exception as err:
         if OptimizedEveusSensor._should_log_error("get_system_time"):
@@ -350,7 +363,7 @@ def get_connection_attrs(updater, hass) -> dict:
 # Sensor specification factory
 # =============================================================================
 
-def create_sensor_specifications() -> List[SensorSpec]:
+def create_sensor_specifications() -> tuple[SensorSpec, ...]:
     """Create all sensor specifications using factory pattern."""
 
     # Measurement sensors
@@ -515,9 +528,10 @@ def create_sensor_specifications() -> List[SensorSpec]:
         ),
     ]
 
-    return measurement_specs + energy_specs + diagnostic_specs + special_specs
+    return tuple(measurement_specs + energy_specs + diagnostic_specs + special_specs)
 
 
-def get_sensor_specifications() -> List[SensorSpec]:
+@lru_cache(maxsize=1)
+def get_sensor_specifications() -> tuple[SensorSpec, ...]:
     """Get all sensor specifications."""
     return create_sensor_specifications()

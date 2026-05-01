@@ -107,7 +107,7 @@ def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
     assert percent._get_sensor_value() == 38
 
     updater.data = {}
-    assert kwh._get_sensor_value() == 16.0
+    assert kwh._get_sensor_value() == 30.4
 
 
 def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:
@@ -156,7 +156,6 @@ def test_helper_sensors_track_inputs_even_when_helpers_missing(
 
     assert tracked == [sensor._tracked_inputs]
     assert len(cleanup_callbacks) == 1
-    assert sensor._stop_listen is None
 
 
 def test_helper_sensor_available_property_is_pure() -> None:

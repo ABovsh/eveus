@@ -48,6 +48,7 @@ def _sensor(value_fn, *, sensor_type: SensorType = SensorType.MEASUREMENT):
     )
     entity = OptimizedEveusSensor(_Updater(), spec)
     entity.hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kiev"))
+    entity.async_write_ha_state = lambda: None
     return entity
 
 
@@ -60,6 +61,7 @@ def test_optimized_sensor_applies_description_fields() -> None:
     assert entity.native_unit_of_measurement == "W"
     assert entity.suggested_display_precision == 1
     assert entity.entity_category == EntityCategory.DIAGNOSTIC
+    entity._handle_coordinator_update()
     assert entity.extra_state_attributes == {"ok": True}
 
 
@@ -73,7 +75,12 @@ def test_optimized_sensor_uses_fresh_coordinator_data() -> None:
 
     entity = _sensor(value_fn)
 
+    entity._handle_coordinator_update()
     assert entity.native_value == 1
+    assert entity.native_value == 1
+    assert calls == 1
+
+    entity._handle_coordinator_update()
     assert entity.native_value == 2
     assert calls == 2
 
@@ -88,7 +95,9 @@ def test_optimized_sensor_recalculates_calculated_values() -> None:
 
     entity = _sensor(value_fn, sensor_type=SensorType.CALCULATED)
 
+    entity._handle_coordinator_update()
     assert entity.native_value == 1
+    entity._handle_coordinator_update()
     assert entity.native_value == 2
 
 
@@ -104,9 +113,13 @@ def test_optimized_sensor_returns_none_when_offline() -> None:
         ),
     )
     entity.hass = object()
+    entity.async_write_ha_state = lambda: None
 
+    entity._handle_coordinator_update()
     assert entity.native_value == 10
     updater.available = False
+    entity._unavailable_since = 0
+    entity._handle_coordinator_update()
     assert entity.native_value is None
 
 
