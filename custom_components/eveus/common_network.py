@@ -31,7 +31,7 @@ from .const import (
 # typically needs 5-10s to reflect a state change in its API, but a slightly
 # earlier read is fine because the entity-level optimistic state TTL keeps
 # the user-visible value stable until the device confirms.
-POST_COMMAND_REFRESH_DELAY = 4
+POST_COMMAND_REFRESH_DELAY = 2
 
 _LOGGER = logging.getLogger(__name__)
 
