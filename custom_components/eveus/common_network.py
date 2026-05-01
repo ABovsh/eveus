@@ -27,11 +27,12 @@ from .const import (
     UPDATE_TIMEOUT,
 )
 
-# Delay before refreshing data after a successful command. The charger
-# typically needs 5-10s to reflect a state change in its API, but a slightly
-# earlier read is fine because the entity-level optimistic state TTL keeps
-# the user-visible value stable until the device confirms.
-POST_COMMAND_REFRESH_DELAY = 2
+# Delays after a successful command. The charger commits state changes
+# anywhere from ~1s (current change) to ~10s (Stop Charging transitioning
+# the device to Standby). Two refreshes give the best of both: the early
+# one catches the common fast case for snappy UI; the later one is the
+# safety net so users never have to wait the full poll interval.
+POST_COMMAND_REFRESH_DELAYS: tuple[int, ...] = (2, 7)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._last_error: str | None = None
         self._device_available = True
         self._next_poll_attempt = 0.0
-        self._post_command_refresh_cancel = None
+        self._post_command_refresh_cancels: list = []
 
     @property
     def available(self) -> bool:
@@ -125,33 +126,42 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         return success
 
     def _schedule_post_command_refresh(self) -> None:
-        """Schedule a single delayed refresh after a successful command.
+        """Schedule delayed refreshes after a successful command.
 
-        Rapid toggles cancel any pending refresh and reschedule, so the refresh
-        always fires POST_COMMAND_REFRESH_DELAY seconds after the most recent
-        command — by which point the charger has committed the latest state.
-        Combined with the entity-level optimistic TTL this prevents the
-        flicker pattern: toggle ON → toggle OFF → stale ON read.
+        Two refreshes are scheduled (at POST_COMMAND_REFRESH_DELAYS): the early
+        one catches fast-committing changes (e.g. setting current) for snappy
+        UI feedback; the later one catches slow transitions (e.g. Stop
+        Charging, where the charger may take ~5-10s to drop to Standby).
+
+        Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
+        always fire relative to the most recent command. Combined with the
+        entity-level optimistic state TTL this prevents stale-read flicker.
         """
-        if self._post_command_refresh_cancel is not None:
-            self._post_command_refresh_cancel()
-            self._post_command_refresh_cancel = None
+        self._cancel_pending_refreshes()
 
-        def _fire(_now) -> None:
-            self._post_command_refresh_cancel = None
-            if self.hass is None or self.hass.is_stopping:
-                return
-            self.hass.async_create_task(self.async_request_refresh())
+        def _make_fire():
+            def _fire(_now) -> None:
+                if self.hass is None or self.hass.is_stopping:
+                    return
+                self.hass.async_create_task(self.async_request_refresh())
+            return _fire
 
-        self._post_command_refresh_cancel = async_call_later(
-            self.hass, POST_COMMAND_REFRESH_DELAY, _fire
-        )
+        for delay in POST_COMMAND_REFRESH_DELAYS:
+            cancel = async_call_later(self.hass, delay, _make_fire())
+            self._post_command_refresh_cancels.append(cancel)
+
+    def _cancel_pending_refreshes(self) -> None:
+        """Cancel any pending post-command refreshes."""
+        for cancel in self._post_command_refresh_cancels:
+            try:
+                cancel()
+            except Exception:  # noqa: BLE001 - cancel callbacks are noexcept by contract
+                pass
+        self._post_command_refresh_cancels.clear()
 
     async def async_shutdown(self) -> None:
-        """Cancel any pending delayed refresh and shut down."""
-        if self._post_command_refresh_cancel is not None:
-            self._post_command_refresh_cancel()
-            self._post_command_refresh_cancel = None
+        """Cancel any pending delayed refreshes and shut down."""
+        self._cancel_pending_refreshes()
         await super().async_shutdown()
 
     def _should_log(self) -> bool:

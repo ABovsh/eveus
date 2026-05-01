@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.1b9 - 2026-05-02
+
+### Changed
+
+- Post-command refresh now fires twice — at 2s and 7s after a successful switch toggle or current change. The early refresh catches fast-committing changes (e.g. setting current) for snappy UI feedback; the later one catches slow transitions like Stop Charging, where the charger may take 5–10s to drop the device into Standby. Previously a single 2s refresh sometimes read stale data and users had to wait for the next scheduled poll (or hit Force Refresh) to see the change. Both refreshes are cancelled and rescheduled together on rapid successive commands.
+
 ## 4.0.1b8 - 2026-05-02
 
 ### Changed
