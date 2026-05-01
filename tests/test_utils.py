@@ -7,7 +7,7 @@ from custom_components.eveus import utils
 
 
 class _Entry:
-    def __init__(self, device_number: int | None) -> None:
+    def __init__(self, device_number: int | str | None) -> None:
         self.data = {}
         if device_number is not None:
             self.data["device_number"] = device_number
@@ -28,7 +28,7 @@ class _Hass:
 
 
 def test_get_next_device_number_fills_first_available_gap() -> None:
-    hass = _Hass([_Entry(1), _Entry(3), _Entry(None)])
+    hass = _Hass([_Entry(1), _Entry("3"), _Entry("bad"), _Entry(None)])
 
     assert utils.get_next_device_number(hass) == 2
 
@@ -38,6 +38,8 @@ def test_get_safe_value_reads_state_dict_and_raw_values() -> None:
     assert utils.get_safe_value({"currentSet": "16"}, "currentSet", int) == 16
     assert utils.get_safe_value("unavailable", default=0) == 0
     assert utils.get_safe_value({"bad": "x"}, "bad", int, default=-1) == -1
+    assert utils.get_safe_value("nan", converter=float, default=None) is None
+    assert utils.get_safe_value("inf", converter=float, default=0) == 0
 
 
 def test_get_device_info_is_backward_compatible_for_first_device() -> None:
@@ -59,6 +61,16 @@ def test_get_device_info_suffixes_additional_devices() -> None:
     assert info["name"] == "Eveus EV Charger 2"
     assert info["sw_version"] == "Unknown"
     assert info["hw_version"] == "Unknown"
+
+
+def test_get_device_info_handles_non_string_versions() -> None:
+    info = utils.get_device_info(
+        "192.168.1.50",
+        {"verFWMain": 303, "verFWWifi": 12},
+    )
+
+    assert info["sw_version"] == "303"
+    assert info["hw_version"] == "12"
 
 
 def test_format_duration_handles_minutes_hours_and_days() -> None:

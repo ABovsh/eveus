@@ -10,7 +10,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, Co
 
 import custom_components.eveus as eveus
 from custom_components.eveus.const import CONF_MODEL, MODEL_16A
+from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
 from custom_components.eveus.sensor import async_setup_entry as async_setup_sensor_entry
+from custom_components.eveus.switch import (
+    EveusResetCounterASwitch,
+    async_setup_entry as async_setup_switch_entry,
+)
 
 
 class _ConfigEntries:
@@ -70,6 +75,9 @@ class _Updater:
     async def async_config_entry_first_refresh(self) -> None:
         return None
 
+    async def async_shutdown(self) -> None:
+        return None
+
 
 class _AuthFailingUpdater(_Updater):
     async def async_config_entry_first_refresh(self) -> None:
@@ -108,6 +116,7 @@ def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatc
     assert entry.runtime_data.soc_calculator is not None
     assert hass.config_entries.updated == [{"data": {**_data(), "device_number": 1}}]
     assert hass.config_entries.forwarded
+    assert entry.runtime_data.updater.async_shutdown in entry.unloads
 
 
 def test_async_setup_entry_propagates_auth_failure(
@@ -174,6 +183,19 @@ def test_async_setup_entry_creates_repair_for_invalid_stored_data(
     assert created[0]["is_fixable"] is True
 
 
+def test_async_setup_entry_normalizes_stored_device_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = _hass()
+    entry = _Entry(_data(device_number="2"))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert entry.runtime_data.device_number == 2
+    assert hass.config_entries.updated == [{"data": {**_data(), "device_number": 2}}]
+
+
 def test_update_listener_and_unload_entry() -> None:
     hass = _hass()
     entry = _Entry(_data())
@@ -214,3 +236,95 @@ def test_sensor_setup_creates_standard_and_ev_sensors() -> None:
     )
 
     assert len(added) >= 20
+
+
+def test_switch_setup_creates_control_entities() -> None:
+    added: list[object] = []
+    entry = _Entry(_data())
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        device_number=2,
+    )
+
+    asyncio.run(
+        async_setup_switch_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert [entity.name for entity in added] == [
+        "Stop Charging",
+        "One Charge",
+        "Reset Counter A",
+    ]
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_stop_charging",
+        "eveus2_one_charge",
+        "eveus2_reset_counter_a",
+    }
+
+
+def test_number_setup_creates_current_entity() -> None:
+    added: list[object] = []
+    entry = _Entry(_data())
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        device_number=3,
+    )
+
+    asyncio.run(
+        async_setup_number_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert len(added) == 1
+    assert added[0].name == "Charging Current"
+    assert added[0].unique_id == "eveus3_charging_current"
+
+
+def test_reset_counter_safe_mode_task_is_cancelled_on_remove(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callbacks: list[object] = []
+    created_task: _Task | None = None
+
+    class _Task:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    class _Hass:
+        def async_create_task(self, coro):
+            nonlocal created_task
+            coro.close()
+            created_task = _Task()
+            return created_task
+
+    async def noop_added_to_hass(self) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "custom_components.eveus.common_base.BaseEveusEntity.async_added_to_hass",
+        noop_added_to_hass,
+    )
+
+    entity = EveusResetCounterASwitch(
+        _Updater(host="192.168.1.50", username="admin", password="secret"),
+        1,
+    )
+    entity.hass = _Hass()
+    entity.async_on_remove = callbacks.append
+
+    asyncio.run(entity.async_added_to_hass())
+
+    assert created_task is not None
+    assert len(callbacks) == 1
+    callbacks[0]()
+    assert created_task.cancelled is True

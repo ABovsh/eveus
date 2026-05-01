@@ -21,8 +21,10 @@ from custom_components.eveus.ev_sensors import (
 class _States:
     def __init__(self, values: dict[str, object]) -> None:
         self._values = values
+        self.calls: list[str] = []
 
     def get(self, entity_id: str) -> SimpleNamespace | None:
+        self.calls.append(entity_id)
         if entity_id not in self._values:
             return None
         return SimpleNamespace(state=str(self._values[entity_id]))
@@ -62,6 +64,12 @@ def test_soc_calculator_reports_missing_and_invalid_helpers() -> None:
     invalid = dict(HELPERS)
     invalid["input_number.ev_initial_soc"] = "bad"
     assert calculator.are_helpers_available(_Hass(invalid)) is False
+
+    calculator.invalidate_cache()
+    out_of_range = dict(HELPERS)
+    out_of_range["input_number.ev_target_soc"] = 150
+    assert calculator.are_helpers_available(_Hass(out_of_range)) is False
+    assert calculator.target_soc is None
 
 
 def test_missing_optional_soc_helpers_are_quiet_at_normal_log_levels(
@@ -121,6 +129,7 @@ def test_helper_sensors_track_inputs_even_when_helpers_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tracked: list[tuple[str, ...]] = []
+    cleanup_callbacks: list[object] = []
 
     async def noop_added_to_hass(self):
         return None
@@ -131,6 +140,7 @@ def test_helper_sensors_track_inputs_even_when_helpers_missing(
 
     sensor = EVSocKwhSensor(_Updater({}))
     sensor.hass = _Hass({})
+    sensor.async_on_remove = lambda callback: cleanup_callbacks.append(callback)
     monkeypatch.setattr(
         ev_sensors.EveusSensorBase,
         "async_added_to_hass",
@@ -145,6 +155,38 @@ def test_helper_sensors_track_inputs_even_when_helpers_missing(
     asyncio.run(BaseEVHelperSensor.async_added_to_hass(sensor))
 
     assert tracked == [sensor._tracked_inputs]
+    assert len(cleanup_callbacks) == 1
+    assert sensor._stop_listen is None
+
+
+def test_helper_sensor_available_property_is_pure() -> None:
+    sensor = EVSocKwhSensor(_Updater({"IEM1": "16"}))
+    hass = _Hass(HELPERS)
+    sensor.hass = hass
+    sensor._helpers_available = True
+
+    assert sensor.available is True
+    assert hass.states.calls == []
+
+
+def test_helper_sensor_coordinator_update_refreshes_helper_status() -> None:
+    writes = 0
+    sensor = EVSocKwhSensor(_Updater({"IEM1": "16"}))
+    sensor.hass = _Hass(HELPERS)
+    sensor.async_write_ha_state = lambda: None
+
+    def record_write() -> None:
+        nonlocal writes
+        writes += 1
+
+    sensor.async_write_ha_state = record_write
+
+    assert sensor.available is False
+    sensor._handle_coordinator_update()
+
+    assert sensor.available is True
+    assert sensor.native_value == 30.4
+    assert writes == 1
 
 
 def test_time_to_target_returns_helper_required_for_missing_helpers() -> None:
@@ -165,6 +207,11 @@ def test_input_entities_status_sensor_reports_missing_invalid_and_ready() -> Non
 
     invalid = dict(HELPERS)
     invalid["input_number.ev_target_soc"] = "bad"
+    sensor.hass = _Hass(invalid)
+    sensor._last_check_time = 0
+    assert sensor._get_sensor_value() == "Invalid 1 Inputs"
+
+    invalid["input_number.ev_target_soc"] = 150
     sensor.hass = _Hass(invalid)
     sensor._last_check_time = 0
     assert sensor._get_sensor_value() == "Invalid 1 Inputs"

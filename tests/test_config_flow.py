@@ -5,6 +5,7 @@ import asyncio
 
 import aiohttp
 import pytest
+import voluptuous as vol
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 
 from custom_components.eveus import config_flow
@@ -35,6 +36,7 @@ class _Response:
         self.status = status
         self.payload = payload if payload is not None else {"currentSet": "16"}
         self.raise_status = raise_status
+        self.json_kwargs: dict[str, object] = {}
 
     async def __aenter__(self) -> "_Response":
         return self
@@ -47,7 +49,8 @@ class _Response:
             raise self.raise_status
         return None
 
-    async def json(self) -> object:
+    async def json(self, **kwargs: object) -> object:
+        self.json_kwargs = kwargs
         if isinstance(self.payload, Exception):
             raise self.payload
         return self.payload
@@ -145,6 +148,11 @@ def test_normalize_user_input_returns_persistable_config_data() -> None:
     }
 
 
+def test_normalize_user_input_rejects_invalid_model() -> None:
+    with pytest.raises(vol.Invalid):
+        normalize_user_input(_input(**{CONF_MODEL: "bad"}))
+
+
 def test_config_flow_version_matches_migration_target() -> None:
     assert config_flow.ConfigFlow.VERSION == CONFIG_ENTRY_VERSION
 
@@ -162,7 +170,8 @@ def test_validate_device_response_accepts_model_limit_boundary() -> None:
 
 
 def test_validate_input_posts_to_normalized_host() -> None:
-    session = _Session(_Response(payload={"currentSet": "12", "verFWMain": "3.0.3"}))
+    response = _Response(payload={"currentSet": "12", "verFWMain": "3.0.3"})
+    session = _Session(response)
     hass = _Hass(session)
 
     result = asyncio.run(
@@ -173,6 +182,7 @@ def test_validate_input_posts_to_normalized_host() -> None:
     assert result["data"][CONF_HOST] == "192.168.1.50"
     assert result["device_info"]["current_set"] == 12
     assert session.calls[0]["url"] == "http://192.168.1.50/main"
+    assert response.json_kwargs == {"content_type": None}
 
 
 def test_validate_input_rejects_unauthorized_response() -> None:

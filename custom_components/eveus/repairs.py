@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+import logging
 
 from homeassistant import data_entry_flow
 from homeassistant.components.repairs import RepairsFlow
@@ -18,6 +19,8 @@ from .config_flow import (
     validate_input,
 )
 from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class InvalidConfigRepairFlow(RepairsFlow):
@@ -81,7 +84,8 @@ class InvalidConfigRepairFlow(RepairsFlow):
                 errors["base"] = "invalid_input"
             except InvalidDevice:
                 errors["base"] = "invalid_device"
-            except Exception:
+            except Exception as err:
+                _LOGGER.debug("Unexpected Eveus repair flow error: %s", err, exc_info=True)
                 errors["base"] = "unknown"
 
         return self.async_show_form(

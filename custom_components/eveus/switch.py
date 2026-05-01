@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import time
+from contextlib import suppress
 from typing import Any, Optional
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
@@ -83,6 +84,7 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
         self._last_device_state: Optional[bool] = None
         self._last_command_time = 0
         self._last_successful_read = 0
+        self._last_written_state: Optional[bool] = None
 
     def _clear_optimistic_state(self) -> None:
         """Clear optimistic state when the device is offline."""
@@ -99,18 +101,10 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
         if self._optimistic_state is not None:
             if current_time - self._optimistic_state_time < OPTIMISTIC_STATE_TTL:
                 return self._optimistic_state
-            self._optimistic_state = None
 
-        if self._updater.available and self._updater.data:
-            if self._state_key in self._updater.data:
-                device_value = get_safe_value(self._updater.data, self._state_key, int, 0)
-                new_device_state = bool(device_value)
-                self._last_device_state = new_device_state
-                self._last_successful_read = current_time
-
-                if self._optimistic_state is not None and self._optimistic_state != new_device_state:
-                    self._optimistic_state = None
-                return new_device_state
+        if self._updater.available and self._updater.data and self._state_key in self._updater.data:
+            device_value = get_safe_value(self._updater.data, self._state_key, int, 0)
+            return bool(device_value)
 
         if self._last_device_state is not None:
             if current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
@@ -150,6 +144,7 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data — reconcile with device state."""
+        availability_changed = self._update_availability_state()
         current_time = time.time()
 
         if self._updater.available and self._updater.data:
@@ -165,7 +160,16 @@ class BaseSwitchEntity(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
                     elif current_time - self._optimistic_state_time > 10:
                         self._optimistic_state = None
 
-        self.async_write_ha_state()
+        if (
+            self._optimistic_state is not None
+            and current_time - self._optimistic_state_time >= OPTIMISTIC_STATE_TTL
+        ):
+            self._optimistic_state = None
+
+        current_state = self.is_on
+        if availability_changed or self._last_written_state != current_state:
+            self._last_written_state = current_state
+            self.async_write_ha_state()
 
 
 class EveusStopChargingSwitch(BaseSwitchEntity):
@@ -212,12 +216,15 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity addition with delayed safe mode disable."""
         await super().async_added_to_hass()
-        self.hass.async_create_task(self._disable_safe_mode())
+        task = self.hass.async_create_task(self._disable_safe_mode())
+        if hasattr(self, "async_on_remove"):
+            self.async_on_remove(task.cancel)
 
     async def _disable_safe_mode(self) -> None:
         """Disable safe mode after first successful update."""
-        await asyncio.sleep(5)
-        self._safe_mode = False
+        with suppress(asyncio.CancelledError):
+            await asyncio.sleep(5)
+            self._safe_mode = False
 
     @property
     def is_on(self) -> bool:
@@ -251,7 +258,11 @@ class EveusResetCounterASwitch(BaseSwitchEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data — state based on counter value."""
-        self.async_write_ha_state()
+        availability_changed = self._update_availability_state()
+        current_state = self.is_on
+        if availability_changed or self._last_written_state != current_state:
+            self._last_written_state = current_state
+            self.async_write_ha_state()
 
 
 async def async_setup_entry(

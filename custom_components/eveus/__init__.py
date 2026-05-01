@@ -71,7 +71,7 @@ def _create_invalid_config_issue(
             translation_key="invalid_config",
         )
     except Exception as err:
-        _LOGGER.debug("Could not create Eveus repair issue: %s", err)
+        _LOGGER.debug("Could not create Eveus repair issue: %s", err, exc_info=True)
 
 
 def _delete_invalid_config_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -79,7 +79,7 @@ def _delete_invalid_config_issue(hass: HomeAssistant, entry: ConfigEntry) -> Non
     try:
         ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
     except Exception as err:
-        _LOGGER.debug("Could not delete Eveus repair issue: %s", err)
+        _LOGGER.debug("Could not delete Eveus repair issue: %s", err, exc_info=True)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -141,13 +141,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         _delete_invalid_config_issue(hass, entry)
 
-        device_number = entry.data.get("device_number")
-        if device_number is None:
+        raw_device_number = entry.data.get("device_number")
+        try:
+            device_number = int(raw_device_number)
+        except (TypeError, ValueError):
+            device_number = None
+
+        if device_number is None or device_number < 1:
             device_number = get_next_device_number(hass)
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
             _LOGGER.debug("Assigned device number %d to %s", device_number, host)
+        elif raw_device_number != device_number:
+            new_data = dict(entry.data)
+            new_data["device_number"] = device_number
+            hass.config_entries.async_update_entry(entry, data=new_data)
+            _LOGGER.debug("Normalized device number %d for %s", device_number, host)
 
         updater = EveusUpdater(
             host=host,
@@ -167,6 +177,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         await updater.async_config_entry_first_refresh()
 
+        entry.async_on_unload(updater.async_shutdown)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         entry.async_on_unload(entry.add_update_listener(update_listener))
 

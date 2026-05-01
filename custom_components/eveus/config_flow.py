@@ -122,12 +122,15 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize config-flow input before connection validation and storage."""
     host = validate_host(data[CONF_HOST])
     username, password = validate_credentials(data[CONF_USERNAME], data[CONF_PASSWORD])
+    model = data.get(CONF_MODEL)
+    if model not in MODELS:
+        raise vol.Invalid("Invalid charger model")
 
     return {
         CONF_HOST: host,
         CONF_USERNAME: username,
         CONF_PASSWORD: password,
-        CONF_MODEL: data[CONF_MODEL],
+        CONF_MODEL: model,
     }
 
 
@@ -185,7 +188,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             response.raise_for_status()
 
             try:
-                result = await response.json()
+                result = await response.json(content_type=None)
             except ValueError:
                 raise CannotConnect("Invalid response format")
 

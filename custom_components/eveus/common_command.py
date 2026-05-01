@@ -53,7 +53,6 @@ class CommandManager:
                     timeout=timeout,
                 ) as response:
                     response.raise_for_status()
-                    self._last_command_time = time.time()
                     self._consecutive_failures = 0
                     return True
 
@@ -66,8 +65,15 @@ class CommandManager:
             except Exception as err:
                 self._consecutive_failures += 1
                 if self._should_log_error():
-                    _LOGGER.debug("Command %s unexpected error: %s", command, err)
+                    _LOGGER.debug(
+                        "Command %s unexpected error: %s",
+                        command,
+                        err,
+                        exc_info=True,
+                    )
                 return False
+            finally:
+                self._last_command_time = time.time()
 
 
 async def send_eveus_command(
