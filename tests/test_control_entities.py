@@ -227,5 +227,80 @@ def test_reset_counter_switch_status_and_reset_behavior_unchanged() -> None:
     assert updater.commands == [("rstEM1", 0)]
 
     updater.command_result = False
-    asyncio.run(entity.async_turn_off())
+    import pytest
+    from homeassistant.exceptions import HomeAssistantError
+
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(entity.async_turn_off())
     assert updater.commands == [("rstEM1", 0), ("rstEM1", 0)]
+
+
+def test_stop_charging_switch_raises_on_command_failure() -> None:
+    import pytest
+    from homeassistant.exceptions import HomeAssistantError
+
+    updater = _Updater({"evseEnabled": "0"})
+    updater.command_result = False
+    entity = EveusStopChargingSwitch(updater)
+    _disable_state_writes(entity)
+
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(entity.async_turn_on())
+
+
+def test_current_number_raises_on_command_failure() -> None:
+    import pytest
+    from homeassistant.exceptions import HomeAssistantError
+
+    updater = _Updater({"currentSet": "16"})
+    updater.command_result = False
+    entity = EveusCurrentNumber(updater, "32A")
+    _disable_state_writes(entity)
+
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(entity.async_set_native_value(20))
+
+
+def test_switch_optimistic_state_survives_until_device_confirms() -> None:
+    """Toggle ON, ensure optimistic ON survives a coordinator read that
+    still shows OFF (charger hasn't committed yet)."""
+    updater = _Updater({"evseEnabled": "0"})
+    entity = EveusStopChargingSwitch(updater)
+    _disable_state_writes(entity)
+
+    asyncio.run(entity.async_turn_on())
+    assert entity.is_on is True
+    assert entity._optimistic_state is True
+
+    # Coordinator returns stale OFF — optimistic must hold ON within TTL window.
+    entity._handle_coordinator_update()
+    assert entity.is_on is True
+
+    # Device finally confirms ON — optimistic clears, state stays ON.
+    updater.data = {"evseEnabled": "1"}
+    entity._handle_coordinator_update()
+    assert entity._optimistic_state is None
+    assert entity.is_on is True
+
+
+def test_switch_rapid_toggle_does_not_flicker_back() -> None:
+    """ON, then OFF 2s later — a stale ON read must not flip the entity."""
+    updater = _Updater({"evseEnabled": "0"})
+    entity = EveusStopChargingSwitch(updater)
+    _disable_state_writes(entity)
+
+    asyncio.run(entity.async_turn_on())
+    asyncio.run(entity.async_turn_off())
+    assert entity.is_on is False
+    assert entity._optimistic_state is False
+
+    # Stale read still shows ON — optimistic OFF wins inside TTL.
+    updater.data = {"evseEnabled": "1"}
+    entity._handle_coordinator_update()
+    assert entity.is_on is False
+
+    # Device commits OFF — optimistic clears.
+    updater.data = {"evseEnabled": "0"}
+    entity._handle_coordinator_update()
+    assert entity.is_on is False
+    assert entity._optimistic_state is None

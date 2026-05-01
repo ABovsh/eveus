@@ -8,7 +8,7 @@ from .common_base import (
     EveusDiagnosticSensor,
 )
 from .common_network import EveusUpdater
-from .common_command import send_eveus_command, CommandManager
+from .common_command import CommandManager
 
 
 class EveusError(HomeAssistantError):
@@ -28,5 +28,4 @@ __all__ = [
     "CommandManager",
     "EveusError",
     "EveusConnectionError",
-    "send_eveus_command",
 ]

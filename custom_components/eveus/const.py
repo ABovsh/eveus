@@ -7,9 +7,13 @@ DOMAIN: Final[str] = "eveus"
 # Update intervals
 CHARGING_UPDATE_INTERVAL: Final[int] = 30
 IDLE_UPDATE_INTERVAL: Final[int] = 60
+OFFLINE_UPDATE_INTERVAL: Final[int] = 300
 RETRY_DELAY: Final[int] = 15
 UPDATE_TIMEOUT: Final[int] = 20
 COMMAND_TIMEOUT: Final[int] = 25
+
+# Charger device-state value that means "actively charging" (CHARGING_STATES[4]).
+DEVICE_STATE_CHARGING: Final[int] = 4
 
 # Availability and resilience - optimized for WiFi connections
 AVAILABILITY_GRACE_PERIOD: Final[int] = 60

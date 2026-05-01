@@ -13,6 +13,7 @@ from homeassistant.components.number import (
     NumberEntityDescription,
 )
 from homeassistant.core import HomeAssistant, callback, State
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.const import (
@@ -140,10 +141,15 @@ class EveusCurrentNumber(EveusNumberEntity):
                     self._optimistic_value = float(int_value)
                     self._optimistic_value_time = time.time()
                 else:
-                    _LOGGER.debug("Failed to set %s to %dA", self.name, int_value)
+                    raise HomeAssistantError(
+                        f"Eveus charger did not accept charging current = {int_value}A"
+                    )
 
+            except HomeAssistantError:
+                raise
             except Exception as err:
                 _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)
+                raise HomeAssistantError(f"Failed to set charging current: {err}") from err
             finally:
                 self._pending_value = None
                 self._last_command_time = time.time()
