@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.1b8 - 2026-05-02
+
+### Changed
+
+- Reduced post-command refresh delay from 4s to 2s for snappier UI feedback after switch toggles and current changes. The entity-level optimistic state TTL still guards against stale reads if the charger hasn't committed yet.
+- Reduced offline poll interval from 5 minutes to 2 minutes so the integration notices a charger coming back online much faster after a power cycle or network blip.
+
 ## 4.0.1b7 - 2026-05-02
 
 ### Added
