@@ -101,12 +101,16 @@ def test_current_number_update_clears_stale_mismatched_optimistic_value() -> Non
 
 
 def test_current_number_handles_failed_command() -> None:
+    import pytest
+    from homeassistant.exceptions import HomeAssistantError
+
     updater = _Updater({"currentSet": "16"})
     updater.command_result = False
     entity = EveusCurrentNumber(updater, "16A")
     _disable_state_writes(entity)
 
-    asyncio.run(entity.async_set_native_value(12))
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(entity.async_set_native_value(12))
 
     assert updater.commands == [("currentSet", 12)]
     assert entity._optimistic_value is None
@@ -187,12 +191,16 @@ def test_switch_update_clears_stale_mismatched_optimistic_state() -> None:
 
 
 def test_switch_failed_command_does_not_set_optimistic_state() -> None:
+    import pytest
+    from homeassistant.exceptions import HomeAssistantError
+
     updater = _Updater({"oneCharge": "0"})
     updater.command_result = False
     entity = EveusOneChargeSwitch(updater)
     _disable_state_writes(entity)
 
-    asyncio.run(entity.async_turn_on())
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(entity.async_turn_on())
 
     assert updater.commands == [("oneCharge", 1)]
     assert entity._optimistic_state is None
