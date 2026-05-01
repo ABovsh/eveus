@@ -179,13 +179,21 @@ def test_initial_network_failure_returns_empty_payload_to_allow_setup(
     assert updater.available is False
 
 
-def test_send_command_refreshes_data_only_after_success() -> None:
+def test_send_command_schedules_delayed_refresh_only_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
-    refreshes = 0
+    scheduled: list[tuple[float, object]] = []
+    cancel_calls = [0]
 
-    async def request_refresh() -> None:
-        nonlocal refreshes
-        refreshes += 1
+    def _cancel() -> None:
+        cancel_calls[0] += 1
+
+    def fake_async_call_later(hass: object, delay: float, action: object):
+        scheduled.append((delay, action))
+        return _cancel
+
+    monkeypatch.setattr(common_network, "async_call_later", fake_async_call_later)
 
     async def successful_command(command: str, value: object) -> bool:
         return True
@@ -193,16 +201,23 @@ def test_send_command_refreshes_data_only_after_success() -> None:
     async def failed_command(command: str, value: object) -> bool:
         return False
 
-    updater.async_request_refresh = request_refresh
     updater._command_manager = SimpleNamespace(send_command=successful_command)
 
     assert asyncio.run(updater.send_command("currentSet", 16)) is True
-    assert refreshes == 1
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == common_network.POST_COMMAND_REFRESH_DELAY
 
+    # Rapid second command should cancel the pending refresh and reschedule.
+    assert asyncio.run(updater.send_command("currentSet", 10)) is True
+    assert cancel_calls[0] == 1
+    assert len(scheduled) == 2
+
+    # Failure must not schedule a refresh and must not cancel the pending one.
     updater._command_manager = SimpleNamespace(send_command=failed_command)
 
     assert asyncio.run(updater.send_command("currentSet", 12)) is False
-    assert refreshes == 1
+    assert cancel_calls[0] == 1
+    assert len(scheduled) == 2
 
 
 def test_failure_recording_reduces_polling_when_device_appears_offline() -> None:

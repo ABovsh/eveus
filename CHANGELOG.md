@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.1b6 - 2026-05-02
+
+### Added
+
+- Faster UI feedback after toggling a switch or changing the charging current: the coordinator now schedules a single delayed refresh 4 seconds after a successful command instead of refreshing immediately. The charger needs a few seconds to reflect a new state in its API, so the previous immediate refresh often returned stale data and users had to wait up to a full poll interval (30 s) to see the change.
+- Rapid successive commands (e.g. toggling a switch off then back on) cancel and reschedule the pending refresh, so the refresh always fires 4 seconds after the most recent command. Combined with the existing entity-level optimistic state TTL this prevents stale-read flicker.
+- The pending delayed refresh is cancelled on coordinator shutdown so it never fires against a torn-down config entry.
+
 ## 4.0.1 - 2026-04-29
 
 Version 4.0.1 is a maintenance release focused on smoother upgrades, quieter normal operation, easier recovery, and more consistent entity behavior.

@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .common_command import CommandManager
@@ -22,6 +23,13 @@ from .const import (
     RETRY_DELAY,
     UPDATE_TIMEOUT,
 )
+
+# Delay before refreshing data after a successful command. The charger
+# typically needs 5-10s to reflect a state change in its API, but a slightly
+# earlier read is fine because the entity-level optimistic state TTL keeps
+# the user-visible value stable until the device confirms.
+POST_COMMAND_REFRESH_DELAY = 4
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -62,6 +70,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._last_error: str | None = None
         self._device_available = True
         self._next_poll_attempt = 0.0
+        self._post_command_refresh_cancel = None
 
     @property
     def available(self) -> bool:
@@ -100,11 +109,41 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         return async_get_clientsession(self.hass)
 
     async def send_command(self, command: str, value: Any) -> bool:
-        """Send command to the device and refresh data on success."""
+        """Send command to the device and schedule a delayed refresh on success."""
         success = await self._command_manager.send_command(command, value)
         if success:
-            await self.async_request_refresh()
+            self._schedule_post_command_refresh()
         return success
+
+    def _schedule_post_command_refresh(self) -> None:
+        """Schedule a single delayed refresh after a successful command.
+
+        Rapid toggles cancel any pending refresh and reschedule, so the refresh
+        always fires POST_COMMAND_REFRESH_DELAY seconds after the most recent
+        command — by which point the charger has committed the latest state.
+        Combined with the entity-level optimistic TTL this prevents the
+        flicker pattern: toggle ON → toggle OFF → stale ON read.
+        """
+        if self._post_command_refresh_cancel is not None:
+            self._post_command_refresh_cancel()
+            self._post_command_refresh_cancel = None
+
+        def _fire(_now) -> None:
+            self._post_command_refresh_cancel = None
+            if self.hass is None or self.hass.is_stopping:
+                return
+            self.hass.async_create_task(self.async_request_refresh())
+
+        self._post_command_refresh_cancel = async_call_later(
+            self.hass, POST_COMMAND_REFRESH_DELAY, _fire
+        )
+
+    async def async_shutdown(self) -> None:
+        """Cancel any pending delayed refresh and shut down."""
+        if self._post_command_refresh_cancel is not None:
+            self._post_command_refresh_cancel()
+            self._post_command_refresh_cancel = None
+        await super().async_shutdown()
 
     def _should_log(self) -> bool:
         """Rate-limit availability logging."""
@@ -147,10 +186,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if not self._silent_mode and self._should_log():
             _LOGGER.debug("Connection issue with %s: %s", self.host, type(error).__name__)
-
-    async def async_shutdown(self) -> None:
-        """Shut down coordinator refresh handling."""
-        await super().async_shutdown()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
