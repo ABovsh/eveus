@@ -13,7 +13,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .common_command import CommandManager
@@ -27,12 +26,10 @@ from .const import (
     UPDATE_TIMEOUT,
 )
 
-# Delays after a successful command. The charger commits state changes
-# anywhere from ~1s (current change) to ~10s (Stop Charging transitioning
-# the device to Standby). Two refreshes give the best of both: the early
-# one catches the common fast case for snappy UI; the later one is the
-# safety net so users never have to wait the full poll interval.
-POST_COMMAND_REFRESH_DELAYS: tuple[int, ...] = (2, 7)
+# Single refresh 5 s after a successful command — long enough for the
+# charger to commit any state change (including slow Stop Charging
+# transitions) while still giving snappy UI feedback.
+POST_COMMAND_REFRESH_DELAYS: tuple[int, ...] = (5,)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +71,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._last_error: str | None = None
         self._device_available = True
         self._next_poll_attempt = 0.0
-        self._post_command_refresh_cancels: list = []
+        self._post_command_refresh_tasks: list[asyncio.Task] = []
 
     @property
     def available(self) -> bool:
@@ -125,43 +122,47 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._schedule_post_command_refresh()
         return success
 
+    async def _delayed_refresh(self, delay: float) -> None:
+        """Wait `delay` seconds then run an immediate, non-debounced refresh.
+
+        async_refresh (not async_request_refresh) is used because the latter
+        is debounced ~10s inside HA's coordinator and would defeat the whole
+        point of scheduling a quick post-command refresh.
+        """
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if self.hass is None or self.hass.is_stopping:
+            return
+        try:
+            await self.async_refresh()
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Post-command refresh failed", exc_info=True)
+
     def _schedule_post_command_refresh(self) -> None:
         """Schedule delayed refreshes after a successful command.
 
-        Two refreshes are scheduled (at POST_COMMAND_REFRESH_DELAYS): the early
-        one catches fast-committing changes (e.g. setting current) for snappy
-        UI feedback; the later one catches slow transitions (e.g. Stop
-        Charging, where the charger may take ~5-10s to drop to Standby).
+        Two refreshes (at POST_COMMAND_REFRESH_DELAYS): the early one catches
+        fast-committing changes (e.g. setting current) for snappy UI feedback;
+        the later one catches slow transitions (e.g. Stop Charging, where the
+        charger may take ~5-10s to drop into Standby).
 
         Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
         always fire relative to the most recent command. Combined with the
         entity-level optimistic state TTL this prevents stale-read flicker.
         """
         self._cancel_pending_refreshes()
-
-        def _make_fire():
-            def _fire(_now) -> None:
-                if self.hass is None or self.hass.is_stopping:
-                    return
-                # Use async_refresh (immediate) rather than async_request_refresh
-                # (debounced ~10s by HA's coordinator). Debouncing makes the
-                # post-command refresh effectively fire 12+ seconds late, which
-                # defeats the whole point of scheduling it.
-                self.hass.async_create_task(self.async_refresh())
-            return _fire
-
         for delay in POST_COMMAND_REFRESH_DELAYS:
-            cancel = async_call_later(self.hass, delay, _make_fire())
-            self._post_command_refresh_cancels.append(cancel)
+            task = self.hass.async_create_task(self._delayed_refresh(delay))
+            self._post_command_refresh_tasks.append(task)
 
     def _cancel_pending_refreshes(self) -> None:
-        """Cancel any pending post-command refreshes."""
-        for cancel in self._post_command_refresh_cancels:
-            try:
-                cancel()
-            except Exception:  # noqa: BLE001 - cancel callbacks are noexcept by contract
-                pass
-        self._post_command_refresh_cancels.clear()
+        """Cancel any pending post-command refresh tasks."""
+        for task in self._post_command_refresh_tasks:
+            if not task.done():
+                task.cancel()
+        self._post_command_refresh_tasks.clear()
 
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""

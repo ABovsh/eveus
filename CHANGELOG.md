@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.0.1b11 - 2026-05-02
+
+### Fixed
+
+- Post-command refreshes now actually fire. The previous implementation used `async_call_later` with a plain sync callback, which Home Assistant wraps as an executor job — meaning the timer fired on a worker thread where `hass.async_create_task` can't schedule on the event loop. The scheduled refreshes silently never ran, so users had to wait for the next regular poll (or hit Force Refresh) to see state changes after a switch toggle or current change. Replaced with a plain `asyncio.sleep` + `async_refresh` task that runs entirely on the event loop.
+
+### Changed
+
+- Simplified post-command refresh from two delayed refreshes (2 s + 7 s) to a single refresh at **5 s**. The 5 s window covers both fast-committing changes (e.g. current slider) and slower transitions (e.g. Stop Charging taking up to ~5 s to drop into Standby), with less network chatter. Result: all entities update within ~5 s of any switch toggle or current change.
+
 ## 4.0.1b10 - 2026-05-02
 
 ### Fixed
