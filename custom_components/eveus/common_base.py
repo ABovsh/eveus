@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import State, callback
@@ -16,14 +16,14 @@ from .const import (
     AVAILABILITY_GRACE_PERIOD,
     CONTROL_GRACE_PERIOD,
     ERROR_LOG_RATE_LIMIT,
-    STATE_CACHE_TTL,
 )
-from .utils import get_device_info, get_device_suffix
+from .utils import RateLog, get_device_info, get_device_suffix
 
 if TYPE_CHECKING:
     from .common_network import EveusUpdater
 
 _LOGGER = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
@@ -40,12 +40,10 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         self._device_number = device_number
 
         self._state_restored = False
-        self._last_available_log = 0.0
+        self._availability_log = RateLog()
         self._last_known_available = True
         self._unavailable_since: float | None = None
         self._entity_available = True
-        self._cached_data: dict[str, Any] | None = None
-        self._cached_data_time = 0.0
 
         if self.ENTITY_NAME is None:
             raise NotImplementedError("ENTITY_NAME must be defined in child class")
@@ -54,7 +52,6 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         device_suffix = get_device_suffix(device_number)
         entity_key = self.ENTITY_NAME.lower().replace(" ", "_")
         self._attr_unique_id = f"eveus{device_suffix}_{entity_key}"
-        self._refresh_cached_data()
         self._attr_device_info = self._build_device_info()
         self._device_info_finalized = self._device_info_has_firmware()
 
@@ -78,7 +75,6 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         current_time = time.time()
 
         if self._updater.available:
-            self._refresh_cached_data()
             if self._unavailable_since is not None:
                 if self._should_log_availability():
                     _LOGGER.debug("%s %s connection restored", label, self.unique_id)
@@ -105,8 +101,6 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
                 unavailable_duration,
             )
         self._last_known_available = False
-        self._cached_data = None
-        self._cached_data_time = 0
         if clear_optimistic_state:
             clear = getattr(self, "_clear_optimistic_state", None)
             if callable(clear):
@@ -116,31 +110,15 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
 
     def _should_log_availability(self) -> bool:
         """Rate limit availability logging."""
-        current_time = time.time()
-        if current_time - self._last_available_log > ERROR_LOG_RATE_LIMIT:
-            self._last_available_log = current_time
-            return True
-        return False
-
-    def _refresh_cached_data(self) -> None:
-        """Snapshot coordinator data for short fallback periods."""
-        if isinstance(self._updater.data, dict) and self._updater.data:
-            self._cached_data = dict(self._updater.data)
-            self._cached_data_time = time.time()
+        return self._availability_log.should_log(ERROR_LOG_RATE_LIMIT)
 
     def get_cached_data_value(self, key: str, default: Any = None) -> Any:
-        """Get value from current data or cached data as fallback without mutation."""
-        data = self._updater.data or {}
-        if key in data:
-            return data[key]
-
-        if (
-            self._cached_data
-            and key in self._cached_data
-            and time.time() - self._cached_data_time < STATE_CACHE_TTL
-        ):
-            return self._cached_data[key]
-
+        """Get a value from the current coordinator payload."""
+        data = self._updater.data
+        if data is not None:
+            value = data.get(key)
+            if value is not None:
+                return value
         return default
 
     def _build_device_info(self) -> dict[str, Any]:
@@ -148,7 +126,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         data = self._updater.data if isinstance(self._updater.data, dict) else None
         return get_device_info(
             self._updater.host,
-            data or self._cached_data or {},
+            data or {},
             self._device_number,
         )
 
@@ -240,6 +218,61 @@ class ControlEntityMixin:
             label=self._control_entity_label,
             clear_optimistic_state=True,
         )
+
+
+class OptimisticControlMixin(Generic[T]):
+    """Shared optimistic-state reconciliation for command-capable controls."""
+
+    def _init_optimistic_control(self) -> None:
+        """Initialize common optimistic-control state."""
+        self._optimistic_value: T | None = None
+        self._optimistic_value_time = 0.0
+        self._last_device_value: T | None = None
+        self._last_successful_read = 0.0
+        self._last_command_time = 0.0
+
+    def _clear_optimistic_state(self) -> None:
+        """Clear optimistic state when the device is offline."""
+        self._optimistic_value = None
+
+    def _set_optimistic_value(self, value: T) -> None:
+        """Store an optimistic value after a successful command."""
+        self._optimistic_value = value
+        self._optimistic_value_time = time.time()
+
+    def _optimistic_value_is_valid(self, current_time: float, ttl: float) -> bool:
+        """Return whether the optimistic value should still be trusted."""
+        return (
+            self._optimistic_value is not None
+            and current_time - self._optimistic_value_time < ttl
+        )
+
+    def _expire_optimistic_value(self, current_time: float, ttl: float) -> None:
+        """Expire optimistic state after its absolute TTL."""
+        if (
+            self._optimistic_value is not None
+            and current_time - self._optimistic_value_time >= ttl
+        ):
+            self._optimistic_value = None
+
+    def _reconcile_with_device(
+        self,
+        new_value: T,
+        current_time: float,
+        confirm_fn: Callable[[T, T], bool],
+        *,
+        mismatch_ttl: float = 10.0,
+    ) -> None:
+        """Record a device value and clear optimistic state when reconciled."""
+        self._last_device_value = new_value
+        self._last_successful_read = current_time
+
+        if self._optimistic_value is None:
+            return
+        if confirm_fn(self._optimistic_value, new_value):
+            self._optimistic_value = None
+        elif current_time - self._optimistic_value_time > mismatch_ttl:
+            self._optimistic_value = None
 
 
 class EveusSensorBase(BaseEveusEntity, SensorEntity):

@@ -8,6 +8,7 @@ from typing import Any
 import aiohttp
 
 from .const import COMMAND_TIMEOUT, ERROR_LOG_RATE_LIMIT
+from .utils import RateLog
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,15 +30,16 @@ class CommandManager:
         self._lock = asyncio.Lock()
         self._last_command_time = 0
         self._consecutive_failures = 0
-        self._last_error_log = 0
+        self._error_log = RateLog()
+
+    @property
+    def consecutive_failures(self) -> int:
+        """Return consecutive command failures."""
+        return self._consecutive_failures
 
     def _should_log_error(self) -> bool:
         """Rate limit error logging."""
-        current_time = time.time()
-        if current_time - self._last_error_log > ERROR_LOG_RATE_LIMIT:
-            self._last_error_log = current_time
-            return True
-        return False
+        return self._error_log.should_log(ERROR_LOG_RATE_LIMIT)
 
     async def send_command(self, command: str, value: Any) -> bool:
         """Send command with rate limiting, retry/backoff, and error handling."""

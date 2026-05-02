@@ -10,7 +10,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
-from .common import BaseEveusEntity
+from .common_base import BaseEveusEntity
 
 _LOGGER = logging.getLogger(__name__)
 

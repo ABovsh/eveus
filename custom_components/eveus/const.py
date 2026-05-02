@@ -1,6 +1,5 @@
 """Constants for the Eveus integration."""
 from typing import Final, Dict, List, Literal
-from functools import lru_cache
 
 DOMAIN: Final[str] = "eveus"
 
@@ -20,6 +19,7 @@ AVAILABILITY_GRACE_PERIOD: Final[int] = 60
 CONTROL_GRACE_PERIOD: Final[int] = 30
 ERROR_LOG_RATE_LIMIT: Final[int] = 300
 STATE_CACHE_TTL: Final[int] = 60
+OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 
 # Current limits
 MIN_CURRENT: Final[int] = 7
@@ -93,19 +93,16 @@ NORMAL_SUBSTATES: Final[Dict[SubState, str]] = {
 }
 
 
-@lru_cache(maxsize=32)
 def get_charging_state(state_value: int) -> str:
-    """Get cached charging state mapping."""
+    """Get charging state mapping."""
     return CHARGING_STATES.get(state_value, "Unknown")
 
 
-@lru_cache(maxsize=32)
 def get_error_state(state_value: int) -> str:
-    """Get cached error state mapping."""
+    """Get error state mapping."""
     return ERROR_STATES.get(state_value, "Unknown Error")
 
 
-@lru_cache(maxsize=32)
 def get_normal_substate(state_value: int) -> str:
-    """Get cached normal substate mapping."""
+    """Get normal substate mapping."""
     return NORMAL_SUBSTATES.get(state_value, "Unknown State")

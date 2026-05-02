@@ -25,6 +25,7 @@ from .const import (
     RETRY_DELAY,
     UPDATE_TIMEOUT,
 )
+from .utils import RateLog
 
 # Single refresh 5 s after a successful command — long enough for the
 # charger to commit any state change (including slow Stop Charging
@@ -32,6 +33,14 @@ from .const import (
 POST_COMMAND_REFRESH_DELAYS: tuple[int, ...] = (5,)
 
 _LOGGER = logging.getLogger(__name__)
+_CHARGING_INTERVAL = timedelta(seconds=CHARGING_UPDATE_INTERVAL)
+_IDLE_INTERVAL = timedelta(seconds=IDLE_UPDATE_INTERVAL)
+_OFFLINE_INTERVAL = timedelta(seconds=OFFLINE_UPDATE_INTERVAL)
+_UPDATE_INTERVALS = {
+    CHARGING_UPDATE_INTERVAL: _CHARGING_INTERVAL,
+    IDLE_UPDATE_INTERVAL: _IDLE_INTERVAL,
+    OFFLINE_UPDATE_INTERVAL: _OFFLINE_INTERVAL,
+}
 
 
 class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
@@ -51,7 +60,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             config_entry=config_entry,
             name=f"Eveus EV Charger {host}",
-            update_interval=timedelta(seconds=CHARGING_UPDATE_INTERVAL),
+            update_interval=_CHARGING_INTERVAL,
         )
         self.host = host
         self.username = username
@@ -65,7 +74,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._last_success_time = time.time()
         self._latency_samples: deque[float] = deque(maxlen=10)
 
-        self._last_availability_log = 0
+        self._availability_log = RateLog()
         self._silent_mode = False
         self._offline_announced = False
         self._last_error: str | None = None
@@ -100,6 +109,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             "success_rate": success_rate,
             "latency_avg": avg_latency,
             "consecutive_failures": self._consecutive_failures,
+            "consecutive_command_failures": self._command_manager.consecutive_failures,
             "is_healthy": success_rate > 80 and time.time() - self._last_success_time < 300,
             "last_success_time": self._last_success_time,
             "last_error": self._last_error,
@@ -171,11 +181,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _should_log(self) -> bool:
         """Rate-limit availability logging."""
-        current_time = time.time()
-        if current_time - self._last_availability_log > ERROR_LOG_RATE_LIMIT:
-            self._last_availability_log = current_time
-            return True
-        return False
+        return self._availability_log.should_log(ERROR_LOG_RATE_LIMIT)
 
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
@@ -233,7 +239,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _set_update_interval(self, seconds: int) -> None:
         """Apply a new poll interval if it differs from the current one."""
-        new_interval = timedelta(seconds=seconds)
+        new_interval = _UPDATE_INTERVALS.get(seconds)
+        if new_interval is None:
+            new_interval = timedelta(seconds=seconds)
         if self.update_interval != new_interval:
             self.update_interval = new_interval
 
@@ -241,8 +249,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch current device data."""
         start_time = time.time()
         if self._next_poll_attempt > start_time:
-            if self.data is None:
-                return {}
             raise UpdateFailed(f"Skipping poll for {self.host} during offline backoff")
 
         try:
@@ -274,6 +280,4 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             asyncio.TimeoutError,
         ) as err:
             self._record_failure(err)
-            if self.data is None:
-                return {}
             raise UpdateFailed(f"Connection issue with {self.host}: {type(err).__name__}") from err

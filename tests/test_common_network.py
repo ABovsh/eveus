@@ -181,7 +181,7 @@ def test_update_data_marks_unavailable_and_raises_update_failed_on_network_failu
     assert updater.connection_quality["last_error"] == "TimeoutError"
 
 
-def test_initial_network_failure_returns_empty_payload_to_allow_setup(
+def test_initial_network_failure_raises_update_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -191,8 +191,18 @@ def test_initial_network_failure_returns_empty_payload_to_allow_setup(
     )
     updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
 
-    assert asyncio.run(updater._async_update_data()) == {}
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
     assert updater.available is False
+
+
+def test_offline_backoff_skip_raises_even_without_prior_data() -> None:
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater.data = None
+    updater._next_poll_attempt = time.time() + RETRY_DELAY
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
 
 
 def test_send_command_schedules_delayed_refresh_only_after_success() -> None:
