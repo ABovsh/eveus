@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import logging
-import time
-from typing import Any, Callable, Dict, List, Optional
+import math
+from typing import Any, Callable, Dict, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
-from zoneinfo import ZoneInfo
+from functools import lru_cache
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -23,7 +23,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.entity import EntityCategory
 
-from .common import EveusSensorBase
+from .common_base import EveusSensorBase
 from .const import (
     get_charging_state,
     get_error_state,
@@ -31,22 +31,16 @@ from .const import (
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
 )
-from .utils import get_safe_value, is_dst, format_duration
+from .utils import RateLog, get_safe_value, format_duration
 
 _LOGGER = logging.getLogger(__name__)
-
-# Rate-limited error logging
-_last_error_logs: Dict[str, float] = {}
+_MAX_ERROR_LOG_KEYS = 64
+_SENSOR_FUNCTION_LOG = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
 
 
 def _should_log_error(function_name: str) -> bool:
-    """Check if we should log errors for a function (rate limited)."""
-    current_time = time.time()
-    last_log = _last_error_logs.get(function_name, 0)
-    if current_time - last_log > ERROR_LOG_RATE_LIMIT:
-        _last_error_logs[function_name] = current_time
-        return True
-    return False
+    """Check if a module-level sensor helper should log an error."""
+    return _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, function_name)
 
 
 class SensorType(Enum):
@@ -87,9 +81,7 @@ class OptimizedEveusSensor(EveusSensorBase):
         super().__init__(updater, device_number)
 
         self._spec = spec
-        self._cached_value = None
-        self._cache_timestamp = 0
-        self._cache_ttl = 30
+        self._error_log = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
 
         if spec.icon:
             self._attr_icon = spec.icon
@@ -103,53 +95,42 @@ class OptimizedEveusSensor(EveusSensorBase):
             self._attr_suggested_display_precision = spec.precision
         if spec.category:
             self._attr_entity_category = spec.category
+        self._attr_extra_state_attributes = {}
+
+    def _should_log_error(self, function_name: str) -> bool:
+        """Check if we should log errors for a function (rate limited)."""
+        return self._error_log.should_log(ERROR_LOG_RATE_LIMIT, function_name)
 
     def _get_sensor_value(self) -> Any:
-        """Return cached or computed sensor value."""
+        """Return computed sensor value from coordinator data."""
         if not self._updater.available:
-            self._cached_value = None
-            self._cache_timestamp = 0
             return None
-
-        current_time = time.time()
-
-        # Use cache for non-calculated sensors
-        if (
-            self._spec.sensor_type != SensorType.CALCULATED
-            and self._cached_value is not None
-            and current_time - self._cache_timestamp < self._cache_ttl
-        ):
-            return self._cached_value
 
         try:
-            value = self._spec.value_fn(self._updater, self.hass)
-            if self._updater.available and value is not None:
-                self._cached_value = value
-                self._cache_timestamp = current_time
-            return value
+            return self._spec.value_fn(self._updater, self.hass)
         except Exception as err:
-            if _should_log_error(f"sensor_{self._spec.key}"):
-                _LOGGER.debug("Error getting value for %s: %s", self.name, err)
+            if self._should_log_error(f"sensor_{self._spec.key}"):
+                _LOGGER.debug("Error getting value for %s: %s", self.name, err, exc_info=True)
             return None
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Clear derived cache when fresh coordinator data arrives."""
-        self._cache_timestamp = 0
-        self.async_write_ha_state()
-
-    @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
-        """Return attributes."""
+    def _update_extra_state_attributes(self) -> bool:
+        """Refresh cached attributes from coordinator data."""
+        previous_attrs = self._attr_extra_state_attributes
+        attrs: Dict[str, Any] = {}
         if self._spec.attributes_fn:
             try:
-                if not self._updater.available:
-                    return {}
-                return self._spec.attributes_fn(self._updater, self.hass)
+                if self._updater.available:
+                    attrs = self._spec.attributes_fn(self._updater, self.hass)
             except Exception as err:
-                if _should_log_error(f"attributes_{self._spec.key}"):
-                    _LOGGER.debug("Error getting attributes for %s: %s", self.name, err)
-        return {}
+                if self._should_log_error(f"attributes_{self._spec.key}"):
+                    _LOGGER.debug(
+                        "Error getting attributes for %s: %s",
+                        self.name,
+                        err,
+                        exc_info=True,
+                    )
+        self._attr_extra_state_attributes = attrs or {}
+        return previous_attrs != self._attr_extra_state_attributes
 
 
 # =============================================================================
@@ -172,8 +153,13 @@ def _get_data_value(updater, key: str, converter=float, default=None):
 def _make_value_getter(key: str, precision: int = 0, transform: Callable = None):
     """Factory for simple data getter functions."""
     def getter(updater, hass):
-        value = _get_data_value(updater, key)
-        if value is None:
+        if not updater.available or not updater.data:
+            return None
+        try:
+            value = float(updater.data[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
             return None
         if transform:
             value = transform(value)
@@ -261,23 +247,14 @@ def get_system_time(updater, hass) -> Optional[str]:
         if timestamp is None:
             return None
 
-        ha_timezone = hass.config.time_zone
-        if not ha_timezone:
-            return None
-
-        offset = 7200
-        if is_dst(ha_timezone, timestamp):
-            offset += 3600
-
-        corrected_timestamp = timestamp - offset
-        dt_corrected = datetime.fromtimestamp(corrected_timestamp, tz=timezone.utc)
-        local_tz = ZoneInfo(ha_timezone)
-        dt_local = dt_corrected.astimezone(local_tz)
-        return dt_local.strftime("%H:%M")
+        # The charger reports systemTime as a local wall-clock value encoded in
+        # epoch seconds. Applying HA's timezone here shifts the displayed clock
+        # by the local UTC offset, so format the encoded clock directly.
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%H:%M")
 
     except Exception as err:
         if _should_log_error("get_system_time"):
-            _LOGGER.debug("Error getting system time: %s", err)
+            _LOGGER.debug("Error getting system time: %s", err, exc_info=True)
         return None
 
 
@@ -323,7 +300,9 @@ def get_connection_quality(updater, hass) -> float:
     try:
         metrics = updater.connection_quality
         return round(max(0, min(100, metrics.get("success_rate", 0))))
-    except Exception:
+    except Exception as err:
+        if _should_log_error("get_connection_quality"):
+            _LOGGER.debug("Error getting connection quality: %s", err, exc_info=True)
         return 100
 
 
@@ -344,7 +323,9 @@ def get_connection_attrs(updater, hass) -> dict:
                 "Poor" if success_rate > 30 else "Critical"
             ),
         }
-    except Exception:
+    except Exception as err:
+        if _should_log_error("get_connection_attrs"):
+            _LOGGER.debug("Error getting connection attributes: %s", err, exc_info=True)
         return {"status": "Error"}
 
 
@@ -352,7 +333,7 @@ def get_connection_attrs(updater, hass) -> dict:
 # Sensor specification factory
 # =============================================================================
 
-def create_sensor_specifications() -> List[SensorSpec]:
+def create_sensor_specifications() -> tuple[SensorSpec, ...]:
     """Create all sensor specifications using factory pattern."""
 
     # Measurement sensors
@@ -517,9 +498,10 @@ def create_sensor_specifications() -> List[SensorSpec]:
         ),
     ]
 
-    return measurement_specs + energy_specs + diagnostic_specs + special_specs
+    return tuple(measurement_specs + energy_specs + diagnostic_specs + special_specs)
 
 
-def get_sensor_specifications() -> List[SensorSpec]:
+@lru_cache(maxsize=1)
+def get_sensor_specifications() -> tuple[SensorSpec, ...]:
     """Get all sensor specifications."""
     return create_sensor_specifications()

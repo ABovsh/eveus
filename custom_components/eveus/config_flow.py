@@ -5,6 +5,7 @@ import logging
 import asyncio
 import ipaddress
 import re
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
 
@@ -13,7 +14,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import aiohttp_client
@@ -26,8 +27,10 @@ from .const import (
     MIN_CURRENT,
     MODEL_MAX_CURRENT,
 )
+from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
+_HOSTNAME_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
 
 
 def _is_valid_ip(ip: str) -> bool:
@@ -49,8 +52,7 @@ def _is_valid_hostname(hostname: str) -> bool:
         hostname = hostname[:-1]
     if not hostname:
         return False
-    allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
-    return all(allowed.match(x) for x in hostname.split("."))
+    return all(_HOSTNAME_RE.match(x) for x in hostname.split("."))
 
 
 def validate_host(host: str) -> str:
@@ -66,13 +68,15 @@ def validate_host(host: str) -> str:
     if not _is_valid_ip(host) and not _is_valid_hostname(host):
         raise vol.Invalid("Invalid IP address or hostname")
 
+    if host.endswith("."):
+        host = host[:-1]
+
     return host
 
 
 def validate_credentials(username: str, password: str) -> tuple[str, str]:
     """Validate credentials input."""
     username = username.strip()
-    password = password.strip()
 
     if not username or not password:
         raise vol.Invalid("Username and password cannot be empty")
@@ -117,12 +121,15 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize config-flow input before connection validation and storage."""
     host = validate_host(data[CONF_HOST])
     username, password = validate_credentials(data[CONF_USERNAME], data[CONF_PASSWORD])
+    model = data.get(CONF_MODEL)
+    if model not in MODELS:
+        raise vol.Invalid("Invalid charger model")
 
     return {
         CONF_HOST: host,
         CONF_USERNAME: username,
         CONF_PASSWORD: password,
-        CONF_MODEL: data[CONF_MODEL],
+        CONF_MODEL: model,
     }
 
 
@@ -143,6 +150,17 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
 
 
 STEP_USER_DATA_SCHEMA = build_user_data_schema()
+
+
+def build_reauth_data_schema(defaults: Mapping[str, Any] | None = None) -> vol.Schema:
+    """Build reauth schema for credential updates."""
+    defaults = defaults or {}
+    return vol.Schema(
+        {
+            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
+            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): str,
+        }
+    )
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
@@ -169,7 +187,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             response.raise_for_status()
 
             try:
-                result = await response.json()
+                result = await response.json(content_type=None)
             except ValueError:
                 raise CannotConnect("Invalid response format")
 
@@ -197,7 +215,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Eveus."""
 
-    VERSION = 1
+    VERSION = CONFIG_ENTRY_VERSION
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -289,30 +307,59 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> config_entries.OptionsFlow:
-        """Get the options flow for this handler."""
-        return OptionsFlowHandler(config_entry)
+    async def async_step_reauth(
+        self,
+        entry_data: Mapping[str, Any],
+    ) -> FlowResult:
+        """Handle reauthentication when stored credentials fail."""
+        return await self.async_step_reauth_confirm()
 
-
-class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle options flow for Eveus integration."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-
-    async def async_step_init(
+    async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage basic options."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+        """Update credentials for an existing Eveus charger."""
+        entry = self._get_reauth_entry()
+        errors = {}
 
-        return self.async_show_form(step_id="init", data_schema=vol.Schema({}))
+        if user_input is not None:
+            try:
+                merged_data = dict(entry.data)
+                merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
+                merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+
+                info = await validate_input(self.hass, merged_data)
+                entry_data = info["data"]
+
+                await self.async_set_unique_id(entry_data[CONF_HOST])
+                if entry.unique_id != entry_data[CONF_HOST]:
+                    return self.async_abort(reason="wrong_device")
+
+                return self.async_update_reload_and_abort(
+                    entry,
+                    unique_id=entry_data[CONF_HOST],
+                    title=info["title"],
+                    data=entry_data,
+                )
+
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except InvalidInput as err:
+                errors["base"] = "invalid_input"
+                _LOGGER.error("Invalid reauth input: %s", str(err))
+            except InvalidDevice as err:
+                errors["base"] = "invalid_device"
+                _LOGGER.error("Invalid reauth device: %s", str(err))
+            except Exception:
+                _LOGGER.exception("Unexpected reauth exception")
+                errors["base"] = "unknown"
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=build_reauth_data_schema(entry.data),
+            errors=errors,
+        )
 
 
 class CannotConnect(HomeAssistantError):
