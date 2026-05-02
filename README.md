@@ -2,7 +2,7 @@
 
 ![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?color=41BDF5&logo=home-assistant&label=Downloads&suffix=%20downloads&style=for-the-badge)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.0.1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.1.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 Local Home Assistant integration for Eveus EV chargers. It adds charger monitoring, current control, charging mode switches, energy and cost sensors, optional EV battery estimates, diagnostics, and multi-charger support.

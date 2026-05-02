@@ -21,10 +21,8 @@ def test_manifest_domain_matches_integration_directory() -> None:
 def test_manifest_readme_and_changelog_versions_match() -> None:
     """Manifest, README badge and CHANGELOG must agree on the release line.
 
-    The release line is the X.Y.Z prefix; pre-release suffixes (e.g. b8) are
-    allowed in the manifest so we can ship betas without the README badge
-    flipping every iteration. CHANGELOG must contain a heading for the
-    manifest version (with or without suffix).
+    The release line is the X.Y.Z version published in the manifest, README,
+    and CHANGELOG.
     """
     import re
 
@@ -39,7 +37,7 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     assert base is not None, version
     base_version = base.group(1)
 
-    assert base_version == "4.0.1"
+    assert base_version == "4.1.0"
     assert f"version-{base_version}-blue" in readme
     assert f"## {version}" in changelog
 
