@@ -4,11 +4,10 @@ from __future__ import annotations
 import logging
 import math
 from typing import Any, Callable, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
-from zoneinfo import ZoneInfo
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -248,11 +247,10 @@ def get_system_time(updater, hass) -> Optional[str]:
         if timestamp is None:
             return None
 
-        ha_timezone = hass.config.time_zone
-        if not ha_timezone:
-            return None
-
-        return datetime.fromtimestamp(timestamp, tz=ZoneInfo(ha_timezone)).strftime("%H:%M")
+        # The charger reports systemTime as a local wall-clock value encoded in
+        # epoch seconds. Applying HA's timezone here shifts the displayed clock
+        # by the local UTC offset, so format the encoded clock directly.
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%H:%M")
 
     except Exception as err:
         if _should_log_error("get_system_time"):

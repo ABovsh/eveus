@@ -146,6 +146,16 @@ def test_session_ground_system_time_and_connection_helpers() -> None:
     assert get_connection_attrs(updater, hass)["status"] == "Fair"
 
 
+def test_system_time_uses_charger_encoded_wall_clock_for_kyiv() -> None:
+    hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kyiv"))
+    updater = SimpleNamespace(
+        available=True,
+        data={"systemTime": "1777725240"},
+    )
+
+    assert get_system_time(updater, hass) == "12:34"
+
+
 def test_connection_helpers_handle_errors() -> None:
     updater = SimpleNamespace(available=True)
 
