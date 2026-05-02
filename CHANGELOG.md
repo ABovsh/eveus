@@ -1,118 +1,36 @@
 # Changelog
 
-## 4.0.1b12 - 2026-05-02
+## 4.1.0 - 2026-05-02
 
-### Fixed
-
-- Unload failures now propagate through Home Assistant instead of returning `False` and leaving the config entry stuck in `FAILED_UNLOAD`.
-- Offline backoff skips now raise `UpdateFailed`, keeping coordinator health and updater availability in agreement.
-- Control entities now ignore stale coordinator reads while a switch or current command is in flight, preventing optimistic UI flicker.
-- System Time now uses Home Assistant's configured timezone instead of a hard-coded UTC+2/UTC+3 offset.
-
-### Changed
-
-- Removed per-entity coordinator payload snapshots and now read directly from coordinator data.
-- Consolidated optimistic control reconciliation and rate-limited logging helpers.
-- Simplified normal switch creation from entity descriptions and split reset-counter behavior into its own base class.
-- Removed the dead `common.py` re-export shim.
-- Reduced minor hot-path allocations and redundant helper-cache checks.
-
-## 4.0.1b11 - 2026-05-02
-
-### Fixed
-
-- Post-command refreshes now actually fire. The previous implementation used `async_call_later` with a plain sync callback, which Home Assistant wraps as an executor job — meaning the timer fired on a worker thread where `hass.async_create_task` can't schedule on the event loop. The scheduled refreshes silently never ran, so users had to wait for the next regular poll (or hit Force Refresh) to see state changes after a switch toggle or current change. Replaced with a plain `asyncio.sleep` + `async_refresh` task that runs entirely on the event loop.
-
-### Changed
-
-- Simplified post-command refresh from two delayed refreshes (2 s + 7 s) to a single refresh at **5 s**. The 5 s window covers both fast-committing changes (e.g. current slider) and slower transitions (e.g. Stop Charging taking up to ~5 s to drop into Standby), with less network chatter. Result: all entities update within ~5 s of any switch toggle or current change.
-
-## 4.0.1b10 - 2026-05-02
-
-### Fixed
-
-- Post-command and force-refresh actions now fire immediately instead of being delayed ~10 s by Home Assistant's coordinator debouncer. The integration was calling `async_request_refresh` (debounced, default cooldown 10 s) which made the 2 s / 7 s post-command refreshes effectively fire 12+ seconds late — exactly matching reports of state changes appearing 14–18 s after a toggle. Switched to `async_refresh` (immediate) for both the dual post-command refresh and the Force Refresh button. State should now update within a few seconds of any switch toggle or current change.
-
-## 4.0.1b9 - 2026-05-02
-
-### Changed
-
-- Post-command refresh now fires twice — at 2s and 7s after a successful switch toggle or current change. The early refresh catches fast-committing changes (e.g. setting current) for snappy UI feedback; the later one catches slow transitions like Stop Charging, where the charger may take 5–10s to drop the device into Standby. Previously a single 2s refresh sometimes read stale data and users had to wait for the next scheduled poll (or hit Force Refresh) to see the change. Both refreshes are cancelled and rescheduled together on rapid successive commands.
-
-## 4.0.1b8 - 2026-05-02
-
-### Changed
-
-- Reduced post-command refresh delay from 4s to 2s for snappier UI feedback after switch toggles and current changes. The entity-level optimistic state TTL still guards against stale reads if the charger hasn't committed yet.
-- Reduced offline poll interval from 5 minutes to 2 minutes so the integration notices a charger coming back online much faster after a power cycle or network blip.
-
-## 4.0.1b7 - 2026-05-02
+Version 4.1.0 is a reliability and responsiveness release. It focuses on faster control feedback, quieter offline handling, better recovery tools, and clearer diagnostics while keeping existing entities and dashboards compatible.
 
 ### Added
 
-- New diagnostic **Force Refresh** button. Triggers an immediate coordinator refresh — useful for diagnostics and automations that want a fresh reading without waiting for the next scheduled poll.
-- Adaptive poll cadence. The integration now polls every 30 s while the charger is actively charging, every 60 s while idle/connected, and every 5 minutes once the charger appears offline. Halves background HTTP load on a charger that sits idle most of the day, with no impact on UI responsiveness during sessions.
-- Command-level retries with exponential backoff and jitter. Transient WiFi packet loss is retried twice (≈0.5 s and ≈1.5 s) before reporting failure, dramatically reducing spurious "command rejected" reports.
-- Lazy device-info finalization. If the charger is unreachable at Home Assistant startup, firmware/model/manufacturer fields used to be permanently shown as "Unknown" until reload; they now update in the device registry the first time the charger replies.
+- Added a **Force Refresh** diagnostic button so you can manually ask the charger for fresh data without waiting for the next scheduled poll.
+- Added reauthentication support, so rejected charger credentials can be updated from Home Assistant instead of removing and re-adding the integration.
+- Added a Repair flow for rare invalid stored configuration data.
+- Added command retries for brief Wi-Fi hiccups, reducing false "command rejected" errors when the charger or network drops a packet.
 
 ### Changed
 
-- Failed switch/number commands now raise `HomeAssistantError` so Home Assistant surfaces a UI toast instead of silently snapping the control back. Applies to Stop Charging, One Charge, Reset Counter A, and Charging Current.
-- Updater `available` property documented as the single in-sync source of truth, kept aligned with `last_update_success` via `_record_success` / `_record_failure`.
-- Removed the dead `_LegacyUpdater` shim and `send_eveus_command` re-export. Tests exercise `CommandManager` directly with a fake updater.
+- Charger data now refreshes faster after changing Charging Current or toggling Stop Charging / One Charge. The integration keeps the UI responsive immediately, then checks the charger again shortly after the command has had time to apply.
+- Polling is now adaptive: faster while charging, slower while idle, and less noisy when a charger appears offline.
+- Offline and reconnect behavior is smoother, with fewer unnecessary logs and more consistent availability reporting in Home Assistant.
+- Device details such as firmware now fill in later if the charger was offline during Home Assistant startup.
+- Optional SOC helper sensors now behave better when helpers are created later, when helper values are invalid, or when multiple chargers are configured.
+- Sensor and control state handling is leaner, with less repeated work on every coordinator update.
+- The integration metadata now identifies Eveus as a device integration.
 
 ### Fixed
 
-- Empty `_clear_optimistic_state` stub on `BaseEveusEntity` removed; control entities are now detected via duck typing, eliminating an implicit-protocol coupling foot-gun.
-
-## 4.0.1b6 - 2026-05-02
-
-### Added
-
-- Faster UI feedback after toggling a switch or changing the charging current: the coordinator now schedules a single delayed refresh 4 seconds after a successful command instead of refreshing immediately. The charger needs a few seconds to reflect a new state in its API, so the previous immediate refresh often returned stale data and users had to wait up to a full poll interval (30 s) to see the change.
-- Rapid successive commands (e.g. toggling a switch off then back on) cancel and reschedule the pending refresh, so the refresh always fires 4 seconds after the most recent command. Combined with the existing entity-level optimistic state TTL this prevents stale-read flicker.
-- The pending delayed refresh is cancelled on coordinator shutdown so it never fires against a torn-down config entry.
-
-## 4.0.1 - 2026-04-29
-
-Version 4.0.1 is a maintenance release focused on smoother upgrades, quieter normal operation, easier recovery, and more consistent entity behavior.
-
-### Changed
-
-- Improved upgrade handling for existing entries that were created with URL-style host values.
-- Improved optional SOC calculations for setups with more than one charger.
-- Improved Time to Target SOC behavior so it uses the same SOC calculation path as the other SOC sensors.
-- Improved short offline/reconnect handling for sensors and controls.
-- Improved offline handling so powered-off chargers stay quiet in normal Home Assistant logs.
-- Improved optional SOC helper handling so missing helpers stay quiet in normal Home Assistant logs.
-- Improved optional SOC helper sensors so they react when helper entities are created after the integration is already loaded.
-- Improved optional SOC helper validation so out-of-range helper values are treated as invalid instead of producing misleading SOC estimates.
-- Improved connection quality reporting so it reflects recent charger connectivity instead of lifetime history.
-- Improved diagnostics with a clearer sanitized device snapshot for troubleshooting.
-- Improved Home Assistant lifecycle handling for coordinator shutdown, entity availability updates, and helper listeners.
-- Improved entity update efficiency by avoiding unnecessary state writes when values have not changed.
-- Improved command throttling so repeated failed commands still respect the cooldown.
-- Improved setup validation for chargers that return valid JSON with a nonstandard response content type.
-- Improved stored device number cleanup for entries that somehow contain a string or invalid device number.
-- Improved optimistic switch and number state reconciliation so property reads no longer mutate internal state.
-- Improved sensor state handling so `native_value`, `is_on`, and control value reads are served from cached entity attributes without recomputing or mutating integration state.
-- Improved sensor attribute handling so extra attributes are refreshed during coordinator/helper updates instead of rebuilt on every property access.
-- Improved Reset Counter A safe-mode cleanup by using Home Assistant's cancellable delayed callback helper.
-- Improved credential handling so passwords are preserved exactly as entered while usernames are still trimmed.
-- Improved coordinator failure reporting after setup so Home Assistant can see failed refreshes while powered-off chargers remain supported at startup.
-- Improved sensor specification and charger system-time caching to reduce repeated work on every poll.
-- Improved coordinator cleanup so scheduled refresh handling is shut down correctly.
-- Improved numeric validation so invalid values such as `nan` or `inf` are not exposed as sensor values.
-- Added Home Assistant reauthentication support for updating credentials after the charger rejects the stored username or password.
-- Added a Home Assistant Repair flow for rare invalid stored setup data.
-
-### Fixed
-
-- Fixed a migration issue that could run the same cleanup again after restart.
-- Fixed possible SOC calculation mix-ups when multiple chargers are configured.
-- Fixed stale sensor fallback behavior during short availability grace periods.
-- Fixed hostname normalization for trailing-dot local hostnames such as `charger.local.`.
-- Fixed optional SOC calculations so real zero values, such as `0 kWh` charged or `0 W` charging power, are not replaced by stale cached values.
+- Fixed the System Time sensor showing the wrong local time in Kyiv and other time zones.
+- Fixed control flicker caused by stale charger reads arriving while a command was still in progress.
+- Fixed unload failures so Home Assistant can handle and report them correctly instead of leaving the entry stuck in a failed-unload state.
+- Fixed coordinator health reporting during offline backoff so Home Assistant does not see a false healthy update.
+- Fixed post-command refresh scheduling so delayed refreshes actually run on Home Assistant's event loop.
+- Fixed optional SOC calculations so real zero values, such as `0 kWh` charged or `0 W` power, are not replaced by stale values.
+- Fixed host normalization for URL-style and trailing-dot local host values.
+- Fixed several edge cases around setup validation, migration, diagnostics, numeric validation, and cleanup during shutdown.
 
 ## 4.0.0 - 2026-04-28
 
