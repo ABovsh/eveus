@@ -17,7 +17,7 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN, MODEL_MAX_CURRENT, CONF_MODEL
-from .common import EveusUpdater
+from .common_network import EveusUpdater
 from .utils import get_next_device_number
 
 if TYPE_CHECKING:
@@ -199,12 +199,4 @@ async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:
     """Unload a config entry."""
-    try:
-        return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-    except Exception as ex:
-        _LOGGER.error(
-            "Error unloading Eveus integration: %s",
-            ex, exc_info=True,
-        )
-        return False
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

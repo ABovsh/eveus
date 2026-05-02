@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.0.1b12 - 2026-05-02
+
+### Fixed
+
+- Unload failures now propagate through Home Assistant instead of returning `False` and leaving the config entry stuck in `FAILED_UNLOAD`.
+- Offline backoff skips now raise `UpdateFailed`, keeping coordinator health and updater availability in agreement.
+- Control entities now ignore stale coordinator reads while a switch or current command is in flight, preventing optimistic UI flicker.
+- System Time now uses Home Assistant's configured timezone instead of a hard-coded UTC+2/UTC+3 offset.
+
+### Changed
+
+- Removed per-entity coordinator payload snapshots and now read directly from coordinator data.
+- Consolidated optimistic control reconciliation and rate-limited logging helpers.
+- Simplified normal switch creation from entity descriptions and split reset-counter behavior into its own base class.
+- Removed the dead `common.py` re-export shim.
+- Reduced minor hot-path allocations and redundant helper-cache checks.
+
 ## 4.0.1b11 - 2026-05-02
 
 ### Fixed

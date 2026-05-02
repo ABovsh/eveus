@@ -8,9 +8,9 @@ from homeassistant.core import State
 
 from custom_components.eveus.number import EveusCurrentNumber
 from custom_components.eveus.switch import (
-    EveusOneChargeSwitch,
+    BaseSwitchEntity,
     EveusResetCounterASwitch,
-    EveusStopChargingSwitch,
+    SWITCH_DESCRIPTIONS,
 )
 
 
@@ -36,6 +36,14 @@ def _disable_state_writes(entity: object) -> None:
     entity.async_write_ha_state = lambda: None
 
 
+def _one_charge_switch(updater: _Updater) -> BaseSwitchEntity:
+    return BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[1])
+
+
+def _stop_charging_switch(updater: _Updater) -> BaseSwitchEntity:
+    return BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[0])
+
+
 def test_current_number_native_value_precedence_and_restore() -> None:
     updater = _Updater({"currentSet": "16"})
     entity = EveusCurrentNumber(updater, "32A")
@@ -44,7 +52,7 @@ def test_current_number_native_value_precedence_and_restore() -> None:
 
     entity._pending_value = 20
     assert entity.native_value == 16
-    assert entity._resolve_value() == 20
+    assert entity._resolve_value() == 16
 
     entity._pending_value = None
     entity._optimistic_value = 24
@@ -100,6 +108,19 @@ def test_current_number_update_clears_stale_mismatched_optimistic_value() -> Non
     assert entity._last_device_value == 10
 
 
+def test_current_number_ignores_stale_coordinator_update_while_command_pending() -> None:
+    updater = _Updater({"currentSet": "10"})
+    entity = EveusCurrentNumber(updater, "16A")
+    _disable_state_writes(entity)
+    entity._pending_value = 14.0
+    entity._attr_native_value = 14.0
+
+    entity._handle_coordinator_update()
+
+    assert entity.native_value == 14.0
+    assert entity._last_device_value is None
+
+
 def test_current_number_handles_failed_command() -> None:
     import pytest
     from homeassistant.exceptions import HomeAssistantError
@@ -136,14 +157,14 @@ def test_current_number_returns_none_for_stale_device_value() -> None:
 
 def test_switch_state_precedence_restore_and_commands() -> None:
     updater = _Updater({"oneCharge": "0"})
-    entity = EveusOneChargeSwitch(updater)
+    entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
 
     assert entity.is_on is False
 
     entity._pending_command = True
     assert entity.is_on is False
-    assert entity._resolve_state() is True
+    assert entity._resolve_state() is False
 
     entity._pending_command = None
     entity._optimistic_state = True
@@ -166,7 +187,7 @@ def test_switch_state_precedence_restore_and_commands() -> None:
 
 def test_switch_update_reconciles_optimistic_state() -> None:
     updater = _Updater({"oneCharge": "1"})
-    entity = EveusOneChargeSwitch(updater)
+    entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
     entity._optimistic_state = True
     entity._optimistic_state_time = time.time()
@@ -179,7 +200,7 @@ def test_switch_update_reconciles_optimistic_state() -> None:
 
 def test_switch_update_clears_stale_mismatched_optimistic_state() -> None:
     updater = _Updater({"oneCharge": "0"})
-    entity = EveusOneChargeSwitch(updater)
+    entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
     entity._optimistic_state = True
     entity._optimistic_state_time = 0
@@ -190,13 +211,26 @@ def test_switch_update_clears_stale_mismatched_optimistic_state() -> None:
     assert entity._last_device_state is False
 
 
+def test_switch_ignores_stale_coordinator_update_while_command_pending() -> None:
+    updater = _Updater({"oneCharge": "0"})
+    entity = _one_charge_switch(updater)
+    _disable_state_writes(entity)
+    entity._pending_command = True
+    entity._attr_is_on = True
+
+    entity._handle_coordinator_update()
+
+    assert entity.is_on is True
+    assert entity._last_device_state is None
+
+
 def test_switch_failed_command_does_not_set_optimistic_state() -> None:
     import pytest
     from homeassistant.exceptions import HomeAssistantError
 
     updater = _Updater({"oneCharge": "0"})
     updater.command_result = False
-    entity = EveusOneChargeSwitch(updater)
+    entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
 
     with pytest.raises(HomeAssistantError):
@@ -208,7 +242,7 @@ def test_switch_failed_command_does_not_set_optimistic_state() -> None:
 
 def test_stop_charging_switch_preserves_existing_semantics() -> None:
     updater = _Updater({"evseEnabled": "0"})
-    entity = EveusStopChargingSwitch(updater)
+    entity = _stop_charging_switch(updater)
     _disable_state_writes(entity)
 
     asyncio.run(entity.async_turn_on())
@@ -249,7 +283,7 @@ def test_stop_charging_switch_raises_on_command_failure() -> None:
 
     updater = _Updater({"evseEnabled": "0"})
     updater.command_result = False
-    entity = EveusStopChargingSwitch(updater)
+    entity = _stop_charging_switch(updater)
     _disable_state_writes(entity)
 
     with pytest.raises(HomeAssistantError):
@@ -273,7 +307,7 @@ def test_switch_optimistic_state_survives_until_device_confirms() -> None:
     """Toggle ON, ensure optimistic ON survives a coordinator read that
     still shows OFF (charger hasn't committed yet)."""
     updater = _Updater({"evseEnabled": "0"})
-    entity = EveusStopChargingSwitch(updater)
+    entity = _stop_charging_switch(updater)
     _disable_state_writes(entity)
 
     asyncio.run(entity.async_turn_on())
@@ -294,7 +328,7 @@ def test_switch_optimistic_state_survives_until_device_confirms() -> None:
 def test_switch_rapid_toggle_does_not_flicker_back() -> None:
     """ON, then OFF 2s later — a stale ON read must not flip the entity."""
     updater = _Updater({"evseEnabled": "0"})
-    entity = EveusStopChargingSwitch(updater)
+    entity = _stop_charging_switch(updater)
     _disable_state_writes(entity)
 
     asyncio.run(entity.async_turn_on())

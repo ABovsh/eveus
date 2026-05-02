@@ -6,9 +6,9 @@ import logging
 from custom_components.eveus.number import EveusCurrentNumber
 from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, SensorSpec, SensorType
 from custom_components.eveus.switch import (
-    EveusOneChargeSwitch,
+    BaseSwitchEntity,
     EveusResetCounterASwitch,
-    EveusStopChargingSwitch,
+    SWITCH_DESCRIPTIONS,
 )
 
 
@@ -68,7 +68,7 @@ def test_base_entity_availability_grace_and_cache_paths() -> None:
     assert entity.available is True
     assert entity.get_cached_data_value("powerMeas") == "7200"
     updater.data = {}
-    assert entity.get_cached_data_value("powerMeas") == "7200"
+    assert entity.get_cached_data_value("powerMeas") is None
     assert entity.device_info["name"] == "Eveus EV Charger"
 
     updater.available = False
@@ -261,8 +261,14 @@ def test_control_unavailable_transition_is_quiet_at_normal_log_levels(caplog) ->
 def test_switch_entities_keep_backward_compatible_unique_ids() -> None:
     updater = _Updater()
 
-    assert EveusStopChargingSwitch(updater).unique_id == "eveus_stop_charging"
-    assert EveusOneChargeSwitch(updater).unique_id == "eveus_one_charge"
+    assert (
+        BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[0]).unique_id
+        == "eveus_stop_charging"
+    )
+    assert (
+        BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[1]).unique_id
+        == "eveus_one_charge"
+    )
     assert EveusResetCounterASwitch(updater).unique_id == "eveus_reset_counter_a"
 
 
@@ -277,7 +283,7 @@ def test_number_entity_keeps_backward_compatible_unique_id_and_limits() -> None:
 def test_control_state_properties_do_not_mutate_cached_device_state() -> None:
     updater = _Updater()
     number = EveusCurrentNumber(updater, "16A")
-    switch = EveusOneChargeSwitch(updater)
+    switch = BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[1])
 
     assert number.native_value == 16
     assert number._last_device_value is None

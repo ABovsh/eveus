@@ -82,8 +82,8 @@ def test_format_duration_handles_minutes_hours_and_days() -> None:
 
 
 def test_soc_calculations_clamp_to_battery_capacity() -> None:
-    assert utils.calculate_soc_kwh_cached(50, 80, 50, 10) == 80
-    assert utils.calculate_soc_percent_cached(50, 80, 10, 0) == 62
+    assert utils.calculate_soc_kwh(50, 80, 50, 10) == 80
+    assert utils.calculate_soc_percent(50, 80, 10, 0) == 62
 
 
 def test_calculate_remaining_time_states() -> None:

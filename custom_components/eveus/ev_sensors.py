@@ -16,11 +16,11 @@ from homeassistant.core import HomeAssistant, callback, Event
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.entity import EntityCategory
 
-from .common import EveusSensorBase
+from .common_base import EveusSensorBase
 from .utils import (
     calculate_remaining_time,
-    calculate_soc_kwh_cached,
-    calculate_soc_percent_cached,
+    calculate_soc_kwh,
+    calculate_soc_percent,
     get_safe_value,
 )
 from .const import STATE_CACHE_TTL
@@ -133,7 +133,7 @@ class CachedSOCCalculator:
         if not self._update_input_cache(hass):
             return None
         try:
-            return calculate_soc_kwh_cached(
+            return calculate_soc_kwh(
                 self._input_cache.initial_soc,
                 self._input_cache.battery_capacity,
                 energy_charged,
@@ -149,7 +149,7 @@ class CachedSOCCalculator:
             return None
         if not self._input_cache.battery_capacity:
             return None
-        return calculate_soc_percent_cached(
+        return calculate_soc_percent(
             self._input_cache.initial_soc,
             self._input_cache.battery_capacity,
             energy_charged,
@@ -273,12 +273,9 @@ class BaseEVHelperSensor(EveusSensorBase):
         ):
             self.async_write_ha_state()
 
-    def _get_energy_charged(self) -> float:
-        """Get energy charged from updater data with fallback."""
-        energy_charged = get_safe_value(self._updater.data, "IEM1", float)
-        if energy_charged is not None:
-            return energy_charged
-        return self.get_cached_data_value("IEM1", 0)
+    def _get_energy_charged(self) -> float | None:
+        """Get energy charged from current updater data."""
+        return get_safe_value(self._updater.data, "IEM1", float)
 
 
 # =============================================================================
@@ -299,9 +296,10 @@ class EVSocKwhSensor(BaseEVHelperSensor):
 
     def _get_sensor_value(self) -> Optional[float]:
         """Get SOC in kWh."""
-        if not self._soc_calculator.are_helpers_available(self.hass):
-            return None
-        result = self._soc_calculator.get_soc_kwh(self.hass, self._get_energy_charged())
+        energy_charged = self._get_energy_charged()
+        if energy_charged is None:
+            return self._cached_value
+        result = self._soc_calculator.get_soc_kwh(self.hass, energy_charged)
         if result is not None:
             self._cached_value = result
         return result if result is not None else self._cached_value
@@ -321,9 +319,10 @@ class EVSocPercentSensor(BaseEVHelperSensor):
 
     def _get_sensor_value(self) -> Optional[float]:
         """Get SOC percentage."""
-        if not self._soc_calculator.are_helpers_available(self.hass):
-            return None
-        result = self._soc_calculator.get_soc_percent(self.hass, self._get_energy_charged())
+        energy_charged = self._get_energy_charged()
+        if energy_charged is None:
+            return self._cached_value
+        result = self._soc_calculator.get_soc_percent(self.hass, energy_charged)
         if result is not None:
             self._cached_value = result
         return result if result is not None else self._cached_value
@@ -360,9 +359,9 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
 
         try:
             power_meas = get_safe_value(self._updater.data, "powerMeas", float)
-            if power_meas is None:
-                power_meas = self.get_cached_data_value("powerMeas", 0)
             energy_charged = self._get_energy_charged()
+            if power_meas is None or energy_charged is None:
+                return self._cached_value
 
             if not self._soc_calculator.are_helpers_available(self.hass):
                 return "Helpers Required"

@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import logging
-import asyncio
 import time
-from typing import Optional
 
 from homeassistant.components.number import (
     NumberEntity,
@@ -26,14 +24,12 @@ from .const import (
     MIN_CURRENT,
     CONF_MODEL,
     CONTROL_GRACE_PERIOD,
+    OPTIMISTIC_CONTROL_TTL,
 )
-from .common import BaseEveusEntity, ControlEntityMixin
+from .common_base import BaseEveusEntity, ControlEntityMixin, OptimisticControlMixin
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
-
-# How long to trust user's command before requiring device confirmation
-OPTIMISTIC_VALUE_TTL = 120
 
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     key="charging_current",
@@ -47,7 +43,12 @@ CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
 )
 
 
-class EveusNumberEntity(ControlEntityMixin, BaseEveusEntity, NumberEntity):
+class EveusNumberEntity(
+    OptimisticControlMixin[float],
+    ControlEntityMixin,
+    BaseEveusEntity,
+    NumberEntity,
+):
     """Base number entity with responsive UI and safety."""
 
     _attr_has_entity_name = True
@@ -65,17 +66,8 @@ class EveusNumberEntity(ControlEntityMixin, BaseEveusEntity, NumberEntity):
         self.ENTITY_NAME = entity_description.name
         super().__init__(updater, device_number)
 
-        self._pending_value: Optional[float] = None
-        self._optimistic_value: Optional[float] = None
-        self._optimistic_value_time: float = 0
-        self._last_device_value: Optional[float] = None
-        self._last_command_time = 0
-        self._last_successful_read = 0
-        self._last_written_value: Optional[float] = None
-
-    def _clear_optimistic_state(self) -> None:
-        """Clear optimistic state when the device is offline."""
-        self._optimistic_value = None
+        self._pending_value: float | None = None
+        self._init_optimistic_control()
 
 
 class EveusCurrentNumber(EveusNumberEntity):
@@ -88,7 +80,6 @@ class EveusCurrentNumber(EveusNumberEntity):
         """Initialize the current control."""
         super().__init__(updater, CHARGING_CURRENT_DESCRIPTION, device_number)
         self._model = model
-        self._command_lock = asyncio.Lock()
 
         self._attr_native_min_value = float(MIN_CURRENT)
         self._attr_native_max_value = float(MODEL_MAX_CURRENT[model])
@@ -103,12 +94,8 @@ class EveusCurrentNumber(EveusNumberEntity):
         """Resolve current value from command, optimistic, device, and restore state."""
         current_time = time.time()
 
-        if self._pending_value is not None:
-            return self._pending_value
-
-        if self._optimistic_value is not None:
-            if current_time - self._optimistic_value_time < OPTIMISTIC_VALUE_TTL:
-                return self._optimistic_value
+        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
+            return self._optimistic_value
 
         if self._updater.available and self._updater.data and self._command in self._updater.data:
             device_value = get_safe_value(self._updater.data, self._command, float)
@@ -123,38 +110,36 @@ class EveusCurrentNumber(EveusNumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new current value with optimistic UI."""
-        async with self._command_lock:
-            try:
-                clamped_value = max(
-                    self._attr_native_min_value,
-                    min(self._attr_native_max_value, value),
+        try:
+            clamped_value = max(
+                self._attr_native_min_value,
+                min(self._attr_native_max_value, value),
+            )
+            int_value = int(clamped_value)
+
+            self._pending_value = float(int_value)
+            self._attr_native_value = self._pending_value
+            self.async_write_ha_state()
+
+            success = await self._updater.send_command(self._command, int_value)
+
+            if success:
+                self._set_optimistic_value(float(int_value))
+            else:
+                raise HomeAssistantError(
+                    f"Eveus charger did not accept charging current = {int_value}A"
                 )
-                int_value = int(clamped_value)
 
-                self._pending_value = float(int_value)
-                self._attr_native_value = self._pending_value
-                self.async_write_ha_state()
-
-                success = await self._updater.send_command(self._command, int_value)
-
-                if success:
-                    self._optimistic_value = float(int_value)
-                    self._optimistic_value_time = time.time()
-                else:
-                    raise HomeAssistantError(
-                        f"Eveus charger did not accept charging current = {int_value}A"
-                    )
-
-            except HomeAssistantError:
-                raise
-            except Exception as err:
-                _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)
-                raise HomeAssistantError(f"Failed to set charging current: {err}") from err
-            finally:
-                self._pending_value = None
-                self._last_command_time = time.time()
-                self._attr_native_value = self._resolve_value()
-                self.async_write_ha_state()
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)
+            raise HomeAssistantError(f"Failed to set charging current: {err}") from err
+        finally:
+            self._pending_value = None
+            self._last_command_time = time.time()
+            self._attr_native_value = self._resolve_value()
+            self.async_write_ha_state()
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
@@ -170,34 +155,28 @@ class EveusCurrentNumber(EveusNumberEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data — reconcile with device value."""
-        availability_changed = self._update_availability_state()
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        if self._pending_value is not None:
+            return
+
         current_time = time.time()
 
         if self._updater.available and self._updater.data:
             if self._command in self._updater.data:
                 device_value = get_safe_value(self._updater.data, self._command, float)
                 if device_value is not None:
-                    new_device_value = float(device_value)
-                    self._last_device_value = new_device_value
-                    self._last_successful_read = current_time
+                    self._reconcile_with_device(
+                        float(device_value),
+                        current_time,
+                        lambda optimistic, device: abs(optimistic - device) < 0.5,
+                    )
 
-                    if self._optimistic_value is not None:
-                        if abs(self._optimistic_value - new_device_value) < 0.5:
-                            self._optimistic_value = None
-                        elif current_time - self._optimistic_value_time > 10:
-                            self._optimistic_value = None
-
-        if (
-            self._optimistic_value is not None
-            and current_time - self._optimistic_value_time >= OPTIMISTIC_VALUE_TTL
-        ):
-            self._optimistic_value = None
+        self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
 
         current_value = self._resolve_value()
         self._attr_native_value = current_value
-        if availability_changed or self._last_written_value != current_value:
-            self._last_written_value = current_value
-            self.async_write_ha_state()
+        self.async_write_ha_state()
 
 
 async def async_setup_entry(

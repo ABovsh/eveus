@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import logging
 import math
-import time
-from typing import Any, Callable, ClassVar, Dict, Optional
-from datetime import datetime, timezone
+from typing import Any, Callable, Dict, Optional
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -25,7 +24,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.entity import EntityCategory
 
-from .common import EveusSensorBase
+from .common_base import EveusSensorBase
 from .const import (
     get_charging_state,
     get_error_state,
@@ -33,26 +32,16 @@ from .const import (
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
 )
-from .utils import get_safe_value, is_dst, format_duration
+from .utils import RateLog, get_safe_value, format_duration
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ERROR_LOG_KEYS = 64
+_SENSOR_FUNCTION_LOG = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
 
 
-@lru_cache(maxsize=16)
-def _get_zone_info(timezone_name: str) -> ZoneInfo:
-    """Return cached timezone info for system-time conversion."""
-    return ZoneInfo(timezone_name)
-
-
-@lru_cache(maxsize=128)
-def _format_system_time(timestamp_minute: int, timezone_name: str, dst_active: bool) -> str:
-    """Return formatted charger system time for a minute bucket and timezone."""
-    offset = 7200 + (3600 if dst_active else 0)
-    corrected_timestamp = timestamp_minute * 60 - offset
-    dt_corrected = datetime.fromtimestamp(corrected_timestamp, tz=timezone.utc)
-    dt_local = dt_corrected.astimezone(_get_zone_info(timezone_name))
-    return dt_local.strftime("%H:%M")
+def _should_log_error(function_name: str) -> bool:
+    """Check if a module-level sensor helper should log an error."""
+    return _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, function_name)
 
 
 class SensorType(Enum):
@@ -87,30 +76,13 @@ class SensorSpec:
 class OptimizedEveusSensor(EveusSensorBase):
     """High-performance templated sensor."""
 
-    _last_error_logs: ClassVar[Dict[str, float]] = {}
-
-    @classmethod
-    def _should_log_error(cls, function_name: str) -> bool:
-        """Check if we should log errors for a function (rate limited)."""
-        current_time = time.time()
-        last_log = cls._last_error_logs.get(function_name, 0)
-        if current_time - last_log > ERROR_LOG_RATE_LIMIT:
-            if (
-                function_name not in cls._last_error_logs
-                and len(cls._last_error_logs) >= _MAX_ERROR_LOG_KEYS
-            ):
-                oldest_key = min(cls._last_error_logs, key=cls._last_error_logs.get)
-                cls._last_error_logs.pop(oldest_key, None)
-            cls._last_error_logs[function_name] = current_time
-            return True
-        return False
-
     def __init__(self, updater, spec: SensorSpec, device_number: int = 1):
         """Initialize sensor from spec."""
         self.ENTITY_NAME = spec.name
         super().__init__(updater, device_number)
 
         self._spec = spec
+        self._error_log = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
 
         if spec.icon:
             self._attr_icon = spec.icon
@@ -125,6 +97,10 @@ class OptimizedEveusSensor(EveusSensorBase):
         if spec.category:
             self._attr_entity_category = spec.category
         self._attr_extra_state_attributes = {}
+
+    def _should_log_error(self, function_name: str) -> bool:
+        """Check if we should log errors for a function (rate limited)."""
+        return self._error_log.should_log(ERROR_LOG_RATE_LIMIT, function_name)
 
     def _get_sensor_value(self) -> Any:
         """Return computed sensor value from coordinator data."""
@@ -276,14 +252,10 @@ def get_system_time(updater, hass) -> Optional[str]:
         if not ha_timezone:
             return None
 
-        return _format_system_time(
-            timestamp // 60,
-            ha_timezone,
-            is_dst(ha_timezone, timestamp),
-        )
+        return datetime.fromtimestamp(timestamp, tz=ZoneInfo(ha_timezone)).strftime("%H:%M")
 
     except Exception as err:
-        if OptimizedEveusSensor._should_log_error("get_system_time"):
+        if _should_log_error("get_system_time"):
             _LOGGER.debug("Error getting system time: %s", err, exc_info=True)
         return None
 
@@ -331,7 +303,7 @@ def get_connection_quality(updater, hass) -> float:
         metrics = updater.connection_quality
         return round(max(0, min(100, metrics.get("success_rate", 0))))
     except Exception as err:
-        if OptimizedEveusSensor._should_log_error("get_connection_quality"):
+        if _should_log_error("get_connection_quality"):
             _LOGGER.debug("Error getting connection quality: %s", err, exc_info=True)
         return 100
 
@@ -354,7 +326,7 @@ def get_connection_attrs(updater, hass) -> dict:
             ),
         }
     except Exception as err:
-        if OptimizedEveusSensor._should_log_error("get_connection_attrs"):
+        if _should_log_error("get_connection_attrs"):
             _LOGGER.debug("Error getting connection attributes: %s", err, exc_info=True)
         return {"status": "Error"}
 

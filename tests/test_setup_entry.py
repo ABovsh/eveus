@@ -213,7 +213,7 @@ def test_update_listener_and_unload_entry() -> None:
     assert hass.config_entries.unloaded
 
 
-def test_unload_entry_returns_false_when_platform_unload_fails() -> None:
+def test_unload_entry_propagates_platform_unload_failure() -> None:
     class _FailingConfigEntries(_ConfigEntries):
         async def async_unload_platforms(self, entry: object, platforms: object) -> bool:
             raise RuntimeError("unload failed")
@@ -221,7 +221,10 @@ def test_unload_entry_returns_false_when_platform_unload_fails() -> None:
     hass = SimpleNamespace(config_entries=_FailingConfigEntries())
     entry = _Entry(_data())
 
-    assert asyncio.run(eveus.async_unload_entry(hass, entry)) is False
+    import pytest
+
+    with pytest.raises(RuntimeError, match="unload failed"):
+        asyncio.run(eveus.async_unload_entry(hass, entry))
 
 
 def test_sensor_setup_creates_standard_and_ev_sensors() -> None:

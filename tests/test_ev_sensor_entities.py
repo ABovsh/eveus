@@ -112,7 +112,6 @@ def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
 
 def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:
     sensor = EVSocKwhSensor(_Updater({"IEM1": "0"}))
-    sensor._cached_data = {"IEM1": "12"}
 
     assert sensor._get_energy_charged() == 0
 
@@ -120,7 +119,6 @@ def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:
 def test_time_to_target_uses_zero_power_instead_of_stale_cache() -> None:
     sensor = TimeToTargetSocSensor(_Updater({"IEM1": "16", "powerMeas": "0"}))
     sensor.hass = _Hass(HELPERS)
-    sensor._cached_data = {"powerMeas": "7000"}
 
     assert sensor._get_sensor_value() == "Not charging"
 
