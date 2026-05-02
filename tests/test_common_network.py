@@ -195,46 +195,66 @@ def test_initial_network_failure_returns_empty_payload_to_allow_setup(
     assert updater.available is False
 
 
-def test_send_command_schedules_delayed_refresh_only_after_success(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
-    scheduled: list[tuple[float, object]] = []
-    cancel_calls = [0]
-
-    def _cancel() -> None:
-        cancel_calls[0] += 1
-
-    def fake_async_call_later(hass: object, delay: float, action: object):
-        scheduled.append((delay, action))
-        return _cancel
-
-    monkeypatch.setattr(common_network, "async_call_later", fake_async_call_later)
-
-    async def successful_command(command: str, value: object) -> bool:
-        return True
-
-    async def failed_command(command: str, value: object) -> bool:
-        return False
-
-    updater._command_manager = SimpleNamespace(send_command=successful_command)
+def test_send_command_schedules_delayed_refresh_only_after_success() -> None:
+    """Successful command must schedule one task per refresh delay; rapid
+    re-commands cancel the previous tasks; failures schedule nothing."""
     delays = common_network.POST_COMMAND_REFRESH_DELAYS
 
-    assert asyncio.run(updater.send_command("currentSet", 16)) is True
-    assert len(scheduled) == len(delays)
-    assert tuple(item[0] for item in scheduled) == delays
+    async def scenario() -> None:
+        class _LoopHass:
+            is_stopping = False
 
-    # Rapid second command should cancel ALL pending refreshes and reschedule.
-    assert asyncio.run(updater.send_command("currentSet", 10)) is True
-    assert cancel_calls[0] == len(delays)
-    assert len(scheduled) == 2 * len(delays)
+            def async_create_task(self, coro):
+                return asyncio.get_event_loop().create_task(coro)
 
-    # Failure must not schedule a refresh and must not cancel the pending ones.
-    updater._command_manager = SimpleNamespace(send_command=failed_command)
+        updater = EveusUpdater("192.168.1.50", "admin", "secret", _LoopHass())
+        recorded_delays: list[float] = []
 
-    assert asyncio.run(updater.send_command("currentSet", 12)) is False
-    assert cancel_calls[0] == len(delays)
-    assert len(scheduled) == 2 * len(delays)
+        async def fake_delayed_refresh(self, delay: float) -> None:
+            recorded_delays.append(delay)
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+
+        # Replace the actual refresh with a sleep so we can observe tasks.
+        original = EveusUpdater._delayed_refresh
+        EveusUpdater._delayed_refresh = fake_delayed_refresh  # type: ignore[assignment]
+        try:
+            async def successful(command: str, value: object) -> bool:
+                return True
+
+            async def failed(command: str, value: object) -> bool:
+                return False
+
+            updater._command_manager = SimpleNamespace(send_command=successful)
+
+            assert await updater.send_command("currentSet", 16) is True
+            await asyncio.sleep(0)  # let tasks register
+            first_tasks = list(updater._post_command_refresh_tasks)
+            assert len(first_tasks) == len(delays)
+            assert tuple(recorded_delays[: len(delays)]) == delays
+
+            # Rapid second command cancels first batch and schedules new one.
+            assert await updater.send_command("currentSet", 10) is True
+            await asyncio.sleep(0)
+            assert all(t.cancelled() or t.done() for t in first_tasks)
+            assert len(updater._post_command_refresh_tasks) == len(delays)
+
+            # Failure must not schedule anything new or cancel pending tasks.
+            second_batch = list(updater._post_command_refresh_tasks)
+            updater._command_manager = SimpleNamespace(send_command=failed)
+            assert await updater.send_command("currentSet", 12) is False
+            await asyncio.sleep(0)
+            assert updater._post_command_refresh_tasks == second_batch
+
+            # Cleanup
+            for t in updater._post_command_refresh_tasks:
+                t.cancel()
+        finally:
+            EveusUpdater._delayed_refresh = original  # type: ignore[assignment]
+
+    asyncio.run(scenario())
 
 
 def test_failure_recording_reduces_polling_when_device_appears_offline() -> None:
