@@ -1,9 +1,14 @@
 """Common functionality for Eveus integration."""
 from homeassistant.exceptions import HomeAssistantError
 
-from .common_base import BaseEveusEntity, EveusSensorBase, EveusDiagnosticSensor
+from .common_base import (
+    BaseEveusEntity,
+    ControlEntityMixin,
+    EveusSensorBase,
+    EveusDiagnosticSensor,
+)
 from .common_network import EveusUpdater
-from .common_command import send_eveus_command, CommandManager
+from .common_command import CommandManager
 
 
 class EveusError(HomeAssistantError):
@@ -16,11 +21,11 @@ class EveusConnectionError(EveusError):
 
 __all__ = [
     "BaseEveusEntity",
+    "ControlEntityMixin",
     "EveusSensorBase",
     "EveusDiagnosticSensor",
     "EveusUpdater",
     "CommandManager",
     "EveusError",
     "EveusConnectionError",
-    "send_eveus_command",
 ]

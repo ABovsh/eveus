@@ -148,9 +148,13 @@ def _install_homeassistant_stub() -> None:
     class ConfigEntryAuthFailed(HomeAssistantError):
         """Authentication failed."""
 
+    class ConfigEntryError(HomeAssistantError):
+        """Unrecoverable config entry setup error."""
+
     exceptions.HomeAssistantError = HomeAssistantError
     exceptions.ConfigEntryNotReady = ConfigEntryNotReady
     exceptions.ConfigEntryAuthFailed = ConfigEntryAuthFailed
+    exceptions.ConfigEntryError = ConfigEntryError
     sys.modules["homeassistant.exceptions"] = exceptions
 
     data_entry_flow = types.ModuleType("homeassistant.data_entry_flow")
@@ -204,6 +208,26 @@ def _install_homeassistant_stub() -> None:
     helpers = types.ModuleType("homeassistant.helpers")
     sys.modules["homeassistant.helpers"] = helpers
 
+    issue_registry = types.ModuleType("homeassistant.helpers.issue_registry")
+
+    class IssueSeverity:
+        ERROR = "error"
+        WARNING = "warning"
+
+    def async_create_issue(hass: Any, domain: str, issue_id: str, **kwargs: Any) -> None:
+        hass.issues = getattr(hass, "issues", {})
+        hass.issues[(domain, issue_id)] = kwargs
+
+    def async_delete_issue(hass: Any, domain: str, issue_id: str) -> None:
+        hass.issues = getattr(hass, "issues", {})
+        hass.issues.pop((domain, issue_id), None)
+
+    issue_registry.IssueSeverity = IssueSeverity
+    issue_registry.async_create_issue = async_create_issue
+    issue_registry.async_delete_issue = async_delete_issue
+    sys.modules["homeassistant.helpers.issue_registry"] = issue_registry
+    helpers.issue_registry = issue_registry
+
     aiohttp_client = types.ModuleType("homeassistant.helpers.aiohttp_client")
 
     def async_get_clientsession(hass: Any) -> Any:
@@ -249,6 +273,43 @@ def _install_homeassistant_stub() -> None:
 
     components = types.ModuleType("homeassistant.components")
     sys.modules["homeassistant.components"] = components
+
+    diagnostics = types.ModuleType("homeassistant.components.diagnostics")
+
+    def async_redact_data(data: dict[str, Any], to_redact: set[str]) -> dict[str, Any]:
+        return {
+            key: "**REDACTED**" if key in to_redact else value
+            for key, value in data.items()
+        }
+
+    diagnostics.async_redact_data = async_redact_data
+    sys.modules["homeassistant.components.diagnostics"] = diagnostics
+
+    repairs = types.ModuleType("homeassistant.components.repairs")
+
+    class RepairsFlow:
+        def async_create_entry(self, *, title: str, data: dict[str, Any]) -> dict[str, Any]:
+            return {"type": "create_entry", "title": title, "data": data}
+
+        def async_show_form(
+            self,
+            *,
+            step_id: str,
+            data_schema: Any,
+            errors: dict[str, str] | None = None,
+        ) -> dict[str, Any]:
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "errors": errors or {},
+            }
+
+        def async_abort(self, *, reason: str) -> dict[str, Any]:
+            return {"type": "abort", "reason": reason}
+
+    repairs.RepairsFlow = RepairsFlow
+    sys.modules["homeassistant.components.repairs"] = repairs
 
     sensor = types.ModuleType("homeassistant.components.sensor")
 

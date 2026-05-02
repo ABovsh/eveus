@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
+import math
+import time
+from collections.abc import Hashable
 from typing import Any, Callable, TypeVar, Optional, Union, Dict
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 from homeassistant.core import State, HomeAssistant
 
@@ -14,6 +14,35 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 T = TypeVar('T')
+
+
+class RateLog:
+    """Small helper for rate-limiting repeated log messages."""
+
+    def __init__(self, max_keys: int = 64) -> None:
+        """Initialize an optional per-key rate limiter."""
+        self._last_log = 0.0
+        self._last_logs: dict[Hashable, float] = {}
+        self._max_keys = max_keys
+
+    def should_log(self, interval: float, key: Hashable | None = None) -> bool:
+        """Return whether a message should be logged for the interval."""
+        current_time = time.time()
+        if key is None:
+            if current_time - self._last_log > interval:
+                self._last_log = current_time
+                return True
+            return False
+
+        last_log = self._last_logs.get(key, 0.0)
+        if current_time - last_log <= interval:
+            return False
+
+        if key not in self._last_logs and len(self._last_logs) >= self._max_keys:
+            oldest_key = min(self._last_logs, key=self._last_logs.get)
+            self._last_logs.pop(oldest_key, None)
+        self._last_logs[key] = current_time
+        return True
 
 # =============================================================================
 # Multi-Device Support Utilities
@@ -25,8 +54,11 @@ def get_next_device_number(hass: HomeAssistant) -> int:
     existing_numbers = set()
     for entry in hass.config_entries.async_entries(DOMAIN):
         device_number = entry.data.get("device_number")
-        if device_number is not None:
-            existing_numbers.add(device_number)
+        try:
+            if device_number is not None:
+                existing_numbers.add(int(device_number))
+        except (TypeError, ValueError):
+            continue
 
     next_number = 1
     while next_number in existing_numbers:
@@ -77,7 +109,10 @@ def get_safe_value(
         if value in (None, 'unknown', 'unavailable', ''):
             return default
 
-        return converter(value)
+        converted = converter(value)
+        if isinstance(converted, float) and not math.isfinite(converted):
+            return default
+        return converted
 
     except (TypeError, ValueError, AttributeError):
         return default
@@ -90,8 +125,8 @@ def get_safe_value(
 
 def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1) -> Dict[str, Any]:
     """Get standardized device information with multi-device support."""
-    firmware = (data.get('verFWMain') or data.get('firmware') or 'Unknown').strip()
-    hardware = (data.get('verFWWifi') or data.get('hardware') or 'Unknown').strip()
+    firmware = str(data.get('verFWMain') or data.get('firmware') or 'Unknown').strip()
+    hardware = str(data.get('verFWWifi') or data.get('hardware') or 'Unknown').strip()
 
     if len(firmware) < 2:
         firmware = "Unknown"
@@ -110,28 +145,6 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1) -> 
         "hw_version": hardware,
         "configuration_url": f"http://{host}",
     }
-
-
-# =============================================================================
-# Time and Date Utilities
-# =============================================================================
-
-
-def is_dst(timezone_str: str, timestamp: float) -> bool:
-    """Check if DST is active, with hour-level caching."""
-    return _is_dst_cached(timezone_str, int(timestamp // 3600))
-
-
-@lru_cache(maxsize=64)
-def _is_dst_cached(timezone_str: str, hour_bucket: int) -> bool:
-    """Cached DST check keyed by hour bucket for effective cache reuse."""
-    try:
-        tz = ZoneInfo(timezone_str)
-        dt = datetime.fromtimestamp(hour_bucket * 3600, tz=timezone.utc)
-        return bool(dt.astimezone(tz).dst())
-    except Exception as err:
-        _LOGGER.error("Error checking DST for %s: %s", timezone_str, err)
-        return False
 
 
 def format_duration(seconds: int) -> str:
@@ -158,43 +171,91 @@ def format_duration(seconds: int) -> str:
 # =============================================================================
 
 
-@lru_cache(maxsize=64)
 def calculate_soc_kwh_cached(
     initial_soc: float,
     battery_capacity: float,
     energy_charged: float,
     efficiency_loss: float,
 ) -> float:
-    """Cached SOC calculation in kWh."""
-    try:
-        initial_kwh = (initial_soc / 100) * battery_capacity
-        efficiency = 1 - efficiency_loss / 100
-        charged_kwh = energy_charged * efficiency
-        total_kwh = initial_kwh + charged_kwh
-        return round(max(0, min(total_kwh, battery_capacity)), 2)
-    except (TypeError, ValueError, ZeroDivisionError):
-        return 0.0
+    """Backward-compatible wrapper for SOC calculation in kWh."""
+    return calculate_soc_kwh(initial_soc, battery_capacity, energy_charged, efficiency_loss)
 
 
-@lru_cache(maxsize=64)
 def calculate_soc_percent_cached(
     initial_soc: float,
     battery_capacity: float,
     energy_charged: float,
     efficiency_loss: float,
 ) -> float:
-    """Cached SOC percentage calculation."""
-    try:
-        if battery_capacity <= 0:
-            return initial_soc
+    """Backward-compatible wrapper for SOC percentage calculation."""
+    return calculate_soc_percent(initial_soc, battery_capacity, energy_charged, efficiency_loss)
 
-        soc_kwh = calculate_soc_kwh_cached(
-            initial_soc, battery_capacity, energy_charged, efficiency_loss
-        )
-        percentage = (soc_kwh / battery_capacity) * 100
-        return round(max(0, min(percentage, 100)), 0)
-    except (TypeError, ValueError, ZeroDivisionError):
+
+def _validate_soc_inputs(
+    initial_soc: float,
+    battery_capacity: float,
+    energy_charged: float,
+    efficiency_loss: float,
+) -> tuple[float, float, float, float] | None:
+    """Validate SOC calculation inputs and return normalized floats."""
+    try:
+        initial_soc = float(initial_soc)
+        battery_capacity = float(battery_capacity)
+        energy_charged = float(energy_charged)
+        efficiency_loss = float(efficiency_loss)
+        if not all(
+            math.isfinite(value)
+            for value in (initial_soc, battery_capacity, energy_charged, efficiency_loss)
+        ):
+            return None
+        return initial_soc, battery_capacity, energy_charged, efficiency_loss
+    except (TypeError, ValueError):
+        return None
+
+
+def calculate_soc_kwh(
+    initial_soc: float,
+    battery_capacity: float,
+    energy_charged: float,
+    efficiency_loss: float,
+) -> float:
+    """Calculate SOC in kWh."""
+    inputs = _validate_soc_inputs(
+        initial_soc, battery_capacity, energy_charged, efficiency_loss
+    )
+    if inputs is None:
+        return 0.0
+    initial_soc, battery_capacity, energy_charged, efficiency_loss = inputs
+    if battery_capacity <= 0:
+        return 0.0
+    initial_kwh = (initial_soc / 100) * battery_capacity
+    efficiency = 1 - efficiency_loss / 100
+    charged_kwh = energy_charged * efficiency
+    total_kwh = initial_kwh + charged_kwh
+    return round(max(0, min(total_kwh, battery_capacity)), 2)
+
+
+def calculate_soc_percent(
+    initial_soc: float,
+    battery_capacity: float,
+    energy_charged: float,
+    efficiency_loss: float,
+) -> float:
+    """Calculate SOC percentage."""
+    inputs = _validate_soc_inputs(
+        initial_soc, battery_capacity, energy_charged, efficiency_loss
+    )
+    if inputs is None:
         return initial_soc or 0
+    initial_soc, battery_capacity, energy_charged, efficiency_loss = inputs
+    if battery_capacity <= 0:
+        return initial_soc
+
+    soc_kwh = calculate_soc_kwh(
+        initial_soc, battery_capacity, energy_charged, efficiency_loss
+    )
+    percentage = (soc_kwh / battery_capacity) * 100
+    return round(max(0, min(percentage, 100)), 0)
 
 
 def calculate_remaining_time(
