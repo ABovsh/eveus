@@ -363,9 +363,6 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             if power_meas is None or energy_charged is None:
                 return self._cached_value
 
-            if not self._soc_calculator.are_helpers_available(self.hass):
-                return "Helpers Required"
-
             battery_capacity = self._soc_calculator.battery_capacity
             target_soc = self._soc_calculator.target_soc
             soc_correction = self._soc_calculator.soc_correction

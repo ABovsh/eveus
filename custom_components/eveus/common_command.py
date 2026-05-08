@@ -4,6 +4,7 @@ import asyncio
 import random
 import time
 from typing import Any
+from urllib.parse import urlencode
 
 import aiohttp
 
@@ -91,6 +92,7 @@ class CommandManager:
         session = self._updater.get_session()
         timeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
 
+        payload = urlencode({"pageevent": command, command: value})
         async with session.post(
             f"http://{self._updater.host}/pageEvent",
             auth=aiohttp.BasicAuth(
@@ -98,7 +100,7 @@ class CommandManager:
                 self._updater.password,
             ),
             headers={"Content-type": "application/x-www-form-urlencoded"},
-            data=f"pageevent={command}&{command}={value}",
+            data=payload,
             timeout=timeout,
         ) as response:
             response.raise_for_status()
