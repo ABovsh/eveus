@@ -171,26 +171,6 @@ def format_duration(seconds: int) -> str:
 # =============================================================================
 
 
-def calculate_soc_kwh_cached(
-    initial_soc: float,
-    battery_capacity: float,
-    energy_charged: float,
-    efficiency_loss: float,
-) -> float:
-    """Backward-compatible wrapper for SOC calculation in kWh."""
-    return calculate_soc_kwh(initial_soc, battery_capacity, energy_charged, efficiency_loss)
-
-
-def calculate_soc_percent_cached(
-    initial_soc: float,
-    battery_capacity: float,
-    energy_charged: float,
-    efficiency_loss: float,
-) -> float:
-    """Backward-compatible wrapper for SOC percentage calculation."""
-    return calculate_soc_percent(initial_soc, battery_capacity, energy_charged, efficiency_loss)
-
-
 def _validate_soc_inputs(
     initial_soc: float,
     battery_capacity: float,

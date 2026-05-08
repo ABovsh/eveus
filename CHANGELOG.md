@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.1.1 - 2026-05-08
+
+Maintenance release with a small hardening pass and dead-code removal. No behavior change for end users.
+
+### Changed
+
+- Command payloads are now built with `urllib.parse.urlencode` instead of f-string concatenation. The set of commands and values is unchanged; this just removes a footgun if a future command name or value ever contained a reserved character.
+- Removed the redundant second helper-availability check inside `Time to Target SOC`. The first check (a few lines above) and the cached calculator already cover it.
+
+### Removed
+
+- Removed the unused `calculate_soc_kwh_cached` and `calculate_soc_percent_cached` wrappers from `utils.py`. Nothing in the integration or tests called them. Use `calculate_soc_kwh` / `calculate_soc_percent` directly.
+
 ## 4.1.0 - 2026-05-02
 
 Version 4.1.0 is a reliability and responsiveness release. It focuses on faster control feedback, quieter offline handling, better recovery tools, and clearer diagnostics while keeping existing entities and dashboards compatible.
