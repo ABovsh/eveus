@@ -34,6 +34,16 @@ class _Session:
         return self.response
 
 
+class _SequencedSession:
+    def __init__(self, responses: list[_Response]) -> None:
+        self.responses = responses
+        self.calls: list[dict[str, object]] = []
+
+    def post(self, url: str, **kwargs: object) -> _Response:
+        self.calls.append({"url": url, **kwargs})
+        return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
+
+
 class _Updater:
     host = "192.168.1.50"
     username = "admin"
@@ -91,6 +101,54 @@ def test_command_manager_applies_rate_limit_after_failure(
 
     assert asyncio.run(manager.send_command("evseEnabled", 0)) is False
     assert manager._last_command_time > 0
+
+
+def test_command_manager_recovers_after_transient_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", _no_sleep)
+    session = _SequencedSession([_Response(raise_error=True), _Response()])
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("currentSet", 12)) is True
+    assert len(session.calls) == 2
+    assert manager.consecutive_failures == 0
+
+
+def test_command_manager_serializes_concurrent_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleep_calls: list[float] = []
+
+    async def tracked_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", tracked_sleep)
+    session = _Session(_Response())
+    manager = CommandManager(_Updater(session))
+
+    async def scenario() -> None:
+        await asyncio.gather(
+            manager.send_command("currentSet", 16),
+            manager.send_command("evseEnabled", 1),
+        )
+
+    asyncio.run(scenario())
+
+    assert [call["data"] for call in session.calls] == [
+        "pageevent=currentSet&currentSet=16",
+        "pageevent=evseEnabled&evseEnabled=1",
+    ]
+    assert sleep_calls and 0 < sleep_calls[0] <= 1
+
+
+def test_command_manager_urlencodes_command_payload() -> None:
+    session = _Session(_Response())
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("profile name", "eco mode")) is True
+
+    assert session.calls[0]["data"] == "pageevent=profile+name&profile+name=eco+mode"
 
 
 async def _no_sleep(_seconds: float) -> None:
