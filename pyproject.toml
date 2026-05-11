@@ -13,3 +13,10 @@ omit = ["tests/*"]
 show_missing = true
 skip_covered = true
 fail_under = 80
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
