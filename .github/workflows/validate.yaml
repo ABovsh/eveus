@@ -36,8 +36,11 @@ jobs:
       - name: Compile integration
         run: "python -m compileall custom_components/eveus"
 
+      - name: Lint
+        run: "python -m ruff check custom_components/eveus tests"
+
       - name: Run tests
-        run: "python -m pytest -q"
+        run: "python -m pytest -q --cov --cov-fail-under=80"
 
   validate-hacs:
     name: HACS
