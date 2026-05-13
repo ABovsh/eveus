@@ -162,11 +162,59 @@ Create these helpers in **Settings → Devices & Services → Helpers → Create
 | Helper entity ID | Name | Unit | Min | Max | Step | Initial | Purpose |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `input_number.ev_battery_capacity` | EV Battery Capacity | kWh | 10 | 160 | 1 | 80 | Battery size used for SOC energy and time-to-target calculations |
-| `input_number.ev_initial_soc` | Initial EV State of Charge | % | 0 | 100 | 1 | 20 | Battery percentage when the charging session starts |
+| `input_number.ev_initial_soc` | Initial EV State of Charge | % | 0 | 100 | 1 | 20 | Battery percentage at the point where SOC tracking should start |
 | `input_number.ev_soc_correction` | Charging Efficiency Loss | % | 0 | 15 | 0.1 | 7.5 | Charging loss correction applied to delivered energy |
 | `input_number.ev_target_soc` | Target SOC | % | 0 | 100 | 5 | 80 | Desired battery percentage for the time-to-target sensor |
 
 The **Input Entities Status** diagnostic sensor shows which helpers are missing or invalid.
+
+### How SOC Baselines Work
+
+The SOC helper sensors do not treat the raw Counter A / `IEM1` value as energy added to the battery. Counter A may already contain previous charging history, especially if it is only reset by an automation when the house changes mode.
+
+Instead, the integration captures the current Counter A / `IEM1` value as a baseline and calculates SOC from the difference:
+
+```text
+charged energy for SOC = current IEM1 - baseline IEM1
+```
+
+The baseline is created the first time a valid Counter A / `IEM1` value is seen after the helpers are available.
+
+The baseline resets when:
+
+- `input_number.ev_initial_soc` changes.
+- Counter A / `IEM1` becomes lower than the captured baseline, which means the charger counter was reset.
+
+The baseline does **not** reset just because charging stops and starts again. This means split charging works as expected when you set Initial SOC once, charge in several separate sessions, and do not reset Counter A between them.
+
+Example:
+
+```text
+Battery capacity: 80 kWh
+Initial SOC: 20%
+Charging loss: 10%
+Counter A / IEM1 when Initial SOC is set: 100 kWh
+```
+
+After the first charging session:
+
+```text
+IEM1 = 110 kWh
+SOC delta = 110 - 100 = 10 kWh
+Usable energy = 10 * 0.90 = 9 kWh
+Estimated SOC = 31%
+```
+
+After a second separate charging session without changing Initial SOC or resetting Counter A:
+
+```text
+IEM1 = 116 kWh
+SOC delta = 116 - 100 = 16 kWh
+Usable energy = 16 * 0.90 = 14.4 kWh
+Estimated SOC = 38%
+```
+
+If you correct Initial SOC during charging, the integration treats the new Initial SOC as the new truth from that moment and starts a fresh SOC baseline at the current Counter A / `IEM1` value.
 
 ## Troubleshooting
 
