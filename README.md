@@ -1,7 +1,7 @@
 # Eveus EV Charger - Home Assistant Integration
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.1.1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.2.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 Local Home Assistant integration for Eveus EV chargers. It adds charger monitoring, current control, charging mode switches, energy and cost sensors, optional EV battery estimates, diagnostics, and multi-charger support.
@@ -59,8 +59,8 @@ When helper entities are created, the integration can estimate:
 | --- | --- |
 | Home Assistant | 2024.4 or newer |
 | Charger | Eveus EV charger on the same reachable network |
-| Network | Charger IP address or local hostname |
-| Setup fields | IP/host, username, password, and charger model |
+| Network | Charger IP address or local hostname, optionally with `http://` or `https://` and a port |
+| Setup fields | IP/host or URL, username, password, and charger model |
 | Supported models | 16A, 32A, 48A |
 
 ## Installation
@@ -83,7 +83,7 @@ When helper entities are created, the integration can estimate:
 1. Open **Settings → Devices & Services**.
 2. Select **Add Integration**.
 3. Search for **Eveus EV Charger**.
-4. Enter the charger IP address or hostname.
+4. Enter the charger IP address, hostname, or URL. Use `https://` when the charger is configured for HTTPS.
 5. Enter the charger username and password.
 6. Select the charger model: 16A, 32A, or 48A.
 

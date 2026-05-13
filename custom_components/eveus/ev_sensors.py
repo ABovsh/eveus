@@ -23,7 +23,7 @@ from .utils import (
     calculate_soc_percent,
     get_safe_value,
 )
-from .const import STATE_CACHE_TTL
+from .const import DEVICE_STATE_CHARGING, STATE_CACHE_TTL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -180,6 +180,11 @@ class CachedSOCCalculator:
         """Return cached target SOC."""
         return self._input_cache.target_soc
 
+    @property
+    def initial_soc(self) -> Optional[float]:
+        """Return cached initial SOC."""
+        return self._input_cache.initial_soc
+
 
 # =============================================================================
 # Common base for EV helper-dependent sensors
@@ -203,6 +208,9 @@ class BaseEVHelperSensor(EveusSensorBase):
         self._last_update_time = 0
         self._cached_value = None
         self._helpers_available = False
+        self._energy_baseline: float | None = None
+        self._baseline_initial_soc: float | None = None
+        self._baseline_session_active = False
 
     def _refresh_helpers_available(self) -> bool:
         """Refresh optional helper availability and return whether it changed."""
@@ -274,8 +282,33 @@ class BaseEVHelperSensor(EveusSensorBase):
             self.async_write_ha_state()
 
     def _get_energy_charged(self) -> float | None:
-        """Get energy charged from current updater data."""
-        return get_safe_value(self._updater.data, "IEM1", float)
+        """Get session energy charged from the current updater data."""
+        energy_charged = get_safe_value(self._updater.data, "IEM1", float)
+        if energy_charged is None:
+            return None
+
+        hass = getattr(self, "hass", None)
+        if hass is not None:
+            self._soc_calculator.are_helpers_available(hass)
+        initial_soc = self._soc_calculator.initial_soc
+
+        state_value = get_safe_value(self._updater.data, "state", int)
+        session_active = state_value == DEVICE_STATE_CHARGING
+
+        if initial_soc != self._baseline_initial_soc:
+            self._energy_baseline = energy_charged
+            self._baseline_initial_soc = initial_soc
+            self._baseline_session_active = session_active
+        elif session_active and not self._baseline_session_active:
+            self._energy_baseline = energy_charged
+            self._baseline_session_active = True
+        elif not session_active:
+            self._baseline_session_active = False
+
+        if self._energy_baseline is None:
+            self._energy_baseline = energy_charged
+
+        return max(0.0, energy_charged - self._energy_baseline)
 
 
 # =============================================================================

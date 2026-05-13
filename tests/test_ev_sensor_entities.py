@@ -103,11 +103,15 @@ def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
     kwh.hass = hass
     percent.hass = hass
 
-    assert kwh._get_sensor_value() == 30.4
-    assert percent._get_sensor_value() == 38
+    assert kwh._get_sensor_value() == 16
+    assert percent._get_sensor_value() == 20
+
+    updater.data = {"IEM1": "20", "state": 4}
+    assert kwh._get_sensor_value() == 19.6
+    assert percent._get_sensor_value() == 24
 
     updater.data = {}
-    assert kwh._get_sensor_value() == 30.4
+    assert kwh._get_sensor_value() == 19.6
 
 
 def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:
@@ -182,8 +186,26 @@ def test_helper_sensor_coordinator_update_refreshes_helper_status() -> None:
     sensor._handle_coordinator_update()
 
     assert sensor.available is True
-    assert sensor.native_value == 30.4
+    assert sensor.native_value == 16
     assert writes == 1
+
+
+def test_soc_baseline_resets_when_initial_soc_changes() -> None:
+    values = dict(HELPERS)
+    hass = _Hass(values)
+    updater = _Updater({"IEM1": "16", "state": 4})
+    sensor = EVSocKwhSensor(updater)
+    sensor.hass = hass
+
+    assert sensor._get_sensor_value() == 16
+
+    updater.data = {"IEM1": "20", "state": 4}
+    assert sensor._get_sensor_value() == 19.6
+
+    values["input_number.ev_initial_soc"] = 30
+    sensor._soc_calculator.invalidate_cache()
+
+    assert sensor._get_sensor_value() == 24
 
 
 def test_time_to_target_returns_helper_required_for_missing_helpers() -> None:

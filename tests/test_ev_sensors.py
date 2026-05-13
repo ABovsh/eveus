@@ -72,6 +72,6 @@ def test_time_to_target_soc_uses_shared_calculator_cache() -> None:
     )
     sensor.hass = _Hass(HELPERS)
 
-    assert sensor._get_sensor_value() == "5h 20m"
+    assert sensor._get_sensor_value() == "7h 37m"
     assert calculator.battery_capacity == 80
     assert calculator.target_soc == 80

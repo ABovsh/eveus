@@ -27,8 +27,9 @@ class _Updater:
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
 
-    async def send_command(self, command: str, value: object) -> bool:
+    async def send_command(self, command: str, value: object, *, retry: bool = True) -> bool:
         self.commands.append((command, value))
+        self.last_retry = retry
         return self.command_result
 
 
@@ -267,6 +268,7 @@ def test_reset_counter_switch_status_and_reset_behavior_unchanged() -> None:
 
     asyncio.run(entity.async_turn_off())
     assert updater.commands == [("rstEM1", 0)]
+    assert updater.last_retry is False
 
     updater.command_result = False
     import pytest

@@ -34,7 +34,7 @@ class EveusRefreshButton(BaseEveusEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Trigger an immediate (non-debounced) refresh."""
-        await self._updater.async_refresh()
+        await self._updater.async_force_refresh()
 
 
 async def async_setup_entry(

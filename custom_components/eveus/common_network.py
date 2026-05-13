@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .common_command import CommandManager
 from .const import (
     CHARGING_UPDATE_INTERVAL,
+    DEFAULT_SCHEME,
     DEVICE_STATE_CHARGING,
     ERROR_LOG_RATE_LIMIT,
     IDLE_UPDATE_INTERVAL,
@@ -52,6 +53,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         username: str,
         password: str,
         hass: HomeAssistant,
+        scheme: str = DEFAULT_SCHEME,
         config_entry: ConfigEntry | None = None,
     ) -> None:
         """Initialize updater."""
@@ -63,6 +65,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=_CHARGING_INTERVAL,
         )
         self.host = host
+        self.scheme = scheme
         self.username = username
         self.password = password
         self._command_manager = CommandManager(self)
@@ -80,6 +83,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._last_error: str | None = None
         self._device_available = True
         self._next_poll_attempt = 0.0
+        self._force_refresh_requested = False
         self._post_command_refresh_tasks: list[asyncio.Task] = []
 
     @property
@@ -125,12 +129,30 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Get Home Assistant shared HTTP session."""
         return async_get_clientsession(self.hass)
 
-    async def send_command(self, command: str, value: Any) -> bool:
+    def url_for(self, path: str) -> str:
+        """Build a charger URL with the configured transport."""
+        return f"{self.scheme}://{self.host}{path}"
+
+    async def send_command(
+        self,
+        command: str,
+        value: Any,
+        *,
+        retry: bool = True,
+    ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
-        success = await self._command_manager.send_command(command, value)
+        success = await self._command_manager.send_command(command, value, retry=retry)
         if success:
             self._schedule_post_command_refresh()
         return success
+
+    async def async_force_refresh(self) -> None:
+        """Force an immediate refresh, bypassing one offline-backoff skip."""
+        self._force_refresh_requested = True
+        try:
+            await self.async_refresh()
+        finally:
+            self._force_refresh_requested = False
 
     async def _delayed_refresh(self, delay: float) -> None:
         """Wait `delay` seconds then run an immediate, non-debounced refresh.
@@ -248,12 +270,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
         start_time = time.time()
-        if self._next_poll_attempt > start_time:
+        bypass_backoff = self._force_refresh_requested
+        self._force_refresh_requested = False
+        if self._next_poll_attempt > start_time and not bypass_backoff:
             raise UpdateFailed(f"Skipping poll for {self.host} during offline backoff")
 
         try:
             async with self.get_session().post(
-                f"http://{self.host}/main",
+                self.url_for("/main"),
                 auth=aiohttp.BasicAuth(self.username, self.password),
                 timeout=aiohttp.ClientTimeout(total=UPDATE_TIMEOUT),
             ) as response:

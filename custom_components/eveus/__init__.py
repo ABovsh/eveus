@@ -16,7 +16,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, MODEL_MAX_CURRENT, CONF_MODEL
+from .const import DOMAIN, MODEL_MAX_CURRENT, CONF_MODEL, CONF_SCHEME, DEFAULT_SCHEME
 from .common_network import EveusUpdater
 from .utils import get_next_device_number
 
@@ -87,12 +87,15 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     new_data = dict(entry.data)
     host = new_data.get(CONF_HOST)
     if isinstance(host, str) and host.startswith(("http://", "https://")):
-        from .config_flow import validate_host
+        from .config_flow import _split_host_and_scheme
 
         try:
-            new_data[CONF_HOST] = validate_host(host)
+            new_data[CONF_HOST], new_data[CONF_SCHEME] = _split_host_and_scheme(host)
         except vol.Invalid:
             _LOGGER.warning("Could not normalize stored Eveus host %s", host)
+
+    if CONF_SCHEME not in new_data:
+        new_data[CONF_SCHEME] = DEFAULT_SCHEME
 
     update_kwargs: dict[str, Any] = {}
     if new_data != entry.data:
@@ -120,6 +123,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         username = entry.data.get(CONF_USERNAME)
         password = entry.data.get(CONF_PASSWORD)
         model = entry.data.get(CONF_MODEL)
+        scheme = entry.data.get(CONF_SCHEME, DEFAULT_SCHEME)
 
         if not host:
             _create_invalid_config_issue(hass, entry, "missing_host")
@@ -159,6 +163,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             username=username,
             password=password,
             hass=hass,
+            scheme=scheme,
             config_entry=entry,
         )
         from .ev_sensors import CachedSOCCalculator

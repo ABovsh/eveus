@@ -36,6 +36,8 @@ MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
 
 # Configuration
 CONF_MODEL: Final[str] = "model"
+CONF_SCHEME: Final[str] = "scheme"
+DEFAULT_SCHEME: Final[str] = "http"
 
 # Rate States
 RATE_STATES: Final[Dict[int, str]] = {

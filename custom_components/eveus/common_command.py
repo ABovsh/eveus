@@ -42,7 +42,7 @@ class CommandManager:
         """Rate limit error logging."""
         return self._error_log.should_log(ERROR_LOG_RATE_LIMIT)
 
-    async def send_command(self, command: str, value: Any) -> bool:
+    async def send_command(self, command: str, value: Any, *, retry: bool = True) -> bool:
         """Send command with rate limiting, retry/backoff, and error handling."""
         async with self._lock:
             # Rate limit: minimum 1 second between commands
@@ -52,7 +52,8 @@ class CommandManager:
 
             try:
                 last_error: Exception | None = None
-                for attempt in range(_COMMAND_RETRY_ATTEMPTS + 1):
+                retry_attempts = _COMMAND_RETRY_ATTEMPTS if retry else 0
+                for attempt in range(retry_attempts + 1):
                     try:
                         return await self._post_command(command, value)
                     except (
@@ -62,7 +63,7 @@ class CommandManager:
                         asyncio.TimeoutError,
                     ) as err:
                         last_error = err
-                        if attempt >= _COMMAND_RETRY_ATTEMPTS:
+                        if attempt >= retry_attempts:
                             break
                         delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(
                             0, _COMMAND_RETRY_JITTER
@@ -94,7 +95,7 @@ class CommandManager:
 
         payload = urlencode({"pageevent": command, command: value})
         async with session.post(
-            f"http://{self._updater.host}/pageEvent",
+            self._updater.url_for("/pageEvent"),
             auth=aiohttp.BasicAuth(
                 self._updater.username,
                 self._updater.password,

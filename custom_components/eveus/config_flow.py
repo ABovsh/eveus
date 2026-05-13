@@ -23,6 +23,8 @@ from .const import (
     DOMAIN,
     MODEL_16A,
     CONF_MODEL,
+    CONF_SCHEME,
+    DEFAULT_SCHEME,
     MODELS,
     MIN_CURRENT,
     MODEL_MAX_CURRENT,
@@ -55,23 +57,45 @@ def _is_valid_hostname(hostname: str) -> bool:
     return all(_HOSTNAME_RE.match(x) for x in hostname.split("."))
 
 
-def validate_host(host: str) -> str:
-    """Validate host input."""
-    host = host.strip()
-    if not host:
+def _split_host_and_scheme(
+    raw_host: str,
+    default_scheme: str = DEFAULT_SCHEME,
+) -> tuple[str, str]:
+    """Validate host input and return normalized host[:port] plus scheme."""
+    raw_host = raw_host.strip()
+    if not raw_host:
         raise vol.Invalid("Host cannot be empty")
 
-    if host.startswith(("http://", "https://")):
-        parsed = urlparse(host)
-        host = parsed.hostname or host
+    parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
+    scheme = parsed.scheme or default_scheme
+    if scheme not in ("http", "https"):
+        raise vol.Invalid("Unsupported URL scheme")
 
-    if not _is_valid_ip(host) and not _is_valid_hostname(host):
+    hostname = parsed.hostname
+    if not hostname:
         raise vol.Invalid("Invalid IP address or hostname")
 
-    if host.endswith("."):
-        host = host[:-1]
+    try:
+        port = parsed.port
+    except ValueError as err:
+        raise vol.Invalid("Invalid port") from err
 
-    return host
+    if not _is_valid_ip(hostname) and not _is_valid_hostname(hostname):
+        raise vol.Invalid("Invalid IP address or hostname")
+
+    if hostname.endswith("."):
+        hostname = hostname[:-1]
+
+    if port is not None:
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        return f"{hostname}:{port}", scheme
+    return hostname, scheme
+
+
+def validate_host(host: str) -> str:
+    """Validate host input."""
+    return _split_host_and_scheme(host)[0]
 
 
 def validate_credentials(username: str, password: str) -> tuple[str, str]:
@@ -119,7 +143,10 @@ def validate_device_response(
 
 def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize config-flow input before connection validation and storage."""
-    host = validate_host(data[CONF_HOST])
+    host, scheme = _split_host_and_scheme(
+        data[CONF_HOST],
+        data.get(CONF_SCHEME, DEFAULT_SCHEME),
+    )
     username, password = validate_credentials(data[CONF_USERNAME], data[CONF_PASSWORD])
     model = data.get(CONF_MODEL)
     if model not in MODELS:
@@ -130,15 +157,19 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
         CONF_USERNAME: username,
         CONF_PASSWORD: password,
         CONF_MODEL: model,
+        CONF_SCHEME: scheme,
     }
 
 
 def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     """Build config-flow schema with optional defaults."""
     defaults = defaults or {}
+    host_default = defaults.get(CONF_HOST)
+    if host_default and defaults.get(CONF_SCHEME) == "https":
+        host_default = f"https://{host_default}"
     return vol.Schema(
         {
-            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST)): str,
+            vol.Required(CONF_HOST, default=host_default): str,
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
             vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): str,
             vol.Required(
@@ -175,7 +206,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         timeout = aiohttp.ClientTimeout(total=10)
 
         async with session.post(
-            f"http://{normalized_data[CONF_HOST]}/main",
+            f"{normalized_data[CONF_SCHEME]}://{normalized_data[CONF_HOST]}/main",
             auth=aiohttp.BasicAuth(
                 normalized_data[CONF_USERNAME],
                 normalized_data[CONF_PASSWORD],

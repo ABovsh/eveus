@@ -22,7 +22,7 @@ from custom_components.eveus.config_flow import (
     validate_host,
     validate_input,
 )
-from custom_components.eveus.const import CONF_MODEL, MODEL_16A
+from custom_components.eveus.const import CONF_MODEL, CONF_SCHEME, MODEL_16A
 
 
 class _Response:
@@ -97,7 +97,7 @@ def _input(**overrides: object) -> dict[str, object]:
     [
         (" 192.168.1.50 ", "192.168.1.50"),
         ("http://charger.local/main", "charger.local"),
-        ("https://eveus.local", "eveus.local"),
+        ("https://eveus.local:8443/main", "eveus.local:8443"),
     ],
 )
 def test_validate_host_accepts_ips_hostnames_and_urls(raw: str, expected: str) -> None:
@@ -145,7 +145,17 @@ def test_normalize_user_input_returns_persistable_config_data() -> None:
         CONF_USERNAME: "admin",
         CONF_PASSWORD: " secret ",
         CONF_MODEL: MODEL_16A,
+        CONF_SCHEME: "http",
     }
+
+
+def test_normalize_user_input_preserves_stored_https_scheme() -> None:
+    data = normalize_user_input(
+        _input(**{CONF_HOST: "eveus.local:8443", CONF_SCHEME: "https"})
+    )
+
+    assert data[CONF_HOST] == "eveus.local:8443"
+    assert data[CONF_SCHEME] == "https"
 
 
 def test_normalize_user_input_rejects_invalid_model() -> None:
@@ -180,9 +190,25 @@ def test_validate_input_posts_to_normalized_host() -> None:
 
     assert result["title"] == "Eveus Charger (192.168.1.50)"
     assert result["data"][CONF_HOST] == "192.168.1.50"
+    assert result["data"][CONF_SCHEME] == "http"
     assert result["device_info"]["current_set"] == 12
     assert session.calls[0]["url"] == "http://192.168.1.50/main"
     assert response.json_kwargs == {"content_type": None}
+
+
+def test_validate_input_preserves_https_scheme_and_port() -> None:
+    response = _Response(payload={"currentSet": "12", "verFWMain": "3.0.3"})
+    session = _Session(response)
+    hass = _Hass(session)
+
+    result = asyncio.run(
+        validate_input(hass, _input(**{CONF_HOST: "https://eveus.local:8443/main"}))
+    )
+
+    assert result["title"] == "Eveus Charger (eveus.local:8443)"
+    assert result["data"][CONF_HOST] == "eveus.local:8443"
+    assert result["data"][CONF_SCHEME] == "https"
+    assert session.calls[0]["url"] == "https://eveus.local:8443/main"
 
 
 def test_validate_input_rejects_unauthorized_response() -> None:
