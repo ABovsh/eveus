@@ -23,7 +23,7 @@ from .utils import (
     calculate_soc_percent,
     get_safe_value,
 )
-from .const import DEVICE_STATE_CHARGING, STATE_CACHE_TTL
+from .const import STATE_CACHE_TTL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -210,7 +210,6 @@ class BaseEVHelperSensor(EveusSensorBase):
         self._helpers_available = False
         self._energy_baseline: float | None = None
         self._baseline_initial_soc: float | None = None
-        self._baseline_session_active = False
 
     def _refresh_helpers_available(self) -> bool:
         """Refresh optional helper availability and return whether it changed."""
@@ -282,7 +281,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             self.async_write_ha_state()
 
     def _get_energy_charged(self) -> float | None:
-        """Get session energy charged from the current updater data."""
+        """Get energy charged since the current SOC helper baseline."""
         energy_charged = get_safe_value(self._updater.data, "IEM1", float)
         if energy_charged is None:
             return None
@@ -292,21 +291,13 @@ class BaseEVHelperSensor(EveusSensorBase):
             self._soc_calculator.are_helpers_available(hass)
         initial_soc = self._soc_calculator.initial_soc
 
-        state_value = get_safe_value(self._updater.data, "state", int)
-        session_active = state_value == DEVICE_STATE_CHARGING
-
-        if initial_soc != self._baseline_initial_soc:
+        if (
+            self._energy_baseline is None
+            or initial_soc != self._baseline_initial_soc
+            or energy_charged < self._energy_baseline
+        ):
             self._energy_baseline = energy_charged
             self._baseline_initial_soc = initial_soc
-            self._baseline_session_active = session_active
-        elif session_active and not self._baseline_session_active:
-            self._energy_baseline = energy_charged
-            self._baseline_session_active = True
-        elif not session_active:
-            self._baseline_session_active = False
-
-        if self._energy_baseline is None:
-            self._energy_baseline = energy_charged
 
         return max(0.0, energy_charged - self._energy_baseline)
 

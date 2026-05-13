@@ -265,10 +265,10 @@ def test_send_command_schedules_delayed_refresh_only_after_success() -> None:
         original = EveusUpdater._delayed_refresh
         EveusUpdater._delayed_refresh = fake_delayed_refresh  # type: ignore[assignment]
         try:
-            async def successful(command: str, value: object) -> bool:
+            async def successful(command: str, value: object, **kwargs: object) -> bool:
                 return True
 
-            async def failed(command: str, value: object) -> bool:
+            async def failed(command: str, value: object, **kwargs: object) -> bool:
                 return False
 
             updater._command_manager = SimpleNamespace(send_command=successful)

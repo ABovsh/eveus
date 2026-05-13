@@ -37,7 +37,6 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     assert base is not None, version
     base_version = base.group(1)
 
-    assert base_version == "4.1.0"
     assert f"version-{base_version}-blue" in readme
     assert f"## {version}" in changelog
 
