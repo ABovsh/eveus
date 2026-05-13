@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.2.1 - 2026-05-13
+
+Patch release for SOC helper baseline behavior.
+
+### Fixed
+
+- SOC helper baselines now remain anchored to the latest Initial SOC helper value across multiple charging sessions, so split charging while staying home continues to accumulate energy correctly.
+- SOC helper baselines still reset when Initial SOC changes or when Counter A/IEM1 drops below the captured baseline, which handles explicit counter resets without treating old counter history as session energy.
+
 ## 4.2.0 - 2026-05-13
 
 Security and correctness release for charger transport, command retries, force refresh, and SOC session math.

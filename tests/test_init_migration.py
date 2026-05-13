@@ -83,7 +83,11 @@ def test_migrate_entry_adds_default_scheme_to_current_host_data() -> None:
     assert asyncio.run(async_migrate_entry(hass, entry)) is True
 
     assert config_entries.calls == [
-        {"data": {CONF_HOST: "192.168.1.50", CONF_SCHEME: "http"}}
+        {
+            "data": {CONF_HOST: "192.168.1.50", CONF_SCHEME: "http"},
+            "unique_id": "192.168.1.50",
+            "title": "Eveus Charger (192.168.1.50)",
+        }
     ]
 
 
@@ -99,4 +103,11 @@ def test_migrate_entry_bumps_version_even_if_old_url_is_invalid() -> None:
 
     assert asyncio.run(async_migrate_entry(hass, entry)) is True
 
-    assert config_entries.calls == [{"version": CONFIG_ENTRY_VERSION}]
+    assert config_entries.calls == [
+        {
+            "data": {CONF_HOST: "http://bad host name/main", CONF_SCHEME: "http"},
+            "unique_id": "http://bad host name/main",
+            "title": "Eveus Charger (http://bad host name/main)",
+            "version": CONFIG_ENTRY_VERSION,
+        }
+    ]

@@ -106,9 +106,9 @@ def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
     assert kwh._get_sensor_value() == 16
     assert percent._get_sensor_value() == 20
 
-    updater.data = {"IEM1": "20", "state": 4}
+    updater.data = {"IEM1": "20"}
     assert kwh._get_sensor_value() == 19.6
-    assert percent._get_sensor_value() == 24
+    assert percent._get_sensor_value() == 25
 
     updater.data = {}
     assert kwh._get_sensor_value() == 19.6
@@ -206,6 +206,42 @@ def test_soc_baseline_resets_when_initial_soc_changes() -> None:
     sensor._soc_calculator.invalidate_cache()
 
     assert sensor._get_sensor_value() == 24
+
+
+def test_soc_baseline_survives_multiple_charging_sessions() -> None:
+    hass = _Hass(HELPERS)
+    updater = _Updater({"IEM1": "100", "state": 4})
+    sensor = EVSocPercentSensor(updater)
+    sensor.hass = hass
+
+    assert sensor._get_sensor_value() == 20
+
+    updater.data = {"IEM1": "110", "state": 2}
+    assert sensor._get_sensor_value() == 31
+
+    updater.data = {"IEM1": "116", "state": 4}
+    assert sensor._get_sensor_value() == 38
+
+    updater.data = {"IEM1": "124", "state": 2}
+    assert sensor._get_sensor_value() == 47
+
+
+def test_soc_baseline_resets_when_counter_is_reset() -> None:
+    hass = _Hass(HELPERS)
+    updater = _Updater({"IEM1": "100"})
+    sensor = EVSocKwhSensor(updater)
+    sensor.hass = hass
+
+    assert sensor._get_sensor_value() == 16
+
+    updater.data = {"IEM1": "110"}
+    assert sensor._get_sensor_value() == 25
+
+    updater.data = {"IEM1": "0"}
+    assert sensor._get_sensor_value() == 16
+
+    updater.data = {"IEM1": "5"}
+    assert sensor._get_sensor_value() == 20.5
 
 
 def test_time_to_target_returns_helper_required_for_missing_helpers() -> None:
