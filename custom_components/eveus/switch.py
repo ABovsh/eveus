@@ -281,7 +281,7 @@ class EveusResetCounterASwitch(BaseCounterSwitch):
         if self._safe_mode:
             return
         async with self._reset_lock:
-            success = await self._updater.send_command(self._command, 0)
+            success = await self._updater.send_command(self._command, 0, retry=False)
             if success:
                 self._last_reset_time = time.time()
                 _LOGGER.debug("Successfully reset counter A")

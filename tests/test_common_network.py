@@ -87,6 +87,25 @@ def test_update_data_fetches_payload_and_uses_stable_interval(
     assert updater.connection_quality["consecutive_failures"] == 0
 
 
+def test_update_data_uses_configured_https_scheme_and_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"state": 4, "powerMeas": 7200}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        "eveus.local:8443",
+        "admin",
+        "secret",
+        _Hass(),
+        scheme="https",
+    )
+
+    asyncio.run(updater._async_update_data())
+
+    assert session.calls[0]["url"] == "https://eveus.local:8443/main"
+    assert updater.connection_quality["consecutive_failures"] == 0
+
+
 def test_coordinator_compatibility_helpers() -> None:
     updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
 
@@ -203,6 +222,21 @@ def test_offline_backoff_skip_raises_even_without_prior_data() -> None:
 
     with pytest.raises(UpdateFailed):
         asyncio.run(updater._async_update_data())
+
+
+def test_force_refresh_bypasses_offline_backoff_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"state": 2}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater._next_poll_attempt = time.time() + RETRY_DELAY
+    updater._force_refresh_requested = True
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data == {"state": 2}
+    assert len(session.calls) == 1
 
 
 def test_send_command_schedules_delayed_refresh_only_after_success() -> None:

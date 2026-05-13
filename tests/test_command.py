@@ -55,6 +55,9 @@ class _Updater:
     def get_session(self) -> _Session:
         return self._session
 
+    def url_for(self, path: str) -> str:
+        return f"http://{self.host}{path}"
+
 
 def test_command_manager_posts_expected_form_payload() -> None:
     session = _Session(_Response())
@@ -113,6 +116,18 @@ def test_command_manager_recovers_after_transient_retry(
     assert asyncio.run(manager.send_command("currentSet", 12)) is True
     assert len(session.calls) == 2
     assert manager.consecutive_failures == 0
+
+
+def test_command_manager_can_disable_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", _no_sleep)
+    failure_session = _Session(_Response(raise_error=True))
+    manager = CommandManager(_Updater(failure_session))
+
+    assert asyncio.run(manager.send_command("rstEM1", 0, retry=False)) is False
+
+    assert len(failure_session.calls) == 1
 
 
 def test_command_manager_serializes_concurrent_commands(

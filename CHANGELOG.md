@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.2.0 - 2026-05-13
+
+Security and correctness release for charger transport, command retries, force refresh, and SOC session math.
+
+### Changed
+
+- URL-style setup input now preserves `https://` and explicit ports. Runtime polling and commands use the stored scheme, so HTTPS chargers use TLS verification through Home Assistant's aiohttp session instead of being downgraded to HTTP.
+- SOC helper sensors now calculate from the IEM1 delta captured at the start of the helper/session baseline instead of treating the charger's lifetime counter as session energy.
+
+### Fixed
+
+- Counter A reset (`rstEM1`) no longer auto-retries after ambiguous network failures, avoiding duplicate destructive reset requests.
+- The Force Refresh button now bypasses offline polling backoff for the requested refresh instead of being blocked by the next scheduled retry time.
+- SOC baselines reset when the initial SOC helper changes or when a new charging session starts.
+
 ## 4.1.1 - 2026-05-08
 
 Maintenance release with a small hardening pass and dead-code removal. No behavior change for end users.
