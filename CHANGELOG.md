@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.4.0 - 2026-05-14
+
+Log hygiene, silent double-work elimination, and code correctness.
+
+- Fix: `calculate_remaining_time` now logs at debug level instead of error — transient calculation failures no longer generate ERROR entries in the HA log
+- Fix: Config flow validation failures (InvalidInput, InvalidDevice) for setup, reconfigure, and reauth steps now log at debug level — wrong IP or credentials no longer pollute the HA log on every user typo
+- Fix: `sensor.py` platform setup no longer double-logs on exception — HA's platform loader already captures the traceback
+- Fix: `BaseCounterSwitch.async_turn_off` now implemented as a no-op, matching `async_turn_on` — prevents `NotImplementedError` if the base class is ever used directly
+- Fix: `_get_energy_charged` now calls `_update_input_cache` directly instead of `are_helpers_available` discarding the return value — removes side-effecting query call
+- Fix: `InputEntitiesStatusSensor._check_inputs` no longer calls `_update_extra_state_attributes` internally — the coordinator update cycle owns attribute updates, preventing double computation per poll
+- Fix: Compatibility alias docstrings in `BaseSwitchEntity` corrected — aliases are actively used in current tests, not "older" ones
+- Fix: `SensorSpec.state_class` type annotation corrected to `Optional[SensorStateClass | str]`
+- Add: Tests for `CachedSOCCalculator` properties (`battery_capacity`, `initial_soc`, `soc_correction`, `target_soc`) and cache invalidation behavior
+- Add: Test verifying `connection_quality` exposes all expected dict keys
+- Add: Test verifying `is_likely_offline` requires both failure count and time thresholds simultaneously
+- Add: Test verifying `BaseCounterSwitch.async_turn_off` does not raise
+
 ## 4.3.0 - 2026-05-14
 
 Bug fixes, statistics correctness, and resilience improvements.

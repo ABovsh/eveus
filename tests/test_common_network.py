@@ -372,6 +372,48 @@ def test_tune_interval_preserves_offline_cadence_when_likely_offline(
     )
 
 
+def test_connection_quality_dict_has_all_expected_keys() -> None:
+    """connection_quality must expose all keys that sensor and diagnostics depend on."""
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+
+    metrics = updater.connection_quality
+
+    for key in (
+        "success_rate",
+        "latency_avg",
+        "consecutive_failures",
+        "consecutive_command_failures",
+        "is_healthy",
+        "last_success_time",
+        "last_error",
+        "sample_count",
+    ):
+        assert key in metrics, f"connection_quality missing key: {key!r}"
+
+
+def test_is_likely_offline_transitions() -> None:
+    """is_likely_offline requires both >10 consecutive failures and >600s since last success."""
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+
+    # Neither condition met — online.
+    assert updater.is_likely_offline is False
+
+    # Failures without time — still online.
+    updater._consecutive_failures = 11
+    updater._last_success_time = time.time()
+    assert updater.is_likely_offline is False
+
+    # Time without failures — still online.
+    updater._consecutive_failures = 5
+    updater._last_success_time = time.time() - 700
+    assert updater.is_likely_offline is False
+
+    # Both conditions met — offline.
+    updater._consecutive_failures = 11
+    updater._last_success_time = time.time() - 700
+    assert updater.is_likely_offline is True
+
+
 def test_current_setpoint_rounding_not_truncation() -> None:
     """Regression: int(clamped_value) truncates 15.99 → 15 instead of rounding to 16."""
     assert int(round(15.99)) == 16

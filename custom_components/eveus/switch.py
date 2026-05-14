@@ -84,7 +84,7 @@ class BaseSwitchEntity(
 
     @property
     def _optimistic_state(self) -> bool | None:
-        """Compatibility alias for older tests and diagnostics."""
+        """Test-facing alias for the canonical _optimistic_value attribute."""
         return self._optimistic_value
 
     @_optimistic_state.setter
@@ -93,7 +93,7 @@ class BaseSwitchEntity(
 
     @property
     def _optimistic_state_time(self) -> float:
-        """Compatibility alias for older tests and diagnostics."""
+        """Test-facing alias for the canonical _optimistic_value_time attribute."""
         return self._optimistic_value_time
 
     @_optimistic_state_time.setter
@@ -102,7 +102,7 @@ class BaseSwitchEntity(
 
     @property
     def _last_device_state(self) -> bool | None:
-        """Compatibility alias for older tests and diagnostics."""
+        """Test-facing alias for the canonical _last_device_value attribute."""
         return self._last_device_value
 
     @_last_device_state.setter
@@ -232,6 +232,9 @@ class BaseCounterSwitch(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
         return False
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        """No action; switch represents counter status."""
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
         """No action; switch represents counter status."""
 
     async def _async_restore_state(self, state: State) -> None:

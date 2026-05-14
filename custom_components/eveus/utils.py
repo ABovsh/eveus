@@ -280,5 +280,5 @@ def calculate_remaining_time(
         return format_duration(int(total_minutes * 60))
 
     except Exception as err:
-        _LOGGER.error("Error calculating remaining time: %s", err, exc_info=True)
+        _LOGGER.debug("Error calculating remaining time: %s", err, exc_info=True)
         return "unavailable"

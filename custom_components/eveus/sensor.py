@@ -59,6 +59,5 @@ async def async_setup_entry(
             device_number,
         )
 
-    except Exception as err:
-        _LOGGER.error("Error setting up sensors for %s: %s", entry.title, err, exc_info=True)
+    except Exception:
         raise

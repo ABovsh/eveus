@@ -61,7 +61,7 @@ class SensorSpec:
     sensor_type: SensorType
     icon: Optional[str] = None
     device_class: Optional[str] = None
-    state_class: Optional[str] = None
+    state_class: Optional[SensorStateClass | str] = None
     unit: Optional[str] = None
     precision: Optional[int] = None
     category: Optional[EntityCategory] = None

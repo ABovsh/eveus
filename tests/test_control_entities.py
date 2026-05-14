@@ -327,6 +327,19 @@ def test_switch_optimistic_state_survives_until_device_confirms() -> None:
     assert entity.is_on is True
 
 
+def test_base_counter_switch_turn_off_is_a_noop() -> None:
+    """BaseCounterSwitch.async_turn_off must not raise; counter status is read-only."""
+    from custom_components.eveus.switch import BaseCounterSwitch
+
+    updater = _Updater({"IEM1": "50"})
+    entity = BaseCounterSwitch(updater, SWITCH_DESCRIPTIONS[2])
+    _disable_state_writes(entity)
+
+    # Must not raise NotImplementedError or any other exception.
+    asyncio.run(entity.async_turn_off())
+    asyncio.run(entity.async_turn_on())
+
+
 def test_switch_rapid_toggle_does_not_flicker_back() -> None:
     """ON, then OFF 2s later — a stale ON read must not flip the entity."""
     updater = _Updater({"evseEnabled": "0"})
