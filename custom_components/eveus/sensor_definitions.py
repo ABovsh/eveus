@@ -315,7 +315,7 @@ def get_connection_attrs(updater, hass) -> dict:
         success_rate = metrics.get("success_rate", 100)
         return {
             "connection_quality": f"{round(success_rate)}%",
-            "latency_avg": f"{max(0, metrics.get('latency_avg', 0)):.2f}s",
+            "latency_avg": f"{max(0, metrics.get('latency_avg', 0)):.1f}s",
             "status": (
                 "Excellent" if success_rate > 95 else
                 "Good" if success_rate > 80 else
@@ -370,7 +370,7 @@ def create_sensor_specifications() -> tuple[SensorSpec, ...]:
 
     # Energy sensors
     energy_sensors = [
-        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", SensorStateClass.TOTAL),
+        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", SensorStateClass.MEASUREMENT),
         ("Total Energy", get_total_energy, "mdi:transmission-tower", SensorStateClass.TOTAL_INCREASING),
         ("Counter A Energy", get_counter_a_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING),
         ("Counter B Energy", get_counter_b_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING),
@@ -498,7 +498,10 @@ def create_sensor_specifications() -> tuple[SensorSpec, ...]:
         ),
     ]
 
-    return tuple(measurement_specs + energy_specs + diagnostic_specs + special_specs)
+    result = tuple(measurement_specs + energy_specs + diagnostic_specs + special_specs)
+    keys = [s.key for s in result]
+    assert len(keys) == len(set(keys)), f"duplicate sensor keys: {[k for k in keys if keys.count(k) > 1]}"
+    return result
 
 
 @lru_cache(maxsize=1)

@@ -93,3 +93,18 @@ def test_brand_images_are_complete_and_sized() -> None:
 
 def test_macos_metadata_files_are_not_packaged() -> None:
     assert not list((ROOT / "custom_components" / "eveus").rglob(".DS_Store"))
+
+
+def test_manifest_has_quality_scale() -> None:
+    manifest = json.loads(
+        (ROOT / "custom_components" / "eveus" / "manifest.json").read_text()
+    )
+    assert "quality_scale" in manifest, "manifest.json must declare quality_scale"
+
+
+def test_manifest_has_loggers() -> None:
+    manifest = json.loads(
+        (ROOT / "custom_components" / "eveus" / "manifest.json").read_text()
+    )
+    assert "loggers" in manifest, "manifest.json must declare loggers"
+    assert "custom_components.eveus" in manifest["loggers"]

@@ -91,3 +91,39 @@ def test_calculate_remaining_time_states() -> None:
     assert utils.calculate_remaining_time(20, 80, 0, 80, 7.5) == "Not charging"
     assert utils.calculate_remaining_time(20, 80, 7000, 80, 0) == "6h 51m"
     assert utils.calculate_remaining_time(120, 80, 7000, 80, 0) == "unavailable"
+
+
+def test_format_duration_handles_none_and_nan() -> None:
+    # Regression: must not raise TypeError comparing None/NaN to 0
+    assert utils.format_duration(None) == "0m"
+    assert utils.format_duration(float("nan")) == "0m"
+    assert utils.format_duration(-10) == "0m"
+    assert utils.format_duration("bad") == "0m"
+
+
+def test_calculate_soc_percent_sanitizes_invalid_input() -> None:
+    # Regression: must never return the raw unvalidated argument
+    result = utils.calculate_soc_percent("bad", 80, 10, 0)
+    assert isinstance(result, (int, float)), f"got {result!r}"
+    assert result == 0.0
+
+    # battery_capacity <= 0 must return 0.0, not the raw initial_soc
+    assert utils.calculate_soc_percent(50, 0, 10, 0) == 0.0
+    assert utils.calculate_soc_percent(50, -5, 10, 0) == 0.0
+
+    # NaN inputs must return 0.0
+    result_nan = utils.calculate_soc_percent(50, float("nan"), 10, 0)
+    assert isinstance(result_nan, (int, float))
+
+
+def test_get_device_info_uses_scheme_in_configuration_url() -> None:
+    # Regression: https-configured charger was linked with http:// in HA UI
+    info_https = utils.get_device_info("192.168.1.50", {}, scheme="https")
+    assert info_https["configuration_url"] == "https://192.168.1.50"
+
+    info_http = utils.get_device_info("192.168.1.50", {}, scheme="http")
+    assert info_http["configuration_url"] == "http://192.168.1.50"
+
+    # Default must stay http for backward compat
+    info_default = utils.get_device_info("192.168.1.50", {})
+    assert info_default["configuration_url"] == "http://192.168.1.50"

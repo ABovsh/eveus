@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.3.0 - 2026-05-14
+
+Bug fixes, statistics correctness, and resilience improvements.
+
+- Fix: `Session Energy` and `SOC Energy` changed from `state_class=TOTAL` to `MEASUREMENT` — prevents broken long-term energy statistics in HA's energy dashboard
+- Fix: `calculate_soc_percent` now always returns a numeric value on invalid input (was returning raw unvalidated argument)
+- Fix: `format_duration` handles `None` and `NaN` inputs without raising `TypeError`
+- Fix: Charging current setpoint now rounds instead of truncates (e.g. 15.99 A → 16 A, not 15 A)
+- Fix: Offline polling cadence is preserved across first recovery (`_tune_update_interval` no longer resets to IDLE while `is_likely_offline` is True)
+- Fix: `async_shutdown` now awaits cancelled post-command refresh tasks, eliminating "Task was destroyed but pending" log warnings on reload
+- Fix: `configuration_url` in device info now uses the configured transport scheme (https chargers are now linked correctly in HA UI)
+- Add: Sensor key uniqueness assertion in specification factory — duplicate sensor keys now fail fast at startup
+- Add: `quality_scale` and `loggers` fields to `manifest.json`
+- Improvement: Connection quality latency attribute rounded to 1 decimal to reduce spurious state-change writes
+
 ## 4.2.1 - 2026-05-13
 
 Patch release for SOC helper baseline behavior.

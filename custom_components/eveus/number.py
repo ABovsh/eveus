@@ -115,7 +115,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                 self._attr_native_min_value,
                 min(self._attr_native_max_value, value),
             )
-            int_value = int(clamped_value)
+            int_value = int(round(clamped_value))
 
             self._pending_value = float(int_value)
             self._attr_native_value = self._pending_value

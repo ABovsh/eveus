@@ -123,7 +123,7 @@ def get_safe_value(
 # =============================================================================
 
 
-def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1) -> Dict[str, Any]:
+def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
     """Get standardized device information with multi-device support."""
     firmware = str(data.get('verFWMain') or data.get('firmware') or 'Unknown').strip()
     hardware = str(data.get('verFWWifi') or data.get('hardware') or 'Unknown').strip()
@@ -143,27 +143,28 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1) -> 
         "model": "Eveus EV Charger",
         "sw_version": firmware,
         "hw_version": hardware,
-        "configuration_url": f"http://{host}",
+        "configuration_url": f"{scheme}://{host}",
     }
 
 
 def format_duration(seconds: int) -> str:
     """Format duration in seconds to human readable string."""
     try:
-        if seconds <= 0:
-            return "0m"
-
-        days = seconds // 86400
-        hours = (seconds % 86400) // 3600
-        minutes = (seconds % 3600) // 60
-
-        if days > 0:
-            return f"{days}d {hours:02d}h {minutes:02d}m"
-        if hours > 0:
-            return f"{hours}h {minutes:02d}m"
-        return f"{minutes}m"
+        seconds = int(seconds)
     except (TypeError, ValueError):
         return "0m"
+    if seconds <= 0:
+        return "0m"
+
+    days = seconds // 86400
+    hours = (seconds % 86400) // 3600
+    minutes = (seconds % 3600) // 60
+
+    if days > 0:
+        return f"{days}d {hours:02d}h {minutes:02d}m"
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m"
+    return f"{minutes}m"
 
 
 # =============================================================================
@@ -226,10 +227,10 @@ def calculate_soc_percent(
         initial_soc, battery_capacity, energy_charged, efficiency_loss
     )
     if inputs is None:
-        return initial_soc or 0
+        return 0.0
     initial_soc, battery_capacity, energy_charged, efficiency_loss = inputs
     if battery_capacity <= 0:
-        return initial_soc
+        return 0.0
 
     soc_kwh = calculate_soc_kwh(
         initial_soc, battery_capacity, energy_charged, efficiency_loss

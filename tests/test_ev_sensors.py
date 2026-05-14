@@ -75,3 +75,14 @@ def test_time_to_target_soc_uses_shared_calculator_cache() -> None:
     assert sensor._get_sensor_value() == "7h 37m"
     assert calculator.battery_capacity == 80
     assert calculator.target_soc == 80
+
+
+def test_soc_kwh_sensor_uses_measurement_state_class() -> None:
+    # Regression: TOTAL without last_reset breaks HA statistics.
+    # SOC kWh is a running gauge (not a monotonic lifetime counter).
+    # HA's CachedProperties metaclass stores default attr values under __attr_* keys.
+    from homeassistant.components.sensor import SensorStateClass
+    default_state_class = vars(EVSocKwhSensor).get("__attr_state_class")
+    assert default_state_class == SensorStateClass.MEASUREMENT, (
+        f"EVSocKwhSensor._attr_state_class should be MEASUREMENT, got {default_state_class!r}"
+    )
