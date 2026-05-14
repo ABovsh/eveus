@@ -120,6 +120,37 @@ def test_get_energy_charged_warms_cache_via_update_input_cache() -> None:
     assert result == 0.0
 
 
+def test_energy_baseline_survives_helper_blip() -> None:
+    """A transient None initial_soc must not reset the energy baseline.
+
+    Reproduces the regression where helpers going briefly unavailable caused
+    session energy to collapse to 0 the moment the helpers came back.
+    """
+    calculator = CachedSOCCalculator()
+    updater = _Updater({"IEM1": "25"})
+    sensor = EVSocKwhSensor(updater, 1, calculator)
+    sensor.hass = _Hass(HELPERS)
+
+    # Initial read anchors the baseline at 25.
+    assert sensor._get_energy_charged() == 0.0
+
+    # 5 kWh charged with helpers present.
+    updater.data = {"IEM1": "30"}
+    assert sensor._get_energy_charged() == 5.0
+
+    # Helpers blip: initial_soc becomes None for the next read.
+    sensor.hass = _Hass({})
+    calculator.invalidate_cache()
+    blip_result = sensor._get_energy_charged()
+    # Baseline must NOT reset on a None initial_soc — running total preserved.
+    assert blip_result == 5.0
+
+    # Helpers come back with the same value: still no reset.
+    sensor.hass = _Hass(HELPERS)
+    calculator.invalidate_cache()
+    assert sensor._get_energy_charged() == 5.0
+
+
 def test_soc_kwh_sensor_uses_measurement_state_class() -> None:
     # Regression: TOTAL without last_reset breaks HA statistics.
     # SOC kWh is a running gauge (not a monotonic lifetime counter).

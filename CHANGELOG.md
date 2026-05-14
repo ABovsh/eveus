@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.4.1 - 2026-05-14
+
+Patch release: SOC helper blip resilience and minor cleanups.
+
+- Fix: Energy baseline in `_get_energy_charged` no longer resets when SOC helpers briefly become unavailable — session energy and SOC progress survive transient `None` reads, and the baseline only updates on a real change in `initial_soc`
+- Cleanup: Simplified redundant ternary in `EVSocKwhSensor._get_sensor_value` and `EVSocPercentSensor._get_sensor_value` — `_cached_value` already holds the post-update value
+- Cleanup: Consolidated three sequential `except X: raise` clauses in `async_setup_entry` into a single tuple-form re-raise
+- Add: Regression test for energy baseline survival across helper unavailability
+
 ## 4.4.0 - 2026-05-14
 
 Log hygiene, silent double-work elimination, and code correctness.

@@ -183,11 +183,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         return True
 
-    except ConfigEntryAuthFailed:
-        raise
-    except ConfigEntryError:
-        raise
-    except ConfigEntryNotReady:
+    except (ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady):
         raise
     except Exception as ex:
         _LOGGER.error(
