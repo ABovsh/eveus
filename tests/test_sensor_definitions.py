@@ -86,3 +86,24 @@ def test_status_like_entities_are_diagnostic() -> None:
     assert specs["Current Set"].category == EntityCategory.DIAGNOSTIC
     assert specs["Rate 2 Status"].category == EntityCategory.DIAGNOSTIC
     assert specs["Rate 3 Status"].category == EntityCategory.DIAGNOSTIC
+
+
+def test_session_energy_uses_measurement_state_class() -> None:
+    # Regression: TOTAL without last_reset breaks HA long-term energy statistics.
+    # Session energy resets each session (MEASUREMENT), not a monotonic counter.
+    specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
+    assert specs["Session Energy"].state_class == "measurement"
+
+
+def test_sensor_keys_and_names_are_unique() -> None:
+    specs = sensors.get_sensor_specifications()
+    keys = [s.key for s in specs]
+    names = [s.name for s in specs]
+    assert len(keys) == len(set(keys)), f"Duplicate keys: {[k for k in keys if keys.count(k) > 1]}"
+    assert len(names) == len(set(names)), f"Duplicate names: {[n for n in names if names.count(n) > 1]}"
+
+
+def test_monotonic_energy_sensors_use_total_increasing() -> None:
+    specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
+    for name in ("Total Energy", "Counter A Energy", "Counter B Energy"):
+        assert specs[name].state_class == "total_increasing", f"{name} should be TOTAL_INCREASING"

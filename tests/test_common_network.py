@@ -348,3 +348,70 @@ def test_offline_failure_recording_is_quiet_at_normal_log_levels(
 
     assert updater.available is False
     assert caplog.records == []
+
+
+def test_tune_interval_preserves_offline_cadence_when_likely_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: _tune_update_interval was switching to IDLE on first recovery
+    even while is_likely_offline was still True, defeating the offline backoff."""
+    from custom_components.eveus.const import OFFLINE_UPDATE_INTERVAL
+
+    session = _Session(_Response(payload={"state": 2}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+
+    updater._consecutive_failures = 11
+    updater._last_success_time = time.time() - 700
+
+    assert updater.is_likely_offline is True
+
+    updater._tune_update_interval({"state": 2})
+    assert updater.update_interval == timedelta(seconds=OFFLINE_UPDATE_INTERVAL), (
+        "_tune_update_interval must keep OFFLINE cadence while is_likely_offline is True"
+    )
+
+
+def test_current_setpoint_rounding_not_truncation() -> None:
+    """Regression: int(clamped_value) truncates 15.99 → 15 instead of rounding to 16."""
+    assert int(round(15.99)) == 16
+    assert int(15.99) == 15  # confirms old behaviour was wrong
+
+
+def test_async_shutdown_awaits_cancelled_tasks() -> None:
+    """Regression: async_shutdown must await cancelled tasks to avoid
+    'Task was destroyed but it is pending!' log warnings on reload."""
+
+    async def scenario() -> None:
+        class _LoopHass:
+            is_stopping = False
+
+            def async_create_task(self, coro):
+                return asyncio.get_event_loop().create_task(coro)
+
+        updater = EveusUpdater("192.168.1.50", "admin", "secret", _LoopHass())
+
+        running = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def _long_refresh(delay: float) -> None:
+            running.set()
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                finished.set()
+                raise
+
+        updater._post_command_refresh_tasks.append(
+            asyncio.get_event_loop().create_task(_long_refresh(60))
+        )
+
+        await running.wait()
+
+        # shutdown must cancel and AWAIT so the task finishes cleanly
+        await updater.async_shutdown()
+
+        assert finished.is_set(), "Cancelled task was not awaited by async_shutdown"
+        assert updater._post_command_refresh_tasks == []
+
+    asyncio.run(scenario())

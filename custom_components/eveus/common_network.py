@@ -198,7 +198,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
-        self._cancel_pending_refreshes()
+        pending = list(self._post_command_refresh_tasks)
+        for task in pending:
+            if not task.done():
+                task.cancel()
+        self._post_command_refresh_tasks.clear()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         await super().async_shutdown()
 
     def _should_log(self) -> bool:
@@ -248,7 +254,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         charger is idle/connected we relax to IDLE_UPDATE_INTERVAL to halve
         background HTTP load, and snap back to CHARGING_UPDATE_INTERVAL the
         moment the device starts a session.
+
+        Offline cadence is preserved: if the device is still in the is_likely_offline
+        regime we keep the long interval even after the first recovery, so the
+        coordinator does not immediately revert to a short 30s cycle.
         """
+        if self.is_likely_offline:
+            self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
+            return
+
         try:
             state_value = int(data.get("state")) if data.get("state") is not None else None
         except (TypeError, ValueError):

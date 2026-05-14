@@ -128,6 +128,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             self._updater.host,
             data or {},
             self._device_number,
+            scheme=getattr(self._updater, "scheme", "http"),
         )
 
     def _device_info_has_firmware(self) -> bool:
