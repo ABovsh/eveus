@@ -289,13 +289,21 @@ class BaseEVHelperSensor(EveusSensorBase):
         self._soc_calculator._update_input_cache(self.hass)
         initial_soc = self._soc_calculator.initial_soc
 
+        # Only treat initial_soc as a baseline trigger when it is a real value.
+        # A transient helper blip (None) must not reset the baseline, otherwise
+        # session energy collapses to 0 the moment helpers come back online.
+        soc_changed = (
+            initial_soc is not None
+            and initial_soc != self._baseline_initial_soc
+        )
         if (
             self._energy_baseline is None
-            or initial_soc != self._baseline_initial_soc
+            or soc_changed
             or energy_charged < self._energy_baseline
         ):
             self._energy_baseline = energy_charged
-            self._baseline_initial_soc = initial_soc
+            if initial_soc is not None:
+                self._baseline_initial_soc = initial_soc
 
         return max(0.0, energy_charged - self._energy_baseline)
 
@@ -324,7 +332,7 @@ class EVSocKwhSensor(BaseEVHelperSensor):
         result = self._soc_calculator.get_soc_kwh(self.hass, energy_charged)
         if result is not None:
             self._cached_value = result
-        return result if result is not None else self._cached_value
+        return self._cached_value
 
 
 class EVSocPercentSensor(BaseEVHelperSensor):
@@ -347,7 +355,7 @@ class EVSocPercentSensor(BaseEVHelperSensor):
         result = self._soc_calculator.get_soc_percent(self.hass, energy_charged)
         if result is not None:
             self._cached_value = result
-        return result if result is not None else self._cached_value
+        return self._cached_value
 
 
 class TimeToTargetSocSensor(BaseEVHelperSensor):
