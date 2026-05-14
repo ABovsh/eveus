@@ -256,6 +256,7 @@ def test_input_entities_status_sensor_reports_missing_invalid_and_ready() -> Non
     sensor.hass = _Hass({})
 
     assert sensor._get_sensor_value() == "Optional - 4 Missing"
+    sensor._update_extra_state_attributes()
     attrs = sensor.extra_state_attributes
     assert attrs["missing_count"] == 4
     assert "configuration_help" in attrs

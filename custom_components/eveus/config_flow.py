@@ -281,10 +281,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
                 errors["base"] = "invalid_input"
-                _LOGGER.error("Invalid input: %s", str(err))
+                _LOGGER.debug("Invalid input: %s", str(err))
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
-                _LOGGER.error("Invalid device: %s", str(err))
+                _LOGGER.debug("Invalid device: %s", str(err))
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
@@ -324,10 +324,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
                 errors["base"] = "invalid_input"
-                _LOGGER.error("Invalid reconfigure input: %s", str(err))
+                _LOGGER.debug("Invalid reconfigure input: %s", str(err))
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
-                _LOGGER.error("Invalid reconfigure device: %s", str(err))
+                _LOGGER.debug("Invalid reconfigure device: %s", str(err))
             except Exception:
                 _LOGGER.exception("Unexpected reconfigure exception")
                 errors["base"] = "unknown"
@@ -378,10 +378,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
                 errors["base"] = "invalid_input"
-                _LOGGER.error("Invalid reauth input: %s", str(err))
+                _LOGGER.debug("Invalid reauth input: %s", str(err))
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
-                _LOGGER.error("Invalid reauth device: %s", str(err))
+                _LOGGER.debug("Invalid reauth device: %s", str(err))
             except Exception:
                 _LOGGER.exception("Unexpected reauth exception")
                 errors["base"] = "unknown"

@@ -286,9 +286,7 @@ class BaseEVHelperSensor(EveusSensorBase):
         if energy_charged is None:
             return None
 
-        hass = getattr(self, "hass", None)
-        if hass is not None:
-            self._soc_calculator.are_helpers_available(hass)
+        self._soc_calculator._update_input_cache(self.hass)
         initial_soc = self._soc_calculator.initial_soc
 
         if (
@@ -561,7 +559,6 @@ class InputEntitiesStatusSensor(EveusSensorBase):
                 self._state = f"Invalid {len(self._invalid_entities)} Inputs"
             else:
                 self._state = "All Present"
-            self._update_extra_state_attributes()
         except Exception as err:
             _LOGGER.debug(
                 "Error checking inputs for %s: %s",
@@ -570,4 +567,3 @@ class InputEntitiesStatusSensor(EveusSensorBase):
                 exc_info=True,
             )
             self._state = "Error"
-            self._update_extra_state_attributes()

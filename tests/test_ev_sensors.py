@@ -77,6 +77,49 @@ def test_time_to_target_soc_uses_shared_calculator_cache() -> None:
     assert calculator.target_soc == 80
 
 
+def test_cached_soc_calculator_exposes_all_cached_properties() -> None:
+    """All four CachedSOCCalculator properties return the helper values after cache warm."""
+    calculator = CachedSOCCalculator()
+
+    calculator._update_input_cache(_Hass(HELPERS))
+
+    assert calculator.battery_capacity == 80
+    assert calculator.initial_soc == 20
+    assert calculator.soc_correction == 10
+    assert calculator.target_soc == 80
+
+
+def test_cached_soc_calculator_invalidate_clears_cached_values() -> None:
+    """invalidate_cache forces a re-read on the next access."""
+    calculator = CachedSOCCalculator()
+    calculator._update_input_cache(_Hass(HELPERS))
+    assert calculator.battery_capacity == 80
+
+    calculator.invalidate_cache()
+
+    updated = dict(HELPERS)
+    updated["input_number.ev_battery_capacity"] = 60
+    calculator._update_input_cache(_Hass(updated))
+
+    assert calculator.battery_capacity == 60
+
+
+def test_get_energy_charged_warms_cache_via_update_input_cache() -> None:
+    """_get_energy_charged must call _update_input_cache (not are_helpers_available)
+    so that initial_soc is fresh before baseline detection runs."""
+    calculator = CachedSOCCalculator()
+    sensor = EVSocKwhSensor(_Updater({"IEM1": "25"}), 1, calculator)
+    sensor.hass = _Hass(HELPERS)
+
+    # Simulate a direct call to _get_energy_charged — cache must be warmed.
+    result = sensor._get_energy_charged()
+
+    # initial_soc must be populated from helpers.
+    assert calculator.initial_soc == 20
+    # Energy baseline should be anchored at 25 (first read).
+    assert result == 0.0
+
+
 def test_soc_kwh_sensor_uses_measurement_state_class() -> None:
     # Regression: TOTAL without last_reset breaks HA statistics.
     # SOC kWh is a running gauge (not a monotonic lifetime counter).
