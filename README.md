@@ -125,6 +125,13 @@ Entity names and unique IDs are kept stable across updates so existing dashboard
 | Active Rate Cost | Currently active electricity rate |
 | Rate 2 Cost | Rate 2 electricity price |
 | Rate 3 Cost | Rate 3 electricity price |
+| Session Cost | Cost of the current charging session in ₴ (sessionEnergy × active rate) |
+
+### Binary Sensors
+
+| Entity | Device class | Description |
+| --- | --- | --- |
+| Car Connected | `plug` | `on` when a vehicle is electrically connected (Connected, Charging, Charge Complete, or Paused); stable across firmware label changes |
 
 ### Optional SOC Sensors
 
@@ -134,7 +141,8 @@ These sensors require the optional helper entities listed below.
 | --- | --- |
 | SOC Energy | Estimated battery energy in kWh |
 | SOC Percent | Estimated battery percentage |
-| Time to Target SOC | Estimated time until the configured target SOC |
+| Time to Target SOC | Human-readable time until the configured target SOC (e.g. "2h 15m") |
+| Charging Finish Time | `device_class: timestamp` — absolute UTC time when target SOC is reached |
 
 ### Controls
 
