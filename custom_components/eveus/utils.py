@@ -239,17 +239,25 @@ def calculate_soc_percent(
     return round(max(0, min(percentage, 100)), 0)
 
 
-def calculate_remaining_time(
-    current_soc: Union[float, int],
-    target_soc: Union[float, int],
-    power_meas: Union[float, int],
-    battery_capacity: Union[float, int],
-    correction: Union[float, int],
-) -> str:
-    """Calculate remaining time with proper handling of target reached state."""
+_REMAINING_TARGET_REACHED = "target_reached"
+_REMAINING_NOT_CHARGING = "not_charging"
+_REMAINING_UNAVAILABLE = "unavailable"
+
+
+def _remaining_seconds_or_state(
+    current_soc, target_soc, power_meas, battery_capacity, correction,
+):
+    """Return remaining charging seconds or a sentinel string for special states.
+
+    Returns:
+      float seconds (>0)   — still charging, ETA known
+      "target_reached"     — current_soc already meets/exceeds target
+      "not_charging"       — power is zero/negative
+      "unavailable"        — inputs missing or invalid
+    """
     try:
         if None in (current_soc, target_soc, power_meas, battery_capacity):
-            return "unavailable"
+            return _REMAINING_UNAVAILABLE
 
         current_soc = float(current_soc)
         target_soc = float(target_soc)
@@ -258,27 +266,65 @@ def calculate_remaining_time(
         correction = float(correction) if correction is not None else 7.5
 
         if not (0 <= current_soc <= 100) or not (0 <= target_soc <= 100):
-            return "unavailable"
+            return _REMAINING_UNAVAILABLE
         if battery_capacity <= 0:
-            return "unavailable"
+            return _REMAINING_UNAVAILABLE
 
         remaining_kwh = (target_soc - current_soc) * battery_capacity / 100
-
         if remaining_kwh <= 0:
-            return "Target reached"
+            return _REMAINING_TARGET_REACHED
         if power_meas <= 0:
-            return "Not charging"
+            return _REMAINING_NOT_CHARGING
 
         power_kw = power_meas * (1 - correction / 100) / 1000
         if power_kw <= 0:
-            return "Not charging"
+            return _REMAINING_NOT_CHARGING
 
-        total_minutes = round(remaining_kwh / power_kw * 60, 0)
-        if total_minutes < 1:
-            return "< 1m"
-
-        return format_duration(int(total_minutes * 60))
+        return remaining_kwh / power_kw * 3600
 
     except Exception as err:
-        _LOGGER.debug("Error calculating remaining time: %s", err, exc_info=True)
+        _LOGGER.debug("Error computing remaining seconds: %s", err, exc_info=True)
+        return _REMAINING_UNAVAILABLE
+
+
+def calculate_remaining_seconds(
+    current_soc, target_soc, power_meas, battery_capacity, correction,
+) -> Optional[float]:
+    """Return charging seconds until target SOC, or None for special/invalid states.
+
+    Returns:
+      seconds > 0  — actively charging, ETA known
+      0.0          — target already reached
+      None         — not charging or inputs invalid (no meaningful ETA)
+    """
+    result = _remaining_seconds_or_state(
+        current_soc, target_soc, power_meas, battery_capacity, correction,
+    )
+    if isinstance(result, (int, float)):
+        return float(result)
+    if result == _REMAINING_TARGET_REACHED:
+        return 0.0
+    return None
+
+
+def calculate_remaining_time(
+    current_soc: Union[float, int],
+    target_soc: Union[float, int],
+    power_meas: Union[float, int],
+    battery_capacity: Union[float, int],
+    correction: Union[float, int],
+) -> str:
+    """Calculate remaining time as a human-readable string."""
+    result = _remaining_seconds_or_state(
+        current_soc, target_soc, power_meas, battery_capacity, correction,
+    )
+    if result == _REMAINING_TARGET_REACHED:
+        return "Target reached"
+    if result == _REMAINING_NOT_CHARGING:
+        return "Not charging"
+    if result == _REMAINING_UNAVAILABLE:
         return "unavailable"
+    total_minutes = round(result / 60, 0)
+    if total_minutes < 1:
+        return "< 1m"
+    return format_duration(int(total_minutes * 60))

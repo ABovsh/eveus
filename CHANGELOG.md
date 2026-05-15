@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.5.0 - 2026-05-16
+
+Three new automation-friendly sensors that replace the template boilerplate users typically write on top of Eveus, plus shared math and stronger tests.
+
+- Add: `binary_sensor.eveus_car_connected` (`device_class: plug`) — true when a vehicle is electrically connected. Uses canonical device-state values ({Connected, Charging, Charge Complete, Paused}), not localized strings, so it stays stable across charger firmware label changes
+- Add: `sensor.eveus_charging_finish_time` (`device_class: timestamp`) — absolute UTC ETA when the configured target SOC will be reached. Companion to the existing string-formatted `Time to Target SOC`; this one is what `device_class: timestamp` cards and "remind me 30 min before finish" automations consume directly. Minute-aligned so the state doesn't jitter on every poll. Returns unavailable when not charging, helpers missing, or target already reached
+- Add: `sensor.eveus_session_cost` — running ₴-value of the current session = sessionEnergy × active rate. Returns unavailable (not 0) when the rate is unknown, so notifications never report a misleading "0 ₴"
+- Refactor: Extracted `calculate_remaining_seconds` and `_remaining_seconds_or_state` in `utils.py` so the Time-to-Target string sensor and the new Finish-Time timestamp sensor share a single source of truth for charging-ETA math
+- Refactor: Hoisted shared input-resolution into `BaseEVHelperSensor._resolve_remaining_inputs` so both Time-to-Target and Finish-Time sensors collect helpers in the same way — no drift possible
+- Tests: 29 new behavior tests covering truth tables for `calculate_remaining_seconds`, Session Cost edge cases (offline / no rate / missing energy / zero energy / Rate 2 active), Finish-Time sensor (active charging / not charging / helpers missing / target reached / jitter resistance / device_class), and Car-Connected binary sensor (all 8 device-state values / unavailable / unparseable input / unique_id convention)
+- Tests: Tightened `test_sensor_specification_factory_exposes_expected_entities` from `>= 20` to exact count (26) so silent additions/removals fail the build
+- Tests: Added `test_value_getters_reject_nan_and_inf` — regression guard so `float("nan")`/`float("inf")` payloads do not enter HA long-term statistics or downstream cost/ETA calculations
+
 ## 4.4.1 - 2026-05-14
 
 Patch release: SOC helper blip resilience and minor cleanups.

@@ -29,6 +29,7 @@ CONFIG_ENTRY_VERSION = 2
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
+    Platform.BINARY_SENSOR,
     Platform.SWITCH,
     Platform.NUMBER,
     Platform.BUTTON,

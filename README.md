@@ -1,7 +1,7 @@
 # Eveus EV Charger - Home Assistant Integration
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.4.1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.5.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 Local Home Assistant integration for Eveus EV chargers. It adds charger monitoring, current control, charging mode switches, energy and cost sensors, optional EV battery estimates, diagnostics, and multi-charger support.
@@ -28,8 +28,16 @@ Local Home Assistant integration for Eveus EV chargers. It adds charger monitori
 - Session Energy and Total Energy sensors.
 - Counter A/B energy tracking.
 - Counter A/B cost tracking.
+- **Session Cost** — running ₴-value of the current charging session, derived from session energy × active rate. Use it directly in notifications and Lovelace cards instead of writing a template sensor.
 - Primary Rate Cost, Active Rate Cost, Rate 2 Cost, and Rate 3 Cost.
 - Rate 2 Status and Rate 3 Status diagnostics.
+
+### Automation Helpers (new in 4.5.0)
+
+These entities exist to replace the template sensors users typically build on top of Eveus.
+
+- **`binary_sensor.eveus_car_connected`** — `device_class: plug`, true whenever a vehicle is electrically connected (charger device-state in {Connected, Charging, Charge Complete, Paused}). Stable across charger firmware label changes — uses canonical state values, not localized strings.
+- **`sensor.eveus_charging_finish_time`** — `device_class: timestamp`, the absolute UTC time when charging is expected to reach the configured target SOC. Companion to `Time to Target SOC` (which is a human-readable string for cards). The timestamp variant is what automations and `device_class: timestamp` cards consume directly (e.g. "notify me 30 min before charge finishes"). Returns unavailable when not charging, helpers missing, or target already reached. Minute-aligned to avoid state jitter every poll.
 
 ### Optional EV Battery Estimates
 

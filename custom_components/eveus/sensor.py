@@ -9,6 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import EveusConfigEntry
 from .sensor_definitions import get_sensor_specifications
 from .ev_sensors import (
+    ChargingFinishTimeSensor,
     EVSocKwhSensor,
     EVSocPercentSensor,
     TimeToTargetSocSensor,
@@ -43,6 +44,7 @@ async def async_setup_entry(
             EVSocKwhSensor(updater, device_number, soc_calculator),
             EVSocPercentSensor(updater, device_number, soc_calculator),
             TimeToTargetSocSensor(updater, device_number, soc_calculator),
+            ChargingFinishTimeSensor(updater, device_number, soc_calculator),
             InputEntitiesStatusSensor(updater, device_number),
         ]
         sensors.extend(ev_sensors)
