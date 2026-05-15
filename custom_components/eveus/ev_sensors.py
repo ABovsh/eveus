@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from datetime import datetime, timedelta
 from typing import Any, ClassVar, Optional, Dict, Set
 from dataclasses import dataclass
 
@@ -15,9 +16,11 @@ from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback, Event
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt_util
 
 from .common_base import EveusSensorBase
 from .utils import (
+    calculate_remaining_seconds,
     calculate_remaining_time,
     calculate_soc_kwh,
     calculate_soc_percent,
@@ -280,6 +283,26 @@ class BaseEVHelperSensor(EveusSensorBase):
         ):
             self.async_write_ha_state()
 
+    def _resolve_remaining_inputs(self) -> tuple | None:
+        """Collect the inputs needed to compute remaining-charge ETA.
+
+        Returns a tuple (current_soc, target_soc, power_meas, battery_capacity,
+        correction) when every input is present, otherwise None.
+        """
+        if not self._soc_calculator.are_helpers_available(self.hass):
+            return None
+        power_meas = get_safe_value(self._updater.data, "powerMeas", float)
+        energy_charged = self._get_energy_charged()
+        if power_meas is None or energy_charged is None:
+            return None
+        battery_capacity = self._soc_calculator.battery_capacity
+        target_soc = self._soc_calculator.target_soc
+        soc_correction = self._soc_calculator.soc_correction
+        current_soc = self._soc_calculator.get_soc_percent(self.hass, energy_charged)
+        if None in (battery_capacity, target_soc, current_soc):
+            return None
+        return (current_soc, target_soc, power_meas, battery_capacity, soc_correction)
+
     def _get_energy_charged(self) -> float | None:
         """Get energy charged since the current SOC helper baseline."""
         energy_charged = get_safe_value(self._updater.data, "IEM1", float)
@@ -388,26 +411,10 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             return "Helpers Required"
 
         try:
-            power_meas = get_safe_value(self._updater.data, "powerMeas", float)
-            energy_charged = self._get_energy_charged()
-            if power_meas is None or energy_charged is None:
+            inputs = self._resolve_remaining_inputs()
+            if inputs is None:
                 return self._cached_value
-
-            battery_capacity = self._soc_calculator.battery_capacity
-            target_soc = self._soc_calculator.target_soc
-            soc_correction = self._soc_calculator.soc_correction
-            current_soc = self._soc_calculator.get_soc_percent(self.hass, energy_charged)
-
-            if None in (battery_capacity, target_soc, current_soc):
-                return "Helpers Required"
-
-            result = calculate_remaining_time(
-                current_soc=current_soc,
-                target_soc=target_soc,
-                power_meas=power_meas,
-                battery_capacity=battery_capacity,
-                correction=soc_correction,
-            )
+            result = calculate_remaining_time(*inputs)
             self._cached_value = result
             return result
 
@@ -419,6 +426,51 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
                 exc_info=True,
             )
             return self._cached_value
+
+
+class ChargingFinishTimeSensor(BaseEVHelperSensor):
+    """Absolute timestamp when charging is expected to reach target SOC.
+
+    Companion to `TimeToTargetSocSensor` — the latter is a UI string ("2h 15m"),
+    this one is a `device_class=timestamp` value that automations and
+    `device_class: timestamp` cards can consume directly (e.g. "notify me 30
+    min before charge finishes"). Returns None when not charging, helpers
+    missing, or target already reached.
+    """
+
+    ENTITY_NAME = "Charging Finish Time"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:calendar-clock"
+
+    _tracked_inputs = (
+        _INPUT_INITIAL_SOC,
+        _INPUT_TARGET_SOC,
+        _INPUT_BATTERY_CAPACITY,
+        _INPUT_SOC_CORRECTION,
+    )
+
+    def _get_sensor_value(self) -> Optional[datetime]:
+        """Compute the finish-time stamp."""
+        try:
+            inputs = self._resolve_remaining_inputs()
+            if inputs is None:
+                return None
+            seconds = calculate_remaining_seconds(*inputs)
+            if seconds is None or seconds <= 0:
+                # None = not charging / invalid; 0 = target reached
+                return None
+            # Round to the next whole minute so the state doesn't jitter on
+            # every poll (each tick would otherwise produce a fresh timestamp).
+            eta = dt_util.utcnow() + timedelta(seconds=seconds)
+            return eta.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        except Exception as err:
+            _LOGGER.debug(
+                "Error calculating finish time for %s: %s",
+                self.unique_id,
+                err,
+                exc_info=True,
+            )
+            return None
 
 
 # =============================================================================

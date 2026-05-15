@@ -292,6 +292,24 @@ def _make_rate_status_getter(rate_key: str):
 
 
 # =============================================================================
+# Session cost (sessionEnergy * active rate)
+# =============================================================================
+
+def get_session_cost(updater, hass) -> Optional[float]:
+    """Current session cost in ₴.
+
+    Reuses `get_session_energy` (kWh, finite-safe) and `get_active_rate_cost`
+    (₴/kWh, already rate-mapped). Returns None when either is unavailable so
+    the entity stays empty rather than showing a misleading 0.
+    """
+    energy = get_session_energy(updater, hass)
+    rate = get_active_rate_cost(updater, hass)
+    if energy is None or rate is None:
+        return None
+    return round(energy * rate, 2)
+
+
+# =============================================================================
 # Connection quality
 # =============================================================================
 
@@ -488,6 +506,11 @@ def create_sensor_specifications() -> tuple[SensorSpec, ...]:
             value_fn=_make_rate_status_getter("tarifBEnable"),
             sensor_type=SensorType.STATE, icon="mdi:clock-check",
             category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="session_cost", name="Session Cost", value_fn=get_session_cost,
+            sensor_type=SensorType.STATE, icon="mdi:cash",
+            state_class=SensorStateClass.MEASUREMENT, unit="₴", precision=2,
         ),
         SensorSpec(
             key="connection_quality", name="Connection Quality",

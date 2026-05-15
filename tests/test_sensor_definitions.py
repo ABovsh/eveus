@@ -73,11 +73,31 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     specs = sensors.get_sensor_specifications()
     names = {spec.name for spec in specs}
 
+    # Spot-check entities from each section so a silent drop of any of these
+    # families is caught — not just "shape" coverage.
     assert "Voltage" in names
     assert "Session Energy" in names
     assert "State" in names
     assert "Connection Quality" in names
-    assert len(specs) >= 20
+    assert "Session Cost" in names  # added in 4.5.0
+    # Exact count: catches silent additions/removals; bump on intentional
+    # changes alongside README/CHANGELOG.
+    assert len(specs) == 26, sorted(names)
+
+
+def test_value_getters_reject_nan_and_inf() -> None:
+    """Regression: float() accepts 'nan'/'inf' but those are not valid readings.
+    They must be filtered to None so HA doesn't store nonsense in long-term
+    statistics or compute downstream cost/finish-time off bad inputs.
+    """
+    updater = SimpleNamespace(
+        data={"voltMeas1": "nan", "powerMeas": "inf", "sessionEnergy": "-inf"},
+        available=True,
+        connection_quality={},
+    )
+    assert sensors.get_voltage(updater, None) is None
+    assert sensors.get_power(updater, None) is None
+    assert sensors.get_session_energy(updater, None) is None
 
 
 def test_status_like_entities_are_diagnostic() -> None:
