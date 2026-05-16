@@ -8,12 +8,58 @@ Local-only Home Assistant integration for Eveus EV chargers. Polls the charger d
 
 ## Highlights
 
-- **Pure local polling.** No cloud, no account required. Reads directly from the charger's HTTP API on your LAN.
-- **Source-of-truth numbers.** Session Cost and SOC are read from charger-native fields (`sessionMoney`, `sessionEnergy`), so the cost reflects the actual rate at each moment — no retroactive re-pricing when the tariff switches at 07:00.
-- **Automation-ready.** Dedicated `binary_sensor.eveus_car_connected` (`device_class: plug`) and `sensor.eveus_charging_finish_time` (`device_class: timestamp`) replace the template sensors you would otherwise have to write.
-- **Adaptive-charging visibility.** See when the charger throttles current to protect a weak supply, and what slot schedule is active.
-- **Multi-charger.** Add as many Eveus chargers as you like to one HA instance.
-- **Stable contracts.** Entity IDs and unique IDs are preserved across releases — existing dashboards and automations keep working.
+### 🔌 Local-only, no cloud
+Polls the charger directly over your LAN via its HTTP API. No Eveus account, no cloud relay, no telemetry leaving your network. Works fully offline-from-the-internet. Supports `http://` or `https://`, custom ports, and either IP or hostname.
+
+### ⚡ Live electrical telemetry
+Voltage, current, power, and the active current-limit setpoint, refreshed on every coordinator tick. Box temperature, plug temperature, ground status, and the charger's internal backup battery voltage round out the diagnostic picture.
+
+### 💰 Source-of-truth energy & cost
+- **Session Energy**, **Total Energy**, and two resettable counters (**Counter A/B**) — kWh delivered.
+- **Counter A/B Cost** — running ₴ cost on each counter.
+- **Session Cost** — reads the charger's native `sessionMoney` field, so it is integrated at the rate that was active at each moment. The session total never jumps backward or forward when the tariff switches mid-session (e.g. night→day at 07:00).
+- **Primary / Active / Rate 2 / Rate 3 Cost** — current electricity rates in ₴/kWh, plus diagnostic status sensors showing which rate schedules are enabled.
+
+### 🔋 Optional EV battery (SOC) estimates
+Add four `input_number` helpers and the integration estimates:
+- **SOC Energy** in kWh, **SOC Percent**, and **Time to Target SOC** as a human-readable string for cards.
+- **Charging Finish Time** as a `device_class: timestamp` for automations and timestamp cards.
+
+Without the helpers, SOC sensors stay unavailable and everything else works normally. SOC math uses the charger-native `sessionEnergy` so there is no fragile per-restart baseline state to manage.
+
+### 🤖 Adaptive charging & schedule visibility *(new in 4.7.0)*
+Eveus chargers can throttle current automatically when the supply voltage sags, and run two configurable time-window slots for scheduled charging. The integration exposes both:
+- **Adaptive Charging** (`Active`/`Idle`), **Adaptive Current Limit** (A), **Adaptive Voltage Threshold** (V).
+- **Schedule 1** / **Schedule 2** — enabled/disabled state with `window` (HH:MM–HH:MM), optional current and energy caps as attributes.
+
+### 🎛 Charging controls with optimistic UI
+- **Charging Current** number slider with model-aware bounds (16 / 32 / 48 A).
+- **Stop Charging**, **One Charge**, and **Reset Counter A** switches.
+
+All controls update the UI immediately and reconcile with the charger on the next poll — no waiting on the round-trip before the slider moves.
+
+### 🤝 Automation-friendly entities (no templates required)
+Designed to replace the template sensors users typically build on top of Eveus:
+- **`binary_sensor.eveus_car_connected`** (`device_class: plug`) — `on` whenever a vehicle is electrically connected. Uses canonical numeric state values from the charger, so it survives firmware label changes.
+- **`sensor.eveus_charging_finish_time`** (`device_class: timestamp`) — absolute UTC time when target SOC will be reached. Minute-aligned to avoid state jitter every poll. Returns unavailable when not charging or target already reached.
+
+### 📊 Reliability & connection health
+- **Connection Quality** sensor exposes recent success-rate %, average latency, and a health label — useful both as a dashboard tile and as an automation trigger.
+- Powered-off / unreachable chargers are treated as a normal condition. Polling backs off automatically and HA logs stay quiet — no spam in the log book.
+- Coordinator-driven updates skip state writes when nothing changed, so the recorder database doesn't bloat.
+
+### 🏠 Multi-charger support
+Add as many Eveus chargers as you want to one HA instance. Each charger gets its own device, entity namespace (`sensor.eveus_*`, `sensor.eveus2_*`, …), and independent coordinator. Reconfigure or reauthenticate any of them without touching the others.
+
+### 🧰 Setup quality of life
+- **Reconfigure** flow to update IP, credentials, or charger model without reinstalling.
+- **Reauthentication** flow when the charger rejects stored credentials.
+- Setup validates reachability and verifies the response looks like a real Eveus charger before creating the entry.
+- **Repair flow** for rare invalid stored setup data.
+- **HA Diagnostics** download with sensitive fields redacted.
+
+### 🔒 Stable contracts
+Entity IDs and unique IDs are preserved across the 4.x line. Dashboards, automations, scripts, and statistics history from earlier versions keep working after every update.
 
 ## Requirements
 
