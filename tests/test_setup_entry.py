@@ -238,6 +238,7 @@ def test_sensor_setup_creates_standard_and_ev_sensors() -> None:
         updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
         device_number=1,
         soc_calculator=object(),
+        phases=1,
     )
 
     asyncio.run(

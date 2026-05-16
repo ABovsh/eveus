@@ -194,6 +194,14 @@ get_plug_temperature = _make_value_getter("temperature2", precision=0)
 
 # Other diagnostic getters
 get_battery_voltage = _make_value_getter("vBat", precision=2)
+get_leak_current = _make_value_getter("leakValue", precision=0)
+get_leak_current_peak = _make_value_getter("leakValueH", precision=0)
+
+# 3-phase per-phase getters (only registered when entry is configured for 3 phases)
+get_current_phase_2 = _make_value_getter("curMeas2", precision=1)
+get_current_phase_3 = _make_value_getter("curMeas3", precision=1)
+get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0)
+get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0)
 
 
 # =============================================================================
@@ -411,8 +419,11 @@ def get_connection_attrs(updater, hass) -> dict:
 # Sensor specification factory
 # =============================================================================
 
-def create_sensor_specifications() -> tuple[SensorSpec, ...]:
-    """Create all sensor specifications using factory pattern."""
+def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
+    """Create all sensor specifications using factory pattern.
+
+    ``phases`` toggles per-phase voltage/current sensors for 3-phase chargers.
+    """
 
     # Measurement sensors
     measurements = [
@@ -515,7 +526,60 @@ def create_sensor_specifications() -> tuple[SensorSpec, ...]:
             unit=UnitOfElectricPotential.VOLT, precision=2,
             category=EntityCategory.DIAGNOSTIC,
         ),
+        SensorSpec(
+            key="leak_current", name="Leakage Current", value_fn=get_leak_current,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-dc",
+            device_class=SensorDeviceClass.CURRENT,
+            state_class=SensorStateClass.MEASUREMENT,
+            unit="mA", precision=0,
+            category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="leak_current_peak", name="Leakage Current Peak",
+            value_fn=get_leak_current_peak,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-dc",
+            device_class=SensorDeviceClass.CURRENT,
+            state_class=SensorStateClass.MEASUREMENT,
+            unit="mA", precision=0,
+            category=EntityCategory.DIAGNOSTIC,
+        ),
     ]
+
+    if phases == 3:
+        diagnostic_specs.extend([
+            SensorSpec(
+                key="current_phase_2", name="Current Phase 2",
+                value_fn=get_current_phase_2,
+                sensor_type=SensorType.MEASUREMENT, icon="mdi:current-ac",
+                device_class=SensorDeviceClass.CURRENT,
+                state_class=SensorStateClass.MEASUREMENT,
+                unit=UnitOfElectricCurrent.AMPERE, precision=1,
+            ),
+            SensorSpec(
+                key="current_phase_3", name="Current Phase 3",
+                value_fn=get_current_phase_3,
+                sensor_type=SensorType.MEASUREMENT, icon="mdi:current-ac",
+                device_class=SensorDeviceClass.CURRENT,
+                state_class=SensorStateClass.MEASUREMENT,
+                unit=UnitOfElectricCurrent.AMPERE, precision=1,
+            ),
+            SensorSpec(
+                key="voltage_phase_2", name="Voltage Phase 2",
+                value_fn=get_voltage_phase_2,
+                sensor_type=SensorType.MEASUREMENT, icon="mdi:flash",
+                device_class=SensorDeviceClass.VOLTAGE,
+                state_class=SensorStateClass.MEASUREMENT,
+                unit=UnitOfElectricPotential.VOLT, precision=0,
+            ),
+            SensorSpec(
+                key="voltage_phase_3", name="Voltage Phase 3",
+                value_fn=get_voltage_phase_3,
+                sensor_type=SensorType.MEASUREMENT, icon="mdi:flash",
+                device_class=SensorDeviceClass.VOLTAGE,
+                state_class=SensorStateClass.MEASUREMENT,
+                unit=UnitOfElectricPotential.VOLT, precision=0,
+            ),
+        ])
 
     # Special sensors
     special_specs = [
@@ -627,7 +691,7 @@ def create_sensor_specifications() -> tuple[SensorSpec, ...]:
     return result
 
 
-@lru_cache(maxsize=1)
-def get_sensor_specifications() -> tuple[SensorSpec, ...]:
-    """Get all sensor specifications."""
-    return create_sensor_specifications()
+@lru_cache(maxsize=4)
+def get_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
+    """Get sensor specifications for the given phase count (cached)."""
+    return create_sensor_specifications(phases=phases)

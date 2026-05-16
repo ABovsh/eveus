@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.9.0-rc.2 - 2026-05-17
+
+Builds on rc.1. Adds 3-phase support and leakage telemetry.
+
+### ✨ New entities (always on)
+- **`sensor.eveus_leakage_current`** — live RCD reading in mA (`leakValue`). Normal value is `0`; non-zero indicates a ground-fault leak.
+- **`sensor.eveus_leakage_current_peak`** — peak-hold leakage value (`leakValueH`).
+
+### ✨ New: 3-phase support
+- New `phases` field (1 or 3) in the **config flow** + **reconfigure flow**, defaults to `1` for backwards compatibility.
+- When `phases=3`, four additional sensors are exposed: `Current Phase 2/3`, `Voltage Phase 2/3` (read from `curMeas2/3`, `voltMeas2/3`).
+- 1-phase chargers see no new entities — phase-2/3 fields are always 0 on those units and are not registered to avoid noise.
+
+### 🔧 Migration
+- `CONFIG_ENTRY_VERSION` bumped to `3`. Existing entries are migrated transparently with `phases=1`.
+
 ## 4.9.0-rc.1 - 2026-05-17
 
 Pre-release adding two on-device clock controls.
