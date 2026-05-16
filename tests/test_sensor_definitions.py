@@ -79,10 +79,12 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     assert "Session Energy" in names
     assert "State" in names
     assert "Connection Quality" in names
-    assert "Session Cost" in names  # added in 4.5.0
+    # Session Cost moved out of the SensorSpec factory in 4.5.2 — it is now
+    # a stateful sensor (SessionCostSensor) instantiated in sensor.py.
+    assert "Session Cost" not in names
     # Exact count: catches silent additions/removals; bump on intentional
     # changes alongside README/CHANGELOG.
-    assert len(specs) == 26, sorted(names)
+    assert len(specs) == 25, sorted(names)
 
 
 def test_value_getters_reject_nan_and_inf() -> None:

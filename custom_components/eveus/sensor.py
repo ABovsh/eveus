@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
-from .sensor_definitions import get_sensor_specifications
+from .sensor_definitions import get_sensor_specifications, SessionCostSensor
 from .ev_sensors import (
     ChargingFinishTimeSensor,
     EVSocKwhSensor,
@@ -46,6 +46,7 @@ async def async_setup_entry(
             TimeToTargetSocSensor(updater, device_number, soc_calculator),
             ChargingFinishTimeSensor(updater, device_number, soc_calculator),
             InputEntitiesStatusSensor(updater, device_number),
+            SessionCostSensor(updater, device_number),
         ]
         sensors.extend(ev_sensors)
 
