@@ -113,8 +113,10 @@ def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
     assert percent._get_sensor_value() == 42
 
     updater.data = {}
-    # No sessionEnergy → fall back to last cached value.
-    assert kwh._get_sensor_value() == 34
+    # No sessionEnergy → treat as 0 delivered and reproject from Initial SOC.
+    # 20% × 80 kWh = 16.0. Avoids the entity going "unknown" at cold start.
+    assert kwh._get_sensor_value() == 16.0
+    assert percent._get_sensor_value() == 20
 
 
 def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:

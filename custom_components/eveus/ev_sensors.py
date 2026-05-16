@@ -333,9 +333,11 @@ class EVSocKwhSensor(BaseEVHelperSensor):
     _tracked_inputs = (_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION)
 
     def _get_sensor_value(self) -> Optional[float]:
-        energy_charged = self._get_energy_charged()
-        if energy_charged is None:
-            return self._cached_value
+        # If the charger has not yet reported sessionEnergy (cold start, offline
+        # blip, or no session ever began), treat it as 0 delivered — SOC then
+        # equals the user's Initial SOC. Prevents the entity from being
+        # "unknown" the moment HA boots before the first successful poll.
+        energy_charged = self._get_energy_charged() or 0.0
         result = self._soc_calculator.get_soc_kwh(self.hass, energy_charged)
         if result is not None:
             self._cached_value = result
@@ -355,10 +357,8 @@ class EVSocPercentSensor(BaseEVHelperSensor):
     _tracked_inputs = (_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION)
 
     def _get_sensor_value(self) -> Optional[float]:
-        """Get SOC percentage."""
-        energy_charged = self._get_energy_charged()
-        if energy_charged is None:
-            return self._cached_value
+        # See EVSocKwhSensor._get_sensor_value — same Initial-SOC fallback.
+        energy_charged = self._get_energy_charged() or 0.0
         result = self._soc_calculator.get_soc_percent(self.hass, energy_charged)
         if result is not None:
             self._cached_value = result
