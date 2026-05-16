@@ -292,79 +292,14 @@ def _make_rate_status_getter(rate_key: str):
 
 
 # =============================================================================
-# Session cost — stateful sensor (see SessionCostSensor below)
+# Session cost — read directly from the charger's `sessionMoney` field.
+#
+# The charger itself integrates session cost using the rate active at the time
+# of each energy delta, so there is no re-pricing on tariff change and no need
+# for a stateful accumulator on the integration side.
 # =============================================================================
 
-_SESSION_COST_ATTR_ACCUMULATED = "accumulated_cost"
-_SESSION_COST_ATTR_LAST_ENERGY = "last_session_energy"
-_SESSION_COST_NEW_SESSION_DROP_KWH = 0.05
-
-
-class SessionCostSensor(EveusSensorBase):
-    """Session cost in ₴, accumulated at the rate active during each delta.
-
-    Multiplying current sessionEnergy by the current rate retroactively
-    re-prices the whole session when the tariff changes mid-session (e.g.
-    night→day at 07:00). Instead we integrate Δenergy × current_rate on every
-    coordinator update and persist the running total via state attributes so
-    it survives HA restarts. Reset is detected when sessionEnergy drops below
-    its previous value (new session started on the charger).
-    """
-
-    ENTITY_NAME = "Session Cost"
-    _attr_icon = "mdi:cash"
-    _attr_state_class = SensorStateClass.TOTAL
-    _attr_native_unit_of_measurement = "₴"
-    _attr_suggested_display_precision = 2
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        super().__init__(updater, device_number)
-        self._accumulated_cost: float = 0.0
-        self._last_session_energy: Optional[float] = None
-
-    def _get_sensor_value(self) -> Optional[float]:
-        energy = get_session_energy(self._updater, self.hass)
-        rate = get_active_rate_cost(self._updater, self.hass)
-
-        if energy is None:
-            return round(self._accumulated_cost, 2) if self._last_session_energy is not None else None
-
-        if self._last_session_energy is None:
-            self._last_session_energy = energy
-        elif energy + _SESSION_COST_NEW_SESSION_DROP_KWH < self._last_session_energy:
-            self._accumulated_cost = 0.0
-            self._last_session_energy = energy
-        else:
-            delta = energy - self._last_session_energy
-            if delta > 0:
-                if rate is not None:
-                    self._accumulated_cost += delta * rate
-                self._last_session_energy = energy
-
-        return round(self._accumulated_cost, 2)
-
-    def _update_extra_state_attributes(self) -> bool:
-        previous = getattr(self, "_attr_extra_state_attributes", None) or {}
-        attrs: Dict[str, Any] = {
-            _SESSION_COST_ATTR_ACCUMULATED: round(self._accumulated_cost, 4),
-        }
-        if self._last_session_energy is not None:
-            attrs[_SESSION_COST_ATTR_LAST_ENERGY] = round(self._last_session_energy, 3)
-        self._attr_extra_state_attributes = attrs
-        return previous != attrs
-
-    async def _async_restore_state(self, state) -> None:
-        await super()._async_restore_state(state)
-        attrs = getattr(state, "attributes", None) or {}
-        acc = attrs.get(_SESSION_COST_ATTR_ACCUMULATED)
-        last = attrs.get(_SESSION_COST_ATTR_LAST_ENERGY)
-        try:
-            if acc is not None:
-                self._accumulated_cost = float(acc)
-            if last is not None:
-                self._last_session_energy = float(last)
-        except (TypeError, ValueError):
-            pass
+get_session_cost = _make_value_getter("sessionMoney", precision=2)
 
 
 # =============================================================================
@@ -564,6 +499,11 @@ def create_sensor_specifications() -> tuple[SensorSpec, ...]:
             value_fn=_make_rate_status_getter("tarifBEnable"),
             sensor_type=SensorType.STATE, icon="mdi:clock-check",
             category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="session_cost", name="Session Cost", value_fn=get_session_cost,
+            sensor_type=SensorType.STATE, icon="mdi:cash",
+            state_class=SensorStateClass.TOTAL, unit="₴", precision=2,
         ),
         SensorSpec(
             key="connection_quality", name="Connection Quality",
