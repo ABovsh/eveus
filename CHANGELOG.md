@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.6.0 - 2026-05-16
+
+Minor release: source-of-truth fields from the charger now back SOC and Session Cost. The integration carried two synthetic accumulators (SOC baseline + session-cost integration) that the charger itself was already computing internally — they are gone.
+
+- Change: `sensor.eveus_soc_energy` and `sensor.eveus_soc_percent` now use the charger-native `sessionEnergy` field instead of the per-sensor `IEM1` baseline. Removed `CachedSOCCalculator._energy_baseline` / `_baseline_initial_soc` / `restore_baseline()` and the `RestoreEntity` plumbing on `EVSocKwhSensor`. ~150 lines of state machinery deleted; the 4.5.1 baseline-survives-restart behavior is now structural — there is no baseline to lose
+- Change: `sensor.eveus_session_cost` now reads `sessionMoney` directly. The charger integrates Δenergy × rate-at-the-time itself, so the stateful `SessionCostSensor` introduced in 4.5.2 is gone. Re-pricing on tariff change remains impossible by construction
+- Behavior change for split charging: the charger starts a fresh session count on every plug-in, so SOC reprojects from `input_number.ev_initial_soc` after a plug-out/in cycle. If you split-charge across cycles, update Initial SOC (manually or via automation on `Car Connected`) before charging resumes. Continuous sessions and mid-session Initial SOC corrections work as before
+- Removed state attributes `energy_baseline_kwh`, `baseline_initial_soc`, `accumulated_cost`, `last_session_energy` from the SOC and session-cost sensors. Any automation reading them must switch to the entity native value
+- Entity IDs, units, and device classes are unchanged
+
 ## 4.5.2 - 2026-05-16
 
 Patch release: Session Cost no longer retroactively re-prices the session when the tariff changes.

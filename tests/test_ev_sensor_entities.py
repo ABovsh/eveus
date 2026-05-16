@@ -96,32 +96,35 @@ def test_soc_calculator_percent_and_properties() -> None:
 def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
     calculator = CachedSOCCalculator()
     hass = _Hass(HELPERS)
-    updater = _Updater({"IEM1": "16"})
+    updater = _Updater({"sessionEnergy": "16"})
 
     kwh = EVSocKwhSensor(updater, 1, calculator)
     percent = EVSocPercentSensor(updater, 1, calculator)
     kwh.hass = hass
     percent.hass = hass
 
-    assert kwh._get_sensor_value() == 16
-    assert percent._get_sensor_value() == 20
+    # initial=20% × 80 + sessionEnergy=16 × (1-0.1) = 16 + 14.4 = 30.4 kWh → 38%
+    assert kwh._get_sensor_value() == 30.4
+    assert percent._get_sensor_value() == 38
 
-    updater.data = {"IEM1": "20"}
-    assert kwh._get_sensor_value() == 19.6
-    assert percent._get_sensor_value() == 25
+    updater.data = {"sessionEnergy": "20"}
+    # 16 + 18 = 34 kWh → 42.5% (banker's-rounds to 42)
+    assert kwh._get_sensor_value() == 34
+    assert percent._get_sensor_value() == 42
 
     updater.data = {}
-    assert kwh._get_sensor_value() == 19.6
+    # No sessionEnergy → fall back to last cached value.
+    assert kwh._get_sensor_value() == 34
 
 
 def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:
-    sensor = EVSocKwhSensor(_Updater({"IEM1": "0"}))
+    sensor = EVSocKwhSensor(_Updater({"sessionEnergy": "0"}))
 
     assert sensor._get_energy_charged() == 0
 
 
 def test_time_to_target_uses_zero_power_instead_of_stale_cache() -> None:
-    sensor = TimeToTargetSocSensor(_Updater({"IEM1": "16", "powerMeas": "0"}))
+    sensor = TimeToTargetSocSensor(_Updater({"sessionEnergy": "16", "powerMeas": "0"}))
     sensor.hass = _Hass(HELPERS)
 
     assert sensor._get_sensor_value() == "Not charging"
@@ -161,7 +164,7 @@ def test_helper_sensors_track_inputs_even_when_helpers_missing(
 
 
 def test_helper_sensor_available_property_is_pure() -> None:
-    sensor = EVSocKwhSensor(_Updater({"IEM1": "16"}))
+    sensor = EVSocKwhSensor(_Updater({"sessionEnergy": "16"}))
     hass = _Hass(HELPERS)
     sensor.hass = hass
     sensor._helpers_available = True
@@ -172,7 +175,7 @@ def test_helper_sensor_available_property_is_pure() -> None:
 
 def test_helper_sensor_coordinator_update_refreshes_helper_status() -> None:
     writes = 0
-    sensor = EVSocKwhSensor(_Updater({"IEM1": "16"}))
+    sensor = EVSocKwhSensor(_Updater({"sessionEnergy": "16"}))
     sensor.hass = _Hass(HELPERS)
     sensor.async_write_ha_state = lambda: None
 
@@ -186,66 +189,38 @@ def test_helper_sensor_coordinator_update_refreshes_helper_status() -> None:
     sensor._handle_coordinator_update()
 
     assert sensor.available is True
-    assert sensor.native_value == 16
+    # sessionEnergy=16, initial=20%, capacity=80, loss=10 → 16 + 14.4 = 30.4 kWh
+    assert sensor.native_value == 30.4
     assert writes == 1
 
 
-def test_soc_baseline_resets_when_initial_soc_changes() -> None:
+def test_soc_reprojects_when_initial_soc_changes() -> None:
+    """4.6.0: SoC = initial_soc% × capacity + sessionEnergy × efficiency.
+    Mid-session correction of initial_soc reprojects on the next poll without
+    any baseline machinery — there is nothing to invalidate."""
     values = dict(HELPERS)
     hass = _Hass(values)
-    updater = _Updater({"IEM1": "16", "state": 4})
+    updater = _Updater({"sessionEnergy": "16", "state": 4})
     sensor = EVSocKwhSensor(updater)
     sensor.hass = hass
 
-    assert sensor._get_sensor_value() == 16
+    # 0.20×80 + 16×0.9 = 30.4 kWh
+    assert sensor._get_sensor_value() == 30.4
 
-    updater.data = {"IEM1": "20", "state": 4}
-    assert sensor._get_sensor_value() == 19.6
+    updater.data = {"sessionEnergy": "20", "state": 4}
+    # 0.20×80 + 20×0.9 = 34 kWh
+    assert sensor._get_sensor_value() == 34
 
     values["input_number.ev_initial_soc"] = 30
     sensor._soc_calculator.invalidate_cache()
 
-    assert sensor._get_sensor_value() == 24
+    # 0.30×80 + 20×0.9 = 24 + 18 = 42 kWh
+    assert sensor._get_sensor_value() == 42
 
-
-def test_soc_baseline_survives_multiple_charging_sessions() -> None:
-    hass = _Hass(HELPERS)
-    updater = _Updater({"IEM1": "100", "state": 4})
-    sensor = EVSocPercentSensor(updater)
-    sensor.hass = hass
-
-    assert sensor._get_sensor_value() == 20
-
-    updater.data = {"IEM1": "110", "state": 2}
-    assert sensor._get_sensor_value() == 31
-
-    updater.data = {"IEM1": "116", "state": 4}
-    assert sensor._get_sensor_value() == 38
-
-    updater.data = {"IEM1": "124", "state": 2}
-    assert sensor._get_sensor_value() == 47
-
-
-def test_soc_baseline_resets_when_counter_is_reset() -> None:
-    hass = _Hass(HELPERS)
-    updater = _Updater({"IEM1": "100"})
-    sensor = EVSocKwhSensor(updater)
-    sensor.hass = hass
-
-    assert sensor._get_sensor_value() == 16
-
-    updater.data = {"IEM1": "110"}
-    assert sensor._get_sensor_value() == 25
-
-    updater.data = {"IEM1": "0"}
-    assert sensor._get_sensor_value() == 16
-
-    updater.data = {"IEM1": "5"}
-    assert sensor._get_sensor_value() == 20.5
 
 
 def test_time_to_target_returns_helper_required_for_missing_helpers() -> None:
-    sensor = TimeToTargetSocSensor(_Updater({"IEM1": "16", "powerMeas": "7000"}))
+    sensor = TimeToTargetSocSensor(_Updater({"sessionEnergy": "16", "powerMeas": "7000"}))
     sensor.hass = _Hass({})
 
     assert sensor._get_sensor_value() == "Helpers Required"

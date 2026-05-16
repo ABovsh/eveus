@@ -1,7 +1,7 @@
 # Eveus EV Charger - Home Assistant Integration
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.5.2-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.6.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 Local Home Assistant integration for Eveus EV chargers. It adds charger monitoring, current control, charging mode switches, energy and cost sensors, optional EV battery estimates, diagnostics, and multi-charger support.
@@ -184,53 +184,39 @@ Create these helpers in **Settings → Devices & Services → Helpers → Create
 
 The **Input Entities Status** diagnostic sensor shows which helpers are missing or invalid.
 
-### How SOC Baselines Work
+### How SOC Is Calculated
 
-The SOC helper sensors do not treat the raw Counter A / `IEM1` value as energy added to the battery. Counter A may already contain previous charging history, especially if it is only reset by an automation when the house changes mode.
-
-Instead, the integration captures the current Counter A / `IEM1` value as a baseline and calculates SOC from the difference:
+SOC uses the charger's native `sessionEnergy` field (kWh delivered in the
+current session). The charger resets it to zero on every new session
+(plug-in), so the integration does not need to snapshot or persist a
+baseline.
 
 ```text
-charged energy for SOC = current IEM1 - baseline IEM1
+charged kWh = sessionEnergy
+usable kWh  = sessionEnergy × (1 - charging_loss / 100)
+SOC %       = initial_soc + (usable kWh / battery_capacity) × 100
 ```
-
-The baseline is created the first time a valid Counter A / `IEM1` value is seen after the helpers are available.
-
-The baseline resets when:
-
-- `input_number.ev_initial_soc` changes.
-- Counter A / `IEM1` becomes lower than the captured baseline, which means the charger counter was reset.
-
-The baseline does **not** reset just because charging stops and starts again. This means split charging works as expected when you set Initial SOC once, charge in several separate sessions, and do not reset Counter A between them.
 
 Example:
 
 ```text
-Battery capacity: 80 kWh
-Initial SOC: 20%
-Charging loss: 10%
-Counter A / IEM1 when Initial SOC is set: 100 kWh
+Battery capacity : 80 kWh
+Initial SOC      : 20%
+Charging loss    : 10%
+
+sessionEnergy = 10 kWh  →  usable = 9 kWh   →  SOC = 31%
+sessionEnergy = 16 kWh  →  usable = 14.4 kWh →  SOC = 38%
 ```
 
-After the first charging session:
+If you correct **Initial SOC** during a charging session, SOC reprojects
+from the new value on the next poll.
 
-```text
-IEM1 = 110 kWh
-SOC delta = 110 - 100 = 10 kWh
-Usable energy = 10 * 0.90 = 9 kWh
-Estimated SOC = 31%
-```
-
-After a second separate charging session without changing Initial SOC or resetting Counter A:
-
-```text
-IEM1 = 116 kWh
-SOC delta = 116 - 100 = 16 kWh
-Usable energy = 16 * 0.90 = 14.4 kWh
-Estimated SOC = 38%
-```
-
-If you correct Initial SOC during charging, the integration treats the new Initial SOC as the new truth from that moment and starts a fresh SOC baseline at the current Counter A / `IEM1` value.
+**Split-charging across plug-out / plug-in:** the charger starts a fresh
+session every time the cable is reinserted, so `sessionEnergy` resets to 0.
+If you unplug at 50% and plug back in later, update
+`input_number.ev_initial_soc` to the dashboard value (or do it from an
+automation on `Car Connected` going off) before charging resumes, otherwise
+SOC will project from the old Initial SOC value.
 
 ## Troubleshooting
 

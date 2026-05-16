@@ -126,97 +126,35 @@ class TestCalculateRemainingSeconds:
 # Session Cost
 # ---------------------------------------------------------------------------
 
-def _cost_sensor(updater):
-    s = sensors.SessionCostSensor(updater, 1)
-    s.hass = _Hass()
-    return s
-
-
 class TestSessionCost:
-    """Stateful Session Cost — integrates Δenergy × current_rate per update.
+    """4.6.0: Session Cost reads `sessionMoney` directly from the charger,
+    which integrates Δenergy × rate-at-the-time internally — no re-pricing
+    on tariff change is possible by construction."""
 
-    Regression baseline: before 4.5.2 this was `sessionEnergy × current_rate`,
-    so changing tariffs mid-session retroactively re-priced the whole session.
-    """
+    def test_reads_session_money_field(self) -> None:
+        updater = _Updater({"sessionMoney": "65.57"})
+        assert sensors.get_session_cost(updater, None) == 65.57
 
-    def test_first_read_anchors_and_charges_zero(self) -> None:
-        # Anchoring at the first observed energy must not retroactively bill
-        # the kWh that were already on the counter when the sensor woke up.
-        updater = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
-        s = _cost_sensor(updater)
-        assert s._get_sensor_value() == 0.0
+    def test_returns_none_when_offline(self) -> None:
+        updater = _Updater({"sessionMoney": "10"}, available=False)
+        assert sensors.get_session_cost(updater, None) is None
 
-    def test_accumulates_delta_at_current_rate(self) -> None:
-        updater = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
-        s = _cost_sensor(updater)
-        s._get_sensor_value()  # anchor
-        updater.data = {"sessionEnergy": "7", "activeTarif": "0", "tarif": "264"}
-        # +2 kWh × 2.64 ₴ = 5.28
-        assert s._get_sensor_value() == 5.28
+    def test_returns_none_when_field_missing(self) -> None:
+        updater = _Updater({"sessionEnergy": "10"})
+        assert sensors.get_session_cost(updater, None) is None
 
-    def test_tariff_change_does_not_repriced_prior_kwh(self) -> None:
-        # The whole point of the rewrite: switching rate mid-session must
-        # only affect future kWh, not the running total of past kWh.
-        updater = _Updater({"sessionEnergy": "0", "activeTarif": "1",
-                            "tarif": "264", "tarifAValue": "132", "tarifBValue": "400"})
-        s = _cost_sensor(updater)
-        s._get_sensor_value()  # anchor at 0 on night rate (1.32)
-        updater.data = {**updater.data, "sessionEnergy": "10"}
-        assert s._get_sensor_value() == 13.2  # 10 × 1.32
-        # Switch to day rate (2.64) — past 10 kWh must stay billed at night.
-        updater.data = {**updater.data, "sessionEnergy": "12", "activeTarif": "0"}
-        assert s._get_sensor_value() == round(round(13.2 + 2 * 2.64, 2), 2)
+    def test_zero_is_a_valid_value(self) -> None:
+        updater = _Updater({"sessionMoney": "0"})
+        assert sensors.get_session_cost(updater, None) == 0.0
 
-    def test_new_session_resets_accumulator(self) -> None:
-        updater = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
-        s = _cost_sensor(updater)
-        s._get_sensor_value()
-        updater.data = {**updater.data, "sessionEnergy": "10"}
-        assert s._get_sensor_value() == 13.2
-        # Counter resets to 0 → new session detected, accumulator zeroed.
-        updater.data = {**updater.data, "sessionEnergy": "0"}
-        assert s._get_sensor_value() == 0.0
-        updater.data = {**updater.data, "sessionEnergy": "3"}
-        assert s._get_sensor_value() == round(3 * 2.64, 2)
+    def test_sensor_spec_is_registered_with_uah_unit(self) -> None:
+        specs = {s.name: s for s in sensors.get_sensor_specifications()}
+        assert "Session Cost" in specs
+        spec = specs["Session Cost"]
+        assert spec.unit == "₴"
+        assert spec.precision == 2
+        assert spec.state_class == SensorStateClass.TOTAL
 
-    def test_offline_keeps_last_value(self) -> None:
-        updater = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
-        s = _cost_sensor(updater)
-        s._get_sensor_value()
-        updater.data = {**updater.data, "sessionEnergy": "10"}
-        s._get_sensor_value()
-        updater.available = False
-        # When offline, _get_sensor_value should still report the last cost
-        # (HA's availability layer will hide the entity, but the accumulator
-        # must not collapse to 0).
-        assert s._get_sensor_value() == 13.2
-
-    def test_persist_and_restore_via_extra_state_attributes(self) -> None:
-        import asyncio
-        updater1 = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
-        s1 = _cost_sensor(updater1)
-        s1._get_sensor_value()
-        updater1.data = {**updater1.data, "sessionEnergy": "10"}
-        s1._get_sensor_value()
-        s1._update_extra_state_attributes()
-        persisted = dict(s1._attr_extra_state_attributes)
-        assert persisted["accumulated_cost"] == 13.2
-        assert persisted["last_session_energy"] == 10.0
-
-        # Simulated restart: fresh sensor restores from attrs.
-        updater2 = _Updater({"sessionEnergy": "10", "activeTarif": "0", "tarif": "264"})
-        s2 = _cost_sensor(updater2)
-        asyncio.run(s2._async_restore_state(SimpleNamespace(state="13.2", attributes=persisted)))
-        # No new kWh since restart → cost unchanged.
-        assert s2._get_sensor_value() == 13.2
-        # Continue charging — accumulates from the restored point.
-        updater2.data = {**updater2.data, "sessionEnergy": "12"}
-        assert s2._get_sensor_value() == round(13.2 + 2 * 2.64, 2)
-
-    def test_unit_and_state_class(self) -> None:
-        cls_vars = vars(sensors.SessionCostSensor)
-        assert cls_vars.get("__attr_native_unit_of_measurement") == "₴"
-        assert cls_vars.get("__attr_state_class") == SensorStateClass.TOTAL
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +173,7 @@ def _finish_sensor(updater_data: dict, helpers: dict | None = HELPERS):
 
 class TestChargingFinishTime:
     def test_returns_future_timestamp_during_active_charging(self) -> None:
-        sensor = _finish_sensor({"IEM1": "0", "powerMeas": "7000"})
+        sensor = _finish_sensor({"sessionEnergy": "0", "powerMeas": "7000"})
         with patch(
             "custom_components.eveus.ev_sensors.dt_util.utcnow",
             return_value=_FIXED_NOW,
@@ -252,27 +190,22 @@ class TestChargingFinishTime:
 
     def test_returns_none_when_not_charging(self) -> None:
         # powerMeas=0 → no ETA. Must be None (timestamp sensors hide on None).
-        sensor = _finish_sensor({"IEM1": "0", "powerMeas": "0"})
+        sensor = _finish_sensor({"sessionEnergy": "0", "powerMeas": "0"})
         assert sensor._get_sensor_value() is None
 
     def test_returns_none_when_helpers_missing(self) -> None:
-        sensor = _finish_sensor({"IEM1": "0", "powerMeas": "7000"}, helpers={})
+        sensor = _finish_sensor({"sessionEnergy": "0", "powerMeas": "7000"}, helpers={})
         assert sensor._get_sensor_value() is None
 
     def test_returns_none_when_target_reached(self) -> None:
         # initial_soc + energy ≥ target → seconds == 0 → must return None,
         # not "now". Otherwise the timestamp would point to the past forever.
         # 80 kWh battery, initial 20%, target 80% → need 48 kWh delivered.
-        helpers_full = dict(HELPERS)
-        sensor = _finish_sensor({"IEM1": "100", "powerMeas": "7000"}, helpers_full)
-        # Energy_charged is the delta from baseline; first read anchors at 100,
-        # then we bump to 200 to deliver 100 kWh (more than 48 needed).
-        sensor._get_sensor_value()
-        sensor._updater.data = {"IEM1": "200", "powerMeas": "7000"}
+        sensor = _finish_sensor({"sessionEnergy": "60", "powerMeas": "7000"})
         assert sensor._get_sensor_value() is None
 
     def test_jitters_only_on_minute_boundary(self) -> None:
-        sensor = _finish_sensor({"IEM1": "0", "powerMeas": "7000"})
+        sensor = _finish_sensor({"sessionEnergy": "0", "powerMeas": "7000"})
         # Two close polls a few seconds apart must yield the same minute-stamp.
         with patch(
             "custom_components.eveus.ev_sensors.dt_util.utcnow",
