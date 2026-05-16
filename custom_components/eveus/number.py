@@ -26,7 +26,12 @@ from .const import (
     CONTROL_GRACE_PERIOD,
     OPTIMISTIC_CONTROL_TTL,
 )
-from .common_base import BaseEveusEntity, ControlEntityMixin, OptimisticControlMixin
+from .common_base import (
+    BaseEveusEntity,
+    ControlEntityMixin,
+    OptimisticControlMixin,
+    WriteOnChangeMixin,
+)
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,6 +49,7 @@ CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
 
 
 class EveusNumberEntity(
+    WriteOnChangeMixin,
     OptimisticControlMixin[float],
     ControlEntityMixin,
     BaseEveusEntity,
@@ -68,8 +74,7 @@ class EveusNumberEntity(
 
         self._pending_value: float | None = None
         self._init_optimistic_control()
-        self._last_written_value: float | None = None
-        self._last_written_available: bool | None = None
+        self._init_write_on_change()
 
 
 class EveusCurrentNumber(EveusNumberEntity):
@@ -178,14 +183,7 @@ class EveusCurrentNumber(EveusNumberEntity):
 
         current_value = self._resolve_value()
         self._attr_native_value = current_value
-        available_now = self.available
-        if (
-            current_value != self._last_written_value
-            or available_now != self._last_written_available
-        ):
-            self._last_written_value = current_value
-            self._last_written_available = available_now
-            self.async_write_ha_state()
+        self._write_if_changed(current_value)
 
 
 async def async_setup_entry(

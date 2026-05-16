@@ -115,20 +115,21 @@ class OptimizedEveusSensor(EveusSensorBase):
 
     def _update_extra_state_attributes(self) -> bool:
         """Refresh cached attributes from coordinator data."""
+        if not self._spec.attributes_fn:
+            return False
         previous_attrs = self._attr_extra_state_attributes
         attrs: Dict[str, Any] = {}
-        if self._spec.attributes_fn:
-            try:
-                if self._updater.available:
-                    attrs = self._spec.attributes_fn(self._updater, self.hass)
-            except Exception as err:
-                if self._should_log_error(f"attributes_{self._spec.key}"):
-                    _LOGGER.debug(
-                        "Error getting attributes for %s: %s",
-                        self.name,
-                        err,
-                        exc_info=True,
-                    )
+        try:
+            if self._updater.available:
+                attrs = self._spec.attributes_fn(self._updater, self.hass)
+        except Exception as err:
+            if self._should_log_error(f"attributes_{self._spec.key}"):
+                _LOGGER.debug(
+                    "Error getting attributes for %s: %s",
+                    self.name,
+                    err,
+                    exc_info=True,
+                )
         self._attr_extra_state_attributes = attrs or {}
         return previous_attrs != self._attr_extra_state_attributes
 

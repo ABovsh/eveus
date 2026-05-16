@@ -12,7 +12,12 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
-from .common_base import BaseEveusEntity, ControlEntityMixin, OptimisticControlMixin
+from .common_base import (
+    BaseEveusEntity,
+    ControlEntityMixin,
+    OptimisticControlMixin,
+    WriteOnChangeMixin,
+)
 from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
 from .utils import get_safe_value
 
@@ -47,6 +52,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
 
 
 class BaseSwitchEntity(
+    WriteOnChangeMixin,
     OptimisticControlMixin[bool],
     ControlEntityMixin,
     BaseEveusEntity,
@@ -71,8 +77,7 @@ class BaseSwitchEntity(
         self._pending_command: bool | None = None
         self._init_optimistic_control()
         self._attr_is_on = False
-        self._last_written_is_on: bool | None = None
-        self._last_written_available: bool | None = None
+        self._init_write_on_change()
 
     @property
     def _optimistic_state(self) -> bool | None:
@@ -140,8 +145,7 @@ class BaseSwitchEntity(
         """Send command with optimistic state."""
         self._pending_command = bool(command_value)
         self._attr_is_on = self._pending_command
-        self.async_write_ha_state()
-        self._last_written_is_on = self._attr_is_on
+        self._write_if_changed(self._attr_is_on)
 
         try:
             success = await self._updater.send_command(self._command, command_value)
@@ -152,8 +156,7 @@ class BaseSwitchEntity(
             self._pending_command = None
             self._last_command_time = time.time()
             self._attr_is_on = self._resolve_state()
-            self.async_write_ha_state()
-            self._last_written_is_on = self._attr_is_on
+            self._write_if_changed(self._attr_is_on)
 
     async def _async_send_command_or_raise(self, command_value: int) -> None:
         """Send command and raise HomeAssistantError on failure so HA shows a toast."""
@@ -194,14 +197,7 @@ class BaseSwitchEntity(
 
         self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
         self._attr_is_on = self._resolve_state()
-        available_now = self.available
-        if (
-            self._attr_is_on != self._last_written_is_on
-            or available_now != self._last_written_available
-        ):
-            self._last_written_is_on = self._attr_is_on
-            self._last_written_available = available_now
-            self.async_write_ha_state()
+        self._write_if_changed(self._attr_is_on)
 
 
 async def async_setup_entry(

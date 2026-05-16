@@ -276,6 +276,38 @@ class OptimisticControlMixin(Generic[T]):
             self._optimistic_value = None
 
 
+_UNSET: Any = object()
+
+
+class WriteOnChangeMixin:
+    """Push HA state only when the visible value or availability actually changes.
+
+    Why: DataUpdateCoordinator swaps `updater.data` BEFORE notifying listeners,
+    so any "previous = self.<prop>" comparison inside `_handle_coordinator_update`
+    reads the *new* data and always matches the current value — masking real
+    transitions and emitting redundant state_changed events on every poll.
+    The mixin tracks the value we actually pushed to HA last time instead.
+    """
+
+    def _init_write_on_change(self) -> None:
+        """Initialize change-detection state. Call from __init__."""
+        self._last_written_value: Any = _UNSET
+        self._last_written_available: bool | None = None
+
+    def _write_if_changed(self, value: Any) -> bool:
+        """Push HA state if value or availability changed since last write."""
+        available_now = self.available  # type: ignore[attr-defined]
+        if (
+            value == self._last_written_value
+            and available_now == self._last_written_available
+        ):
+            return False
+        self._last_written_value = value
+        self._last_written_available = available_now
+        self.async_write_ha_state()  # type: ignore[attr-defined]
+        return True
+
+
 class EveusSensorBase(BaseEveusEntity, SensorEntity):
     """Base sensor entity."""
 

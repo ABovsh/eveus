@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.8.0-rc.2 - 2026-05-16
+
+Second pre-release pass after another round of adversarial review (Codex) and a `/simplify` sweep.
+
+### 🔒 Security / UX
+- Config-flow and reauth `password` fields now use `TextSelector` with `TextSelectorType.PASSWORD`, so HA renders them as masked password inputs instead of plain text.
+
+### 🧹 Internals — `WriteOnChangeMixin`
+- Extracted the duplicated `_last_written_*` change-detection idiom that landed in rc.1 (binary_sensor, switch, number) into a single `WriteOnChangeMixin` in `common_base.py`. Three platforms now share one `_write_if_changed(value)` helper. No behavior change.
+- Removed a redundant pre-call write of `_last_written_is_on` in `BaseSwitchEntity._async_send_command` (the `finally` clause already updates it). One less dead write per command.
+- `OptimizedEveusSensor._update_extra_state_attributes` now short-circuits when the spec has no `attributes_fn`, avoiding two empty-dict allocations per sensor per poll across ~25 sensors.
+
+### 📝 Docs
+- README updated: Reset Counter A and Reset Counter B are listed as **buttons** (not switches), matching the rc.1 platform change.
+- `_schedule_post_command_refresh` docstring corrected — `POST_COMMAND_REFRESH_DELAYS` is currently a single 5s tick, not two.
+
 ## 4.8.0-rc.1 - 2026-05-16
 
 Pre-release covering an extensive Codex review pass plus a new entity. Behavior-changing items are listed under ⚠️.
