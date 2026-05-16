@@ -70,8 +70,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self.password = password
         self._command_manager = CommandManager(self)
 
-        self._success_count = 0
-        self._total_count = 0
         self._poll_results: deque[bool] = deque(maxlen=20)
         self._consecutive_failures = 0
         self._last_success_time = time.time()
@@ -175,10 +173,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _schedule_post_command_refresh(self) -> None:
         """Schedule delayed refreshes after a successful command.
 
-        Two refreshes (at POST_COMMAND_REFRESH_DELAYS): the early one catches
-        fast-committing changes (e.g. setting current) for snappy UI feedback;
-        the later one catches slow transitions (e.g. Stop Charging, where the
-        charger may take ~5-10s to drop into Standby).
+        Refreshes fire at POST_COMMAND_REFRESH_DELAYS (currently a single 5s
+        tick) to catch both fast commits (e.g. setting current) and slower
+        transitions (e.g. Stop Charging, where the charger may take ~5-10s to
+        drop into Standby) in one well-timed poll.
 
         Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
         always fire relative to the most recent command. Combined with the
@@ -213,8 +211,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
-        self._success_count += 1
-        self._total_count += 1
         self._poll_results.append(True)
         self._consecutive_failures = 0
         self._device_available = True
@@ -228,7 +224,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
-        self._total_count += 1
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False

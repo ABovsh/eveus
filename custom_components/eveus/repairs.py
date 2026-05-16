@@ -15,6 +15,7 @@ from .config_flow import (
     InvalidAuth,
     InvalidDevice,
     InvalidInput,
+    _merge_entry_data,
     build_user_data_schema,
     validate_input,
 )
@@ -64,7 +65,7 @@ class InvalidConfigRepairFlow(RepairsFlow):
         if user_input is not None:
             try:
                 info = await validate_input(self.hass, user_input)
-                entry_data = info["data"]
+                entry_data = _merge_entry_data(entry.data, info["data"])
 
                 self.hass.config_entries.async_update_entry(
                     entry,

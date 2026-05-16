@@ -31,7 +31,7 @@ def test_diagnostics_redacts_credentials_and_reports_coordinator_state() -> None
     diagnostics = asyncio.run(async_get_config_entry_diagnostics(None, entry))
 
     assert diagnostics["entry"]["data"] == {
-        "host": "192.168.1.50",
+        "host": "**REDACTED**",
         "username": "**REDACTED**",
         "password": "**REDACTED**",
     }
@@ -45,6 +45,21 @@ def test_diagnostics_redacts_credentials_and_reports_coordinator_state() -> None
         "subState": 1,
         "currentSet": 16,
     }
+
+
+def test_diagnostics_returns_partial_payload_when_runtime_data_missing() -> None:
+    """Diagnostics must not raise when setup failed before runtime_data was set."""
+    entry = SimpleNamespace(
+        title="Eveus Charger",
+        data={"host": "192.168.1.50", "username": "admin", "password": "secret"},
+    )
+
+    diagnostics = asyncio.run(async_get_config_entry_diagnostics(None, entry))
+
+    assert diagnostics["entry"]["device_number"] is None
+    assert diagnostics["setup"]["ready"] is False
+    assert "coordinator" not in diagnostics
+    assert "device" not in diagnostics
 
 
 def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:

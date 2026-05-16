@@ -7,9 +7,12 @@ import time
 from homeassistant.core import State
 
 from custom_components.eveus.number import EveusCurrentNumber
+from custom_components.eveus.button import (
+    EveusResetCounterAButton,
+    EveusResetCounterBButton,
+)
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
-    EveusResetCounterASwitch,
     SWITCH_DESCRIPTIONS,
 )
 
@@ -252,31 +255,26 @@ def test_stop_charging_switch_preserves_existing_semantics() -> None:
     assert updater.commands == [("evseEnabled", 1), ("evseEnabled", 0)]
 
 
-def test_reset_counter_switch_status_and_reset_behavior_unchanged() -> None:
-    updater = _Updater({"IEM1": "5.5"})
-    entity = EveusResetCounterASwitch(updater)
-    _disable_state_writes(entity)
-
-    assert entity.is_on is False
-    entity._safe_mode = False
-    assert entity.is_on is False
-    entity._handle_coordinator_update()
-    assert entity.is_on is True
-
-    asyncio.run(entity.async_turn_on())
-    assert updater.commands == []
-
-    asyncio.run(entity.async_turn_off())
-    assert updater.commands == [("rstEM1", 0)]
-    assert updater.last_retry is False
-
-    updater.command_result = False
+def test_reset_counter_buttons_emit_reset_commands() -> None:
     import pytest
     from homeassistant.exceptions import HomeAssistantError
 
+    updater = _Updater({"IEM1": "5.5", "IEM2": "2.2"})
+    button_a = EveusResetCounterAButton(updater)
+    button_b = EveusResetCounterBButton(updater)
+    _disable_state_writes(button_a)
+    _disable_state_writes(button_b)
+
+    asyncio.run(button_a.async_press())
+    asyncio.run(button_b.async_press())
+    assert updater.commands == [("rstEM1", 0), ("rstEM2", 0)]
+    assert updater.last_retry is False
+
+    updater.command_result = False
     with pytest.raises(HomeAssistantError):
-        asyncio.run(entity.async_turn_off())
-    assert updater.commands == [("rstEM1", 0), ("rstEM1", 0)]
+        asyncio.run(button_a.async_press())
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(button_b.async_press())
 
 
 def test_stop_charging_switch_raises_on_command_failure() -> None:
@@ -325,19 +323,6 @@ def test_switch_optimistic_state_survives_until_device_confirms() -> None:
     entity._handle_coordinator_update()
     assert entity._optimistic_state is None
     assert entity.is_on is True
-
-
-def test_base_counter_switch_turn_off_is_a_noop() -> None:
-    """BaseCounterSwitch.async_turn_off must not raise; counter status is read-only."""
-    from custom_components.eveus.switch import BaseCounterSwitch
-
-    updater = _Updater({"IEM1": "50"})
-    entity = BaseCounterSwitch(updater, SWITCH_DESCRIPTIONS[2])
-    _disable_state_writes(entity)
-
-    # Must not raise NotImplementedError or any other exception.
-    asyncio.run(entity.async_turn_off())
-    asyncio.run(entity.async_turn_on())
 
 
 def test_switch_rapid_toggle_does_not_flicker_back() -> None:
