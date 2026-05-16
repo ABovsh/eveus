@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.9.0-rc.1 - 2026-05-17
+
+Pre-release adding two on-device clock controls.
+
+### ✨ New entities
+- **`button.eveus_sync_time`** (Sync Time) — pushes the host's current UTC seconds to the charger's `systemTime`. The R3.05.2 firmware stores UTC and renders local-as-unix in `/main`, so no client-side timezone math is needed (verified against the live unit).
+- **`select.eveus_time_zone`** (Time Zone) — readable + writable view of the charger's `timeZone` field, full IANA range `-12..+14` (firmware accepts `+14`, confirmed).
+- Both entities are `EntityCategory.CONFIG` and **disabled by default** — enable in the entity registry when needed. They route through the existing `CommandManager` (rate-limited, retried, surfaces `HomeAssistantError` toasts on failure).
+
+### 🔧 Platform
+- `Platform.SELECT` added to `PLATFORMS` in `__init__.py`.
+
 ## 4.8.0 - 2026-05-16
 
 Production release. Identical to `4.8.0-rc.2` after end-to-end testing on real hardware. See rc.1 and rc.2 notes below for the full change list.
