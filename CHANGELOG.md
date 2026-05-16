@@ -2,122 +2,80 @@
 
 ## 4.9.0-rc.3 - 2026-05-17
 
-UX polish on rc.2.
-
 ### ✨ New
-- **`switch.eveus_adaptive_mode`** — direct on/off control of the charger's adaptive (AI) mode via `aiStatus`. Pairs with the existing `Adaptive Charging` diagnostic sensor (same field).
+- **`switch.eveus_adaptive_mode`** — on/off control of the charger's adaptive (AI) mode. Pairs with the existing `Adaptive Charging` diagnostic sensor.
 
 ### 🔧 Changed
-- `Sync Time` and `Time Zone` are now **enabled by default** — they were disabled in rc.1/rc.2, inconsistent with the rest of the integration's convention.
-- `Force Refresh` moved from `DIAGNOSTIC` to `CONFIG` entity category.
+- `Sync Time` and `Time Zone` are now enabled by default.
+- `Force Refresh` moved from the Diagnostic to the Config section in the device UI.
 
 ## 4.9.0-rc.2 - 2026-05-17
 
-Builds on rc.1. Adds 3-phase support and leakage telemetry.
+### ✨ New entities
+- **`sensor.eveus_leakage_current`** (mA) — live RCD reading. `0` is normal; non-zero indicates a ground-fault leak.
+- **`sensor.eveus_leakage_current_peak`** (mA) — peak-hold leakage value.
 
-### ✨ New entities (always on)
-- **`sensor.eveus_leakage_current`** — live RCD reading in mA (`leakValue`). Normal value is `0`; non-zero indicates a ground-fault leak.
-- **`sensor.eveus_leakage_current_peak`** — peak-hold leakage value (`leakValueH`).
-
-### ✨ New: 3-phase support
-- New `phases` field (1 or 3) in the **config flow** + **reconfigure flow**, defaults to `1` for backwards compatibility.
-- When `phases=3`, four additional sensors are exposed: `Current Phase 2/3`, `Voltage Phase 2/3` (read from `curMeas2/3`, `voltMeas2/3`).
-- 1-phase chargers see no new entities — phase-2/3 fields are always 0 on those units and are not registered to avoid noise.
-
-### 🔧 Migration
-- `CONFIG_ENTRY_VERSION` bumped to `3`. Existing entries are migrated transparently with `phases=1`.
+### ✨ 3-phase support
+- New `Phases` field (1 or 3) in the setup and reconfigure dialogs, defaults to `1`.
+- When `Phases = 3`, four additional sensors are exposed: `Current Phase 2`, `Current Phase 3`, `Voltage Phase 2`, `Voltage Phase 3`.
+- Existing 1-phase setups are migrated transparently — no action required.
 
 ## 4.9.0-rc.1 - 2026-05-17
 
-Pre-release adding two on-device clock controls.
-
 ### ✨ New entities
-- **`button.eveus_sync_time`** (Sync Time) — pushes the host's current UTC seconds to the charger's `systemTime`. The R3.05.2 firmware stores UTC and renders local-as-unix in `/main`, so no client-side timezone math is needed (verified against the live unit).
-- **`select.eveus_time_zone`** (Time Zone) — readable + writable view of the charger's `timeZone` field, full IANA range `-12..+14` (firmware accepts `+14`, confirmed).
-- Both entities are `EntityCategory.CONFIG` and **disabled by default** — enable in the entity registry when needed. They route through the existing `CommandManager` (rate-limited, retried, surfaces `HomeAssistantError` toasts on failure).
-
-### 🔧 Platform
-- `Platform.SELECT` added to `PLATFORMS` in `__init__.py`.
+- **`button.eveus_sync_time`** — pushes the host's current time to the charger's clock.
+- **`select.eveus_time_zone`** — readable / writable time-zone offset, range `-12..+14`.
 
 ## 4.8.0 - 2026-05-16
 
-Production release. Identical to `4.8.0-rc.2` after end-to-end testing on real hardware. See rc.1 and rc.2 notes below for the full change list.
+Promotion of `4.8.0-rc.2` to a stable release. See `4.8.0-rc.1` and `4.8.0-rc.2` notes for the full change list.
 
 ## 4.8.0-rc.2 - 2026-05-16
 
-Second pre-release pass after another round of adversarial review (Codex) and a `/simplify` sweep.
-
 ### 🔒 Security / UX
-- Config-flow and reauth `password` fields now use `TextSelector` with `TextSelectorType.PASSWORD`, so HA renders them as masked password inputs instead of plain text.
-
-### 🧹 Internals — `WriteOnChangeMixin`
-- Extracted the duplicated `_last_written_*` change-detection idiom that landed in rc.1 (binary_sensor, switch, number) into a single `WriteOnChangeMixin` in `common_base.py`. Three platforms now share one `_write_if_changed(value)` helper. No behavior change.
-- Removed a redundant pre-call write of `_last_written_is_on` in `BaseSwitchEntity._async_send_command` (the `finally` clause already updates it). One less dead write per command.
-- `OptimizedEveusSensor._update_extra_state_attributes` now short-circuits when the spec has no `attributes_fn`, avoiding two empty-dict allocations per sensor per poll across ~25 sensors.
-
-### 📝 Docs
-- README updated: Reset Counter A and Reset Counter B are listed as **buttons** (not switches), matching the rc.1 platform change.
-- `_schedule_post_command_refresh` docstring corrected — `POST_COMMAND_REFRESH_DELAYS` is currently a single 5s tick, not two.
+- Config-flow and reauth password fields are now rendered as masked password inputs instead of plain text.
 
 ## 4.8.0-rc.1 - 2026-05-16
 
-Pre-release covering an extensive Codex review pass plus a new entity. Behavior-changing items are listed under ⚠️.
-
 ### ⚠️ Breaking — entity platform change
-- `switch.eveus_reset_counter_a` is removed. It is replaced by `button.eveus_reset_counter_a`, which models the one-shot reset action correctly (HA switch semantics imply togglable binary state — a counter reset is not that). The unique-id (`eveus_reset_counter_a`) is preserved, so the new button inherits the entity registry slot — but the entity domain moves from `switch.` to `button.`. Update any dashboards/automations that referenced `switch.eveus_reset_counter_a`.
+- `switch.eveus_reset_counter_a` is removed and replaced by `button.eveus_reset_counter_a`, which models the one-shot reset action correctly. The unique-id is preserved, but the entity domain moves from `switch.` to `button.`. Update any dashboards or automations that referenced `switch.eveus_reset_counter_a`.
 
 ### ✨ New
-- `button.eveus_reset_counter_b` — momentary reset for the second user-resettable energy counter (`rstEM2` / `IEM2`). Mirrors Counter A; appears under the existing Eveus device.
+- `button.eveus_reset_counter_b` — momentary reset for the second user-resettable energy counter. Mirrors Counter A.
 
 ### 🐛 Correctness fixes
-- Reconfigure, reauth, and the "invalid_config" repair flow now preserve `device_number` (and other integration-owned keys) when updating `entry.data`. Previously a reconfigure on a multi-charger setup could reassign the number on reload, breaking entity unique-id stability and the device registry mapping.
-- `get_connection_quality` now returns `None` on internal error instead of `100`. A calculation failure no longer masquerades as "Excellent".
-- Diagnostics no longer raises when called before setup completes — it returns a partial payload with `setup.ready = False` instead.
+- Reconfigure, reauth, and the "invalid_config" repair flow now preserve `device_number` when updating entry data. Previously a reconfigure on a multi-charger setup could reassign the number on reload, breaking entity unique-id stability.
+- `Connection Quality` now reports `unknown` on internal error instead of falsely showing `100%` (Excellent).
+- Diagnostics no longer raises when called before setup completes — it returns a partial payload instead.
 
 ### 🔒 Security
-- `diagnostics.py` now redacts `host` and `unique_id` (in addition to `username`/`password`). Diagnostic dumps shared publicly no longer leak LAN topology.
-- The config flow logs a `WARNING` when the charger is configured over plain HTTP, calling out that Basic Auth credentials are sent in cleartext on every poll. Default scheme is unchanged.
+- Diagnostic dumps now redact `host` and `unique_id` (in addition to credentials), so shared dumps no longer leak LAN topology.
+- A warning is logged when the charger is configured over plain HTTP, calling out that Basic Auth credentials are sent in cleartext on every poll.
 
 ### 🏎 Performance
-- Control entities (`Stop Charging`, `One Charge`, `Charging Current`) only call `async_write_ha_state()` when their visible value or availability actually changes. Coordinator ticks no longer generate redundant `state_changed` events for unchanged controls.
-
-### 🧹 Internals & cleanups
-- `BaseEVHelperSensor._handle_coordinator_update` now calls `_maybe_finalize_device_info()`, so first-firmware-after-boot updates reach SOC/ETA sensors like every other entity type.
-- Removed unused `_device_info` cache from `ConfigFlow`.
-- Removed unused `_success_count` / `_total_count` counters from `EveusUpdater`.
-- Replaced an `assert` for duplicate sensor keys with an explicit `RuntimeError` (assertions are stripped under `python -O`).
-
-### 🧪 Tests
-- Repair-flow test locks in `device_number` preservation across an invalid-config repair.
-- Diagnostics test covers the missing-`runtime_data` path.
-- Reset-counter tests rewritten against the new button platform.
-- Setup test asserts the new button list (`Force Refresh`, `Reset Counter A`, `Reset Counter B`).
+- Control entities (`Stop Charging`, `One Charge`, `Charging Current`) only update Home Assistant when their visible value or availability actually changes. Coordinator ticks no longer generate redundant state-change events for unchanged controls.
 
 ## 4.7.2 - 2026-05-16
 
 Bugfix: `sensor.eveus_soc_energy` / `sensor.eveus_soc_percent` could still show `unknown` after 4.7.1 when `input_number.ev_target_soc` was missing or out-of-range — typical for the first few seconds after a HA reboot, before the input_number platform finishes loading.
 
-- Fix: `CachedSOCCalculator._update_input_cache` no longer treats `target_soc` as required. SOC calculations need only Initial SOC, Battery Capacity, and SOC Correction. Target SOC is consumed exclusively by the ETA-class sensors (Time to Target SOC, Charging Finish Time), which already degrade gracefully when it is None. Effect: a startup race or a deleted/invalid Target SOC helper no longer hides SOC %/kWh
-- Test: extended `test_soc_calculator_reports_missing_and_invalid_helpers` to lock in the new contract — missing/out-of-range Target SOC keeps SOC working and returns Initial SOC; missing/out-of-range Battery Capacity (a true required input) still disables SOC
+- Fix: SOC %/kWh sensors no longer go `unknown` when the `input_number.ev_target_soc` helper is missing or out of range. Target SOC is only required by the ETA-class sensors (Time to Target SOC, Charging Finish Time); SOC %/kWh need only Initial SOC, Battery Capacity, and SOC Correction.
 
 ## 4.7.1 - 2026-05-16
 
 Bugfix release covering two regressions surfaced after 4.6.0/4.7.0.
 
-- Fix: `binary_sensor.eveus_car_connected` got stuck on the value from the very first fetch and never reflected later plug-in / plug-out transitions. `_handle_coordinator_update` recomputed `previous_state = self.is_on` after the coordinator had already swapped in the new payload, so the comparison always equalled the current value and `async_write_ha_state()` was never called. Now tracks the last value actually pushed to HA in a dedicated instance attribute
-- Fix: `sensor.eveus_soc_energy` and `sensor.eveus_soc_percent` showed `unknown` whenever `sessionEnergy` was missing from the payload (cold start before first poll, brief offline blip). Now treat a missing `sessionEnergy` as 0 delivered, so SOC reprojects from `input_number.ev_initial_soc` instead of going unknown. Cached-last-value fallback is no longer needed and was removed
-- Tests: regression case for the binary-sensor write path (in-place coordinator data swap, Charging → Standby), and updated SOC sensor test to lock in the Initial-SOC fallback
+- Fix: `binary_sensor.eveus_car_connected` got stuck on the value from the very first fetch and never reflected later plug-in / plug-out transitions. Now correctly tracks every state change.
+- Fix: `sensor.eveus_soc_energy` and `sensor.eveus_soc_percent` no longer go `unknown` when `sessionEnergy` is briefly missing from the payload (cold start before first poll, transient offline blip). A missing value is now treated as `0 kWh delivered`, so SOC reprojects from `input_number.ev_initial_soc` instead of going unknown.
 
 ## 4.7.0 - 2026-05-16
 
-Minor release: five new diagnostic sensors expose the charger's adaptive (AI) mode and scheduled-charging slots. Adds a firmware-drift test backed by a real `/main` snapshot. Cleans up a dead `try/except` in sensor setup.
+Minor release: five new diagnostic sensors expose the charger's adaptive (AI) mode and scheduled-charging slots.
 
-- New diagnostic sensor `sensor.eveus_adaptive_charging` — "Active" / "Idle" from `aiStatus`. Indicates whether the charger is currently throttling current to maintain voltage under heavy load
-- New diagnostic sensor `sensor.eveus_adaptive_current_limit` — current cap chosen by the AI throttle (A), from `aiModecurrent`
-- New diagnostic sensor `sensor.eveus_adaptive_voltage_threshold` — voltage floor that triggers throttling (V), from `aiVoltage`
-- New diagnostic sensors `sensor.eveus_schedule_1`, `sensor.eveus_schedule_2` — "Enabled" / "Disabled" with attributes `window` (HH:MM–HH:MM), `start`, `stop`, and optional `current_limit_a` / `energy_limit_kwh`. Mirrors the charger's `sh1*` / `sh2*` slot config
-- New test `tests/test_real_payload_schema.py` — runs every value getter against `tests/fixtures/real_main_response.json` (captured from a live Eveus Pro 1P 2024, FW GRM070A-R3.05.2). Catches firmware schema drift that synthetic dict-based unit tests cannot see
-- Cleanup: removed `try: ... except Exception: raise` no-op wrapper in `sensor.py:async_setup_entry`
+- New diagnostic sensor `sensor.eveus_adaptive_charging` — `Active` / `Idle`. Indicates whether the charger is currently throttling current to maintain voltage under heavy load.
+- New diagnostic sensor `sensor.eveus_adaptive_current_limit` — current cap (A) chosen by the adaptive throttle.
+- New diagnostic sensor `sensor.eveus_adaptive_voltage_threshold` — voltage floor (V) that triggers throttling.
+- New diagnostic sensors `sensor.eveus_schedule_1`, `sensor.eveus_schedule_2` — `Enabled` / `Disabled` with attributes `window` (HH:MM–HH:MM), `start`, `stop`, and optional `current_limit_a` / `energy_limit_kwh`.
 
 ## 4.6.0 - 2026-05-16
 
@@ -152,37 +110,19 @@ Three new automation-friendly sensors that replace the template boilerplate user
 - Add: `binary_sensor.eveus_car_connected` (`device_class: plug`) — true when a vehicle is electrically connected. Uses canonical device-state values ({Connected, Charging, Charge Complete, Paused}), not localized strings, so it stays stable across charger firmware label changes
 - Add: `sensor.eveus_charging_finish_time` (`device_class: timestamp`) — absolute UTC ETA when the configured target SOC will be reached. Companion to the existing string-formatted `Time to Target SOC`; this one is what `device_class: timestamp` cards and "remind me 30 min before finish" automations consume directly. Minute-aligned so the state doesn't jitter on every poll. Returns unavailable when not charging, helpers missing, or target already reached
 - Add: `sensor.eveus_session_cost` — running ₴-value of the current session = sessionEnergy × active rate. Returns unavailable (not 0) when the rate is unknown, so notifications never report a misleading "0 ₴"
-- Refactor: Extracted `calculate_remaining_seconds` and `_remaining_seconds_or_state` in `utils.py` so the Time-to-Target string sensor and the new Finish-Time timestamp sensor share a single source of truth for charging-ETA math
-- Refactor: Hoisted shared input-resolution into `BaseEVHelperSensor._resolve_remaining_inputs` so both Time-to-Target and Finish-Time sensors collect helpers in the same way — no drift possible
-- Tests: 29 new behavior tests covering truth tables for `calculate_remaining_seconds`, Session Cost edge cases (offline / no rate / missing energy / zero energy / Rate 2 active), Finish-Time sensor (active charging / not charging / helpers missing / target reached / jitter resistance / device_class), and Car-Connected binary sensor (all 8 device-state values / unavailable / unparseable input / unique_id convention)
-- Tests: Tightened `test_sensor_specification_factory_exposes_expected_entities` from `>= 20` to exact count (26) so silent additions/removals fail the build
-- Tests: Added `test_value_getters_reject_nan_and_inf` — regression guard so `float("nan")`/`float("inf")` payloads do not enter HA long-term statistics or downstream cost/ETA calculations
 
 ## 4.4.1 - 2026-05-14
 
 Patch release: SOC helper blip resilience and minor cleanups.
 
-- Fix: Energy baseline in `_get_energy_charged` no longer resets when SOC helpers briefly become unavailable — session energy and SOC progress survive transient `None` reads, and the baseline only updates on a real change in `initial_soc`
-- Cleanup: Simplified redundant ternary in `EVSocKwhSensor._get_sensor_value` and `EVSocPercentSensor._get_sensor_value` — `_cached_value` already holds the post-update value
-- Cleanup: Consolidated three sequential `except X: raise` clauses in `async_setup_entry` into a single tuple-form re-raise
-- Add: Regression test for energy baseline survival across helper unavailability
+- Fix: SOC progress and session energy now survive transient unavailability of the SOC helpers. The energy baseline only updates on a real change in `input_number.ev_initial_soc`, not on a brief `None` read.
 
 ## 4.4.0 - 2026-05-14
 
 Log hygiene, silent double-work elimination, and code correctness.
 
-- Fix: `calculate_remaining_time` now logs at debug level instead of error — transient calculation failures no longer generate ERROR entries in the HA log
-- Fix: Config flow validation failures (InvalidInput, InvalidDevice) for setup, reconfigure, and reauth steps now log at debug level — wrong IP or credentials no longer pollute the HA log on every user typo
-- Fix: `sensor.py` platform setup no longer double-logs on exception — HA's platform loader already captures the traceback
-- Fix: `BaseCounterSwitch.async_turn_off` now implemented as a no-op, matching `async_turn_on` — prevents `NotImplementedError` if the base class is ever used directly
-- Fix: `_get_energy_charged` now calls `_update_input_cache` directly instead of `are_helpers_available` discarding the return value — removes side-effecting query call
-- Fix: `InputEntitiesStatusSensor._check_inputs` no longer calls `_update_extra_state_attributes` internally — the coordinator update cycle owns attribute updates, preventing double computation per poll
-- Fix: Compatibility alias docstrings in `BaseSwitchEntity` corrected — aliases are actively used in current tests, not "older" ones
-- Fix: `SensorSpec.state_class` type annotation corrected to `Optional[SensorStateClass | str]`
-- Add: Tests for `CachedSOCCalculator` properties (`battery_capacity`, `initial_soc`, `soc_correction`, `target_soc`) and cache invalidation behavior
-- Add: Test verifying `connection_quality` exposes all expected dict keys
-- Add: Test verifying `is_likely_offline` requires both failure count and time thresholds simultaneously
-- Add: Test verifying `BaseCounterSwitch.async_turn_off` does not raise
+- Fix: Charging-ETA calculation failures and config-flow validation errors no longer generate ERROR entries in the HA log on every user typo — they are now logged at debug level only.
+- Fix: Sensor platform setup no longer double-logs on exception.
 
 ## 4.3.0 - 2026-05-14
 
@@ -276,7 +216,6 @@ Version 4.0.0 is a major modernization release focused on reliability, setup val
 
 - Added Home Assistant reconfigure support for updating charger IP address, credentials, and model after setup.
 - Added downloadable diagnostics with sensitive fields redacted.
-- Added a dedicated automated test suite covering config validation, coordinator polling, diagnostics, command payloads, sensor mappings, entity IDs, and utility calculations.
 
 ### Changed
 
