@@ -1,8 +1,9 @@
-"""Support for Eveus buttons (force refresh, counter resets)."""
+"""Support for Eveus buttons (force refresh, counter resets, time sync)."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
@@ -80,6 +81,30 @@ class EveusResetCounterBButton(_EveusResetCounterButton):
     _command = "rstEM2"
 
 
+class EveusSyncTimeButton(BaseEveusEntity, ButtonEntity):
+    """Push the current UTC timestamp to the charger's clock.
+
+    The firmware stores `systemTime` as UTC and renders it as local-as-unix
+    (UTC + timeZone*3600) in /main responses. So the correct payload is the
+    plain current UTC second count — no timezone arithmetic.
+    """
+
+    ENTITY_NAME = "Sync Time"
+    _attr_icon = "mdi:clock-check-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_enabled_default = False
+
+    async def async_press(self) -> None:
+        """Send the current UTC seconds as `systemTime`."""
+        utc_now = int(time.time())
+        success = await self._updater.send_command("systemTime", utc_now)
+        if not success:
+            raise HomeAssistantError(
+                "Eveus charger did not accept the time-sync command"
+            )
+        _LOGGER.debug("Time sync sent: systemTime=%d", utc_now)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -94,5 +119,6 @@ async def async_setup_entry(
             EveusRefreshButton(updater, device_number),
             EveusResetCounterAButton(updater, device_number),
             EveusResetCounterBButton(updater, device_number),
+            EveusSyncTimeButton(updater, device_number),
         ]
     )
