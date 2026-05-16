@@ -82,7 +82,9 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     assert "Session Cost" in names  # back as a SensorSpec in 4.6.0
     # Exact count: catches silent additions/removals; bump on intentional
     # changes alongside README/CHANGELOG.
-    assert len(specs) == 26, sorted(names)
+    # 4.7.0: +5 adaptive/scheduled-charging sensors (Adaptive Charging,
+    # Adaptive Current Limit, Adaptive Voltage Threshold, Schedule 1, Schedule 2).
+    assert len(specs) == 31, sorted(names)
 
 
 def test_value_getters_reject_nan_and_inf() -> None:
