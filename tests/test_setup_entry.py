@@ -12,8 +12,12 @@ import custom_components.eveus as eveus
 from custom_components.eveus.const import CONF_MODEL, MODEL_16A
 from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
 from custom_components.eveus.sensor import async_setup_entry as async_setup_sensor_entry
+from custom_components.eveus.button import (
+    EveusResetCounterAButton,
+    EveusResetCounterBButton,
+    async_setup_entry as async_setup_button_entry,
+)
 from custom_components.eveus.switch import (
-    EveusResetCounterASwitch,
     async_setup_entry as async_setup_switch_entry,
 )
 
@@ -266,12 +270,38 @@ def test_switch_setup_creates_control_entities() -> None:
     assert [entity.name for entity in added] == [
         "Stop Charging",
         "One Charge",
-        "Reset Counter A",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_stop_charging",
         "eveus2_one_charge",
+    }
+
+
+def test_button_setup_creates_refresh_and_reset_buttons() -> None:
+    added: list[object] = []
+    entry = _Entry(_data())
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        device_number=2,
+    )
+
+    asyncio.run(
+        async_setup_button_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert [entity.name for entity in added] == [
+        "Force Refresh",
+        "Reset Counter A",
+        "Reset Counter B",
+    ]
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_force_refresh",
         "eveus2_reset_counter_a",
+        "eveus2_reset_counter_b",
     }
 
 
@@ -296,39 +326,23 @@ def test_number_setup_creates_current_entity() -> None:
     assert added[0].unique_id == "eveus3_charging_current"
 
 
-def test_reset_counter_safe_mode_task_is_cancelled_on_remove(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    callbacks: list[object] = []
-    cancel_called = False
+def test_reset_counter_buttons_send_reset_commands() -> None:
+    updater = _Updater(host="192.168.1.50", username="admin", password="secret")
+    updater.send_command_calls = []
 
-    def fake_async_call_later(hass, delay, action):
-        def cancel() -> None:
-            nonlocal cancel_called
-            cancel_called = True
-        return cancel
+    async def send_command(command: str, value: object, *, retry: bool = True) -> bool:
+        updater.send_command_calls.append((command, value, retry))
+        return True
 
-    async def noop_added_to_hass(self) -> None:
-        return None
+    updater.send_command = send_command  # type: ignore[assignment]
 
-    monkeypatch.setattr(
-        "custom_components.eveus.common_base.BaseEveusEntity.async_added_to_hass",
-        noop_added_to_hass,
-    )
-    monkeypatch.setattr(
-        "custom_components.eveus.switch.async_call_later",
-        fake_async_call_later,
-    )
+    button_a = EveusResetCounterAButton(updater, 1)
+    button_b = EveusResetCounterBButton(updater, 1)
 
-    entity = EveusResetCounterASwitch(
-        _Updater(host="192.168.1.50", username="admin", password="secret"),
-        1,
-    )
-    entity.hass = object()
-    entity.async_on_remove = callbacks.append
+    asyncio.run(button_a.async_press())
+    asyncio.run(button_b.async_press())
 
-    asyncio.run(entity.async_added_to_hass())
-
-    assert len(callbacks) == 1
-    callbacks[0]()
-    assert cancel_called is True
+    assert updater.send_command_calls == [
+        ("rstEM1", 0, False),
+        ("rstEM2", 0, False),
+    ]

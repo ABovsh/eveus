@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from . import EveusConfigEntry
 
-TO_REDACT = {"password", "username"}
+TO_REDACT = {"password", "username", "host", "unique_id"}
 DEVICE_DIAGNOSTIC_KEYS = (
     "verFWMain",
     "verFWWifi",
@@ -29,36 +29,50 @@ async def async_get_config_entry_diagnostics(
     entry: EveusConfigEntry,
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    runtime_data = entry.runtime_data
-    updater = runtime_data.updater
-    data = updater.data or {}
-
-    return {
+    runtime_data = getattr(entry, "runtime_data", None)
+    payload: dict[str, Any] = {
         "entry": {
             "title": entry.title,
             "data": async_redact_data(dict(entry.data), TO_REDACT),
-            "device_number": runtime_data.device_number,
-        },
-        "coordinator": {
-            "last_update_success": updater.last_update_success,
-            "update_interval": (
-                updater.update_interval.total_seconds()
-                if updater.update_interval is not None
-                else None
+            "device_number": (
+                runtime_data.device_number if runtime_data is not None else None
             ),
-            "connection_quality": updater.connection_quality,
-            "is_likely_offline": updater.is_likely_offline,
-        },
-        "device": {
-            "firmware": data.get("verFWMain"),
-            "wifi_firmware": data.get("verFWWifi"),
-            "state": data.get("state"),
-            "substate": data.get("subState"),
-            "current_set": data.get("currentSet"),
-            "sanitized_raw": {
-                key: data.get(key)
-                for key in DEVICE_DIAGNOSTIC_KEYS
-                if key in data
-            },
         },
     }
+
+    if runtime_data is None:
+        payload["setup"] = {
+            "ready": False,
+            "note": "Integration setup did not complete; runtime data unavailable.",
+        }
+        return payload
+
+    updater = runtime_data.updater
+    data = updater.data or {}
+    payload.update(
+        {
+            "coordinator": {
+                "last_update_success": updater.last_update_success,
+                "update_interval": (
+                    updater.update_interval.total_seconds()
+                    if updater.update_interval is not None
+                    else None
+                ),
+                "connection_quality": updater.connection_quality,
+                "is_likely_offline": updater.is_likely_offline,
+            },
+            "device": {
+                "firmware": data.get("verFWMain"),
+                "wifi_firmware": data.get("verFWWifi"),
+                "state": data.get("state"),
+                "substate": data.get("subState"),
+                "current_set": data.get("currentSet"),
+                "sanitized_raw": {
+                    key: data.get(key)
+                    for key in DEVICE_DIAGNOSTIC_KEYS
+                    if key in data
+                },
+            },
+        }
+    )
+    return payload

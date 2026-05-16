@@ -5,7 +5,7 @@
 💬 **Discussion:** [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.7.2-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.8.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 Local-only Home Assistant integration for Eveus EV chargers. Polls the charger directly over your LAN — no cloud, no account, no telemetry. Gives you live power/energy/cost telemetry, charging controls with optimistic UI, optional EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, multi-charger support, and a small set of automation-friendly entities (Car Connected, Charging Finish Time, Session Cost) so you do not need to write template sensors.
@@ -38,7 +38,7 @@ Eveus chargers can throttle current automatically when the supply voltage sags, 
 
 ### 🎛 Charging controls with optimistic UI
 - **Charging Current** number slider with model-aware bounds (16 / 32 / 48 A).
-- **Stop Charging**, **One Charge**, and **Reset Counter A** switches.
+- **Stop Charging** and **One Charge** switches; **Reset Counter A** and **Reset Counter B** buttons.
 
 All controls update the UI immediately and reconcile with the charger on the next poll — no waiting on the round-trip before the slider moves.
 
@@ -168,7 +168,8 @@ These exist specifically to replace template sensors users typically build on to
 | Charging Current | Number | Current-limit slider, model-aware bounds (16/32/48 A) |
 | Stop Charging | Switch | Charger-side stop-charge option |
 | One Charge | Switch | Single charging session |
-| Reset Counter A | Switch | Reset energy counter A |
+| Reset Counter A | Button | Reset energy counter A (one-shot action) |
+| Reset Counter B | Button | Reset energy counter B (one-shot action) |
 
 Controls use **optimistic UI**: the slider/switch updates immediately, then reconciles with the next charger response.
 

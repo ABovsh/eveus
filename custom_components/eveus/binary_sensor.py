@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
-from .common_base import BaseEveusEntity
+from .common_base import BaseEveusEntity, WriteOnChangeMixin
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 _CONNECTED_STATES: Final[FrozenSet[int]] = frozenset({3, 4, 5, 6})
 
 
-class EveusCarConnectedBinarySensor(BaseEveusEntity, BinarySensorEntity):
+class EveusCarConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
     """True whenever the charger reports a vehicle is plugged in.
 
     The mapping uses canonical device-state values rather than localized state
@@ -44,7 +44,7 @@ class EveusCarConnectedBinarySensor(BaseEveusEntity, BinarySensorEntity):
 
     def __init__(self, updater, device_number) -> None:
         super().__init__(updater, device_number)
-        self._last_written_is_on: bool | None = None
+        self._init_write_on_change()
 
     @property
     def is_on(self) -> bool | None:
@@ -58,19 +58,10 @@ class EveusCarConnectedBinarySensor(BaseEveusEntity, BinarySensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Write HA state only when availability or plug-state actually changes.
-
-        Why: coordinator swaps `self._updater.data` BEFORE notifying listeners,
-        so recomputing `previous_state = self.is_on` here would read the new
-        data and always equal the current value — masking real transitions.
-        We track the last value we actually pushed to HA instead.
-        """
+        """Write HA state only when availability or plug-state actually changes."""
         self._maybe_finalize_device_info()
-        availability_changed = self._update_availability_state()
-        current = self.is_on
-        if availability_changed or current != self._last_written_is_on:
-            self._last_written_is_on = current
-            self.async_write_ha_state()
+        self._update_availability_state()
+        self._write_if_changed(self.is_on)
 
 
 async def async_setup_entry(
