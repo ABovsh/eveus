@@ -1,11 +1,12 @@
-"""Support for Eveus buttons (force refresh)."""
+"""Support for Eveus buttons (force refresh, counter resets)."""
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -37,6 +38,48 @@ class EveusRefreshButton(BaseEveusEntity, ButtonEntity):
         await self._updater.async_force_refresh()
 
 
+class _EveusResetCounterButton(BaseEveusEntity, ButtonEntity):
+    """Momentary action that resets one of the charger's energy counters.
+
+    Modeled as a button (not a switch) because the action is one-shot: there
+    is no "on" state to maintain, and HA's switch semantics imply a togglable
+    binary state — which a reset is not.
+    """
+
+    _attr_icon = "mdi:refresh-circle"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    _command: str
+
+    def __init__(self, updater, device_number: int = 1) -> None:
+        super().__init__(updater, device_number)
+        self._reset_lock = asyncio.Lock()
+
+    async def async_press(self) -> None:
+        """Send the reset command. Surfaces a toast in HA on failure."""
+        async with self._reset_lock:
+            success = await self._updater.send_command(self._command, 0, retry=False)
+            if not success:
+                raise HomeAssistantError(
+                    f"Eveus charger did not accept '{self.name}' reset command"
+                )
+            _LOGGER.debug("Reset command %s acknowledged", self._command)
+
+
+class EveusResetCounterAButton(_EveusResetCounterButton):
+    """Reset the session-resettable Counter A energy meter."""
+
+    ENTITY_NAME = "Reset Counter A"
+    _command = "rstEM1"
+
+
+class EveusResetCounterBButton(_EveusResetCounterButton):
+    """Reset the user-resettable Counter B energy meter."""
+
+    ENTITY_NAME = "Reset Counter B"
+    _command = "rstEM2"
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -44,6 +87,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Eveus buttons."""
     runtime_data = entry.runtime_data
+    updater = runtime_data.updater
+    device_number = runtime_data.device_number
     async_add_entities(
-        [EveusRefreshButton(runtime_data.updater, runtime_data.device_number)]
+        [
+            EveusRefreshButton(updater, device_number),
+            EveusResetCounterAButton(updater, device_number),
+            EveusResetCounterBButton(updater, device_number),
+        ]
     )

@@ -288,6 +288,7 @@ class BaseEVHelperSensor(EveusSensorBase):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle fresh coordinator data and optional helper availability."""
+        self._maybe_finalize_device_info()
         previous_available = self.available
         self._refresh_helpers_available()
         availability_changed = self._update_availability_state()

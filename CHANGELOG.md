@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.8.0-rc.1 - 2026-05-16
+
+Pre-release covering an extensive Codex review pass plus a new entity. Behavior-changing items are listed under ⚠️.
+
+### ⚠️ Breaking — entity platform change
+- `switch.eveus_reset_counter_a` is removed. It is replaced by `button.eveus_reset_counter_a`, which models the one-shot reset action correctly (HA switch semantics imply togglable binary state — a counter reset is not that). The unique-id (`eveus_reset_counter_a`) is preserved, so the new button inherits the entity registry slot — but the entity domain moves from `switch.` to `button.`. Update any dashboards/automations that referenced `switch.eveus_reset_counter_a`.
+
+### ✨ New
+- `button.eveus_reset_counter_b` — momentary reset for the second user-resettable energy counter (`rstEM2` / `IEM2`). Mirrors Counter A; appears under the existing Eveus device.
+
+### 🐛 Correctness fixes
+- Reconfigure, reauth, and the "invalid_config" repair flow now preserve `device_number` (and other integration-owned keys) when updating `entry.data`. Previously a reconfigure on a multi-charger setup could reassign the number on reload, breaking entity unique-id stability and the device registry mapping.
+- `get_connection_quality` now returns `None` on internal error instead of `100`. A calculation failure no longer masquerades as "Excellent".
+- Diagnostics no longer raises when called before setup completes — it returns a partial payload with `setup.ready = False` instead.
+
+### 🔒 Security
+- `diagnostics.py` now redacts `host` and `unique_id` (in addition to `username`/`password`). Diagnostic dumps shared publicly no longer leak LAN topology.
+- The config flow logs a `WARNING` when the charger is configured over plain HTTP, calling out that Basic Auth credentials are sent in cleartext on every poll. Default scheme is unchanged.
+
+### 🏎 Performance
+- Control entities (`Stop Charging`, `One Charge`, `Charging Current`) only call `async_write_ha_state()` when their visible value or availability actually changes. Coordinator ticks no longer generate redundant `state_changed` events for unchanged controls.
+
+### 🧹 Internals & cleanups
+- `BaseEVHelperSensor._handle_coordinator_update` now calls `_maybe_finalize_device_info()`, so first-firmware-after-boot updates reach SOC/ETA sensors like every other entity type.
+- Removed unused `_device_info` cache from `ConfigFlow`.
+- Removed unused `_success_count` / `_total_count` counters from `EveusUpdater`.
+- Replaced an `assert` for duplicate sensor keys with an explicit `RuntimeError` (assertions are stripped under `python -O`).
+
+### 🧪 Tests
+- Repair-flow test locks in `device_number` preservation across an invalid-config repair.
+- Diagnostics test covers the missing-`runtime_data` path.
+- Reset-counter tests rewritten against the new button platform.
+- Setup test asserts the new button list (`Force Refresh`, `Reset Counter A`, `Reset Counter B`).
+
 ## 4.7.2 - 2026-05-16
 
 Bugfix: `sensor.eveus_soc_energy` / `sensor.eveus_soc_percent` could still show `unknown` after 4.7.1 when `input_number.ev_target_soc` was missing or out-of-range — typical for the first few seconds after a HA reboot, before the input_number platform finishes loading.

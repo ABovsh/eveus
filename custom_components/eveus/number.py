@@ -68,6 +68,8 @@ class EveusNumberEntity(
 
         self._pending_value: float | None = None
         self._init_optimistic_control()
+        self._last_written_value: float | None = None
+        self._last_written_available: bool | None = None
 
 
 class EveusCurrentNumber(EveusNumberEntity):
@@ -176,7 +178,14 @@ class EveusCurrentNumber(EveusNumberEntity):
 
         current_value = self._resolve_value()
         self._attr_native_value = current_value
-        self.async_write_ha_state()
+        available_now = self.available
+        if (
+            current_value != self._last_written_value
+            or available_now != self._last_written_available
+        ):
+            self._last_written_value = current_value
+            self._last_written_available = available_now
+            self.async_write_ha_state()
 
 
 async def async_setup_entry(

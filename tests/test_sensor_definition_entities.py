@@ -159,5 +159,5 @@ def test_system_time_uses_charger_encoded_wall_clock_for_kyiv() -> None:
 def test_connection_helpers_handle_errors() -> None:
     updater = SimpleNamespace(available=True)
 
-    assert get_connection_quality(updater, None) == 100
+    assert get_connection_quality(updater, None) is None
     assert get_connection_attrs(updater, None) == {"status": "Error"}

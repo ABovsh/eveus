@@ -1,7 +1,6 @@
 """Support for Eveus switches with optimistic UI and safety."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Any
@@ -11,7 +10,6 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_call_later
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, ControlEntityMixin, OptimisticControlMixin
@@ -45,14 +43,6 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         command="oneCharge",
         state_key="oneCharge",
     ),
-    EveusSwitchEntityDescription(
-        key="reset_counter_a",
-        name="Reset Counter A",
-        icon="mdi:refresh-circle",
-        entity_category=EntityCategory.CONFIG,
-        command="rstEM1",
-        state_key="IEM1",
-    ),
 )
 
 
@@ -81,6 +71,8 @@ class BaseSwitchEntity(
         self._pending_command: bool | None = None
         self._init_optimistic_control()
         self._attr_is_on = False
+        self._last_written_is_on: bool | None = None
+        self._last_written_available: bool | None = None
 
     @property
     def _optimistic_state(self) -> bool | None:
@@ -149,6 +141,7 @@ class BaseSwitchEntity(
         self._pending_command = bool(command_value)
         self._attr_is_on = self._pending_command
         self.async_write_ha_state()
+        self._last_written_is_on = self._attr_is_on
 
         try:
             success = await self._updater.send_command(self._command, command_value)
@@ -160,6 +153,7 @@ class BaseSwitchEntity(
             self._last_command_time = time.time()
             self._attr_is_on = self._resolve_state()
             self.async_write_ha_state()
+            self._last_written_is_on = self._attr_is_on
 
     async def _async_send_command_or_raise(self, command_value: int) -> None:
         """Send command and raise HomeAssistantError on failure so HA shows a toast."""
@@ -178,7 +172,12 @@ class BaseSwitchEntity(
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data and reconcile with device state."""
+        """Handle updated data and reconcile with device state.
+
+        Only writes HA state when the on/off result or availability actually
+        changes — coordinator ticks every 30s would otherwise generate
+        unnecessary state_changed events for every control entity.
+        """
         self._maybe_finalize_device_info()
         self._update_availability_state()
         if self._pending_command is not None:
@@ -195,101 +194,14 @@ class BaseSwitchEntity(
 
         self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
         self._attr_is_on = self._resolve_state()
-        self.async_write_ha_state()
-
-
-class BaseCounterSwitch(ControlEntityMixin, BaseEveusEntity, SwitchEntity):
-    """Base class for counter-status switches."""
-
-    _control_entity_label = "Switch"
-
-    def __init__(
-        self,
-        updater,
-        entity_description: EveusSwitchEntityDescription,
-        device_number: int = 1,
-    ) -> None:
-        """Initialize the counter switch."""
-        self.entity_description = entity_description
-        self.ENTITY_NAME = entity_description.name
-        super().__init__(updater, device_number)
-        self._command = entity_description.command
-        self._state_key = entity_description.state_key
-        self._attr_is_on = False
-
-    @property
-    def is_on(self) -> bool:
-        """Return cached counter state."""
-        return bool(self._attr_is_on)
-
-    def _resolve_state(self) -> bool:
-        """Return True if the counter has a value."""
-        if not self._updater.available or not self._updater.data:
-            return False
-        if self._state_key in self._updater.data:
-            value = get_safe_value(self._updater.data, self._state_key, float, 0)
-            return value > 0
-        return False
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """No action; switch represents counter status."""
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """No action; switch represents counter status."""
-
-    async def _async_restore_state(self, state: State) -> None:
-        """No state restoration for counter switches."""
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data based on counter value."""
-        self._maybe_finalize_device_info()
-        self._update_availability_state()
-        self._attr_is_on = self._resolve_state()
-        self.async_write_ha_state()
-
-
-class EveusResetCounterASwitch(BaseCounterSwitch):
-    """Representation of Eveus reset counter A switch."""
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        """Initialize with special reset behavior."""
-        super().__init__(updater, SWITCH_DESCRIPTIONS[2], device_number)
-        self._safe_mode = True
-        self._last_reset_time = 0.0
-        self._reset_lock = asyncio.Lock()
-
-    async def async_added_to_hass(self) -> None:
-        """Handle entity addition with delayed safe mode disable."""
-        await super().async_added_to_hass()
-        self.async_on_remove(async_call_later(self.hass, 5, self._disable_safe_mode))
-
-    @callback
-    def _disable_safe_mode(self, _now=None) -> None:
-        """Disable safe mode after first successful update."""
-        self._safe_mode = False
-        current_state = self._resolve_state()
-        if self._attr_is_on != current_state:
-            self._attr_is_on = current_state
+        available_now = self.available
+        if (
+            self._attr_is_on != self._last_written_is_on
+            or available_now != self._last_written_available
+        ):
+            self._last_written_is_on = self._attr_is_on
+            self._last_written_available = available_now
             self.async_write_ha_state()
-
-    def _resolve_state(self) -> bool:
-        """Return True if counter A has a value."""
-        if self._safe_mode:
-            return False
-        return super()._resolve_state()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Perform reset when turned off."""
-        if self._safe_mode:
-            return
-        async with self._reset_lock:
-            success = await self._updater.send_command(self._command, 0, retry=False)
-            if success:
-                self._last_reset_time = time.time()
-                _LOGGER.debug("Successfully reset counter A")
-                return
-            raise HomeAssistantError("Eveus charger did not accept reset Counter A command")
 
 
 async def async_setup_entry(
@@ -302,10 +214,7 @@ async def async_setup_entry(
     updater = runtime_data.updater
     device_number = runtime_data.device_number
 
-    switches = [
+    async_add_entities(
         BaseSwitchEntity(updater, description, device_number)
-        for description in SWITCH_DESCRIPTIONS[:2]
-    ]
-    switches.append(EveusResetCounterASwitch(updater, device_number))
-
-    async_add_entities(switches)
+        for description in SWITCH_DESCRIPTIONS
+    )

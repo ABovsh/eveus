@@ -72,6 +72,37 @@ def test_invalid_config_repair_flow_updates_entry(
     assert deleted == [("eveus", "invalid_config_entry-id")]
 
 
+def test_invalid_config_repair_flow_preserves_device_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-running the repair flow must not strip integration-owned keys."""
+
+    async def fake_validate_input(hass, data):
+        return {
+            "title": "Eveus Charger (192.168.1.50)",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    entry = SimpleNamespace(
+        entry_id="entry-id",
+        data=_data(device_number=4),
+    )
+    config_entries = _ConfigEntries(entry)
+    hass = SimpleNamespace(config_entries=config_entries)
+    monkeypatch.setattr(repairs, "validate_input", fake_validate_input)
+    monkeypatch.setattr(
+        repairs.ir,
+        "async_delete_issue",
+        lambda hass, domain, issue_id: None,
+    )
+
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
+    asyncio.run(flow.async_step_confirm(_data(**{CONF_PASSWORD: "new"})))
+
+    assert config_entries.updated[0]["data"]["device_number"] == 4
+
+
 def test_invalid_config_repair_flow_returns_form_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
