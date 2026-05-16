@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.7.0 - 2026-05-16
+
+Minor release: five new diagnostic sensors expose the charger's adaptive (AI) mode and scheduled-charging slots. Adds a firmware-drift test backed by a real `/main` snapshot. Cleans up a dead `try/except` in sensor setup.
+
+- New diagnostic sensor `sensor.eveus_adaptive_charging` — "Active" / "Idle" from `aiStatus`. Indicates whether the charger is currently throttling current to maintain voltage under heavy load
+- New diagnostic sensor `sensor.eveus_adaptive_current_limit` — current cap chosen by the AI throttle (A), from `aiModecurrent`
+- New diagnostic sensor `sensor.eveus_adaptive_voltage_threshold` — voltage floor that triggers throttling (V), from `aiVoltage`
+- New diagnostic sensors `sensor.eveus_schedule_1`, `sensor.eveus_schedule_2` — "Enabled" / "Disabled" with attributes `window` (HH:MM–HH:MM), `start`, `stop`, and optional `current_limit_a` / `energy_limit_kwh`. Mirrors the charger's `sh1*` / `sh2*` slot config
+- New test `tests/test_real_payload_schema.py` — runs every value getter against `tests/fixtures/real_main_response.json` (captured from a live Eveus Pro 1P 2024, FW GRM070A-R3.05.2). Catches firmware schema drift that synthetic dict-based unit tests cannot see
+- Cleanup: removed `try: ... except Exception: raise` no-op wrapper in `sensor.py:async_setup_entry`
+
 ## 4.6.0 - 2026-05-16
 
 Minor release: source-of-truth fields from the charger now back SOC and Session Cost. The integration carried two synthetic accumulators (SOC baseline + session-cost integration) that the charger itself was already computing internally — they are gone.

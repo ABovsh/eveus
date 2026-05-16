@@ -303,6 +303,68 @@ get_session_cost = _make_value_getter("sessionMoney", precision=2)
 
 
 # =============================================================================
+# Adaptive charging (AI mode) and scheduled slots
+# =============================================================================
+
+def get_adaptive_charging_state(updater, hass) -> Optional[str]:
+    """Adaptive (AI) mode active/idle."""
+    value = _get_data_value(updater, "aiStatus", int)
+    if value == 1:
+        return "Active"
+    if value == 0:
+        return "Idle"
+    return None
+
+
+get_adaptive_current = _make_value_getter("aiModecurrent", precision=0)
+get_adaptive_voltage = _make_value_getter("aiVoltage", precision=0)
+
+
+def _format_minutes(value: Optional[int]) -> Optional[str]:
+    """Convert minutes-since-midnight to HH:MM."""
+    if value is None or not 0 <= value < 1440:
+        return None
+    return f"{value // 60:02d}:{value % 60:02d}"
+
+
+def _make_schedule_getter(slot: int):
+    """Slot enabled/disabled state."""
+    key = f"sh{slot}Enabled"
+    def getter(updater, hass) -> Optional[str]:
+        value = _get_data_value(updater, key, int)
+        if value == 1:
+            return "Enabled"
+        if value == 0:
+            return "Disabled"
+        return None
+    return getter
+
+
+def _make_schedule_attrs(slot: int):
+    """Slot details: window, optional current/energy caps."""
+    def getter(updater, hass) -> dict:
+        if not updater.available:
+            return {}
+        start = _format_minutes(_get_data_value(updater, f"sh{slot}Start", int))
+        stop = _format_minutes(_get_data_value(updater, f"sh{slot}Stop", int))
+        attrs: Dict[str, Any] = {}
+        if start and stop:
+            attrs["window"] = f"{start}–{stop}"
+            attrs["start"] = start
+            attrs["stop"] = stop
+        if _get_data_value(updater, f"sh{slot}CurrentEnable", int) == 1:
+            cur = _get_data_value(updater, f"sh{slot}CurrentValue", int)
+            if cur is not None:
+                attrs["current_limit_a"] = cur
+        if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
+            energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)
+            if energy is not None:
+                attrs["energy_limit_kwh"] = energy
+        return attrs
+    return getter
+
+
+# =============================================================================
 # Connection quality
 # =============================================================================
 
@@ -504,6 +566,44 @@ def create_sensor_specifications() -> tuple[SensorSpec, ...]:
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
             sensor_type=SensorType.STATE, icon="mdi:cash",
             state_class=SensorStateClass.TOTAL, unit="₴", precision=2,
+        ),
+        SensorSpec(
+            key="adaptive_charging", name="Adaptive Charging",
+            value_fn=get_adaptive_charging_state,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:auto-mode",
+            category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="adaptive_current_limit", name="Adaptive Current Limit",
+            value_fn=get_adaptive_current,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-ac",
+            device_class=SensorDeviceClass.CURRENT,
+            state_class=SensorStateClass.MEASUREMENT,
+            unit=UnitOfElectricCurrent.AMPERE, precision=0,
+            category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="adaptive_voltage_threshold", name="Adaptive Voltage Threshold",
+            value_fn=get_adaptive_voltage,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:flash-alert",
+            device_class=SensorDeviceClass.VOLTAGE,
+            state_class=SensorStateClass.MEASUREMENT,
+            unit=UnitOfElectricPotential.VOLT, precision=0,
+            category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="schedule_1", name="Schedule 1",
+            value_fn=_make_schedule_getter(1),
+            attributes_fn=_make_schedule_attrs(1),
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
+            category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="schedule_2", name="Schedule 2",
+            value_fn=_make_schedule_getter(2),
+            attributes_fn=_make_schedule_attrs(2),
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
+            category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
             key="connection_quality", name="Connection Quality",

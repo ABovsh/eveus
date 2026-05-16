@@ -25,41 +25,30 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Eveus sensors with optimized factory pattern."""
-    try:
-        runtime_data = entry.runtime_data
-        updater = runtime_data.updater
-        device_number = runtime_data.device_number
-        soc_calculator = runtime_data.soc_calculator
+    runtime_data = entry.runtime_data
+    updater = runtime_data.updater
+    device_number = runtime_data.device_number
+    soc_calculator = runtime_data.soc_calculator
 
-        # Create all sensors efficiently using factory pattern
-        sensors = []
+    sensor_specs = get_sensor_specifications()
+    standard_sensors = [spec.create_sensor(updater, device_number) for spec in sensor_specs]
 
-        # Create standard sensors from specifications
-        sensor_specs = get_sensor_specifications()
-        standard_sensors = [spec.create_sensor(updater, device_number) for spec in sensor_specs]
-        sensors.extend(standard_sensors)
+    ev_sensors = [
+        EVSocKwhSensor(updater, device_number, soc_calculator),
+        EVSocPercentSensor(updater, device_number, soc_calculator),
+        TimeToTargetSocSensor(updater, device_number, soc_calculator),
+        ChargingFinishTimeSensor(updater, device_number, soc_calculator),
+        InputEntitiesStatusSensor(updater, device_number),
+    ]
 
-        # Create EV-specific optimized sensors
-        ev_sensors = [
-            EVSocKwhSensor(updater, device_number, soc_calculator),
-            EVSocPercentSensor(updater, device_number, soc_calculator),
-            TimeToTargetSocSensor(updater, device_number, soc_calculator),
-            ChargingFinishTimeSensor(updater, device_number, soc_calculator),
-            InputEntitiesStatusSensor(updater, device_number),
-        ]
-        sensors.extend(ev_sensors)
+    sensors = standard_sensors + ev_sensors
+    async_add_entities(sensors, update_before_add=False)
 
-        # Add all sensors at once for efficiency
-        async_add_entities(sensors, update_before_add=False)
-
-        _LOGGER.debug(
-            "Successfully created %d sensors (%d standard, %d EV-specific) for %s (device %d)",
-            len(sensors),
-            len(standard_sensors),
-            len(ev_sensors),
-            entry.title,
-            device_number,
-        )
-
-    except Exception:
-        raise
+    _LOGGER.debug(
+        "Created %d sensors (%d standard, %d EV-specific) for %s (device %d)",
+        len(sensors),
+        len(standard_sensors),
+        len(ev_sensors),
+        entry.title,
+        device_number,
+    )
