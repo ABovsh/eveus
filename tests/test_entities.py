@@ -5,9 +5,12 @@ import logging
 
 from custom_components.eveus.number import EveusCurrentNumber
 from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, SensorSpec, SensorType
+from custom_components.eveus.button import (
+    EveusResetCounterAButton,
+    EveusResetCounterBButton,
+)
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
-    EveusResetCounterASwitch,
     SWITCH_DESCRIPTIONS,
 )
 
@@ -269,7 +272,8 @@ def test_switch_entities_keep_backward_compatible_unique_ids() -> None:
         BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[1]).unique_id
         == "eveus_one_charge"
     )
-    assert EveusResetCounterASwitch(updater).unique_id == "eveus_reset_counter_a"
+    assert EveusResetCounterAButton(updater).unique_id == "eveus_reset_counter_a"
+    assert EveusResetCounterBButton(updater).unique_id == "eveus_reset_counter_b"
 
 
 def test_number_entity_keeps_backward_compatible_unique_id_and_limits() -> None:

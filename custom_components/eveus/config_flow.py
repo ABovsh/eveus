@@ -34,6 +34,36 @@ from . import CONFIG_ENTRY_VERSION
 _LOGGER = logging.getLogger(__name__)
 _HOSTNAME_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
 
+# Keys outside the user-editable form that must survive reconfigure/reauth/repair.
+_PRESERVED_ENTRY_KEYS: tuple[str, ...] = ("device_number",)
+
+
+def _merge_entry_data(
+    existing: Mapping[str, Any],
+    incoming: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge form-derived data into existing entry.data without dropping runtime keys.
+
+    Reconfigure/reauth flows return only the fields the user just edited. Replacing
+    entry.data wholesale would discard integration-owned keys (e.g. device_number)
+    and break entity unique-id stability on reload.
+    """
+    merged = dict(incoming)
+    for key in _PRESERVED_ENTRY_KEYS:
+        if key in existing and key not in merged:
+            merged[key] = existing[key]
+    return merged
+
+
+def _warn_if_plaintext(scheme: str | None) -> None:
+    """Warn once when credentials will be sent over plain HTTP."""
+    if scheme == "http":
+        _LOGGER.warning(
+            "Eveus is configured over HTTP; Basic Auth credentials will be "
+            "sent in cleartext on every poll. Use HTTPS on a LAN-trusted "
+            "network or accept the exposure risk."
+        )
+
 
 def _is_valid_ip(ip: str) -> bool:
     """Check if string is a valid IP address."""
@@ -251,7 +281,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._host: str | None = None
-        self._device_info: dict[str, Any] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -268,7 +297,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(self._host)
                 self._abort_if_unique_id_configured()
 
-                self._device_info = info["device_info"]
+                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
                 return self.async_create_entry(
                     title=info["title"],
@@ -305,7 +334,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 info = await validate_input(self.hass, user_input)
-                entry_data = info["data"]
+                entry_data = _merge_entry_data(entry.data, info["data"])
 
                 await self.async_set_unique_id(entry_data[CONF_HOST])
                 if entry.unique_id != entry_data[CONF_HOST]:
@@ -359,7 +388,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
 
                 info = await validate_input(self.hass, merged_data)
-                entry_data = info["data"]
+                entry_data = _merge_entry_data(entry.data, info["data"])
 
                 await self.async_set_unique_id(entry_data[CONF_HOST])
                 if entry.unique_id != entry_data[CONF_HOST]:

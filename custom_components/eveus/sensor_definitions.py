@@ -368,15 +368,19 @@ def _make_schedule_attrs(slot: int):
 # Connection quality
 # =============================================================================
 
-def get_connection_quality(updater, hass) -> float:
-    """Get connection quality as numeric value."""
+def get_connection_quality(updater, hass) -> Optional[float]:
+    """Get connection quality as numeric value.
+
+    Returns None on exception so a calculation failure doesn't masquerade as
+    100% (excellent) — the sensor goes unknown, which is the correct signal.
+    """
     try:
         metrics = updater.connection_quality
         return round(max(0, min(100, metrics.get("success_rate", 0))))
     except Exception as err:
         if _should_log_error("get_connection_quality"):
             _LOGGER.debug("Error getting connection quality: %s", err, exc_info=True)
-        return 100
+        return None
 
 
 def get_connection_attrs(updater, hass) -> dict:
@@ -616,7 +620,9 @@ def create_sensor_specifications() -> tuple[SensorSpec, ...]:
 
     result = tuple(measurement_specs + energy_specs + diagnostic_specs + special_specs)
     keys = [s.key for s in result]
-    assert len(keys) == len(set(keys)), f"duplicate sensor keys: {[k for k in keys if keys.count(k) > 1]}"
+    if len(keys) != len(set(keys)):
+        duplicates = sorted({k for k in keys if keys.count(k) > 1})
+        raise RuntimeError(f"duplicate sensor keys: {duplicates}")
     return result
 
 
