@@ -65,11 +65,26 @@ def test_soc_calculator_reports_missing_and_invalid_helpers() -> None:
     invalid["input_number.ev_initial_soc"] = "bad"
     assert calculator.are_helpers_available(_Hass(invalid)) is False
 
+    # An out-of-range REQUIRED helper disables SOC entirely.
     calculator.invalidate_cache()
     out_of_range = dict(HELPERS)
-    out_of_range["input_number.ev_target_soc"] = 150
+    out_of_range["input_number.ev_battery_capacity"] = 999
     assert calculator.are_helpers_available(_Hass(out_of_range)) is False
+
+    # target_soc is OPTIONAL: out-of-range / missing must not disable SOC.
+    # ETA sensors check `target_soc` separately and degrade gracefully.
+    calculator.invalidate_cache()
+    bad_target = dict(HELPERS)
+    bad_target["input_number.ev_target_soc"] = 150
+    assert calculator.are_helpers_available(_Hass(bad_target)) is True
     assert calculator.target_soc is None
+    assert calculator.battery_capacity == 80
+
+    calculator.invalidate_cache()
+    no_target = {k: v for k, v in HELPERS.items() if k != "input_number.ev_target_soc"}
+    assert calculator.are_helpers_available(_Hass(no_target)) is True
+    assert calculator.target_soc is None
+    assert calculator.get_soc_percent(_Hass(no_target), 0) == 20  # Initial SOC fallback
 
 
 def test_missing_optional_soc_helpers_are_quiet_at_normal_log_levels(

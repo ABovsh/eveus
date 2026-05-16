@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.7.2 - 2026-05-16
+
+Bugfix: `sensor.eveus_soc_energy` / `sensor.eveus_soc_percent` could still show `unknown` after 4.7.1 when `input_number.ev_target_soc` was missing or out-of-range — typical for the first few seconds after a HA reboot, before the input_number platform finishes loading.
+
+- Fix: `CachedSOCCalculator._update_input_cache` no longer treats `target_soc` as required. SOC calculations need only Initial SOC, Battery Capacity, and SOC Correction. Target SOC is consumed exclusively by the ETA-class sensors (Time to Target SOC, Charging Finish Time), which already degrade gracefully when it is None. Effect: a startup race or a deleted/invalid Target SOC helper no longer hides SOC %/kWh
+- Test: extended `test_soc_calculator_reports_missing_and_invalid_helpers` to lock in the new contract — missing/out-of-range Target SOC keeps SOC working and returns Initial SOC; missing/out-of-range Battery Capacity (a true required input) still disables SOC
+
 ## 4.7.1 - 2026-05-16
 
 Bugfix release covering two regressions surfaced after 4.6.0/4.7.0.

@@ -84,8 +84,19 @@ class CachedSOCCalculator:
             helpers_available=False,
         )
 
+    # SOC % / kWh only need these three helpers. Target SOC is consumed only
+    # by ETA-class sensors (Time to Target SOC, Charging Finish Time), so we
+    # don't gate SOC availability on it — otherwise a slow-loading
+    # `input_number.ev_target_soc` at HA startup would mask SOC entirely.
+    _SOC_REQUIRED_KEYS = ("initial_soc", "battery_capacity", "soc_correction")
+
     def _update_input_cache(self, hass: HomeAssistant) -> bool:
-        """Update input entity cache. Returns False if helpers not available."""
+        """Refresh helper cache. Returns True when SOC helpers are usable.
+
+        Target SOC is treated as optional: when missing or invalid we still
+        report helpers_available=True (so SOC sensors work) and leave
+        `target_soc` as None for ETA sensors to detect.
+        """
         if self._input_cache.is_valid(self.cache_ttl):
             return self._input_cache.helpers_available
 
@@ -97,30 +108,39 @@ class CachedSOCCalculator:
                 "target_soc": hass.states.get(_INPUT_TARGET_SOC),
             }
 
-            missing = [k for k, v in entities.items() if v is None]
-            if missing:
-                _LOGGER.debug("Optional EV helper entities not found: %s", missing)
+            missing_soc = [k for k in self._SOC_REQUIRED_KEYS if entities[k] is None]
+            if missing_soc:
+                _LOGGER.debug("Required SOC helper entities not found: %s", missing_soc)
                 self._mark_helpers_unavailable()
                 return False
 
-            if not self._input_cache.helpers_available:
-                _LOGGER.debug("All EV helper entities found. Advanced SOC metrics are available.")
-
             values: Dict[str, Any] = {"helpers_available": True}
             for key, entity in entities.items():
+                if entity is None:
+                    # Optional (target_soc); leave at None.
+                    continue
                 try:
                     value = float(entity.state)
                 except (ValueError, TypeError):
-                    self._mark_helpers_unavailable()
-                    return False
+                    if key in self._SOC_REQUIRED_KEYS:
+                        self._mark_helpers_unavailable()
+                        return False
+                    continue  # target_soc invalid → leave None, keep SOC working
 
                 minimum, maximum = _INPUT_LIMITS[key]
                 if not math.isfinite(value) or value < minimum or value > maximum:
-                    self._mark_helpers_unavailable()
-                    return False
+                    if key in self._SOC_REQUIRED_KEYS:
+                        self._mark_helpers_unavailable()
+                        return False
+                    continue
 
                 values[key] = value
 
+            if not self._input_cache.helpers_available:
+                _LOGGER.debug("SOC helper entities resolved (target_soc=%s).", values.get("target_soc"))
+
+            # Reset previous-cycle values (esp. target_soc) before overwriting.
+            self._input_cache.target_soc = None
             for key, value in values.items():
                 setattr(self._input_cache, key, value)
             self._input_cache.timestamp = time.time()
