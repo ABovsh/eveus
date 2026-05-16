@@ -109,6 +109,10 @@ Every entity below is created automatically. Names and unique IDs are stable acr
 | Box Temperature | °C | Internal charger temperature *(diag)* |
 | Plug Temperature | °C | Plug temperature *(diag)* |
 | Battery Voltage | V | Charger backup battery *(diag)* |
+| Leakage Current | mA | Live RCD reading; `0` is normal, non-zero signals a ground-fault leak *(diag, new in 4.9.0)* |
+| Leakage Current Peak | mA | Peak-hold leakage reading from the firmware *(diag, new in 4.9.0)* |
+
+When the integration is configured for a **3-phase** charger (`Phases = 3` in setup), four additional measurement sensors are exposed: `Current Phase 2`, `Current Phase 3`, `Voltage Phase 2`, `Voltage Phase 3`. *(new in 4.9.0)*
 
 ### Energy & cost
 
@@ -168,6 +172,10 @@ These exist specifically to replace template sensors users typically build on to
 | Charging Current | Number | Current-limit slider, model-aware bounds (16/32/48 A) |
 | Stop Charging | Switch | Charger-side stop-charge option |
 | One Charge | Switch | Single charging session |
+| Adaptive Mode | Switch | Toggle the charger's adaptive (AI) throttle on/off *(new in 4.9.0)* |
+| Time Zone | Select | Charger time-zone offset, `-12..+14` *(new in 4.9.0)* |
+| Force Refresh | Button | Force an immediate coordinator poll |
+| Sync Time | Button | Push the host's current UTC time to the charger's clock *(new in 4.9.0)* |
 | Reset Counter A | Button | Reset energy counter A (one-shot action) |
 | Reset Counter B | Button | Reset energy counter B (one-shot action) |
 
