@@ -126,61 +126,97 @@ class TestCalculateRemainingSeconds:
 # Session Cost
 # ---------------------------------------------------------------------------
 
+def _cost_sensor(updater):
+    s = sensors.SessionCostSensor(updater, 1)
+    s.hass = _Hass()
+    return s
+
+
 class TestSessionCost:
-    def test_multiplies_session_energy_by_active_rate(self) -> None:
-        updater = _Updater({
-            "sessionEnergy": "12.34",
-            "activeTarif": "0",
-            "tarif": "264",  # 2.64 ₴/kWh
-        })
-        # 12.34 kWh * 2.64 ₴/kWh = 32.5776 → rounded to 32.58 ₴
-        assert sensors.get_session_cost(updater, None) == 32.58
+    """Stateful Session Cost — integrates Δenergy × current_rate per update.
 
-    def test_returns_none_when_offline(self) -> None:
-        updater = _Updater(
-            {"sessionEnergy": "10", "activeTarif": "0", "tarif": "264"},
-            available=False,
-        )
-        # No fake value, no zero — must be None so HA hides the entity.
-        assert sensors.get_session_cost(updater, None) is None
+    Regression baseline: before 4.5.2 this was `sessionEnergy × current_rate`,
+    so changing tariffs mid-session retroactively re-priced the whole session.
+    """
 
-    def test_returns_none_when_active_rate_unknown(self) -> None:
-        # `activeTarif` missing → cannot compute cost → must NOT silently
-        # return 0 (that would falsely imply "no charging cost").
-        updater = _Updater({"sessionEnergy": "10"})
-        assert sensors.get_session_cost(updater, None) is None
+    def test_first_read_anchors_and_charges_zero(self) -> None:
+        # Anchoring at the first observed energy must not retroactively bill
+        # the kWh that were already on the counter when the sensor woke up.
+        updater = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
+        s = _cost_sensor(updater)
+        assert s._get_sensor_value() == 0.0
 
-    def test_returns_none_when_session_energy_missing(self) -> None:
-        updater = _Updater({"activeTarif": "0", "tarif": "264"})
-        assert sensors.get_session_cost(updater, None) is None
+    def test_accumulates_delta_at_current_rate(self) -> None:
+        updater = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
+        s = _cost_sensor(updater)
+        s._get_sensor_value()  # anchor
+        updater.data = {"sessionEnergy": "7", "activeTarif": "0", "tarif": "264"}
+        # +2 kWh × 2.64 ₴ = 5.28
+        assert s._get_sensor_value() == 5.28
 
-    def test_zero_energy_yields_zero_cost(self) -> None:
-        # Distinct from None: device online, rate known, but session hasn't
-        # produced any kWh yet → 0.00 ₴ is a real, meaningful value.
-        updater = _Updater({
-            "sessionEnergy": "0",
-            "activeTarif": "0",
-            "tarif": "264",
-        })
-        assert sensors.get_session_cost(updater, None) == 0.0
+    def test_tariff_change_does_not_repriced_prior_kwh(self) -> None:
+        # The whole point of the rewrite: switching rate mid-session must
+        # only affect future kWh, not the running total of past kWh.
+        updater = _Updater({"sessionEnergy": "0", "activeTarif": "1",
+                            "tarif": "264", "tarifAValue": "132", "tarifBValue": "400"})
+        s = _cost_sensor(updater)
+        s._get_sensor_value()  # anchor at 0 on night rate (1.32)
+        updater.data = {**updater.data, "sessionEnergy": "10"}
+        assert s._get_sensor_value() == 13.2  # 10 × 1.32
+        # Switch to day rate (2.64) — past 10 kWh must stay billed at night.
+        updater.data = {**updater.data, "sessionEnergy": "12", "activeTarif": "0"}
+        assert s._get_sensor_value() == round(round(13.2 + 2 * 2.64, 2), 2)
 
-    def test_rate_2_is_used_when_active(self) -> None:
-        updater = _Updater({
-            "sessionEnergy": "10",
-            "activeTarif": "1",
-            "tarif": "264",
-            "tarifAValue": "132",  # 1.32 ₴/kWh
-            "tarifBValue": "400",
-        })
-        assert sensors.get_session_cost(updater, None) == 13.2
+    def test_new_session_resets_accumulator(self) -> None:
+        updater = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
+        s = _cost_sensor(updater)
+        s._get_sensor_value()
+        updater.data = {**updater.data, "sessionEnergy": "10"}
+        assert s._get_sensor_value() == 13.2
+        # Counter resets to 0 → new session detected, accumulator zeroed.
+        updater.data = {**updater.data, "sessionEnergy": "0"}
+        assert s._get_sensor_value() == 0.0
+        updater.data = {**updater.data, "sessionEnergy": "3"}
+        assert s._get_sensor_value() == round(3 * 2.64, 2)
 
-    def test_sensor_spec_is_registered_with_uah_unit(self) -> None:
-        specs = {s.name: s for s in sensors.get_sensor_specifications()}
-        assert "Session Cost" in specs
-        spec = specs["Session Cost"]
-        assert spec.unit == "₴"
-        assert spec.precision == 2
-        assert spec.state_class == SensorStateClass.MEASUREMENT
+    def test_offline_keeps_last_value(self) -> None:
+        updater = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
+        s = _cost_sensor(updater)
+        s._get_sensor_value()
+        updater.data = {**updater.data, "sessionEnergy": "10"}
+        s._get_sensor_value()
+        updater.available = False
+        # When offline, _get_sensor_value should still report the last cost
+        # (HA's availability layer will hide the entity, but the accumulator
+        # must not collapse to 0).
+        assert s._get_sensor_value() == 13.2
+
+    def test_persist_and_restore_via_extra_state_attributes(self) -> None:
+        import asyncio
+        updater1 = _Updater({"sessionEnergy": "5", "activeTarif": "0", "tarif": "264"})
+        s1 = _cost_sensor(updater1)
+        s1._get_sensor_value()
+        updater1.data = {**updater1.data, "sessionEnergy": "10"}
+        s1._get_sensor_value()
+        s1._update_extra_state_attributes()
+        persisted = dict(s1._attr_extra_state_attributes)
+        assert persisted["accumulated_cost"] == 13.2
+        assert persisted["last_session_energy"] == 10.0
+
+        # Simulated restart: fresh sensor restores from attrs.
+        updater2 = _Updater({"sessionEnergy": "10", "activeTarif": "0", "tarif": "264"})
+        s2 = _cost_sensor(updater2)
+        asyncio.run(s2._async_restore_state(SimpleNamespace(state="13.2", attributes=persisted)))
+        # No new kWh since restart → cost unchanged.
+        assert s2._get_sensor_value() == 13.2
+        # Continue charging — accumulates from the restored point.
+        updater2.data = {**updater2.data, "sessionEnergy": "12"}
+        assert s2._get_sensor_value() == round(13.2 + 2 * 2.64, 2)
+
+    def test_unit_and_state_class(self) -> None:
+        cls_vars = vars(sensors.SessionCostSensor)
+        assert cls_vars.get("__attr_native_unit_of_measurement") == "₴"
+        assert cls_vars.get("__attr_state_class") == SensorStateClass.TOTAL
 
 
 # ---------------------------------------------------------------------------

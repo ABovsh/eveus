@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.5.2 - 2026-05-16
+
+Patch release: Session Cost no longer retroactively re-prices the session when the tariff changes.
+
+- Fix: `sensor.eveus_session_cost` was computed as `sessionEnergy × current_active_rate`, so when the active tariff switched mid-session (e.g. night→day at 07:00) the whole accumulated cost was instantly recalculated at the new rate. The sensor is now stateful: it integrates Δenergy × rate-at-the-time on each coordinator update and persists the running total via state attributes (`accumulated_cost`, `last_session_energy`) so it survives HA restarts. A new session is detected when `sessionEnergy` drops below its previous value
+- Unchanged: the entity ID, unit (₴), and rounding remain the same; only the underlying math changed
+
 ## 4.5.1 - 2026-05-16
 
 Patch release: SOC baseline survives HA restarts.
