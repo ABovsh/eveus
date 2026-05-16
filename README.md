@@ -1,4 +1,6 @@
-# Eveus EV Charger — Home Assistant Integration
+# Eveus Home Assistant Integration
+
+> **Eveus EV charger integration for Home Assistant** — installable via HACS. Local-only polling over your LAN, no cloud, no account.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
 ![Version](https://img.shields.io/badge/version-4.8.0-blue?style=for-the-badge)
