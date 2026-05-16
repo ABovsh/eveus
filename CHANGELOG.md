@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.5.1 - 2026-05-16
+
+Patch release: SOC baseline survives HA restarts.
+
+- Fix: The energy baseline used by `EVSocKwhSensor` / `EVSocPercentSensor` lived only in RAM, so restarting Home Assistant mid-session snapped SoC back to `initial_soc` (next IEM1 read became the new baseline → delivered energy = 0). The baseline now lives on the shared `CachedSOCCalculator` and is persisted as state attributes on `sensor.eveus_soc_energy` (`energy_baseline_kwh`, `baseline_initial_soc`); on restart it is restored via `RestoreEntity` before the first coordinator update, so SoC continues from where it was
+- Refactor: Moved baseline state and the `_get_energy_charged` logic from `BaseEVHelperSensor` (per-sensor instance) to `CachedSOCCalculator` (shared per device) — every helper sensor on the device now agrees on the same baseline by construction
+- Preserves existing helper-blip behavior: a transient `initial_soc=None` still does not reset the baseline; counter-A reset (IEM1 drops below baseline) still re-anchors as before
+- Backwards compatible: pre-4.5.1 users without the saved attributes fall back to the old "first IEM1 read becomes baseline" behavior on the next session
+
 ## 4.5.0 - 2026-05-16
 
 Three new automation-friendly sensors that replace the template boilerplate users typically write on top of Eveus, plus shared math and stronger tests.
