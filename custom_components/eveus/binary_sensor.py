@@ -42,6 +42,10 @@ class EveusCarConnectedBinarySensor(BaseEveusEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.PLUG
     _attr_icon = "mdi:ev-plug-type2"
 
+    def __init__(self, updater, device_number) -> None:
+        super().__init__(updater, device_number)
+        self._last_written_is_on: bool | None = None
+
     @property
     def is_on(self) -> bool | None:
         """Return whether a car is connected, or None if state is unknown."""
@@ -54,11 +58,18 @@ class EveusCarConnectedBinarySensor(BaseEveusEntity, BinarySensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Write HA state only when availability or plug-state actually changes."""
-        previous_state = self.is_on
+        """Write HA state only when availability or plug-state actually changes.
+
+        Why: coordinator swaps `self._updater.data` BEFORE notifying listeners,
+        so recomputing `previous_state = self.is_on` here would read the new
+        data and always equal the current value — masking real transitions.
+        We track the last value we actually pushed to HA instead.
+        """
         self._maybe_finalize_device_info()
         availability_changed = self._update_availability_state()
-        if availability_changed or previous_state != self.is_on:
+        current = self.is_on
+        if availability_changed or current != self._last_written_is_on:
+            self._last_written_is_on = current
             self.async_write_ha_state()
 
 

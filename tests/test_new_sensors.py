@@ -285,3 +285,30 @@ class TestCarConnectedBinarySensor:
         assert sensor.unique_id == "eveus_car_connected"
         sensor2 = EveusCarConnectedBinarySensor(_Updater({"state": 4}), 2)
         assert sensor2.unique_id == "eveus2_car_connected"
+
+    def test_coordinator_update_writes_on_real_state_transition(self) -> None:
+        # Regression: coordinator mutates updater.data in place before notifying
+        # listeners, so `previous_state = self.is_on` recomputed inside the
+        # callback always equalled the new value — masking transitions and
+        # leaving HA stuck on the first-fetch value.
+        data = {"state": 4}  # Charging → plug present
+        updater = _Updater(data)
+        sensor = EveusCarConnectedBinarySensor(updater, 1)
+        sensor._entity_available = True
+        sensor.hass = _Hass()
+        writes: list[bool | None] = []
+        sensor.async_write_ha_state = lambda: writes.append(sensor.is_on)
+        sensor._maybe_finalize_device_info = lambda: None
+        sensor._update_availability_state = lambda: False
+
+        sensor._handle_coordinator_update()
+        assert writes == [True]
+
+        # Simulate coordinator swapping new data in place — car unplugged.
+        data["state"] = 2  # Standby
+        sensor._handle_coordinator_update()
+        assert writes == [True, False]
+
+        # No-op update: no extra write.
+        sensor._handle_coordinator_update()
+        assert writes == [True, False]
