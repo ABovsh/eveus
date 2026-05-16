@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.7.1 - 2026-05-16
+
+Bugfix: `binary_sensor.eveus_car_connected` got stuck on the value from the very first fetch and never reflected later plug-in / plug-out transitions.
+
+- Fix: `EveusCarConnectedBinarySensor._handle_coordinator_update` recomputed `previous_state = self.is_on` after the coordinator had already swapped in the new payload, so the comparison always equalled the current value and `async_write_ha_state()` was never called. Now tracks the last value actually pushed to HA in a dedicated instance attribute
+- Test: new regression case in `tests/test_new_sensors.py` simulating in-place coordinator data swap across a Charging → Standby transition
+
 ## 4.7.0 - 2026-05-16
 
 Minor release: five new diagnostic sensors expose the charger's adaptive (AI) mode and scheduled-charging slots. Adds a firmware-drift test backed by a real `/main` snapshot. Cleans up a dead `try/except` in sensor setup.
