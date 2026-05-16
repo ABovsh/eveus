@@ -173,10 +173,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _schedule_post_command_refresh(self) -> None:
         """Schedule delayed refreshes after a successful command.
 
-        Two refreshes (at POST_COMMAND_REFRESH_DELAYS): the early one catches
-        fast-committing changes (e.g. setting current) for snappy UI feedback;
-        the later one catches slow transitions (e.g. Stop Charging, where the
-        charger may take ~5-10s to drop into Standby).
+        Refreshes fire at POST_COMMAND_REFRESH_DELAYS (currently a single 5s
+        tick) to catch both fast commits (e.g. setting current) and slower
+        transitions (e.g. Stop Charging, where the charger may take ~5-10s to
+        drop into Standby) in one well-timed poll.
 
         Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
         always fire relative to the most recent command. Combined with the

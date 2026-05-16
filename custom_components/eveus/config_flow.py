@@ -18,6 +18,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .const import (
     DOMAIN,
@@ -201,7 +206,9 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
         {
             vol.Required(CONF_HOST, default=host_default): str,
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): str,
+            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
             vol.Required(
                 CONF_MODEL,
                 default=defaults.get(CONF_MODEL, MODEL_16A),
@@ -219,7 +226,9 @@ def build_reauth_data_schema(defaults: Mapping[str, Any] | None = None) -> vol.S
     return vol.Schema(
         {
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): str,
+            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
         }
     )
 

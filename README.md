@@ -34,7 +34,7 @@ Eveus chargers can throttle current automatically when the supply voltage sags, 
 
 ### 🎛 Charging controls with optimistic UI
 - **Charging Current** number slider with model-aware bounds (16 / 32 / 48 A).
-- **Stop Charging**, **One Charge**, and **Reset Counter A** switches.
+- **Stop Charging** and **One Charge** switches; **Reset Counter A** and **Reset Counter B** buttons.
 
 All controls update the UI immediately and reconcile with the charger on the next poll — no waiting on the round-trip before the slider moves.
 
@@ -164,7 +164,8 @@ These exist specifically to replace template sensors users typically build on to
 | Charging Current | Number | Current-limit slider, model-aware bounds (16/32/48 A) |
 | Stop Charging | Switch | Charger-side stop-charge option |
 | One Charge | Switch | Single charging session |
-| Reset Counter A | Switch | Reset energy counter A |
+| Reset Counter A | Button | Reset energy counter A (one-shot action) |
+| Reset Counter B | Button | Reset energy counter B (one-shot action) |
 
 Controls use **optimistic UI**: the slider/switch updates immediately, then reconciles with the next charger response.
 
