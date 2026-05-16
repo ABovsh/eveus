@@ -151,6 +151,87 @@ def test_energy_baseline_survives_helper_blip() -> None:
     assert sensor._get_energy_charged() == 5.0
 
 
+def test_baseline_persists_via_extra_state_attributes_and_restore() -> None:
+    """Baseline survives a HA restart via EVSocKwhSensor state attributes.
+
+    Regression: before 4.5.1 the baseline lived only in RAM on the sensor
+    instance, so after restart the first IEM1 read became a new baseline
+    and delivered energy snapped to 0 (SoC fell back to initial_soc).
+    """
+    # --- Session-1: anchor baseline at 25, deliver 5 kWh.
+    calc1 = CachedSOCCalculator()
+    updater1 = _Updater({"IEM1": "25"})
+    sensor1 = EVSocKwhSensor(updater1, 1, calc1)
+    sensor1.hass = _Hass(HELPERS)
+
+    assert sensor1._get_energy_charged() == 0.0
+    updater1.data = {"IEM1": "30"}
+    assert sensor1._get_energy_charged() == 5.0
+
+    # Persisted attributes that HA's RestoreEntity would write to disk.
+    sensor1._update_extra_state_attributes()
+    persisted = dict(sensor1._attr_extra_state_attributes)
+    assert persisted["energy_baseline_kwh"] == 25.0
+    assert persisted["baseline_initial_soc"] == 20.0
+
+    # --- Session-2: simulate HA restart — fresh calculator + sensor.
+    calc2 = CachedSOCCalculator()
+    updater2 = _Updater({"IEM1": "30"})
+    sensor2 = EVSocKwhSensor(updater2, 1, calc2)
+    sensor2.hass = _Hass(HELPERS)
+
+    # async_added_to_hass would call _async_restore_state with the last state.
+    import asyncio
+    asyncio.run(
+        sensor2._async_restore_state(SimpleNamespace(state="5.0", attributes=persisted))
+    )
+
+    # First read after restart: IEM1 still 30, baseline restored to 25 → still 5 kWh.
+    assert sensor2._get_energy_charged() == 5.0
+    # And SoC math sees the same delivered energy.
+    assert calc2.energy_baseline == 25.0
+    assert calc2.baseline_initial_soc == 20.0
+
+
+def test_restore_baseline_is_noop_when_baseline_already_set() -> None:
+    """restore_baseline must not overwrite a live baseline."""
+    calc = CachedSOCCalculator()
+    calc._energy_baseline = 10.0
+    calc._baseline_initial_soc = 50.0
+
+    calc.restore_baseline(99.0, 99.0)
+
+    assert calc.energy_baseline == 10.0
+    assert calc.baseline_initial_soc == 50.0
+
+
+def test_restore_baseline_handles_missing_attributes() -> None:
+    """No persisted attrs (pre-4.5.1 install) → no crash, no baseline seeded."""
+    calc = CachedSOCCalculator()
+
+    calc.restore_baseline(None, None)
+
+    assert calc.energy_baseline is None
+    assert calc.baseline_initial_soc is None
+
+
+def test_baseline_shared_across_sensors_on_same_device() -> None:
+    """All helper sensors on one device must share the baseline via the calculator."""
+    calc = CachedSOCCalculator()
+    updater = _Updater({"IEM1": "25"})
+    kwh_sensor = EVSocKwhSensor(updater, 1, calc)
+    kwh_sensor.hass = _Hass(HELPERS)
+
+    # Anchor baseline via the kWh sensor.
+    assert kwh_sensor._get_energy_charged() == 0.0
+    assert calc.energy_baseline == 25.0
+
+    # A second helper sensor sharing the same calculator sees the same baseline.
+    second = EVSocKwhSensor(_Updater({"IEM1": "32"}), 1, calc)
+    second.hass = _Hass(HELPERS)
+    assert second._get_energy_charged() == 7.0
+
+
 def test_soc_kwh_sensor_uses_measurement_state_class() -> None:
     # Regression: TOTAL without last_reset breaks HA statistics.
     # SOC kWh is a running gauge (not a monotonic lifetime counter).

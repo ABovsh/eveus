@@ -76,6 +76,8 @@ class CachedSOCCalculator:
         """Initialize with cache TTL."""
         self.cache_ttl = cache_ttl
         self._input_cache = InputEntityCache()
+        self._energy_baseline: Optional[float] = None
+        self._baseline_initial_soc: Optional[float] = None
 
     def _mark_helpers_unavailable(self) -> None:
         """Cache helper unavailability and clear stale helper values."""
@@ -188,6 +190,67 @@ class CachedSOCCalculator:
         """Return cached initial SOC."""
         return self._input_cache.initial_soc
 
+    @property
+    def energy_baseline(self) -> Optional[float]:
+        """Return persisted IEM1 baseline (kWh) or None."""
+        return self._energy_baseline
+
+    @property
+    def baseline_initial_soc(self) -> Optional[float]:
+        """Return the initial_soc anchored to the current baseline, if any."""
+        return self._baseline_initial_soc
+
+    def get_energy_charged(
+        self, hass: HomeAssistant, energy_charged_raw: Optional[float]
+    ) -> Optional[float]:
+        """Return kWh delivered since the active baseline.
+
+        Baseline lives on the (shared) calculator so all helper sensors agree,
+        and so EVSocKwhSensor can persist it across HA restarts.
+        """
+        if energy_charged_raw is None:
+            return None
+
+        self._update_input_cache(hass)
+        initial_soc = self._input_cache.initial_soc
+
+        # A transient helper blip (initial_soc=None) must not reset the
+        # baseline, otherwise session energy collapses to 0 when helpers
+        # come back online.
+        soc_changed = (
+            initial_soc is not None
+            and self._baseline_initial_soc is not None
+            and initial_soc != self._baseline_initial_soc
+        )
+        if (
+            self._energy_baseline is None
+            or soc_changed
+            or energy_charged_raw < self._energy_baseline
+        ):
+            self._energy_baseline = energy_charged_raw
+            if initial_soc is not None:
+                self._baseline_initial_soc = initial_soc
+
+        return max(0.0, energy_charged_raw - self._energy_baseline)
+
+    def restore_baseline(
+        self,
+        energy_baseline: Optional[float],
+        baseline_initial_soc: Optional[float],
+    ) -> None:
+        """Seed the baseline from persisted state (only if not yet set)."""
+        if self._energy_baseline is not None or energy_baseline is None:
+            return
+        try:
+            self._energy_baseline = float(energy_baseline)
+        except (TypeError, ValueError):
+            return
+        if baseline_initial_soc is not None:
+            try:
+                self._baseline_initial_soc = float(baseline_initial_soc)
+            except (TypeError, ValueError):
+                self._baseline_initial_soc = None
+
 
 # =============================================================================
 # Common base for EV helper-dependent sensors
@@ -211,8 +274,6 @@ class BaseEVHelperSensor(EveusSensorBase):
         self._last_update_time = 0
         self._cached_value = None
         self._helpers_available = False
-        self._energy_baseline: float | None = None
-        self._baseline_initial_soc: float | None = None
 
     def _refresh_helpers_available(self) -> bool:
         """Refresh optional helper availability and return whether it changed."""
@@ -304,39 +365,32 @@ class BaseEVHelperSensor(EveusSensorBase):
         return (current_soc, target_soc, power_meas, battery_capacity, soc_correction)
 
     def _get_energy_charged(self) -> float | None:
-        """Get energy charged since the current SOC helper baseline."""
+        """Get energy charged since the current SOC helper baseline.
+
+        Delegates to the shared :class:`CachedSOCCalculator` so every helper
+        sensor on the device sees the same baseline, and so EVSocKwhSensor
+        can persist the baseline across HA restarts.
+        """
         energy_charged = get_safe_value(self._updater.data, "IEM1", float)
-        if energy_charged is None:
-            return None
-
-        self._soc_calculator._update_input_cache(self.hass)
-        initial_soc = self._soc_calculator.initial_soc
-
-        # Only treat initial_soc as a baseline trigger when it is a real value.
-        # A transient helper blip (None) must not reset the baseline, otherwise
-        # session energy collapses to 0 the moment helpers come back online.
-        soc_changed = (
-            initial_soc is not None
-            and initial_soc != self._baseline_initial_soc
-        )
-        if (
-            self._energy_baseline is None
-            or soc_changed
-            or energy_charged < self._energy_baseline
-        ):
-            self._energy_baseline = energy_charged
-            if initial_soc is not None:
-                self._baseline_initial_soc = initial_soc
-
-        return max(0.0, energy_charged - self._energy_baseline)
+        return self._soc_calculator.get_energy_charged(self.hass, energy_charged)
 
 
 # =============================================================================
 # Concrete EV sensors
 # =============================================================================
 
+_BASELINE_ATTR_ENERGY = "energy_baseline_kwh"
+_BASELINE_ATTR_INITIAL_SOC = "baseline_initial_soc"
+
+
 class EVSocKwhSensor(BaseEVHelperSensor):
-    """SOC energy sensor."""
+    """SOC energy sensor.
+
+    Acts as the persistence anchor for the shared SOC baseline: the IEM1
+    baseline + the initial_soc it was anchored to are exposed as state
+    attributes and restored on HA restart, so SoC does not snap back to
+    `initial_soc` whenever HA is rebooted mid-session.
+    """
 
     ENTITY_NAME = "SOC Energy"
     _attr_device_class = SensorDeviceClass.ENERGY
@@ -356,6 +410,28 @@ class EVSocKwhSensor(BaseEVHelperSensor):
         if result is not None:
             self._cached_value = result
         return self._cached_value
+
+    def _update_extra_state_attributes(self) -> bool:
+        """Expose the shared baseline so it survives HA restarts."""
+        previous = getattr(self, "_attr_extra_state_attributes", None) or {}
+        attrs: Dict[str, Any] = {}
+        baseline = self._soc_calculator.energy_baseline
+        if baseline is not None:
+            attrs[_BASELINE_ATTR_ENERGY] = round(float(baseline), 3)
+        anchor = self._soc_calculator.baseline_initial_soc
+        if anchor is not None:
+            attrs[_BASELINE_ATTR_INITIAL_SOC] = float(anchor)
+        self._attr_extra_state_attributes = attrs
+        return previous != attrs
+
+    async def _async_restore_state(self, state) -> None:
+        """Seed the shared baseline from the last persisted attributes."""
+        await super()._async_restore_state(state)
+        attrs = getattr(state, "attributes", None) or {}
+        self._soc_calculator.restore_baseline(
+            attrs.get(_BASELINE_ATTR_ENERGY),
+            attrs.get(_BASELINE_ATTR_INITIAL_SOC),
+        )
 
 
 class EVSocPercentSensor(BaseEVHelperSensor):
