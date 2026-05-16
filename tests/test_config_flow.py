@@ -22,7 +22,13 @@ from custom_components.eveus.config_flow import (
     validate_host,
     validate_input,
 )
-from custom_components.eveus.const import CONF_MODEL, CONF_SCHEME, MODEL_16A
+from custom_components.eveus.const import (
+    CONF_MODEL,
+    CONF_PHASES,
+    CONF_SCHEME,
+    DEFAULT_PHASES,
+    MODEL_16A,
+)
 
 
 class _Response:
@@ -146,7 +152,18 @@ def test_normalize_user_input_returns_persistable_config_data() -> None:
         CONF_PASSWORD: " secret ",
         CONF_MODEL: MODEL_16A,
         CONF_SCHEME: "http",
+        CONF_PHASES: DEFAULT_PHASES,
     }
+
+
+def test_normalize_user_input_accepts_three_phase() -> None:
+    data = normalize_user_input(_input(**{CONF_PHASES: 3}))
+    assert data[CONF_PHASES] == 3
+
+
+def test_normalize_user_input_rejects_invalid_phases() -> None:
+    with pytest.raises(vol.Invalid):
+        normalize_user_input(_input(**{CONF_PHASES: 2}))
 
 
 def test_normalize_user_input_preserves_stored_https_scheme() -> None:

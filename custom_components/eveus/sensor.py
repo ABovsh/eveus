@@ -30,7 +30,7 @@ async def async_setup_entry(
     device_number = runtime_data.device_number
     soc_calculator = runtime_data.soc_calculator
 
-    sensor_specs = get_sensor_specifications()
+    sensor_specs = get_sensor_specifications(phases=runtime_data.phases)
     standard_sensors = [spec.create_sensor(updater, device_number) for spec in sensor_specs]
 
     ev_sensors = [

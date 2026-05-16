@@ -16,7 +16,16 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, MODEL_MAX_CURRENT, CONF_MODEL, CONF_SCHEME, DEFAULT_SCHEME
+from .const import (
+    DOMAIN,
+    MODEL_MAX_CURRENT,
+    CONF_MODEL,
+    CONF_SCHEME,
+    DEFAULT_SCHEME,
+    CONF_PHASES,
+    DEFAULT_PHASES,
+    PHASE_OPTIONS,
+)
 from .common_network import EveusUpdater
 from .utils import get_next_device_number
 
@@ -25,7 +34,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-CONFIG_ENTRY_VERSION = 2
+CONFIG_ENTRY_VERSION = 3
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -45,6 +54,7 @@ class EveusRuntimeData:
     device_number: int
     title: str
     soc_calculator: CachedSOCCalculator
+    phases: int = DEFAULT_PHASES
 
 
 EveusConfigEntry = ConfigEntry[EveusRuntimeData]
@@ -98,6 +108,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if CONF_SCHEME not in new_data:
         new_data[CONF_SCHEME] = DEFAULT_SCHEME
+
+    if CONF_PHASES not in new_data:
+        new_data[CONF_PHASES] = DEFAULT_PHASES
 
     update_kwargs: dict[str, Any] = {}
     if new_data != entry.data:
@@ -170,11 +183,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         )
         from .ev_sensors import CachedSOCCalculator
 
+        raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
+        try:
+            phases = int(raw_phases)
+        except (TypeError, ValueError):
+            phases = DEFAULT_PHASES
+        if phases not in PHASE_OPTIONS:
+            phases = DEFAULT_PHASES
+
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
             device_number=device_number,
             title=entry.title,
             soc_calculator=CachedSOCCalculator(),
+            phases=phases,
         )
 
         await updater.async_config_entry_first_refresh()

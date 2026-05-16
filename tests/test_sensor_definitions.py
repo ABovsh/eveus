@@ -80,11 +80,26 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     assert "State" in names
     assert "Connection Quality" in names
     assert "Session Cost" in names  # back as a SensorSpec in 4.6.0
+    assert "Leakage Current" in names  # 4.9.0-rc.2
+    assert "Leakage Current Peak" in names  # 4.9.0-rc.2
     # Exact count: catches silent additions/removals; bump on intentional
     # changes alongside README/CHANGELOG.
     # 4.7.0: +5 adaptive/scheduled-charging sensors (Adaptive Charging,
     # Adaptive Current Limit, Adaptive Voltage Threshold, Schedule 1, Schedule 2).
-    assert len(specs) == 31, sorted(names)
+    # 4.9.0-rc.2: +2 leakage sensors (always on).
+    assert len(specs) == 33, sorted(names)
+
+
+def test_sensor_specifications_adds_three_phase_sensors_when_requested() -> None:
+    one_phase = {s.name for s in sensors.get_sensor_specifications(phases=1)}
+    three_phase = {s.name for s in sensors.get_sensor_specifications(phases=3)}
+    new_in_three = three_phase - one_phase
+    assert new_in_three == {
+        "Current Phase 2",
+        "Current Phase 3",
+        "Voltage Phase 2",
+        "Voltage Phase 3",
+    }
 
 
 def test_value_getters_reject_nan_and_inf() -> None:
