@@ -27,7 +27,7 @@ class EveusRefreshButton(BaseEveusEntity, ButtonEntity):
 
     ENTITY_NAME = "Force Refresh"
     _attr_icon = "mdi:refresh"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_category = EntityCategory.CONFIG
 
     @property
     def available(self) -> bool:
@@ -92,7 +92,6 @@ class EveusSyncTimeButton(BaseEveusEntity, ButtonEntity):
     ENTITY_NAME = "Sync Time"
     _attr_icon = "mdi:clock-check-outline"
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_entity_registry_enabled_default = False
 
     async def async_press(self) -> None:
         """Send the current UTC seconds as `systemTime`."""
