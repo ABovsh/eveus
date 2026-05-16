@@ -48,6 +48,14 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         command="oneCharge",
         state_key="oneCharge",
     ),
+    EveusSwitchEntityDescription(
+        key="adaptive_mode",
+        name="Adaptive Mode",
+        icon="mdi:auto-mode",
+        entity_category=EntityCategory.CONFIG,
+        command="aiStatus",
+        state_key="aiStatus",
+    ),
 )
 
 

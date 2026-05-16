@@ -40,7 +40,6 @@ class EveusTimeZoneSelect(
     ENTITY_NAME = "Time Zone"
     _attr_icon = "mdi:map-clock-outline"
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_entity_registry_enabled_default = False
     _attr_options = list(TIMEZONE_OPTIONS)
     _control_entity_label = "Select"
 

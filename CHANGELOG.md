@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.9.0-rc.3 - 2026-05-17
+
+UX polish on rc.2.
+
+### ✨ New
+- **`switch.eveus_adaptive_mode`** — direct on/off control of the charger's adaptive (AI) mode via `aiStatus`. Pairs with the existing `Adaptive Charging` diagnostic sensor (same field).
+
+### 🔧 Changed
+- `Sync Time` and `Time Zone` are now **enabled by default** — they were disabled in rc.1/rc.2, inconsistent with the rest of the integration's convention.
+- `Force Refresh` moved from `DIAGNOSTIC` to `CONFIG` entity category.
+
 ## 4.9.0-rc.2 - 2026-05-17
 
 Builds on rc.1. Adds 3-phase support and leakage telemetry.
