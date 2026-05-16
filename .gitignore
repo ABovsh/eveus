@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env
+.DS_Store
+
+# Internal/private docs — never publish to GitHub
+AUDIT_FINDINGS*.md
+*.local.md
