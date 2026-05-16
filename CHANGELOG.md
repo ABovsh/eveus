@@ -2,10 +2,11 @@
 
 ## 4.7.1 - 2026-05-16
 
-Bugfix: `binary_sensor.eveus_car_connected` got stuck on the value from the very first fetch and never reflected later plug-in / plug-out transitions.
+Bugfix release covering two regressions surfaced after 4.6.0/4.7.0.
 
-- Fix: `EveusCarConnectedBinarySensor._handle_coordinator_update` recomputed `previous_state = self.is_on` after the coordinator had already swapped in the new payload, so the comparison always equalled the current value and `async_write_ha_state()` was never called. Now tracks the last value actually pushed to HA in a dedicated instance attribute
-- Test: new regression case in `tests/test_new_sensors.py` simulating in-place coordinator data swap across a Charging → Standby transition
+- Fix: `binary_sensor.eveus_car_connected` got stuck on the value from the very first fetch and never reflected later plug-in / plug-out transitions. `_handle_coordinator_update` recomputed `previous_state = self.is_on` after the coordinator had already swapped in the new payload, so the comparison always equalled the current value and `async_write_ha_state()` was never called. Now tracks the last value actually pushed to HA in a dedicated instance attribute
+- Fix: `sensor.eveus_soc_energy` and `sensor.eveus_soc_percent` showed `unknown` whenever `sessionEnergy` was missing from the payload (cold start before first poll, brief offline blip). Now treat a missing `sessionEnergy` as 0 delivered, so SOC reprojects from `input_number.ev_initial_soc` instead of going unknown. Cached-last-value fallback is no longer needed and was removed
+- Tests: regression case for the binary-sensor write path (in-place coordinator data swap, Charging → Standby), and updated SOC sensor test to lock in the Initial-SOC fallback
 
 ## 4.7.0 - 2026-05-16
 
