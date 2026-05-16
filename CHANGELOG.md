@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.8.0 - 2026-05-16
+
+Production release. Identical to `4.8.0-rc.2` after end-to-end testing on real hardware. See rc.1 and rc.2 notes below for the full change list.
+
 ## 4.8.0-rc.2 - 2026-05-16
 
 Second pre-release pass after another round of adversarial review (Codex) and a `/simplify` sweep.
