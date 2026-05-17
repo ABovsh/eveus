@@ -31,7 +31,7 @@ Add four `input_number` helpers and the integration estimates:
 
 Without the helpers, SOC sensors stay unavailable and everything else works normally. SOC math uses the charger-native `sessionEnergy` so there is no fragile per-restart baseline state to manage.
 
-### 🤖 Adaptive charging & schedule visibility *(new in 4.7.0)*
+### 🤖 Adaptive charging & schedule visibility
 Eveus chargers can throttle current automatically when the supply voltage sags, and run two configurable time-window slots for scheduled charging. The integration exposes both:
 - **Adaptive Charging** (`Active`/`Idle`), **Adaptive Current Limit** (A), **Adaptive Voltage Threshold** (V).
 - **Schedule 1** / **Schedule 2** — enabled/disabled state with `window` (HH:MM–HH:MM), optional current and energy caps as attributes.
@@ -144,9 +144,9 @@ When the integration is configured for a **3-phase** charger (`Phases = 3` in se
 | Rate 3 Status | Whether Rate 3 schedule is enabled *(diag)* |
 | Input Entities Status | Reports missing/invalid optional SOC helpers *(diag)* |
 
-### Adaptive charging & schedules *(new in 4.7.0)*
+### Adaptive charging & schedules
 
-The charger has a built-in adaptive ("AI") mode that throttles current when the supply voltage sags, and two configurable time-window slots for scheduled charging. These entities expose that state so you can build dashboards and automations around them.
+The charger has a built-in adaptive mode that throttles current when the supply voltage sags, and two configurable time-window slots for scheduled charging. These entities expose that state so you can build dashboards and automations around them.
 
 | Entity | Description |
 | --- | --- |
