@@ -155,6 +155,8 @@ The charger has a built-in adaptive ("AI") mode that throttles current when the 
 | Adaptive Voltage Threshold | Voltage floor (V) below which the throttle engages *(diag)* |
 | Schedule 1 | `Enabled` / `Disabled` with attributes `window` (HH:MM–HH:MM), `start`, `stop`, optional `current_limit_a`, `energy_limit_kwh` *(diag)* |
 | Schedule 2 | Same as Schedule 1 for the second slot *(diag)* |
+| Schedule 1 / 2 Enabled | Switch — arm or disarm each on-device schedule slot *(new in 4.9.0-rc.5)* |
+| Schedule 1 / 2 Start, Stop | `time` entities — native HH:MM picker for each slot's window *(new in 4.9.0-rc.5)* |
 
 ### Automation-friendly entities
 
@@ -190,6 +192,16 @@ Created automatically. Show as *unavailable* until you add the helpers in the ne
 | SOC Energy | Estimated battery energy in kWh |
 | SOC Percent | Estimated battery percentage |
 | Time to Target SOC | Human-readable ETA to target SOC (e.g. `2h 15m`). For automations prefer `Charging Finish Time` |
+
+## Dashboard
+
+A ready-to-paste Lovelace view exposing every Eveus capability — status, controls, schedules, live 24-hour charts, session totals, tariffs, adaptive mode, and diagnostics — ships in [`docs/dashboard.yaml`](docs/dashboard.yaml).
+
+![Eveus dashboard](docs/dashboard.png)
+
+**Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin.
+
+**Install:** open your dashboard → ⋮ → *Edit dashboard* → ⋮ → *Raw configuration editor*, then paste the view under `views:`. If your device slug differs from `eveus_ev_charger`, do a find-and-replace.
 
 ## Optional SOC helpers
 

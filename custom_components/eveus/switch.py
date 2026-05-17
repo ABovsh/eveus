@@ -56,6 +56,22 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         command="aiStatus",
         state_key="aiStatus",
     ),
+    EveusSwitchEntityDescription(
+        key="schedule_1_enabled",
+        name="Schedule 1 Enabled",
+        icon="mdi:calendar-clock",
+        entity_category=EntityCategory.CONFIG,
+        command="sh1Enabled",
+        state_key="sh1Enabled",
+    ),
+    EveusSwitchEntityDescription(
+        key="schedule_2_enabled",
+        name="Schedule 2 Enabled",
+        icon="mdi:calendar-clock",
+        entity_category=EntityCategory.CONFIG,
+        command="sh2Enabled",
+        state_key="sh2Enabled",
+    ),
 )
 
 
