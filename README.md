@@ -5,7 +5,7 @@
 💬 **Discussion:** [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.8.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.9.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 Local-only Home Assistant integration for Eveus EV chargers. Polls the charger directly over your LAN — no cloud, no account, no telemetry. Gives you live power/energy/cost telemetry, charging controls with optimistic UI, optional EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, multi-charger support, and a small set of automation-friendly entities (Car Connected, Charging Finish Time, Session Cost) so you do not need to write template sensors.
@@ -31,7 +31,7 @@ Add four `input_number` helpers and the integration estimates:
 
 Without the helpers, SOC sensors stay unavailable and everything else works normally. SOC math uses the charger-native `sessionEnergy` so there is no fragile per-restart baseline state to manage.
 
-### 🤖 Adaptive charging & schedule visibility *(new in 4.7.0)*
+### 🤖 Adaptive charging & schedule visibility
 Eveus chargers can throttle current automatically when the supply voltage sags, and run two configurable time-window slots for scheduled charging. The integration exposes both:
 - **Adaptive Charging** (`Active`/`Idle`), **Adaptive Current Limit** (A), **Adaptive Voltage Threshold** (V).
 - **Schedule 1** / **Schedule 2** — enabled/disabled state with `window` (HH:MM–HH:MM), optional current and energy caps as attributes.
@@ -109,6 +109,10 @@ Every entity below is created automatically. Names and unique IDs are stable acr
 | Box Temperature | °C | Internal charger temperature *(diag)* |
 | Plug Temperature | °C | Plug temperature *(diag)* |
 | Battery Voltage | V | Charger backup battery *(diag)* |
+| Leakage Current | mA | Live RCD reading; `0` is normal, non-zero signals a ground-fault leak *(diag, new in 4.9.0)* |
+| Leakage Current Peak | mA | Peak-hold leakage reading from the firmware *(diag, new in 4.9.0)* |
+
+When the integration is configured for a **3-phase** charger (`Phases = 3` in setup), four additional measurement sensors are exposed: `Current Phase 2`, `Current Phase 3`, `Voltage Phase 2`, `Voltage Phase 3`. *(new in 4.9.0)*
 
 ### Energy & cost
 
@@ -140,9 +144,9 @@ Every entity below is created automatically. Names and unique IDs are stable acr
 | Rate 3 Status | Whether Rate 3 schedule is enabled *(diag)* |
 | Input Entities Status | Reports missing/invalid optional SOC helpers *(diag)* |
 
-### Adaptive charging & schedules *(new in 4.7.0)*
+### Adaptive charging & schedules
 
-The charger has a built-in adaptive ("AI") mode that throttles current when the supply voltage sags, and two configurable time-window slots for scheduled charging. These entities expose that state so you can build dashboards and automations around them.
+The charger has a built-in adaptive mode that throttles current when the supply voltage sags, and two configurable time-window slots for scheduled charging. These entities expose that state so you can build dashboards and automations around them.
 
 | Entity | Description |
 | --- | --- |
@@ -151,6 +155,8 @@ The charger has a built-in adaptive ("AI") mode that throttles current when the 
 | Adaptive Voltage Threshold | Voltage floor (V) below which the throttle engages *(diag)* |
 | Schedule 1 | `Enabled` / `Disabled` with attributes `window` (HH:MM–HH:MM), `start`, `stop`, optional `current_limit_a`, `energy_limit_kwh` *(diag)* |
 | Schedule 2 | Same as Schedule 1 for the second slot *(diag)* |
+| Schedule 1 / 2 Enabled | Switch — arm or disarm each on-device schedule slot *(new in 4.9.0-rc.5)* |
+| Schedule 1 / 2 Start, Stop | `time` entities — native HH:MM picker for each slot's window *(new in 4.9.0-rc.5)* |
 
 ### Automation-friendly entities
 
@@ -168,6 +174,10 @@ These exist specifically to replace template sensors users typically build on to
 | Charging Current | Number | Current-limit slider, model-aware bounds (16/32/48 A) |
 | Stop Charging | Switch | Charger-side stop-charge option |
 | One Charge | Switch | Single charging session |
+| Adaptive Mode | Switch | Toggle the charger's adaptive (AI) throttle on/off *(new in 4.9.0)* |
+| Time Zone | Select | Charger time-zone offset, `-12..+14` *(new in 4.9.0)* |
+| Force Refresh | Button | Force an immediate coordinator poll |
+| Sync Time | Button | Push the host's current UTC time to the charger's clock *(new in 4.9.0)* |
 | Reset Counter A | Button | Reset energy counter A (one-shot action) |
 | Reset Counter B | Button | Reset energy counter B (one-shot action) |
 
@@ -182,6 +192,21 @@ Created automatically. Show as *unavailable* until you add the helpers in the ne
 | SOC Energy | Estimated battery energy in kWh |
 | SOC Percent | Estimated battery percentage |
 | Time to Target SOC | Human-readable ETA to target SOC (e.g. `2h 15m`). For automations prefer `Charging Finish Time` |
+
+## Dashboard
+
+A ready-to-paste Lovelace view exposing every Eveus capability — live status tiles, all writable controls (current slider, switches, time-zone select, refresh / sync / reset buttons), both on-device schedule slots with native HH:MM time pickers, adaptive-mode card, 24-hour mini-graph charts, session totals, tariffs, and diagnostics — ships in [`docs/dashboard.yaml`](docs/dashboard.yaml).
+
+**Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin.
+
+**Install:** open your dashboard → ⋮ → *Edit dashboard* → ⋮ → *Raw configuration editor*, then paste the view under `views:`. If your device slug differs from `eveus_ev_charger`, do a find-and-replace.
+
+## Screenshots
+
+See the dashboard YAML used to render these views: [`docs/dashboard.yaml`](docs/dashboard.yaml).
+<img width="1189" height="711" alt="image" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
+<img width="1185" height="577" alt="image" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
+
 
 ## Optional SOC helpers
 

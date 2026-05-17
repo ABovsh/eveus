@@ -28,10 +28,14 @@ from .const import (
 )
 from .utils import RateLog
 
-# Single refresh 5 s after a successful command — long enough for the
-# charger to commit any state change (including slow Stop Charging
-# transitions) while still giving snappy UI feedback.
-POST_COMMAND_REFRESH_DELAYS: tuple[int, ...] = (5,)
+# Sequence of refreshes after a successful command. Covers both fast
+# commits (e.g. Charging Current — applied immediately, visible at 3 s)
+# and slow state transitions (Stop Charging off + One Charge on — the
+# contactor typically closes 5-15 s after the command, so a single early
+# poll catches the device still in Standby/Connected and the coordinator
+# then reverts to the 60 s idle cadence, hiding the real transition for
+# almost a minute).
+POST_COMMAND_REFRESH_DELAYS: tuple[int, ...] = (3, 10, 20)
 
 _LOGGER = logging.getLogger(__name__)
 _CHARGING_INTERVAL = timedelta(seconds=CHARGING_UPDATE_INTERVAL)
@@ -173,10 +177,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _schedule_post_command_refresh(self) -> None:
         """Schedule delayed refreshes after a successful command.
 
-        Refreshes fire at POST_COMMAND_REFRESH_DELAYS (currently a single 5s
-        tick) to catch both fast commits (e.g. setting current) and slower
-        transitions (e.g. Stop Charging, where the charger may take ~5-10s to
-        drop into Standby) in one well-timed poll.
+        Refreshes fire at POST_COMMAND_REFRESH_DELAYS to catch both fast
+        commits (e.g. setting current) and slower transitions (Stop Charging
+        off + One Charge on, where the contactor may take 5-15 s to close).
+        A single early poll is not enough: it sees the device still idle and
+        the coordinator reverts to the 60 s idle cadence, so the real
+        CHARGING state is hidden for almost a minute. Multiple polls bracket
+        the transition window so the coordinator snaps to the 30 s charging
+        cadence as soon as the device actually transitions.
 
         Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
         always fire relative to the most recent command. Combined with the

@@ -1,0 +1,311 @@
+title: Eveus
+path: eveus
+icon: mdi:ev-station
+type: sections
+max_columns: 3
+dense_section_placement: true
+sections:
+  - type: grid
+    cards:
+      - type: heading
+        heading: EV Battery
+        icon: mdi:car-battery
+      - type: entities
+        show_header_toggle: false
+        entities:
+          - entity: input_number.ev_battery_capacity
+            name: Battery Capacity
+            icon: mdi:car-battery
+          - entity: input_number.ev_initial_soc
+            name: Initial SOC
+            icon: mdi:battery-50
+          - entity: input_number.ev_target_soc
+            name: Target SOC
+            icon: mdi:battery-high
+          - entity: input_number.ev_soc_correction
+            name: Charging Loss
+            icon: mdi:battery-minus-variant
+          - type: divider
+          - entity: sensor.eveus_ev_charger_soc_percent
+            name: Current SOC
+            icon: mdi:battery
+          - entity: sensor.eveus_ev_charger_soc_energy
+            name: SOC Energy
+            icon: mdi:battery-charging
+          - entity: sensor.eveus_ev_charger_time_to_target_soc
+            name: Time to Target
+            icon: mdi:clock-fast
+          - entity: sensor.eveus_ev_charger_charging_finish_time
+            name: ETA Finish
+            icon: mdi:clock-end
+  - type: grid
+    cards:
+      - type: heading
+        heading: Now
+        icon: mdi:ev-station
+      - type: tile
+        entity: sensor.eveus_ev_charger_state
+        name: State
+        icon: mdi:ev-station
+        color: primary
+      - type: tile
+        entity: binary_sensor.eveus_ev_charger_car_connected
+        name: Car
+        icon: mdi:car-electric
+      - type: tile
+        entity: sensor.eveus_ev_charger_power
+        name: Power
+        icon: mdi:flash
+        color: amber
+      - type: tile
+        entity: sensor.eveus_ev_charger_current
+        name: Current
+        icon: mdi:current-ac
+      - type: tile
+        entity: sensor.eveus_ev_charger_voltage
+        name: Voltage
+        icon: mdi:sine-wave
+      - type: tile
+        entity: sensor.eveus_ev_charger_substate
+        name: Substate
+        icon: mdi:information-outline
+  - type: grid
+    cards:
+      - type: heading
+        heading: Charging Controls
+        icon: mdi:tune
+      - type: tile
+        entity: number.eveus_ev_charger_charging_current
+        name: Charging Current
+        icon: mdi:current-ac
+        features:
+          - type: numeric-input
+            style: slider
+      - type: entities
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: switch.eveus_ev_charger_stop_charging
+            name: Stop Charging
+            icon: mdi:stop-circle-outline
+          - entity: switch.eveus_ev_charger_one_charge
+            name: One Charge
+            icon: mdi:lightning-bolt
+          - entity: button.eveus_ev_charger_force_refresh
+            name: Force Refresh
+            icon: mdi:refresh
+  - type: grid
+    cards:
+      - type: heading
+        heading: Session
+        icon: mdi:battery-charging-high
+      - type: entities
+        show_header_toggle: false
+        entities:
+          - entity: sensor.eveus_ev_charger_session_time
+            name: Duration
+            icon: mdi:timer-sand
+          - entity: sensor.eveus_ev_charger_session_energy
+            name: Energy
+            icon: mdi:battery-charging
+          - entity: sensor.eveus_ev_charger_session_cost
+            name: Cost
+            icon: mdi:cash
+  - type: grid
+    cards:
+      - type: heading
+        heading: Last 24 h
+        icon: mdi:chart-line
+      - type: custom:mini-graph-card
+        name: Power
+        icon: mdi:flash
+        hours_to_show: 24
+        points_per_hour: 6
+        line_width: 2
+        smoothing: true
+        height: 90
+        entities:
+          - entity: sensor.eveus_ev_charger_power
+        show:
+          fill: fade
+          labels: true
+          name: false
+      - type: custom:mini-graph-card
+        name: Current
+        icon: mdi:current-ac
+        hours_to_show: 24
+        points_per_hour: 6
+        line_width: 2
+        height: 90
+        entities:
+          - entity: sensor.eveus_ev_charger_current
+        show:
+          fill: fade
+          labels: true
+          name: false
+  - type: grid
+    cards:
+      - type: heading
+        heading: Adaptive
+        icon: mdi:shield-flash-outline
+      - type: entities
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: switch.eveus_ev_charger_adaptive_mode
+            name: Adaptive Mode
+            icon: mdi:shield-flash-outline
+          - entity: sensor.eveus_ev_charger_adaptive_charging
+            name: Status
+            icon: mdi:circle-slice-8
+          - entity: sensor.eveus_ev_charger_adaptive_current_limit
+            name: Current Limit
+            icon: mdi:current-ac
+          - entity: sensor.eveus_ev_charger_adaptive_voltage_threshold
+            name: Voltage Threshold
+            icon: mdi:sine-wave
+  - type: grid
+    cards:
+      - type: heading
+        heading: Schedule 1
+        icon: mdi:calendar-clock
+      - type: entities
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: switch.eveus_ev_charger_schedule_1_enabled
+            name: Enabled
+            icon: mdi:power
+          - entity: time.eveus_ev_charger_schedule_1_start
+            name: Start
+            icon: mdi:clock-start
+          - entity: time.eveus_ev_charger_schedule_1_stop
+            name: Stop
+            icon: mdi:clock-end
+          - entity: sensor.eveus_ev_charger_schedule_1
+            name: Window
+            icon: mdi:timetable
+  - type: grid
+    cards:
+      - type: heading
+        heading: Schedule 2
+        icon: mdi:calendar-clock-outline
+      - type: entities
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: switch.eveus_ev_charger_schedule_2_enabled
+            name: Enabled
+            icon: mdi:power
+          - entity: time.eveus_ev_charger_schedule_2_start
+            name: Start
+            icon: mdi:clock-start
+          - entity: time.eveus_ev_charger_schedule_2_stop
+            name: Stop
+            icon: mdi:clock-end
+          - entity: sensor.eveus_ev_charger_schedule_2
+            name: Window
+            icon: mdi:timetable
+  - type: grid
+    cards:
+      - type: heading
+        heading: Clock & Time Zone
+        icon: mdi:clock-outline
+      - type: entities
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: select.eveus_ev_charger_time_zone
+            name: Time Zone
+            icon: mdi:earth
+          - entity: sensor.eveus_ev_charger_system_time
+            name: Charger Clock
+            icon: mdi:clock-outline
+          - entity: button.eveus_ev_charger_sync_time
+            name: Sync Clock to HA
+            icon: mdi:clock-check-outline
+  - type: grid
+    cards:
+      - type: heading
+        heading: Counters
+        icon: mdi:counter
+      - type: entities
+        show_header_toggle: false
+        entities:
+          - entity: sensor.eveus_ev_charger_total_energy
+            name: Lifetime Energy
+            icon: mdi:counter
+          - type: divider
+          - entity: sensor.eveus_ev_charger_counter_a_energy
+            name: Counter A
+            icon: mdi:numeric-1-box-outline
+          - entity: sensor.eveus_ev_charger_counter_a_cost
+            name: Counter A Cost
+            icon: mdi:cash
+          - entity: button.eveus_ev_charger_reset_counter_a
+            name: Reset Counter A
+            icon: mdi:restart
+          - type: divider
+          - entity: sensor.eveus_ev_charger_counter_b_energy
+            name: Counter B
+            icon: mdi:numeric-2-box-outline
+          - entity: sensor.eveus_ev_charger_counter_b_cost
+            name: Counter B Cost
+            icon: mdi:cash
+          - entity: button.eveus_ev_charger_reset_counter_b
+            name: Reset Counter B
+            icon: mdi:restart
+  - type: grid
+    cards:
+      - type: heading
+        heading: Tariffs
+        icon: mdi:cash-multiple
+      - type: entities
+        show_header_toggle: false
+        entities:
+          - entity: sensor.eveus_ev_charger_active_rate_cost
+            name: Active Tariff
+            icon: mdi:cash-multiple
+          - entity: sensor.eveus_ev_charger_primary_rate_cost
+            name: Primary Rate
+          - type: divider
+          - entity: sensor.eveus_ev_charger_rate_2_status
+            name: Rate 2
+          - entity: sensor.eveus_ev_charger_rate_2_cost
+            name: Rate 2 Cost
+          - type: divider
+          - entity: sensor.eveus_ev_charger_rate_3_status
+            name: Rate 3
+          - entity: sensor.eveus_ev_charger_rate_3_cost
+            name: Rate 3 Cost
+  - type: grid
+    cards:
+      - type: heading
+        heading: Diagnostics
+        icon: mdi:stethoscope
+      - type: entities
+        show_header_toggle: false
+        entities:
+          - entity: sensor.eveus_ev_charger_connection_quality
+            name: Connection Quality
+            icon: mdi:wifi
+          - entity: sensor.eveus_ev_charger_ground
+            name: Ground
+            icon: mdi:earth
+          - entity: sensor.eveus_ev_charger_box_temperature
+            name: Box Temp
+            icon: mdi:thermometer
+          - entity: sensor.eveus_ev_charger_plug_temperature
+            name: Plug Temp
+            icon: mdi:thermometer-lines
+          - entity: sensor.eveus_ev_charger_leakage_current
+            name: Leakage
+            icon: mdi:flash-alert
+          - entity: sensor.eveus_ev_charger_leakage_current_peak
+            name: Leakage Peak
+          - entity: sensor.eveus_ev_charger_battery_voltage
+            name: Internal Battery
+          - entity: sensor.eveus_ev_charger_input_entities_status
+            name: SOC Helpers Status
+            icon: mdi:cog-outline
+cards: []
