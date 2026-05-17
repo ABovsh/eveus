@@ -33,6 +33,9 @@ from .const import (
     MODELS,
     MIN_CURRENT,
     MODEL_MAX_CURRENT,
+    CONF_PHASES,
+    DEFAULT_PHASES,
+    PHASE_OPTIONS,
 )
 from . import CONFIG_ENTRY_VERSION
 
@@ -187,12 +190,21 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
     if model not in MODELS:
         raise vol.Invalid("Invalid charger model")
 
+    raw_phases = data.get(CONF_PHASES, DEFAULT_PHASES)
+    try:
+        phases = int(raw_phases)
+    except (TypeError, ValueError) as err:
+        raise vol.Invalid("Invalid phase count") from err
+    if phases not in PHASE_OPTIONS:
+        raise vol.Invalid("Invalid phase count")
+
     return {
         CONF_HOST: host,
         CONF_USERNAME: username,
         CONF_PASSWORD: password,
         CONF_MODEL: model,
         CONF_SCHEME: scheme,
+        CONF_PHASES: phases,
     }
 
 
@@ -213,6 +225,10 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
                 CONF_MODEL,
                 default=defaults.get(CONF_MODEL, MODEL_16A),
             ): vol.In(MODELS),
+            vol.Required(
+                CONF_PHASES,
+                default=int(defaults.get(CONF_PHASES, DEFAULT_PHASES)),
+            ): vol.In(PHASE_OPTIONS),
         }
     )
 

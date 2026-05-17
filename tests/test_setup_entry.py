@@ -238,6 +238,7 @@ def test_sensor_setup_creates_standard_and_ev_sensors() -> None:
         updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
         device_number=1,
         soc_calculator=object(),
+        phases=1,
     )
 
     asyncio.run(
@@ -270,10 +271,16 @@ def test_switch_setup_creates_control_entities() -> None:
     assert [entity.name for entity in added] == [
         "Stop Charging",
         "One Charge",
+        "Adaptive Mode",
+        "Schedule 1 Enabled",
+        "Schedule 2 Enabled",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_stop_charging",
         "eveus2_one_charge",
+        "eveus2_adaptive_mode",
+        "eveus2_schedule_1_enabled",
+        "eveus2_schedule_2_enabled",
     }
 
 
@@ -297,12 +304,36 @@ def test_button_setup_creates_refresh_and_reset_buttons() -> None:
         "Force Refresh",
         "Reset Counter A",
         "Reset Counter B",
+        "Sync Time",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_force_refresh",
         "eveus2_reset_counter_a",
         "eveus2_reset_counter_b",
+        "eveus2_sync_time",
     }
+
+
+def test_select_setup_creates_time_zone_entity() -> None:
+    from custom_components.eveus.select import async_setup_entry as async_setup_select_entry
+
+    added: list[object] = []
+    entry = _Entry(_data())
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        device_number=2,
+    )
+
+    asyncio.run(
+        async_setup_select_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert [entity.name for entity in added] == ["Time Zone"]
+    assert {entity.unique_id for entity in added} == {"eveus2_time_zone"}
 
 
 def test_number_setup_creates_current_entity() -> None:
