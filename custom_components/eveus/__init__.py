@@ -43,6 +43,7 @@ PLATFORMS: list[Platform] = [
     Platform.NUMBER,
     Platform.BUTTON,
     Platform.SELECT,
+    Platform.TIME,
 ]
 
 

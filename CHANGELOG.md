@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.9.0-rc.5 - 2026-05-17
+
+### ✨ New entities
+- **`switch.eveus_schedule_1_enabled`** / **`switch.eveus_schedule_2_enabled`** — arm or disarm the charger's two on-device schedule slots directly from HA.
+- **`time.eveus_schedule_1_start`** / **`time.eveus_schedule_1_stop`** and **`time.eveus_schedule_2_start`** / **`time.eveus_schedule_2_stop`** — native HA time pickers for each slot's start/stop window. Changes apply directly on the charger; no more digging into the device's web UI to shift the night-tariff window.
+
+### 📊 Dashboard
+- New `docs/dashboard.yaml` — drop-in Lovelace view that exposes every Eveus capability (status, controls, schedules, live charts, session totals, diagnostics). See README for screenshot and install steps.
+
 ## 4.9.0-rc.4 - 2026-05-17
 
 ### 🐛 Fixed

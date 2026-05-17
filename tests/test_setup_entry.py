@@ -272,11 +272,15 @@ def test_switch_setup_creates_control_entities() -> None:
         "Stop Charging",
         "One Charge",
         "Adaptive Mode",
+        "Schedule 1 Enabled",
+        "Schedule 2 Enabled",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_stop_charging",
         "eveus2_one_charge",
         "eveus2_adaptive_mode",
+        "eveus2_schedule_1_enabled",
+        "eveus2_schedule_2_enabled",
     }
 
 
