@@ -195,13 +195,18 @@ Created automatically. Show as *unavailable* until you add the helpers in the ne
 
 ## Dashboard
 
-A ready-to-paste Lovelace view exposing every Eveus capability — status, controls, schedules, live 24-hour charts, session totals, tariffs, adaptive mode, and diagnostics — ships in [`docs/dashboard.yaml`](docs/dashboard.yaml).
-
-![Eveus dashboard](docs/dashboard.png)
+A ready-to-paste Lovelace view exposing every Eveus capability — live status tiles, all writable controls (current slider, switches, time-zone select, refresh / sync / reset buttons), both on-device schedule slots with native HH:MM time pickers, adaptive-mode card, 24-hour mini-graph charts, session totals, tariffs, and diagnostics — ships in [`docs/dashboard.yaml`](docs/dashboard.yaml).
 
 **Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin.
 
 **Install:** open your dashboard → ⋮ → *Edit dashboard* → ⋮ → *Raw configuration editor*, then paste the view under `views:`. If your device slug differs from `eveus_ev_charger`, do a find-and-replace.
+
+## Screenshots
+
+See the dashboard YAML used to render these views: [`docs/dashboard.yaml`](docs/dashboard.yaml).
+
+<!-- Add screenshots here -->
+
 
 ## Optional SOC helpers
 
