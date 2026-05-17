@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.9.0-rc.4 - 2026-05-17
+
+### 🐛 Fixed
+- Starting a charging session (Stop Charging off + One Charge on) no longer takes up to a minute to show as charging. `sensor.eveus_current` and the charging-state entities now reflect the new session within ~10–20 s instead of waiting for the next 60 s idle poll. Stopping a session also reflects faster.
+
 ## 4.9.0-rc.3 - 2026-05-17
 
 ### ✨ New
