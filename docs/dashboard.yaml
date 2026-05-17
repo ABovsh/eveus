@@ -57,6 +57,7 @@ sections:
         icon: mdi:information-outline
 
   # ─── Controls ────────────────────────────────────────────────────────────
+  # All writable inputs in one place: current slider, switches, select, buttons.
   - type: grid
     cards:
       - type: heading
@@ -79,6 +80,9 @@ sections:
           - entity: switch.eveus_ev_charger_one_charge
             name: One Charge
             icon: mdi:lightning-bolt
+          - entity: select.eveus_ev_charger_time_zone
+            name: Time Zone
+            icon: mdi:earth
           - type: divider
           - entity: button.eveus_ev_charger_force_refresh
             name: Force Refresh
@@ -86,6 +90,12 @@ sections:
           - entity: button.eveus_ev_charger_sync_time
             name: Sync Clock
             icon: mdi:clock-check-outline
+          - entity: button.eveus_ev_charger_reset_counter_a
+            name: Reset Counter A
+            icon: mdi:restart
+          - entity: button.eveus_ev_charger_reset_counter_b
+            name: Reset Counter B
+            icon: mdi:restart
 
   # ─── Adaptive ────────────────────────────────────────────────────────────
   - type: grid
@@ -267,15 +277,6 @@ sections:
             name: Rate 3
           - entity: sensor.eveus_ev_charger_rate_3_cost
             name: Rate 3 Cost
-      - type: entities
-        show_header_toggle: false
-        entities:
-          - entity: button.eveus_ev_charger_reset_counter_a
-            name: Reset Counter A
-            icon: mdi:restart
-          - entity: button.eveus_ev_charger_reset_counter_b
-            name: Reset Counter B
-            icon: mdi:restart
 
   # ─── Diagnostics ─────────────────────────────────────────────────────────
   - type: grid
@@ -308,6 +309,3 @@ sections:
           - entity: sensor.eveus_ev_charger_system_time
             name: Charger Clock
             icon: mdi:clock-outline
-          - entity: select.eveus_ev_charger_time_zone
-            name: Time Zone
-            icon: mdi:earth
