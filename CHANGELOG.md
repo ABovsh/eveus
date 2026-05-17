@@ -1,5 +1,47 @@
 # Changelog
 
+## 4.9.0 - 2026-05-17
+
+Stable promotion of the 4.9.0-rc series. Highlights:
+
+### ✨ Schedules — writable from HA
+- **`switch.eveus_schedule_1_enabled`** / **`switch.eveus_schedule_2_enabled`** — arm or disarm each on-device schedule slot.
+- **`time.eveus_schedule_1_start` / `_stop`** and **`time.eveus_schedule_2_start` / `_stop`** — native HA time pickers for each slot's window.
+
+### ✨ Adaptive mode — on/off control
+- **`switch.eveus_adaptive_mode`** — toggle the charger's adaptive (voltage-sag throttle) feature.
+
+### ✨ Clock & time zone
+- **`select.eveus_time_zone`** — readable / writable time-zone offset, range `-12..+14`.
+- **`button.eveus_sync_time`** — push HA's current time to the charger's clock.
+
+### ✨ 3-phase support
+- New `Phases` field (1 or 3) in setup and reconfigure. When `Phases = 3`, four extra sensors are exposed: Current Phase 2/3 and Voltage Phase 2/3. Existing 1-phase setups migrate transparently.
+
+### ✨ Leakage current sensors
+- **`sensor.eveus_leakage_current`** (mA) — live RCD reading.
+- **`sensor.eveus_leakage_current_peak`** (mA) — peak-hold leakage value.
+
+### ✨ Quick refresh
+- **`button.eveus_force_refresh`** — trigger an immediate coordinator poll.
+
+### 📊 Dashboard
+- New `docs/dashboard.yaml` — drop-in Lovelace view exposing every Eveus capability, organized into logical sections (EV Battery, Now, Charging Controls, Session, Last 24 h, Adaptive, Schedule 1/2, Clock & Time Zone, Counters, Tariffs, Diagnostics). See README for install steps.
+
+### 🐛 Fixes
+- Starting / stopping a charging session now reflects within ~10–20 s instead of waiting up to a minute for the next idle poll.
+- Connection Quality reports `unknown` on internal error instead of falsely showing `100%`.
+- Diagnostics endpoint no longer raises when called before setup completes.
+- Reconfigure / reauth / repair flows preserve `device_number` in multi-charger setups.
+
+### 🔒 Security & UX
+- Config-flow and reauth password fields are masked.
+- Diagnostic dumps redact `host` and `unique_id` in addition to credentials.
+- A warning is logged when the charger is configured over plain HTTP.
+
+### ⚠️ Breaking
+- `switch.eveus_reset_counter_a` removed in favor of `button.eveus_reset_counter_a` (proper one-shot reset). `button.eveus_reset_counter_b` mirrors it.
+
 ## 4.9.0-rc.5 - 2026-05-17
 
 ### ✨ New entities
