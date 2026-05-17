@@ -204,8 +204,8 @@ A ready-to-paste Lovelace view exposing every Eveus capability — live status t
 ## Screenshots
 
 See the dashboard YAML used to render these views: [`docs/dashboard.yaml`](docs/dashboard.yaml).
-
-<!-- Add screenshots here -->
+<img width="1189" height="711" alt="image" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
+<img width="1185" height="577" alt="image" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
 
 
 ## Optional SOC helpers
