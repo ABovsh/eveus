@@ -5,7 +5,7 @@
 💬 **Discussion:** [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.9.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.9.1-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 Local-only Home Assistant integration for Eveus EV chargers. Polls the charger directly over your LAN — no cloud, no account, no telemetry. Gives you live power/energy/cost telemetry, charging controls with optimistic UI, optional EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, multi-charger support, and a small set of automation-friendly entities (Car Connected, Charging Finish Time, Session Cost) so you do not need to write template sensors.

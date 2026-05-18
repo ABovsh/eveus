@@ -12,7 +12,13 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
-from .common_base import BaseEveusEntity, ControlEntityMixin, WriteOnChangeMixin
+from .common_base import (
+    BaseEveusEntity,
+    ControlEntityMixin,
+    OptimisticControlMixin,
+    WriteOnChangeMixin,
+)
+from .const import OPTIMISTIC_CONTROL_TTL
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,6 +37,7 @@ TIMEZONE_OPTIONS: tuple[str, ...] = tuple(_format_tz(i) for i in range(-12, 15))
 
 class EveusTimeZoneSelect(
     WriteOnChangeMixin,
+    OptimisticControlMixin[int],
     ControlEntityMixin,
     BaseEveusEntity,
     SelectEntity,
@@ -45,24 +52,35 @@ class EveusTimeZoneSelect(
 
     def __init__(self, updater, device_number: int = 1) -> None:
         super().__init__(updater, device_number)
+        self._init_optimistic_control()
         self._init_write_on_change()
 
-    @property
-    def current_option(self) -> str | None:
-        """Return the formatted timezone string from coordinator data."""
+    def _device_option(self) -> str | None:
+        """Resolve the formatted timezone string from coordinator data."""
         value = get_safe_value(self._updater.data or {}, "timeZone", int, None)
         if value is None:
             return None
         formatted = _format_tz(value)
         return formatted if formatted in TIMEZONE_OPTIONS else None
 
+    @property
+    def current_option(self) -> str | None:
+        """Return optimistic value while pending; otherwise the device value."""
+        if self._optimistic_value_is_valid(time.time(), OPTIMISTIC_CONTROL_TTL):
+            return _format_tz(self._optimistic_value)
+        return self._device_option()
+
     async def async_select_option(self, option: str) -> None:
-        """Send `timeZone=<int>` to the charger."""
+        """Send `timeZone=<int>` to the charger with optimistic UI."""
         if option not in TIMEZONE_OPTIONS:
             raise HomeAssistantError(f"Unsupported time zone: {option}")
         offset = int(option)
+        self._set_optimistic_value(offset)
+        self._write_if_changed(option)
         success = await self._updater.send_command("timeZone", offset)
         if not success:
+            self._optimistic_value = None
+            self._write_if_changed(self.current_option)
             raise HomeAssistantError(
                 f"Eveus charger did not accept timeZone={option}"
             )
@@ -73,6 +91,20 @@ class EveusTimeZoneSelect(
         """Push HA state only when the visible option or availability changes."""
         self._maybe_finalize_device_info()
         self._update_availability_state()
+        current_time = time.time()
+        device_option = self._device_option()
+        if device_option is not None:
+            try:
+                device_value = int(device_option)
+            except ValueError:
+                device_value = None
+            if device_value is not None:
+                self._reconcile_with_device(
+                    device_value,
+                    current_time,
+                    lambda optimistic, device: optimistic == device,
+                )
+        self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
         self._write_if_changed(self.current_option)
 
 

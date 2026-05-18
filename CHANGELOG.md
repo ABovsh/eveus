@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.9.1-rc.1 - 2026-05-18
+
+### 🐛 Fixed
+- **Time Zone**: picking a new offset no longer snaps back to the previous value for ~30 s before the next poll. `select.eveus_time_zone` now holds the chosen value during the brief window between the command being acknowledged and the charger reporting the new `timeZone` field — matching the responsive feel of `switch.eveus_stop_charging`, `number.eveus_charging_current`, and the schedule time entities. If the charger rejects the write, the select reverts to the device value immediately.
+
 ## 4.9.0 - 2026-05-17
 
 Stable promotion of the 4.9.0-rc series. Highlights:

@@ -140,3 +140,60 @@ def test_timezone_select_raises_on_failure() -> None:
 
     with pytest.raises(HomeAssistantError):
         asyncio.run(select.async_select_option("+3"))
+
+
+def test_timezone_select_holds_optimistic_value_until_device_confirms() -> None:
+    """After a successful write, current_option reflects the picked value even
+    if the next poll still returns the old timeZone — prevents the UI snap-back
+    that other writable controls already protect against via optimistic state.
+    """
+    updater = _Updater({"timeZone": 0})
+    select = EveusTimeZoneSelect(updater)
+    _disable_state_writes(select)
+
+    asyncio.run(select.async_select_option("+3"))
+    assert select.current_option == "+3"
+
+    # Coordinator hasn't observed the new value yet — UI must still show +3.
+    select._handle_coordinator_update()
+    assert select.current_option == "+3"
+
+    # Device finally confirms +3 → optimistic state clears, device value used.
+    updater.data["timeZone"] = 3
+    select._handle_coordinator_update()
+    assert select.current_option == "+3"
+    assert select._optimistic_value is None
+
+
+def test_timezone_select_optimistic_cleared_on_failed_write() -> None:
+    """A rejected command must not leave a stale optimistic value behind."""
+    updater = _Updater({"timeZone": 0})
+    updater.command_result = False
+    select = EveusTimeZoneSelect(updater)
+    _disable_state_writes(select)
+
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(select.async_select_option("+7"))
+
+    assert select._optimistic_value is None
+    assert select.current_option == "0"
+
+
+def test_timezone_select_optimistic_clears_on_device_mismatch() -> None:
+    """If the device persistently reports a different value past the TTL, the
+    optimistic state expires and the UI follows the device — same contract as
+    OptimisticControlMixin uses for switches and numbers.
+    """
+    updater = _Updater({"timeZone": 0})
+    select = EveusTimeZoneSelect(updater)
+    _disable_state_writes(select)
+
+    asyncio.run(select.async_select_option("+5"))
+    assert select.current_option == "+5"
+
+    # Force the optimistic value far enough into the past to expire.
+    select._optimistic_value_time = time.time() - 3600
+    updater.data["timeZone"] = 2
+    select._handle_coordinator_update()
+    assert select._optimistic_value is None
+    assert select.current_option == "+2"
