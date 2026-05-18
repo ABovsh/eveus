@@ -153,7 +153,7 @@ class TestSessionCost:
         spec = specs["Session Cost"]
         assert spec.unit == "₴"
         assert spec.precision == 2
-        assert spec.state_class == SensorStateClass.TOTAL
+        assert spec.state_class == SensorStateClass.MEASUREMENT
 
 
 

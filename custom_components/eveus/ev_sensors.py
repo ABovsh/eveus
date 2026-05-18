@@ -26,7 +26,7 @@ from .utils import (
     calculate_soc_percent,
     get_safe_value,
 )
-from .const import STATE_CACHE_TTL
+from .const import DEFAULT_SOC_CORRECTION, STATE_CACHE_TTL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ class CachedSOCCalculator:
                 self._input_cache.initial_soc,
                 self._input_cache.battery_capacity,
                 energy_charged,
-                self._input_cache.soc_correction or 7.5,
+                self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION,
             )
         except Exception as err:
             _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)
@@ -176,7 +176,7 @@ class CachedSOCCalculator:
             self._input_cache.initial_soc,
             self._input_cache.battery_capacity,
             energy_charged,
-            self._input_cache.soc_correction or 7.5,
+            self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION,
         )
 
     def invalidate_cache(self):
@@ -196,7 +196,7 @@ class CachedSOCCalculator:
     @property
     def soc_correction(self) -> float:
         """Return cached SOC correction or the integration default."""
-        return self._input_cache.soc_correction or 7.5
+        return self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION
 
     @property
     def target_soc(self) -> Optional[float]:

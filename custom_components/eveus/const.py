@@ -13,6 +13,11 @@ COMMAND_TIMEOUT: Final[int] = 25
 
 # Charger device-state value that means "actively charging" (CHARGING_STATES[4]).
 DEVICE_STATE_CHARGING: Final[int] = 4
+# Charger device-state value that means "error" (CHARGING_STATES[7]).
+DEVICE_STATE_ERROR: Final[int] = 7
+
+# Default SOC efficiency correction (%) when the user has not provided the helper.
+DEFAULT_SOC_CORRECTION: Final[float] = 7.5
 
 # Availability and resilience - optimized for WiFi connections
 AVAILABILITY_GRACE_PERIOD: Final[int] = 60

@@ -28,6 +28,8 @@ from .const import (
 )
 from .utils import RateLog
 
+_UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
+
 # Sequence of refreshes after a successful command. Covers both fast
 # commits (e.g. Charging Current — applied immediately, visible at 3 s)
 # and slow state transitions (Stop Charging off + One Charge on — the
@@ -72,6 +74,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self.scheme = scheme
         self.username = username
         self.password = password
+        self._basic_auth = aiohttp.BasicAuth(username, password)
         self._command_manager = CommandManager(self)
 
         self._poll_results: deque[bool] = deque(maxlen=20)
@@ -295,10 +298,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         try:
             async with self.get_session().post(
                 self.url_for("/main"),
-                auth=aiohttp.BasicAuth(self.username, self.password),
-                timeout=aiohttp.ClientTimeout(total=UPDATE_TIMEOUT),
+                auth=self._basic_auth,
+                timeout=_UPDATE_TIMEOUT_OBJ,
             ) as response:
                 if response.status == 401:
+                    self._record_failure(ConfigEntryAuthFailed("401"))
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 

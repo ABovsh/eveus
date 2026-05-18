@@ -109,6 +109,9 @@ def _split_host_and_scheme(
     if scheme not in ("http", "https"):
         raise vol.Invalid("Unsupported URL scheme")
 
+    if parsed.username or parsed.password:
+        raise vol.Invalid("Credentials in URL are not allowed")
+
     hostname = parsed.hostname
     if not hostname:
         raise vol.Invalid("Invalid IP address or hostname")
@@ -124,9 +127,11 @@ def _split_host_and_scheme(
     if hostname.endswith("."):
         hostname = hostname[:-1]
 
+    is_ipv6 = ":" in hostname
+    if is_ipv6 and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+
     if port is not None:
-        if ":" in hostname and not hostname.startswith("["):
-            hostname = f"[{hostname}]"
         return f"{hostname}:{port}", scheme
     return hostname, scheme
 
@@ -144,6 +149,8 @@ def validate_credentials(username: str, password: str) -> tuple[str, str]:
         raise vol.Invalid("Username and password cannot be empty")
     if len(username) > 32 or len(password) > 32:
         raise vol.Invalid("Username and password must be less than 32 characters")
+    if ":" in username:
+        raise vol.Invalid("Username cannot contain ':'")
 
     return username, password
 
@@ -208,6 +215,15 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _safe_phases_default(raw: Any) -> int:
+    """Coerce stored phase data to a valid option, falling back on DEFAULT_PHASES."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_PHASES
+    return value if value in PHASE_OPTIONS else DEFAULT_PHASES
+
+
 def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     """Build config-flow schema with optional defaults."""
     defaults = defaults or {}
@@ -227,7 +243,7 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
             ): vol.In(MODELS),
             vol.Required(
                 CONF_PHASES,
-                default=int(defaults.get(CONF_PHASES, DEFAULT_PHASES)),
+                default=_safe_phases_default(defaults.get(CONF_PHASES)),
             ): vol.In(PHASE_OPTIONS),
         }
     )

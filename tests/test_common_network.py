@@ -457,3 +457,20 @@ def test_async_shutdown_awaits_cancelled_tasks() -> None:
         assert updater._post_command_refresh_tasks == []
 
     asyncio.run(scenario())
+
+
+def test_updater_caches_basic_auth_object() -> None:
+    """BasicAuth must be cached on the updater, not rebuilt per poll."""
+    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    import aiohttp
+    assert isinstance(updater._basic_auth, aiohttp.BasicAuth)
+    assert updater._basic_auth.login == "admin"
+
+
+def test_update_uses_module_level_timeout_object(
+    coordinator: tuple[EveusUpdater, _Session],
+) -> None:
+    """Poll timeout comes from the module constant, not rebuilt per poll."""
+    updater, session = coordinator
+    asyncio.run(updater._async_update_data())
+    assert session.calls[0]["timeout"] is common_network._UPDATE_TIMEOUT_OBJ

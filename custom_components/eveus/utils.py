@@ -9,7 +9,7 @@ from typing import Any, Callable, TypeVar, Optional, Union, Dict
 
 from homeassistant.core import State, HomeAssistant
 
-from .const import DOMAIN
+from .const import DEFAULT_SOC_CORRECTION, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ def _remaining_seconds_or_state(
         target_soc = float(target_soc)
         power_meas = float(power_meas)
         battery_capacity = float(battery_capacity)
-        correction = float(correction) if correction is not None else 7.5
+        correction = float(correction) if correction is not None else DEFAULT_SOC_CORRECTION
 
         if not (0 <= current_soc <= 100) or not (0 <= target_soc <= 100):
             return _REMAINING_UNAVAILABLE

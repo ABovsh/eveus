@@ -105,7 +105,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             new_data[CONF_HOST], new_data[CONF_SCHEME] = _split_host_and_scheme(host)
         except vol.Invalid:
-            _LOGGER.warning("Could not normalize stored Eveus host %s", host)
+            _LOGGER.warning(
+                "Could not normalize stored Eveus host for entry %s",
+                getattr(entry, "entry_id", "<unknown>"),
+            )
 
     if CONF_SCHEME not in new_data:
         new_data[CONF_SCHEME] = DEFAULT_SCHEME

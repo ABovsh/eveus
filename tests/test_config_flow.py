@@ -560,3 +560,33 @@ def test_reauth_flow_maps_validation_errors(
     )
 
     assert result["errors"] == {"base": error_key}
+
+
+# --- rc.2 hardening tests -----------------------------------------------------
+
+
+def test_validate_host_rejects_userinfo_credentials() -> None:
+    """Reject URLs that embed credentials, since aiohttp BasicAuth would not pick them up."""
+    with pytest.raises(vol.Invalid):
+        validate_host("http://user:pass@192.168.1.50")
+
+
+def test_validate_host_keeps_brackets_for_ipv6_without_port() -> None:
+    """IPv6 literals normalize with brackets even when no port is given."""
+    normalized, scheme = config_flow._split_host_and_scheme("[::1]")
+    assert normalized == "[::1]"
+    assert scheme == "http"
+
+
+def test_validate_credentials_rejects_colon_in_username() -> None:
+    """':' in username breaks aiohttp BasicAuth — reject early in the form."""
+    with pytest.raises(vol.Invalid):
+        validate_credentials("user:name", "secret")
+
+
+def test_safe_phases_default_falls_back_on_corrupt_input() -> None:
+    """A corrupt stored phases value must not crash the schema build."""
+    assert config_flow._safe_phases_default("oops") == DEFAULT_PHASES
+    assert config_flow._safe_phases_default(None) == DEFAULT_PHASES
+    assert config_flow._safe_phases_default(2) == DEFAULT_PHASES
+    assert config_flow._safe_phases_default("3") == 3

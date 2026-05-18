@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.9.1-rc.2 - 2026-05-18
+
+### 🐛 Fixed
+- **Session Cost**: long-term statistics no longer break — `sensor.eveus_session_cost` now reports as a measurement instead of a totalled value, so the per-session reset is no longer treated as a meter-rollover.
+- **Setup form**: choosing a model and phases no longer crashes when an older stored phase value is invalid; the form falls back to the default and continues.
+- **Diagnostics**: the integration's title in the diagnostics dump no longer echoes the configured host alongside the redacted entry data.
+- **Logs**: a malformed legacy host stored on the entry is no longer printed verbatim on migration; only the entry identifier appears.
+
+### 🔧 Changed
+- **Config flow** rejects malformed input earlier and more clearly: URLs that embed credentials (`http://user:pass@host`), usernames containing `:`, and bare IPv6 inputs are now validated before any network call.
+- **Connection Quality** attributes (`connection_quality`, `latency_avg`) are exposed as quantized numeric values instead of formatted strings, so dashboards can chart them and the sensor no longer emits a state change every poll from sub-percent latency drift.
+
 ## 4.9.1-rc.1 - 2026-05-18
 
 ### 🐛 Fixed

@@ -399,9 +399,10 @@ def get_connection_attrs(updater, hass) -> dict:
             return {}
         metrics = updater.connection_quality
         success_rate = metrics.get("success_rate", 100)
+        latency_avg = max(0.0, metrics.get("latency_avg", 0.0))
         return {
-            "connection_quality": f"{round(success_rate)}%",
-            "latency_avg": f"{max(0, metrics.get('latency_avg', 0)):.1f}s",
+            "connection_quality": round(success_rate),
+            "latency_avg": round(latency_avg * 2) / 2,
             "status": (
                 "Excellent" if success_rate > 95 else
                 "Good" if success_rate > 80 else
@@ -634,7 +635,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         SensorSpec(
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
             sensor_type=SensorType.STATE, icon="mdi:cash",
-            state_class=SensorStateClass.TOTAL, unit="₴", precision=2,
+            state_class=SensorStateClass.MEASUREMENT, unit="₴", precision=2,
         ),
         SensorSpec(
             key="adaptive_charging", name="Adaptive Charging",

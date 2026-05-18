@@ -144,3 +144,18 @@ def test_monotonic_energy_sensors_use_total_increasing() -> None:
     specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
     for name in ("Total Energy", "Counter A Energy", "Counter B Energy"):
         assert specs[name].state_class == "total_increasing", f"{name} should be TOTAL_INCREASING"
+
+
+def test_connection_attrs_returns_quantized_numerics_not_drifting_strings() -> None:
+    """Connection attrs must be quantized numeric values to avoid per-tick state writes."""
+    from custom_components.eveus.sensor_definitions import get_connection_attrs
+
+    class _Fake:
+        available = True
+        connection_quality = {"success_rate": 99.34, "latency_avg": 0.873}
+
+    attrs = get_connection_attrs(_Fake(), None)
+    assert attrs["connection_quality"] == 99
+    assert attrs["latency_avg"] == 1.0  # rounded to nearest 0.5
+    assert isinstance(attrs["connection_quality"], int)
+    assert isinstance(attrs["latency_avg"], float)

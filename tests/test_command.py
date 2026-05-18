@@ -51,6 +51,8 @@ class _Updater:
 
     def __init__(self, session: _Session) -> None:
         self._session = session
+        import aiohttp
+        self._basic_auth = aiohttp.BasicAuth(self.username, self.password)
 
     def get_session(self) -> _Session:
         return self._session
@@ -168,3 +170,13 @@ def test_command_manager_urlencodes_command_payload() -> None:
 
 async def _no_sleep(_seconds: float) -> None:
     return None
+
+
+def test_command_manager_uses_module_level_timeout() -> None:
+    """Timeout object must come from the module-level constant, not be built per call."""
+    from custom_components.eveus import common_command
+
+    session = _Session(_Response())
+    asyncio.run(CommandManager(_Updater(session)).send_command("currentSet", 16))
+
+    assert session.calls[0]["timeout"] is common_command._COMMAND_TIMEOUT_OBJ

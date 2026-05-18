@@ -92,3 +92,18 @@ def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:
         "current_set": None,
         "sanitized_raw": {},
     }
+
+
+def test_diagnostics_does_not_leak_host_via_title() -> None:
+    """Diagnostics title must not echo the configured host even though the title contains it."""
+    import asyncio
+    from types import SimpleNamespace
+    from custom_components.eveus.diagnostics import async_get_config_entry_diagnostics
+
+    entry = SimpleNamespace(
+        title="Eveus Charger (192.168.1.50)",
+        data={"host": "192.168.1.50", "username": "u", "password": "p"},
+        runtime_data=None,
+    )
+    payload = asyncio.run(async_get_config_entry_diagnostics(object(), entry))
+    assert "192.168.1.50" not in payload["entry"]["title"]
