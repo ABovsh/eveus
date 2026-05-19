@@ -188,11 +188,11 @@ get_counter_b_energy = _make_value_getter("IEM2", precision=2, minimum=0)
 
 # Cost getters (divide by 100)
 _div100 = lambda v: v / 100
-get_counter_a_cost = _make_value_getter("IEM1_money", precision=2)
-get_counter_b_cost = _make_value_getter("IEM2_money", precision=2)
-get_primary_rate_cost = _make_value_getter("tarif", precision=2, transform=_div100)
-get_rate2_cost = _make_value_getter("tarifAValue", precision=2, transform=_div100)
-get_rate3_cost = _make_value_getter("tarifBValue", precision=2, transform=_div100)
+get_counter_a_cost = _make_value_getter("IEM1_money", precision=2, minimum=0)
+get_counter_b_cost = _make_value_getter("IEM2_money", precision=2, minimum=0)
+get_primary_rate_cost = _make_value_getter("tarif", precision=2, transform=_div100, minimum=0)
+get_rate2_cost = _make_value_getter("tarifAValue", precision=2, transform=_div100, minimum=0)
+get_rate3_cost = _make_value_getter("tarifBValue", precision=2, transform=_div100, minimum=0)
 
 # Temperature getters
 get_box_temperature = _make_value_getter("temperature1", precision=0)
@@ -314,7 +314,7 @@ def _make_rate_status_getter(rate_key: str):
 # for a stateful accumulator on the integration side.
 # =============================================================================
 
-get_session_cost = _make_value_getter("sessionMoney", precision=2)
+get_session_cost = _make_value_getter("sessionMoney", precision=2, minimum=0)
 
 
 # =============================================================================
@@ -331,8 +331,8 @@ def get_adaptive_charging_state(updater, hass) -> Optional[str]:
     return None
 
 
-get_adaptive_current = _make_value_getter("aiModecurrent", precision=0)
-get_adaptive_voltage = _make_value_getter("aiVoltage", precision=0)
+get_adaptive_current = _make_value_getter("aiModecurrent", precision=0, minimum=0)
+get_adaptive_voltage = _make_value_getter("aiVoltage", precision=0, minimum=0)
 
 
 def _format_minutes(value: Optional[int]) -> Optional[str]:
@@ -646,7 +646,8 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         SensorSpec(
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
             sensor_type=SensorType.STATE, icon="mdi:cash",
-            state_class=SensorStateClass.MEASUREMENT, unit="₴", precision=2,
+            device_class=SensorDeviceClass.MONETARY,
+            state_class=SensorStateClass.TOTAL, unit="UAH", precision=2,
         ),
         SensorSpec(
             key="adaptive_charging", name="Adaptive Charging",

@@ -24,6 +24,10 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
+class _AlreadyConfigured(Exception):
+    """Sentinel raised when repair would collide with another entry's unique_id."""
+
+
 class InvalidConfigRepairFlow(RepairsFlow):
     """Repair invalid stored Eveus setup data."""
 
@@ -67,16 +71,25 @@ class InvalidConfigRepairFlow(RepairsFlow):
                 info = await validate_input(self.hass, user_input)
                 entry_data = _merge_entry_data(entry.data, info["data"])
 
+                new_unique_id = entry_data[CONF_HOST]
+                if getattr(entry, "unique_id", None) != new_unique_id:
+                    for other in self.hass.config_entries.async_entries(DOMAIN):
+                        if other.entry_id != entry.entry_id and other.unique_id == new_unique_id:
+                            errors["base"] = "already_configured"
+                            raise _AlreadyConfigured()
+
                 self.hass.config_entries.async_update_entry(
                     entry,
                     data=entry_data,
                     title=info["title"],
-                    unique_id=entry_data[CONF_HOST],
+                    unique_id=new_unique_id,
                 )
                 ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
                 await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_create_entry(title="", data={})
 
+            except _AlreadyConfigured:
+                pass
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:

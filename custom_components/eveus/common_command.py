@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import COMMAND_TIMEOUT, ERROR_LOG_RATE_LIMIT
 from .utils import RateLog
@@ -58,8 +59,16 @@ class CommandManager:
                 for attempt in range(retry_attempts + 1):
                     try:
                         return await self._post_command(command, value)
+                    except aiohttp.ClientResponseError as err:
+                        if err.status == 401:
+                            self._consecutive_failures += 1
+                            raise ConfigEntryAuthFailed(
+                                "Eveus charger rejected credentials"
+                            ) from err
+                        last_error = err
+                        if attempt >= retry_attempts:
+                            break
                     except (
-                        aiohttp.ClientResponseError,
                         aiohttp.ClientConnectorError,
                         aiohttp.ClientError,
                         asyncio.TimeoutError,
@@ -77,6 +86,8 @@ class CommandManager:
                     _LOGGER.debug("Command %s failed: %s", command, last_error)
                 return False
 
+            except ConfigEntryAuthFailed:
+                raise
             except Exception as err:
                 self._consecutive_failures += 1
                 if self._should_log_error():

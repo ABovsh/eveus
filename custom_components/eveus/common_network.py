@@ -72,8 +72,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.host = host
         self.scheme = scheme
-        self.username = username
-        self.password = password
         self._basic_auth = aiohttp.BasicAuth(username, password)
         self._command_manager = CommandManager(self)
 

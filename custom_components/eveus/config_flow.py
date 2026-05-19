@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import ipaddress
+import math
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -112,6 +113,9 @@ def _split_host_and_scheme(
     if parsed.username or parsed.password:
         raise vol.Invalid("Credentials in URL are not allowed")
 
+    if parsed.query or parsed.fragment:
+        raise vol.Invalid("URL must not include a query or fragment")
+
     hostname = parsed.hostname
     if not hostname:
         raise vol.Invalid("Invalid IP address or hostname")
@@ -120,6 +124,9 @@ def _split_host_and_scheme(
         port = parsed.port
     except ValueError as err:
         raise vol.Invalid("Invalid port") from err
+
+    if port is not None and not 1 <= port <= 65535:
+        raise vol.Invalid("Invalid port")
 
     if not _is_valid_ip(hostname) and not _is_valid_hostname(hostname):
         raise vol.Invalid("Invalid IP address or hostname")
@@ -170,6 +177,9 @@ def validate_device_response(
         current_set = float(result["currentSet"])
     except (TypeError, ValueError) as err:
         raise InvalidDevice("Device reports invalid current format") from err
+
+    if not math.isfinite(current_set):
+        raise InvalidDevice("Device reports invalid current value")
 
     if current_set < MIN_CURRENT:
         raise InvalidDevice("Device reports invalid current setting")

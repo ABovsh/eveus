@@ -29,6 +29,9 @@ class _ConfigEntries:
     async def async_reload(self, entry_id: str) -> None:
         self.reloaded.append(entry_id)
 
+    def async_entries(self, domain: str) -> list[object]:
+        return [self.entry] if self.entry is not None else []
+
 
 def _data(**overrides: object) -> dict[str, object]:
     data = {

@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.9.1-rc.4 - 2026-05-19
+
+### 🐛 Fixed
+- **Session Cost**: now declared as a monetary sensor with the `UAH` currency code, so Home Assistant accepts it in energy/cost dashboards alongside the Counter A/B totals.
+- **Tariff rates** (`primary_rate_cost`, `rate_2_cost`, `rate_3_cost`) and **Counter A/B Cost** drop negative readings instead of charting them — protects long-term cost statistics from firmware glitches.
+- **Adaptive current / voltage**: negative readings from the AI charging mode telemetry are filtered out.
+- **Setup**: a malformed `currentSet` value (NaN / infinity) from the charger now produces a clear "invalid device" error instead of silently being accepted.
+- **Setup**: URLs that embed a query string or fragment (e.g. `https://host/?x=1`) are rejected, and TCP port `0` is no longer treated as a valid charger port.
+- **Authentication on commands**: when the charger replies `401 Unauthorized` to a control command, Home Assistant now starts reauthentication immediately instead of silently retrying with the wrong password.
+- **Repair flow**: repairing one charger entry to a host that's already used by another entry is now blocked with an "already configured" message instead of corrupting the device registry.
+
+### 🔒 Security
+- The integration no longer keeps the charger username and password as readable attributes on the coordinator object — only the prepared Basic Auth header is held in memory.
+
 ## 4.9.1-rc.3 - 2026-05-19
 
 ### 🐛 Fixed
