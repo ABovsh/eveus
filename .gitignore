@@ -9,3 +9,5 @@ venv/
 # Internal/private docs — never publish to GitHub
 AUDIT_FINDINGS*.md
 *.local.md
+.codex
+.coverage

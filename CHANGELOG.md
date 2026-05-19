@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.9.1-rc.3 - 2026-05-19
+
+### 🐛 Fixed
+- **Counter A/B Cost**: now declared as monetary sensors with the `UAH` currency code, so Home Assistant accepts them in long-term statistics and energy/cost dashboards.
+- **Measurements**: voltage, current, power, leak current, and per-phase readings reject negative and non-finite firmware payloads instead of charting them as real values.
+- **Session Energy / SOC**: negative `sessionEnergy` readings are dropped before they feed SOC math, so a charger glitch can't push the SOC sensor backwards.
+- **Current setpoint**: out-of-range firmware echoes below the 7 A minimum are filtered out instead of being shown as the active setpoint.
+- **Connection Quality**: NaN / infinity / boolean values from the metrics pipeline no longer surface as a misleading 100% reading — the sensor goes unknown instead.
+- **Numeric safety**: boolean values arriving in numeric fields are no longer silently converted to 0.0 / 1.0.
+
 ## 4.9.1-rc.2 - 2026-05-18
 
 ### 🐛 Fixed

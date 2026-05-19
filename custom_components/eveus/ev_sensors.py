@@ -334,7 +334,10 @@ class BaseEVHelperSensor(EveusSensorBase):
         to update ``input_number.ev_initial_soc`` before unplugging, since the
         charger starts a fresh session count on the next plug-in.
         """
-        return get_safe_value(self._updater.data, "sessionEnergy", float)
+        value = get_safe_value(self._updater.data, "sessionEnergy", float)
+        if value is None or value < 0:
+            return None
+        return value
 
 
 # =============================================================================

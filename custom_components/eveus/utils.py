@@ -109,6 +109,9 @@ def get_safe_value(
         if value in (None, 'unknown', 'unavailable', ''):
             return default
 
+        if isinstance(value, bool) and converter in (float, int):
+            return default
+
         converted = converter(value)
         if isinstance(converted, float) and not math.isfinite(converted):
             return default
