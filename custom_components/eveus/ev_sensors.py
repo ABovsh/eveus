@@ -26,7 +26,7 @@ from .utils import (
     calculate_soc_percent,
     get_safe_value,
 )
-from .const import STATE_CACHE_TTL
+from .const import DEFAULT_SOC_CORRECTION, STATE_CACHE_TTL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +90,36 @@ class CachedSOCCalculator:
     # `input_number.ev_target_soc` at HA startup would mask SOC entirely.
     _SOC_REQUIRED_KEYS = ("initial_soc", "battery_capacity", "soc_correction")
 
+    @staticmethod
+    def _get_input_entities(hass: HomeAssistant) -> Dict[str, Any]:
+        """Return SOC helper states keyed by cache field name."""
+        return {
+            "initial_soc": hass.states.get(_INPUT_INITIAL_SOC),
+            "battery_capacity": hass.states.get(_INPUT_BATTERY_CAPACITY),
+            "soc_correction": hass.states.get(_INPUT_SOC_CORRECTION),
+            "target_soc": hass.states.get(_INPUT_TARGET_SOC),
+        }
+
+    def _is_required_key(self, key: str) -> bool:
+        """Return True when a helper key is required for SOC sensors."""
+        return key in self._SOC_REQUIRED_KEYS
+
+    def _read_helper_value(self, key: str, entity: Any) -> Optional[float]:
+        """Return a valid helper value, or None for invalid optional helpers."""
+        try:
+            value = float(entity.state)
+        except (ValueError, TypeError):
+            if self._is_required_key(key):
+                raise
+            return None
+
+        minimum, maximum = _INPUT_LIMITS[key]
+        if not math.isfinite(value) or value < minimum or value > maximum:
+            if self._is_required_key(key):
+                raise ValueError(f"{key} is outside valid range")
+            return None
+        return value
+
     def _update_input_cache(self, hass: HomeAssistant) -> bool:
         """Refresh helper cache. Returns True when SOC helpers are usable.
 
@@ -101,12 +131,7 @@ class CachedSOCCalculator:
             return self._input_cache.helpers_available
 
         try:
-            entities = {
-                "initial_soc": hass.states.get(_INPUT_INITIAL_SOC),
-                "battery_capacity": hass.states.get(_INPUT_BATTERY_CAPACITY),
-                "soc_correction": hass.states.get(_INPUT_SOC_CORRECTION),
-                "target_soc": hass.states.get(_INPUT_TARGET_SOC),
-            }
+            entities = self._get_input_entities(hass)
 
             missing_soc = [k for k in self._SOC_REQUIRED_KEYS if entities[k] is None]
             if missing_soc:
@@ -120,21 +145,12 @@ class CachedSOCCalculator:
                     # Optional (target_soc); leave at None.
                     continue
                 try:
-                    value = float(entity.state)
+                    value = self._read_helper_value(key, entity)
                 except (ValueError, TypeError):
-                    if key in self._SOC_REQUIRED_KEYS:
-                        self._mark_helpers_unavailable()
-                        return False
-                    continue  # target_soc invalid → leave None, keep SOC working
-
-                minimum, maximum = _INPUT_LIMITS[key]
-                if not math.isfinite(value) or value < minimum or value > maximum:
-                    if key in self._SOC_REQUIRED_KEYS:
-                        self._mark_helpers_unavailable()
-                        return False
-                    continue
-
-                values[key] = value
+                    self._mark_helpers_unavailable()
+                    return False
+                if value is not None:
+                    values[key] = value
 
             if not self._input_cache.helpers_available:
                 _LOGGER.debug("SOC helper entities resolved (target_soc=%s).", values.get("target_soc"))
@@ -160,7 +176,7 @@ class CachedSOCCalculator:
                 self._input_cache.initial_soc,
                 self._input_cache.battery_capacity,
                 energy_charged,
-                self._input_cache.soc_correction or 7.5,
+                self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION,
             )
         except Exception as err:
             _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)
@@ -176,7 +192,7 @@ class CachedSOCCalculator:
             self._input_cache.initial_soc,
             self._input_cache.battery_capacity,
             energy_charged,
-            self._input_cache.soc_correction or 7.5,
+            self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION,
         )
 
     def invalidate_cache(self):
@@ -196,7 +212,7 @@ class CachedSOCCalculator:
     @property
     def soc_correction(self) -> float:
         """Return cached SOC correction or the integration default."""
-        return self._input_cache.soc_correction or 7.5
+        return self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION
 
     @property
     def target_soc(self) -> Optional[float]:
@@ -334,7 +350,10 @@ class BaseEVHelperSensor(EveusSensorBase):
         to update ``input_number.ev_initial_soc`` before unplugging, since the
         charger starts a fresh session count on the next plug-in.
         """
-        return get_safe_value(self._updater.data, "sessionEnergy", float)
+        value = get_safe_value(self._updater.data, "sessionEnergy", float)
+        if value is None or value < 0:
+            return None
+        return value
 
 
 # =============================================================================

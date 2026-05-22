@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from homeassistant.const import CONF_HOST
 
+from conftest import TEST_BASE_URL, TEST_HOST
 from custom_components.eveus import CONFIG_ENTRY_VERSION, async_migrate_entry
 from custom_components.eveus.const import CONF_PHASES, CONF_SCHEME, DEFAULT_PHASES
 
@@ -22,9 +23,9 @@ def test_migrate_entry_normalizes_host_and_bumps_version() -> None:
     config_entries = _ConfigEntries()
     hass = SimpleNamespace(config_entries=config_entries)
     entry = SimpleNamespace(
-        data={CONF_HOST: "http://192.168.1.50/main"},
-        unique_id="http://192.168.1.50/main",
-        title="Eveus Charger (http://192.168.1.50/main)",
+        data={CONF_HOST: f"{TEST_BASE_URL}/main"},
+        unique_id=f"{TEST_BASE_URL}/main",
+        title=f"Eveus Charger ({TEST_BASE_URL}/main)",
         version=1,
     )
 
@@ -33,12 +34,12 @@ def test_migrate_entry_normalizes_host_and_bumps_version() -> None:
     assert config_entries.calls == [
         {
             "data": {
-                CONF_HOST: "192.168.1.50",
+                CONF_HOST: TEST_HOST,
                 CONF_SCHEME: "http",
                 CONF_PHASES: DEFAULT_PHASES,
             },
-            "unique_id": "192.168.1.50",
-            "title": "Eveus Charger (192.168.1.50)",
+            "unique_id": TEST_HOST,
+            "title": f"Eveus Charger ({TEST_HOST})",
             "version": CONFIG_ENTRY_VERSION,
         }
     ]
@@ -48,9 +49,9 @@ def test_migrate_entry_only_bumps_old_version_when_data_is_current() -> None:
     config_entries = _ConfigEntries()
     hass = SimpleNamespace(config_entries=config_entries)
     entry = SimpleNamespace(
-        data={CONF_HOST: "192.168.1.50", CONF_SCHEME: "http", CONF_PHASES: 1},
-        unique_id="192.168.1.50",
-        title="Eveus Charger (192.168.1.50)",
+        data={CONF_HOST: TEST_HOST, CONF_SCHEME: "http", CONF_PHASES: 1},
+        unique_id=TEST_HOST,
+        title=f"Eveus Charger ({TEST_HOST})",
         version=1,
     )
 
@@ -63,9 +64,9 @@ def test_migrate_entry_leaves_current_entries_unchanged() -> None:
     config_entries = _ConfigEntries()
     hass = SimpleNamespace(config_entries=config_entries)
     entry = SimpleNamespace(
-        data={CONF_HOST: "192.168.1.50", CONF_SCHEME: "http", CONF_PHASES: 1},
-        unique_id="192.168.1.50",
-        title="Eveus Charger (192.168.1.50)",
+        data={CONF_HOST: TEST_HOST, CONF_SCHEME: "http", CONF_PHASES: 1},
+        unique_id=TEST_HOST,
+        title=f"Eveus Charger ({TEST_HOST})",
         version=CONFIG_ENTRY_VERSION,
     )
 
@@ -78,9 +79,9 @@ def test_migrate_entry_adds_default_scheme_to_current_host_data() -> None:
     config_entries = _ConfigEntries()
     hass = SimpleNamespace(config_entries=config_entries)
     entry = SimpleNamespace(
-        data={CONF_HOST: "192.168.1.50"},
-        unique_id="192.168.1.50",
-        title="Eveus Charger (192.168.1.50)",
+        data={CONF_HOST: TEST_HOST},
+        unique_id=TEST_HOST,
+        title=f"Eveus Charger ({TEST_HOST})",
         version=CONFIG_ENTRY_VERSION,
     )
 
@@ -89,12 +90,12 @@ def test_migrate_entry_adds_default_scheme_to_current_host_data() -> None:
     assert config_entries.calls == [
         {
             "data": {
-                CONF_HOST: "192.168.1.50",
+                CONF_HOST: TEST_HOST,
                 CONF_SCHEME: "http",
                 CONF_PHASES: DEFAULT_PHASES,
             },
-            "unique_id": "192.168.1.50",
-            "title": "Eveus Charger (192.168.1.50)",
+            "unique_id": TEST_HOST,
+            "title": f"Eveus Charger ({TEST_HOST})",
         }
     ]
 

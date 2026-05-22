@@ -12,6 +12,7 @@ import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
+from conftest import TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.const import (
@@ -71,7 +72,7 @@ def coordinator(monkeypatch: pytest.MonkeyPatch) -> tuple[EveusUpdater, _Session
     """Create a coordinator with a fake HTTP session."""
     session = _Session(_Response(payload={"state": 4, "powerMeas": 7200}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    return EveusUpdater("192.168.1.50", "admin", "secret", _Hass()), session
+    return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass()), session
 
 
 def test_update_data_fetches_payload_and_uses_stable_interval(
@@ -82,7 +83,7 @@ def test_update_data_fetches_payload_and_uses_stable_interval(
     data = asyncio.run(updater._async_update_data())
 
     assert data == {"state": 4, "powerMeas": 7200}
-    assert session.calls[0]["url"] == "http://192.168.1.50/main"
+    assert session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
     assert updater.update_interval == timedelta(seconds=CHARGING_UPDATE_INTERVAL)
     assert updater.connection_quality["consecutive_failures"] == 0
 
@@ -94,20 +95,21 @@ def test_update_data_uses_configured_https_scheme_and_port(
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(
         "eveus.local:8443",
-        "admin",
-        "secret",
+        TEST_USERNAME,
+        TEST_PASSWORD,
         _Hass(),
         scheme="https",
     )
 
     asyncio.run(updater._async_update_data())
 
+    assert len(session.calls) >= 1
     assert session.calls[0]["url"] == "https://eveus.local:8443/main"
     assert updater.connection_quality["consecutive_failures"] == 0
 
 
 def test_coordinator_compatibility_helpers() -> None:
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
     assert updater.available is True
     assert asyncio.run(updater.async_shutdown()) is None
@@ -123,7 +125,7 @@ def test_update_data_relaxes_interval_when_device_is_idle(
 
     session = _Session(_Response(payload={"state": 2, "powerMeas": 0}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
     asyncio.run(updater._async_update_data())
 
@@ -136,7 +138,7 @@ def test_update_data_uses_charging_interval_while_charging(
     """Charging state must keep the fast 30s cadence."""
     session = _Session(_Response(payload={"state": 4, "powerMeas": 7200}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
     asyncio.run(updater._async_update_data())
 
@@ -148,10 +150,11 @@ def test_update_data_raises_auth_failed_on_unauthorized(
 ) -> None:
     session = _Session(_Response(status=401))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
-    with pytest.raises(ConfigEntryAuthFailed):
+    with pytest.raises(ConfigEntryAuthFailed, match="Invalid authentication"):
         asyncio.run(updater._async_update_data())
+    assert updater.connection_quality["consecutive_failures"] == 1
 
 
 def test_update_data_raises_update_failed_for_bad_json(
@@ -159,10 +162,12 @@ def test_update_data_raises_update_failed_for_bad_json(
 ) -> None:
     session = _Session(_Response(payload="{not-json"))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
-    with pytest.raises(UpdateFailed):
+    with pytest.raises(UpdateFailed, match="Invalid Eveus response: JSONDecodeError"):
         asyncio.run(updater._async_update_data())
+    assert updater.available is False
+    assert updater.connection_quality["sample_count"] == 1
 
     assert updater.connection_quality["consecutive_failures"] == 1
     assert updater.connection_quality["last_error"] == "JSONDecodeError"
@@ -173,7 +178,7 @@ def test_update_data_raises_update_failed_for_non_dict_payload(
 ) -> None:
     session = _Session(_Response(payload=["not", "a", "mapping"]))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
     with pytest.raises(UpdateFailed):
         asyncio.run(updater._async_update_data())
@@ -190,7 +195,7 @@ def test_update_data_marks_unavailable_and_raises_update_failed_on_network_failu
         "async_get_clientsession",
         lambda hass: _FailingSession(),
     )
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater.data = {"state": 2}
 
     with pytest.raises(UpdateFailed):
@@ -208,7 +213,7 @@ def test_initial_network_failure_raises_update_failed(
         "async_get_clientsession",
         lambda hass: _FailingSession(),
     )
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
     with pytest.raises(UpdateFailed):
         asyncio.run(updater._async_update_data())
@@ -216,7 +221,7 @@ def test_initial_network_failure_raises_update_failed(
 
 
 def test_offline_backoff_skip_raises_even_without_prior_data() -> None:
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater.data = None
     updater._next_poll_attempt = time.time() + RETRY_DELAY
 
@@ -229,7 +234,7 @@ def test_force_refresh_bypasses_offline_backoff_once(
 ) -> None:
     session = _Session(_Response(payload={"state": 2}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._next_poll_attempt = time.time() + RETRY_DELAY
     updater._force_refresh_requested = True
 
@@ -251,7 +256,7 @@ def test_send_command_schedules_delayed_refresh_only_after_success() -> None:
             def async_create_task(self, coro):
                 return asyncio.get_event_loop().create_task(coro)
 
-        updater = EveusUpdater("192.168.1.50", "admin", "secret", _LoopHass())
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _LoopHass())
         recorded_delays: list[float] = []
 
         async def fake_delayed_refresh(self, delay: float) -> None:
@@ -259,7 +264,7 @@ def test_send_command_schedules_delayed_refresh_only_after_success() -> None:
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
-                return
+                raise
 
         # Replace the actual refresh with a sleep so we can observe tasks.
         original = EveusUpdater._delayed_refresh
@@ -302,7 +307,7 @@ def test_send_command_schedules_delayed_refresh_only_after_success() -> None:
 
 
 def test_failure_recording_reduces_polling_when_device_appears_offline() -> None:
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._last_success_time = time.time() - 700
     updater._consecutive_failures = 10
 
@@ -314,7 +319,7 @@ def test_failure_recording_reduces_polling_when_device_appears_offline() -> None
 
 
 def test_failure_recording_enters_silent_mode_after_many_failures() -> None:
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._consecutive_failures = 20
 
     updater._record_failure(asyncio.TimeoutError())
@@ -323,7 +328,7 @@ def test_failure_recording_enters_silent_mode_after_many_failures() -> None:
 
 
 def test_connection_quality_uses_recent_poll_window() -> None:
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._success_count = 100
     updater._total_count = 100
 
@@ -339,7 +344,7 @@ def test_connection_quality_uses_recent_poll_window() -> None:
 def test_offline_failure_recording_is_quiet_at_normal_log_levels(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._last_success_time = time.time() - 700
     updater._consecutive_failures = 10
 
@@ -359,7 +364,7 @@ def test_tune_interval_preserves_offline_cadence_when_likely_offline(
 
     session = _Session(_Response(payload={"state": 2}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
     updater._consecutive_failures = 11
     updater._last_success_time = time.time() - 700
@@ -374,7 +379,7 @@ def test_tune_interval_preserves_offline_cadence_when_likely_offline(
 
 def test_connection_quality_dict_has_all_expected_keys() -> None:
     """connection_quality must expose all keys that sensor and diagnostics depend on."""
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
     metrics = updater.connection_quality
 
@@ -393,7 +398,7 @@ def test_connection_quality_dict_has_all_expected_keys() -> None:
 
 def test_is_likely_offline_transitions() -> None:
     """is_likely_offline requires both >10 consecutive failures and >600s since last success."""
-    updater = EveusUpdater("192.168.1.50", "admin", "secret", _Hass())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
     # Neither condition met — online.
     assert updater.is_likely_offline is False
@@ -431,7 +436,7 @@ def test_async_shutdown_awaits_cancelled_tasks() -> None:
             def async_create_task(self, coro):
                 return asyncio.get_event_loop().create_task(coro)
 
-        updater = EveusUpdater("192.168.1.50", "admin", "secret", _LoopHass())
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _LoopHass())
 
         running = asyncio.Event()
         finished = asyncio.Event()
@@ -457,3 +462,84 @@ def test_async_shutdown_awaits_cancelled_tasks() -> None:
         assert updater._post_command_refresh_tasks == []
 
     asyncio.run(scenario())
+
+
+def test_updater_caches_basic_auth_object() -> None:
+    """BasicAuth must be cached on the updater, not rebuilt per poll."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    import aiohttp
+    assert isinstance(updater._basic_auth, aiohttp.BasicAuth)
+    assert updater._basic_auth.login == TEST_USERNAME
+
+
+def test_update_uses_module_level_timeout_object(
+    coordinator: tuple[EveusUpdater, _Session],
+) -> None:
+    """Poll timeout comes from the module constant, not rebuilt per poll."""
+    updater, session = coordinator
+    asyncio.run(updater._async_update_data())
+    assert session.calls[0]["timeout"] is common_network._UPDATE_TIMEOUT_OBJ
+
+
+def test_force_refresh_resets_flag_after_refresh_failure() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    async def broken_refresh() -> None:
+        raise RuntimeError("refresh failed")
+
+    updater.async_refresh = broken_refresh
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(updater.async_force_refresh())
+
+    assert updater._force_refresh_requested is False
+
+
+def test_delayed_refresh_exits_when_hass_is_stopping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_sleep(delay: float) -> None:
+        return None
+
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater.hass = SimpleNamespace(is_stopping=True)
+    refreshed = False
+
+    async def refresh() -> None:
+        nonlocal refreshed
+        refreshed = True
+
+    updater.async_refresh = refresh
+    monkeypatch.setattr(common_network.asyncio, "sleep", no_sleep)
+
+    asyncio.run(updater._delayed_refresh(1))
+
+    assert refreshed is False
+
+
+def test_delayed_refresh_swallows_refresh_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_sleep(delay: float) -> None:
+        return None
+
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater.hass = SimpleNamespace(is_stopping=False)
+
+    async def refresh() -> None:
+        raise RuntimeError("refresh failed")
+
+    updater.async_refresh = refresh
+    monkeypatch.setattr(common_network.asyncio, "sleep", no_sleep)
+
+    asyncio.run(updater._delayed_refresh(1))
+
+
+def test_tune_interval_handles_invalid_state_and_custom_interval() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    updater._tune_update_interval({"state": "bad"})
+    assert updater.update_interval == timedelta(seconds=common_network.IDLE_UPDATE_INTERVAL)
+
+    updater._set_update_interval(123)
+    assert updater.update_interval == timedelta(seconds=123)

@@ -8,12 +8,13 @@ future regressions in offline/missing-helper/target-reached paths fail loudly.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
+from conftest import EV_HELPERS, EveusTestUpdater, HelperHass
 from custom_components.eveus import sensor_definitions as sensors
 from custom_components.eveus import utils
 from custom_components.eveus.binary_sensor import (
@@ -24,47 +25,6 @@ from custom_components.eveus.ev_sensors import (
     CachedSOCCalculator,
     ChargingFinishTimeSensor,
 )
-
-
-# ---------------------------------------------------------------------------
-# Test doubles
-# ---------------------------------------------------------------------------
-
-class _States:
-    def __init__(self, values: dict[str, object]) -> None:
-        self._values = values
-
-    def get(self, entity_id: str) -> SimpleNamespace | None:
-        v = self._values.get(entity_id)
-        return None if v is None else SimpleNamespace(state=str(v))
-
-
-class _Hass:
-    def __init__(self, values: dict[str, object] | None = None) -> None:
-        self.states = _States(values or {})
-
-
-class _Updater:
-    host = "192.168.1.50"
-    available = True
-    last_update_success = True
-    scheme = "http"
-
-    def __init__(self, data: dict[str, object], *, available: bool = True) -> None:
-        self.data = data
-        self.available = available
-        self.connection_quality = {}
-
-    def async_add_listener(self, *args, **kwargs):
-        return lambda: None
-
-
-HELPERS = {
-    "input_number.ev_initial_soc": 20,
-    "input_number.ev_battery_capacity": 80,
-    "input_number.ev_soc_correction": 10,
-    "input_number.ev_target_soc": 80,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +42,12 @@ class TestCalculateRemainingSeconds:
 
     def test_returns_zero_when_target_already_reached(self) -> None:
         # Target reached must be a distinct, actionable result.
-        assert utils.calculate_remaining_seconds(80, 80, 7000, 80, 10) == 0.0
-        assert utils.calculate_remaining_seconds(90, 80, 7000, 80, 10) == 0.0
+        assert utils.calculate_remaining_seconds(80, 80, 7000, 80, 10) == pytest.approx(
+            0.0
+        )
+        assert utils.calculate_remaining_seconds(90, 80, 7000, 80, 10) == pytest.approx(
+            0.0
+        )
 
     def test_returns_none_when_not_charging(self) -> None:
         # Zero/negative power → no meaningful ETA. Critical: must NOT return 0.0,
@@ -110,11 +74,13 @@ class TestCalculateRemainingSeconds:
         # Same math as test_returns_positive_seconds_when_charging but with
         # correction=None; helper must default to 7.5%, not crash.
         seconds = utils.calculate_remaining_seconds(20, 80, 7000, 80, None)
-        assert seconds is not None and seconds > 0
+        assert seconds == pytest.approx(26687.26, abs=0.01)
 
     def test_remaining_time_and_seconds_agree_on_target_reached(self) -> None:
         # The two public helpers must agree on which inputs mean "done".
-        assert utils.calculate_remaining_seconds(80, 80, 7000, 80, 10) == 0.0
+        assert utils.calculate_remaining_seconds(80, 80, 7000, 80, 10) == pytest.approx(
+            0.0
+        )
         assert utils.calculate_remaining_time(80, 80, 7000, 80, 10) == "Target reached"
 
     def test_remaining_time_and_seconds_agree_on_not_charging(self) -> None:
@@ -132,28 +98,28 @@ class TestSessionCost:
     on tariff change is possible by construction."""
 
     def test_reads_session_money_field(self) -> None:
-        updater = _Updater({"sessionMoney": "65.57"})
-        assert sensors.get_session_cost(updater, None) == 65.57
+        updater = EveusTestUpdater({"sessionMoney": "65.57"})
+        assert sensors.get_session_cost(updater, None) == pytest.approx(65.57)
 
     def test_returns_none_when_offline(self) -> None:
-        updater = _Updater({"sessionMoney": "10"}, available=False)
+        updater = EveusTestUpdater({"sessionMoney": "10"}, available=False)
         assert sensors.get_session_cost(updater, None) is None
 
     def test_returns_none_when_field_missing(self) -> None:
-        updater = _Updater({"sessionEnergy": "10"})
+        updater = EveusTestUpdater({"sessionEnergy": "10"})
         assert sensors.get_session_cost(updater, None) is None
 
     def test_zero_is_a_valid_value(self) -> None:
-        updater = _Updater({"sessionMoney": "0"})
-        assert sensors.get_session_cost(updater, None) == 0.0
+        updater = EveusTestUpdater({"sessionMoney": "0"})
+        assert sensors.get_session_cost(updater, None) == pytest.approx(0.0)
 
-    def test_sensor_spec_is_registered_with_uah_unit(self) -> None:
+    def test_sensor_spec_is_registered_with_hryvnia_unit(self) -> None:
         specs = {s.name: s for s in sensors.get_sensor_specifications()}
         assert "Session Cost" in specs
         spec = specs["Session Cost"]
         assert spec.unit == "₴"
         assert spec.precision == 2
-        assert spec.state_class == SensorStateClass.TOTAL
+        assert spec.state_class == SensorStateClass.MEASUREMENT
 
 
 
@@ -162,12 +128,13 @@ class TestSessionCost:
 # ---------------------------------------------------------------------------
 
 _FIXED_NOW = datetime(2026, 5, 16, 10, 0, 0, tzinfo=timezone.utc)
+_EXPECTED_FINISH = datetime(2026, 5, 16, 17, 38, 0, tzinfo=timezone.utc)
 
 
-def _finish_sensor(updater_data: dict, helpers: dict | None = HELPERS):
+def _finish_sensor(updater_data: dict, helpers: dict | None = EV_HELPERS):
     calc = CachedSOCCalculator()
-    sensor = ChargingFinishTimeSensor(_Updater(updater_data), 1, calc)
-    sensor.hass = _Hass(helpers or {})
+    sensor = ChargingFinishTimeSensor(EveusTestUpdater(updater_data), 1, calc)
+    sensor.hass = HelperHass(helpers or {})
     return sensor
 
 
@@ -180,9 +147,7 @@ class TestChargingFinishTime:
         ):
             result = sensor._get_sensor_value()
         # ~27428s ahead, rounded up to the next whole minute.
-        assert result is not None
-        delta = result - _FIXED_NOW
-        assert timedelta(hours=7, minutes=30) < delta < timedelta(hours=8)
+        assert result == _EXPECTED_FINISH
         # Must be a tz-aware UTC timestamp suitable for device_class=timestamp.
         assert result.tzinfo is not None
         # Must be minute-aligned to avoid jitter on every poll.
@@ -242,7 +207,10 @@ class TestCarConnectedBinarySensor:
         assert _CONNECTED_STATES == frozenset({3, 4, 5, 6})
 
     def _make(self, data: dict, *, available: bool = True):
-        sensor = EveusCarConnectedBinarySensor(_Updater(data, available=available), 1)
+        sensor = EveusCarConnectedBinarySensor(
+            EveusTestUpdater(data, available=available),
+            1,
+        )
         sensor._entity_available = available
         return sensor
 
@@ -252,10 +220,15 @@ class TestCarConnectedBinarySensor:
             assert sensor.is_on is True, f"state={state} should be connected"
 
     def test_is_off_for_disconnected_states(self) -> None:
-        # 0=Startup, 1=System Test, 2=Standby, 7=Error → no plug presence.
-        for state in (0, 1, 2, 7):
+        # 0=Startup, 1=System Test, 2=Standby → no plug presence.
+        for state in (0, 1, 2):
             sensor = self._make({"state": state})
             assert sensor.is_on is False, f"state={state} should be disconnected"
+
+    def test_error_state_is_unknown(self) -> None:
+        # 7=Error: plug presence cannot be inferred — must be unknown, not False.
+        sensor = self._make({"state": 7})
+        assert sensor.is_on is None
 
     def test_returns_none_when_unavailable(self) -> None:
         # When the charger is offline, plug presence is unknown — not False.
@@ -283,7 +256,7 @@ class TestCarConnectedBinarySensor:
         sensor = self._make({"state": 4})
         # eveus_car_connected for device 1; "eveus2_..." for device 2.
         assert sensor.unique_id == "eveus_car_connected"
-        sensor2 = EveusCarConnectedBinarySensor(_Updater({"state": 4}), 2)
+        sensor2 = EveusCarConnectedBinarySensor(EveusTestUpdater({"state": 4}), 2)
         assert sensor2.unique_id == "eveus2_car_connected"
 
     def test_coordinator_update_writes_on_real_state_transition(self) -> None:
@@ -292,10 +265,10 @@ class TestCarConnectedBinarySensor:
         # callback always equalled the new value — masking transitions and
         # leaving HA stuck on the first-fetch value.
         data = {"state": 4}  # Charging → plug present
-        updater = _Updater(data)
+        updater = EveusTestUpdater(data)
         sensor = EveusCarConnectedBinarySensor(updater, 1)
         sensor._entity_available = True
-        sensor.hass = _Hass()
+        sensor.hass = HelperHass()
         writes: list[bool | None] = []
         sensor.async_write_ha_state = lambda: writes.append(sensor.is_on)
         sensor._maybe_finalize_device_info = lambda: None

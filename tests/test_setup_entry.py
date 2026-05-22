@@ -8,6 +8,7 @@ import pytest
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady
 
+from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 import custom_components.eveus as eveus
 from custom_components.eveus.const import CONF_MODEL, MODEL_16A
 from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
@@ -99,9 +100,9 @@ def _hass() -> SimpleNamespace:
 
 def _data(**overrides: object) -> dict[str, object]:
     data = {
-        CONF_HOST: "192.168.1.50",
-        CONF_USERNAME: "admin",
-        CONF_PASSWORD: "secret",
+        CONF_HOST: TEST_HOST,
+        CONF_USERNAME: TEST_USERNAME,
+        CONF_PASSWORD: TEST_PASSWORD,
         CONF_MODEL: MODEL_16A,
     }
     data.update(overrides)
@@ -121,7 +122,8 @@ def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatc
 
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
 
-    assert entry.runtime_data.updater.host == "192.168.1.50"
+    assert entry.runtime_data is not None
+    assert entry.runtime_data.updater.host == TEST_HOST
     assert entry.runtime_data.device_number == 1
     assert entry.runtime_data.soc_calculator is not None
     assert hass.config_entries.updated == [{"data": {**_data(), "device_number": 1}}]
@@ -165,8 +167,14 @@ def test_async_setup_entry_wraps_unexpected_refresh_failure(
     ],
 )
 def test_async_setup_entry_rejects_invalid_stored_data(overrides: dict[str, object]) -> None:
-    with pytest.raises(ConfigEntryError):
+    with pytest.raises(ConfigEntryError) as exc_info:
         asyncio.run(eveus.async_setup_entry(_hass(), _Entry(_data(**overrides))))
+    assert str(exc_info.value) in {
+        "No host specified",
+        "No username specified",
+        "No password specified",
+        "Invalid model specified",
+    }
 
 
 def test_async_setup_entry_creates_repair_for_invalid_stored_data(
@@ -202,6 +210,7 @@ def test_async_setup_entry_normalizes_stored_device_number(
 
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
 
+    assert entry.runtime_data is not None
     assert entry.runtime_data.device_number == 2
     assert hass.config_entries.updated == [{"data": {**_data(), "device_number": 2}}]
 
@@ -229,13 +238,14 @@ def test_unload_entry_propagates_platform_unload_failure() -> None:
 
     with pytest.raises(RuntimeError, match="unload failed"):
         asyncio.run(eveus.async_unload_entry(hass, entry))
+    assert hass.config_entries.unloaded == []
 
 
 def test_sensor_setup_creates_standard_and_ev_sensors() -> None:
     added: list[object] = []
     entry = _Entry(_data())
     entry.runtime_data = SimpleNamespace(
-        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
         device_number=1,
         soc_calculator=object(),
         phases=1,
@@ -256,7 +266,7 @@ def test_switch_setup_creates_control_entities() -> None:
     added: list[object] = []
     entry = _Entry(_data())
     entry.runtime_data = SimpleNamespace(
-        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
         device_number=2,
     )
 
@@ -288,7 +298,7 @@ def test_button_setup_creates_refresh_and_reset_buttons() -> None:
     added: list[object] = []
     entry = _Entry(_data())
     entry.runtime_data = SimpleNamespace(
-        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
         device_number=2,
     )
 
@@ -320,7 +330,7 @@ def test_select_setup_creates_time_zone_entity() -> None:
     added: list[object] = []
     entry = _Entry(_data())
     entry.runtime_data = SimpleNamespace(
-        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
         device_number=2,
     )
 
@@ -340,7 +350,7 @@ def test_number_setup_creates_current_entity() -> None:
     added: list[object] = []
     entry = _Entry(_data())
     entry.runtime_data = SimpleNamespace(
-        updater=_Updater(host="192.168.1.50", username="admin", password="secret"),
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
         device_number=3,
     )
 
@@ -358,7 +368,7 @@ def test_number_setup_creates_current_entity() -> None:
 
 
 def test_reset_counter_buttons_send_reset_commands() -> None:
-    updater = _Updater(host="192.168.1.50", username="admin", password="secret")
+    updater = _Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD)
     updater.send_command_calls = []
 
     async def send_command(command: str, value: object, *, retry: bool = True) -> bool:

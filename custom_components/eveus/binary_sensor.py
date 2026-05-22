@@ -28,6 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 # Complete, 6=Paused. Standby (2), Startup (0), System Test (1), and Error (7)
 # explicitly do not imply a plug presence.
 _CONNECTED_STATES: Final[FrozenSet[int]] = frozenset({3, 4, 5, 6})
+_PLUG_UNKNOWN_STATES: Final[FrozenSet[int]] = frozenset({7})
 
 
 class EveusCarConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
@@ -54,6 +55,8 @@ class EveusCarConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinaryS
         state = get_safe_value(self._updater.data, "state", int)
         if state is None:
             return None
+        if state in _PLUG_UNKNOWN_STATES:
+            return None
         return state in _CONNECTED_STATES
 
     @callback
@@ -65,7 +68,7 @@ class EveusCarConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinaryS
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
+    _hass: HomeAssistant,
     entry: EveusConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:

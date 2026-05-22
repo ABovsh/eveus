@@ -5,6 +5,7 @@ import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 
+from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus.diagnostics import async_get_config_entry_diagnostics
 
 
@@ -24,7 +25,7 @@ def test_diagnostics_redacts_credentials_and_reports_coordinator_state() -> None
     )
     entry = SimpleNamespace(
         title="Eveus Charger",
-        data={"host": "192.168.1.50", "username": "admin", "password": "secret"},
+        data={"host": TEST_HOST, "username": TEST_USERNAME, "password": TEST_PASSWORD},
         runtime_data=SimpleNamespace(updater=updater, device_number=1),
     )
 
@@ -51,7 +52,7 @@ def test_diagnostics_returns_partial_payload_when_runtime_data_missing() -> None
     """Diagnostics must not raise when setup failed before runtime_data was set."""
     entry = SimpleNamespace(
         title="Eveus Charger",
-        data={"host": "192.168.1.50", "username": "admin", "password": "secret"},
+        data={"host": TEST_HOST, "username": TEST_USERNAME, "password": TEST_PASSWORD},
     )
 
     diagnostics = asyncio.run(async_get_config_entry_diagnostics(None, entry))
@@ -75,7 +76,7 @@ def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:
     )
     entry = SimpleNamespace(
         title="Eveus Charger",
-        data={"host": "192.168.1.50", "username": "admin", "password": "secret"},
+        data={"host": TEST_HOST, "username": TEST_USERNAME, "password": TEST_PASSWORD},
         runtime_data=SimpleNamespace(updater=updater, device_number=2),
     )
 
@@ -92,3 +93,14 @@ def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:
         "current_set": None,
         "sanitized_raw": {},
     }
+
+
+def test_diagnostics_does_not_leak_host_via_title() -> None:
+    """Diagnostics title must not echo the configured host even though the title contains it."""
+    entry = SimpleNamespace(
+        title=f"Eveus Charger ({TEST_HOST})",
+        data={"host": TEST_HOST, "username": "u", "password": "p"},
+        runtime_data=None,
+    )
+    payload = asyncio.run(async_get_config_entry_diagnostics(object(), entry))
+    assert TEST_HOST not in payload["entry"]["title"]

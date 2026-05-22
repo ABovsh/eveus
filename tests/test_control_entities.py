@@ -4,9 +4,13 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
 from homeassistant.core import State
 
+from conftest import EveusTestUpdater as _Updater
+from conftest import disable_state_writes as _disable_state_writes
 from custom_components.eveus.number import EveusCurrentNumber
+from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
 from custom_components.eveus.button import (
     EveusResetCounterAButton,
     EveusResetCounterBButton,
@@ -14,30 +18,8 @@ from custom_components.eveus.button import (
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
     SWITCH_DESCRIPTIONS,
+    async_setup_entry as async_setup_switch_entry,
 )
-
-
-class _Updater:
-    host = "192.168.1.50"
-    available = True
-    last_update_success = True
-
-    def __init__(self, data: dict[str, object] | None = None) -> None:
-        self.data = data or {}
-        self.commands: list[tuple[str, object]] = []
-        self.command_result = True
-
-    def async_add_listener(self, *args: object, **kwargs: object):
-        return lambda: None
-
-    async def send_command(self, command: str, value: object, *, retry: bool = True) -> bool:
-        self.commands.append((command, value))
-        self.last_retry = retry
-        return self.command_result
-
-
-def _disable_state_writes(entity: object) -> None:
-    entity.async_write_ha_state = lambda: None
 
 
 def _one_charge_switch(updater: _Updater) -> BaseSwitchEntity:
@@ -121,7 +103,7 @@ def test_current_number_ignores_stale_coordinator_update_while_command_pending()
 
     entity._handle_coordinator_update()
 
-    assert entity.native_value == 14.0
+    assert entity.native_value == pytest.approx(14.0)
     assert entity._last_device_value is None
 
 
@@ -138,6 +120,23 @@ def test_current_number_handles_failed_command() -> None:
         asyncio.run(entity.async_set_native_value(12))
 
     assert updater.commands == [("currentSet", 12)]
+    assert entity._optimistic_value is None
+
+
+def test_current_number_wraps_unexpected_command_exception() -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    class BrokenUpdater(_Updater):
+        async def send_command(self, command: str, value: object, *, retry: bool = True) -> bool:
+            raise RuntimeError("network disappeared")
+
+    entity = EveusCurrentNumber(BrokenUpdater({"currentSet": "16"}), "16A")
+    _disable_state_writes(entity)
+
+    with pytest.raises(HomeAssistantError, match="Failed to set charging current"):
+        asyncio.run(entity.async_set_native_value(12))
+
+    assert entity._pending_value is None
     assert entity._optimistic_value is None
 
 
@@ -237,7 +236,7 @@ def test_switch_failed_command_does_not_set_optimistic_state() -> None:
     entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
 
-    with pytest.raises(HomeAssistantError):
+    with pytest.raises(HomeAssistantError, match="did not accept"):
         asyncio.run(entity.async_turn_on())
 
     assert updater.commands == [("oneCharge", 1)]
@@ -286,8 +285,9 @@ def test_stop_charging_switch_raises_on_command_failure() -> None:
     entity = _stop_charging_switch(updater)
     _disable_state_writes(entity)
 
-    with pytest.raises(HomeAssistantError):
+    with pytest.raises(HomeAssistantError, match="did not accept"):
         asyncio.run(entity.async_turn_on())
+    assert updater.commands == [("evseEnabled", 1)]
 
 
 def test_current_number_raises_on_command_failure() -> None:
@@ -299,8 +299,9 @@ def test_current_number_raises_on_command_failure() -> None:
     entity = EveusCurrentNumber(updater, "32A")
     _disable_state_writes(entity)
 
-    with pytest.raises(HomeAssistantError):
+    with pytest.raises(HomeAssistantError, match="did not accept"):
         asyncio.run(entity.async_set_native_value(20))
+    assert updater.commands == [("currentSet", 20)]
 
 
 def test_switch_optimistic_state_survives_until_device_confirms() -> None:
@@ -346,3 +347,91 @@ def test_switch_rapid_toggle_does_not_flicker_back() -> None:
     entity._handle_coordinator_update()
     assert entity.is_on is False
     assert entity._optimistic_state is None
+
+
+def test_switch_test_alias_properties_round_trip() -> None:
+    entity = _one_charge_switch(_Updater({}))
+
+    entity._optimistic_state_time = 123.0
+    entity._last_device_state = True
+
+    assert entity._optimistic_state_time == 123.0
+    assert entity._last_device_state is True
+
+
+def test_switch_resolves_recent_restored_state_when_payload_missing() -> None:
+    entity = _one_charge_switch(_Updater({}))
+    entity._last_device_state = True
+    entity._last_successful_read = time.time()
+
+    assert entity._resolve_state() is True
+
+
+def test_switch_added_to_hass_resolves_initial_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = _Updater({"oneCharge": "1"})
+    entity = _one_charge_switch(updater)
+
+    async def noop_added_to_hass(self):
+        return None
+
+    monkeypatch.setattr(
+        "custom_components.eveus.common_base.BaseEveusEntity.async_added_to_hass",
+        noop_added_to_hass,
+    )
+
+    asyncio.run(entity.async_added_to_hass())
+
+    assert entity.is_on is True
+
+
+def test_switch_restore_ignores_invalid_state() -> None:
+    entity = _one_charge_switch(_Updater({}))
+
+    asyncio.run(entity._async_restore_state(State("switch.one", "unknown")))
+
+    assert entity._last_device_state is None
+    assert entity.is_on is False
+
+
+def test_switch_setup_entry_adds_all_switches() -> None:
+    added = []
+    entry = type(
+        "Entry",
+        (),
+        {
+            "runtime_data": type(
+                "RuntimeData",
+                (),
+                {"updater": _Updater({}), "device_number": 3},
+            )()
+        },
+    )()
+
+    asyncio.run(async_setup_switch_entry(None, entry, lambda entities: added.extend(entities)))
+
+    assert [entity.entity_description.key for entity in added] == [
+        description.key for description in SWITCH_DESCRIPTIONS
+    ]
+    assert all(entity.unique_id.startswith("eveus3_") for entity in added)
+
+
+def test_number_setup_entry_skips_entity_when_model_is_missing() -> None:
+    added = []
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": {},
+            "runtime_data": type(
+                "RuntimeData",
+                (),
+                {"updater": _Updater({"currentSet": "16"}), "device_number": 1},
+            )(),
+        },
+    )()
+
+    asyncio.run(async_setup_number_entry(None, entry, lambda entities: added.extend(entities)))
+
+    assert added == []

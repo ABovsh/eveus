@@ -187,7 +187,7 @@ class EveusCurrentNumber(EveusNumberEntity):
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
+    _hass: HomeAssistant,
     entry: EveusConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:

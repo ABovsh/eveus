@@ -3,6 +3,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+addopts = "-p no:homeassistant"
 
 [tool.coverage.run]
 branch = true
@@ -12,7 +13,7 @@ omit = ["tests/*"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 80
+fail_under = 90
 
 [tool.ruff]
 line-length = 100

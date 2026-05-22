@@ -1,8 +1,9 @@
 """Unit tests for optional EV helper sensors."""
 from __future__ import annotations
 
-from types import SimpleNamespace
+import pytest
 
+from conftest import EV_HELPERS, EveusTestUpdater, HelperHass
 from custom_components.eveus.ev_sensors import (
     CachedSOCCalculator,
     EVSocKwhSensor,
@@ -10,53 +11,17 @@ from custom_components.eveus.ev_sensors import (
 )
 
 
-class _States:
-    def __init__(self, values: dict[str, object]) -> None:
-        self._values = values
-
-    def get(self, entity_id: str) -> SimpleNamespace | None:
-        value = self._values.get(entity_id)
-        if value is None:
-            return None
-        return SimpleNamespace(state=str(value))
-
-
-class _Hass:
-    def __init__(self, values: dict[str, object]) -> None:
-        self.states = _States(values)
-
-
-class _Updater:
-    host = "192.168.1.50"
-    available = True
-    last_update_success = True
-
-    def __init__(self, data: dict[str, object]) -> None:
-        self.data = data
-
-    def async_add_listener(self, *args: object, **kwargs: object):
-        return lambda: None
-
-
-HELPERS = {
-    "input_number.ev_initial_soc": 20,
-    "input_number.ev_battery_capacity": 80,
-    "input_number.ev_soc_correction": 10,
-    "input_number.ev_target_soc": 80,
-}
-
-
 def test_cached_soc_calculator_uses_shared_soc_math() -> None:
     calculator = CachedSOCCalculator()
 
-    assert calculator.get_soc_kwh(_Hass(HELPERS), 20) == 34
+    assert calculator.get_soc_kwh(HelperHass(EV_HELPERS), 20) == 34
 
 
 def test_ev_sensors_keep_soc_calculator_per_instance() -> None:
     first_calculator = CachedSOCCalculator()
     second_calculator = CachedSOCCalculator()
-    first = EVSocKwhSensor(_Updater({"sessionEnergy": "10"}), 1, first_calculator)
-    second = EVSocKwhSensor(_Updater({"sessionEnergy": "10"}), 2, second_calculator)
+    first = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "10"}), 1, first_calculator)
+    second = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "10"}), 2, second_calculator)
 
     assert first._soc_calculator is first_calculator
     assert second._soc_calculator is second_calculator
@@ -66,11 +31,11 @@ def test_ev_sensors_keep_soc_calculator_per_instance() -> None:
 def test_time_to_target_soc_uses_shared_calculator_cache() -> None:
     calculator = CachedSOCCalculator()
     sensor = TimeToTargetSocSensor(
-        _Updater({"sessionEnergy": "0", "powerMeas": "7000"}),
+        EveusTestUpdater({"sessionEnergy": "0", "powerMeas": "7000"}),
         1,
         calculator,
     )
-    sensor.hass = _Hass(HELPERS)
+    sensor.hass = HelperHass(EV_HELPERS)
 
     assert sensor._get_sensor_value() == "7h 37m"
     assert calculator.battery_capacity == 80
@@ -81,7 +46,7 @@ def test_cached_soc_calculator_exposes_all_cached_properties() -> None:
     """All four CachedSOCCalculator properties return the helper values after cache warm."""
     calculator = CachedSOCCalculator()
 
-    calculator._update_input_cache(_Hass(HELPERS))
+    calculator._update_input_cache(HelperHass(EV_HELPERS))
 
     assert calculator.battery_capacity == 80
     assert calculator.initial_soc == 20
@@ -92,14 +57,14 @@ def test_cached_soc_calculator_exposes_all_cached_properties() -> None:
 def test_cached_soc_calculator_invalidate_clears_cached_values() -> None:
     """invalidate_cache forces a re-read on the next access."""
     calculator = CachedSOCCalculator()
-    calculator._update_input_cache(_Hass(HELPERS))
+    calculator._update_input_cache(HelperHass(EV_HELPERS))
     assert calculator.battery_capacity == 80
 
     calculator.invalidate_cache()
 
-    updated = dict(HELPERS)
+    updated = dict(EV_HELPERS)
     updated["input_number.ev_battery_capacity"] = 60
-    calculator._update_input_cache(_Hass(updated))
+    calculator._update_input_cache(HelperHass(updated))
 
     assert calculator.battery_capacity == 60
 
@@ -107,16 +72,16 @@ def test_cached_soc_calculator_invalidate_clears_cached_values() -> None:
 def test_energy_charged_reads_session_energy_directly() -> None:
     """4.6.0: energy delivered comes from the charger's `sessionEnergy` field."""
     calculator = CachedSOCCalculator()
-    sensor = EVSocKwhSensor(_Updater({"sessionEnergy": "12.5"}), 1, calculator)
-    sensor.hass = _Hass(HELPERS)
+    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "12.5"}), 1, calculator)
+    sensor.hass = HelperHass(EV_HELPERS)
 
-    assert sensor._get_energy_charged() == 12.5
+    assert sensor._get_energy_charged() == pytest.approx(12.5)
 
 
 def test_energy_charged_returns_none_when_session_energy_missing() -> None:
     calculator = CachedSOCCalculator()
-    sensor = EVSocKwhSensor(_Updater({}), 1, calculator)
-    sensor.hass = _Hass(HELPERS)
+    sensor = EVSocKwhSensor(EveusTestUpdater({}), 1, calculator)
+    sensor.hass = HelperHass(EV_HELPERS)
 
     assert sensor._get_energy_charged() is None
 
@@ -125,13 +90,13 @@ def test_session_reset_collapses_to_zero() -> None:
     """When the charger starts a new session it resets sessionEnergy itself —
     we must reflect that immediately, not carry a stale baseline."""
     calculator = CachedSOCCalculator()
-    updater = _Updater({"sessionEnergy": "8"})
+    updater = EveusTestUpdater({"sessionEnergy": "8"})
     sensor = EVSocKwhSensor(updater, 1, calculator)
-    sensor.hass = _Hass(HELPERS)
+    sensor.hass = HelperHass(EV_HELPERS)
 
-    assert sensor._get_energy_charged() == 8.0
+    assert sensor._get_energy_charged() == pytest.approx(8.0)
     updater.data = {"sessionEnergy": "0"}
-    assert sensor._get_energy_charged() == 0.0
+    assert sensor._get_energy_charged() == pytest.approx(0.0)
 
 
 def test_calculator_has_no_baseline_state() -> None:

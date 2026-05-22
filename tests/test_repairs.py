@@ -7,14 +7,22 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 
+from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import repairs
-from custom_components.eveus.config_flow import CannotConnect, normalize_user_input
+from custom_components.eveus.config_flow import (
+    CannotConnect,
+    InvalidAuth,
+    InvalidDevice,
+    InvalidInput,
+    normalize_user_input,
+)
 from custom_components.eveus.const import CONF_MODEL, MODEL_16A
 
 
 class _ConfigEntries:
-    def __init__(self, entry: object | None) -> None:
+    def __init__(self, entry: object | None, others: list[object] | None = None) -> None:
         self.entry = entry
+        self.others = others or []
         self.updated: list[dict[str, object]] = []
         self.reloaded: list[str] = []
 
@@ -29,12 +37,16 @@ class _ConfigEntries:
     async def async_reload(self, entry_id: str) -> None:
         self.reloaded.append(entry_id)
 
+    def async_entries(self, domain: str) -> list[object]:
+        entries = [self.entry] if self.entry is not None else []
+        return [*entries, *self.others]
+
 
 def _data(**overrides: object) -> dict[str, object]:
     data = {
-        CONF_HOST: "192.168.1.50",
-        CONF_USERNAME: "admin",
-        CONF_PASSWORD: "secret",
+        CONF_HOST: TEST_HOST,
+        CONF_USERNAME: TEST_USERNAME,
+        CONF_PASSWORD: TEST_PASSWORD,
         CONF_MODEL: MODEL_16A,
     }
     data.update(overrides)
@@ -46,7 +58,7 @@ def test_invalid_config_repair_flow_updates_entry(
 ) -> None:
     async def fake_validate_input(hass, data):
         return {
-            "title": "Eveus Charger (192.168.1.50)",
+            "title": f"Eveus Charger ({TEST_HOST})",
             "data": normalize_user_input(data),
             "device_info": {"current_set": 16},
         }
@@ -67,7 +79,7 @@ def test_invalid_config_repair_flow_updates_entry(
 
     assert result["type"] == "create_entry"
     assert config_entries.updated[0]["data"][CONF_PASSWORD] == "new"
-    assert config_entries.updated[0]["unique_id"] == "192.168.1.50"
+    assert config_entries.updated[0]["unique_id"] == TEST_HOST
     assert config_entries.reloaded == ["entry-id"]
     assert deleted == [("eveus", "invalid_config_entry-id")]
 
@@ -79,7 +91,7 @@ def test_invalid_config_repair_flow_preserves_device_number(
 
     async def fake_validate_input(hass, data):
         return {
-            "title": "Eveus Charger (192.168.1.50)",
+            "title": f"Eveus Charger ({TEST_HOST})",
             "data": normalize_user_input(data),
             "device_info": {"current_set": 16},
         }
@@ -151,3 +163,79 @@ def test_async_create_fix_flow_passes_entry_id() -> None:
     )
 
     assert isinstance(flow, repairs.InvalidConfigRepairFlow)
+
+
+def test_async_create_fix_flow_handles_missing_entry_id() -> None:
+    hass = SimpleNamespace(config_entries=_ConfigEntries(None))
+
+    flow = asyncio.run(repairs.async_create_fix_flow(hass, "invalid_config", None))
+
+    assert isinstance(flow, repairs.InvalidConfigRepairFlow)
+    assert flow._entry_id is None
+
+
+def test_repair_flow_init_delegates_to_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
+    entry = SimpleNamespace(entry_id="entry-id", data=_data())
+    hass = SimpleNamespace(config_entries=_ConfigEntries(entry))
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
+
+    async def fake_confirm(user_input=None):
+        return {"type": "form", "user_input": user_input}
+
+    monkeypatch.setattr(flow, "async_step_confirm", fake_confirm)
+
+    assert asyncio.run(flow.async_step_init({"host": TEST_HOST})) == {
+        "type": "form",
+        "user_input": {"host": TEST_HOST},
+    }
+
+
+@pytest.mark.parametrize(
+    ("exc", "error"),
+    [
+        (InvalidAuth, "invalid_auth"),
+        (InvalidInput, "invalid_input"),
+        (InvalidDevice, "invalid_device"),
+        (RuntimeError, "unknown"),
+    ],
+)
+def test_invalid_config_repair_flow_maps_validation_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: type[Exception],
+    error: str,
+) -> None:
+    async def fake_validate_input(hass, data):
+        raise exc("boom")
+
+    entry = SimpleNamespace(entry_id="entry-id", data=_data())
+    hass = SimpleNamespace(config_entries=_ConfigEntries(entry))
+    monkeypatch.setattr(repairs, "validate_input", fake_validate_input)
+
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
+    result = asyncio.run(flow.async_step_confirm(_data()))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": error}
+
+
+def test_invalid_config_repair_flow_blocks_unique_id_collision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_validate_input(hass, data):
+        return {
+            "title": "Eveus Charger (other-host)",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    entry = SimpleNamespace(entry_id="entry-id", unique_id=TEST_HOST, data=_data())
+    other = SimpleNamespace(entry_id="other-id", unique_id="other-host", data={})
+    hass = SimpleNamespace(config_entries=_ConfigEntries(entry, [other]))
+    monkeypatch.setattr(repairs, "validate_input", fake_validate_input)
+
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
+    result = asyncio.run(flow.async_step_confirm(_data(**{CONF_HOST: "other-host"})))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "already_configured"}
+    assert hass.config_entries.updated == []

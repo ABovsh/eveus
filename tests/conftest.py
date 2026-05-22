@@ -5,7 +5,21 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+
+TEST_HOST = "192.168.1.50"  # NOSONAR(python:S1313) - RFC 1918 LAN address, test fixture only
+TEST_HOST_ALT = "192.168.1.55"  # NOSONAR(python:S1313) - RFC 1918 LAN address, test fixture only
+TEST_BASE_URL = f"http://{TEST_HOST}"  # NOSONAR(python:S5332) - HTTP required by charger firmware; test fixture only
+TEST_BASE_URL_ALT = f"http://{TEST_HOST_ALT}"  # NOSONAR(python:S5332) - HTTP required by charger firmware; test fixture only
+TEST_USERNAME = "test_user"  # NOSONAR(python:S2068) - test fixture, not a real credential
+TEST_PASSWORD = "test_password"  # NOSONAR(python:S2068) - test fixture, not a real credential
+EV_HELPERS = {
+    "input_number.ev_initial_soc": 20,
+    "input_number.ev_battery_capacity": 80,
+    "input_number.ev_soc_correction": 10,
+    "input_number.ev_target_soc": 80,
+}
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -22,22 +36,22 @@ def _install_voluptuous_stub() -> None:
         """Test replacement for voluptuous.Invalid."""
 
     class Schema:
-        def __init__(self, schema: Any, *args: Any, **kwargs: Any) -> None:
-            self.schema = schema
+        def __init__(self, schema_: Any, *args: Any, **kwargs: Any) -> None:
+            self.schema_ = schema_
 
         def __call__(self, value: Any) -> Any:
             return value
 
-    def Required(key: str, default: Any = None) -> str:
+    def required_(key: str, default: Any = None) -> str:
         return key
 
-    def In(values: Any) -> Any:
+    def in_(values: Any) -> Any:
         return values
 
     vol.Invalid = Invalid
     vol.Schema = Schema
-    vol.Required = Required
-    vol.In = In
+    vol.Required = required_
+    vol.In = in_
     vol.ALLOW_EXTRA = object()
     sys.modules["voluptuous"] = vol
 
@@ -124,7 +138,7 @@ def _install_homeassistant_stub() -> None:
 
     class State:
         def __init__(self, *args: str) -> None:
-            self.state = args[-1]
+            self.state_ = args[-1]
 
     class HomeAssistant:
         """Placeholder Home Assistant object."""
@@ -362,3 +376,70 @@ def _install_homeassistant_stub() -> None:
 _install_voluptuous_stub()
 _install_aiohttp_stub()
 _install_homeassistant_stub()
+
+
+class HelperStates:
+    """Small Home Assistant state registry fake for helper-entity tests."""
+
+    def __init__(self, values: dict[str, object] | None = None) -> None:
+        self._values = values or {}
+        self.calls: list[str] = []
+
+    def get(self, entity_id: str) -> SimpleNamespace | None:
+        self.calls.append(entity_id)
+        value = self._values.get(entity_id)
+        if value is None:
+            return None
+        return SimpleNamespace(state=str(value))
+
+
+class HelperHass:
+    """Minimal hass object exposing only the states API used by helper sensors."""
+
+    def __init__(self, values: dict[str, object] | None = None) -> None:
+        self.states = HelperStates(values)
+
+
+class EveusTestUpdater:
+    """Reusable coordinator/updater fake for direct entity tests."""
+
+    host = TEST_HOST
+    available = True
+    last_update_success = True
+    scheme = "http"
+
+    def __init__(
+        self,
+        data: dict[str, object] | None = None,
+        *,
+        host: str = TEST_HOST,
+        available: bool = True,
+        scheme: str = "http",
+        quality: dict[str, object] | None = None,
+    ) -> None:
+        self.host = host
+        self.available = available
+        self.scheme = scheme
+        self.data = data or {}
+        self.connection_quality = quality or {}
+        self.commands: list[tuple[str, object]] = []
+        self.command_result = True
+
+    def async_add_listener(self, *args: object, **kwargs: object):
+        return lambda: None
+
+    async def send_command(
+        self,
+        command: str,
+        value: object,
+        *,
+        retry: bool = True,
+    ) -> bool:
+        self.commands.append((command, value))
+        self.last_retry = retry
+        return self.command_result
+
+
+def disable_state_writes(entity: object) -> None:
+    """Replace HA state writes with a no-op for direct entity unit tests."""
+    entity.async_write_ha_state = lambda: None

@@ -2,7 +2,17 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
+import pytest
+from conftest import TEST_BASE_URL, TEST_HOST, EveusTestUpdater
+from custom_components.eveus import common
+from custom_components.eveus.common_base import (
+    BaseEveusEntity,
+    EveusSensorBase,
+    OptimisticControlMixin,
+    WriteOnChangeMixin,
+)
 from custom_components.eveus.number import EveusCurrentNumber
 from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, SensorSpec, SensorType
 from custom_components.eveus.button import (
@@ -16,7 +26,7 @@ from custom_components.eveus.switch import (
 
 
 class _Updater:
-    host = "192.168.1.50"
+    host = TEST_HOST
     available = True
     last_update_success = True
 
@@ -207,6 +217,50 @@ def test_base_entity_availability_restores_after_grace_period() -> None:
     assert entity._last_known_available is True
 
 
+def test_base_entity_availability_restore_log_is_rate_limited(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    updater = _Updater()
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+    entity._unavailable_since = 0
+    entity._last_known_available = False
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.common_base"):
+        entity._update_availability_state(label="Sensor")
+        entity._unavailable_since = 0
+        entity._update_availability_state(label="Sensor")
+
+    restore_logs = [
+        record
+        for record in caplog.records
+        if "connection restored" in record.getMessage()
+    ]
+    assert len(restore_logs) == 1
+
+
+def test_base_entity_cached_data_value_uses_default_for_none_payload_value() -> None:
+    updater = EveusTestUpdater({"powerMeas": None})
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: updater.data["powerMeas"],
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+
+    assert entity.get_cached_data_value("powerMeas", default="fallback") == "fallback"
+
+
 def test_base_entity_device_info_falls_back_when_payload_is_malformed() -> None:
     updater = _Updater()
     updater.data = "not-a-dict"
@@ -221,13 +275,13 @@ def test_base_entity_device_info_falls_back_when_payload_is_malformed() -> None:
     )
 
     assert entity.device_info == {
-        "identifiers": {("eveus", "192.168.1.50")},
+        "identifiers": {("eveus", TEST_HOST)},
         "name": "Eveus EV Charger",
         "manufacturer": "Eveus",
         "model": "Eveus EV Charger",
         "sw_version": "Unknown",
         "hw_version": "Unknown",
-        "configuration_url": "http://192.168.1.50",
+        "configuration_url": TEST_BASE_URL,
     }
 
 
@@ -293,3 +347,272 @@ def test_control_state_properties_do_not_mutate_cached_device_state() -> None:
     assert number._last_device_value is None
     assert switch.is_on is False
     assert switch._last_device_state is None
+
+
+def test_common_module_exports_backward_compatible_symbols() -> None:
+    assert common.BaseEveusEntity is BaseEveusEntity
+    assert common.CommandManager.__name__ == "CommandManager"
+    assert common.EveusUpdater.__name__ == "EveusUpdater"
+    assert issubclass(common.EveusConnectionError, common.EveusError)
+    assert set(common.__all__) == {
+        "BaseEveusEntity",
+        "ControlEntityMixin",
+        "EveusSensorBase",
+        "EveusDiagnosticSensor",
+        "EveusUpdater",
+        "CommandManager",
+        "EveusError",
+        "EveusConnectionError",
+    }
+
+
+def test_base_entity_requires_entity_name() -> None:
+    class NamelessEntity(BaseEveusEntity):
+        pass
+
+    with pytest.raises(NotImplementedError):
+        NamelessEntity(_Updater())
+
+
+def test_base_entity_async_added_to_hass_restores_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    updater = _Updater()
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+    restored: list[str] = []
+
+    async def fake_get_last_state():
+        return SimpleNamespace(state="42")
+
+    async def fake_restore_state(state):
+        restored.append(state.state)
+
+    monkeypatch.setattr(entity, "async_get_last_state", fake_get_last_state)
+    monkeypatch.setattr(entity, "_async_restore_state", fake_restore_state)
+
+    import asyncio
+
+    asyncio.run(entity.async_added_to_hass())
+
+    assert restored == ["42"]
+    assert entity._state_restored is True
+
+
+def test_base_entity_async_added_to_hass_contains_restore_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entity = OptimizedEveusSensor(
+        _Updater(),
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+
+    async def broken_last_state():
+        raise RuntimeError("restore failed")
+
+    monkeypatch.setattr(entity, "async_get_last_state", broken_last_state)
+
+    import asyncio
+
+    asyncio.run(entity.async_added_to_hass())
+
+    assert entity._state_restored is False
+
+
+def test_base_entity_finalize_device_info_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    updater = _Updater()
+    updater.data = {}
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: None,
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+
+    entity._maybe_finalize_device_info()
+    assert entity._device_info_finalized is False
+
+    updater.data = {"verFWMain": "R3.05.2", "verFWWifi": "W1.0"}
+    entity._maybe_finalize_device_info()
+    assert entity._device_info_finalized is True
+    assert entity.device_info["sw_version"] == "R3.05.2"
+
+
+def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    updater = _Updater()
+    updater.data = {}
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: None,
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+    entity.hass = object()
+    updater.data = {"verFWMain": "R3.05.2", "verFWWifi": "W1.0"}
+    updates: list[tuple[str, dict[str, object]]] = []
+
+    class Registry:
+        def async_get_device(self, *, identifiers):
+            assert identifiers == {("eveus", TEST_HOST)}
+            return SimpleNamespace(id="device-id")
+
+        def async_update_device(self, device_id, **kwargs):
+            updates.append((device_id, kwargs))
+
+    monkeypatch.setattr("custom_components.eveus.common_base.dr.async_get", lambda hass: Registry())
+
+    entity._maybe_finalize_device_info()
+
+    assert updates == [
+        (
+            "device-id",
+            {
+                "sw_version": "R3.05.2",
+                "model": "Eveus EV Charger",
+                "manufacturer": "Eveus",
+            },
+        )
+    ]
+
+
+def test_base_entity_finalize_skips_missing_registry_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = _Updater()
+    updater.data = {}
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: None,
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+    entity.hass = object()
+    updater.data = {"verFWMain": "R3.05.2"}
+
+    class Registry:
+        def async_get_device(self, *, identifiers):
+            return None
+
+        def async_update_device(self, *args, **kwargs):
+            raise AssertionError("must not update missing device")
+
+    monkeypatch.setattr("custom_components.eveus.common_base.dr.async_get", lambda hass: Registry())
+
+    entity._maybe_finalize_device_info()
+    assert entity._device_info_finalized is True
+
+
+def test_base_entity_finalize_skips_registry_update_without_identifiers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = EveusTestUpdater({})
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: None,
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+    entity.hass = object()
+    updater.data = {"verFWMain": "R3.05.2"}
+    monkeypatch.setattr(
+        entity,
+        "_build_device_info",
+        lambda: {"sw_version": "R3.05.2", "model": "Eveus EV Charger"},
+    )
+
+    class Registry:
+        def async_get_device(self, *args, **kwargs):
+            raise AssertionError("must not query registry without identifiers")
+
+    monkeypatch.setattr("custom_components.eveus.common_base.dr.async_get", lambda hass: Registry())
+
+    entity._maybe_finalize_device_info()
+    assert entity._device_info_finalized is True
+
+
+def test_optimistic_control_mixin_reconciles_and_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Optimistic(OptimisticControlMixin[int]):
+        pass
+
+    control = Optimistic()
+    control._init_optimistic_control()
+    monkeypatch.setattr("custom_components.eveus.common_base.time.time", lambda: 10.0)
+    control._set_optimistic_value(7)
+
+    assert control._optimistic_value_is_valid(12.0, 5.0) is True
+    control._reconcile_with_device(7, 13.0, lambda optimistic, device: optimistic == device)
+    assert control._optimistic_value is None
+    assert control._last_device_value == 7
+    assert control._last_successful_read == 13.0
+
+    control._set_optimistic_value(9)
+    control._reconcile_with_device(
+        10,
+        19.0,
+        lambda optimistic, device: optimistic == device,
+        mismatch_ttl=10.0,
+    )
+    assert control._optimistic_value == 9
+    control._expire_optimistic_value(25.0, 10.0)
+    assert control._optimistic_value is None
+
+
+def test_write_on_change_mixin_suppresses_redundant_writes() -> None:
+    class Writable(WriteOnChangeMixin):
+        available = True
+
+        def __init__(self) -> None:
+            self.writes = 0
+            self._init_write_on_change()
+
+        def async_write_ha_state(self) -> None:
+            self.writes += 1
+
+    entity = Writable()
+
+    assert entity._write_if_changed("on") is True
+    assert entity._write_if_changed("on") is False
+    entity.available = False
+    assert entity._write_if_changed("on") is True
+    assert entity.writes == 2
+
+
+def test_sensor_base_value_errors_are_rate_limited(monkeypatch: pytest.MonkeyPatch) -> None:
+    class BrokenSensor(EveusSensorBase):
+        ENTITY_NAME = "Broken"
+
+        def _get_sensor_value(self):
+            raise ValueError("boom")
+
+    entity = BrokenSensor(_Updater())
+    times = iter([1000.0, 1001.0, 1400.0])
+    monkeypatch.setattr("custom_components.eveus.common_base.time.time", lambda: next(times))
+
+    assert entity._update_native_value() is False
+    assert entity._last_error_log == 1000.0
+    assert entity._update_native_value() is False
+    assert entity._last_error_log == 1000.0
+    assert entity._update_native_value() is False
+    assert entity._last_error_log == 1400.0

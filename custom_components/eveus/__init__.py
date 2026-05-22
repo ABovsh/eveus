@@ -90,7 +90,7 @@ def _delete_invalid_config_issue(hass: HomeAssistant, entry: ConfigEntry) -> Non
     ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
 
 
-async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+async def async_setup(_hass: HomeAssistant, _config: dict[str, Any]) -> bool:
     """Set up the Eveus component."""
     return True
 
@@ -99,13 +99,28 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old config entry data."""
     new_data = dict(entry.data)
     host = new_data.get(CONF_HOST)
-    if isinstance(host, str) and host.startswith(("http://", "https://")):
+    if isinstance(host, str) and host.startswith(("http://", "https://")):  # NOSONAR python:S5332 — local LAN device, HTTPS not available on charger firmware.
+        from urllib.parse import urlparse, urlunparse
         from .config_flow import _split_host_and_scheme
 
+        # Legacy entries may have stored a full URL with path (e.g. ".../main").
+        # Strip the path/query/fragment before validation so migration recovers
+        # cleanly instead of leaving a malformed host on the entry.
+        sanitized = host
         try:
-            new_data[CONF_HOST], new_data[CONF_SCHEME] = _split_host_and_scheme(host)
+            parts = urlparse(host)
+            if parts.path not in ("", "/") or parts.query or parts.fragment:
+                sanitized = urlunparse((parts.scheme, parts.netloc, "", "", "", ""))
+        except ValueError:
+            sanitized = host
+
+        try:
+            new_data[CONF_HOST], new_data[CONF_SCHEME] = _split_host_and_scheme(sanitized)
         except vol.Invalid:
-            _LOGGER.warning("Could not normalize stored Eveus host %s", host)
+            _LOGGER.warning(
+                "Could not normalize stored Eveus host for entry %s",
+                getattr(entry, "entry_id", "<unknown>"),
+            )
 
     if CONF_SCHEME not in new_data:
         new_data[CONF_SCHEME] = DEFAULT_SCHEME
@@ -167,12 +182,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.debug("Assigned device number %d to %s", device_number, host)
+            _LOGGER.debug("Assigned Eveus device number %d", device_number)
         elif raw_device_number != device_number:
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.debug("Normalized device number %d for %s", device_number, host)
+            _LOGGER.debug("Normalized Eveus device number %d", device_number)
 
         updater = EveusUpdater(
             host=host,
@@ -211,10 +226,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
     except (ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady):
         raise
     except Exception as ex:
-        _LOGGER.error(
-            "Unexpected error setting up Eveus integration: %s",
-            ex, exc_info=True,
-        )
+        _LOGGER.exception("Unexpected error setting up Eveus integration: %s", ex)
         raise ConfigEntryNotReady(f"Unexpected error: {ex}")
 
 

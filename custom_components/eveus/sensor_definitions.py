@@ -30,12 +30,17 @@ from .const import (
     get_normal_substate,
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
+    MIN_CURRENT,
 )
 from .utils import RateLog, get_safe_value, format_duration
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ERROR_LOG_KEYS = 64
 _SENSOR_FUNCTION_LOG = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
+ICON_FLASH = "mdi:flash"
+ICON_CURRENT_AC = "mdi:current-ac"
+ICON_CURRENCY_UAH = "mdi:currency-uah"
+UNIT_UAH_PER_KWH = "₴/kWh"
 
 
 def _should_log_error(function_name: str) -> bool:
@@ -151,16 +156,21 @@ def _get_data_value(updater, key: str, converter=float, default=None):
 # Value getter factories — replace ~20 identical functions
 # =============================================================================
 
-def _make_value_getter(key: str, precision: int = 0, transform: Callable = None):
+def _make_value_getter(key: str, precision: int = 0, transform: Callable = None, minimum: Optional[float] = None):
     """Factory for simple data getter functions."""
     def getter(updater, hass):
         if not updater.available or not updater.data:
             return None
+        raw = updater.data.get(key)
+        if raw is None or isinstance(raw, bool):
+            return None
         try:
-            value = float(updater.data[key])
-        except (KeyError, TypeError, ValueError):
+            value = float(raw)
+        except (TypeError, ValueError):
             return None
         if not math.isfinite(value):
+            return None
+        if minimum is not None and value < minimum:
             return None
         if transform:
             value = transform(value)
@@ -169,24 +179,24 @@ def _make_value_getter(key: str, precision: int = 0, transform: Callable = None)
 
 
 # Measurement getters
-get_voltage = _make_value_getter("voltMeas1", precision=0)
-get_current = _make_value_getter("curMeas1", precision=1)
-get_power = _make_value_getter("powerMeas", precision=1)
-get_current_set = _make_value_getter("currentSet", precision=0)
+get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0)
+get_current = _make_value_getter("curMeas1", precision=1, minimum=0)
+get_power = _make_value_getter("powerMeas", precision=1, minimum=0)
+get_current_set = _make_value_getter("currentSet", precision=0, minimum=MIN_CURRENT)
 
 # Energy getters
-get_session_energy = _make_value_getter("sessionEnergy", precision=2)
-get_total_energy = _make_value_getter("totalEnergy", precision=2)
-get_counter_a_energy = _make_value_getter("IEM1", precision=2)
-get_counter_b_energy = _make_value_getter("IEM2", precision=2)
+get_session_energy = _make_value_getter("sessionEnergy", precision=2, minimum=0)
+get_total_energy = _make_value_getter("totalEnergy", precision=2, minimum=0)
+get_counter_a_energy = _make_value_getter("IEM1", precision=2, minimum=0)
+get_counter_b_energy = _make_value_getter("IEM2", precision=2, minimum=0)
 
 # Cost getters (divide by 100)
 _div100 = lambda v: v / 100
-get_counter_a_cost = _make_value_getter("IEM1_money", precision=2)
-get_counter_b_cost = _make_value_getter("IEM2_money", precision=2)
-get_primary_rate_cost = _make_value_getter("tarif", precision=2, transform=_div100)
-get_rate2_cost = _make_value_getter("tarifAValue", precision=2, transform=_div100)
-get_rate3_cost = _make_value_getter("tarifBValue", precision=2, transform=_div100)
+get_counter_a_cost = _make_value_getter("IEM1_money", precision=2, minimum=0)
+get_counter_b_cost = _make_value_getter("IEM2_money", precision=2, minimum=0)
+get_primary_rate_cost = _make_value_getter("tarif", precision=2, transform=_div100, minimum=0)
+get_rate2_cost = _make_value_getter("tarifAValue", precision=2, transform=_div100, minimum=0)
+get_rate3_cost = _make_value_getter("tarifBValue", precision=2, transform=_div100, minimum=0)
 
 # Temperature getters
 get_box_temperature = _make_value_getter("temperature1", precision=0)
@@ -194,14 +204,14 @@ get_plug_temperature = _make_value_getter("temperature2", precision=0)
 
 # Other diagnostic getters
 get_battery_voltage = _make_value_getter("vBat", precision=2)
-get_leak_current = _make_value_getter("leakValue", precision=0)
-get_leak_current_peak = _make_value_getter("leakValueH", precision=0)
+get_leak_current = _make_value_getter("leakValue", precision=0, minimum=0)
+get_leak_current_peak = _make_value_getter("leakValueH", precision=0, minimum=0)
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
-get_current_phase_2 = _make_value_getter("curMeas2", precision=1)
-get_current_phase_3 = _make_value_getter("curMeas3", precision=1)
-get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0)
-get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0)
+get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0)
+get_current_phase_3 = _make_value_getter("curMeas3", precision=1, minimum=0)
+get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0, minimum=0)
+get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0)
 
 
 # =============================================================================
@@ -308,7 +318,7 @@ def _make_rate_status_getter(rate_key: str):
 # for a stateful accumulator on the integration side.
 # =============================================================================
 
-get_session_cost = _make_value_getter("sessionMoney", precision=2)
+get_session_cost = _make_value_getter("sessionMoney", precision=2, minimum=0)
 
 
 # =============================================================================
@@ -325,8 +335,8 @@ def get_adaptive_charging_state(updater, hass) -> Optional[str]:
     return None
 
 
-get_adaptive_current = _make_value_getter("aiModecurrent", precision=0)
-get_adaptive_voltage = _make_value_getter("aiVoltage", precision=0)
+get_adaptive_current = _make_value_getter("aiModecurrent", precision=0, minimum=0)
+get_adaptive_voltage = _make_value_getter("aiVoltage", precision=0, minimum=0)
 
 
 def _format_minutes(value: Optional[int]) -> Optional[str]:
@@ -385,7 +395,10 @@ def get_connection_quality(updater, hass) -> Optional[float]:
     """
     try:
         metrics = updater.connection_quality
-        return round(max(0, min(100, metrics.get("success_rate", 0))))
+        rate = metrics.get("success_rate", 0)
+        if not isinstance(rate, (int, float)) or isinstance(rate, bool) or not math.isfinite(rate):
+            return None
+        return round(max(0, min(100, rate)))
     except Exception as err:
         if _should_log_error("get_connection_quality"):
             _LOGGER.debug("Error getting connection quality: %s", err, exc_info=True)
@@ -399,15 +412,21 @@ def get_connection_attrs(updater, hass) -> dict:
             return {}
         metrics = updater.connection_quality
         success_rate = metrics.get("success_rate", 100)
+        latency_avg = max(0.0, metrics.get("latency_avg", 0.0))
+        if success_rate > 95:
+            status = "Excellent"
+        elif success_rate > 80:
+            status = "Good"
+        elif success_rate > 60:
+            status = "Fair"
+        elif success_rate > 30:
+            status = "Poor"
+        else:
+            status = "Critical"
         return {
-            "connection_quality": f"{round(success_rate)}%",
-            "latency_avg": f"{max(0, metrics.get('latency_avg', 0)):.1f}s",
-            "status": (
-                "Excellent" if success_rate > 95 else
-                "Good" if success_rate > 80 else
-                "Fair" if success_rate > 60 else
-                "Poor" if success_rate > 30 else "Critical"
-            ),
+            "connection_quality": round(success_rate),
+            "latency_avg": round(latency_avg * 2) / 2,
+            "status": status,
         }
     except Exception as err:
         if _should_log_error("get_connection_attrs"):
@@ -427,13 +446,13 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
 
     # Measurement sensors
     measurements = [
-        ("Voltage", get_voltage, "mdi:flash", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, None),
-        ("Current", get_current, "mdi:current-ac", SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, None),
-        ("Power", get_power, "mdi:flash", SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None),
+        ("Voltage", get_voltage, ICON_FLASH, SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, None),
+        ("Current", get_current, ICON_CURRENT_AC, SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, None),
+        ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None),
         (
             "Current Set",
             get_current_set,
-            "mdi:current-ac",
+            ICON_CURRENT_AC,
             SensorDeviceClass.CURRENT,
             UnitOfElectricCurrent.AMPERE,
             0,
@@ -550,7 +569,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             SensorSpec(
                 key="current_phase_2", name="Current Phase 2",
                 value_fn=get_current_phase_2,
-                sensor_type=SensorType.MEASUREMENT, icon="mdi:current-ac",
+                sensor_type=SensorType.MEASUREMENT, icon=ICON_CURRENT_AC,
                 device_class=SensorDeviceClass.CURRENT,
                 state_class=SensorStateClass.MEASUREMENT,
                 unit=UnitOfElectricCurrent.AMPERE, precision=1,
@@ -558,7 +577,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             SensorSpec(
                 key="current_phase_3", name="Current Phase 3",
                 value_fn=get_current_phase_3,
-                sensor_type=SensorType.MEASUREMENT, icon="mdi:current-ac",
+                sensor_type=SensorType.MEASUREMENT, icon=ICON_CURRENT_AC,
                 device_class=SensorDeviceClass.CURRENT,
                 state_class=SensorStateClass.MEASUREMENT,
                 unit=UnitOfElectricCurrent.AMPERE, precision=1,
@@ -566,7 +585,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             SensorSpec(
                 key="voltage_phase_2", name="Voltage Phase 2",
                 value_fn=get_voltage_phase_2,
-                sensor_type=SensorType.MEASUREMENT, icon="mdi:flash",
+                sensor_type=SensorType.MEASUREMENT, icon=ICON_FLASH,
                 device_class=SensorDeviceClass.VOLTAGE,
                 state_class=SensorStateClass.MEASUREMENT,
                 unit=UnitOfElectricPotential.VOLT, precision=0,
@@ -574,7 +593,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             SensorSpec(
                 key="voltage_phase_3", name="Voltage Phase 3",
                 value_fn=get_voltage_phase_3,
-                sensor_type=SensorType.MEASUREMENT, icon="mdi:flash",
+                sensor_type=SensorType.MEASUREMENT, icon=ICON_FLASH,
                 device_class=SensorDeviceClass.VOLTAGE,
                 state_class=SensorStateClass.MEASUREMENT,
                 unit=UnitOfElectricPotential.VOLT, precision=0,
@@ -590,34 +609,34 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         ),
         SensorSpec(
             key="counter_a_cost", name="Counter A Cost", value_fn=get_counter_a_cost,
-            sensor_type=SensorType.ENERGY, icon="mdi:currency-uah",
+            sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
             state_class=SensorStateClass.TOTAL_INCREASING, unit="₴", precision=2,
         ),
         SensorSpec(
             key="counter_b_cost", name="Counter B Cost", value_fn=get_counter_b_cost,
-            sensor_type=SensorType.ENERGY, icon="mdi:currency-uah",
+            sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
             state_class=SensorStateClass.TOTAL_INCREASING, unit="₴", precision=2,
         ),
         SensorSpec(
             key="primary_rate_cost", name="Primary Rate Cost", value_fn=get_primary_rate_cost,
-            sensor_type=SensorType.STATE, icon="mdi:currency-uah",
-            state_class=SensorStateClass.MEASUREMENT, unit="₴/kWh", precision=2,
+            sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
+            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
             key="active_rate_cost", name="Active Rate Cost", value_fn=get_active_rate_cost,
-            sensor_type=SensorType.STATE, icon="mdi:currency-uah",
-            state_class=SensorStateClass.MEASUREMENT, unit="₴/kWh", precision=2,
+            sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
+            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
             attributes_fn=get_active_rate_attrs,
         ),
         SensorSpec(
             key="rate_2_cost", name="Rate 2 Cost", value_fn=get_rate2_cost,
-            sensor_type=SensorType.STATE, icon="mdi:currency-uah",
-            state_class=SensorStateClass.MEASUREMENT, unit="₴/kWh", precision=2,
+            sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
+            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
             key="rate_3_cost", name="Rate 3 Cost", value_fn=get_rate3_cost,
-            sensor_type=SensorType.STATE, icon="mdi:currency-uah",
-            state_class=SensorStateClass.MEASUREMENT, unit="₴/kWh", precision=2,
+            sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
+            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
             key="rate_2_status", name="Rate 2 Status",
@@ -634,7 +653,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         SensorSpec(
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
             sensor_type=SensorType.STATE, icon="mdi:cash",
-            state_class=SensorStateClass.TOTAL, unit="₴", precision=2,
+            state_class=SensorStateClass.MEASUREMENT, unit="₴", precision=2,
         ),
         SensorSpec(
             key="adaptive_charging", name="Adaptive Charging",
@@ -645,7 +664,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         SensorSpec(
             key="adaptive_current_limit", name="Adaptive Current Limit",
             value_fn=get_adaptive_current,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-ac",
+            sensor_type=SensorType.DIAGNOSTIC, icon=ICON_CURRENT_AC,
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
             unit=UnitOfElectricCurrent.AMPERE, precision=0,

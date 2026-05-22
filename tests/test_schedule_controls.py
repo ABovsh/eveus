@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 
+from conftest import TEST_HOST
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
     SWITCH_DESCRIPTIONS,
@@ -17,7 +18,7 @@ from custom_components.eveus.time import (
 
 
 class _Updater:
-    host = "192.168.1.50"
+    host = TEST_HOST
     available = True
     last_update_success = True
 
@@ -142,6 +143,4 @@ def test_time_entity_all_four_keys_registered() -> None:
     }
     for desc in TIME_DESCRIPTIONS:
         assert desc.command == desc.state_key
-        assert desc.command.startswith("sh") and (
-            desc.command.endswith("Start") or desc.command.endswith("Stop")
-        )
+        assert desc.command.startswith("sh") and desc.command.endswith(("Start", "Stop"))

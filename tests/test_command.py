@@ -3,14 +3,23 @@ from __future__ import annotations
 
 import asyncio
 
+import aiohttp
 import pytest
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
+from conftest import TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus.common_command import CommandManager
 
 
 class _Response:
-    def __init__(self, *, raise_error: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        raise_error: bool = False,
+        response_status: int | None = None,
+    ) -> None:
         self.raise_error = raise_error
+        self.response_status = response_status
 
     async def __aenter__(self) -> "_Response":
         return self
@@ -19,8 +28,13 @@ class _Response:
         return None
 
     def raise_for_status(self) -> None:
+        if self.response_status is not None:
+            raise aiohttp.ClientResponseError(
+                request_info=None,
+                history=(),
+                status=self.response_status,
+            )
         if self.raise_error:
-            import aiohttp
             raise aiohttp.ClientError("boom")
 
 
@@ -45,12 +59,14 @@ class _SequencedSession:
 
 
 class _Updater:
-    host = "192.168.1.50"
-    username = "admin"
-    password = "secret"
+    host = TEST_HOST
+    username = TEST_USERNAME
+    password = TEST_PASSWORD
 
     def __init__(self, session: _Session) -> None:
         self._session = session
+        import aiohttp
+        self._basic_auth = aiohttp.BasicAuth(self.username, self.password)
 
     def get_session(self) -> _Session:
         return self._session
@@ -66,7 +82,8 @@ def test_command_manager_posts_expected_form_payload() -> None:
     ok = asyncio.run(manager.send_command("currentSet", 16))
 
     assert ok is True
-    assert session.calls[0]["url"] == "http://192.168.1.50/pageEvent"
+    assert len(session.calls) == 1
+    assert session.calls[0]["url"] == f"{TEST_BASE_URL}/pageEvent"
     assert session.calls[0]["data"] == "pageevent=currentSet&currentSet=16"
     assert session.calls[0]["headers"] == {
         "Content-type": "application/x-www-form-urlencoded"
@@ -81,6 +98,7 @@ def test_command_manager_records_success_and_failure_counts(
 
     assert asyncio.run(manager.send_command("evseEnabled", 1)) is True
     assert manager._consecutive_failures == 0
+    assert len(success_session.calls) == 1
     assert success_session.calls[0]["data"] == "pageevent=evseEnabled&evseEnabled=1"
 
     # Skip retry sleeps in failure path
@@ -163,8 +181,60 @@ def test_command_manager_urlencodes_command_payload() -> None:
 
     assert asyncio.run(manager.send_command("profile name", "eco mode")) is True
 
+    assert len(session.calls) == 1
     assert session.calls[0]["data"] == "pageevent=profile+name&profile+name=eco+mode"
 
 
 async def _no_sleep(_seconds: float) -> None:
     return None
+
+
+def test_command_manager_uses_module_level_timeout() -> None:
+    """Timeout object must come from the module-level constant, not be built per call."""
+    from custom_components.eveus import common_command
+
+    session = _Session(_Response())
+    asyncio.run(CommandManager(_Updater(session)).send_command("currentSet", 16))
+
+    assert session.calls[0]["timeout"] is common_command._COMMAND_TIMEOUT_OBJ
+
+
+def test_command_manager_non_auth_response_error_retries_and_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", _no_sleep)
+    monkeypatch.setattr("custom_components.eveus.common_command.random.uniform", lambda a, b: 0)
+    session = _Session(_Response(response_status=500))
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("currentSet", 16)) is False
+
+    assert len(session.calls) == 3
+    assert manager.consecutive_failures == 1
+
+
+def test_command_manager_raises_auth_failed_without_retry() -> None:
+    session = _Session(_Response(response_status=401))
+    manager = CommandManager(_Updater(session))
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        asyncio.run(manager.send_command("currentSet", 16))
+
+    assert len(session.calls) == 1
+    assert manager.consecutive_failures == 1
+
+
+def test_command_manager_handles_unexpected_post_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", _no_sleep)
+    session = _Session(_Response())
+    manager = CommandManager(_Updater(session))
+
+    async def broken_post(command: str, value: object) -> bool:
+        raise RuntimeError("unexpected")
+
+    manager._post_command = broken_post
+
+    assert asyncio.run(manager.send_command("currentSet", 16)) is False
+    assert manager.consecutive_failures == 1

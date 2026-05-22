@@ -1,8 +1,29 @@
 # Changelog
 
+## 4.9.1 - 2026-05-22
+
+### 🐛 Fixed
+- **Time Zone**: picking a new offset no longer snaps back to the previous value before the next poll. `select.eveus_time_zone` now keeps the chosen value while the charger confirms it, and reverts immediately if the charger rejects the command.
+- **Session Cost**: long-term statistics no longer treat the end-of-session reset as a meter rollback. The sensor is reported as a per-session measurement again.
+- **Car Connected**: the binary sensor now reports `unknown` while the charger is in an error state instead of falsely reporting the vehicle as unplugged.
+- **State of Charge**: SOC calculations now reject invalid inputs such as negative energy, invalid battery capacity, impossible SOC values, and impossible efficiency-loss values.
+- **Measurements**: voltage, current, power, leakage current, per-phase readings, session energy, current setpoint, and connection quality now reject negative, non-finite, or boolean payload glitches instead of showing misleading values.
+- **Setup and repair**: malformed URLs, invalid ports, embedded credentials, invalid phase values, and duplicate repaired hosts are rejected earlier and with clearer Home Assistant errors.
+- **Commands**: if the charger rejects a control command with `401 Unauthorized`, Home Assistant now starts reauthentication instead of silently retrying with stale credentials.
+- **Shutdown / restart**: cancelled refreshes now stop cleanly, so the integration reconnects normally on the next Home Assistant start.
+
+### 🔒 Privacy
+- Connection failures, migration messages, diagnostics titles, and setup errors no longer echo the configured charger host/IP.
+- The integration avoids keeping the charger username and password as readable coordinator attributes.
+
+### 🔧 Changed
+- **Cost sensors** (`counter_a_cost`, `counter_b_cost`, `session_cost`) display the compact `₴` symbol again instead of the `UAH` code.
+- **Connection Quality** attributes are exposed as chart-friendly numeric values instead of formatted strings.
+- Integration brand icons were refreshed.
+
 ## 4.9.0 - 2026-05-17
 
-Stable promotion of the 4.9.0-rc series. Highlights:
+Highlights:
 
 ### ✨ Schedules — writable from HA
 - **`switch.eveus_schedule_1_enabled`** / **`switch.eveus_schedule_2_enabled`** — arm or disarm each on-device schedule slot.
@@ -42,56 +63,7 @@ Stable promotion of the 4.9.0-rc series. Highlights:
 ### ⚠️ Breaking
 - `switch.eveus_reset_counter_a` removed in favor of `button.eveus_reset_counter_a` (proper one-shot reset). `button.eveus_reset_counter_b` mirrors it.
 
-## 4.9.0-rc.5 - 2026-05-17
-
-### ✨ New entities
-- **`switch.eveus_schedule_1_enabled`** / **`switch.eveus_schedule_2_enabled`** — arm or disarm the charger's two on-device schedule slots directly from HA.
-- **`time.eveus_schedule_1_start`** / **`time.eveus_schedule_1_stop`** and **`time.eveus_schedule_2_start`** / **`time.eveus_schedule_2_stop`** — native HA time pickers for each slot's start/stop window. Changes apply directly on the charger; no more digging into the device's web UI to shift the night-tariff window.
-
-### 📊 Dashboard
-- New `docs/dashboard.yaml` — drop-in Lovelace view that exposes every Eveus capability (status, controls, schedules, live charts, session totals, diagnostics). See README for screenshot and install steps.
-
-## 4.9.0-rc.4 - 2026-05-17
-
-### 🐛 Fixed
-- Starting a charging session (Stop Charging off + One Charge on) no longer takes up to a minute to show as charging. `sensor.eveus_current` and the charging-state entities now reflect the new session within ~10–20 s instead of waiting for the next 60 s idle poll. Stopping a session also reflects faster.
-
-## 4.9.0-rc.3 - 2026-05-17
-
-### ✨ New
-- **`switch.eveus_adaptive_mode`** — on/off control of the charger's adaptive (AI) mode. Pairs with the existing `Adaptive Charging` diagnostic sensor.
-
-### 🔧 Changed
-- `Sync Time` and `Time Zone` are now enabled by default.
-- `Force Refresh` moved from the Diagnostic to the Config section in the device UI.
-
-## 4.9.0-rc.2 - 2026-05-17
-
-### ✨ New entities
-- **`sensor.eveus_leakage_current`** (mA) — live RCD reading. `0` is normal; non-zero indicates a ground-fault leak.
-- **`sensor.eveus_leakage_current_peak`** (mA) — peak-hold leakage value.
-
-### ✨ 3-phase support
-- New `Phases` field (1 or 3) in the setup and reconfigure dialogs, defaults to `1`.
-- When `Phases = 3`, four additional sensors are exposed: `Current Phase 2`, `Current Phase 3`, `Voltage Phase 2`, `Voltage Phase 3`.
-- Existing 1-phase setups are migrated transparently — no action required.
-
-## 4.9.0-rc.1 - 2026-05-17
-
-### ✨ New entities
-- **`button.eveus_sync_time`** — pushes the host's current time to the charger's clock.
-- **`select.eveus_time_zone`** — readable / writable time-zone offset, range `-12..+14`.
-
 ## 4.8.0 - 2026-05-16
-
-Promotion of `4.8.0-rc.2` to a stable release. See `4.8.0-rc.1` and `4.8.0-rc.2` notes for the full change list.
-
-## 4.8.0-rc.2 - 2026-05-16
-
-### 🔒 Security / UX
-- Config-flow and reauth password fields are now rendered as masked password inputs instead of plain text.
-
-## 4.8.0-rc.1 - 2026-05-16
 
 ### ⚠️ Breaking — entity platform change
 - `switch.eveus_reset_counter_a` is removed and replaced by `button.eveus_reset_counter_a`, which models the one-shot reset action correctly. The unique-id is preserved, but the entity domain moves from `switch.` to `button.`. Update any dashboards or automations that referenced `switch.eveus_reset_counter_a`.
@@ -105,6 +77,7 @@ Promotion of `4.8.0-rc.2` to a stable release. See `4.8.0-rc.1` and `4.8.0-rc.2`
 - Diagnostics no longer raises when called before setup completes — it returns a partial payload instead.
 
 ### 🔒 Security
+- Config-flow and reauth password fields are now rendered as masked password inputs instead of plain text.
 - Diagnostic dumps now redact `host` and `unique_id` (in addition to credentials), so shared dumps no longer leak LAN topology.
 - A warning is logged when the charger is configured over plain HTTP, calling out that Basic Auth credentials are sent in cleartext on every poll.
 

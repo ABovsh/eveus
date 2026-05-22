@@ -25,14 +25,14 @@ DEVICE_DIAGNOSTIC_KEYS = (
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant,
+    _hass: HomeAssistant,
     entry: EveusConfigEntry,
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     runtime_data = getattr(entry, "runtime_data", None)
     payload: dict[str, Any] = {
         "entry": {
-            "title": entry.title,
+            "title": "Eveus Charger",
             "data": async_redact_data(dict(entry.data), TO_REDACT),
             "device_number": (
                 runtime_data.device_number if runtime_data is not None else None

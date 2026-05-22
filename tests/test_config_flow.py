@@ -2,12 +2,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import aiohttp
 import pytest
 import voluptuous as vol
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 
+from conftest import (
+    TEST_BASE_URL,
+    TEST_HOST,
+    TEST_HOST_ALT,
+    TEST_PASSWORD,
+    TEST_USERNAME,
+)
 from custom_components.eveus import config_flow
 from custom_components.eveus import CONFIG_ENTRY_VERSION
 from custom_components.eveus.config_flow import (
@@ -15,6 +23,7 @@ from custom_components.eveus.config_flow import (
     InvalidAuth,
     InvalidDevice,
     InvalidInput,
+    build_user_data_schema,
     build_reauth_data_schema,
     normalize_user_input,
     validate_credentials,
@@ -89,9 +98,9 @@ def _patch_clientsession(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _input(**overrides: object) -> dict[str, object]:
     data: dict[str, object] = {
-        CONF_HOST: "192.168.1.50",
-        CONF_USERNAME: "admin",
-        CONF_PASSWORD: "secret",
+        CONF_HOST: TEST_HOST,
+        CONF_USERNAME: TEST_USERNAME,
+        CONF_PASSWORD: TEST_PASSWORD,
         CONF_MODEL: MODEL_16A,
     }
     data.update(overrides)
@@ -101,9 +110,10 @@ def _input(**overrides: object) -> dict[str, object]:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        (" 192.168.1.50 ", "192.168.1.50"),
-        ("http://charger.local/main", "charger.local"),
-        ("https://eveus.local:8443/main", "eveus.local:8443"),
+        (f" {TEST_HOST} ", TEST_HOST),
+        ("http://charger.local", "charger.local"),
+        ("http://charger.local/", "charger.local"),
+        ("https://eveus.local:8443", "eveus.local:8443"),
     ],
 )
 def test_validate_host_accepts_ips_hostnames_and_urls(raw: str, expected: str) -> None:
@@ -114,42 +124,72 @@ def test_validate_host_removes_trailing_hostname_dot() -> None:
     assert validate_host("charger.local.") == "charger.local"
 
 
-@pytest.mark.parametrize("raw", ["", "bad host name", "-bad.local", "bad-.local"])
+@pytest.mark.parametrize("raw", ["", ".", "bad host name", "-bad.local", "bad-.local"])
 def test_validate_host_rejects_invalid_values(raw: str) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(vol.Invalid) as exc_info:
+        validate_host(raw)
+    assert str(exc_info.value) in {
+        "Host cannot be empty",
+        "Invalid IP address or hostname",
+    }
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ("ftp://charger.local", "Unsupported URL scheme"),
+        (f"http://{TEST_HOST}/main", "URL must not include a path"),
+        (f"http://{TEST_HOST}?x=1", "URL must not include a query or fragment"),
+        (f"http://{TEST_HOST}#frag", "URL must not include a query or fragment"),
+        ("http://charger.local:bad", "Invalid port"),
+        ("http://charger.local:99999", "Invalid port"),
+        ("http:///missing-host", "URL must not include a path"),
+    ],
+)
+def test_validate_host_rejects_url_shapes(raw: str, message: str) -> None:
+    with pytest.raises(vol.Invalid, match=message):
         validate_host(raw)
 
 
+def test_validate_host_normalizes_case_and_ipv6_port() -> None:
+    assert validate_host("HTTP://Charger.LOCAL") == "charger.local"
+    assert validate_host("http://[::1]:8080") == "[::1]:8080"
+
+
 def test_validate_credentials_strips_username_but_preserves_password() -> None:
-    assert validate_credentials(" admin ", " secret ") == ("admin", " secret ")
+    assert validate_credentials(f" {TEST_USERNAME} ", f" {TEST_PASSWORD} ") == (TEST_USERNAME, f" {TEST_PASSWORD} ")
 
 
 @pytest.mark.parametrize(
     ("username", "password"),
-    [("", "secret"), ("admin", ""), ("a" * 33, "secret"), ("admin", "b" * 33)],
+    [("", TEST_PASSWORD), (TEST_USERNAME, ""), ("a" * 33, TEST_PASSWORD), (TEST_USERNAME, "b" * 33)],
 )
 def test_validate_credentials_rejects_missing_or_long_values(
     username: str, password: str
 ) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(vol.Invalid) as exc_info:
         validate_credentials(username, password)
+    assert str(exc_info.value) in {
+        "Username and password cannot be empty",
+        "Username and password must be less than 32 characters",
+    }
 
 
 def test_normalize_user_input_returns_persistable_config_data() -> None:
     data = normalize_user_input(
         _input(
             **{
-                CONF_HOST: " http://192.168.1.50/main ",
-                CONF_USERNAME: " admin ",
-                CONF_PASSWORD: " secret ",
+                CONF_HOST: f" {TEST_BASE_URL} ",
+                CONF_USERNAME: f" {TEST_USERNAME} ",
+                CONF_PASSWORD: f" {TEST_PASSWORD} ",
             }
         )
     )
 
     assert data == {
-        CONF_HOST: "192.168.1.50",
-        CONF_USERNAME: "admin",
-        CONF_PASSWORD: " secret ",
+        CONF_HOST: TEST_HOST,
+        CONF_USERNAME: TEST_USERNAME,
+        CONF_PASSWORD: f" {TEST_PASSWORD} ",
         CONF_MODEL: MODEL_16A,
         CONF_SCHEME: "http",
         CONF_PHASES: DEFAULT_PHASES,
@@ -162,8 +202,11 @@ def test_normalize_user_input_accepts_three_phase() -> None:
 
 
 def test_normalize_user_input_rejects_invalid_phases() -> None:
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(vol.Invalid, match="Invalid phase count"):
         normalize_user_input(_input(**{CONF_PHASES: 2}))
+
+    with pytest.raises(vol.Invalid, match="Invalid phase count"):
+        normalize_user_input(_input(**{CONF_PHASES: "bad"}))
 
 
 def test_normalize_user_input_preserves_stored_https_scheme() -> None:
@@ -175,8 +218,24 @@ def test_normalize_user_input_preserves_stored_https_scheme() -> None:
     assert data[CONF_SCHEME] == "https"
 
 
+def test_build_user_schema_prefixes_https_default_host() -> None:
+    schema = build_user_data_schema({CONF_HOST: "eveus.local:8443", CONF_SCHEME: "https"})
+    host_key = next(key for key in schema.schema if key.schema == CONF_HOST)
+
+    assert host_key.default() == "https://eveus.local:8443"
+
+
+def test_warn_if_plaintext_does_not_warn_for_https(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="custom_components.eveus.config_flow"):
+        config_flow._warn_if_plaintext("https")
+
+    assert caplog.records == []
+
+
 def test_normalize_user_input_rejects_invalid_model() -> None:
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(vol.Invalid, match="Invalid charger model"):
         normalize_user_input(_input(**{CONF_MODEL: "bad"}))
 
 
@@ -185,7 +244,7 @@ def test_config_flow_version_matches_migration_target() -> None:
 
 
 def test_validate_device_response_rejects_non_eveus_json() -> None:
-    with pytest.raises(InvalidDevice):
+    with pytest.raises(InvalidDevice, match="missing currentSet"):
         validate_device_response({"name": "Not Eveus"}, MODEL_16A)
 
 
@@ -202,14 +261,17 @@ def test_validate_input_posts_to_normalized_host() -> None:
     hass = _Hass(session)
 
     result = asyncio.run(
-        validate_input(hass, _input(**{CONF_HOST: "http://192.168.1.50/main"}))
+        validate_input(hass, _input(**{CONF_HOST: TEST_BASE_URL}))
     )
 
-    assert result["title"] == "Eveus Charger (192.168.1.50)"
-    assert result["data"][CONF_HOST] == "192.168.1.50"
+    assert result["title"] == f"Eveus Charger ({TEST_HOST})"
+    assert "data" in result
+    assert result["data"][CONF_HOST] == TEST_HOST
     assert result["data"][CONF_SCHEME] == "http"
+    assert "device_info" in result
     assert result["device_info"]["current_set"] == 12
-    assert session.calls[0]["url"] == "http://192.168.1.50/main"
+    assert len(session.calls) >= 1
+    assert session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
     assert response.json_kwargs == {"content_type": None}
 
 
@@ -219,25 +281,27 @@ def test_validate_input_preserves_https_scheme_and_port() -> None:
     hass = _Hass(session)
 
     result = asyncio.run(
-        validate_input(hass, _input(**{CONF_HOST: "https://eveus.local:8443/main"}))
+        validate_input(hass, _input(**{CONF_HOST: "https://eveus.local:8443"}))
     )
 
     assert result["title"] == "Eveus Charger (eveus.local:8443)"
+    assert "data" in result
     assert result["data"][CONF_HOST] == "eveus.local:8443"
     assert result["data"][CONF_SCHEME] == "https"
+    assert len(session.calls) >= 1
     assert session.calls[0]["url"] == "https://eveus.local:8443/main"
 
 
 def test_validate_input_rejects_unauthorized_response() -> None:
     hass = _Hass(_Session(_Response(status=401)))
 
-    with pytest.raises(InvalidAuth):
+    with pytest.raises(InvalidAuth, match="Invalid credentials"):
         asyncio.run(validate_input(hass, _input()))
 
 
 def test_validate_input_maps_http_401_response_error_to_invalid_auth() -> None:
     error = aiohttp.ClientResponseError(
-        request_info=type("RequestInfo", (), {"real_url": "http://192.168.1.50/main"})(),
+        request_info=type("RequestInfo", (), {"real_url": f"{TEST_BASE_URL}/main"})(),
         history=(),
         status=401,
     )
@@ -249,14 +313,27 @@ def test_validate_input_maps_http_401_response_error_to_invalid_auth() -> None:
 
 def test_validate_input_maps_http_errors_to_cannot_connect() -> None:
     error = aiohttp.ClientResponseError(
-        request_info=type("RequestInfo", (), {"real_url": "http://192.168.1.50/main"})(),
+        request_info=type("RequestInfo", (), {"real_url": f"{TEST_BASE_URL}/main"})(),
         history=(),
         status=500,
     )
     hass = _Hass(_Session(_Response(raise_status=error)))
 
-    with pytest.raises(CannotConnect):
+    with pytest.raises(CannotConnect, match="Connection error: ClientResponseError"):
         asyncio.run(validate_input(hass, _input()))
+
+
+def test_validate_input_maps_timeout_and_unexpected_errors() -> None:
+    hass = _Hass(_Session(_Response(raise_status=asyncio.TimeoutError())))
+    with pytest.raises(CannotConnect, match="Connection error: TimeoutError"):
+        asyncio.run(validate_input(hass, _input()))
+
+    class BrokenSession:
+        def post(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    with pytest.raises(CannotConnect, match="Unexpected error: RuntimeError"):
+        asyncio.run(validate_input(_Hass(BrokenSession()), _input()))
 
 
 @pytest.mark.parametrize(
@@ -269,8 +346,12 @@ def test_validate_input_maps_http_errors_to_cannot_connect() -> None:
 def test_validate_input_rejects_malformed_device_response(payload: object) -> None:
     hass = _Hass(_Session(_Response(payload=payload)))
 
-    with pytest.raises(CannotConnect):
+    with pytest.raises(CannotConnect) as exc_info:
         asyncio.run(validate_input(hass, _input()))
+    assert str(exc_info.value) in {
+        "Invalid response format",
+        "Invalid response format: Invalid response format",
+    }
 
 
 @pytest.mark.parametrize(
@@ -289,19 +370,20 @@ def test_validate_input_rejects_device_values_outside_model_limits(
 
     with pytest.raises(InvalidDevice):
         asyncio.run(validate_input(hass, _input()))
+    assert hass.session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
 
 
 def test_validate_input_wraps_local_validation_errors() -> None:
     hass = _Hass(_Session(_Response()))
 
-    with pytest.raises(InvalidInput):
+    with pytest.raises(InvalidInput, match="Invalid IP address or hostname"):
         asyncio.run(validate_input(hass, _input(**{CONF_HOST: "bad host name"})))
 
 
 def test_user_flow_creates_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_validate_input(hass, data):
         return {
-            "title": "Eveus Charger (192.168.1.50)",
+            "title": f"Eveus Charger ({TEST_HOST})",
             "data": normalize_user_input(data),
             "device_info": {"current_set": 16},
         }
@@ -320,7 +402,7 @@ def test_user_flow_creates_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     result = asyncio.run(flow.async_step_user(_input()))
 
     assert result["type"] == "create_entry"
-    assert result["data"][CONF_HOST] == "192.168.1.50"
+    assert result["data"][CONF_HOST] == TEST_HOST
 
 
 @pytest.mark.parametrize(
@@ -367,7 +449,7 @@ def test_user_flow_maps_unexpected_errors_to_unknown(
 def test_reconfigure_flow_updates_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_validate_input(hass, data):
         return {
-            "title": "Eveus Charger (192.168.1.55)",
+            "title": f"Eveus Charger ({TEST_HOST_ALT})",
             "data": normalize_user_input(data),
             "device_info": {"current_set": 16},
         }
@@ -376,8 +458,8 @@ def test_reconfigure_flow_updates_entry(monkeypatch: pytest.MonkeyPatch) -> None
         "Entry",
         (),
         {
-            "data": _input(**{CONF_HOST: "192.168.1.50"}),
-            "unique_id": "192.168.1.50",
+            "data": _input(**{CONF_HOST: TEST_HOST}),
+            "unique_id": TEST_HOST,
         },
     )()
     flow = config_flow.ConfigFlow()
@@ -393,11 +475,49 @@ def test_reconfigure_flow_updates_entry(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(
-        flow.async_step_reconfigure(_input(**{CONF_HOST: "192.168.1.55"}))
+        flow.async_step_reconfigure(_input(**{CONF_HOST: TEST_HOST_ALT}))
     )
 
     assert result["type"] == "abort"
-    assert result["unique_id"] == "192.168.1.55"
+    assert result["unique_id"] == TEST_HOST_ALT
+
+
+def test_reconfigure_flow_skips_duplicate_check_when_unique_id_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_validate_input(hass, data):
+        return {
+            "title": f"Eveus Charger ({TEST_HOST})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: TEST_HOST, "device_number": 2}),
+            "unique_id": TEST_HOST,
+        },
+    )()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reconfigure_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    flow._abort_if_unique_id_configured = (
+        lambda: (_ for _ in ()).throw(AssertionError("duplicate check should be skipped"))
+    )
+    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
+        "type": "abort",
+        "reason": "reconfigure_successful",
+        **kwargs,
+    }
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(flow.async_step_reconfigure(_input()))
+
+    assert result["type"] == "abort"
+    assert result["data"]["device_number"] == 2
 
 
 @pytest.mark.parametrize(
@@ -421,8 +541,8 @@ def test_reconfigure_flow_maps_validation_errors(
         "Entry",
         (),
         {
-            "data": _input(**{CONF_HOST: "192.168.1.50"}),
-            "unique_id": "192.168.1.50",
+            "data": _input(**{CONF_HOST: TEST_HOST}),
+            "unique_id": TEST_HOST,
         },
     )()
     flow = config_flow.ConfigFlow()
@@ -435,9 +555,26 @@ def test_reconfigure_flow_maps_validation_errors(
     assert result["errors"] == {"base": error_key}
 
 
+def test_reconfigure_flow_maps_unexpected_errors_to_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_validate_input(hass, data):
+        raise RuntimeError("boom")
+
+    entry = type("Entry", (), {"data": _input(), "unique_id": TEST_HOST})()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reconfigure_entry = lambda: entry
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(flow.async_step_reconfigure(_input()))
+
+    assert result["errors"] == {"base": "unknown"}
+
+
 def test_reauth_schema_contains_only_credentials() -> None:
     schema = build_reauth_data_schema(
-        {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"}
+        {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
     )
 
     assert set(schema.schema) == {CONF_USERNAME, CONF_PASSWORD}
@@ -446,7 +583,7 @@ def test_reauth_schema_contains_only_credentials() -> None:
 def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_validate_input(hass, data):
         return {
-            "title": "Eveus Charger (192.168.1.50)",
+            "title": f"Eveus Charger ({TEST_HOST})",
             "data": normalize_user_input(data),
             "device_info": {"current_set": 16},
         }
@@ -457,12 +594,12 @@ def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> Non
         {
             "data": _input(
                 **{
-                    CONF_HOST: "192.168.1.50",
+                    CONF_HOST: TEST_HOST,
                     CONF_USERNAME: "old",
                     CONF_PASSWORD: "old",
                 }
             ),
-            "unique_id": "192.168.1.50",
+            "unique_id": TEST_HOST,
         },
     )()
     flow = config_flow.ConfigFlow()
@@ -479,22 +616,36 @@ def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> Non
 
     result = asyncio.run(
         flow.async_step_reauth_confirm(
-            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"}
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
         )
     )
 
     assert result["type"] == "abort"
-    assert result["data"][CONF_USERNAME] == "admin"
-    assert result["data"][CONF_PASSWORD] == "secret"
-    assert result["data"][CONF_HOST] == "192.168.1.50"
+    assert result["data"][CONF_USERNAME] == TEST_USERNAME
+    assert result["data"][CONF_PASSWORD] == TEST_PASSWORD
+    assert result["data"][CONF_HOST] == TEST_HOST
+
+
+def test_reauth_step_delegates_to_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
+    flow = config_flow.ConfigFlow()
+
+    async def fake_confirm(user_input=None):
+        return {"type": "form", "user_input": user_input}
+
+    monkeypatch.setattr(flow, "async_step_reauth_confirm", fake_confirm)
+
+    assert asyncio.run(flow.async_step_reauth({CONF_HOST: TEST_HOST})) == {
+        "type": "form",
+        "user_input": None,
+    }
 
 
 def test_reauth_flow_aborts_when_host_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_validate_input(hass, data):
         normalized = normalize_user_input(data)
-        normalized[CONF_HOST] = "192.168.1.55"
+        normalized[CONF_HOST] = TEST_HOST_ALT
         return {
-            "title": "Eveus Charger (192.168.1.55)",
+            "title": f"Eveus Charger ({TEST_HOST_ALT})",
             "data": normalized,
             "device_info": {"current_set": 16},
         }
@@ -503,8 +654,8 @@ def test_reauth_flow_aborts_when_host_changes(monkeypatch: pytest.MonkeyPatch) -
         "Entry",
         (),
         {
-            "data": _input(**{CONF_HOST: "192.168.1.50"}),
-            "unique_id": "192.168.1.50",
+            "data": _input(**{CONF_HOST: TEST_HOST}),
+            "unique_id": TEST_HOST,
         },
     )()
     flow = config_flow.ConfigFlow()
@@ -516,7 +667,7 @@ def test_reauth_flow_aborts_when_host_changes(monkeypatch: pytest.MonkeyPatch) -
 
     result = asyncio.run(
         flow.async_step_reauth_confirm(
-            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"}
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
         )
     )
 
@@ -544,8 +695,8 @@ def test_reauth_flow_maps_validation_errors(
         "Entry",
         (),
         {
-            "data": _input(**{CONF_HOST: "192.168.1.50"}),
-            "unique_id": "192.168.1.50",
+            "data": _input(**{CONF_HOST: TEST_HOST}),
+            "unique_id": TEST_HOST,
         },
     )()
     flow = config_flow.ConfigFlow()
@@ -555,8 +706,59 @@ def test_reauth_flow_maps_validation_errors(
 
     result = asyncio.run(
         flow.async_step_reauth_confirm(
-            {CONF_USERNAME: "admin", CONF_PASSWORD: "secret"}
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
         )
     )
 
     assert result["errors"] == {"base": error_key}
+
+
+def test_reauth_flow_maps_unexpected_errors_to_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_validate_input(hass, data):
+        raise RuntimeError("boom")
+
+    entry = type("Entry", (), {"data": _input(), "unique_id": TEST_HOST})()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
+        )
+    )
+
+    assert result["errors"] == {"base": "unknown"}
+
+
+# --- rc.2 hardening tests -----------------------------------------------------
+
+
+def test_validate_host_rejects_userinfo_credentials() -> None:
+    """Reject URLs that embed credentials, since aiohttp BasicAuth would not pick them up."""
+    with pytest.raises(vol.Invalid, match="Credentials in URL"):
+        validate_host(f"http://user:pass@{TEST_HOST}")
+
+
+def test_validate_host_keeps_brackets_for_ipv6_without_port() -> None:
+    """IPv6 literals normalize with brackets even when no port is given."""
+    normalized, scheme = config_flow._split_host_and_scheme("[::1]")
+    assert normalized == "[::1]"
+    assert scheme == "http"
+
+
+def test_validate_credentials_rejects_colon_in_username() -> None:
+    """':' in username breaks aiohttp BasicAuth — reject early in the form."""
+    with pytest.raises(vol.Invalid, match="Username cannot contain"):
+        validate_credentials("user:name", TEST_PASSWORD)
+
+
+def test_safe_phases_default_falls_back_on_corrupt_input() -> None:
+    """A corrupt stored phases value must not crash the schema build."""
+    assert config_flow._safe_phases_default("oops") == DEFAULT_PHASES
+    assert config_flow._safe_phases_default(None) == DEFAULT_PHASES
+    assert config_flow._safe_phases_default(2) == DEFAULT_PHASES
+    assert config_flow._safe_phases_default("3") == 3

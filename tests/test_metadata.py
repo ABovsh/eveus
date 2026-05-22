@@ -79,8 +79,6 @@ def test_brand_images_are_complete_and_sized() -> None:
     expected_sizes = {
         "icon.png": (256, 256),
         "icon@2x.png": (512, 512),
-        "logo.png": (256, 256),
-        "logo@2x.png": (512, 512),
     }
 
     for filename, expected_size in expected_sizes.items():
@@ -108,3 +106,9 @@ def test_manifest_has_loggers() -> None:
     )
     assert "loggers" in manifest, "manifest.json must declare loggers"
     assert "custom_components.eveus" in manifest["loggers"]
+
+
+def test_unit_suite_disables_homeassistant_pytest_plugin(pytestconfig) -> None:
+    """The fast unit path must not load the Home Assistant pytest plugin."""
+
+    assert not pytestconfig.pluginmanager.hasplugin("homeassistant")

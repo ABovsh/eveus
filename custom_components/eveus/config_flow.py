@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import ipaddress
+import math
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -109,6 +110,15 @@ def _split_host_and_scheme(
     if scheme not in ("http", "https"):
         raise vol.Invalid("Unsupported URL scheme")
 
+    if parsed.username or parsed.password:
+        raise vol.Invalid("Credentials in URL are not allowed")
+
+    if parsed.query or parsed.fragment:
+        raise vol.Invalid("URL must not include a query or fragment")
+
+    if parsed.path not in ("", "/"):
+        raise vol.Invalid("URL must not include a path")
+
     hostname = parsed.hostname
     if not hostname:
         raise vol.Invalid("Invalid IP address or hostname")
@@ -118,15 +128,23 @@ def _split_host_and_scheme(
     except ValueError as err:
         raise vol.Invalid("Invalid port") from err
 
+    if port is not None and not 1 <= port <= 65535:
+        raise vol.Invalid("Invalid port")
+
     if not _is_valid_ip(hostname) and not _is_valid_hostname(hostname):
         raise vol.Invalid("Invalid IP address or hostname")
 
     if hostname.endswith("."):
         hostname = hostname[:-1]
 
+    if not _is_valid_ip(hostname):
+        hostname = hostname.lower()
+
+    is_ipv6 = ":" in hostname
+    if is_ipv6 and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+
     if port is not None:
-        if ":" in hostname and not hostname.startswith("["):
-            hostname = f"[{hostname}]"
         return f"{hostname}:{port}", scheme
     return hostname, scheme
 
@@ -144,6 +162,8 @@ def validate_credentials(username: str, password: str) -> tuple[str, str]:
         raise vol.Invalid("Username and password cannot be empty")
     if len(username) > 32 or len(password) > 32:
         raise vol.Invalid("Username and password must be less than 32 characters")
+    if ":" in username:
+        raise vol.Invalid("Username cannot contain ':'")
 
     return username, password
 
@@ -163,6 +183,9 @@ def validate_device_response(
         current_set = float(result["currentSet"])
     except (TypeError, ValueError) as err:
         raise InvalidDevice("Device reports invalid current format") from err
+
+    if not math.isfinite(current_set):
+        raise InvalidDevice("Device reports invalid current value")
 
     if current_set < MIN_CURRENT:
         raise InvalidDevice("Device reports invalid current setting")
@@ -208,6 +231,15 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _safe_phases_default(raw: Any) -> int:
+    """Coerce stored phase data to a valid option, falling back on DEFAULT_PHASES."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_PHASES
+    return value if value in PHASE_OPTIONS else DEFAULT_PHASES
+
+
 def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
     """Build config-flow schema with optional defaults."""
     defaults = defaults or {}
@@ -227,7 +259,7 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
             ): vol.In(MODELS),
             vol.Required(
                 CONF_PHASES,
-                default=int(defaults.get(CONF_PHASES, DEFAULT_PHASES)),
+                default=_safe_phases_default(defaults.get(CONF_PHASES)),
             ): vol.In(PHASE_OPTIONS),
         }
     )
@@ -288,14 +320,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except aiohttp.ClientResponseError as err:
         if err.status == 401:
             raise InvalidAuth from err
-        raise CannotConnect(f"Connection error: {err}") from err
+        raise CannotConnect(f"Connection error: {type(err).__name__}") from err
     except (asyncio.TimeoutError, aiohttp.ClientError) as err:
-        raise CannotConnect(f"Connection error: {err}") from err
+        raise CannotConnect(f"Connection error: {type(err).__name__}") from err
     except (InvalidAuth, InvalidDevice, InvalidInput, CannotConnect):
         raise
     except Exception as err:
-        _LOGGER.exception("Unexpected error: %s", str(err))
-        raise CannotConnect(f"Unexpected error: {err}") from err
+        _LOGGER.exception("Unexpected Eveus setup error")
+        raise CannotConnect(f"Unexpected error: {type(err).__name__}") from err
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

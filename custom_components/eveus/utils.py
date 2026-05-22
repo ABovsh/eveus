@@ -5,11 +5,11 @@ import logging
 import math
 import time
 from collections.abc import Hashable
-from typing import Any, Callable, TypeVar, Optional, Union, Dict
+from typing import Any, Callable, TypeVar, Optional, Dict
 
 from homeassistant.core import State, HomeAssistant
 
-from .const import DOMAIN
+from .const import DEFAULT_SOC_CORRECTION, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,6 +109,9 @@ def get_safe_value(
         if value in (None, 'unknown', 'unavailable', ''):
             return default
 
+        if isinstance(value, bool) and converter in (float, int):
+            return default
+
         converted = converter(value)
         if isinstance(converted, float) and not math.isfinite(converted):
             return default
@@ -189,6 +192,14 @@ def _validate_soc_inputs(
             for value in (initial_soc, battery_capacity, energy_charged, efficiency_loss)
         ):
             return None
+        if not 0 <= initial_soc <= 100:
+            return None
+        if battery_capacity <= 0:
+            return None
+        if energy_charged < 0:
+            return None
+        if not 0 <= efficiency_loss < 100:
+            return None
         return initial_soc, battery_capacity, energy_charged, efficiency_loss
     except (TypeError, ValueError):
         return None
@@ -263,7 +274,7 @@ def _remaining_seconds_or_state(
         target_soc = float(target_soc)
         power_meas = float(power_meas)
         battery_capacity = float(battery_capacity)
-        correction = float(correction) if correction is not None else 7.5
+        correction = float(correction) if correction is not None else DEFAULT_SOC_CORRECTION
 
         if not (0 <= current_soc <= 100) or not (0 <= target_soc <= 100):
             return _REMAINING_UNAVAILABLE
@@ -308,11 +319,11 @@ def calculate_remaining_seconds(
 
 
 def calculate_remaining_time(
-    current_soc: Union[float, int],
-    target_soc: Union[float, int],
-    power_meas: Union[float, int],
-    battery_capacity: Union[float, int],
-    correction: Union[float, int],
+    current_soc: float | int,
+    target_soc: float | int,
+    power_meas: float | int,
+    battery_capacity: float | int,
+    correction: float | int,
 ) -> str:
     """Calculate remaining time as a human-readable string."""
     result = _remaining_seconds_or_state(

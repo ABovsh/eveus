@@ -8,6 +8,7 @@ import pytest
 import voluptuous as vol
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 
+from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus.config_flow import (
     build_user_data_schema,
     normalize_user_input,
@@ -25,12 +26,12 @@ from custom_components.eveus.sensor_definitions import get_sensor_specifications
 
 
 class _Updater:
-    host = "192.168.1.50"
+    host = TEST_HOST
     available = True
     last_update_success = True
     scheme = "http"
-    username = "admin"
-    password = "secret"
+    username = TEST_USERNAME
+    password = TEST_PASSWORD
 
     def __init__(self) -> None:
         self.data: dict[str, object] = {}
@@ -53,9 +54,9 @@ def test_user_data_schema_defaults_to_one_phase() -> None:
     schema = build_user_data_schema()
     data = schema(
         {
-            CONF_HOST: "192.168.1.50",
-            CONF_USERNAME: "admin",
-            CONF_PASSWORD: "secret",
+            CONF_HOST: TEST_HOST,
+            CONF_USERNAME: TEST_USERNAME,
+            CONF_PASSWORD: TEST_PASSWORD,
             CONF_MODEL: MODEL_16A,
         }
     )
@@ -64,25 +65,26 @@ def test_user_data_schema_defaults_to_one_phase() -> None:
 
 def test_user_data_schema_rejects_two_phases() -> None:
     schema = build_user_data_schema()
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(vol.Invalid) as exc_info:
         schema(
             {
-                CONF_HOST: "192.168.1.50",
-                CONF_USERNAME: "admin",
-                CONF_PASSWORD: "secret",
+                CONF_HOST: TEST_HOST,
+                CONF_USERNAME: TEST_USERNAME,
+                CONF_PASSWORD: TEST_PASSWORD,
                 CONF_MODEL: MODEL_16A,
                 CONF_PHASES: 2,
             }
         )
+    assert "value must be one of" in str(exc_info.value)
 
 
 def test_user_data_schema_preserves_existing_three_phase_default() -> None:
     schema = build_user_data_schema({CONF_PHASES: 3})
     data = schema(
         {
-            CONF_HOST: "192.168.1.50",
-            CONF_USERNAME: "admin",
-            CONF_PASSWORD: "secret",
+            CONF_HOST: TEST_HOST,
+            CONF_USERNAME: TEST_USERNAME,
+            CONF_PASSWORD: TEST_PASSWORD,
             CONF_MODEL: MODEL_16A,
         }
     )
@@ -92,9 +94,9 @@ def test_user_data_schema_preserves_existing_three_phase_default() -> None:
 def test_normalize_user_input_coerces_string_phases() -> None:
     data = normalize_user_input(
         {
-            CONF_HOST: "192.168.1.50",
-            CONF_USERNAME: "admin",
-            CONF_PASSWORD: "secret",
+            CONF_HOST: TEST_HOST,
+            CONF_USERNAME: TEST_USERNAME,
+            CONF_PASSWORD: TEST_PASSWORD,
             CONF_MODEL: MODEL_16A,
             CONF_PHASES: "3",
         }

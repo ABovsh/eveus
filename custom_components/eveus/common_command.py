@@ -7,9 +7,12 @@ from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import COMMAND_TIMEOUT, ERROR_LOG_RATE_LIMIT
 from .utils import RateLog
+
+_COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,8 +59,16 @@ class CommandManager:
                 for attempt in range(retry_attempts + 1):
                     try:
                         return await self._post_command(command, value)
+                    except aiohttp.ClientResponseError as err:
+                        if err.status == 401:
+                            self._consecutive_failures += 1
+                            raise ConfigEntryAuthFailed(
+                                "Eveus charger rejected credentials"
+                            ) from err
+                        last_error = err
+                        if attempt >= retry_attempts:
+                            break
                     except (
-                        aiohttp.ClientResponseError,
                         aiohttp.ClientConnectorError,
                         aiohttp.ClientError,
                         asyncio.TimeoutError,
@@ -75,6 +86,8 @@ class CommandManager:
                     _LOGGER.debug("Command %s failed: %s", command, last_error)
                 return False
 
+            except ConfigEntryAuthFailed:
+                raise
             except Exception as err:
                 self._consecutive_failures += 1
                 if self._should_log_error():
@@ -91,18 +104,14 @@ class CommandManager:
     async def _post_command(self, command: str, value: Any) -> bool:
         """Issue a single HTTP request to the charger and return success."""
         session = self._updater.get_session()
-        timeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
 
         payload = urlencode({"pageevent": command, command: value})
         async with session.post(
             self._updater.url_for("/pageEvent"),
-            auth=aiohttp.BasicAuth(
-                self._updater.username,
-                self._updater.password,
-            ),
+            auth=self._updater._basic_auth,
             headers={"Content-type": "application/x-www-form-urlencoded"},
             data=payload,
-            timeout=timeout,
+            timeout=_COMMAND_TIMEOUT_OBJ,
         ) as response:
             response.raise_for_status()
             self._consecutive_failures = 0

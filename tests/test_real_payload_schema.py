@@ -81,7 +81,7 @@ def test_session_time_and_system_time(real_payload) -> None:
 def test_active_rate_resolves_to_known_slot(real_payload) -> None:
     upd = _updater(real_payload)
     # Whichever slot is active (0/1/2), the cost must resolve.
-    assert sd.get_active_rate_cost(upd, None) is not None
+    assert sd.get_active_rate_cost(upd, None) == pytest.approx(4.32)
 
 
 def test_adaptive_charging_state_resolves(real_payload) -> None:

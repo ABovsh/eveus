@@ -28,6 +28,8 @@ from .const import (
 )
 from .utils import RateLog
 
+_UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
+
 # Sequence of refreshes after a successful command. Covers both fast
 # commits (e.g. Charging Current — applied immediately, visible at 3 s)
 # and slow state transitions (Stop Charging off + One Charge on — the
@@ -70,8 +72,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.host = host
         self.scheme = scheme
-        self.username = username
-        self.password = password
+        self._basic_auth = aiohttp.BasicAuth(username, password)
         self._command_manager = CommandManager(self)
 
         self._poll_results: deque[bool] = deque(maxlen=20)
@@ -163,10 +164,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         is debounced ~10s inside HA's coordinator and would defeat the whole
         point of scheduling a quick post-command refresh.
         """
-        try:
-            await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            return
+        await asyncio.sleep(delay)
         if self.hass is None or self.hass.is_stopping:
             return
         try:
@@ -244,11 +242,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._next_poll_attempt = time.time() + min(RETRY_DELAY * 4, 300)
             self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
             if not self._offline_announced:
-                _LOGGER.debug("Device %s appears offline, reducing poll frequency", self.host)
+                _LOGGER.debug("Eveus device appears offline, reducing poll frequency")
                 self._offline_announced = True
 
         if not self._silent_mode and self._should_log():
-            _LOGGER.debug("Connection issue with %s: %s", self.host, type(error).__name__)
+            _LOGGER.debug("Eveus connection issue: %s", type(error).__name__)
 
     def _tune_update_interval(self, data: dict[str, Any]) -> None:
         """Pick a poll cadence based on charger activity.
@@ -290,15 +288,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         bypass_backoff = self._force_refresh_requested
         self._force_refresh_requested = False
         if self._next_poll_attempt > start_time and not bypass_backoff:
-            raise UpdateFailed(f"Skipping poll for {self.host} during offline backoff")
+            raise UpdateFailed("Skipping Eveus poll during offline backoff")
 
         try:
             async with self.get_session().post(
                 self.url_for("/main"),
-                auth=aiohttp.BasicAuth(self.username, self.password),
-                timeout=aiohttp.ClientTimeout(total=UPDATE_TIMEOUT),
+                auth=self._basic_auth,
+                timeout=_UPDATE_TIMEOUT_OBJ,
             ) as response:
                 if response.status == 401:
+                    self._record_failure(ConfigEntryAuthFailed("401"))
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 
@@ -313,7 +312,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             raise
         except ValueError as err:
             self._record_failure(err)
-            raise UpdateFailed(f"Invalid response from {self.host}: {err}") from err
+            raise UpdateFailed(f"Invalid Eveus response: {type(err).__name__}") from err
         except (
             aiohttp.ClientResponseError,
             aiohttp.ClientConnectorError,
@@ -321,4 +320,4 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             asyncio.TimeoutError,
         ) as err:
             self._record_failure(err)
-            raise UpdateFailed(f"Connection issue with {self.host}: {type(err).__name__}") from err
+            raise UpdateFailed(f"Eveus connection issue: {type(err).__name__}") from err

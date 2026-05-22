@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from homeassistant.helpers.entity import EntityCategory
 
+from conftest import TEST_HOST
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
     SensorSpec,
@@ -19,7 +20,7 @@ from custom_components.eveus.sensor_definitions import (
 
 
 class _Updater:
-    host = "192.168.1.50"
+    host = TEST_HOST
     available = True
     last_update_success = True
     data = {"value": "10"}

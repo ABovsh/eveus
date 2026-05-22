@@ -270,9 +270,10 @@ class OptimisticControlMixin(Generic[T]):
 
         if self._optimistic_value is None:
             return
-        if confirm_fn(self._optimistic_value, new_value):
-            self._optimistic_value = None
-        elif current_time - self._optimistic_value_time > mismatch_ttl:
+        if (
+            confirm_fn(self._optimistic_value, new_value)
+            or current_time - self._optimistic_value_time > mismatch_ttl
+        ):
             self._optimistic_value = None
 
 
