@@ -285,6 +285,45 @@ def _install_homeassistant_stub() -> None:
     event.async_track_state_change_event = async_track_state_change_event
     sys.modules["homeassistant.helpers.event"] = event
 
+    update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
+
+    class UpdateFailed(Exception):
+        """Raised when a coordinator update fails."""
+
+    class DataUpdateCoordinator:
+        def __init__(self, hass: Any = None, logger: Any = None, *, name: str = "", update_interval: Any = None) -> None:
+            self.hass = hass
+            self.logger = logger
+            self.name = name
+            self.update_interval = update_interval
+            self.data: Any = None
+            self.last_update_success = True
+
+        def async_add_listener(self, *args: Any, **kwargs: Any) -> Any:
+            return lambda: None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            return None
+
+        async def async_request_refresh(self) -> None:
+            return None
+
+        def async_set_updated_data(self, data: Any) -> None:
+            self.data = data
+
+    class CoordinatorEntity:
+        def __init__(self, coordinator: Any = None) -> None:
+            self.coordinator = coordinator
+
+        async def async_added_to_hass(self) -> None:
+            return None
+
+    update_coordinator.UpdateFailed = UpdateFailed
+    update_coordinator.DataUpdateCoordinator = DataUpdateCoordinator
+    update_coordinator.CoordinatorEntity = CoordinatorEntity
+    sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
+    helpers.update_coordinator = update_coordinator
+
     components = types.ModuleType("homeassistant.components")
     sys.modules["homeassistant.components"] = components
 
