@@ -110,6 +110,10 @@ def _install_homeassistant_stub() -> None:
         SENSOR = "sensor"
         SWITCH = "switch"
         NUMBER = "number"
+        BINARY_SENSOR = "binary_sensor"
+        BUTTON = "button"
+        SELECT = "select"
+        TIME = "time"
 
     class UnitOfEnergy:
         KILO_WATT_HOUR = "kWh"
@@ -178,6 +182,9 @@ def _install_homeassistant_stub() -> None:
     config_entries = types.ModuleType("homeassistant.config_entries")
 
     class ConfigEntry:
+        def __class_getitem__(cls, item: Any) -> Any:
+            return cls
+
         def __init__(self, data: dict[str, Any] | None = None, title: str = "Eveus") -> None:
             self.data = data or {}
             self.title = title
@@ -291,6 +298,9 @@ def _install_homeassistant_stub() -> None:
         """Raised when a coordinator update fails."""
 
     class DataUpdateCoordinator:
+        def __class_getitem__(cls, item: Any) -> Any:
+            return cls
+
         def __init__(self, hass: Any = None, logger: Any = None, *, name: str = "", update_interval: Any = None) -> None:
             self.hass = hass
             self.logger = logger
@@ -386,6 +396,22 @@ def _install_homeassistant_stub() -> None:
     sensor.SensorDeviceClass = SensorDeviceClass
     sensor.SensorStateClass = SensorStateClass
     sys.modules["homeassistant.components.sensor"] = sensor
+
+    binary_sensor = types.ModuleType("homeassistant.components.binary_sensor")
+
+    class BinarySensorEntity:
+        """Placeholder binary sensor entity."""
+
+    class BinarySensorDeviceClass:
+        CONNECTIVITY = "connectivity"
+        PROBLEM = "problem"
+        POWER = "power"
+        RUNNING = "running"
+        PLUG = "plug"
+
+    binary_sensor.BinarySensorEntity = BinarySensorEntity
+    binary_sensor.BinarySensorDeviceClass = BinarySensorDeviceClass
+    sys.modules["homeassistant.components.binary_sensor"] = binary_sensor
 
     switch = types.ModuleType("homeassistant.components.switch")
 
