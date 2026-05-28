@@ -162,14 +162,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         if not isinstance(host, str):
             _create_invalid_config_issue(hass, entry, "invalid_host")
             raise ConfigEntryError("Host is not a string")
-        else:
-            from .config_flow import _split_host_and_scheme
 
-            try:
-                host, scheme = _split_host_and_scheme(host, scheme)
-            except vol.Invalid as err:
-                _create_invalid_config_issue(hass, entry, "invalid_host")
-                raise ConfigEntryError(f"Invalid host: {err}") from err
+        from .config_flow import _split_host_and_scheme
+
+        try:
+            host, scheme = _split_host_and_scheme(host, scheme)
+        except vol.Invalid as err:
+            _create_invalid_config_issue(hass, entry, "invalid_host")
+            raise ConfigEntryError(f"Invalid host: {err}") from err
         if not username:
             _create_invalid_config_issue(hass, entry, "missing_username")
             raise ConfigEntryError("No username specified")
