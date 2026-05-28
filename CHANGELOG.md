@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.9.2-rc4 - 2026-05-28
+
+Fourth release candidate. Closes findings from a second adversarial audit (Codex GPT-5.5 high) — small but real correctness fixes plus new tests.
+
+### 🐛 Fixed
+- **Input Entities Status really does repaint on helper changes** — rc3 scheduled an HA refresh but `SensorEntity` has no `async_update`, so the cached value was re-written unchanged. Now the entity recomputes value + attributes synchronously in the event callback and writes only when something changed.
+- **Device registry now shows hardware version and serial number** — `_maybe_finalize_device_info` was only propagating `sw_version`, `model`, `manufacturer` to the device registry once the charger came online. `hw_version` (WiFi firmware) and `serial_number` are now also pushed so the Devices page reflects all rc2 metadata.
+
+### 🧪 Tests
+- New `test_input_entities_status_event_recomputes_value_and_attributes` covers the rc4 event-driven recompute path.
+- `test_base_entity_finalize_updates_registry_device` now asserts `hw_version` and `serial_number` propagation.
+
 ## 4.9.2-rc3 - 2026-05-28
 
 Third release candidate. Closes the loop on findings from an adversarial review of rc1+rc2, plus a small UX improvement to the Connection Quality sensor.

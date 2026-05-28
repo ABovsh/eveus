@@ -464,7 +464,11 @@ def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.Monkey
         ),
     )
     entity.hass = object()
-    updater.data = {"verFWMain": "R3.05.2", "verFWWifi": "W1.0"}
+    updater.data = {
+        "verFWMain": "R3.05.2",
+        "verFWWifi": "W1.0",
+        "serialNum": "EV-12345",
+    }
     updates: list[tuple[str, dict[str, object]]] = []
 
     class Registry:
@@ -486,6 +490,8 @@ def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.Monkey
                 "sw_version": "R3.05.2",
                 "model": "Eveus EV Charger",
                 "manufacturer": "Eveus",
+                "hw_version": "W1.0",
+                "serial_number": "EV-12345",
             },
         )
     ]

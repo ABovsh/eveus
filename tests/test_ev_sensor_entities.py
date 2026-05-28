@@ -392,6 +392,31 @@ def test_charging_finish_time_returns_none_for_non_eta_states(
     assert sensor._get_sensor_value() is None
 
 
+def test_input_entities_status_event_recomputes_value_and_attributes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sensor = InputEntitiesStatusSensor(EveusTestUpdater({}))
+    sensor.hass = HelperHass({})
+    # Prime cached value with helpers missing.
+    sensor._update_native_value()
+    sensor._update_extra_state_attributes()
+    assert sensor._attr_native_value == "Optional - 4 Missing"
+
+    writes: list[None] = []
+    monkeypatch.setattr(sensor, "async_write_ha_state", lambda: writes.append(None))
+
+    # Helpers now appear — event should trigger recompute + write.
+    sensor.hass = HelperHass(EV_HELPERS)
+    sensor._on_input_state_changed(None)
+    assert sensor._attr_native_value == "All Present"
+    assert sensor.extra_state_attributes["missing_count"] == 0
+    assert len(writes) == 1
+
+    # Second call without change must not write again.
+    sensor._on_input_state_changed(None)
+    assert len(writes) == 1
+
+
 def test_input_entities_status_sensor_caches_between_checks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
