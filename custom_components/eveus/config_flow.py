@@ -176,6 +176,13 @@ def validate_device_response(
     if not isinstance(result, dict):
         raise CannotConnect("Invalid response format")
 
+    # Match the runtime coordinator contract (common_network.py): /main must
+    # carry both `state` and `currentSet` to be accepted as an Eveus charger.
+    # Validating both here means we fail at config flow instead of letting
+    # setup succeed and then immediately fail on first refresh.
+    if "state" not in result:
+        raise InvalidDevice("Device response is missing state")
+
     if "currentSet" not in result:
         raise InvalidDevice("Device response is missing currentSet")
 

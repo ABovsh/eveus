@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.9.2-rc3 - 2026-05-28
+
+Third release candidate. Closes the loop on findings from an adversarial review of rc1+rc2, plus a small UX improvement to the Connection Quality sensor.
+
+### 🐛 Fixed
+- **Config flow now matches the runtime contract** — adding a new charger rejects responses that lack the `state` field, the same check the coordinator does. Previously the config flow could accept a misrouted device and only fail on the first refresh.
+- **Input Entities Status updates instantly** — adding or removing a helper now repaints the diagnostic sensor immediately instead of waiting for the next coordinator tick. (The rc2 fix invalidated the cache; this one also schedules the redraw.)
+- **Money Limit unit is now ISO 4217** — `number.eveus_money_limit` uses `UAH` for `device_class=monetary` instead of the `₴` symbol, matching Home Assistant's expectations for monetary device classes. No user impact in the UI — HA still renders the local currency symbol.
+
+### ⚡ Improvements
+- **`sensor.eveus_connection_quality` now includes `wifi_rssi`** as a supplementary attribute. Connection Quality measures HA→charger HTTP success; WiFi Signal measures charger→AP radio strength. They are kept as separate sensors because they diagnose different layers — pairing them in one attribute view makes "why is polling unreliable?" a one-glance question.
+
+### 🏷️ Project quality
+- README now displays live SonarCloud badges: Quality Gate, Reliability, Security, Maintainability, Coverage. Current state: gate **OK**, all ratings **A**, 95.4% coverage, 0 bugs, 0 vulnerabilities.
+
 ## 4.9.2-rc2 - 2026-05-28
 
 Second release candidate from the deep-audit pass. Adds new entities and richer device metadata. No breaking changes.

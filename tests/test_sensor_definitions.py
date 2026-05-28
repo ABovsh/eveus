@@ -172,6 +172,7 @@ def test_connection_attrs_returns_quantized_numerics_not_drifting_strings() -> N
 
     class _Fake:
         available = True
+        data: dict = {}
         connection_quality = {"success_rate": 99.34, "latency_avg": 0.873}
 
     attrs = get_connection_attrs(_Fake(), None)

@@ -307,7 +307,8 @@ SESSION_LIMIT_DESCRIPTIONS: tuple[tuple[NumberEntityDescription, str, float], ..
             entity_category=EntityCategory.CONFIG,
             native_step=1.0,
             mode=NumberMode.BOX,
-            native_unit_of_measurement="₴",
+            # NumberDeviceClass.MONETARY requires an ISO 4217 code, not a symbol.
+            native_unit_of_measurement="UAH",
             device_class=NumberDeviceClass.MONETARY,
         ),
         "moneyLimit",

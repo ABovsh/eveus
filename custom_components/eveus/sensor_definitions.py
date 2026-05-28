@@ -413,7 +413,13 @@ def get_connection_quality(updater, hass) -> Optional[float]:
 
 
 def get_connection_attrs(updater, hass) -> dict:
-    """Get connection attributes."""
+    """Get connection attributes.
+
+    Connection Quality measures HA→charger HTTP poll success.
+    `wifi_rssi` is included as a supplementary metric (charger→AP link)
+    because a degraded RSSI is the most common upstream cause of poor
+    Connection Quality — surfacing both in one view makes diagnosis faster.
+    """
     try:
         if not updater.available:
             return {}
@@ -430,11 +436,15 @@ def get_connection_attrs(updater, hass) -> dict:
             status = "Poor"
         else:
             status = "Critical"
-        return {
+        attrs: dict[str, Any] = {
             "connection_quality": round(success_rate),
             "latency_avg": round(latency_avg * 2) / 2,
             "status": status,
         }
+        rssi = get_wifi_rssi(updater, hass)
+        if rssi is not None:
+            attrs["wifi_rssi"] = rssi
+        return attrs
     except Exception as err:
         if _should_log_error("get_connection_attrs"):
             _LOGGER.debug("Error getting connection attributes: %s", err, exc_info=True)

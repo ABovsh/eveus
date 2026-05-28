@@ -566,8 +566,15 @@ class InputEntitiesStatusSensor(EveusSensorBase):
 
     @callback
     def _on_input_state_changed(self, _event: Event) -> None:
-        """Force the next read to re-check inputs rather than wait for TTL."""
+        """Re-check inputs immediately and push the new state to HA.
+
+        Invalidating the TTL alone is not enough — without an explicit
+        schedule_update the entity would still wait for the next coordinator
+        tick to repaint. `async_schedule_update_ha_state(True)` runs the full
+        update cycle (recompute value + attributes) right now.
+        """
         self._last_check_time = 0
+        self.async_schedule_update_ha_state(True)
 
     def _get_sensor_value(self) -> str:
         """Get input status with caching."""

@@ -55,9 +55,9 @@ def test_split_host_rejects_port_zero():
 # F04 — NaN currentSet rejected
 def test_validate_device_response_rejects_nan():
     with pytest.raises(InvalidDevice, match="invalid current value"):
-        validate_device_response({"currentSet": float("nan")}, "16A")
+        validate_device_response({"state": 2, "currentSet": float("nan")}, "16A")
     with pytest.raises(InvalidDevice, match="invalid current value"):
-        validate_device_response({"currentSet": float("inf")}, "16A")
+        validate_device_response({"state": 2, "currentSet": float("inf")}, "16A")
 
 
 # F05 — counter cost negative rejected
