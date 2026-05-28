@@ -16,6 +16,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.const import (
     UnitOfElectricCurrent,
+    UnitOfEnergy,
+    UnitOfTime,
 )
 
 from . import EveusConfigEntry
@@ -186,6 +188,134 @@ class EveusCurrentNumber(EveusNumberEntity):
         self._write_if_changed(current_value)
 
 
+class EveusSessionLimitNumber(EveusNumberEntity):
+    """Generic writable session-limit (energy / time / money) backed by /main."""
+
+    def __init__(
+        self,
+        updater,
+        description: NumberEntityDescription,
+        command: str,
+        max_value: float,
+        device_number: int = 1,
+    ) -> None:
+        super().__init__(updater, description, device_number)
+        self._command = command
+        self._attr_native_min_value = 0.0
+        self._attr_native_max_value = float(max_value)
+        self._attr_native_value = self._resolve_value()
+
+    @property
+    def native_value(self) -> float | None:
+        return self._attr_native_value
+
+    def _resolve_value(self) -> float | None:
+        current_time = time.time()
+        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
+            return self._optimistic_value
+        if self._updater.available and self._updater.data and self._command in self._updater.data:
+            value = get_safe_value(self._updater.data, self._command, float)
+            if value is not None:
+                return float(value)
+        if self._last_device_value is not None and current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
+            return self._last_device_value
+        return None
+
+    async def async_set_native_value(self, value: float) -> None:
+        try:
+            clamped = max(self._attr_native_min_value, min(self._attr_native_max_value, value))
+            int_value = int(round(clamped))
+            self._pending_value = float(int_value)
+            self._attr_native_value = self._pending_value
+            self._write_if_changed(self._attr_native_value)
+            try:
+                success = await self._updater.send_command(self._command, int_value)
+            except Exception:
+                self._optimistic_value = None
+                raise
+            if success:
+                self._set_optimistic_value(float(int_value))
+            else:
+                raise HomeAssistantError(
+                    f"Eveus charger did not accept {self.name} = {int_value}"
+                )
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            _LOGGER.debug("Failed to set %s: %s", self.name, err, exc_info=True)
+            raise HomeAssistantError(f"Failed to set {self.name}: {err}") from err
+        finally:
+            self._pending_value = None
+            self._last_command_time = time.time()
+            self._attr_native_value = self._resolve_value()
+            self._write_if_changed(self._attr_native_value)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        if self._pending_value is not None:
+            return
+        current_time = time.time()
+        if self._updater.available and self._updater.data and self._command in self._updater.data:
+            device_value = get_safe_value(self._updater.data, self._command, float)
+            if device_value is not None:
+                self._reconcile_with_device(
+                    float(device_value),
+                    current_time,
+                    lambda optimistic, device: abs(optimistic - device) < 0.5,
+                )
+        self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
+        self._attr_native_value = self._resolve_value()
+        self._write_if_changed(self._attr_native_value)
+
+
+SESSION_LIMIT_DESCRIPTIONS: tuple[tuple[NumberEntityDescription, str, float], ...] = (
+    (
+        NumberEntityDescription(
+            key="energy_limit",
+            name="Energy Limit",
+            icon="mdi:flash-outline",
+            entity_category=EntityCategory.CONFIG,
+            native_step=1.0,
+            mode=NumberMode.BOX,
+            native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            device_class=NumberDeviceClass.ENERGY,
+        ),
+        "energyLimit",
+        200.0,
+    ),
+    (
+        NumberEntityDescription(
+            key="time_limit",
+            name="Time Limit",
+            icon="mdi:timer-sand",
+            entity_category=EntityCategory.CONFIG,
+            native_step=1.0,
+            mode=NumberMode.BOX,
+            native_unit_of_measurement=UnitOfTime.MINUTES,
+            device_class=NumberDeviceClass.DURATION,
+        ),
+        "timeLimit",
+        1440.0,
+    ),
+    (
+        NumberEntityDescription(
+            key="money_limit",
+            name="Money Limit",
+            icon="mdi:cash",
+            entity_category=EntityCategory.CONFIG,
+            native_step=1.0,
+            mode=NumberMode.BOX,
+            native_unit_of_measurement="₴",
+            device_class=NumberDeviceClass.MONETARY,
+        ),
+        "moneyLimit",
+        10000.0,
+    ),
+)
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -201,8 +331,9 @@ async def async_setup_entry(
         _LOGGER.debug("No model specified in config")
         return
 
-    entities = [
-        EveusCurrentNumber(updater, model, device_number),
-    ]
-
+    entities: list[NumberEntity] = [EveusCurrentNumber(updater, model, device_number)]
+    entities.extend(
+        EveusSessionLimitNumber(updater, desc, command, max_v, device_number)
+        for desc, command, max_v in SESSION_LIMIT_DESCRIPTIONS
+    )
     async_add_entities(entities)

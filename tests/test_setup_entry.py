@@ -363,9 +363,15 @@ def test_number_setup_creates_current_entity() -> None:
         )
     )
 
-    assert len(added) == 1
-    assert added[0].name == "Charging Current"
-    assert added[0].unique_id == "eveus3_charging_current"
+    # 4.9.2-rc2: +3 session-limit Number entities (Energy/Time/Money Limit).
+    assert len(added) == 4
+    names = [e.name for e in added]
+    assert "Charging Current" in names
+    assert "Energy Limit" in names
+    assert "Time Limit" in names
+    assert "Money Limit" in names
+    current = next(e for e in added if e.name == "Charging Current")
+    assert current.unique_id == "eveus3_charging_current"
 
 
 def test_reset_counter_buttons_send_reset_commands() -> None:

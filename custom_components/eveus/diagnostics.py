@@ -8,20 +8,20 @@ from homeassistant.core import HomeAssistant
 
 from . import EveusConfigEntry
 
-TO_REDACT = {"password", "username", "host", "unique_id"}
-DEVICE_DIAGNOSTIC_KEYS = (
-    "verFWMain",
-    "verFWWifi",
-    "state",
-    "subState",
-    "currentSet",
-    "powerMeas",
-    "voltMeas1",
-    "curMeas1",
-    "temperature1",
-    "temperature2",
-    "ground",
-)
+# Redacted on every diagnostics download — credentials, host, IDs, and any
+# /main field that exposes the LAN address or hardware serial.
+TO_REDACT = {
+    "password",
+    "username",
+    "host",
+    "unique_id",
+    # /main fields with identifying device data
+    "serialNum",
+    "serialNumCPU",
+    "stationId",
+    "STA_IP_Addres",
+    "fwCRC32",
+}
 
 
 async def async_get_config_entry_diagnostics(
@@ -60,6 +60,8 @@ async def async_get_config_entry_diagnostics(
                 ),
                 "connection_quality": updater.connection_quality,
                 "is_likely_offline": updater.is_likely_offline,
+                "consecutive_failures": getattr(updater, "_consecutive_failures", None),
+                "last_error": getattr(updater, "_last_error", None),
             },
             "device": {
                 "firmware": data.get("verFWMain"),
@@ -67,12 +69,13 @@ async def async_get_config_entry_diagnostics(
                 "state": data.get("state"),
                 "substate": data.get("subState"),
                 "current_set": data.get("currentSet"),
-                "sanitized_raw": {
-                    key: data.get(key)
-                    for key in DEVICE_DIAGNOSTIC_KEYS
-                    if key in data
-                },
+                "model": data.get("model"),
+                "manufacturer": data.get("manufacturer"),
             },
+            # Full /main payload with sensitive identifiers removed. Useful for
+            # bug reports — gives the developer the exact field set the device
+            # reported without leaking serials or LAN addresses.
+            "raw_main": async_redact_data(dict(data), TO_REDACT),
         }
     )
     return payload

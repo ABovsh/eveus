@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.9.2-rc2 - 2026-05-28
+
+Second release candidate from the deep-audit pass. Adds new entities and richer device metadata. No breaking changes.
+
+### ✨ New entities
+
+- **`number.eveus_energy_limit`** — session energy cap in kWh. Set 0 to clear, or any value from 1 to 200 kWh. The charger stops the session when this is reached.
+- **`number.eveus_time_limit`** — session duration cap in minutes. Set 0 to clear, or up to 1440 (24 h).
+- **`number.eveus_money_limit`** — session spend cap in ₴. Set 0 to clear, or any value up to 10000 ₴.
+- **`binary_sensor.eveus_energy_limit_reached`**, **`binary_sensor.eveus_time_limit_reached`**, **`binary_sensor.eveus_money_limit_reached`** — turn on the moment the charger reports the corresponding limit was hit. Great for automations that should react when a session ends because of a cap.
+- **`sensor.eveus_wifi_signal`** — WiFi signal strength reported by the charger (dBm). Helps correlate connection issues with bad RF.
+- **`sensor.eveus_control_pilot`** — raw EV Control Pilot byte from the charger firmware. Niche, but invaluable when a session looks "stuck on Connected".
+
+### 🛠️ Improvements
+
+- **Richer Device page** — the Devices view in Home Assistant now shows the charger's real model and manufacturer from the firmware (instead of a generic label), plus a real serial number. The firmware version was already shown; now it sits next to model/manufacturer/serial like a proper device.
+- **Beefed-up diagnostics download** — `Download diagnostics` now ships the full sanitized `/main` snapshot from your charger plus coordinator state (consecutive failures, last error). Sensitive fields (serial number, station ID, LAN IP, firmware CRC) are redacted automatically. Makes bug reports actually reproducible.
+
+### 🧠 Audit confirmations (no code change required)
+
+- **Master on/off switch** — `switch.eveus_stop_charging` already wires the firmware's `evseEnabled` field. Nothing to add; renaming would have been a breaking change.
+- **Energy dashboard compatibility** — verified that Total Energy / Counter A Energy / Counter B Energy declare `device_class=energy` and `state_class=total_increasing`. Pickable in the Energy dashboard as-is.
+
 ## 4.9.2-rc1 - 2026-05-28
 
 Release candidate from a deep audit pass. Mostly invisible reliability and responsiveness fixes — no breaking changes, no entity renames.

@@ -90,10 +90,11 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     assert "Leakage Current Peak" in names
     # Exact count: catches silent additions/removals; bump on intentional
     # changes alongside README/CHANGELOG.
-    # 4.7.0: +5 adaptive/scheduled-charging sensors (Adaptive Charging,
-    # Adaptive Current Limit, Adaptive Voltage Threshold, Schedule 1, Schedule 2).
-    # Leakage sensors are always exposed.
-    assert len(specs) == 33, sorted(names)
+    # 4.7.0: +5 adaptive/scheduled-charging sensors.
+    # 4.9.2-rc2: +2 diagnostic sensors (WiFi Signal, Control Pilot).
+    assert "WiFi Signal" in names
+    assert "Control Pilot" in names
+    assert len(specs) == 35, sorted(names)
 
 
 def test_sensor_specifications_adds_three_phase_sensors_when_requested() -> None:

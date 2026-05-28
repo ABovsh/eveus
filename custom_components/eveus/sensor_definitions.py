@@ -211,6 +211,8 @@ get_plug_temperature = _make_value_getter("temperature2", precision=0)
 get_battery_voltage = _make_value_getter("vBat", precision=2)
 get_leak_current = _make_value_getter("leakValue", precision=0, minimum=0)
 get_leak_current_peak = _make_value_getter("leakValueH", precision=0, minimum=0)
+get_wifi_rssi = _make_value_getter("RSSI", precision=0)
+get_pilot = _make_value_getter("pilot", precision=0)
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
 get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0)
@@ -565,6 +567,22 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
             unit="mA", precision=0,
+            category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="wifi_signal", name="WiFi Signal",
+            value_fn=get_wifi_rssi,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:wifi",
+            device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+            state_class=SensorStateClass.MEASUREMENT,
+            unit="dBm", precision=0,
+            category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="control_pilot", name="Control Pilot",
+            value_fn=get_pilot,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:car-connected",
+            state_class=SensorStateClass.MEASUREMENT, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
     ]

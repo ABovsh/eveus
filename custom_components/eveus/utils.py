@@ -126,28 +126,43 @@ def get_safe_value(
 # =============================================================================
 
 
-def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
-    """Get standardized device information with multi-device support."""
-    firmware = str(data.get('verFWMain') or data.get('firmware') or 'Unknown').strip()
-    hardware = str(data.get('verFWWifi') or data.get('hardware') or 'Unknown').strip()
+def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
+    """Coerce a /main field to a trimmed string or a fallback."""
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text if len(text) >= min_len else fallback
 
-    if len(firmware) < 2:
-        firmware = "Unknown"
-    if len(hardware) < 2:
-        hardware = "Unknown"
+
+def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
+    """Get standardized device information with multi-device support.
+
+    The charger exposes its own model, manufacturer, and serial in /main. When
+    those fields are present we surface them in device_info so the Devices
+    page shows real device metadata instead of generic strings.
+    """
+    firmware = _safe_str(data.get("verFWMain") or data.get("firmware"))
+    hardware = _safe_str(data.get("verFWWifi") or data.get("hardware"))
+    manufacturer = _safe_str(data.get("manufacturer"), fallback="Eveus")
+    model = _safe_str(data.get("model"), fallback="Eveus EV Charger")
+    serial = data.get("serialNum") or data.get("stationId")
+    serial_str = str(serial).strip() if serial else ""
 
     device_suffix = get_device_display_suffix(device_number)
     device_identifier = get_device_identifier(host, device_number)
 
-    return {
+    info: Dict[str, Any] = {
         "identifiers": {device_identifier},
         "name": f"Eveus EV Charger{device_suffix}",
-        "manufacturer": "Eveus",
-        "model": "Eveus EV Charger",
+        "manufacturer": manufacturer,
+        "model": model,
         "sw_version": firmware,
         "hw_version": hardware,
         "configuration_url": f"{scheme}://{host}",
     }
+    if serial_str:
+        info["serial_number"] = serial_str
+    return info
 
 
 def format_duration(seconds: int) -> str:

@@ -1,9 +1,4 @@
-"""Binary sensors for the Eveus integration.
-
-Currently exposes a single `Car Connected` entity derived from the charger's
-device-state value. The goal is to remove the most common template-sensor
-boilerplate users write on top of `sensor.eveus_state`.
-"""
+"""Binary sensors for the Eveus integration."""
 from __future__ import annotations
 
 import logging
@@ -14,6 +9,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
@@ -67,6 +63,39 @@ class EveusCarConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinaryS
         self._write_if_changed(self.is_on)
 
 
+class EveusLimitReachedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
+    """True when the matching session-limit flag (`*S` field) is set by the charger."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, updater, device_number, name: str, state_key: str, icon: str) -> None:
+        self.ENTITY_NAME = name
+        self._state_key = state_key
+        self._attr_icon = icon
+        super().__init__(updater, device_number)
+        self._init_write_on_change()
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.available or not self._updater.data:
+            return None
+        value = get_safe_value(self._updater.data, self._state_key, int)
+        return None if value is None else bool(value)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        self._write_if_changed(self.is_on)
+
+
+_LIMIT_REACHED_SPECS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("Energy Limit Reached", "energyLimitS", "mdi:flash-alert"),
+    ("Time Limit Reached", "timeLimitS", "mdi:timer-alert"),
+    ("Money Limit Reached", "moneyLimitS", "mdi:cash-remove"),
+)
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -74,10 +103,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up Eveus binary sensors from a config entry."""
     runtime_data = entry.runtime_data
-    async_add_entities(
-        [
-            EveusCarConnectedBinarySensor(
-                runtime_data.updater, runtime_data.device_number
-            )
-        ]
+    updater = runtime_data.updater
+    device_number = runtime_data.device_number
+    entities: list[BinarySensorEntity] = [
+        EveusCarConnectedBinarySensor(updater, device_number)
+    ]
+    entities.extend(
+        EveusLimitReachedBinarySensor(updater, device_number, name, key, icon)
+        for name, key, icon in _LIMIT_REACHED_SPECS
     )
+    async_add_entities(entities)
