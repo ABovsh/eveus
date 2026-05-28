@@ -21,11 +21,11 @@ from .const import (
     CHARGING_STATES,
     CHARGING_UPDATE_INTERVAL,
     DEFAULT_SCHEME,
-    DEVICE_STATE_CHARGING,
     ERROR_LOG_RATE_LIMIT,
     IDLE_UPDATE_INTERVAL,
     OFFLINE_UPDATE_INTERVAL,
     RETRY_DELAY,
+    SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
 from .utils import RateLog
@@ -256,10 +256,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     ) -> None:
         """Pick a poll cadence based on charger activity.
 
-        Charging is the only state where users want fast feedback. When the
-        charger is idle/connected we relax to IDLE_UPDATE_INTERVAL to halve
-        background HTTP load, and snap back to CHARGING_UPDATE_INTERVAL the
-        moment the device starts a session.
+        An active session (Charging, or briefly Paused mid-session) is where
+        users want fast feedback, so both get CHARGING_UPDATE_INTERVAL. When the
+        charger is merely idle/connected we relax to IDLE_UPDATE_INTERVAL to
+        halve background HTTP load, and snap back the moment a session resumes.
 
         ``preserve_offline`` keeps the long offline cadence for the first
         successful poll right after a long outage, so the coordinator does
@@ -274,7 +274,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         except (TypeError, ValueError):
             state_value = None
 
-        if state_value == DEVICE_STATE_CHARGING:
+        if state_value in SESSION_ACTIVE_STATES:
             self._set_update_interval(CHARGING_UPDATE_INTERVAL)
         elif state_value is not None and state_value in CHARGING_STATES:
             self._set_update_interval(IDLE_UPDATE_INTERVAL)

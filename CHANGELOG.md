@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.9.2-rc8 - 2026-05-29
+
+Eighth release candidate. Keeps fast updates flowing while a charging session is paused.
+
+### 🐛 Fixed
+
+- **A paused-but-active charging session now refreshes as quickly as an active one.** When a session pauses mid-charge (for example under Adaptive Charging or a schedule gap), `binary_sensor.eveus_session_active`, the SOC sensors, and the charging-time estimates keep updating on the fast cadence instead of dropping to the slower idle cadence until charging resumes.
+
 ## 4.9.2-rc7 - 2026-05-28
 
 Seventh release candidate. Tightens how the integration handles unexpected or out-of-range data from the charger, so corrupt readings show as `unknown` instead of plausible-but-wrong values.

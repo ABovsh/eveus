@@ -49,6 +49,7 @@ async def async_get_config_entry_diagnostics(
 
     updater = runtime_data.updater
     data = updater.data or {}
+    quality = updater.connection_quality
     payload.update(
         {
             "coordinator": {
@@ -58,10 +59,10 @@ async def async_get_config_entry_diagnostics(
                     if updater.update_interval is not None
                     else None
                 ),
-                "connection_quality": updater.connection_quality,
+                "connection_quality": quality,
                 "is_likely_offline": updater.is_likely_offline,
-                "consecutive_failures": getattr(updater, "_consecutive_failures", None),
-                "last_error": getattr(updater, "_last_error", None),
+                "consecutive_failures": quality.get("consecutive_failures"),
+                "last_error": quality.get("last_error"),
             },
             "device": {
                 "firmware": data.get("verFWMain"),

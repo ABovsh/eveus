@@ -145,6 +145,19 @@ def test_update_data_uses_charging_interval_while_charging(
     assert updater.update_interval == timedelta(seconds=CHARGING_UPDATE_INTERVAL)
 
 
+def test_update_data_uses_charging_interval_while_paused_mid_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Paused (state 6) is an active session, so it must keep the fast 30s cadence."""
+    session = _Session(_Response(payload={"state": 6, "currentSet": 16, "powerMeas": 0}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater._async_update_data())
+
+    assert updater.update_interval == timedelta(seconds=CHARGING_UPDATE_INTERVAL)
+
+
 def test_update_data_raises_auth_failed_on_unauthorized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
