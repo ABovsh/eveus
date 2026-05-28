@@ -5,6 +5,7 @@ import asyncio
 from collections import deque
 from datetime import timedelta
 import logging
+import math
 import time
 from typing import Any
 
@@ -315,9 +316,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     raise ValueError(f"Expected dict, got {type(new_data).__name__}")
                 if "state" not in new_data:
                     raise ValueError("Response missing required Eveus 'state' field")
+                raw_state = new_data["state"]
+                if isinstance(raw_state, bool):
+                    raise ValueError("Eveus 'state' field is boolean")
+                if isinstance(raw_state, float) and not math.isfinite(raw_state):
+                    raise ValueError("Eveus 'state' field is not finite")
                 try:
-                    state_value = int(new_data["state"])
-                except (TypeError, ValueError) as err:
+                    state_value = int(raw_state)
+                except (TypeError, ValueError, OverflowError) as err:
                     raise ValueError("Eveus 'state' field is not numeric") from err
                 if state_value not in CHARGING_STATES:
                     raise ValueError(f"Eveus 'state' value {state_value} outside known domain")

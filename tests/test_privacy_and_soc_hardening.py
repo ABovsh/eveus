@@ -5,7 +5,7 @@ import logging
 
 import pytest
 import voluptuous as vol
-from homeassistant.components.sensor import SensorStateClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 from custom_components.eveus.config_flow import _split_host_and_scheme
 from custom_components.eveus.sensor_definitions import get_sensor_specifications
@@ -107,10 +107,12 @@ def test_soc_inputs_accept_valid():
     assert _validate_soc_inputs(50, 60, 5, 8) == (50.0, 60.0, 5.0, 8.0)
 
 
-# F14 — session_cost no longer TOTAL
-def test_session_cost_is_measurement_not_total():
+# session_cost is a resettable monetary total (TOTAL handles per-session reset
+# gracefully, and MONETARY device class requires it).
+def test_session_cost_is_monetary_total():
     by_key = {s.key: s for s in get_sensor_specifications(1)}
-    assert by_key["session_cost"].state_class == SensorStateClass.MEASUREMENT
+    assert by_key["session_cost"].state_class == SensorStateClass.TOTAL
+    assert by_key["session_cost"].device_class == SensorDeviceClass.MONETARY
 
 
 # F22 — Car Connected returns None for error state (7)
@@ -124,9 +126,9 @@ def test_car_connected_error_state_is_unknown():
     assert 7 not in _CONNECTED_STATES
 
 
-# UAH→₴ revert
-def test_cost_sensors_use_hryvnia_symbol():
+# Absolute cost sensors are MONETARY with the ISO currency unit.
+def test_cost_sensors_use_monetary_iso_unit():
     by_key = {s.key: s for s in get_sensor_specifications(1)}
     for key in ("counter_a_cost", "counter_b_cost", "session_cost"):
-        assert by_key[key].unit == "₴"
-        assert by_key[key].device_class is None
+        assert by_key[key].unit == "UAH"
+        assert by_key[key].device_class == SensorDeviceClass.MONETARY

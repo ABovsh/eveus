@@ -163,21 +163,22 @@ def test_switch_state_precedence_restore_and_commands() -> None:
     entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
 
-    assert entity.is_on is False
+    # Cached is_on starts unknown (None) until a resolve/coordinator update.
+    assert entity.is_on is None
 
     entity._pending_command = True
-    assert entity.is_on is False
+    assert entity.is_on is None
     assert entity._resolve_state() is False
 
     entity._pending_command = None
     entity._optimistic_state = True
     entity._optimistic_state_time = time.time()
-    assert entity.is_on is False
+    assert entity.is_on is None
     assert entity._resolve_state() is True
 
     entity._optimistic_state_time = 0
     updater.data = {"oneCharge": "1"}
-    assert entity.is_on is False
+    assert entity.is_on is None
     assert entity._resolve_state() is True
 
     asyncio.run(entity._async_restore_state(State("switch.one", "off")))
@@ -392,7 +393,7 @@ def test_switch_restore_ignores_invalid_state() -> None:
     asyncio.run(entity._async_restore_state(State("switch.one", "unknown")))
 
     assert entity._last_device_state is None
-    assert entity.is_on is False
+    assert entity.is_on is None
 
 
 def test_switch_setup_entry_adds_all_switches() -> None:

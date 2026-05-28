@@ -100,7 +100,7 @@ class BaseSwitchEntity(
         self._state_key = entity_description.state_key
         self._pending_command: bool | None = None
         self._init_optimistic_control()
-        self._attr_is_on = False
+        self._attr_is_on = None
         self._init_write_on_change()
 
     @property
@@ -131,24 +131,29 @@ class BaseSwitchEntity(
         self._last_device_value = value
 
     @property
-    def is_on(self) -> bool:
-        """Return cached switch state without side effects."""
-        return bool(self._attr_is_on)
+    def is_on(self) -> bool | None:
+        """Return cached switch state without side effects (None = unknown)."""
+        return self._attr_is_on
 
     async def async_added_to_hass(self) -> None:
         """Resolve the initial state after restore/coordinator data is available."""
         await super().async_added_to_hass()
         self._attr_is_on = self._resolve_state()
 
-    def _resolve_state(self) -> bool:
-        """Resolve switch state from optimistic, device, and restore state."""
+    def _resolve_state(self) -> bool | None:
+        """Resolve switch state from optimistic, device, and restore state.
+
+        Returns None (unknown) rather than a definite ``off`` when no trusted
+        source is available, so a missing/invalid payload field is not exposed
+        as a real ``off`` state that automations could act on.
+        """
         current_time = time.time()
 
         if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
             return bool(self._optimistic_value)
 
         if self._updater.available and self._updater.data and self._state_key in self._updater.data:
-            device_value = get_safe_value(self._updater.data, self._state_key, int, 0)
+            device_value = get_safe_value(self._updater.data, self._state_key, int)
             if device_value in (0, 1):
                 return bool(device_value)
 
@@ -156,7 +161,7 @@ class BaseSwitchEntity(
             if current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
                 return self._last_device_value
 
-        return False
+        return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
@@ -196,6 +201,7 @@ class BaseSwitchEntity(
         """Restore previous display state only; no commands sent on startup."""
         if state and state.state in ("on", "off"):
             self._last_device_value = state.state == "on"
+            self._last_successful_read = time.time()
             self._attr_is_on = self._last_device_value
 
     @callback
@@ -213,7 +219,7 @@ class BaseSwitchEntity(
 
         current_time = time.time()
         if self._updater.available and self._updater.data and self._state_key in self._updater.data:
-            device_value = get_safe_value(self._updater.data, self._state_key, int, 0)
+            device_value = get_safe_value(self._updater.data, self._state_key, int)
             if device_value in (0, 1):
                 self._reconcile_with_device(
                     bool(device_value),

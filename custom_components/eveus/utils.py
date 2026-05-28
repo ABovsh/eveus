@@ -49,21 +49,35 @@ class RateLog:
 # =============================================================================
 
 
-def get_next_device_number(hass: HomeAssistant) -> int:
-    """Find the next available device number for multi-device support."""
+def _used_device_numbers(hass: HomeAssistant, exclude_entry_id: str | None = None) -> set:
+    """Return device numbers already assigned to other Eveus entries."""
     existing_numbers = set()
     for entry in hass.config_entries.async_entries(DOMAIN):
+        if exclude_entry_id is not None and entry.entry_id == exclude_entry_id:
+            continue
         device_number = entry.data.get("device_number")
         try:
             if device_number is not None:
                 existing_numbers.add(int(device_number))
         except (TypeError, ValueError):
             continue
+    return existing_numbers
 
+
+def get_next_device_number(hass: HomeAssistant, exclude_entry_id: str | None = None) -> int:
+    """Find the next available device number for multi-device support."""
+    existing_numbers = _used_device_numbers(hass, exclude_entry_id)
     next_number = 1
     while next_number in existing_numbers:
         next_number += 1
     return next_number
+
+
+def is_device_number_taken(
+    hass: HomeAssistant, device_number: int, exclude_entry_id: str | None = None
+) -> bool:
+    """Return True when another Eveus entry already uses this device number."""
+    return device_number in _used_device_numbers(hass, exclude_entry_id)
 
 
 def get_device_suffix(device_number: int) -> str:
@@ -112,12 +126,15 @@ def get_safe_value(
         if isinstance(value, bool) and converter in (float, int):
             return default
 
+        if isinstance(value, float) and not math.isfinite(value):
+            return default
+
         converted = converter(value)
         if isinstance(converted, float) and not math.isfinite(converted):
             return default
         return converted
 
-    except (TypeError, ValueError, AttributeError):
+    except (TypeError, ValueError, OverflowError, AttributeError):
         return default
 
 

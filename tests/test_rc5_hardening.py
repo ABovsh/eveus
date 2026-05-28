@@ -85,20 +85,8 @@ def test_switch_rejects_out_of_domain_state_value() -> None:
     description = SWITCH_DESCRIPTIONS[0]  # Stop Charging / evseEnabled
     updater = EveusTestUpdater({"evseEnabled": 2})
     sw = BaseSwitchEntity(updater, description, 1)
-    # 2 is outside the 0/1 domain — _resolve_state falls through to default False
-    assert sw._resolve_state() is False
-
-
-# ---------------------------------------------------------------------------
-# F07 — Energy Limit Reached returns None for out-of-domain value
-# ---------------------------------------------------------------------------
-
-def test_limit_reached_rejects_non_binary_value() -> None:
-    updater = EveusTestUpdater({"energyLimitS": 2})
-    sensor = bs.EveusLimitReachedBinarySensor(
-        updater, 1, "Energy Limit Reached", "energyLimitS", "mdi:flash-alert"
-    )
-    assert sensor.is_on is None
+    # 2 is outside the 0/1 domain — _resolve_state falls through to unknown (None)
+    assert sw._resolve_state() is None
 
 
 # ---------------------------------------------------------------------------
@@ -108,13 +96,6 @@ def test_limit_reached_rejects_non_binary_value() -> None:
 def test_charging_current_hides_out_of_range_device_value() -> None:
     updater = EveusTestUpdater({"currentSet": 48})  # 16A model max
     num = number_mod.EveusCurrentNumber(updater, "16A", 1)
-    assert num._resolve_value() is None
-
-
-def test_energy_limit_hides_out_of_range_device_value() -> None:
-    description, command, max_v = number_mod.SESSION_LIMIT_DESCRIPTIONS[0]
-    updater = EveusTestUpdater({command: max_v + 100})
-    num = number_mod.EveusSessionLimitNumber(updater, description, command, max_v, 1)
     assert num._resolve_value() is None
 
 
@@ -220,18 +201,16 @@ def test_command_retry_skips_permanent_4xx_source_check() -> None:
 # Removed entities should be gone from the registries
 # ---------------------------------------------------------------------------
 
-def test_removed_entities_not_in_number_specs() -> None:
-    keys = {d.key for d, _c, _m in number_mod.SESSION_LIMIT_DESCRIPTIONS}
-    assert "time_limit" not in keys
-    assert "money_limit" not in keys
-    assert "energy_limit" in keys
+def test_session_limit_number_removed() -> None:
+    # rc6: energy/time/money limit number entities are gone entirely.
+    assert not hasattr(number_mod, "SESSION_LIMIT_DESCRIPTIONS")
+    assert not hasattr(number_mod, "EveusSessionLimitNumber")
 
 
-def test_removed_entities_not_in_binary_specs() -> None:
-    names = {spec[0] for spec in bs._LIMIT_REACHED_SPECS}
-    assert "Time Limit Reached" not in names
-    assert "Money Limit Reached" not in names
-    assert "Energy Limit Reached" in names
+def test_limit_reached_binary_sensors_removed() -> None:
+    # rc6: energy/time/money limit-reached binary sensors are gone entirely.
+    assert not hasattr(bs, "_LIMIT_REACHED_SPECS")
+    assert not hasattr(bs, "EveusLimitReachedBinarySensor")
 
 
 def test_control_pilot_removed_from_sensor_specs() -> None:

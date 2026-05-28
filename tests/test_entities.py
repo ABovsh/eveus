@@ -345,7 +345,7 @@ def test_control_state_properties_do_not_mutate_cached_device_state() -> None:
 
     assert number.native_value == 16
     assert number._last_device_value is None
-    assert switch.is_on is False
+    assert switch.is_on is None
     assert switch._last_device_state is None
 
 

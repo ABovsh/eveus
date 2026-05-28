@@ -468,6 +468,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     return self.async_abort(reason="wrong_device")
 
+                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
+
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=entry_data[CONF_HOST],

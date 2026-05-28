@@ -83,12 +83,12 @@ def test_adaptive_metrics_reject_negative():
 
 
 # F08 — session_cost uses ₴ symbol as MEASUREMENT (per-session reset, no MONETARY)
-def test_session_cost_spec_is_measurement_hryvnia():
+def test_session_cost_spec_is_monetary_uah():
     by_key = {s.key: s for s in get_sensor_specifications(1)}
     spec = by_key["session_cost"]
-    assert spec.device_class is None
-    assert spec.unit == "₴"
-    assert spec.state_class == SensorStateClass.MEASUREMENT
+    assert spec.device_class == SensorDeviceClass.MONETARY
+    assert spec.unit == "UAH"
+    assert spec.state_class == SensorStateClass.TOTAL
 
 
 def test_session_cost_rejects_negative():

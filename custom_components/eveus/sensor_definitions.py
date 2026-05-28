@@ -32,6 +32,7 @@ from .const import (
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
     MIN_CURRENT,
+    MODEL_MAX_CURRENT,
 )
 from .utils import RateLog, get_safe_value, format_duration
 
@@ -42,6 +43,10 @@ ICON_FLASH = "mdi:flash"
 ICON_CURRENT_AC = "mdi:current-ac"
 ICON_CURRENCY_UAH = "mdi:currency-uah"
 UNIT_UAH_PER_KWH = "₴/kWh"
+UNIT_UAH = "UAH"
+_MAX_MODEL_CURRENT = max(MODEL_MAX_CURRENT.values())
+# Upper sanity bound for the charger clock (epoch seconds at year 2100).
+_MAX_SYSTEM_TIME = 4102444800
 
 
 def _should_log_error(function_name: str) -> bool:
@@ -289,6 +294,11 @@ def get_system_time(updater, hass) -> Optional[str]:
         if timestamp is None:
             return None
 
+        # Reject obviously corrupt clock values (negative or far-future) so a
+        # bad RTC reading is reported as unknown instead of a plausible time.
+        if timestamp < 0 or timestamp > _MAX_SYSTEM_TIME:
+            return None
+
         # The charger reports systemTime as a local wall-clock value encoded in
         # epoch seconds. Applying HA's timezone here shifts the displayed clock
         # by the local UTC offset, so format the encoded clock directly.
@@ -398,7 +408,7 @@ def _make_schedule_attrs(slot: int):
             attrs["stop"] = stop
         if _get_data_value(updater, f"sh{slot}CurrentEnable", int) == 1:
             cur = _get_data_value(updater, f"sh{slot}CurrentValue", int)
-            if cur is not None and cur >= MIN_CURRENT:
+            if cur is not None and MIN_CURRENT <= cur <= _MAX_MODEL_CURRENT:
                 attrs["current_limit_a"] = cur
         if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
             energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)
@@ -654,12 +664,14 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         SensorSpec(
             key="counter_a_cost", name="Counter A Cost", value_fn=get_counter_a_cost,
             sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.TOTAL_INCREASING, unit="₴", precision=2,
+            device_class=SensorDeviceClass.MONETARY,
+            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
         ),
         SensorSpec(
             key="counter_b_cost", name="Counter B Cost", value_fn=get_counter_b_cost,
             sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.TOTAL_INCREASING, unit="₴", precision=2,
+            device_class=SensorDeviceClass.MONETARY,
+            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
         ),
         SensorSpec(
             key="primary_rate_cost", name="Primary Rate Cost", value_fn=get_primary_rate_cost,
@@ -697,7 +709,8 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         SensorSpec(
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
             sensor_type=SensorType.STATE, icon="mdi:cash",
-            state_class=SensorStateClass.MEASUREMENT, unit="₴", precision=2,
+            device_class=SensorDeviceClass.MONETARY,
+            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
         ),
         SensorSpec(
             key="adaptive_charging", name="Adaptive Charging",

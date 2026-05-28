@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.9.2-rc6 - 2026-05-28
+
+Sixth release candidate. Removes the last of the confusing session-cap entities, fixes several SOC and restart-resiliency edge cases, and aligns the cost sensors with Home Assistant's monetary handling.
+
+### ⚠️ Breaking — removed entities
+
+- **Removed `number.eveus_energy_limit` and `binary_sensor.eveus_energy_limit_reached`** — session energy caps rounded out the set of rarely-used limit entities removed over the last releases. The charger still enforces an energy limit if you set one directly on the device.
+
+Dashboard cards and automations referencing these entities will go unavailable. Migration: remove the cards.
+
+### 🔧 Changed
+
+- **Cost sensors now use Home Assistant's monetary handling.** `Counter A Cost`, `Counter B Cost`, and `Session Cost` are now reported with the `monetary` device class and the ISO currency unit `UAH` (instead of the `₴` symbol). This gives correct long-term statistics and lets the energy dashboard pick them up as costs. Existing history may show a one-time unit change notice.
+
+### 🐛 Fixed
+
+- **SOC sensors honor a 0% charging-efficiency-loss setting.** Setting `Charging Efficiency Loss` to `0` is now respected instead of being silently replaced with the 7.5% default — so `SOC Energy`, `SOC Percent`, and the ETA sensors match what you configured.
+- **A corrupt session-energy reading no longer fakes your starting charge level.** If the charger reports an invalid (negative) `sessionEnergy`, the SOC sensors now go `unknown` instead of collapsing to your configured Initial SOC, which looked plausible but was wrong.
+- **Switches show `unknown` instead of a false `off` when the charger omits a field.** If a firmware payload drops a switch's state key, `Stop Charging`, `One Charge`, `Adaptive Mode`, and the Schedule enables now report `unknown` rather than a definite `off` that automations could act on.
+- **Restored control values survive a restart while the charger is offline.** After a Home Assistant restart, `Charging Current`, the schedule time entities, and the switches now keep their restored value through the normal grace window instead of immediately dropping to `unknown`/`off`.
+- **`Input Entities Status` stays available when the charger is offline.** It reports the state of your local SOC helper entities, so it now remains usable for troubleshooting even when the charger can't be reached.
+- **Charger clock corruption is reported honestly.** An invalid `System Time` (negative or far-future) now shows `unknown` instead of a plausible-looking `23:59`.
+- **Schedule current-limit attribute is dropped when out of range.** A corrupt schedule current value above the charger's capability is no longer exposed as `current_limit_a`.
+- **HTTP plaintext warning now also fires during re-authentication**, matching setup and reconfigure.
+- **Corrupt stored configuration is caught at startup.** A malformed or non-text host, or an invalid phase count, now raises a clear repair notice or self-corrects instead of failing in confusing ways. Setting up two chargers at once can no longer assign them the same internal device number.
+- **Unexpected non-numeric or infinite firmware values are handled safely** across the integration rather than occasionally interrupting an entity update.
+
 ## 4.9.2-rc5 - 2026-05-28
 
 Fifth release candidate. Removes confusing or low-value entities, hardens firmware-payload handling against unexpected values, and adds a long-requested "session in progress" automation trigger.
@@ -34,7 +61,7 @@ Dashboard cards and automations referencing these entities will go unavailable. 
 
 ## 4.9.2-rc4 - 2026-05-28
 
-Fourth release candidate. Closes findings from a second adversarial audit (Codex GPT-5.5 high) — small but real correctness fixes plus new tests.
+Fourth release candidate. Closes findings from a second hardening pass — small but real correctness fixes.
 
 ### 🐛 Fixed
 - **Input Entities Status really does repaint on helper changes** — rc3 scheduled an HA refresh but `SensorEntity` has no `async_update`, so the cached value was re-written unchanged. Now the entity recomputes value + attributes synchronously in the event callback and writes only when something changed.

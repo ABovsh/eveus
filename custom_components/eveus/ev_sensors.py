@@ -167,6 +167,11 @@ class CachedSOCCalculator:
             self._mark_helpers_unavailable()
             return False
 
+    def _effective_correction(self) -> float:
+        """Cached SOC correction, preserving an explicit 0% configuration."""
+        correction = self._input_cache.soc_correction
+        return DEFAULT_SOC_CORRECTION if correction is None else correction
+
     def get_soc_kwh(self, hass: HomeAssistant, energy_charged: float) -> Optional[float]:
         """Get SOC in kWh. Returns None if helpers not available."""
         if not self._update_input_cache(hass):
@@ -176,7 +181,7 @@ class CachedSOCCalculator:
                 self._input_cache.initial_soc,
                 self._input_cache.battery_capacity,
                 energy_charged,
-                self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION,
+                self._effective_correction(),
             )
         except Exception as err:
             _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)
@@ -192,7 +197,7 @@ class CachedSOCCalculator:
             self._input_cache.initial_soc,
             self._input_cache.battery_capacity,
             energy_charged,
-            self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION,
+            self._effective_correction(),
         )
 
     def invalidate_cache(self):
@@ -211,8 +216,8 @@ class CachedSOCCalculator:
 
     @property
     def soc_correction(self) -> float:
-        """Return cached SOC correction or the integration default."""
-        return self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION
+        """Return cached SOC correction, preserving an explicit 0% config."""
+        return self._effective_correction()
 
     @property
     def target_soc(self) -> Optional[float]:
@@ -355,6 +360,16 @@ class BaseEVHelperSensor(EveusSensorBase):
             return None
         return value
 
+    def _session_energy_is_invalid(self) -> bool:
+        """True when sessionEnergy is reported but not a usable value.
+
+        Distinguishes a present-but-corrupt reading (e.g. negative) from the
+        field simply not being reported yet, so callers don't silently treat a
+        bad reading as 0 kWh delivered (which would mimic the initial SOC).
+        """
+        data = self._updater.data or {}
+        return "sessionEnergy" in data and self._get_energy_charged() is None
+
 
 # =============================================================================
 # Concrete EV sensors
@@ -377,6 +392,8 @@ class EVSocKwhSensor(BaseEVHelperSensor):
         # blip, or no session ever began), treat it as 0 delivered — SOC then
         # equals the user's Initial SOC. Prevents the entity from being
         # "unknown" the moment HA boots before the first successful poll.
+        if self._session_energy_is_invalid():
+            return None
         energy_charged = self._get_energy_charged() or 0.0
         result = self._soc_calculator.get_soc_kwh(self.hass, energy_charged)
         if result is not None:
@@ -398,6 +415,8 @@ class EVSocPercentSensor(BaseEVHelperSensor):
 
     def _get_sensor_value(self) -> Optional[float]:
         # See EVSocKwhSensor._get_sensor_value — same Initial-SOC fallback.
+        if self._session_energy_is_invalid():
+            return None
         energy_charged = self._get_energy_charged() or 0.0
         result = self._soc_calculator.get_soc_percent(self.hass, energy_charged)
         if result is not None:
@@ -581,6 +600,15 @@ class InputEntitiesStatusSensor(EveusSensorBase):
         attrs_changed = self._update_extra_state_attributes()
         if value_changed or attrs_changed:
             self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Always available — reports local HA helper state, not charger data.
+
+        Decoupled from charger availability so the diagnostic stays useful for
+        troubleshooting missing SOC helpers while the charger is offline.
+        """
+        return True
 
     def _get_sensor_value(self) -> str:
         """Get input status with caching."""
