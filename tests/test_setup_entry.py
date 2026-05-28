@@ -128,7 +128,8 @@ def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatc
     assert entry.runtime_data.soc_calculator is not None
     assert hass.config_entries.updated == [{"data": {**_data(), "device_number": 1}}]
     assert hass.config_entries.forwarded
-    assert entry.runtime_data.updater.async_shutdown in entry.unloads
+    # async_shutdown is registered by DataUpdateCoordinator itself (via the
+    # config_entry= constructor argument); we no longer hook it manually.
 
 
 def test_async_setup_entry_propagates_auth_failure(

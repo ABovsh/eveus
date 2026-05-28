@@ -217,6 +217,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
+        was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)
         self._consecutive_failures = 0
         self._device_available = True
@@ -226,7 +227,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._silent_mode = False
         self._offline_announced = False
         self._last_error = None
-        self._tune_update_interval(new_data)
+        self._tune_update_interval(new_data, preserve_offline=was_likely_offline)
 
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
@@ -248,7 +249,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if not self._silent_mode and self._should_log():
             _LOGGER.debug("Eveus connection issue: %s", type(error).__name__)
 
-    def _tune_update_interval(self, data: dict[str, Any]) -> None:
+    def _tune_update_interval(
+        self, data: dict[str, Any], *, preserve_offline: bool = False
+    ) -> None:
         """Pick a poll cadence based on charger activity.
 
         Charging is the only state where users want fast feedback. When the
@@ -256,11 +259,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         background HTTP load, and snap back to CHARGING_UPDATE_INTERVAL the
         moment the device starts a session.
 
-        Offline cadence is preserved: if the device is still in the is_likely_offline
-        regime we keep the long interval even after the first recovery, so the
-        coordinator does not immediately revert to a short 30s cycle.
+        ``preserve_offline`` keeps the long offline cadence for the first
+        successful poll right after a long outage, so the coordinator does
+        not snap straight back to a 30s cycle on a single recovered tick.
         """
-        if self.is_likely_offline:
+        if preserve_offline or self.is_likely_offline:
             self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
             return
 
@@ -304,6 +307,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 new_data = await response.json(content_type=None)
                 if not isinstance(new_data, dict):
                     raise ValueError(f"Expected dict, got {type(new_data).__name__}")
+                if "state" not in new_data:
+                    raise ValueError("Response missing required Eveus 'state' field")
 
                 self._record_success(time.time() - start_time, new_data)
                 return new_data

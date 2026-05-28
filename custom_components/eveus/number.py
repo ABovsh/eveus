@@ -126,7 +126,7 @@ class EveusCurrentNumber(EveusNumberEntity):
 
             self._pending_value = float(int_value)
             self._attr_native_value = self._pending_value
-            self.async_write_ha_state()
+            self._write_if_changed(self._attr_native_value)
 
             success = await self._updater.send_command(self._command, int_value)
 
@@ -146,7 +146,7 @@ class EveusCurrentNumber(EveusNumberEntity):
             self._pending_value = None
             self._last_command_time = time.time()
             self._attr_native_value = self._resolve_value()
-            self.async_write_ha_state()
+            self._write_if_changed(self._attr_native_value)
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""

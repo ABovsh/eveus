@@ -68,6 +68,10 @@ class CommandManager:
                         last_error = err
                         if attempt >= retry_attempts:
                             break
+                        delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(
+                            0, _COMMAND_RETRY_JITTER
+                        )
+                        await asyncio.sleep(delay)
                     except (
                         aiohttp.ClientConnectorError,
                         aiohttp.ClientError,

@@ -543,26 +543,31 @@ class InputEntitiesStatusSensor(EveusSensorBase):
         self._invalid_entities: Set[str] = set()
         self._last_check_time = 0
         self._check_interval = STATE_CACHE_TTL
-        self._configuration_help = self._build_configuration_help()
         self._attr_extra_state_attributes = {}
 
-    def _build_configuration_help(self) -> Dict[str, str]:
-        """Build static helper creation hints once."""
-        help_text = {}
-        for entity_id, config in self.REQUIRED_INPUTS.items():
-            input_name = entity_id.split(".", 1)[1]
-            help_text[entity_id] = (
-                f"{input_name}:\n"
-                f"  name: '{config['name']}'\n"
-                f"  min: {config['min']}\n"
-                f"  max: {config['max']}\n"
-                f"  step: {config['step']}\n"
-                f"  initial: {config['initial']}\n"
-                f"  unit_of_measurement: '{config['unit_of_measurement']}'\n"
-                f"  mode: {config['mode']}\n"
-                f"  icon: '{config['icon']}'"
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to helper-entity state changes for instant updates."""
+        await super().async_added_to_hass()
+        try:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    tuple(self.REQUIRED_INPUTS),
+                    self._on_input_state_changed,
+                )
             )
-        return help_text
+        except Exception as err:
+            _LOGGER.debug(
+                "Could not set up input tracking for %s: %s",
+                self.unique_id,
+                err,
+                exc_info=True,
+            )
+
+    @callback
+    def _on_input_state_changed(self, _event: Event) -> None:
+        """Force the next read to re-check inputs rather than wait for TTL."""
+        self._last_check_time = 0
 
     def _get_sensor_value(self) -> str:
         """Get input status with caching."""
@@ -573,10 +578,15 @@ class InputEntitiesStatusSensor(EveusSensorBase):
         return self._state
 
     def _build_extra_state_attributes(self) -> Dict[str, Any]:
-        """Build cached status attributes from the latest input check."""
-        attrs = {
-            "missing_entities": list(self._missing_entities),
-            "invalid_entities": list(self._invalid_entities),
+        """Build cached status attributes from the latest input check.
+
+        configuration_help is intentionally omitted: storing a multi-line YAML
+        snippet per missing helper bloats every state_changed event and gets
+        persisted by Recorder. README documents the helper format instead.
+        """
+        return {
+            "missing_entities": sorted(self._missing_entities),
+            "invalid_entities": sorted(self._invalid_entities),
             "required_count": len(self.REQUIRED_INPUTS),
             "missing_count": len(self._missing_entities),
             "invalid_count": len(self._invalid_entities),
@@ -588,15 +598,6 @@ class InputEntitiesStatusSensor(EveusSensorBase):
             },
             "note": "These helpers are optional. Advanced SOC metrics require them.",
         }
-
-        if self._missing_entities:
-            attrs["configuration_help"] = {
-                entity_id: self._configuration_help[entity_id]
-                for entity_id in self._missing_entities
-                if entity_id in self._configuration_help
-            }
-
-        return attrs
 
     def _update_extra_state_attributes(self) -> bool:
         """Refresh cached status attributes."""

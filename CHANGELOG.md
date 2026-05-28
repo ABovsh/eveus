@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.9.2-rc1 - 2026-05-28
+
+Release candidate from a deep audit pass. Mostly invisible reliability and responsiveness fixes — no breaking changes, no entity renames.
+
+### 🐛 Fixed
+- **Faster recovery after long outages** — when the charger is unreachable for a while and finally comes back online, the integration no longer immediately snaps back to fast polling. It eases out of the slow "offline" cadence so a single fluke packet does not retrigger heavy traffic. (`common_network.py`)
+- **Time Zone selector survives auth errors** — if changing `select.eveus_time_zone` hits an authentication problem, the dropdown now reverts immediately instead of showing the unsaved selection for the next 30 seconds.
+- **Commands retried on transient HTTP errors back off properly** — temporary `5xx` / `429` responses from the charger now get the same short backoff already used for network errors, instead of being retried back-to-back in a tight loop.
+- **Setup catches misrouted hosts earlier** — if `/main` returns valid JSON that is clearly not from an Eveus charger (e.g. a captive portal on the same LAN), the integration now refuses it instead of silently displaying garbage values.
+
+### ⚡ Performance & responsiveness
+- **Input Entities Status reacts instantly** — adding, removing, or fixing one of the optional EV helpers (`input_number.ev_battery_capacity`, etc.) now updates the diagnostic sensor immediately instead of waiting up to 30s for the next cache tick.
+- **Charging Current entity no longer spams state-change events** — `number.eveus_charging_current` now only writes to HA when the displayed value actually changes (matching the other control entities), trimming Recorder churn.
+- **Smaller state attributes on the diagnostic sensor** — `sensor.eveus_input_entities_status` no longer ships a multi-line YAML snippet for every missing helper inside its attributes. The list of missing entities is still there; the YAML hint moved to the README. Recorder and the History panel will thank you.
+
+### 🔒 Privacy
+- **Reauth no longer prefills the stored password** — credential prompts during reconfigure / reauth now require fresh entry instead of round-tripping the cached password back to the browser form.
+
+### 🧹 Internals
+- Removed a duplicate shutdown registration in `async_setup_entry` (now handled by Home Assistant's coordinator lifecycle).
+- Documented the firmware contract for cost fields: `tarif*` values are reported in hundredths of a currency unit (divide by 100), while `IEM1_money` / `IEM2_money` / `sessionMoney` are whole currency units.
+
 ## 4.9.1 - 2026-05-22
 
 ### 🐛 Fixed

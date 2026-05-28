@@ -217,7 +217,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         await updater.async_config_entry_first_refresh()
 
-        entry.async_on_unload(updater.async_shutdown)
+        # DataUpdateCoordinator constructed with config_entry already registers
+        # async_shutdown on the entry unload lifecycle — no manual registration.
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         entry.async_on_unload(entry.add_update_listener(update_listener))
 

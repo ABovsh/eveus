@@ -250,7 +250,7 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
         {
             vol.Required(CONF_HOST, default=host_default): str,
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): TextSelector(
+            vol.Required(CONF_PASSWORD): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.PASSWORD)
             ),
             vol.Required(
@@ -274,7 +274,7 @@ def build_reauth_data_schema(defaults: Mapping[str, Any] | None = None) -> vol.S
     return vol.Schema(
         {
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): TextSelector(
+            vol.Required(CONF_PASSWORD): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.PASSWORD)
             ),
         }

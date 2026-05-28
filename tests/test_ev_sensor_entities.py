@@ -220,7 +220,8 @@ def test_input_entities_status_sensor_reports_missing_invalid_and_ready() -> Non
     sensor._update_extra_state_attributes()
     attrs = sensor.extra_state_attributes
     assert attrs["missing_count"] == 4
-    assert "configuration_help" in attrs
+    assert attrs["missing_entities"]
+    assert "configuration_help" not in attrs
 
     invalid = dict(EV_HELPERS)
     invalid["input_number.ev_target_soc"] = "bad"

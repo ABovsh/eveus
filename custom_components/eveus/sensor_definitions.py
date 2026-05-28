@@ -190,7 +190,12 @@ get_total_energy = _make_value_getter("totalEnergy", precision=2, minimum=0)
 get_counter_a_energy = _make_value_getter("IEM1", precision=2, minimum=0)
 get_counter_b_energy = _make_value_getter("IEM2", precision=2, minimum=0)
 
-# Cost getters (divide by 100)
+# Cost getters.
+# Firmware contract:
+#   * `tarif*` fields are reported in HUNDREDTHS of a currency unit (kop/cent),
+#     so they must be divided by 100 to get the per-kWh price.
+#   * `IEM1_money`, `IEM2_money`, `sessionMoney` are already in WHOLE currency
+#     units — DO NOT divide. Verified against R3.05.2 firmware.
 _div100 = lambda v: v / 100
 get_counter_a_cost = _make_value_getter("IEM1_money", precision=2, minimum=0)
 get_counter_b_cost = _make_value_getter("IEM2_money", precision=2, minimum=0)
