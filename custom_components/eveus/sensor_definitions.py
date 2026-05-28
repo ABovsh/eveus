@@ -28,6 +28,7 @@ from .const import (
     get_charging_state,
     get_error_state,
     get_normal_substate,
+    CHARGING_STATES,
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
     MIN_CURRENT,
@@ -156,7 +157,13 @@ def _get_data_value(updater, key: str, converter=float, default=None):
 # Value getter factories — replace ~20 identical functions
 # =============================================================================
 
-def _make_value_getter(key: str, precision: int = 0, transform: Callable = None, minimum: Optional[float] = None):
+def _make_value_getter(
+    key: str,
+    precision: int = 0,
+    transform: Callable = None,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+):
     """Factory for simple data getter functions."""
     def getter(updater, hass):
         if not updater.available or not updater.data:
@@ -171,6 +178,8 @@ def _make_value_getter(key: str, precision: int = 0, transform: Callable = None,
         if not math.isfinite(value):
             return None
         if minimum is not None and value < minimum:
+            return None
+        if maximum is not None and value > maximum:
             return None
         if transform:
             value = transform(value)
@@ -208,11 +217,11 @@ get_box_temperature = _make_value_getter("temperature1", precision=0)
 get_plug_temperature = _make_value_getter("temperature2", precision=0)
 
 # Other diagnostic getters
-get_battery_voltage = _make_value_getter("vBat", precision=2)
+get_battery_voltage = _make_value_getter("vBat", precision=2, minimum=0)
 get_leak_current = _make_value_getter("leakValue", precision=0, minimum=0)
 get_leak_current_peak = _make_value_getter("leakValueH", precision=0, minimum=0)
-get_wifi_rssi = _make_value_getter("RSSI", precision=0)
-get_pilot = _make_value_getter("pilot", precision=0)
+# RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
+get_wifi_rssi = _make_value_getter("RSSI", precision=0, minimum=-120, maximum=0)
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
 get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0)
@@ -232,10 +241,17 @@ def get_charger_state(updater, hass) -> Optional[str]:
 
 
 def get_charger_substate(updater, hass) -> Optional[str]:
-    """Get charger substate."""
+    """Get charger substate.
+
+    Returns None when the device state itself is outside the known domain —
+    otherwise a stray firmware state would be labelled with normal-mode substate
+    text and look like a plausible diagnostic reason.
+    """
     state = _get_data_value(updater, "state", int)
     substate = _get_data_value(updater, "subState", int)
     if None in (state, substate):
+        return None
+    if state not in CHARGING_STATES:
         return None
     if state == 7:
         return get_error_state(substate)
@@ -293,8 +309,10 @@ def get_active_rate_cost(updater, hass) -> Optional[float]:
     key = rate_keys.get(active_rate)
     if not key:
         return None
-    value = _get_data_value(updater, key)
-    return round(value / 100, 2) if value is not None else None
+    value = _get_data_value(updater, key, float)
+    if value is None or value < 0:
+        return None
+    return round(value / 100, 2)
 
 
 def get_active_rate_attrs(updater, hass) -> dict:
@@ -380,11 +398,11 @@ def _make_schedule_attrs(slot: int):
             attrs["stop"] = stop
         if _get_data_value(updater, f"sh{slot}CurrentEnable", int) == 1:
             cur = _get_data_value(updater, f"sh{slot}CurrentValue", int)
-            if cur is not None:
+            if cur is not None and cur >= MIN_CURRENT:
                 attrs["current_limit_a"] = cur
         if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
             energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)
-            if energy is not None:
+            if energy is not None and energy >= 0:
                 attrs["energy_limit_kwh"] = energy
         return attrs
     return getter
@@ -586,13 +604,6 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             device_class=SensorDeviceClass.SIGNAL_STRENGTH,
             state_class=SensorStateClass.MEASUREMENT,
             unit="dBm", precision=0,
-            category=EntityCategory.DIAGNOSTIC,
-        ),
-        SensorSpec(
-            key="control_pilot", name="Control Pilot",
-            value_fn=get_pilot,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:car-connected",
-            state_class=SensorStateClass.MEASUREMENT, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
     ]

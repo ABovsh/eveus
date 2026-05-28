@@ -65,6 +65,11 @@ class CommandManager:
                             raise ConfigEntryAuthFailed(
                                 "Eveus charger rejected credentials"
                             ) from err
+                        # Permanent client/server-routing errors won't fix
+                        # themselves: don't burn the retry budget on them.
+                        if err.status not in (408, 425, 429, 500, 502, 503, 504):
+                            last_error = err
+                            break
                         last_error = err
                         if attempt >= retry_attempts:
                             break

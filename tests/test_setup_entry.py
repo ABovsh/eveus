@@ -364,12 +364,13 @@ def test_number_setup_creates_current_entity() -> None:
     )
 
     # 4.9.2-rc2: +3 session-limit Number entities (Energy/Time/Money Limit).
-    assert len(added) == 4
+    # 4.9.2-rc5: Time Limit and Money Limit removed; only Energy Limit remains.
+    assert len(added) == 2
     names = [e.name for e in added]
     assert "Charging Current" in names
     assert "Energy Limit" in names
-    assert "Time Limit" in names
-    assert "Money Limit" in names
+    assert "Time Limit" not in names
+    assert "Money Limit" not in names
     current = next(e for e in added if e.name == "Charging Current")
     assert current.unique_id == "eveus3_charging_current"
 

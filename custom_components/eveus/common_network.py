@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .common_command import CommandManager
 from .const import (
+    CHARGING_STATES,
     CHARGING_UPDATE_INTERVAL,
     DEFAULT_SCHEME,
     DEVICE_STATE_CHARGING,
@@ -274,8 +275,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if state_value == DEVICE_STATE_CHARGING:
             self._set_update_interval(CHARGING_UPDATE_INTERVAL)
-        else:
+        elif state_value is not None and state_value in CHARGING_STATES:
             self._set_update_interval(IDLE_UPDATE_INTERVAL)
+        else:
+            # Unknown/invalid state: hold offline cadence rather than snap to
+            # idle polling. The payload validator at /main rejects the response,
+            # so this branch only matters for transient between-tick recovery.
+            self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
 
     def _set_update_interval(self, seconds: int) -> None:
         """Apply a new poll interval if it differs from the current one."""
@@ -309,6 +315,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     raise ValueError(f"Expected dict, got {type(new_data).__name__}")
                 if "state" not in new_data:
                     raise ValueError("Response missing required Eveus 'state' field")
+                try:
+                    state_value = int(new_data["state"])
+                except (TypeError, ValueError) as err:
+                    raise ValueError("Eveus 'state' field is not numeric") from err
+                if state_value not in CHARGING_STATES:
+                    raise ValueError(f"Eveus 'state' value {state_value} outside known domain")
 
                 self._record_success(time.time() - start_time, new_data)
                 return new_data

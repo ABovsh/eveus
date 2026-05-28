@@ -538,7 +538,14 @@ def test_delayed_refresh_swallows_refresh_errors(
 def test_tune_interval_handles_invalid_state_and_custom_interval() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
+    # Out-of-domain state is treated as suspect: hold offline cadence rather
+    # than snap back to idle polling on data that the /main validator already
+    # would have rejected.
     updater._tune_update_interval({"state": "bad"})
+    assert updater.update_interval == timedelta(seconds=common_network.OFFLINE_UPDATE_INTERVAL)
+
+    # A known non-charging state keeps the idle cadence.
+    updater._tune_update_interval({"state": 3})
     assert updater.update_interval == timedelta(seconds=common_network.IDLE_UPDATE_INTERVAL)
 
     updater._set_update_interval(123)

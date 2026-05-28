@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 
 from homeassistant.components.number import (
@@ -17,8 +18,20 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfEnergy,
-    UnitOfTime,
 )
+
+
+def _validate_finite_number(value, label: str) -> float:
+    """Reject NaN/inf/bool from service-call input before clamping."""
+    if isinstance(value, bool):
+        raise HomeAssistantError(f"{label}: boolean value not accepted")
+    try:
+        raw = float(value)
+    except (TypeError, ValueError) as err:
+        raise HomeAssistantError(f"{label}: not a number") from err
+    if not math.isfinite(raw):
+        raise HomeAssistantError(f"{label}: NaN or infinity not accepted")
+    return raw
 
 from . import EveusConfigEntry
 from .const import (
@@ -108,7 +121,9 @@ class EveusCurrentNumber(EveusNumberEntity):
 
         if self._updater.available and self._updater.data and self._command in self._updater.data:
             device_value = get_safe_value(self._updater.data, self._command, float)
-            if device_value is not None:
+            if device_value is not None and (
+                self._attr_native_min_value <= device_value <= self._attr_native_max_value
+            ):
                 return float(device_value)
 
         if self._last_device_value is not None:
@@ -120,9 +135,10 @@ class EveusCurrentNumber(EveusNumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Set new current value with optimistic UI."""
         try:
+            raw = _validate_finite_number(value, "Charging Current")
             clamped_value = max(
                 self._attr_native_min_value,
-                min(self._attr_native_max_value, value),
+                min(self._attr_native_max_value, raw),
             )
             int_value = int(round(clamped_value))
 
@@ -189,7 +205,7 @@ class EveusCurrentNumber(EveusNumberEntity):
 
 
 class EveusSessionLimitNumber(EveusNumberEntity):
-    """Generic writable session-limit (energy / time / money) backed by /main."""
+    """Writable session-limit (energy) backed by /main."""
 
     def __init__(
         self,
@@ -215,7 +231,9 @@ class EveusSessionLimitNumber(EveusNumberEntity):
             return self._optimistic_value
         if self._updater.available and self._updater.data and self._command in self._updater.data:
             value = get_safe_value(self._updater.data, self._command, float)
-            if value is not None:
+            if value is not None and (
+                self._attr_native_min_value <= value <= self._attr_native_max_value
+            ):
                 return float(value)
         if self._last_device_value is not None and current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
             return self._last_device_value
@@ -223,7 +241,8 @@ class EveusSessionLimitNumber(EveusNumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         try:
-            clamped = max(self._attr_native_min_value, min(self._attr_native_max_value, value))
+            raw = _validate_finite_number(value, self.name or "Limit")
+            clamped = max(self._attr_native_min_value, min(self._attr_native_max_value, raw))
             int_value = int(round(clamped))
             self._pending_value = float(int_value)
             self._attr_native_value = self._pending_value
@@ -284,35 +303,6 @@ SESSION_LIMIT_DESCRIPTIONS: tuple[tuple[NumberEntityDescription, str, float], ..
         ),
         "energyLimit",
         200.0,
-    ),
-    (
-        NumberEntityDescription(
-            key="time_limit",
-            name="Time Limit",
-            icon="mdi:timer-sand",
-            entity_category=EntityCategory.CONFIG,
-            native_step=1.0,
-            mode=NumberMode.BOX,
-            native_unit_of_measurement=UnitOfTime.MINUTES,
-            device_class=NumberDeviceClass.DURATION,
-        ),
-        "timeLimit",
-        1440.0,
-    ),
-    (
-        NumberEntityDescription(
-            key="money_limit",
-            name="Money Limit",
-            icon="mdi:cash",
-            entity_category=EntityCategory.CONFIG,
-            native_step=1.0,
-            mode=NumberMode.BOX,
-            # NumberDeviceClass.MONETARY requires an ISO 4217 code, not a symbol.
-            native_unit_of_measurement="UAH",
-            device_class=NumberDeviceClass.MONETARY,
-        ),
-        "moneyLimit",
-        10000.0,
     ),
 )
 

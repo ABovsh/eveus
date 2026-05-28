@@ -92,9 +92,10 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     # changes alongside README/CHANGELOG.
     # 4.7.0: +5 adaptive/scheduled-charging sensors.
     # 4.9.2-rc2: +2 diagnostic sensors (WiFi Signal, Control Pilot).
+    # 4.9.2-rc5: Control Pilot removed (jargon; misled users).
     assert "WiFi Signal" in names
-    assert "Control Pilot" in names
-    assert len(specs) == 35, sorted(names)
+    assert "Control Pilot" not in names
+    assert len(specs) == 34, sorted(names)
 
 
 def test_sensor_specifications_adds_three_phase_sensors_when_requested() -> None:

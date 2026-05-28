@@ -168,6 +168,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         if model not in MODEL_MAX_CURRENT:
             _create_invalid_config_issue(hass, entry, "invalid_model")
             raise ConfigEntryError("Invalid model specified")
+        if scheme not in ("http", "https"):
+            _create_invalid_config_issue(hass, entry, "invalid_scheme")
+            raise ConfigEntryError(f"Invalid scheme: {scheme!r}")
 
         _delete_invalid_config_issue(hass, entry)
 

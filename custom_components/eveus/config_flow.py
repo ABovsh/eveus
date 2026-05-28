@@ -26,6 +26,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CHARGING_STATES,
     DOMAIN,
     MODEL_16A,
     CONF_MODEL,
@@ -182,6 +183,13 @@ def validate_device_response(
     # setup succeed and then immediately fail on first refresh.
     if "state" not in result:
         raise InvalidDevice("Device response is missing state")
+
+    try:
+        state_value = int(result["state"])
+    except (TypeError, ValueError) as err:
+        raise InvalidDevice("Device 'state' field is not numeric") from err
+    if state_value not in CHARGING_STATES:
+        raise InvalidDevice(f"Device reports unknown state {state_value}")
 
     if "currentSet" not in result:
         raise InvalidDevice("Device response is missing currentSet")
@@ -403,6 +411,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(entry_data[CONF_HOST])
                 if entry.unique_id != entry_data[CONF_HOST]:
                     self._abort_if_unique_id_configured()
+
+                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
                 return self.async_update_reload_and_abort(
                     entry,

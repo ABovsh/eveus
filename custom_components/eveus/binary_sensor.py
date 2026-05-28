@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, WriteOnChangeMixin
+from .const import CHARGING_STATES, SESSION_ACTIVE_STATES
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,12 +29,7 @@ _PLUG_UNKNOWN_STATES: Final[FrozenSet[int]] = frozenset({7})
 
 
 class EveusCarConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
-    """True whenever the charger reports a vehicle is plugged in.
-
-    The mapping uses canonical device-state values rather than localized state
-    strings so it stays stable if the human-readable labels in
-    `CHARGING_STATES` ever change.
-    """
+    """True whenever the charger reports a vehicle is plugged in."""
 
     ENTITY_NAME = "Car Connected"
     _attr_device_class = BinarySensorDeviceClass.PLUG
@@ -49,7 +45,7 @@ class EveusCarConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinaryS
         if not self.available:
             return None
         state = get_safe_value(self._updater.data, "state", int)
-        if state is None:
+        if state is None or state not in CHARGING_STATES:
             return None
         if state in _PLUG_UNKNOWN_STATES:
             return None
@@ -57,7 +53,33 @@ class EveusCarConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinaryS
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Write HA state only when availability or plug-state actually changes."""
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        self._write_if_changed(self.is_on)
+
+
+class EveusSessionActiveBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
+    """True while a charging session is in progress (Charging or Paused)."""
+
+    ENTITY_NAME = "Session Active"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = "mdi:ev-station"
+
+    def __init__(self, updater, device_number) -> None:
+        super().__init__(updater, device_number)
+        self._init_write_on_change()
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.available:
+            return None
+        state = get_safe_value(self._updater.data, "state", int)
+        if state is None or state not in CHARGING_STATES:
+            return None
+        return state in SESSION_ACTIVE_STATES
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
         self._maybe_finalize_device_info()
         self._update_availability_state()
         self._write_if_changed(self.is_on)
@@ -80,7 +102,9 @@ class EveusLimitReachedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinaryS
         if not self.available or not self._updater.data:
             return None
         value = get_safe_value(self._updater.data, self._state_key, int)
-        return None if value is None else bool(value)
+        if value is None or value not in (0, 1):
+            return None
+        return bool(value)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -91,8 +115,6 @@ class EveusLimitReachedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinaryS
 
 _LIMIT_REACHED_SPECS: Final[tuple[tuple[str, str, str], ...]] = (
     ("Energy Limit Reached", "energyLimitS", "mdi:flash-alert"),
-    ("Time Limit Reached", "timeLimitS", "mdi:timer-alert"),
-    ("Money Limit Reached", "moneyLimitS", "mdi:cash-remove"),
 )
 
 
@@ -106,7 +128,8 @@ async def async_setup_entry(
     updater = runtime_data.updater
     device_number = runtime_data.device_number
     entities: list[BinarySensorEntity] = [
-        EveusCarConnectedBinarySensor(updater, device_number)
+        EveusCarConnectedBinarySensor(updater, device_number),
+        EveusSessionActiveBinarySensor(updater, device_number),
     ]
     entities.extend(
         EveusLimitReachedBinarySensor(updater, device_number, name, key, icon)

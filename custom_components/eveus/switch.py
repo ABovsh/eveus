@@ -149,7 +149,8 @@ class BaseSwitchEntity(
 
         if self._updater.available and self._updater.data and self._state_key in self._updater.data:
             device_value = get_safe_value(self._updater.data, self._state_key, int, 0)
-            return bool(device_value)
+            if device_value in (0, 1):
+                return bool(device_value)
 
         if self._last_device_value is not None:
             if current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
@@ -213,11 +214,12 @@ class BaseSwitchEntity(
         current_time = time.time()
         if self._updater.available and self._updater.data and self._state_key in self._updater.data:
             device_value = get_safe_value(self._updater.data, self._state_key, int, 0)
-            self._reconcile_with_device(
-                bool(device_value),
-                current_time,
-                lambda optimistic, device: optimistic == device,
-            )
+            if device_value in (0, 1):
+                self._reconcile_with_device(
+                    bool(device_value),
+                    current_time,
+                    lambda optimistic, device: optimistic == device,
+                )
 
         self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
         self._attr_is_on = self._resolve_state()

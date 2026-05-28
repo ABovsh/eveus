@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.9.2-rc5 - 2026-05-28
+
+Fifth release candidate. Removes confusing or low-value entities, hardens firmware-payload handling against unexpected values, and adds a long-requested "session in progress" automation trigger.
+
+### ⚠️ Breaking — removed entities
+
+- **Removed `number.eveus_money_limit` and `binary_sensor.eveus_money_limit_reached`** — session monetary caps were confusing and rarely useful in practice.
+- **Removed `number.eveus_time_limit` and `binary_sensor.eveus_time_limit_reached`** — session duration caps were equally confusing; the charger continues to enforce them if set directly on the device.
+- **Removed `sensor.eveus_control_pilot`** — the raw EV Control Pilot byte was misleading for most users and had no meaningful unit. If you need it for advanced diagnostics, raise an issue.
+
+Dashboard cards and automations referencing these entities will go unavailable. Migration: remove the cards.
+
+### ✨ New
+
+- **`binary_sensor.eveus_session_active`** (`device_class: running`) — turns on whenever the charger is actively `Charging` or briefly `Paused` mid-session. Use this as a single automation trigger for "a charging session is in progress" instead of templating on the `State` string.
+
+### 🐛 Fixed
+
+- **Unknown charger states no longer masquerade as plausible values.** Out-of-domain `state` from the charger (firmware regression, a misrouted host returning random JSON, etc.) is now rejected at the coordinator and config flow — instead of being silently propagated to `Substate`, `Car Connected`, and other dependent sensors.
+- **Switches no longer flip on for unexpected firmware values.** `switch.eveus_stop_charging`, `One Charge`, `Adaptive Mode`, and the Schedule enables now ignore device values outside `{0, 1}` rather than treating any non-zero as `on`.
+- **`binary_sensor.eveus_energy_limit_reached`** — same domain guard; non-binary firmware values now produce `unknown` instead of a false `on`.
+- **`number.eveus_charging_current`** and **`number.eveus_energy_limit`** — out-of-range device values (e.g. `currentSet = 48A` on a 16A charger) are no longer surfaced as the entity state; the entity stays at its last good value.
+- **`number.eveus_charging_current`** and **`number.eveus_energy_limit`** — the `number.set_value` service now rejects `NaN`, infinity, and boolean inputs before sending a command, so a buggy automation template can't drive a real charger command.
+- **`sensor.eveus_active_rate_cost`** — negative tariff values from the firmware are now treated as `unknown`, matching the per-rate sensors.
+- **Schedule attributes** — invalid `current_limit_a` (below charger minimum) and `energy_limit_kwh` (negative) are dropped from the schedule sensor attributes.
+- **`sensor.eveus_wifi_signal`** — clamps to the physically valid dBm range (`−120..0`); positive readings (firmware bug) now display as `unknown` instead of "excellent".
+- **`sensor.eveus_battery_voltage`** — negative readings are now treated as `unknown`.
+- **`sensor.eveus_time_to_target_soc`** — when SOC helpers disappear mid-session, the entity now shows `Helpers Required` instead of keeping the stale `2h 15m` ETA on screen forever.
+- **HTTP plaintext warning** now fires on **reconfigure** too, not only on initial setup. Switching an existing charger from HTTPS → HTTP now surfaces the cleartext credentials warning.
+- **Stored entries with a corrupted transport scheme** (anything other than `http` / `https`) now raise a clear repair issue at startup instead of building broken URLs.
+- **Permanent control-command errors** (`400`, `403`, `404`) no longer burn the full retry budget — the integration fails fast and surfaces the error promptly.
+
 ## 4.9.2-rc4 - 2026-05-28
 
 Fourth release candidate. Closes findings from a second adversarial audit (Codex GPT-5.5 high) — small but real correctness fixes plus new tests.

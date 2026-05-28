@@ -432,11 +432,15 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
     def _get_sensor_value(self) -> str:
         """Calculate time to target."""
         if not self._soc_calculator.are_helpers_available(self.hass):
-            return "Helpers Required"
+            self._cached_value = "Helpers Required"
+            return self._cached_value
 
         try:
             inputs = self._resolve_remaining_inputs()
             if inputs is None:
+                # Helpers became unavailable mid-session — drop the stale ETA
+                # rather than keeping the last "2h 15m" on screen forever.
+                self._cached_value = "Helpers Required"
                 return self._cached_value
             result = calculate_remaining_time(*inputs)
             self._cached_value = result
