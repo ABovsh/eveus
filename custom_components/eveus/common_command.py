@@ -45,6 +45,11 @@ class CommandManager:
         """Rate limit error logging."""
         return self._error_log.should_log(ERROR_LOG_RATE_LIMIT)
 
+    async def _sleep_backoff(self, attempt: int) -> None:
+        """Wait the per-attempt backoff window (with jitter) before retrying."""
+        delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(0, _COMMAND_RETRY_JITTER)
+        await asyncio.sleep(delay)
+
     async def send_command(self, command: str, value: Any, *, retry: bool = True) -> bool:
         """Send command with rate limiting, retry/backoff, and error handling."""
         async with self._lock:
@@ -73,10 +78,7 @@ class CommandManager:
                         last_error = err
                         if attempt >= retry_attempts:
                             break
-                        delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(
-                            0, _COMMAND_RETRY_JITTER
-                        )
-                        await asyncio.sleep(delay)
+                        await self._sleep_backoff(attempt)
                     except (
                         aiohttp.ClientConnectorError,
                         aiohttp.ClientError,
@@ -85,10 +87,7 @@ class CommandManager:
                         last_error = err
                         if attempt >= retry_attempts:
                             break
-                        delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(
-                            0, _COMMAND_RETRY_JITTER
-                        )
-                        await asyncio.sleep(delay)
+                        await self._sleep_backoff(attempt)
 
                 self._consecutive_failures += 1
                 if self._consecutive_failures <= 5 and self._should_log_error():

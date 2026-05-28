@@ -19,19 +19,6 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
 )
 
-
-def _validate_finite_number(value, label: str) -> float:
-    """Reject NaN/inf/bool from service-call input before clamping."""
-    if isinstance(value, bool):
-        raise HomeAssistantError(f"{label}: boolean value not accepted")
-    try:
-        raw = float(value)
-    except (TypeError, ValueError) as err:
-        raise HomeAssistantError(f"{label}: not a number") from err
-    if not math.isfinite(raw):
-        raise HomeAssistantError(f"{label}: NaN or infinity not accepted")
-    return raw
-
 from . import EveusConfigEntry
 from .const import (
     MODEL_MAX_CURRENT,
@@ -49,6 +36,19 @@ from .common_base import (
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _validate_finite_number(value, label: str) -> float:
+    """Reject NaN/inf/bool from service-call input before clamping."""
+    if isinstance(value, bool):
+        raise HomeAssistantError(f"{label}: boolean value not accepted")
+    try:
+        raw = float(value)
+    except (TypeError, ValueError) as err:
+        raise HomeAssistantError(f"{label}: not a number") from err
+    if not math.isfinite(raw):
+        raise HomeAssistantError(f"{label}: NaN or infinity not accepted")
+    return raw
 
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     key="charging_current",

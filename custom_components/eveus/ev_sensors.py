@@ -40,8 +40,6 @@ _INPUT_BATTERY_CAPACITY = "input_number.ev_battery_capacity"
 _INPUT_SOC_CORRECTION = "input_number.ev_soc_correction"
 _INPUT_TARGET_SOC = "input_number.ev_target_soc"
 
-_ALL_INPUTS = [_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION, _INPUT_TARGET_SOC]
-
 _INPUT_LIMITS = {
     "initial_soc": (0, 100),
     "battery_capacity": (10, 160),
