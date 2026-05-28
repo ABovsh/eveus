@@ -320,7 +320,6 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
         """Initialize the sensor."""
         super().__init__(updater, device_number)
         self._attr_native_value = None
-        self._last_valid_value = None
         self._last_error_log = 0.0
 
     async def async_added_to_hass(self) -> None:
@@ -354,8 +353,6 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
 
         try:
             value = self._get_sensor_value()
-            if value is not None:
-                self._last_valid_value = value
             self._attr_native_value = value
         except Exception as err:
             current_time = time.time()
