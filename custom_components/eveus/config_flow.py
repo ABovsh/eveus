@@ -184,8 +184,13 @@ def validate_device_response(
     if "state" not in result:
         raise InvalidDevice("Device response is missing state")
 
+    raw_state = result["state"]
+    if isinstance(raw_state, bool):
+        raise InvalidDevice("Device 'state' field is boolean")
+    if isinstance(raw_state, float) and not raw_state.is_integer():
+        raise InvalidDevice("Device 'state' field is not an integer")
     try:
-        state_value = int(result["state"])
+        state_value = int(raw_state)
     except (TypeError, ValueError) as err:
         raise InvalidDevice("Device 'state' field is not numeric") from err
     if state_value not in CHARGING_STATES:

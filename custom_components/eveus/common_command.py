@@ -91,7 +91,11 @@ class CommandManager:
 
                 self._consecutive_failures += 1
                 if self._consecutive_failures <= 5 and self._should_log_error():
-                    _LOGGER.debug("Command %s failed: %s", command, last_error)
+                    # Log only the error type — ClientResponseError.__str__ embeds
+                    # the request URL (the charger host), which we scrub elsewhere.
+                    _LOGGER.debug(
+                        "Command %s failed: %s", command, type(last_error).__name__
+                    )
                 return False
 
             except ConfigEntryAuthFailed:

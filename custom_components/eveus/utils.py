@@ -129,6 +129,13 @@ def get_safe_value(
         if isinstance(value, float) and not math.isfinite(value):
             return default
 
+        # Integer fields (state, switch flags, schedule minutes, tariff index,
+        # timezone offset, ...) must be exact. A fractional float like 4.9 would
+        # otherwise truncate to 4 and masquerade as a valid enum value, so reject
+        # non-integral floats instead of silently truncating them.
+        if converter is int and isinstance(value, float) and not value.is_integer():
+            return default
+
         converted = converter(value)
         if isinstance(converted, float) and not math.isfinite(converted):
             return default

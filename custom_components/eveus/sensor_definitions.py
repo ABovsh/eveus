@@ -47,6 +47,14 @@ UNIT_UAH = "UAH"
 _MAX_MODEL_CURRENT = max(MODEL_MAX_CURRENT.values())
 # Upper sanity bound for the charger clock (epoch seconds at year 2100).
 _MAX_SYSTEM_TIME = 4102444800
+# Upper sanity ceilings for live telemetry. Real readings sit far below these;
+# the bounds exist only to reject corrupt payload outliers (e.g. powerMeas
+# 999999) before they reach HA long-term statistics. Generous on purpose.
+_MAX_VOLTAGE = 500
+_MAX_CURRENT = 200
+_MAX_POWER = 100_000
+# Largest plausible per-slot schedule energy cap (kWh).
+_MAX_SCHEDULE_KWH = 200
 
 
 def _should_log_error(function_name: str) -> bool:
@@ -193,10 +201,12 @@ def _make_value_getter(
 
 
 # Measurement getters
-get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0)
-get_current = _make_value_getter("curMeas1", precision=1, minimum=0)
-get_power = _make_value_getter("powerMeas", precision=1, minimum=0)
-get_current_set = _make_value_getter("currentSet", precision=0, minimum=MIN_CURRENT)
+get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
+get_current = _make_value_getter("curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT)
+get_power = _make_value_getter("powerMeas", precision=1, minimum=0, maximum=_MAX_POWER)
+get_current_set = _make_value_getter(
+    "currentSet", precision=0, minimum=MIN_CURRENT, maximum=_MAX_MODEL_CURRENT
+)
 
 # Energy getters
 get_session_energy = _make_value_getter("sessionEnergy", precision=2, minimum=0)
@@ -229,10 +239,10 @@ get_leak_current_peak = _make_value_getter("leakValueH", precision=0, minimum=0)
 get_wifi_rssi = _make_value_getter("RSSI", precision=0, minimum=-120, maximum=0)
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
-get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0)
-get_current_phase_3 = _make_value_getter("curMeas3", precision=1, minimum=0)
-get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0, minimum=0)
-get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0)
+get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT)
+get_current_phase_3 = _make_value_getter("curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT)
+get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
+get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
 
 
 # =============================================================================
@@ -370,8 +380,12 @@ def get_adaptive_charging_state(updater, hass) -> Optional[str]:
     return None
 
 
-get_adaptive_current = _make_value_getter("aiModecurrent", precision=0, minimum=0)
-get_adaptive_voltage = _make_value_getter("aiVoltage", precision=0, minimum=0)
+get_adaptive_current = _make_value_getter(
+    "aiModecurrent", precision=0, minimum=0, maximum=_MAX_CURRENT
+)
+get_adaptive_voltage = _make_value_getter(
+    "aiVoltage", precision=0, minimum=0, maximum=_MAX_VOLTAGE
+)
 
 
 def _format_minutes(value: Optional[int]) -> Optional[str]:
@@ -412,7 +426,7 @@ def _make_schedule_attrs(slot: int):
                 attrs["current_limit_a"] = cur
         if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
             energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)
-            if energy is not None and energy >= 0:
+            if energy is not None and 0 <= energy <= _MAX_SCHEDULE_KWH:
                 attrs["energy_limit_kwh"] = energy
         return attrs
     return getter

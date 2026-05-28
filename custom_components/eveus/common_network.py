@@ -316,11 +316,18 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     raise ValueError(f"Expected dict, got {type(new_data).__name__}")
                 if "state" not in new_data:
                     raise ValueError("Response missing required Eveus 'state' field")
+                # Match the config-flow contract: a genuine Eveus /main payload
+                # always carries currentSet. Requiring it here too rejects a
+                # misrouted host that happens to return a plausible bare state.
+                if "currentSet" not in new_data:
+                    raise ValueError("Response missing required Eveus 'currentSet' field")
                 raw_state = new_data["state"]
                 if isinstance(raw_state, bool):
                     raise ValueError("Eveus 'state' field is boolean")
                 if isinstance(raw_state, float) and not math.isfinite(raw_state):
                     raise ValueError("Eveus 'state' field is not finite")
+                if isinstance(raw_state, float) and not raw_state.is_integer():
+                    raise ValueError("Eveus 'state' field is not an integer")
                 try:
                     state_value = int(raw_state)
                 except (TypeError, ValueError, OverflowError) as err:

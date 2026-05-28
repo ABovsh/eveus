@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.9.2-rc7 - 2026-05-28
+
+Seventh release candidate. Tightens how the integration handles unexpected or out-of-range data from the charger, so corrupt readings show as `unknown` instead of plausible-but-wrong values.
+
+### 🐛 Fixed
+
+- **Misrouted or partial responses are rejected more reliably.** A response that looks vaguely like a charger but is missing the current setpoint (a different device on the LAN, a captive portal, a proxy) is now refused instead of briefly bringing the integration online with blank values. This matches the check already done when you first add a charger.
+- **Implausible charger states no longer slip through.** A non-whole-number or boolean `State` value (firmware glitch or wrong device) is now rejected both when adding a charger and during normal polling, instead of being rounded into a valid-looking state.
+- **Fractional glitch values on on/off and status fields read as `unknown`.** Switch states, schedule enables, Ground, Adaptive Charging, the tariff/rate indicators, Time Zone, and the schedule time pickers now ignore a corrupt fractional value rather than snapping it to a definite on/off/enabled state.
+- **Impossible electrical readings are discarded.** `Voltage`, `Current`, `Power`, `Current Set`, the per-phase sensors, and the Adaptive current/voltage diagnostics now drop absurd high outliers (e.g. a spurious 999999 W) so they can't pollute your long-term statistics and energy graphs.
+- **Out-of-range schedule energy caps are dropped.** An implausibly large `energy_limit_kwh` from a corrupt schedule payload is no longer exposed as a real configured cap.
+
+### 🔒 Privacy
+
+- **Command-failure logs no longer include the charger address.** A failed control command now records only the error type, matching how polling failures are already logged.
+
 ## 4.9.2-rc6 - 2026-05-28
 
 Sixth release candidate. Removes the last of the confusing session-cap entities, fixes several SOC and restart-resiliency edge cases, and aligns the cost sensors with Home Assistant's monetary handling.
