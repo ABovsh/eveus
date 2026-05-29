@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 from conftest import EveusTestUpdater
 from custom_components.eveus.utils import get_safe_value
@@ -79,12 +79,13 @@ def test_connection_quality_valid_clamped():
     assert get_connection_quality(EveusTestUpdater({}, quality={"success_rate": 87.4}), None) == 87
 
 
-def test_counter_cost_sensors_use_hryvnia_symbol():
+def test_counter_cost_sensors_use_monetary_iso_unit():
     by_key = {s.key: s for s in get_sensor_specifications(1)}
     for key in ("counter_a_cost", "counter_b_cost"):
         spec = by_key[key]
-        assert spec.device_class is None
-        assert spec.unit == "₴"
+        assert spec.device_class == SensorDeviceClass.MONETARY
+        assert spec.unit == "UAH"
+        assert spec.state_class == SensorStateClass.TOTAL
 
 
 class _SessionEnergyHolder:

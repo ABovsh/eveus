@@ -166,12 +166,16 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         device = registry.async_get_device(identifiers=identifiers)
         if device is None:
             return
-        registry.async_update_device(
-            device.id,
-            sw_version=new_info["sw_version"],
-            model=new_info.get("model"),
-            manufacturer=new_info.get("manufacturer"),
-        )
+        update_kwargs: dict[str, Any] = {
+            "sw_version": new_info["sw_version"],
+            "model": new_info.get("model"),
+            "manufacturer": new_info.get("manufacturer"),
+        }
+        if new_info.get("hw_version"):
+            update_kwargs["hw_version"] = new_info["hw_version"]
+        if new_info.get("serial_number"):
+            update_kwargs["serial_number"] = new_info["serial_number"]
+        registry.async_update_device(device.id, **update_kwargs)
 
     async def async_added_to_hass(self) -> None:
         """Handle entity addition with state restoration."""
@@ -316,7 +320,6 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
         """Initialize the sensor."""
         super().__init__(updater, device_number)
         self._attr_native_value = None
-        self._last_valid_value = None
         self._last_error_log = 0.0
 
     async def async_added_to_hass(self) -> None:
@@ -350,8 +353,6 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
 
         try:
             value = self._get_sensor_value()
-            if value is not None:
-                self._last_valid_value = value
             self._attr_native_value = value
         except Exception as err:
             current_time = time.time()

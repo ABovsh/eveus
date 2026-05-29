@@ -45,6 +45,11 @@ class CommandManager:
         """Rate limit error logging."""
         return self._error_log.should_log(ERROR_LOG_RATE_LIMIT)
 
+    async def _sleep_backoff(self, attempt: int) -> None:
+        """Wait the per-attempt backoff window (with jitter) before retrying."""
+        delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(0, _COMMAND_RETRY_JITTER)
+        await asyncio.sleep(delay)
+
     async def send_command(self, command: str, value: Any, *, retry: bool = True) -> bool:
         """Send command with rate limiting, retry/backoff, and error handling."""
         async with self._lock:
@@ -65,9 +70,15 @@ class CommandManager:
                             raise ConfigEntryAuthFailed(
                                 "Eveus charger rejected credentials"
                             ) from err
+                        # Permanent client/server-routing errors won't fix
+                        # themselves: don't burn the retry budget on them.
+                        if err.status not in (408, 425, 429, 500, 502, 503, 504):
+                            last_error = err
+                            break
                         last_error = err
                         if attempt >= retry_attempts:
                             break
+                        await self._sleep_backoff(attempt)
                     except (
                         aiohttp.ClientConnectorError,
                         aiohttp.ClientError,
@@ -76,14 +87,15 @@ class CommandManager:
                         last_error = err
                         if attempt >= retry_attempts:
                             break
-                        delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(
-                            0, _COMMAND_RETRY_JITTER
-                        )
-                        await asyncio.sleep(delay)
+                        await self._sleep_backoff(attempt)
 
                 self._consecutive_failures += 1
                 if self._consecutive_failures <= 5 and self._should_log_error():
-                    _LOGGER.debug("Command %s failed: %s", command, last_error)
+                    # Log only the error type — ClientResponseError.__str__ embeds
+                    # the request URL (the charger host), which we scrub elsewhere.
+                    _LOGGER.debug(
+                        "Command %s failed: %s", command, type(last_error).__name__
+                    )
                 return False
 
             except ConfigEntryAuthFailed:
@@ -108,7 +120,7 @@ class CommandManager:
         payload = urlencode({"pageevent": command, command: value})
         async with session.post(
             self._updater.url_for("/pageEvent"),
-            auth=self._updater._basic_auth,
+            auth=self._updater.basic_auth,
             headers={"Content-type": "application/x-www-form-urlencoded"},
             data=payload,
             timeout=_COMMAND_TIMEOUT_OBJ,

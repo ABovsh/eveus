@@ -49,21 +49,35 @@ class RateLog:
 # =============================================================================
 
 
-def get_next_device_number(hass: HomeAssistant) -> int:
-    """Find the next available device number for multi-device support."""
+def _used_device_numbers(hass: HomeAssistant, exclude_entry_id: str | None = None) -> set:
+    """Return device numbers already assigned to other Eveus entries."""
     existing_numbers = set()
     for entry in hass.config_entries.async_entries(DOMAIN):
+        if exclude_entry_id is not None and entry.entry_id == exclude_entry_id:
+            continue
         device_number = entry.data.get("device_number")
         try:
             if device_number is not None:
                 existing_numbers.add(int(device_number))
         except (TypeError, ValueError):
             continue
+    return existing_numbers
 
+
+def get_next_device_number(hass: HomeAssistant, exclude_entry_id: str | None = None) -> int:
+    """Find the next available device number for multi-device support."""
+    existing_numbers = _used_device_numbers(hass, exclude_entry_id)
     next_number = 1
     while next_number in existing_numbers:
         next_number += 1
     return next_number
+
+
+def is_device_number_taken(
+    hass: HomeAssistant, device_number: int, exclude_entry_id: str | None = None
+) -> bool:
+    """Return True when another Eveus entry already uses this device number."""
+    return device_number in _used_device_numbers(hass, exclude_entry_id)
 
 
 def get_device_suffix(device_number: int) -> str:
@@ -112,12 +126,22 @@ def get_safe_value(
         if isinstance(value, bool) and converter in (float, int):
             return default
 
+        if isinstance(value, float) and not math.isfinite(value):
+            return default
+
+        # Integer fields (state, switch flags, schedule minutes, tariff index,
+        # timezone offset, ...) must be exact. A fractional float like 4.9 would
+        # otherwise truncate to 4 and masquerade as a valid enum value, so reject
+        # non-integral floats instead of silently truncating them.
+        if converter is int and isinstance(value, float) and not value.is_integer():
+            return default
+
         converted = converter(value)
         if isinstance(converted, float) and not math.isfinite(converted):
             return default
         return converted
 
-    except (TypeError, ValueError, AttributeError):
+    except (TypeError, ValueError, OverflowError, AttributeError):
         return default
 
 
@@ -126,28 +150,43 @@ def get_safe_value(
 # =============================================================================
 
 
-def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
-    """Get standardized device information with multi-device support."""
-    firmware = str(data.get('verFWMain') or data.get('firmware') or 'Unknown').strip()
-    hardware = str(data.get('verFWWifi') or data.get('hardware') or 'Unknown').strip()
+def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
+    """Coerce a /main field to a trimmed string or a fallback."""
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text if len(text) >= min_len else fallback
 
-    if len(firmware) < 2:
-        firmware = "Unknown"
-    if len(hardware) < 2:
-        hardware = "Unknown"
+
+def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
+    """Get standardized device information with multi-device support.
+
+    The charger exposes its own model, manufacturer, and serial in /main. When
+    those fields are present we surface them in device_info so the Devices
+    page shows real device metadata instead of generic strings.
+    """
+    firmware = _safe_str(data.get("verFWMain") or data.get("firmware"))
+    hardware = _safe_str(data.get("verFWWifi") or data.get("hardware"))
+    manufacturer = _safe_str(data.get("manufacturer"), fallback="Eveus")
+    model = _safe_str(data.get("model"), fallback="Eveus EV Charger")
+    serial = data.get("serialNum") or data.get("stationId")
+    serial_str = str(serial).strip() if serial else ""
 
     device_suffix = get_device_display_suffix(device_number)
     device_identifier = get_device_identifier(host, device_number)
 
-    return {
+    info: Dict[str, Any] = {
         "identifiers": {device_identifier},
         "name": f"Eveus EV Charger{device_suffix}",
-        "manufacturer": "Eveus",
-        "model": "Eveus EV Charger",
+        "manufacturer": manufacturer,
+        "model": model,
         "sw_version": firmware,
         "hw_version": hardware,
         "configuration_url": f"{scheme}://{host}",
     }
+    if serial_str:
+        info["serial_number"] = serial_str
+    return info
 
 
 def format_duration(seconds: int) -> str:
@@ -205,6 +244,19 @@ def _validate_soc_inputs(
         return None
 
 
+def _soc_kwh_from_inputs(
+    initial_soc: float,
+    battery_capacity: float,
+    energy_charged: float,
+    efficiency_loss: float,
+) -> float:
+    """Compute clamped SOC kWh from already-validated inputs (no revalidation)."""
+    initial_kwh = (initial_soc / 100) * battery_capacity
+    charged_kwh = energy_charged * (1 - efficiency_loss / 100)
+    total_kwh = initial_kwh + charged_kwh
+    return round(max(0, min(total_kwh, battery_capacity)), 2)
+
+
 def calculate_soc_kwh(
     initial_soc: float,
     battery_capacity: float,
@@ -217,14 +269,7 @@ def calculate_soc_kwh(
     )
     if inputs is None:
         return 0.0
-    initial_soc, battery_capacity, energy_charged, efficiency_loss = inputs
-    if battery_capacity <= 0:
-        return 0.0
-    initial_kwh = (initial_soc / 100) * battery_capacity
-    efficiency = 1 - efficiency_loss / 100
-    charged_kwh = energy_charged * efficiency
-    total_kwh = initial_kwh + charged_kwh
-    return round(max(0, min(total_kwh, battery_capacity)), 2)
+    return _soc_kwh_from_inputs(*inputs)
 
 
 def calculate_soc_percent(
@@ -239,13 +284,10 @@ def calculate_soc_percent(
     )
     if inputs is None:
         return 0.0
-    initial_soc, battery_capacity, energy_charged, efficiency_loss = inputs
-    if battery_capacity <= 0:
-        return 0.0
-
-    soc_kwh = calculate_soc_kwh(
-        initial_soc, battery_capacity, energy_charged, efficiency_loss
-    )
+    # _validate_soc_inputs guarantees battery_capacity > 0, so a single
+    # validation feeds both the kWh figure and the percentage.
+    _initial_soc, battery_capacity, _energy, _loss = inputs
+    soc_kwh = _soc_kwh_from_inputs(*inputs)
     percentage = (soc_kwh / battery_capacity) * 100
     return round(max(0, min(percentage, 100)), 0)
 

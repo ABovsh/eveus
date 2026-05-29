@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.9.2 - 2026-05-29
+
+Reliability, statistics-correctness, and privacy improvements, plus two new automation-friendly entities. No entity renames or removals versus 4.9.1; existing setups upgrade transparently.
+
+### ✨ New
+
+- **`binary_sensor.eveus_session_active`** (`device_class: running`) — turns on whenever a charging session is in progress, including brief mid-session pauses. Use it as a single automation trigger instead of templating on the `State` string.
+- **`sensor.eveus_wifi_signal`** — WiFi signal strength (dBm) reported by the charger, so you can correlate polling problems with weak RF.
+
+### 🔧 Changed
+
+- **Cost sensors use Home Assistant's monetary handling.** `Counter A Cost`, `Counter B Cost`, and `Session Cost` now report with the `monetary` device class and the ISO unit `UAH`, so long-term cost statistics keep accumulating correctly across session and counter resets, and the Energy dashboard can pick them up as costs. Per-kWh tariffs continue to display `₴/kWh`. Upgrading may show a one-time "units changed" notice on the cost sensors.
+- **`SOC Energy` and `Session Energy` use a valid sensor type.** `sensor.eveus_soc_energy` is now reported as stored battery energy and `sensor.eveus_session_energy` as a plain energy measurement, which clears an "impossible state class" warning at startup. Their history is unaffected.
+- **Richer Device page.** The Devices view now shows the charger's real model, manufacturer, hardware version, and serial number from the firmware.
+- **Fuller, safer diagnostics.** `Download diagnostics` now ships the full sanitized `/main` snapshot plus connection state. Identifying fields — serial number, station ID, LAN IP, firmware CRC, and anything whose name looks like an address, SSID, MAC, or token — are redacted automatically, so a future firmware field can't leak into a shared report.
+
+### 🐛 Fixed
+
+- **Corrupt or impossible readings show `unknown` instead of plausible-but-wrong values.** This now covers `Voltage`, `Current`, `Power`, the per-phase sensors, leakage current, battery voltage, WiFi signal, the tariff/rate sensors, switch and schedule states, and the charger clock. `Current Set` is additionally bounded by your charger model's maximum, so a setpoint that's impossible for your unit (for example 40 A on a 16 A charger) reads as `unknown`.
+- **Misrouted or non-Eveus responses are refused.** A captive portal, proxy, or a partial payload missing the current setpoint is now rejected both when adding a charger and during polling, instead of briefly coming online with blank or garbage values.
+- **SOC math is more faithful to your settings.** A `0%` `Charging Efficiency Loss` setting is now respected instead of being replaced with the default, and a corrupt (negative) session-energy reading makes the SOC sensors go `unknown` rather than faking your configured starting charge level.
+- **Restored controls survive a restart while the charger is offline.** After a restart, `Charging Current`, the schedule time pickers, and the switches keep their restored value through the normal grace window instead of dropping straight to `unknown`/`off`.
+- **`Input Entities Status` is more responsive and more available.** It updates immediately when you add or remove an optional SOC helper, and it stays available for troubleshooting even while the charger is unreachable.
+- **Gentler, smarter connection handling.** Recovery after a long outage no longer snaps straight back to fast polling on a single fluke packet; transient `5xx`/`429`/network errors back off properly; and permanent command errors (`400`/`403`/`404`) fail fast instead of burning the retry budget, while a `401` starts reauthentication.
+- **A paused-but-active session keeps refreshing on the fast cadence.** `binary_sensor.eveus_session_active`, the SOC sensors, and the charging-time estimates no longer slow to the idle cadence when a session pauses mid-charge.
+- **`Time to Target SOC` asks for the one thing it needs.** It shows `Set Target SOC` when the core SOC helpers are set but `Target SOC` is not, and `Helpers Required` only when no helpers are configured — instead of leaving a stale ETA on screen.
+- **`Connection Quality` no longer shows a false healthy state.** It reads `unknown` before the first successful poll and on internal error, rather than a misleading `100%`.
+- **Corrupt stored configuration is caught at startup.** A malformed host, an unexpected transport scheme, or an invalid phase count now raises a clear repair notice or self-corrects, and adding two chargers at once can no longer assign them the same internal device number.
+
+### 🔒 Privacy
+
+- **Stored password is never echoed back.** Reauthentication and reconfigure no longer prefill or round-trip the saved password to the browser form.
+- **Command-failure logs omit the charger address.** A failed control command now records only the error type, matching how polling failures are already logged.
+- **Cleartext-credentials warning fires more often.** The plain-HTTP warning now also appears during reconfigure and reauthentication, not only on initial setup.
+
 ## 4.9.1 - 2026-05-22
 
 ### 🐛 Fixed

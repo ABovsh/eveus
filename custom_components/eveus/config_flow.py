@@ -26,6 +26,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CHARGING_STATES,
     DOMAIN,
     MODEL_16A,
     CONF_MODEL,
@@ -176,6 +177,25 @@ def validate_device_response(
     if not isinstance(result, dict):
         raise CannotConnect("Invalid response format")
 
+    # Match the runtime coordinator contract (common_network.py): /main must
+    # carry both `state` and `currentSet` to be accepted as an Eveus charger.
+    # Validating both here means we fail at config flow instead of letting
+    # setup succeed and then immediately fail on first refresh.
+    if "state" not in result:
+        raise InvalidDevice("Device response is missing state")
+
+    raw_state = result["state"]
+    if isinstance(raw_state, bool):
+        raise InvalidDevice("Device 'state' field is boolean")
+    if isinstance(raw_state, float) and not raw_state.is_integer():
+        raise InvalidDevice("Device 'state' field is not an integer")
+    try:
+        state_value = int(raw_state)
+    except (TypeError, ValueError) as err:
+        raise InvalidDevice("Device 'state' field is not numeric") from err
+    if state_value not in CHARGING_STATES:
+        raise InvalidDevice(f"Device reports unknown state {state_value}")
+
     if "currentSet" not in result:
         raise InvalidDevice("Device response is missing currentSet")
 
@@ -250,7 +270,7 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
         {
             vol.Required(CONF_HOST, default=host_default): str,
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): TextSelector(
+            vol.Required(CONF_PASSWORD): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.PASSWORD)
             ),
             vol.Required(
@@ -274,7 +294,7 @@ def build_reauth_data_schema(defaults: Mapping[str, Any] | None = None) -> vol.S
     return vol.Schema(
         {
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD)): TextSelector(
+            vol.Required(CONF_PASSWORD): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.PASSWORD)
             ),
         }
@@ -397,6 +417,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     self._abort_if_unique_id_configured()
 
+                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
+
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=entry_data[CONF_HOST],
@@ -450,6 +472,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(entry_data[CONF_HOST])
                 if entry.unique_id != entry_data[CONF_HOST]:
                     return self.async_abort(reason="wrong_device")
+
+                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
                 return self.async_update_reload_and_abort(
                     entry,

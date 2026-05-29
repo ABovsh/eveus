@@ -70,7 +70,7 @@ class _FailingSession:
 @pytest.fixture
 def coordinator(monkeypatch: pytest.MonkeyPatch) -> tuple[EveusUpdater, _Session]:
     """Create a coordinator with a fake HTTP session."""
-    session = _Session(_Response(payload={"state": 4, "powerMeas": 7200}))
+    session = _Session(_Response(payload={"state": 4, "currentSet": 16, "powerMeas": 7200}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass()), session
 
@@ -82,7 +82,7 @@ def test_update_data_fetches_payload_and_uses_stable_interval(
 
     data = asyncio.run(updater._async_update_data())
 
-    assert data == {"state": 4, "powerMeas": 7200}
+    assert data == {"state": 4, "currentSet": 16, "powerMeas": 7200}
     assert session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
     assert updater.update_interval == timedelta(seconds=CHARGING_UPDATE_INTERVAL)
     assert updater.connection_quality["consecutive_failures"] == 0
@@ -91,7 +91,7 @@ def test_update_data_fetches_payload_and_uses_stable_interval(
 def test_update_data_uses_configured_https_scheme_and_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = _Session(_Response(payload={"state": 4, "powerMeas": 7200}))
+    session = _Session(_Response(payload={"state": 4, "currentSet": 16, "powerMeas": 7200}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(
         "eveus.local:8443",
@@ -123,7 +123,7 @@ def test_update_data_relaxes_interval_when_device_is_idle(
     """Idle (non-charging) state should slow the poll cadence to IDLE."""
     from custom_components.eveus.const import IDLE_UPDATE_INTERVAL
 
-    session = _Session(_Response(payload={"state": 2, "powerMeas": 0}))
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16, "powerMeas": 0}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
@@ -136,7 +136,20 @@ def test_update_data_uses_charging_interval_while_charging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Charging state must keep the fast 30s cadence."""
-    session = _Session(_Response(payload={"state": 4, "powerMeas": 7200}))
+    session = _Session(_Response(payload={"state": 4, "currentSet": 16, "powerMeas": 7200}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater._async_update_data())
+
+    assert updater.update_interval == timedelta(seconds=CHARGING_UPDATE_INTERVAL)
+
+
+def test_update_data_uses_charging_interval_while_paused_mid_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Paused (state 6) is an active session, so it must keep the fast 30s cadence."""
+    session = _Session(_Response(payload={"state": 6, "currentSet": 16, "powerMeas": 0}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
@@ -232,7 +245,7 @@ def test_offline_backoff_skip_raises_even_without_prior_data() -> None:
 def test_force_refresh_bypasses_offline_backoff_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = _Session(_Response(payload={"state": 2}))
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._next_poll_attempt = time.time() + RETRY_DELAY
@@ -240,7 +253,7 @@ def test_force_refresh_bypasses_offline_backoff_once(
 
     data = asyncio.run(updater._async_update_data())
 
-    assert data == {"state": 2}
+    assert data == {"state": 2, "currentSet": 16}
     assert len(session.calls) == 1
 
 
@@ -538,7 +551,14 @@ def test_delayed_refresh_swallows_refresh_errors(
 def test_tune_interval_handles_invalid_state_and_custom_interval() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
+    # Out-of-domain state is treated as suspect: hold offline cadence rather
+    # than snap back to idle polling on data that the /main validator already
+    # would have rejected.
     updater._tune_update_interval({"state": "bad"})
+    assert updater.update_interval == timedelta(seconds=common_network.OFFLINE_UPDATE_INTERVAL)
+
+    # A known non-charging state keeps the idle cadence.
+    updater._tune_update_interval({"state": 3})
     assert updater.update_interval == timedelta(seconds=common_network.IDLE_UPDATE_INTERVAL)
 
     updater._set_update_interval(123)

@@ -128,7 +128,8 @@ def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatc
     assert entry.runtime_data.soc_calculator is not None
     assert hass.config_entries.updated == [{"data": {**_data(), "device_number": 1}}]
     assert hass.config_entries.forwarded
-    assert entry.runtime_data.updater.async_shutdown in entry.unloads
+    # async_shutdown is registered by DataUpdateCoordinator itself (via the
+    # config_entry= constructor argument); we no longer hook it manually.
 
 
 def test_async_setup_entry_propagates_auth_failure(
@@ -362,9 +363,17 @@ def test_number_setup_creates_current_entity() -> None:
         )
     )
 
+    # 4.9.2-rc2: +3 session-limit Number entities (Energy/Time/Money Limit).
+    # 4.9.2-rc5: Time Limit and Money Limit removed.
+    # 4.9.2-rc6: Energy Limit removed; only Charging Current remains.
     assert len(added) == 1
-    assert added[0].name == "Charging Current"
-    assert added[0].unique_id == "eveus3_charging_current"
+    names = [e.name for e in added]
+    assert "Charging Current" in names
+    assert "Energy Limit" not in names
+    assert "Time Limit" not in names
+    assert "Money Limit" not in names
+    current = next(e for e in added if e.name == "Charging Current")
+    assert current.unique_id == "eveus3_charging_current"
 
 
 def test_reset_counter_buttons_send_reset_commands() -> None:

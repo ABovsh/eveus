@@ -5,6 +5,7 @@ import asyncio
 from collections import deque
 from datetime import timedelta
 import logging
+import math
 import time
 from typing import Any
 
@@ -17,13 +18,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .common_command import CommandManager
 from .const import (
+    CHARGING_STATES,
     CHARGING_UPDATE_INTERVAL,
     DEFAULT_SCHEME,
-    DEVICE_STATE_CHARGING,
     ERROR_LOG_RATE_LIMIT,
     IDLE_UPDATE_INTERVAL,
     OFFLINE_UPDATE_INTERVAL,
     RETRY_DELAY,
+    SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
 from .utils import RateLog
@@ -77,7 +79,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         self._poll_results: deque[bool] = deque(maxlen=20)
         self._consecutive_failures = 0
-        self._last_success_time = time.time()
+        # 0.0 until the first successful poll, so connection_quality does not
+        # report "healthy" before the charger has ever answered.
+        self._last_success_time = 0.0
         self._latency_samples: deque[float] = deque(maxlen=10)
 
         self._availability_log = RateLog()
@@ -88,6 +92,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._next_poll_attempt = 0.0
         self._force_refresh_requested = False
         self._post_command_refresh_tasks: list[asyncio.Task] = []
+
+    @property
+    def basic_auth(self) -> aiohttp.BasicAuth:
+        """Cached Basic Auth credentials for charger requests."""
+        return self._basic_auth
 
     @property
     def available(self) -> bool:
@@ -117,7 +126,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             "latency_avg": avg_latency,
             "consecutive_failures": self._consecutive_failures,
             "consecutive_command_failures": self._command_manager.consecutive_failures,
-            "is_healthy": success_rate > 80 and time.time() - self._last_success_time < 300,
+            "is_healthy": (
+                self._last_success_time > 0
+                and success_rate > 80
+                and time.time() - self._last_success_time < 300
+            ),
             "last_success_time": self._last_success_time,
             "last_error": self._last_error,
             "sample_count": len(self._poll_results),
@@ -217,6 +230,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
+        was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)
         self._consecutive_failures = 0
         self._device_available = True
@@ -226,7 +240,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._silent_mode = False
         self._offline_announced = False
         self._last_error = None
-        self._tune_update_interval(new_data)
+        self._tune_update_interval(new_data, preserve_offline=was_likely_offline)
 
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
@@ -248,19 +262,21 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if not self._silent_mode and self._should_log():
             _LOGGER.debug("Eveus connection issue: %s", type(error).__name__)
 
-    def _tune_update_interval(self, data: dict[str, Any]) -> None:
+    def _tune_update_interval(
+        self, data: dict[str, Any], *, preserve_offline: bool = False
+    ) -> None:
         """Pick a poll cadence based on charger activity.
 
-        Charging is the only state where users want fast feedback. When the
-        charger is idle/connected we relax to IDLE_UPDATE_INTERVAL to halve
-        background HTTP load, and snap back to CHARGING_UPDATE_INTERVAL the
-        moment the device starts a session.
+        An active session (Charging, or briefly Paused mid-session) is where
+        users want fast feedback, so both get CHARGING_UPDATE_INTERVAL. When the
+        charger is merely idle/connected we relax to IDLE_UPDATE_INTERVAL to
+        halve background HTTP load, and snap back the moment a session resumes.
 
-        Offline cadence is preserved: if the device is still in the is_likely_offline
-        regime we keep the long interval even after the first recovery, so the
-        coordinator does not immediately revert to a short 30s cycle.
+        ``preserve_offline`` keeps the long offline cadence for the first
+        successful poll right after a long outage, so the coordinator does
+        not snap straight back to a 30s cycle on a single recovered tick.
         """
-        if self.is_likely_offline:
+        if preserve_offline or self.is_likely_offline:
             self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
             return
 
@@ -269,10 +285,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         except (TypeError, ValueError):
             state_value = None
 
-        if state_value == DEVICE_STATE_CHARGING:
+        if state_value in SESSION_ACTIVE_STATES:
             self._set_update_interval(CHARGING_UPDATE_INTERVAL)
-        else:
+        elif state_value is not None and state_value in CHARGING_STATES:
             self._set_update_interval(IDLE_UPDATE_INTERVAL)
+        else:
+            # Unknown/invalid state: hold offline cadence rather than snap to
+            # idle polling. The payload validator at /main rejects the response,
+            # so this branch only matters for transient between-tick recovery.
+            self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
 
     def _set_update_interval(self, seconds: int) -> None:
         """Apply a new poll interval if it differs from the current one."""
@@ -304,6 +325,26 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 new_data = await response.json(content_type=None)
                 if not isinstance(new_data, dict):
                     raise ValueError(f"Expected dict, got {type(new_data).__name__}")
+                if "state" not in new_data:
+                    raise ValueError("Response missing required Eveus 'state' field")
+                # Match the config-flow contract: a genuine Eveus /main payload
+                # always carries currentSet. Requiring it here too rejects a
+                # misrouted host that happens to return a plausible bare state.
+                if "currentSet" not in new_data:
+                    raise ValueError("Response missing required Eveus 'currentSet' field")
+                raw_state = new_data["state"]
+                if isinstance(raw_state, bool):
+                    raise ValueError("Eveus 'state' field is boolean")
+                if isinstance(raw_state, float) and not math.isfinite(raw_state):
+                    raise ValueError("Eveus 'state' field is not finite")
+                if isinstance(raw_state, float) and not raw_state.is_integer():
+                    raise ValueError("Eveus 'state' field is not an integer")
+                try:
+                    state_value = int(raw_state)
+                except (TypeError, ValueError, OverflowError) as err:
+                    raise ValueError("Eveus 'state' field is not numeric") from err
+                if state_value not in CHARGING_STATES:
+                    raise ValueError(f"Eveus 'state' value {state_value} outside known domain")
 
                 self._record_success(time.time() - start_time, new_data)
                 return new_data

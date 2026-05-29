@@ -15,6 +15,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.core import callback
 from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -22,15 +24,18 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt_util
 
 from .common_base import EveusSensorBase
 from .const import (
     get_charging_state,
     get_error_state,
     get_normal_substate,
+    CHARGING_STATES,
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
     MIN_CURRENT,
+    MODEL_MAX_CURRENT,
 )
 from .utils import RateLog, get_safe_value, format_duration
 
@@ -41,6 +46,18 @@ ICON_FLASH = "mdi:flash"
 ICON_CURRENT_AC = "mdi:current-ac"
 ICON_CURRENCY_UAH = "mdi:currency-uah"
 UNIT_UAH_PER_KWH = "₴/kWh"
+UNIT_UAH = "UAH"
+_MAX_MODEL_CURRENT = max(MODEL_MAX_CURRENT.values())
+# Upper sanity bound for the charger clock (epoch seconds at year 2100).
+_MAX_SYSTEM_TIME = 4102444800
+# Upper sanity ceilings for live telemetry. Real readings sit far below these;
+# the bounds exist only to reject corrupt payload outliers (e.g. powerMeas
+# 999999) before they reach HA long-term statistics. Generous on purpose.
+_MAX_VOLTAGE = 500
+_MAX_CURRENT = 200
+_MAX_POWER = 100_000
+# Largest plausible per-slot schedule energy cap (kWh).
+_MAX_SCHEDULE_KWH = 200
 
 
 def _should_log_error(function_name: str) -> bool:
@@ -71,10 +88,12 @@ class SensorSpec:
     precision: Optional[int] = None
     category: Optional[EntityCategory] = None
     attributes_fn: Optional[Callable] = None
+    tracks_reset: bool = False
 
     def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
         """Create sensor instance from specification."""
-        return OptimizedEveusSensor(updater, self, device_number)
+        cls = MonetaryCostSensor if self.tracks_reset else OptimizedEveusSensor
+        return cls(updater, self, device_number)
 
 
 class OptimizedEveusSensor(EveusSensorBase):
@@ -139,6 +158,60 @@ class OptimizedEveusSensor(EveusSensorBase):
         return previous_attrs != self._attr_extra_state_attributes
 
 
+class MonetaryCostSensor(OptimizedEveusSensor):
+    """Cost sensor that tracks meter resets so TOTAL statistics stay correct.
+
+    Monetary sensors must use ``state_class=TOTAL`` (Home Assistant forbids
+    TOTAL_INCREASING for the monetary device class), but the charger resets
+    ``sessionMoney`` every session and clears the IEM*_money counters on demand.
+    Without a ``last_reset`` marker HA computes a negative delta on each reset
+    and the long-term cost ``sum`` under-counts. We advance ``last_reset`` only
+    when the value actually drops, which tells the recorder to start a fresh
+    accumulation window instead of subtracting the pre-reset total.
+    """
+
+    def __init__(self, updater, spec: "SensorSpec", device_number: int = 1) -> None:
+        """Initialize the cost sensor with reset tracking state."""
+        super().__init__(updater, spec, device_number)
+        self._prev_cost_value: Optional[float] = None
+        self._attr_last_reset = None
+
+    def _update_native_value(self) -> bool:
+        """Refresh value and advance last_reset when the meter resets."""
+        changed = super()._update_native_value()
+        value = self._attr_native_value
+        if value is None:
+            # Offline/None: leave the accumulation window untouched so an outage
+            # is never mistaken for a meter reset.
+            return changed
+        if self._attr_last_reset is None:
+            # First reading establishes the start of the accumulation window.
+            self._attr_last_reset = dt_util.utcnow()
+        elif self._prev_cost_value is not None and value < self._prev_cost_value:
+            # The cumulative cost can only rise within a window, so any drop is
+            # a charger-side reset (new session or a manual counter clear).
+            self._attr_last_reset = dt_util.utcnow()
+        self._prev_cost_value = value
+        return changed
+
+    async def _async_restore_state(self, state) -> None:
+        """Restore the previous accumulation window across restarts."""
+        await super()._async_restore_state(state)
+        last_reset = state.attributes.get("last_reset")
+        if last_reset is not None:
+            parsed = (
+                dt_util.parse_datetime(last_reset)
+                if isinstance(last_reset, str)
+                else last_reset
+            )
+            if parsed is not None:
+                self._attr_last_reset = parsed
+        try:
+            self._prev_cost_value = float(state.state)
+        except (TypeError, ValueError):
+            self._prev_cost_value = None
+
+
 # =============================================================================
 # Value helper
 # =============================================================================
@@ -156,7 +229,13 @@ def _get_data_value(updater, key: str, converter=float, default=None):
 # Value getter factories — replace ~20 identical functions
 # =============================================================================
 
-def _make_value_getter(key: str, precision: int = 0, transform: Callable = None, minimum: Optional[float] = None):
+def _make_value_getter(
+    key: str,
+    precision: int = 0,
+    transform: Callable = None,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+):
     """Factory for simple data getter functions."""
     def getter(updater, hass):
         if not updater.available or not updater.data:
@@ -172,6 +251,8 @@ def _make_value_getter(key: str, precision: int = 0, transform: Callable = None,
             return None
         if minimum is not None and value < minimum:
             return None
+        if maximum is not None and value > maximum:
+            return None
         if transform:
             value = transform(value)
         return round(value, precision)
@@ -179,10 +260,12 @@ def _make_value_getter(key: str, precision: int = 0, transform: Callable = None,
 
 
 # Measurement getters
-get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0)
-get_current = _make_value_getter("curMeas1", precision=1, minimum=0)
-get_power = _make_value_getter("powerMeas", precision=1, minimum=0)
-get_current_set = _make_value_getter("currentSet", precision=0, minimum=MIN_CURRENT)
+get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
+get_current = _make_value_getter("curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT)
+get_power = _make_value_getter("powerMeas", precision=1, minimum=0, maximum=_MAX_POWER)
+get_current_set = _make_value_getter(
+    "currentSet", precision=0, minimum=MIN_CURRENT, maximum=_MAX_MODEL_CURRENT
+)
 
 # Energy getters
 get_session_energy = _make_value_getter("sessionEnergy", precision=2, minimum=0)
@@ -190,7 +273,12 @@ get_total_energy = _make_value_getter("totalEnergy", precision=2, minimum=0)
 get_counter_a_energy = _make_value_getter("IEM1", precision=2, minimum=0)
 get_counter_b_energy = _make_value_getter("IEM2", precision=2, minimum=0)
 
-# Cost getters (divide by 100)
+# Cost getters.
+# Firmware contract:
+#   * `tarif*` fields are reported in HUNDREDTHS of a currency unit (kop/cent),
+#     so they must be divided by 100 to get the per-kWh price.
+#   * `IEM1_money`, `IEM2_money`, `sessionMoney` are already in WHOLE currency
+#     units — DO NOT divide. Verified against R3.05.2 firmware.
 _div100 = lambda v: v / 100
 get_counter_a_cost = _make_value_getter("IEM1_money", precision=2, minimum=0)
 get_counter_b_cost = _make_value_getter("IEM2_money", precision=2, minimum=0)
@@ -203,15 +291,17 @@ get_box_temperature = _make_value_getter("temperature1", precision=0)
 get_plug_temperature = _make_value_getter("temperature2", precision=0)
 
 # Other diagnostic getters
-get_battery_voltage = _make_value_getter("vBat", precision=2)
+get_battery_voltage = _make_value_getter("vBat", precision=2, minimum=0)
 get_leak_current = _make_value_getter("leakValue", precision=0, minimum=0)
 get_leak_current_peak = _make_value_getter("leakValueH", precision=0, minimum=0)
+# RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
+get_wifi_rssi = _make_value_getter("RSSI", precision=0, minimum=-120, maximum=0)
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
-get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0)
-get_current_phase_3 = _make_value_getter("curMeas3", precision=1, minimum=0)
-get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0, minimum=0)
-get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0)
+get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT)
+get_current_phase_3 = _make_value_getter("curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT)
+get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
+get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
 
 
 # =============================================================================
@@ -225,10 +315,17 @@ def get_charger_state(updater, hass) -> Optional[str]:
 
 
 def get_charger_substate(updater, hass) -> Optional[str]:
-    """Get charger substate."""
+    """Get charger substate.
+
+    Returns None when the device state itself is outside the known domain —
+    otherwise a stray firmware state would be labelled with normal-mode substate
+    text and look like a plausible diagnostic reason.
+    """
     state = _get_data_value(updater, "state", int)
     substate = _get_data_value(updater, "subState", int)
     if None in (state, substate):
+        return None
+    if state not in CHARGING_STATES:
         return None
     if state == 7:
         return get_error_state(substate)
@@ -266,6 +363,11 @@ def get_system_time(updater, hass) -> Optional[str]:
         if timestamp is None:
             return None
 
+        # Reject obviously corrupt clock values (negative or far-future) so a
+        # bad RTC reading is reported as unknown instead of a plausible time.
+        if timestamp < 0 or timestamp > _MAX_SYSTEM_TIME:
+            return None
+
         # The charger reports systemTime as a local wall-clock value encoded in
         # epoch seconds. Applying HA's timezone here shifts the displayed clock
         # by the local UTC offset, so format the encoded clock directly.
@@ -286,8 +388,10 @@ def get_active_rate_cost(updater, hass) -> Optional[float]:
     key = rate_keys.get(active_rate)
     if not key:
         return None
-    value = _get_data_value(updater, key)
-    return round(value / 100, 2) if value is not None else None
+    value = _get_data_value(updater, key, float)
+    if value is None or value < 0:
+        return None
+    return round(value / 100, 2)
 
 
 def get_active_rate_attrs(updater, hass) -> dict:
@@ -335,8 +439,12 @@ def get_adaptive_charging_state(updater, hass) -> Optional[str]:
     return None
 
 
-get_adaptive_current = _make_value_getter("aiModecurrent", precision=0, minimum=0)
-get_adaptive_voltage = _make_value_getter("aiVoltage", precision=0, minimum=0)
+get_adaptive_current = _make_value_getter(
+    "aiModecurrent", precision=0, minimum=0, maximum=_MAX_CURRENT
+)
+get_adaptive_voltage = _make_value_getter(
+    "aiVoltage", precision=0, minimum=0, maximum=_MAX_VOLTAGE
+)
 
 
 def _format_minutes(value: Optional[int]) -> Optional[str]:
@@ -373,11 +481,11 @@ def _make_schedule_attrs(slot: int):
             attrs["stop"] = stop
         if _get_data_value(updater, f"sh{slot}CurrentEnable", int) == 1:
             cur = _get_data_value(updater, f"sh{slot}CurrentValue", int)
-            if cur is not None:
+            if cur is not None and MIN_CURRENT <= cur <= _MAX_MODEL_CURRENT:
                 attrs["current_limit_a"] = cur
         if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
             energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)
-            if energy is not None:
+            if energy is not None and 0 <= energy <= _MAX_SCHEDULE_KWH:
                 attrs["energy_limit_kwh"] = energy
         return attrs
     return getter
@@ -406,7 +514,13 @@ def get_connection_quality(updater, hass) -> Optional[float]:
 
 
 def get_connection_attrs(updater, hass) -> dict:
-    """Get connection attributes."""
+    """Get connection attributes.
+
+    Connection Quality measures HA→charger HTTP poll success.
+    `wifi_rssi` is included as a supplementary metric (charger→AP link)
+    because a degraded RSSI is the most common upstream cause of poor
+    Connection Quality — surfacing both in one view makes diagnosis faster.
+    """
     try:
         if not updater.available:
             return {}
@@ -423,11 +537,15 @@ def get_connection_attrs(updater, hass) -> dict:
             status = "Poor"
         else:
             status = "Critical"
-        return {
+        attrs: dict[str, Any] = {
             "connection_quality": round(success_rate),
             "latency_avg": round(latency_avg * 2) / 2,
             "status": status,
         }
+        rssi = get_wifi_rssi(updater, hass)
+        if rssi is not None:
+            attrs["wifi_rssi"] = rssi
+        return attrs
     except Exception as err:
         if _should_log_error("get_connection_attrs"):
             _LOGGER.debug("Error getting connection attributes: %s", err, exc_info=True)
@@ -438,11 +556,23 @@ def get_connection_attrs(updater, hass) -> dict:
 # Sensor specification factory
 # =============================================================================
 
-def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
+def create_sensor_specifications(
+    phases: int = 1, max_current: int = _MAX_MODEL_CURRENT
+) -> tuple[SensorSpec, ...]:
     """Create all sensor specifications using factory pattern.
 
     ``phases`` toggles per-phase voltage/current sensors for 3-phase chargers.
+    ``max_current`` bounds the Current Set diagnostic sensor to the configured
+    model's maximum, so a corrupt ``currentSet`` above the charger's capability
+    (e.g. 48 A reported by a 16 A unit) reads as ``unknown`` instead of a
+    plausible-but-impossible value.
     """
+
+    # Bound Current Set to this charger's model maximum rather than the global
+    # ceiling shared by all models.
+    current_set_getter = _make_value_getter(
+        "currentSet", precision=0, minimum=MIN_CURRENT, maximum=max_current
+    )
 
     # Measurement sensors
     measurements = [
@@ -451,7 +581,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None),
         (
             "Current Set",
-            get_current_set,
+            current_set_getter,
             ICON_CURRENT_AC,
             SensorDeviceClass.CURRENT,
             UnitOfElectricCurrent.AMPERE,
@@ -476,12 +606,16 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         for name, fn, icon, device_class, unit, precision, category in measurements
     ]
 
-    # Energy sensors
+    # Energy sensors.
+    # Session Energy resets to 0 each session and is deliberately kept out of
+    # the Energy Dashboard, so it is a plain MEASUREMENT with no device class
+    # (HA forbids ENERGY + MEASUREMENT). The lifetime/counter meters increase
+    # and reset, so they use the ENERGY device class with TOTAL_INCREASING.
     energy_sensors = [
-        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", SensorStateClass.MEASUREMENT),
-        ("Total Energy", get_total_energy, "mdi:transmission-tower", SensorStateClass.TOTAL_INCREASING),
-        ("Counter A Energy", get_counter_a_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING),
-        ("Counter B Energy", get_counter_b_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING),
+        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", SensorStateClass.MEASUREMENT, None),
+        ("Total Energy", get_total_energy, "mdi:transmission-tower", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
+        ("Counter A Energy", get_counter_a_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
+        ("Counter B Energy", get_counter_b_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
     ]
 
     energy_specs = [
@@ -491,12 +625,12 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             value_fn=fn,
             sensor_type=SensorType.ENERGY,
             icon=icon,
-            device_class=SensorDeviceClass.ENERGY,
+            device_class=device_class,
             state_class=state_class,
             unit=UnitOfEnergy.KILO_WATT_HOUR,
             precision=2,
         )
-        for name, fn, icon, state_class in energy_sensors
+        for name, fn, icon, state_class, device_class in energy_sensors
     ]
 
     # Diagnostic sensors
@@ -550,7 +684,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-dc",
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
-            unit="mA", precision=0,
+            unit=UnitOfElectricCurrent.MILLIAMPERE, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
@@ -559,7 +693,16 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-dc",
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
-            unit="mA", precision=0,
+            unit=UnitOfElectricCurrent.MILLIAMPERE, precision=0,
+            category=EntityCategory.DIAGNOSTIC,
+        ),
+        SensorSpec(
+            key="wifi_signal", name="WiFi Signal",
+            value_fn=get_wifi_rssi,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:wifi",
+            device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+            state_class=SensorStateClass.MEASUREMENT,
+            unit=SIGNAL_STRENGTH_DECIBELS_MILLIWATT, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
     ]
@@ -610,12 +753,16 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         SensorSpec(
             key="counter_a_cost", name="Counter A Cost", value_fn=get_counter_a_cost,
             sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.TOTAL_INCREASING, unit="₴", precision=2,
+            device_class=SensorDeviceClass.MONETARY,
+            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            tracks_reset=True,
         ),
         SensorSpec(
             key="counter_b_cost", name="Counter B Cost", value_fn=get_counter_b_cost,
             sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.TOTAL_INCREASING, unit="₴", precision=2,
+            device_class=SensorDeviceClass.MONETARY,
+            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            tracks_reset=True,
         ),
         SensorSpec(
             key="primary_rate_cost", name="Primary Rate Cost", value_fn=get_primary_rate_cost,
@@ -653,7 +800,9 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         SensorSpec(
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
             sensor_type=SensorType.STATE, icon="mdi:cash",
-            state_class=SensorStateClass.MEASUREMENT, unit="₴", precision=2,
+            device_class=SensorDeviceClass.MONETARY,
+            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            tracks_reset=True,
         ),
         SensorSpec(
             key="adaptive_charging", name="Adaptive Charging",
@@ -697,7 +846,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             key="connection_quality", name="Connection Quality",
             value_fn=get_connection_quality,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:connection",
-            state_class=SensorStateClass.MEASUREMENT, unit="%", precision=0,
+            state_class=SensorStateClass.MEASUREMENT, unit=PERCENTAGE, precision=0,
             category=EntityCategory.DIAGNOSTIC, attributes_fn=get_connection_attrs,
         ),
     ]
@@ -710,7 +859,11 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
     return result
 
 
-@lru_cache(maxsize=4)
-def get_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
-    """Get sensor specifications for the given phase count (cached)."""
-    return create_sensor_specifications(phases=phases)
+@lru_cache(maxsize=8)
+def get_sensor_specifications(
+    phases: int = 1, max_current: Optional[int] = None
+) -> tuple[SensorSpec, ...]:
+    """Get sensor specifications for the given phase count and model max (cached)."""
+    return create_sensor_specifications(
+        phases=phases, max_current=max_current or _MAX_MODEL_CURRENT
+    )

@@ -180,6 +180,7 @@ class EveusScheduleTimeEntity(
         except (ValueError, AttributeError):
             return
         self._last_device_value = time_to_minutes(restored)
+        self._last_successful_read = _time.time()
         self._attr_native_value = restored
 
     @callback

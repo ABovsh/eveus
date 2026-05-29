@@ -77,7 +77,12 @@ class EveusTimeZoneSelect(
         offset = int(option)
         self._set_optimistic_value(offset)
         self._write_if_changed(option)
-        success = await self._updater.send_command("timeZone", offset)
+        try:
+            success = await self._updater.send_command("timeZone", offset)
+        except Exception:
+            self._optimistic_value = None
+            self._write_if_changed(self.current_option)
+            raise
         if not success:
             self._optimistic_value = None
             self._write_if_changed(self.current_option)

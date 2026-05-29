@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 
 from homeassistant.components.number import (
@@ -35,6 +36,19 @@ from .common_base import (
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _validate_finite_number(value, label: str) -> float:
+    """Reject NaN/inf/bool from service-call input before clamping."""
+    if isinstance(value, bool):
+        raise HomeAssistantError(f"{label}: boolean value not accepted")
+    try:
+        raw = float(value)
+    except (TypeError, ValueError) as err:
+        raise HomeAssistantError(f"{label}: not a number") from err
+    if not math.isfinite(raw):
+        raise HomeAssistantError(f"{label}: NaN or infinity not accepted")
+    return raw
 
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     key="charging_current",
@@ -106,7 +120,9 @@ class EveusCurrentNumber(EveusNumberEntity):
 
         if self._updater.available and self._updater.data and self._command in self._updater.data:
             device_value = get_safe_value(self._updater.data, self._command, float)
-            if device_value is not None:
+            if device_value is not None and (
+                self._attr_native_min_value <= device_value <= self._attr_native_max_value
+            ):
                 return float(device_value)
 
         if self._last_device_value is not None:
@@ -118,15 +134,16 @@ class EveusCurrentNumber(EveusNumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Set new current value with optimistic UI."""
         try:
+            raw = _validate_finite_number(value, "Charging Current")
             clamped_value = max(
                 self._attr_native_min_value,
-                min(self._attr_native_max_value, value),
+                min(self._attr_native_max_value, raw),
             )
             int_value = int(round(clamped_value))
 
             self._pending_value = float(int_value)
             self._attr_native_value = self._pending_value
-            self.async_write_ha_state()
+            self._write_if_changed(self._attr_native_value)
 
             success = await self._updater.send_command(self._command, int_value)
 
@@ -146,7 +163,7 @@ class EveusCurrentNumber(EveusNumberEntity):
             self._pending_value = None
             self._last_command_time = time.time()
             self._attr_native_value = self._resolve_value()
-            self.async_write_ha_state()
+            self._write_if_changed(self._attr_native_value)
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
@@ -155,6 +172,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                 restored_value = float(state.state)
                 if self._attr_native_min_value <= restored_value <= self._attr_native_max_value:
                     self._last_device_value = restored_value
+                    self._last_successful_read = time.time()
                     self._attr_native_value = restored_value
         except (TypeError, ValueError) as err:
             _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)
@@ -172,7 +190,9 @@ class EveusCurrentNumber(EveusNumberEntity):
         if self._updater.available and self._updater.data:
             if self._command in self._updater.data:
                 device_value = get_safe_value(self._updater.data, self._command, float)
-                if device_value is not None:
+                if device_value is not None and (
+                    self._attr_native_min_value <= device_value <= self._attr_native_max_value
+                ):
                     self._reconcile_with_device(
                         float(device_value),
                         current_time,
@@ -201,8 +221,4 @@ async def async_setup_entry(
         _LOGGER.debug("No model specified in config")
         return
 
-    entities = [
-        EveusCurrentNumber(updater, model, device_number),
-    ]
-
-    async_add_entities(entities)
+    async_add_entities([EveusCurrentNumber(updater, model, device_number)])

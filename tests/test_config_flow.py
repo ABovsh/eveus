@@ -244,19 +244,19 @@ def test_config_flow_version_matches_migration_target() -> None:
 
 
 def test_validate_device_response_rejects_non_eveus_json() -> None:
-    with pytest.raises(InvalidDevice, match="missing currentSet"):
+    with pytest.raises(InvalidDevice, match="missing state"):
         validate_device_response({"name": "Not Eveus"}, MODEL_16A)
 
 
 def test_validate_device_response_accepts_model_limit_boundary() -> None:
-    assert validate_device_response({"currentSet": "16"}, MODEL_16A) == {
+    assert validate_device_response({"state": 2, "currentSet": "16"}, MODEL_16A) == {
         "current_set": 16.0,
         "firmware": "Unknown",
     }
 
 
 def test_validate_input_posts_to_normalized_host() -> None:
-    response = _Response(payload={"currentSet": "12", "verFWMain": "3.0.3"})
+    response = _Response(payload={"state": 2, "currentSet": "12", "verFWMain": "3.0.3"})
     session = _Session(response)
     hass = _Hass(session)
 
@@ -276,7 +276,7 @@ def test_validate_input_posts_to_normalized_host() -> None:
 
 
 def test_validate_input_preserves_https_scheme_and_port() -> None:
-    response = _Response(payload={"currentSet": "12", "verFWMain": "3.0.3"})
+    response = _Response(payload={"state": 2, "currentSet": "12", "verFWMain": "3.0.3"})
     session = _Session(response)
     hass = _Hass(session)
 
@@ -358,9 +358,9 @@ def test_validate_input_rejects_malformed_device_response(payload: object) -> No
     "payload",
     [
         {},
-        {"currentSet": "6"},
-        {"currentSet": "not-a-number"},
-        {"currentSet": "32"},
+        {"state": 2, "currentSet": "6"},
+        {"state": 2, "currentSet": "not-a-number"},
+        {"state": 2, "currentSet": "32"},
     ],
 )
 def test_validate_input_rejects_device_values_outside_model_limits(

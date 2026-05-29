@@ -40,8 +40,6 @@ _INPUT_BATTERY_CAPACITY = "input_number.ev_battery_capacity"
 _INPUT_SOC_CORRECTION = "input_number.ev_soc_correction"
 _INPUT_TARGET_SOC = "input_number.ev_target_soc"
 
-_ALL_INPUTS = [_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION, _INPUT_TARGET_SOC]
-
 _INPUT_LIMITS = {
     "initial_soc": (0, 100),
     "battery_capacity": (10, 160),
@@ -167,6 +165,11 @@ class CachedSOCCalculator:
             self._mark_helpers_unavailable()
             return False
 
+    def _effective_correction(self) -> float:
+        """Cached SOC correction, preserving an explicit 0% configuration."""
+        correction = self._input_cache.soc_correction
+        return DEFAULT_SOC_CORRECTION if correction is None else correction
+
     def get_soc_kwh(self, hass: HomeAssistant, energy_charged: float) -> Optional[float]:
         """Get SOC in kWh. Returns None if helpers not available."""
         if not self._update_input_cache(hass):
@@ -176,7 +179,7 @@ class CachedSOCCalculator:
                 self._input_cache.initial_soc,
                 self._input_cache.battery_capacity,
                 energy_charged,
-                self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION,
+                self._effective_correction(),
             )
         except Exception as err:
             _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)
@@ -192,7 +195,7 @@ class CachedSOCCalculator:
             self._input_cache.initial_soc,
             self._input_cache.battery_capacity,
             energy_charged,
-            self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION,
+            self._effective_correction(),
         )
 
     def invalidate_cache(self):
@@ -211,8 +214,8 @@ class CachedSOCCalculator:
 
     @property
     def soc_correction(self) -> float:
-        """Return cached SOC correction or the integration default."""
-        return self._input_cache.soc_correction or DEFAULT_SOC_CORRECTION
+        """Return cached SOC correction, preserving an explicit 0% config."""
+        return self._effective_correction()
 
     @property
     def target_soc(self) -> Optional[float]:
@@ -355,6 +358,16 @@ class BaseEVHelperSensor(EveusSensorBase):
             return None
         return value
 
+    def _session_energy_is_invalid(self) -> bool:
+        """True when sessionEnergy is reported but not a usable value.
+
+        Distinguishes a present-but-corrupt reading (e.g. negative) from the
+        field simply not being reported yet, so callers don't silently treat a
+        bad reading as 0 kWh delivered (which would mimic the initial SOC).
+        """
+        data = self._updater.data or {}
+        return "sessionEnergy" in data and self._get_energy_charged() is None
+
 
 # =============================================================================
 # Concrete EV sensors
@@ -364,7 +377,10 @@ class EVSocKwhSensor(BaseEVHelperSensor):
     """SOC energy sensor — battery energy in kWh from session delivered."""
 
     ENTITY_NAME = "SOC Energy"
-    _attr_device_class = SensorDeviceClass.ENERGY
+    # Stored energy currently in the battery — a level, not a cumulative meter —
+    # so ENERGY_STORAGE (the device class HA pairs with MEASUREMENT) rather than
+    # ENERGY (which HA only allows with TOTAL/TOTAL_INCREASING).
+    _attr_device_class = SensorDeviceClass.ENERGY_STORAGE
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:battery-charging"
     _attr_suggested_display_precision = 1
@@ -377,6 +393,8 @@ class EVSocKwhSensor(BaseEVHelperSensor):
         # blip, or no session ever began), treat it as 0 delivered — SOC then
         # equals the user's Initial SOC. Prevents the entity from being
         # "unknown" the moment HA boots before the first successful poll.
+        if self._session_energy_is_invalid():
+            return None
         energy_charged = self._get_energy_charged() or 0.0
         result = self._soc_calculator.get_soc_kwh(self.hass, energy_charged)
         if result is not None:
@@ -398,6 +416,8 @@ class EVSocPercentSensor(BaseEVHelperSensor):
 
     def _get_sensor_value(self) -> Optional[float]:
         # See EVSocKwhSensor._get_sensor_value — same Initial-SOC fallback.
+        if self._session_energy_is_invalid():
+            return None
         energy_charged = self._get_energy_charged() or 0.0
         result = self._soc_calculator.get_soc_percent(self.hass, energy_charged)
         if result is not None:
@@ -432,11 +452,22 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
     def _get_sensor_value(self) -> str:
         """Calculate time to target."""
         if not self._soc_calculator.are_helpers_available(self.hass):
-            return "Helpers Required"
+            self._cached_value = "Helpers Required"
+            return self._cached_value
+
+        if self._soc_calculator.target_soc is None:
+            # The core SOC helpers are present but the optional Target SOC is
+            # not — prompt for the one missing piece instead of the generic
+            # "Helpers Required", which implies nothing is configured.
+            self._cached_value = "Set Target SOC"
+            return self._cached_value
 
         try:
             inputs = self._resolve_remaining_inputs()
             if inputs is None:
+                # Helpers became unavailable mid-session — drop the stale ETA
+                # rather than keeping the last "2h 15m" on screen forever.
+                self._cached_value = "Helpers Required"
                 return self._cached_value
             result = calculate_remaining_time(*inputs)
             self._cached_value = result
@@ -543,26 +574,49 @@ class InputEntitiesStatusSensor(EveusSensorBase):
         self._invalid_entities: Set[str] = set()
         self._last_check_time = 0
         self._check_interval = STATE_CACHE_TTL
-        self._configuration_help = self._build_configuration_help()
         self._attr_extra_state_attributes = {}
 
-    def _build_configuration_help(self) -> Dict[str, str]:
-        """Build static helper creation hints once."""
-        help_text = {}
-        for entity_id, config in self.REQUIRED_INPUTS.items():
-            input_name = entity_id.split(".", 1)[1]
-            help_text[entity_id] = (
-                f"{input_name}:\n"
-                f"  name: '{config['name']}'\n"
-                f"  min: {config['min']}\n"
-                f"  max: {config['max']}\n"
-                f"  step: {config['step']}\n"
-                f"  initial: {config['initial']}\n"
-                f"  unit_of_measurement: '{config['unit_of_measurement']}'\n"
-                f"  mode: {config['mode']}\n"
-                f"  icon: '{config['icon']}'"
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to helper-entity state changes for instant updates."""
+        await super().async_added_to_hass()
+        try:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    tuple(self.REQUIRED_INPUTS),
+                    self._on_input_state_changed,
+                )
             )
-        return help_text
+        except Exception as err:
+            _LOGGER.debug(
+                "Could not set up input tracking for %s: %s",
+                self.unique_id,
+                err,
+                exc_info=True,
+            )
+
+    @callback
+    def _on_input_state_changed(self, _event: Event) -> None:
+        """Re-check inputs immediately and push the new state to HA.
+
+        SensorEntity has no async_update, so async_schedule_update_ha_state
+        would write the cached value. Recompute value+attrs here, then write
+        if anything changed.
+        """
+        self._last_check_time = 0
+        value_changed = self._update_native_value()
+        attrs_changed = self._update_extra_state_attributes()
+        if value_changed or attrs_changed:
+            self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Always available — reports local HA helper state, not charger data.
+
+        Decoupled from charger availability so the diagnostic stays useful for
+        troubleshooting missing SOC helpers while the charger is offline.
+        """
+        return True
 
     def _get_sensor_value(self) -> str:
         """Get input status with caching."""
@@ -573,10 +627,15 @@ class InputEntitiesStatusSensor(EveusSensorBase):
         return self._state
 
     def _build_extra_state_attributes(self) -> Dict[str, Any]:
-        """Build cached status attributes from the latest input check."""
-        attrs = {
-            "missing_entities": list(self._missing_entities),
-            "invalid_entities": list(self._invalid_entities),
+        """Build cached status attributes from the latest input check.
+
+        configuration_help is intentionally omitted: storing a multi-line YAML
+        snippet per missing helper bloats every state_changed event and gets
+        persisted by Recorder. README documents the helper format instead.
+        """
+        return {
+            "missing_entities": sorted(self._missing_entities),
+            "invalid_entities": sorted(self._invalid_entities),
             "required_count": len(self.REQUIRED_INPUTS),
             "missing_count": len(self._missing_entities),
             "invalid_count": len(self._invalid_entities),
@@ -588,15 +647,6 @@ class InputEntitiesStatusSensor(EveusSensorBase):
             },
             "note": "These helpers are optional. Advanced SOC metrics require them.",
         }
-
-        if self._missing_entities:
-            attrs["configuration_help"] = {
-                entity_id: self._configuration_help[entity_id]
-                for entity_id in self._missing_entities
-                if entity_id in self._configuration_help
-            }
-
-        return attrs
 
     def _update_extra_state_attributes(self) -> bool:
         """Refresh cached status attributes."""

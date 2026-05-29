@@ -16,6 +16,11 @@ DEVICE_STATE_CHARGING: Final[int] = 4
 # Charger device-state value that means "error" (CHARGING_STATES[7]).
 DEVICE_STATE_ERROR: Final[int] = 7
 
+# Device states that count as "a charging session is in progress": actively
+# Charging (4) or briefly Paused (6) mid-session. Excludes Connected (3) where
+# the car is plugged in but no session is running, and Charge Complete (5).
+SESSION_ACTIVE_STATES: Final[frozenset[int]] = frozenset({4, 6})
+
 # Default SOC efficiency correction (%) when the user has not provided the helper.
 DEFAULT_SOC_CORRECTION: Final[float] = 7.5
 

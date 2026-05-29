@@ -27,7 +27,7 @@ from .const import (
     PHASE_OPTIONS,
 )
 from .common_network import EveusUpdater
-from .utils import get_next_device_number
+from .utils import get_next_device_number, is_device_number_taken
 
 if TYPE_CHECKING:
     from .ev_sensors import CachedSOCCalculator
@@ -135,7 +135,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if getattr(entry, "unique_id", None) == host:
             update_kwargs["unique_id"] = new_data[CONF_HOST]
 
-        if isinstance(entry.title, str) and host in entry.title:
+        if isinstance(host, str) and isinstance(entry.title, str) and host in entry.title:
             update_kwargs["title"] = entry.title.replace(host, new_data[CONF_HOST])
 
     if getattr(entry, "version", 1) < CONFIG_ENTRY_VERSION:
@@ -159,6 +159,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         if not host:
             _create_invalid_config_issue(hass, entry, "missing_host")
             raise ConfigEntryError("No host specified")
+        if not isinstance(host, str):
+            _create_invalid_config_issue(hass, entry, "invalid_host")
+            raise ConfigEntryError("Host is not a string")
+
+        from .config_flow import _split_host_and_scheme
+
+        try:
+            host, scheme = _split_host_and_scheme(host, scheme)
+        except vol.Invalid as err:
+            _create_invalid_config_issue(hass, entry, "invalid_host")
+            raise ConfigEntryError(f"Invalid host: {err}") from err
         if not username:
             _create_invalid_config_issue(hass, entry, "missing_username")
             raise ConfigEntryError("No username specified")
@@ -168,6 +179,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         if model not in MODEL_MAX_CURRENT:
             _create_invalid_config_issue(hass, entry, "invalid_model")
             raise ConfigEntryError("Invalid model specified")
+        if scheme not in ("http", "https"):
+            _create_invalid_config_issue(hass, entry, "invalid_scheme")
+            raise ConfigEntryError(f"Invalid scheme: {scheme!r}")
 
         _delete_invalid_config_issue(hass, entry)
 
@@ -177,8 +191,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         except (TypeError, ValueError):
             device_number = None
 
-        if device_number is None or device_number < 1:
-            device_number = get_next_device_number(hass)
+        if (
+            device_number is None
+            or device_number < 1
+            or is_device_number_taken(hass, device_number, entry.entry_id)
+        ):
+            device_number = get_next_device_number(hass, entry.entry_id)
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
@@ -206,6 +224,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             phases = DEFAULT_PHASES
         if phases not in PHASE_OPTIONS:
             phases = DEFAULT_PHASES
+        if raw_phases != phases:
+            # Persist the normalized value so an invalid stored phase count is
+            # not silently re-evaluated (and hiding phase 2/3 entities) on every
+            # reload.
+            normalized = dict(entry.data)
+            normalized[CONF_PHASES] = phases
+            hass.config_entries.async_update_entry(entry, data=normalized)
+            _LOGGER.warning(
+                "Eveus phase count %r was invalid; normalized to %d phase(s)",
+                raw_phases,
+                phases,
+            )
 
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
@@ -217,7 +247,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         await updater.async_config_entry_first_refresh()
 
-        entry.async_on_unload(updater.async_shutdown)
+        # DataUpdateCoordinator constructed with config_entry already registers
+        # async_shutdown on the entry unload lifecycle — no manual registration.
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         entry.async_on_unload(entry.add_update_listener(update_listener))
 
