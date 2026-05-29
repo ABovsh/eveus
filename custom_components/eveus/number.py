@@ -50,9 +50,11 @@ def _validate_finite_number(value, label: str) -> float:
         raise HomeAssistantError(f"{label}: NaN or infinity not accepted")
     return raw
 
+_CHARGING_CURRENT_NAME = "Charging Current"
+
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     key="charging_current",
-    name="Charging Current",
+    name=_CHARGING_CURRENT_NAME,
     icon="mdi:current-ac",
     entity_category=EntityCategory.CONFIG,
     native_step=1.0,
@@ -94,7 +96,7 @@ class EveusNumberEntity(
 class EveusCurrentNumber(EveusNumberEntity):
     """Representation of Eveus current control with responsive UI."""
 
-    ENTITY_NAME = "Charging Current"
+    ENTITY_NAME = _CHARGING_CURRENT_NAME
     _command = "currentSet"
 
     def __init__(self, updater, model: str, device_number: int = 1) -> None:
@@ -134,7 +136,7 @@ class EveusCurrentNumber(EveusNumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Set new current value with optimistic UI."""
         try:
-            raw = _validate_finite_number(value, "Charging Current")
+            raw = _validate_finite_number(value, _CHARGING_CURRENT_NAME)
             clamped_value = max(
                 self._attr_native_min_value,
                 min(self._attr_native_max_value, raw),

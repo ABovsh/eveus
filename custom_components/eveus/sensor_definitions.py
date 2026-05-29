@@ -180,18 +180,18 @@ class MonetaryCostSensor(OptimizedEveusSensor):
         """Refresh value and advance last_reset when the meter resets."""
         changed = super()._update_native_value()
         value = self._attr_native_value
-        if value is None:
-            # Offline/None: leave the accumulation window untouched so an outage
-            # is never mistaken for a meter reset.
-            return changed
-        if self._attr_last_reset is None:
-            # First reading establishes the start of the accumulation window.
-            self._attr_last_reset = dt_util.utcnow()
-        elif self._prev_cost_value is not None and value < self._prev_cost_value:
-            # The cumulative cost can only rise within a window, so any drop is
-            # a charger-side reset (new session or a manual counter clear).
-            self._attr_last_reset = dt_util.utcnow()
-        self._prev_cost_value = value
+        # Offline/None: leave the accumulation window untouched so an outage is
+        # never mistaken for a meter reset.
+        if value is not None:
+            # First reading opens the accumulation window; a drop in cumulative
+            # cost can only mean a charger-side reset (new session or manual
+            # counter clear), since cost can only rise within a window.
+            window_restart = self._attr_last_reset is None or (
+                self._prev_cost_value is not None and value < self._prev_cost_value
+            )
+            if window_restart:
+                self._attr_last_reset = dt_util.utcnow()
+            self._prev_cost_value = value
         return changed
 
     async def _async_restore_state(self, state) -> None:

@@ -35,6 +35,8 @@ _LOGGER = logging.getLogger(__name__)
 # Input entity names
 # =============================================================================
 
+_HELPERS_REQUIRED = "Helpers Required"
+
 _INPUT_INITIAL_SOC = "input_number.ev_initial_soc"
 _INPUT_BATTERY_CAPACITY = "input_number.ev_battery_capacity"
 _INPUT_SOC_CORRECTION = "input_number.ev_soc_correction"
@@ -447,12 +449,12 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
     ) -> None:
         """Initialize with default cached value."""
         super().__init__(updater, device_number, soc_calculator)
-        self._cached_value = "Helpers Required"
+        self._cached_value = _HELPERS_REQUIRED
 
     def _get_sensor_value(self) -> str:
         """Calculate time to target."""
         if not self._soc_calculator.are_helpers_available(self.hass):
-            self._cached_value = "Helpers Required"
+            self._cached_value = _HELPERS_REQUIRED
             return self._cached_value
 
         if self._soc_calculator.target_soc is None:
@@ -467,7 +469,7 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             if inputs is None:
                 # Helpers became unavailable mid-session — drop the stale ETA
                 # rather than keeping the last "2h 15m" on screen forever.
-                self._cached_value = "Helpers Required"
+                self._cached_value = _HELPERS_REQUIRED
                 return self._cached_value
             result = calculate_remaining_time(*inputs)
             self._cached_value = result
