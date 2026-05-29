@@ -15,6 +15,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.core import callback
 from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -22,6 +24,7 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt_util
 
 from .common_base import EveusSensorBase
 from .const import (
@@ -85,10 +88,12 @@ class SensorSpec:
     precision: Optional[int] = None
     category: Optional[EntityCategory] = None
     attributes_fn: Optional[Callable] = None
+    tracks_reset: bool = False
 
     def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
         """Create sensor instance from specification."""
-        return OptimizedEveusSensor(updater, self, device_number)
+        cls = MonetaryCostSensor if self.tracks_reset else OptimizedEveusSensor
+        return cls(updater, self, device_number)
 
 
 class OptimizedEveusSensor(EveusSensorBase):
@@ -151,6 +156,60 @@ class OptimizedEveusSensor(EveusSensorBase):
                 )
         self._attr_extra_state_attributes = attrs or {}
         return previous_attrs != self._attr_extra_state_attributes
+
+
+class MonetaryCostSensor(OptimizedEveusSensor):
+    """Cost sensor that tracks meter resets so TOTAL statistics stay correct.
+
+    Monetary sensors must use ``state_class=TOTAL`` (Home Assistant forbids
+    TOTAL_INCREASING for the monetary device class), but the charger resets
+    ``sessionMoney`` every session and clears the IEM*_money counters on demand.
+    Without a ``last_reset`` marker HA computes a negative delta on each reset
+    and the long-term cost ``sum`` under-counts. We advance ``last_reset`` only
+    when the value actually drops, which tells the recorder to start a fresh
+    accumulation window instead of subtracting the pre-reset total.
+    """
+
+    def __init__(self, updater, spec: "SensorSpec", device_number: int = 1) -> None:
+        """Initialize the cost sensor with reset tracking state."""
+        super().__init__(updater, spec, device_number)
+        self._prev_cost_value: Optional[float] = None
+        self._attr_last_reset = None
+
+    def _update_native_value(self) -> bool:
+        """Refresh value and advance last_reset when the meter resets."""
+        changed = super()._update_native_value()
+        value = self._attr_native_value
+        if value is None:
+            # Offline/None: leave the accumulation window untouched so an outage
+            # is never mistaken for a meter reset.
+            return changed
+        if self._attr_last_reset is None:
+            # First reading establishes the start of the accumulation window.
+            self._attr_last_reset = dt_util.utcnow()
+        elif self._prev_cost_value is not None and value < self._prev_cost_value:
+            # The cumulative cost can only rise within a window, so any drop is
+            # a charger-side reset (new session or a manual counter clear).
+            self._attr_last_reset = dt_util.utcnow()
+        self._prev_cost_value = value
+        return changed
+
+    async def _async_restore_state(self, state) -> None:
+        """Restore the previous accumulation window across restarts."""
+        await super()._async_restore_state(state)
+        last_reset = state.attributes.get("last_reset")
+        if last_reset is not None:
+            parsed = (
+                dt_util.parse_datetime(last_reset)
+                if isinstance(last_reset, str)
+                else last_reset
+            )
+            if parsed is not None:
+                self._attr_last_reset = parsed
+        try:
+            self._prev_cost_value = float(state.state)
+        except (TypeError, ValueError):
+            self._prev_cost_value = None
 
 
 # =============================================================================
@@ -497,11 +556,23 @@ def get_connection_attrs(updater, hass) -> dict:
 # Sensor specification factory
 # =============================================================================
 
-def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
+def create_sensor_specifications(
+    phases: int = 1, max_current: int = _MAX_MODEL_CURRENT
+) -> tuple[SensorSpec, ...]:
     """Create all sensor specifications using factory pattern.
 
     ``phases`` toggles per-phase voltage/current sensors for 3-phase chargers.
+    ``max_current`` bounds the Current Set diagnostic sensor to the configured
+    model's maximum, so a corrupt ``currentSet`` above the charger's capability
+    (e.g. 48 A reported by a 16 A unit) reads as ``unknown`` instead of a
+    plausible-but-impossible value.
     """
+
+    # Bound Current Set to this charger's model maximum rather than the global
+    # ceiling shared by all models.
+    current_set_getter = _make_value_getter(
+        "currentSet", precision=0, minimum=MIN_CURRENT, maximum=max_current
+    )
 
     # Measurement sensors
     measurements = [
@@ -510,7 +581,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None),
         (
             "Current Set",
-            get_current_set,
+            current_set_getter,
             ICON_CURRENT_AC,
             SensorDeviceClass.CURRENT,
             UnitOfElectricCurrent.AMPERE,
@@ -535,12 +606,16 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         for name, fn, icon, device_class, unit, precision, category in measurements
     ]
 
-    # Energy sensors
+    # Energy sensors.
+    # Session Energy resets to 0 each session and is deliberately kept out of
+    # the Energy Dashboard, so it is a plain MEASUREMENT with no device class
+    # (HA forbids ENERGY + MEASUREMENT). The lifetime/counter meters increase
+    # and reset, so they use the ENERGY device class with TOTAL_INCREASING.
     energy_sensors = [
-        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", SensorStateClass.MEASUREMENT),
-        ("Total Energy", get_total_energy, "mdi:transmission-tower", SensorStateClass.TOTAL_INCREASING),
-        ("Counter A Energy", get_counter_a_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING),
-        ("Counter B Energy", get_counter_b_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING),
+        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", SensorStateClass.MEASUREMENT, None),
+        ("Total Energy", get_total_energy, "mdi:transmission-tower", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
+        ("Counter A Energy", get_counter_a_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
+        ("Counter B Energy", get_counter_b_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
     ]
 
     energy_specs = [
@@ -550,12 +625,12 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             value_fn=fn,
             sensor_type=SensorType.ENERGY,
             icon=icon,
-            device_class=SensorDeviceClass.ENERGY,
+            device_class=device_class,
             state_class=state_class,
             unit=UnitOfEnergy.KILO_WATT_HOUR,
             precision=2,
         )
-        for name, fn, icon, state_class in energy_sensors
+        for name, fn, icon, state_class, device_class in energy_sensors
     ]
 
     # Diagnostic sensors
@@ -609,7 +684,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-dc",
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
-            unit="mA", precision=0,
+            unit=UnitOfElectricCurrent.MILLIAMPERE, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
@@ -618,7 +693,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-dc",
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
-            unit="mA", precision=0,
+            unit=UnitOfElectricCurrent.MILLIAMPERE, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
@@ -627,7 +702,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:wifi",
             device_class=SensorDeviceClass.SIGNAL_STRENGTH,
             state_class=SensorStateClass.MEASUREMENT,
-            unit="dBm", precision=0,
+            unit=SIGNAL_STRENGTH_DECIBELS_MILLIWATT, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
     ]
@@ -680,12 +755,14 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            tracks_reset=True,
         ),
         SensorSpec(
             key="counter_b_cost", name="Counter B Cost", value_fn=get_counter_b_cost,
             sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            tracks_reset=True,
         ),
         SensorSpec(
             key="primary_rate_cost", name="Primary Rate Cost", value_fn=get_primary_rate_cost,
@@ -725,6 +802,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             sensor_type=SensorType.STATE, icon="mdi:cash",
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            tracks_reset=True,
         ),
         SensorSpec(
             key="adaptive_charging", name="Adaptive Charging",
@@ -768,7 +846,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             key="connection_quality", name="Connection Quality",
             value_fn=get_connection_quality,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:connection",
-            state_class=SensorStateClass.MEASUREMENT, unit="%", precision=0,
+            state_class=SensorStateClass.MEASUREMENT, unit=PERCENTAGE, precision=0,
             category=EntityCategory.DIAGNOSTIC, attributes_fn=get_connection_attrs,
         ),
     ]
@@ -781,7 +859,11 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
     return result
 
 
-@lru_cache(maxsize=4)
-def get_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
-    """Get sensor specifications for the given phase count (cached)."""
-    return create_sensor_specifications(phases=phases)
+@lru_cache(maxsize=8)
+def get_sensor_specifications(
+    phases: int = 1, max_current: Optional[int] = None
+) -> tuple[SensorSpec, ...]:
+    """Get sensor specifications for the given phase count and model max (cached)."""
+    return create_sensor_specifications(
+        phases=phases, max_current=max_current or _MAX_MODEL_CURRENT
+    )

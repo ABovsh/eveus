@@ -377,7 +377,10 @@ class EVSocKwhSensor(BaseEVHelperSensor):
     """SOC energy sensor — battery energy in kWh from session delivered."""
 
     ENTITY_NAME = "SOC Energy"
-    _attr_device_class = SensorDeviceClass.ENERGY
+    # Stored energy currently in the battery — a level, not a cumulative meter —
+    # so ENERGY_STORAGE (the device class HA pairs with MEASUREMENT) rather than
+    # ENERGY (which HA only allows with TOTAL/TOTAL_INCREASING).
+    _attr_device_class = SensorDeviceClass.ENERGY_STORAGE
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:battery-charging"
     _attr_suggested_display_precision = 1
@@ -450,6 +453,13 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
         """Calculate time to target."""
         if not self._soc_calculator.are_helpers_available(self.hass):
             self._cached_value = "Helpers Required"
+            return self._cached_value
+
+        if self._soc_calculator.target_soc is None:
+            # The core SOC helpers are present but the optional Target SOC is
+            # not — prompt for the one missing piece instead of the generic
+            # "Helpers Required", which implies nothing is configured.
+            self._cached_value = "Set Target SOC"
             return self._cached_value
 
         try:

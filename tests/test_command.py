@@ -68,6 +68,10 @@ class _Updater:
         import aiohttp
         self._basic_auth = aiohttp.BasicAuth(self.username, self.password)
 
+    @property
+    def basic_auth(self):
+        return self._basic_auth
+
     def get_session(self) -> _Session:
         return self._session
 

@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
+from .const import CONF_MODEL, MODEL_MAX_CURRENT
 from .sensor_definitions import get_sensor_specifications
 from .ev_sensors import (
     ChargingFinishTimeSensor,
@@ -30,7 +31,10 @@ async def async_setup_entry(
     device_number = runtime_data.device_number
     soc_calculator = runtime_data.soc_calculator
 
-    sensor_specs = get_sensor_specifications(phases=runtime_data.phases)
+    max_current = MODEL_MAX_CURRENT.get(entry.data.get(CONF_MODEL))
+    sensor_specs = get_sensor_specifications(
+        phases=runtime_data.phases, max_current=max_current
+    )
     standard_sensors = [spec.create_sensor(updater, device_number) for spec in sensor_specs]
 
     ev_sensors = [

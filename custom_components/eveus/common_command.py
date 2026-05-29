@@ -120,7 +120,7 @@ class CommandManager:
         payload = urlencode({"pageevent": command, command: value})
         async with session.post(
             self._updater.url_for("/pageEvent"),
-            auth=self._updater._basic_auth,
+            auth=self._updater.basic_auth,
             headers={"Content-type": "application/x-www-form-urlencoded"},
             data=payload,
             timeout=_COMMAND_TIMEOUT_OBJ,

@@ -244,6 +244,19 @@ def _validate_soc_inputs(
         return None
 
 
+def _soc_kwh_from_inputs(
+    initial_soc: float,
+    battery_capacity: float,
+    energy_charged: float,
+    efficiency_loss: float,
+) -> float:
+    """Compute clamped SOC kWh from already-validated inputs (no revalidation)."""
+    initial_kwh = (initial_soc / 100) * battery_capacity
+    charged_kwh = energy_charged * (1 - efficiency_loss / 100)
+    total_kwh = initial_kwh + charged_kwh
+    return round(max(0, min(total_kwh, battery_capacity)), 2)
+
+
 def calculate_soc_kwh(
     initial_soc: float,
     battery_capacity: float,
@@ -256,14 +269,7 @@ def calculate_soc_kwh(
     )
     if inputs is None:
         return 0.0
-    initial_soc, battery_capacity, energy_charged, efficiency_loss = inputs
-    if battery_capacity <= 0:
-        return 0.0
-    initial_kwh = (initial_soc / 100) * battery_capacity
-    efficiency = 1 - efficiency_loss / 100
-    charged_kwh = energy_charged * efficiency
-    total_kwh = initial_kwh + charged_kwh
-    return round(max(0, min(total_kwh, battery_capacity)), 2)
+    return _soc_kwh_from_inputs(*inputs)
 
 
 def calculate_soc_percent(
@@ -278,13 +284,10 @@ def calculate_soc_percent(
     )
     if inputs is None:
         return 0.0
-    initial_soc, battery_capacity, energy_charged, efficiency_loss = inputs
-    if battery_capacity <= 0:
-        return 0.0
-
-    soc_kwh = calculate_soc_kwh(
-        initial_soc, battery_capacity, energy_charged, efficiency_loss
-    )
+    # _validate_soc_inputs guarantees battery_capacity > 0, so a single
+    # validation feeds both the kWh figure and the percentage.
+    _initial_soc, battery_capacity, _energy, _loss = inputs
+    soc_kwh = _soc_kwh_from_inputs(*inputs)
     percentage = (soc_kwh / battery_capacity) * 100
     return round(max(0, min(percentage, 100)), 0)
 

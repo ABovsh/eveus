@@ -1,6 +1,8 @@
 """Diagnostics support for Eveus."""
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -22,6 +24,24 @@ TO_REDACT = {
     "STA_IP_Addres",
     "fwCRC32",
 }
+
+# Defense in depth: also redact any field whose name *looks* identifying, so a
+# future firmware key (a new SSID/MAC/IP/serial/token field) cannot leak into a
+# shared diagnostics download just because it was not on the explicit list.
+# Telemetry field names (powerMeas, sessionEnergy, tarif*, IEM1_money, …) do not
+# match these substrings.
+_SENSITIVE_NAME_RE = re.compile(
+    r"ssid|passw|secret|token|serial|imei|uuid|mac|addr|ipaddr|"
+    r"ip_addr|latitude|longitude|geoloc|crc",
+    re.IGNORECASE,
+)
+
+
+def _sensitive_keys(data: Mapping[str, Any]) -> set[str]:
+    """Return the explicit + name-heuristic set of keys to redact for `data`."""
+    keys = set(TO_REDACT)
+    keys.update(key for key in data if _SENSITIVE_NAME_RE.search(str(key)))
+    return keys
 
 
 async def async_get_config_entry_diagnostics(
@@ -75,8 +95,9 @@ async def async_get_config_entry_diagnostics(
             },
             # Full /main payload with sensitive identifiers removed. Useful for
             # bug reports — gives the developer the exact field set the device
-            # reported without leaking serials or LAN addresses.
-            "raw_main": async_redact_data(dict(data), TO_REDACT),
+            # reported without leaking serials or LAN addresses. Unknown but
+            # identifying-looking firmware fields are redacted too.
+            "raw_main": async_redact_data(dict(data), _sensitive_keys(data)),
         }
     )
     return payload

@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.9.2-rc9 - 2026-05-29
+
+Ninth release candidate. Corrects how a few sensors report to Home Assistant's long-term statistics, and tightens some diagnostics and display details. No entity renames, no unit changes.
+
+### 🐛 Fixed
+
+- **Lifetime charging-cost totals stay correct across resets.** `Counter A Cost`, `Counter B Cost`, and `Session Cost` now mark each meter reset for Home Assistant, so the long-term cost statistics keep accumulating instead of dropping back when a session ends or a counter is cleared.
+- **`SOC Energy` and `Session Energy` use a Home Assistant–valid sensor type.** Both previously paired an energy class with a "measurement" type that Home Assistant flags as invalid (a warning on every startup). `SOC Energy` is now reported as stored battery energy and `Session Energy` as a plain energy measurement — the warning is gone and their history is unaffected.
+- **`Current Set` rejects values impossible for your charger model.** A corrupt setpoint above your model's maximum (for example 40 A reported by a 16 A charger) now reads as `unknown` instead of being shown, matching the charging-current control.
+- **`Time to Target SOC` asks for the one thing it needs.** When the core SOC helpers are set but `Target SOC` is not, it now shows "Set Target SOC" instead of the generic "Helpers Required".
+- **`Connection Quality` no longer looks "healthy" before the first poll.** The health indicator stays off until the charger has actually answered once.
+
+### 🔒 Privacy
+
+- **Diagnostics downloads redact more defensively.** Alongside the known identifying fields, any charger field whose name looks like an address, serial, SSID, MAC, or token is now stripped from the diagnostics file, so a future firmware field can't leak into a shared report.
+
+### 💡 Note on currency units
+
+Cost units are intentionally unchanged: totals stay in `UAH` (correct for Home Assistant's monetary handling) and per-kWh tariffs stay in `₴/kWh`. No new "units changed" prompts.
+
 ## 4.9.2-rc8 - 2026-05-29
 
 Eighth release candidate. Keeps fast updates flowing while a charging session is paused.

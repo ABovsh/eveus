@@ -126,6 +126,7 @@ def test_sensor_setup_includes_three_phase_sensors_when_runtime_phases_is_3() ->
     added: list[object] = []
     entry = SimpleNamespace(
         title="Eveus (test)",
+        data={CONF_MODEL: MODEL_16A},
         runtime_data=SimpleNamespace(
             updater=_Updater(),
             device_number=4,
@@ -151,6 +152,7 @@ def test_sensor_setup_excludes_three_phase_sensors_when_runtime_phases_is_1() ->
     added: list[object] = []
     entry = SimpleNamespace(
         title="Eveus (test)",
+        data={CONF_MODEL: MODEL_16A},
         runtime_data=SimpleNamespace(
             updater=_Updater(),
             device_number=5,

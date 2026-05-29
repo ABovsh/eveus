@@ -79,7 +79,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         self._poll_results: deque[bool] = deque(maxlen=20)
         self._consecutive_failures = 0
-        self._last_success_time = time.time()
+        # 0.0 until the first successful poll, so connection_quality does not
+        # report "healthy" before the charger has ever answered.
+        self._last_success_time = 0.0
         self._latency_samples: deque[float] = deque(maxlen=10)
 
         self._availability_log = RateLog()
@@ -90,6 +92,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._next_poll_attempt = 0.0
         self._force_refresh_requested = False
         self._post_command_refresh_tasks: list[asyncio.Task] = []
+
+    @property
+    def basic_auth(self) -> aiohttp.BasicAuth:
+        """Cached Basic Auth credentials for charger requests."""
+        return self._basic_auth
 
     @property
     def available(self) -> bool:
@@ -119,7 +126,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             "latency_avg": avg_latency,
             "consecutive_failures": self._consecutive_failures,
             "consecutive_command_failures": self._command_manager.consecutive_failures,
-            "is_healthy": success_rate > 80 and time.time() - self._last_success_time < 300,
+            "is_healthy": (
+                self._last_success_time > 0
+                and success_rate > 80
+                and time.time() - self._last_success_time < 300
+            ),
             "last_success_time": self._last_success_time,
             "last_error": self._last_error,
             "sample_count": len(self._poll_results),
