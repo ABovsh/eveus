@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Unit tests
@@ -40,7 +44,37 @@ jobs:
         run: "python -m ruff check custom_components/eveus tests"
 
       - name: Run tests
-        run: "python -m pytest -q --cov --cov-fail-under=90"
+        run: "python -m pytest -q --cov --cov-report=xml --cov-fail-under=90"
+
+      - name: Upload coverage report
+        if: github.event_name == 'push'
+        uses: "actions/upload-artifact@v4"
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 1
+
+  sonar:
+    name: SonarCloud
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "actions/checkout@v4"
+        with:
+          # Full history so SonarCloud can attribute new code and blame lines.
+          fetch-depth: 0
+
+      - name: Download coverage report
+        uses: "actions/download-artifact@v4"
+        with:
+          name: coverage-xml
+
+      - name: SonarCloud scan
+        uses: "SonarSource/sonarqube-scan-action@v4"
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: "https://sonarcloud.io"
 
   validate-hacs:
     name: HACS
