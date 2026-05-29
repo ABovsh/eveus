@@ -1,179 +1,39 @@
 # Changelog
 
-## 4.9.2-rc9 - 2026-05-29
+## 4.9.2 - 2026-05-29
 
-Ninth release candidate. Corrects how a few sensors report to Home Assistant's long-term statistics, and tightens some diagnostics and display details. No entity renames, no unit changes.
-
-### 🐛 Fixed
-
-- **Lifetime charging-cost totals stay correct across resets.** `Counter A Cost`, `Counter B Cost`, and `Session Cost` now mark each meter reset for Home Assistant, so the long-term cost statistics keep accumulating instead of dropping back when a session ends or a counter is cleared.
-- **`SOC Energy` and `Session Energy` use a Home Assistant–valid sensor type.** Both previously paired an energy class with a "measurement" type that Home Assistant flags as invalid (a warning on every startup). `SOC Energy` is now reported as stored battery energy and `Session Energy` as a plain energy measurement — the warning is gone and their history is unaffected.
-- **`Current Set` rejects values impossible for your charger model.** A corrupt setpoint above your model's maximum (for example 40 A reported by a 16 A charger) now reads as `unknown` instead of being shown, matching the charging-current control.
-- **`Time to Target SOC` asks for the one thing it needs.** When the core SOC helpers are set but `Target SOC` is not, it now shows "Set Target SOC" instead of the generic "Helpers Required".
-- **`Connection Quality` no longer looks "healthy" before the first poll.** The health indicator stays off until the charger has actually answered once.
-
-### 🔒 Privacy
-
-- **Diagnostics downloads redact more defensively.** Alongside the known identifying fields, any charger field whose name looks like an address, serial, SSID, MAC, or token is now stripped from the diagnostics file, so a future firmware field can't leak into a shared report.
-
-### 💡 Note on currency units
-
-Cost units are intentionally unchanged: totals stay in `UAH` (correct for Home Assistant's monetary handling) and per-kWh tariffs stay in `₴/kWh`. No new "units changed" prompts.
-
-## 4.9.2-rc8 - 2026-05-29
-
-Eighth release candidate. Keeps fast updates flowing while a charging session is paused.
-
-### 🐛 Fixed
-
-- **A paused-but-active charging session now refreshes as quickly as an active one.** When a session pauses mid-charge (for example under Adaptive Charging or a schedule gap), `binary_sensor.eveus_session_active`, the SOC sensors, and the charging-time estimates keep updating on the fast cadence instead of dropping to the slower idle cadence until charging resumes.
-
-## 4.9.2-rc7 - 2026-05-28
-
-Seventh release candidate. Tightens how the integration handles unexpected or out-of-range data from the charger, so corrupt readings show as `unknown` instead of plausible-but-wrong values.
-
-### 🐛 Fixed
-
-- **Misrouted or partial responses are rejected more reliably.** A response that looks vaguely like a charger but is missing the current setpoint (a different device on the LAN, a captive portal, a proxy) is now refused instead of briefly bringing the integration online with blank values. This matches the check already done when you first add a charger.
-- **Implausible charger states no longer slip through.** A non-whole-number or boolean `State` value (firmware glitch or wrong device) is now rejected both when adding a charger and during normal polling, instead of being rounded into a valid-looking state.
-- **Fractional glitch values on on/off and status fields read as `unknown`.** Switch states, schedule enables, Ground, Adaptive Charging, the tariff/rate indicators, Time Zone, and the schedule time pickers now ignore a corrupt fractional value rather than snapping it to a definite on/off/enabled state.
-- **Impossible electrical readings are discarded.** `Voltage`, `Current`, `Power`, `Current Set`, the per-phase sensors, and the Adaptive current/voltage diagnostics now drop absurd high outliers (e.g. a spurious 999999 W) so they can't pollute your long-term statistics and energy graphs.
-- **Out-of-range schedule energy caps are dropped.** An implausibly large `energy_limit_kwh` from a corrupt schedule payload is no longer exposed as a real configured cap.
-
-### 🔒 Privacy
-
-- **Command-failure logs no longer include the charger address.** A failed control command now records only the error type, matching how polling failures are already logged.
-
-## 4.9.2-rc6 - 2026-05-28
-
-Sixth release candidate. Removes the last of the confusing session-cap entities, fixes several SOC and restart-resiliency edge cases, and aligns the cost sensors with Home Assistant's monetary handling.
-
-### ⚠️ Breaking — removed entities
-
-- **Removed `number.eveus_energy_limit` and `binary_sensor.eveus_energy_limit_reached`** — session energy caps rounded out the set of rarely-used limit entities removed over the last releases. The charger still enforces an energy limit if you set one directly on the device.
-
-Dashboard cards and automations referencing these entities will go unavailable. Migration: remove the cards.
-
-### 🔧 Changed
-
-- **Cost sensors now use Home Assistant's monetary handling.** `Counter A Cost`, `Counter B Cost`, and `Session Cost` are now reported with the `monetary` device class and the ISO currency unit `UAH` (instead of the `₴` symbol). This gives correct long-term statistics and lets the energy dashboard pick them up as costs. Existing history may show a one-time unit change notice.
-
-### 🐛 Fixed
-
-- **SOC sensors honor a 0% charging-efficiency-loss setting.** Setting `Charging Efficiency Loss` to `0` is now respected instead of being silently replaced with the 7.5% default — so `SOC Energy`, `SOC Percent`, and the ETA sensors match what you configured.
-- **A corrupt session-energy reading no longer fakes your starting charge level.** If the charger reports an invalid (negative) `sessionEnergy`, the SOC sensors now go `unknown` instead of collapsing to your configured Initial SOC, which looked plausible but was wrong.
-- **Switches show `unknown` instead of a false `off` when the charger omits a field.** If a firmware payload drops a switch's state key, `Stop Charging`, `One Charge`, `Adaptive Mode`, and the Schedule enables now report `unknown` rather than a definite `off` that automations could act on.
-- **Restored control values survive a restart while the charger is offline.** After a Home Assistant restart, `Charging Current`, the schedule time entities, and the switches now keep their restored value through the normal grace window instead of immediately dropping to `unknown`/`off`.
-- **`Input Entities Status` stays available when the charger is offline.** It reports the state of your local SOC helper entities, so it now remains usable for troubleshooting even when the charger can't be reached.
-- **Charger clock corruption is reported honestly.** An invalid `System Time` (negative or far-future) now shows `unknown` instead of a plausible-looking `23:59`.
-- **Schedule current-limit attribute is dropped when out of range.** A corrupt schedule current value above the charger's capability is no longer exposed as `current_limit_a`.
-- **HTTP plaintext warning now also fires during re-authentication**, matching setup and reconfigure.
-- **Corrupt stored configuration is caught at startup.** A malformed or non-text host, or an invalid phase count, now raises a clear repair notice or self-corrects instead of failing in confusing ways. Setting up two chargers at once can no longer assign them the same internal device number.
-- **Unexpected non-numeric or infinite firmware values are handled safely** across the integration rather than occasionally interrupting an entity update.
-
-## 4.9.2-rc5 - 2026-05-28
-
-Fifth release candidate. Removes confusing or low-value entities, hardens firmware-payload handling against unexpected values, and adds a long-requested "session in progress" automation trigger.
-
-### ⚠️ Breaking — removed entities
-
-- **Removed `number.eveus_money_limit` and `binary_sensor.eveus_money_limit_reached`** — session monetary caps were confusing and rarely useful in practice.
-- **Removed `number.eveus_time_limit` and `binary_sensor.eveus_time_limit_reached`** — session duration caps were equally confusing; the charger continues to enforce them if set directly on the device.
-- **Removed `sensor.eveus_control_pilot`** — the raw EV Control Pilot byte was misleading for most users and had no meaningful unit. If you need it for advanced diagnostics, raise an issue.
-
-Dashboard cards and automations referencing these entities will go unavailable. Migration: remove the cards.
+Reliability, statistics-correctness, and privacy improvements, plus two new automation-friendly entities. No entity renames or removals versus 4.9.1; existing setups upgrade transparently.
 
 ### ✨ New
 
-- **`binary_sensor.eveus_session_active`** (`device_class: running`) — turns on whenever the charger is actively `Charging` or briefly `Paused` mid-session. Use this as a single automation trigger for "a charging session is in progress" instead of templating on the `State` string.
+- **`binary_sensor.eveus_session_active`** (`device_class: running`) — turns on whenever a charging session is in progress, including brief mid-session pauses. Use it as a single automation trigger instead of templating on the `State` string.
+- **`sensor.eveus_wifi_signal`** — WiFi signal strength (dBm) reported by the charger, so you can correlate polling problems with weak RF.
+
+### 🔧 Changed
+
+- **Cost sensors use Home Assistant's monetary handling.** `Counter A Cost`, `Counter B Cost`, and `Session Cost` now report with the `monetary` device class and the ISO unit `UAH`, so long-term cost statistics keep accumulating correctly across session and counter resets, and the Energy dashboard can pick them up as costs. Per-kWh tariffs continue to display `₴/kWh`. Upgrading may show a one-time "units changed" notice on the cost sensors.
+- **`SOC Energy` and `Session Energy` use a valid sensor type.** `sensor.eveus_soc_energy` is now reported as stored battery energy and `sensor.eveus_session_energy` as a plain energy measurement, which clears an "impossible state class" warning at startup. Their history is unaffected.
+- **Richer Device page.** The Devices view now shows the charger's real model, manufacturer, hardware version, and serial number from the firmware.
+- **Fuller, safer diagnostics.** `Download diagnostics` now ships the full sanitized `/main` snapshot plus connection state. Identifying fields — serial number, station ID, LAN IP, firmware CRC, and anything whose name looks like an address, SSID, MAC, or token — are redacted automatically, so a future firmware field can't leak into a shared report.
 
 ### 🐛 Fixed
 
-- **Unknown charger states no longer masquerade as plausible values.** Out-of-domain `state` from the charger (firmware regression, a misrouted host returning random JSON, etc.) is now rejected at the coordinator and config flow — instead of being silently propagated to `Substate`, `Car Connected`, and other dependent sensors.
-- **Switches no longer flip on for unexpected firmware values.** `switch.eveus_stop_charging`, `One Charge`, `Adaptive Mode`, and the Schedule enables now ignore device values outside `{0, 1}` rather than treating any non-zero as `on`.
-- **`binary_sensor.eveus_energy_limit_reached`** — same domain guard; non-binary firmware values now produce `unknown` instead of a false `on`.
-- **`number.eveus_charging_current`** and **`number.eveus_energy_limit`** — out-of-range device values (e.g. `currentSet = 48A` on a 16A charger) are no longer surfaced as the entity state; the entity stays at its last good value.
-- **`number.eveus_charging_current`** and **`number.eveus_energy_limit`** — the `number.set_value` service now rejects `NaN`, infinity, and boolean inputs before sending a command, so a buggy automation template can't drive a real charger command.
-- **`sensor.eveus_active_rate_cost`** — negative tariff values from the firmware are now treated as `unknown`, matching the per-rate sensors.
-- **Schedule attributes** — invalid `current_limit_a` (below charger minimum) and `energy_limit_kwh` (negative) are dropped from the schedule sensor attributes.
-- **`sensor.eveus_wifi_signal`** — clamps to the physically valid dBm range (`−120..0`); positive readings (firmware bug) now display as `unknown` instead of "excellent".
-- **`sensor.eveus_battery_voltage`** — negative readings are now treated as `unknown`.
-- **`sensor.eveus_time_to_target_soc`** — when SOC helpers disappear mid-session, the entity now shows `Helpers Required` instead of keeping the stale `2h 15m` ETA on screen forever.
-- **HTTP plaintext warning** now fires on **reconfigure** too, not only on initial setup. Switching an existing charger from HTTPS → HTTP now surfaces the cleartext credentials warning.
-- **Stored entries with a corrupted transport scheme** (anything other than `http` / `https`) now raise a clear repair issue at startup instead of building broken URLs.
-- **Permanent control-command errors** (`400`, `403`, `404`) no longer burn the full retry budget — the integration fails fast and surfaces the error promptly.
-
-## 4.9.2-rc4 - 2026-05-28
-
-Fourth release candidate. Closes findings from a second hardening pass — small but real correctness fixes.
-
-### 🐛 Fixed
-- **Input Entities Status really does repaint on helper changes** — rc3 scheduled an HA refresh but `SensorEntity` has no `async_update`, so the cached value was re-written unchanged. Now the entity recomputes value + attributes synchronously in the event callback and writes only when something changed.
-- **Device registry now shows hardware version and serial number** — `_maybe_finalize_device_info` was only propagating `sw_version`, `model`, `manufacturer` to the device registry once the charger came online. `hw_version` (WiFi firmware) and `serial_number` are now also pushed so the Devices page reflects all rc2 metadata.
-
-### 🧪 Tests
-- New `test_input_entities_status_event_recomputes_value_and_attributes` covers the rc4 event-driven recompute path.
-- `test_base_entity_finalize_updates_registry_device` now asserts `hw_version` and `serial_number` propagation.
-
-## 4.9.2-rc3 - 2026-05-28
-
-Third release candidate. Closes the loop on findings from an adversarial review of rc1+rc2, plus a small UX improvement to the Connection Quality sensor.
-
-### 🐛 Fixed
-- **Config flow now matches the runtime contract** — adding a new charger rejects responses that lack the `state` field, the same check the coordinator does. Previously the config flow could accept a misrouted device and only fail on the first refresh.
-- **Input Entities Status updates instantly** — adding or removing a helper now repaints the diagnostic sensor immediately instead of waiting for the next coordinator tick. (The rc2 fix invalidated the cache; this one also schedules the redraw.)
-- **Money Limit unit is now ISO 4217** — `number.eveus_money_limit` uses `UAH` for `device_class=monetary` instead of the `₴` symbol, matching Home Assistant's expectations for monetary device classes. No user impact in the UI — HA still renders the local currency symbol.
-
-### ⚡ Improvements
-- **`sensor.eveus_connection_quality` now includes `wifi_rssi`** as a supplementary attribute. Connection Quality measures HA→charger HTTP success; WiFi Signal measures charger→AP radio strength. They are kept as separate sensors because they diagnose different layers — pairing them in one attribute view makes "why is polling unreliable?" a one-glance question.
-
-### 🏷️ Project quality
-- README now displays live SonarCloud badges: Quality Gate, Reliability, Security, Maintainability, Coverage. Current state: gate **OK**, all ratings **A**, 95.4% coverage, 0 bugs, 0 vulnerabilities.
-
-## 4.9.2-rc2 - 2026-05-28
-
-Second release candidate from the deep-audit pass. Adds new entities and richer device metadata. No breaking changes.
-
-### ✨ New entities
-
-- **`number.eveus_energy_limit`** — session energy cap in kWh. Set 0 to clear, or any value from 1 to 200 kWh. The charger stops the session when this is reached.
-- **`number.eveus_time_limit`** — session duration cap in minutes. Set 0 to clear, or up to 1440 (24 h).
-- **`number.eveus_money_limit`** — session spend cap in ₴. Set 0 to clear, or any value up to 10000 ₴.
-- **`binary_sensor.eveus_energy_limit_reached`**, **`binary_sensor.eveus_time_limit_reached`**, **`binary_sensor.eveus_money_limit_reached`** — turn on the moment the charger reports the corresponding limit was hit. Great for automations that should react when a session ends because of a cap.
-- **`sensor.eveus_wifi_signal`** — WiFi signal strength reported by the charger (dBm). Helps correlate connection issues with bad RF.
-- **`sensor.eveus_control_pilot`** — raw EV Control Pilot byte from the charger firmware. Niche, but invaluable when a session looks "stuck on Connected".
-
-### 🛠️ Improvements
-
-- **Richer Device page** — the Devices view in Home Assistant now shows the charger's real model and manufacturer from the firmware (instead of a generic label), plus a real serial number. The firmware version was already shown; now it sits next to model/manufacturer/serial like a proper device.
-- **Beefed-up diagnostics download** — `Download diagnostics` now ships the full sanitized `/main` snapshot from your charger plus coordinator state (consecutive failures, last error). Sensitive fields (serial number, station ID, LAN IP, firmware CRC) are redacted automatically. Makes bug reports actually reproducible.
-
-### 🧠 Audit confirmations (no code change required)
-
-- **Master on/off switch** — `switch.eveus_stop_charging` already wires the firmware's `evseEnabled` field. Nothing to add; renaming would have been a breaking change.
-- **Energy dashboard compatibility** — verified that Total Energy / Counter A Energy / Counter B Energy declare `device_class=energy` and `state_class=total_increasing`. Pickable in the Energy dashboard as-is.
-
-## 4.9.2-rc1 - 2026-05-28
-
-Release candidate from a deep audit pass. Mostly invisible reliability and responsiveness fixes — no breaking changes, no entity renames.
-
-### 🐛 Fixed
-- **Faster recovery after long outages** — when the charger is unreachable for a while and finally comes back online, the integration no longer immediately snaps back to fast polling. It eases out of the slow "offline" cadence so a single fluke packet does not retrigger heavy traffic. (`common_network.py`)
-- **Time Zone selector survives auth errors** — if changing `select.eveus_time_zone` hits an authentication problem, the dropdown now reverts immediately instead of showing the unsaved selection for the next 30 seconds.
-- **Commands retried on transient HTTP errors back off properly** — temporary `5xx` / `429` responses from the charger now get the same short backoff already used for network errors, instead of being retried back-to-back in a tight loop.
-- **Setup catches misrouted hosts earlier** — if `/main` returns valid JSON that is clearly not from an Eveus charger (e.g. a captive portal on the same LAN), the integration now refuses it instead of silently displaying garbage values.
-
-### ⚡ Performance & responsiveness
-- **Input Entities Status reacts instantly** — adding, removing, or fixing one of the optional EV helpers (`input_number.ev_battery_capacity`, etc.) now updates the diagnostic sensor immediately instead of waiting up to 30s for the next cache tick.
-- **Charging Current entity no longer spams state-change events** — `number.eveus_charging_current` now only writes to HA when the displayed value actually changes (matching the other control entities), trimming Recorder churn.
-- **Smaller state attributes on the diagnostic sensor** — `sensor.eveus_input_entities_status` no longer ships a multi-line YAML snippet for every missing helper inside its attributes. The list of missing entities is still there; the YAML hint moved to the README. Recorder and the History panel will thank you.
+- **Corrupt or impossible readings show `unknown` instead of plausible-but-wrong values.** This now covers `Voltage`, `Current`, `Power`, the per-phase sensors, leakage current, battery voltage, WiFi signal, the tariff/rate sensors, switch and schedule states, and the charger clock. `Current Set` is additionally bounded by your charger model's maximum, so a setpoint that's impossible for your unit (for example 40 A on a 16 A charger) reads as `unknown`.
+- **Misrouted or non-Eveus responses are refused.** A captive portal, proxy, or a partial payload missing the current setpoint is now rejected both when adding a charger and during polling, instead of briefly coming online with blank or garbage values.
+- **SOC math is more faithful to your settings.** A `0%` `Charging Efficiency Loss` setting is now respected instead of being replaced with the default, and a corrupt (negative) session-energy reading makes the SOC sensors go `unknown` rather than faking your configured starting charge level.
+- **Restored controls survive a restart while the charger is offline.** After a restart, `Charging Current`, the schedule time pickers, and the switches keep their restored value through the normal grace window instead of dropping straight to `unknown`/`off`.
+- **`Input Entities Status` is more responsive and more available.** It updates immediately when you add or remove an optional SOC helper, and it stays available for troubleshooting even while the charger is unreachable.
+- **Gentler, smarter connection handling.** Recovery after a long outage no longer snaps straight back to fast polling on a single fluke packet; transient `5xx`/`429`/network errors back off properly; and permanent command errors (`400`/`403`/`404`) fail fast instead of burning the retry budget, while a `401` starts reauthentication.
+- **A paused-but-active session keeps refreshing on the fast cadence.** `binary_sensor.eveus_session_active`, the SOC sensors, and the charging-time estimates no longer slow to the idle cadence when a session pauses mid-charge.
+- **`Time to Target SOC` asks for the one thing it needs.** It shows `Set Target SOC` when the core SOC helpers are set but `Target SOC` is not, and `Helpers Required` only when no helpers are configured — instead of leaving a stale ETA on screen.
+- **`Connection Quality` no longer shows a false healthy state.** It reads `unknown` before the first successful poll and on internal error, rather than a misleading `100%`.
+- **Corrupt stored configuration is caught at startup.** A malformed host, an unexpected transport scheme, or an invalid phase count now raises a clear repair notice or self-corrects, and adding two chargers at once can no longer assign them the same internal device number.
 
 ### 🔒 Privacy
-- **Reauth no longer prefills the stored password** — credential prompts during reconfigure / reauth now require fresh entry instead of round-tripping the cached password back to the browser form.
 
-### 🧹 Internals
-- Removed a duplicate shutdown registration in `async_setup_entry` (now handled by Home Assistant's coordinator lifecycle).
-- Documented the firmware contract for cost fields: `tarif*` values are reported in hundredths of a currency unit (divide by 100), while `IEM1_money` / `IEM2_money` / `sessionMoney` are whole currency units.
+- **Stored password is never echoed back.** Reauthentication and reconfigure no longer prefill or round-trip the saved password to the browser form.
+- **Command-failure logs omit the charger address.** A failed control command now records only the error type, matching how polling failures are already logged.
+- **Cleartext-credentials warning fires more often.** The plain-HTTP warning now also appears during reconfigure and reauthentication, not only on initial setup.
 
 ## 4.9.1 - 2026-05-22
 
