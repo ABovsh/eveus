@@ -3,13 +3,13 @@
 ## 4.10.0-rc.1 - 2026-05-31
 
 ### ✨ New
-- **SOC monitoring modes.** Choose **Basic** (charging control only) or **Advanced** during setup. Advanced now creates its own `number.eveus_initial_soc`, `number.eveus_target_soc`, `number.eveus_battery_capacity`, and `number.eveus_soc_correction` entities automatically — no manual `input_number` helpers to create. Switch modes anytime from the integration's Configure dialog.
+- **SOC monitoring modes.** Choose **Basic** (charging control only) or **Advanced** during setup. Advanced now creates its own SOC number entities automatically (for the default device slug: `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, and `number.eveus_ev_charger_soc_correction`) — no manual `input_number` helpers to create. Switch modes anytime from the integration's Configure dialog.
 
 ### 🔧 Changed
 - SOC %/kWh sensors are available as soon as the charger is online (no longer wait on external helpers).
 
 ### ⚠️ Behavior change
-- The old `input_number.ev_*` helpers are no longer read. Existing SOC users are moved to Advanced with their Battery Capacity and SOC Correction carried over; update any dashboard cards that set `input_number.ev_*` to the new `number.eveus_*` entities, then you may delete the old helpers.
+- The old `input_number.ev_*` helpers are no longer read. Existing SOC users are moved to Advanced with their Battery Capacity and SOC Correction carried over; update dashboard cards and automations using the exact replacements: `input_number.ev_initial_soc` -> `number.eveus_ev_charger_initial_soc`, `input_number.ev_target_soc` -> `number.eveus_ev_charger_target_soc`, `input_number.ev_battery_capacity` -> `number.eveus_ev_charger_battery_capacity`, and `input_number.ev_soc_correction` -> `number.eveus_ev_charger_soc_correction`; then you may delete the old helpers.
 
 ### ⚠️ Breaking
 - Removed the `Input Entities Status` diagnostic sensor — it only existed to prompt for manual helper creation, which Advanced mode now handles.

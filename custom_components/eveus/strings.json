@@ -132,7 +132,7 @@
         },
         "soc_dashboard_update": {
             "title": "Eveus: update your SOC dashboard cards",
-            "description": "SOC inputs are now provided by native `number.eveus_*` entities (Initial SOC, Target SOC, Battery Capacity, SOC Correction). Repoint any dashboard cards or automations that set the old `input_number.ev_*` helpers to the matching `number.eveus_*` entities. Once nothing references them, you can delete the old `input_number.ev_*` helpers."
+            "description": "Eveus now provides SOC inputs as native number entities. Update dashboard cards and automations that set the old helpers using this mapping: `input_number.ev_initial_soc` -> `number.eveus_ev_charger_initial_soc`; `input_number.ev_target_soc` -> `number.eveus_ev_charger_target_soc`; `input_number.ev_battery_capacity` -> `number.eveus_ev_charger_battery_capacity`; `input_number.ev_soc_correction` -> `number.eveus_ev_charger_soc_correction`. If your charger entity prefix is not `eveus_ev_charger`, use the same final names on your device's Eveus number entities. After no dashboard cards or automations reference `input_number.ev_*`, you can delete the old helpers."
         }
     }
 }

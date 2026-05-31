@@ -74,6 +74,25 @@ def test_repair_issue_translations_are_present() -> None:
     assert "fix_flow" in translations["issues"]["invalid_config"]
 
 
+def test_soc_dashboard_repair_issue_lists_exact_entity_replacements() -> None:
+    translations = json.loads(
+        (ROOT / "custom_components" / "eveus" / "translations" / "en.json").read_text()
+    )
+    strings = json.loads(
+        (ROOT / "custom_components" / "eveus" / "strings.json").read_text()
+    )
+
+    description = translations["issues"]["soc_dashboard_update"]["description"]
+    assert strings["issues"]["soc_dashboard_update"]["description"] == description
+    for old_entity, new_entity in (
+        ("input_number.ev_initial_soc", "number.eveus_ev_charger_initial_soc"),
+        ("input_number.ev_target_soc", "number.eveus_ev_charger_target_soc"),
+        ("input_number.ev_battery_capacity", "number.eveus_ev_charger_battery_capacity"),
+        ("input_number.ev_soc_correction", "number.eveus_ev_charger_soc_correction"),
+    ):
+        assert f"`{old_entity}` -> `{new_entity}`" in description
+
+
 def test_brand_images_are_complete_and_sized() -> None:
     brand_dir = ROOT / "custom_components" / "eveus" / "brand"
     expected_sizes = {

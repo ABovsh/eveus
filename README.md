@@ -33,7 +33,7 @@ Voltage, current, power, and the active current-limit setpoint, refreshed on eve
 ### 🔋 EV battery (SOC) estimates
 Pick a **SOC monitoring** mode during setup:
 - **Basic** — charging control only, no SOC sensors.
-- **Advanced** — the integration auto-creates four native `number.eveus_*` entities (Initial SOC, Target SOC, Battery Capacity, SOC Correction) and estimates:
+- **Advanced** — the integration auto-creates four native `number.eveus_ev_charger_*` entities (Initial SOC, Target SOC, Battery Capacity, SOC Correction; replace `eveus_ev_charger` with your device slug if different) and estimates:
   - **SOC Energy** in kWh, **SOC Percent**, and **Time to Target SOC** as a human-readable string for cards.
   - **Charging Finish Time** as a `device_class: timestamp` for automations and timestamp cards.
 
@@ -192,7 +192,7 @@ Controls use **optimistic UI**: the slider/switch updates immediately, then reco
 
 ### SOC sensors (Advanced mode)
 
-Created automatically in **Advanced** SOC mode. Driven by the native `number.eveus_*` SOC entities (see below).
+Created automatically in **Advanced** SOC mode. Driven by the native `number.eveus_ev_charger_*` SOC entities (see below; replace `eveus_ev_charger` with your device slug if different).
 
 | Entity | Description |
 | --- | --- |
@@ -224,12 +224,12 @@ SOC tracking is optional. Energy/cost/controls/diagnostics all work without it. 
 
 | Entity ID | Name | Unit | Min | Max | Step | Default |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| `number.eveus_battery_capacity` | Battery Capacity | kWh | 10 | 160 | 1 | 80 |
-| `number.eveus_initial_soc` | Initial SOC | % | 0 | 100 | 1 | 20 |
-| `number.eveus_soc_correction` | SOC Correction | % | 0 | 15 | 0.1 | 7.5 |
-| `number.eveus_target_soc` | Target SOC | % | 0 | 100 | 5 | 80 |
+| `number.eveus_ev_charger_battery_capacity` | Battery Capacity | kWh | 10 | 160 | 1 | 50 |
+| `number.eveus_ev_charger_initial_soc` | Initial SOC | % | 0 | 100 | 1 | 20 |
+| `number.eveus_ev_charger_soc_correction` | SOC Correction | % | 0 | 20 | 0.5 | 7.5 |
+| `number.eveus_ev_charger_target_soc` | Target SOC | % | 0 | 100 | 5 | 80 |
 
-> **Migrating from older versions:** existing SOC users are moved to **Advanced** automatically, with Battery Capacity and SOC Correction carried over. Repoint any dashboard cards or automations that set the old `input_number.ev_*` helpers to the new `number.eveus_*` entities, then delete the old helpers. The integration raises a repair notice with the same instructions.
+> **Migrating from older versions:** existing SOC users are moved to **Advanced** automatically, with the old helper values carried over. Repoint dashboard cards and automations exactly: `input_number.ev_initial_soc` -> `number.eveus_ev_charger_initial_soc`, `input_number.ev_target_soc` -> `number.eveus_ev_charger_target_soc`, `input_number.ev_battery_capacity` -> `number.eveus_ev_charger_battery_capacity`, and `input_number.ev_soc_correction` -> `number.eveus_ev_charger_soc_correction`. If your device slug differs from `eveus_ev_charger`, use the matching `number.<your_slug>_*` entities shown on the Eveus device page. Then delete the old helpers when nothing references them.
 
 ### How SOC is calculated
 
@@ -250,7 +250,7 @@ sessionEnergy = 16 kWh  →  usable = 14.4 kWh  →  SOC = 38%
 
 Changing **Initial SOC** mid-session is fine — SOC reprojects from the new value on the next poll.
 
-**Split-charging across plug-out/plug-in:** the charger starts a fresh session every time the cable is reinserted, so `sessionEnergy` resets to 0. If you unplug at 50% and plug back in later, update `number.eveus_initial_soc` to the current dashboard value (manually, or from an automation triggered by `binary_sensor.eveus_car_connected` going `off`) before charging resumes — otherwise SOC will project from the old value.
+**Split-charging across plug-out/plug-in:** the charger starts a fresh session every time the cable is reinserted, so `sessionEnergy` resets to 0. If you unplug at 50% and plug back in later, update `number.eveus_ev_charger_initial_soc` to the current dashboard value (manually, or from an automation triggered by `binary_sensor.eveus_car_connected` going `off`) before charging resumes — otherwise SOC will project from the old value.
 
 ## Troubleshooting
 
@@ -273,7 +273,7 @@ Changing **Initial SOC** mid-session is fine — SOC reprojects from the new val
 
 - Confirm SOC monitoring is set to **Advanced** (Settings → Devices & Services → Eveus → Configure). Basic mode creates no SOC sensors.
 - Confirm the charger is online — SOC sensors populate once the first poll succeeds.
-- Check the `number.eveus_*` SOC entities hold sensible values (battery capacity, initial/target SOC, correction).
+- Check the `number.eveus_ev_charger_*` SOC entities hold sensible values (battery capacity, initial/target SOC, correction). If your device slug differs, use your device page to find the matching SOC number entities.
 
 ### Charger is powered off
 
