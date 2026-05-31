@@ -132,8 +132,19 @@ _FIXED_NOW = datetime(2026, 5, 16, 10, 0, 0, tzinfo=timezone.utc)
 _EXPECTED_FINISH = datetime(2026, 5, 16, 17, 38, 0, tzinfo=timezone.utc)
 
 
+_HELPER_KEYS = {
+    "input_number.ev_initial_soc": "initial_soc",
+    "input_number.ev_battery_capacity": "battery_capacity",
+    "input_number.ev_soc_correction": "soc_correction",
+    "input_number.ev_target_soc": "target_soc",
+}
+
+
 def _finish_sensor(updater_data: dict, helpers: dict | None = EV_HELPERS):
     calc = CachedSOCCalculator()
+    for entity_id, key in _HELPER_KEYS.items():
+        if helpers and entity_id in helpers:
+            calc.set_value(key, helpers[entity_id])
     sensor = ChargingFinishTimeSensor(EveusTestUpdater(updater_data), 1, calc)
     sensor.hass = HelperHass(helpers or {})
     return sensor

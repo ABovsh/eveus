@@ -14,6 +14,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import callback, Event
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
@@ -25,7 +26,7 @@ from .utils import (
     calculate_soc_percent,
     get_safe_value,
 )
-from .const import DEFAULT_SOC_CORRECTION, STATE_CACHE_TTL
+from .const import DEFAULT_SOC_CORRECTION, STATE_CACHE_TTL, soc_update_signal
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -118,7 +119,6 @@ class CachedSOCCalculator:
 class BaseEVHelperSensor(EveusSensorBase):
     """Base class for sensors that depend on input_number helpers."""
 
-    _tracked_inputs: tuple[str, ...] = ()
     _requires_helpers: ClassVar[bool] = True
 
     def __init__(
@@ -132,75 +132,43 @@ class BaseEVHelperSensor(EveusSensorBase):
         self._soc_calculator = soc_calculator or CachedSOCCalculator()
         self._last_update_time = 0
         self._cached_value = None
-        self._helpers_available = False
-
-    def _refresh_helpers_available(self) -> bool:
-        """Refresh optional helper availability and return whether it changed."""
-        previous = self._helpers_available
-        self._helpers_available = self._soc_calculator.are_helpers_available()
-        return previous != self._helpers_available
 
     async def async_added_to_hass(self) -> None:
-        """Set up state tracking for helper entities."""
+        """Subscribe to per-entry SOC value updates."""
         await super().async_added_to_hass()
-        self._refresh_helpers_available()
-
-        if self._tracked_inputs:
-            try:
-                self.async_on_remove(
-                    async_track_state_change_event(
-                        self.hass,
-                        self._tracked_inputs,
-                        self._on_input_changed,
-                    )
-                )
-            except Exception as err:
-                _LOGGER.debug(
-                    "Could not set up state tracking for %s: %s",
-                    self.unique_id,
-                    err,
-                    exc_info=True,
-                )
+        entry_id = self._updater.config_entry.entry_id
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, soc_update_signal(entry_id), self._on_soc_input_changed
+            )
+        )
 
     @callback
-    def _on_input_changed(self, event: Event) -> None:
-        """Handle input changes with rate limiting."""
+    def _on_soc_input_changed(self) -> None:
+        """Recompute immediately when a SOC input value is pushed."""
         previous_available = self.available
-        helpers_changed = self._refresh_helpers_available()
         value_changed = self._update_native_value()
         attributes_changed = self._update_extra_state_attributes()
-
-        current_time = time.time()
-        if (
-            helpers_changed
-            or previous_available != self.available
-            or value_changed
-            or attributes_changed
-            or current_time - self._last_update_time > 1
-        ):
-            self._last_update_time = current_time
+        if value_changed or attributes_changed or previous_available != self.available:
             self.async_write_ha_state()
 
     @property
     def available(self) -> bool:
-        """Available only when device is online AND helpers are present."""
-        return super().available and (not self._requires_helpers or self._helpers_available)
+        """Available when online; SOC%/kWh additionally require inputs present."""
+        if not super().available:
+            return False
+        if not self._requires_helpers:
+            return True
+        return self._soc_calculator.are_helpers_available()
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle fresh coordinator data and optional helper availability."""
         self._maybe_finalize_device_info()
         previous_available = self.available
-        self._refresh_helpers_available()
         availability_changed = self._update_availability_state()
         value_changed = self._update_native_value()
         attributes_changed = self._update_extra_state_attributes()
-        if (
-            availability_changed
-            or previous_available != self.available
-            or value_changed
-            or attributes_changed
-        ):
+        if availability_changed or previous_available != self.available or value_changed or attributes_changed:
             self.async_write_ha_state()
 
     def _resolve_remaining_inputs(self) -> tuple | None:
@@ -267,8 +235,7 @@ class EVSocKwhSensor(BaseEVHelperSensor):
     _attr_icon = "mdi:battery-charging"
     _attr_suggested_display_precision = 1
     _attr_state_class = SensorStateClass.MEASUREMENT
-
-    _tracked_inputs = (_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION)
+    _requires_helpers = False
 
     def _get_sensor_value(self) -> Optional[float]:
         # If the charger has not yet reported sessionEnergy (cold start, offline
@@ -293,8 +260,7 @@ class EVSocPercentSensor(BaseEVHelperSensor):
     _attr_icon = "mdi:battery-charging"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 0
-
-    _tracked_inputs = (_INPUT_INITIAL_SOC, _INPUT_BATTERY_CAPACITY, _INPUT_SOC_CORRECTION)
+    _requires_helpers = False
 
     def _get_sensor_value(self) -> Optional[float]:
         # See EVSocKwhSensor._get_sensor_value — same Initial-SOC fallback.
@@ -313,13 +279,6 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
     ENTITY_NAME = "Time to Target SOC"
     _attr_icon = "mdi:timer"
     _requires_helpers = False
-
-    _tracked_inputs = (
-        _INPUT_INITIAL_SOC,
-        _INPUT_TARGET_SOC,
-        _INPUT_BATTERY_CAPACITY,
-        _INPUT_SOC_CORRECTION,
-    )
 
     def __init__(
         self,
@@ -378,13 +337,9 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
     ENTITY_NAME = "Charging Finish Time"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:calendar-clock"
-
-    _tracked_inputs = (
-        _INPUT_INITIAL_SOC,
-        _INPUT_TARGET_SOC,
-        _INPUT_BATTERY_CAPACITY,
-        _INPUT_SOC_CORRECTION,
-    )
+    # Available whenever online; reads None (via _resolve_remaining_inputs) when
+    # target/helpers are missing, so the timestamp entity always exists.
+    _requires_helpers = False
 
     def _get_sensor_value(self) -> Optional[datetime]:
         """Compute the finish-time stamp."""

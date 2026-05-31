@@ -23,14 +23,14 @@ from custom_components.eveus import utils
 
 def test_zero_soc_correction_is_preserved() -> None:
     calc = ev_sensors.CachedSOCCalculator()
-    calc._input_cache.soc_correction = 0.0
+    calc.set_value("soc_correction", 0.0)
     assert calc._effective_correction() == 0.0
     assert calc.soc_correction == 0.0
 
 
 def test_missing_soc_correction_falls_back_to_default() -> None:
     calc = ev_sensors.CachedSOCCalculator()
-    calc._input_cache.soc_correction = None
+    calc.set_value("soc_correction", None)
     assert calc._effective_correction() == ev_sensors.DEFAULT_SOC_CORRECTION
 
 

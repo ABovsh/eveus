@@ -489,6 +489,7 @@ class EveusTestUpdater:
         self.connection_quality = quality or {}
         self.commands: list[tuple[str, object]] = []
         self.command_result = True
+        self.config_entry = SimpleNamespace(entry_id="entry-id")
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
