@@ -155,17 +155,6 @@ def test_system_time_rejects_far_future() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F20 — Input Entities Status stays available when charger is offline
-# ---------------------------------------------------------------------------
-
-def test_input_status_sensor_always_available() -> None:
-    sensor = ev_sensors.InputEntitiesStatusSensor(
-        EveusTestUpdater({}, available=False), 1
-    )
-    assert sensor.available is True
-
-
-# ---------------------------------------------------------------------------
 # F04 — duplicate device numbers are detected
 # ---------------------------------------------------------------------------
 

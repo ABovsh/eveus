@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from types import SimpleNamespace
 
 import pytest
 
@@ -15,7 +14,6 @@ from custom_components.eveus.ev_sensors import (
     ChargingFinishTimeSensor,
     EVSocKwhSensor,
     EVSocPercentSensor,
-    InputEntitiesStatusSensor,
     TimeToTargetSocSensor,
 )
 
@@ -211,33 +209,6 @@ def test_time_to_target_returns_helper_required_for_missing_helpers() -> None:
     assert sensor._get_sensor_value() == "Helpers Required"
 
 
-def test_input_entities_status_sensor_reports_missing_invalid_and_ready() -> None:
-    sensor = InputEntitiesStatusSensor(EveusTestUpdater({}))
-    sensor.hass = HelperHass({})
-
-    assert sensor._get_sensor_value() == "Optional - 4 Missing"
-    sensor._update_extra_state_attributes()
-    attrs = sensor.extra_state_attributes
-    assert attrs["missing_count"] == 4
-    assert attrs["missing_entities"]
-    assert "configuration_help" not in attrs
-
-    invalid = dict(EV_HELPERS)
-    invalid["input_number.ev_target_soc"] = "bad"
-    sensor.hass = HelperHass(invalid)
-    sensor._last_check_time = 0
-    assert sensor._get_sensor_value() == "Invalid 1 Inputs"
-
-    invalid["input_number.ev_target_soc"] = 150
-    sensor.hass = HelperHass(invalid)
-    sensor._last_check_time = 0
-    assert sensor._get_sensor_value() == "Invalid 1 Inputs"
-
-    sensor.hass = HelperHass(EV_HELPERS)
-    sensor._last_check_time = 0
-    assert sensor._get_sensor_value() == "All Present"
-
-
 def test_soc_calculator_optional_target_absent_keeps_core_available() -> None:
     # target_soc is optional: core SOC stays available without it.
     no_target = {k: v for k, v in EV_HELPERS.items() if k != "input_number.ev_target_soc"}
@@ -354,66 +325,6 @@ def test_charging_finish_time_returns_none_for_non_eta_states(
         lambda *args: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     assert sensor._get_sensor_value() is None
-
-
-def test_input_entities_status_event_recomputes_value_and_attributes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sensor = InputEntitiesStatusSensor(EveusTestUpdater({}))
-    sensor.hass = HelperHass({})
-    # Prime cached value with helpers missing.
-    sensor._update_native_value()
-    sensor._update_extra_state_attributes()
-    assert sensor._attr_native_value == "Optional - 4 Missing"
-
-    writes: list[None] = []
-    monkeypatch.setattr(sensor, "async_write_ha_state", lambda: writes.append(None))
-
-    # Helpers now appear — event should trigger recompute + write.
-    sensor.hass = HelperHass(EV_HELPERS)
-    sensor._on_input_state_changed(None)
-    assert sensor._attr_native_value == "All Present"
-    assert sensor.extra_state_attributes["missing_count"] == 0
-    assert len(writes) == 1
-
-    # Second call without change must not write again.
-    sensor._on_input_state_changed(None)
-    assert len(writes) == 1
-
-
-def test_input_entities_status_sensor_caches_between_checks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sensor = InputEntitiesStatusSensor(EveusTestUpdater({}))
-    sensor.hass = HelperHass(EV_HELPERS)
-    monkeypatch.setattr(ev_sensors.time, "time", lambda: 100.0)
-
-    assert sensor._get_sensor_value() == "All Present"
-    sensor.hass = HelperHass({})
-    assert sensor._get_sensor_value() == "All Present"
-
-
-def test_input_entities_status_sensor_contains_attribute_and_check_errors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sensor = InputEntitiesStatusSensor(EveusTestUpdater({}))
-    sensor.hass = HelperHass(EV_HELPERS)
-
-    monkeypatch.setattr(
-        sensor,
-        "_build_extra_state_attributes",
-        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
-    )
-    assert sensor._update_extra_state_attributes() is True
-    assert sensor.extra_state_attributes == {}
-
-    class BrokenStates:
-        def get(self, entity_id: str):
-            raise RuntimeError("state problem")
-
-    sensor.hass = SimpleNamespace(states=BrokenStates())
-    sensor._check_inputs()
-    assert sensor._state == "Error"
 
 
 def test_soc_percent_available_without_target() -> None:

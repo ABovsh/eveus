@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.10.0-rc.1 - unreleased
+
+### ⚠️ Breaking
+
+- **Removed `sensor.eveus_input_entities_status`.** This diagnostic only nagged you to create the optional `input_number.*` SOC helpers. Advanced mode now auto-creates native `number.eveus_*` SOC entities, so the nag sensor is obsolete and has been deleted. Its registry entry is purged automatically on upgrade; any dashboard card or automation referencing it should be removed.
+- **SOC/ETA sensors are created only in Advanced SOC mode.** `SOC Energy`, `SOC Percent`, `Time to Target SOC`, and `Charging Finish Time` are no longer created in Basic mode, where no SOC inputs exist to feed them.
+
 ## 4.9.2 - 2026-05-29
 
 Reliability, statistics-correctness, and privacy improvements, plus two new automation-friendly entities. No entity renames or removals versus 4.9.1; existing setups upgrade transparently.

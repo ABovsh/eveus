@@ -2,20 +2,16 @@
 from __future__ import annotations
 
 import logging
-import math
-import time
 from datetime import datetime, timedelta
-from typing import Any, ClassVar, Optional, Dict, Set
+from typing import ClassVar, Optional
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
 from homeassistant.const import UnitOfEnergy
-from homeassistant.core import callback, Event
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
 from .common_base import EveusSensorBase
@@ -26,7 +22,7 @@ from .utils import (
     calculate_soc_percent,
     get_safe_value,
 )
-from .const import DEFAULT_SOC_CORRECTION, STATE_CACHE_TTL, soc_update_signal
+from .const import DEFAULT_SOC_CORRECTION, soc_update_signal
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,18 +32,6 @@ _LOGGER = logging.getLogger(__name__)
 # =============================================================================
 
 _HELPERS_REQUIRED = "Helpers Required"
-
-_INPUT_INITIAL_SOC = "input_number.ev_initial_soc"
-_INPUT_BATTERY_CAPACITY = "input_number.ev_battery_capacity"
-_INPUT_SOC_CORRECTION = "input_number.ev_soc_correction"
-_INPUT_TARGET_SOC = "input_number.ev_target_soc"
-
-_INPUT_LIMITS = {
-    "initial_soc": (0, 100),
-    "battery_capacity": (10, 160),
-    "soc_correction": (0, 15),
-    "target_soc": (0, 100),
-}
 
 
 # =============================================================================
@@ -117,7 +101,7 @@ class CachedSOCCalculator:
 # =============================================================================
 
 class BaseEVHelperSensor(EveusSensorBase):
-    """Base class for sensors that depend on input_number helpers."""
+    """Base class for SOC sensors fed by the native number entities."""
 
     _requires_helpers: ClassVar[bool] = True
 
@@ -130,7 +114,6 @@ class BaseEVHelperSensor(EveusSensorBase):
         """Initialize EV helper sensor."""
         super().__init__(updater, device_number)
         self._soc_calculator = soc_calculator or CachedSOCCalculator()
-        self._last_update_time = 0
         self._cached_value = None
 
     async def async_added_to_hass(self) -> None:
@@ -364,177 +347,3 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             )
             return None
 
-
-# =============================================================================
-# Input entity status sensor
-# =============================================================================
-
-class InputEntitiesStatusSensor(EveusSensorBase):
-    """Sensor that monitors the status of optional input entities."""
-
-    ENTITY_NAME = "Input Entities Status"
-    _attr_icon = "mdi:clipboard-check"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    REQUIRED_INPUTS = {
-        _INPUT_BATTERY_CAPACITY: {
-            "name": "EV Battery Capacity",
-            "min": 10, "max": 160, "step": 1, "initial": 80,
-            "unit_of_measurement": "kWh", "mode": "slider",
-            "icon": "mdi:car-battery",
-        },
-        _INPUT_INITIAL_SOC: {
-            "name": "Initial EV State of Charge",
-            "min": 0, "max": 100, "step": 1, "initial": 20,
-            "unit_of_measurement": "%", "mode": "slider",
-            "icon": "mdi:battery-charging-40",
-        },
-        _INPUT_SOC_CORRECTION: {
-            "name": "Charging Efficiency Loss",
-            "min": 0, "max": 15, "step": 0.1, "initial": 7.5,
-            "unit_of_measurement": "%", "mode": "slider",
-            "icon": "mdi:chart-bell-curve",
-        },
-        _INPUT_TARGET_SOC: {
-            "name": "Target SOC",
-            "min": 0, "max": 100, "step": 5, "initial": 80,
-            "unit_of_measurement": "%", "mode": "slider",
-            "icon": "mdi:battery-charging-high",
-        },
-    }
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        """Initialize input status sensor."""
-        super().__init__(updater, device_number)
-        self._state = "Unknown"
-        self._missing_entities: Set[str] = set()
-        self._invalid_entities: Set[str] = set()
-        self._last_check_time = 0
-        self._check_interval = STATE_CACHE_TTL
-        self._attr_extra_state_attributes = {}
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to helper-entity state changes for instant updates."""
-        await super().async_added_to_hass()
-        try:
-            self.async_on_remove(
-                async_track_state_change_event(
-                    self.hass,
-                    tuple(self.REQUIRED_INPUTS),
-                    self._on_input_state_changed,
-                )
-            )
-        except Exception as err:
-            _LOGGER.debug(
-                "Could not set up input tracking for %s: %s",
-                self.unique_id,
-                err,
-                exc_info=True,
-            )
-
-    @callback
-    def _on_input_state_changed(self, _event: Event) -> None:
-        """Re-check inputs immediately and push the new state to HA.
-
-        SensorEntity has no async_update, so async_schedule_update_ha_state
-        would write the cached value. Recompute value+attrs here, then write
-        if anything changed.
-        """
-        self._last_check_time = 0
-        value_changed = self._update_native_value()
-        attrs_changed = self._update_extra_state_attributes()
-        if value_changed or attrs_changed:
-            self.async_write_ha_state()
-
-    @property
-    def available(self) -> bool:
-        """Always available — reports local HA helper state, not charger data.
-
-        Decoupled from charger availability so the diagnostic stays useful for
-        troubleshooting missing SOC helpers while the charger is offline.
-        """
-        return True
-
-    def _get_sensor_value(self) -> str:
-        """Get input status with caching."""
-        current_time = time.time()
-        if current_time - self._last_check_time > self._check_interval:
-            self._check_inputs()
-            self._last_check_time = current_time
-        return self._state
-
-    def _build_extra_state_attributes(self) -> Dict[str, Any]:
-        """Build cached status attributes from the latest input check.
-
-        configuration_help is intentionally omitted: storing a multi-line YAML
-        snippet per missing helper bloats every state_changed event and gets
-        persisted by Recorder. README documents the helper format instead.
-        """
-        return {
-            "missing_entities": sorted(self._missing_entities),
-            "invalid_entities": sorted(self._invalid_entities),
-            "required_count": len(self.REQUIRED_INPUTS),
-            "missing_count": len(self._missing_entities),
-            "invalid_count": len(self._invalid_entities),
-            "status_summary": {
-                eid: ("Missing" if eid in self._missing_entities
-                      else "Invalid" if eid in self._invalid_entities
-                      else "OK")
-                for eid in self.REQUIRED_INPUTS
-            },
-            "note": "These helpers are optional. Advanced SOC metrics require them.",
-        }
-
-    def _update_extra_state_attributes(self) -> bool:
-        """Refresh cached status attributes."""
-        try:
-            previous_attrs = self._attr_extra_state_attributes
-            self._attr_extra_state_attributes = self._build_extra_state_attributes()
-            return previous_attrs != self._attr_extra_state_attributes
-        except Exception as err:
-            _LOGGER.debug(
-                "Error getting attributes for %s: %s",
-                self.unique_id,
-                err,
-                exc_info=True,
-            )
-            self._attr_extra_state_attributes = {}
-            return True
-
-    def _check_inputs(self) -> None:
-        """Check all required inputs."""
-        try:
-            self._missing_entities.clear()
-            self._invalid_entities.clear()
-
-            for entity_id in self.REQUIRED_INPUTS:
-                state = self.hass.states.get(entity_id)
-                if state is None:
-                    self._missing_entities.add(entity_id)
-                    continue
-                try:
-                    value = float(state.state)
-                    config = self.REQUIRED_INPUTS[entity_id]
-                    if (
-                        not math.isfinite(value)
-                        or value < config["min"]
-                        or value > config["max"]
-                    ):
-                        self._invalid_entities.add(entity_id)
-                except (ValueError, TypeError):
-                    self._invalid_entities.add(entity_id)
-
-            if self._missing_entities:
-                self._state = f"Optional - {len(self._missing_entities)} Missing"
-            elif self._invalid_entities:
-                self._state = f"Invalid {len(self._invalid_entities)} Inputs"
-            else:
-                self._state = "All Present"
-        except Exception as err:
-            _LOGGER.debug(
-                "Error checking inputs for %s: %s",
-                self.unique_id,
-                err,
-                exc_info=True,
-            )
-            self._state = "Error"
