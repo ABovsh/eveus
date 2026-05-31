@@ -30,13 +30,21 @@ from .const import (
     SOC_MODE_BASIC,
     SOC_MODE_ADVANCED,
     get_soc_mode,
+    CONF_INITIAL_SOC,
+    CONF_TARGET_SOC,
     CONF_BATTERY_CAPACITY,
     CONF_SOC_CORRECTION,
+    DEFAULT_INITIAL_SOC,
+    DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
 )
 from .common_network import EveusUpdater
-from .utils import get_next_device_number, is_device_number_taken
+from .utils import (
+    get_next_device_number,
+    is_device_number_taken,
+    normalize_soc_input,
+)
 
 if TYPE_CHECKING:
     from .ev_sensors import CachedSOCCalculator
@@ -150,6 +158,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if _legacy_helpers_present(hass):
             new_data[CONF_SOC_MODE] = SOC_MODE_ADVANCED
             for entity_id, key, default in (
+                ("input_number.ev_initial_soc", CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC),
+                ("input_number.ev_target_soc", CONF_TARGET_SOC, DEFAULT_TARGET_SOC),
                 (
                     "input_number.ev_battery_capacity",
                     CONF_BATTERY_CAPACITY,
@@ -162,10 +172,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ),
             ):
                 st = hass.states.get(entity_id)
-                try:
-                    new_data[key] = float(st.state) if st is not None else default
-                except (TypeError, ValueError):
-                    new_data[key] = default
+                # CONF_* values equal the SOC_INPUT_LIMITS keys.
+                new_data[key] = normalize_soc_input(
+                    key, st.state if st is not None else None, default
+                )
         else:
             new_data[CONF_SOC_MODE] = SOC_MODE_BASIC
 

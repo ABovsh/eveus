@@ -62,7 +62,13 @@ _LOGGER = logging.getLogger(__name__)
 _HOSTNAME_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
 
 # Keys outside the user-editable form that must survive reconfigure/reauth/repair.
-_PRESERVED_ENTRY_KEYS: tuple[str, ...] = ("device_number",)
+_PRESERVED_ENTRY_KEYS: tuple[str, ...] = (
+    "device_number",
+    CONF_INITIAL_SOC,
+    CONF_TARGET_SOC,
+    CONF_BATTERY_CAPACITY,
+    CONF_SOC_CORRECTION,
+)
 
 _SOC_MODE_SELECTOR = SelectSelector(
     SelectSelectorConfig(

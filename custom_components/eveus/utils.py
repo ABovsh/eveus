@@ -9,11 +9,29 @@ from typing import Any, Callable, TypeVar, Optional, Dict
 
 from homeassistant.core import State, HomeAssistant
 
-from .const import DEFAULT_SOC_CORRECTION, DOMAIN
+from .const import DEFAULT_SOC_CORRECTION, DOMAIN, SOC_INPUT_LIMITS
 
 _LOGGER = logging.getLogger(__name__)
 
 T = TypeVar('T')
+
+
+def normalize_soc_input(key: str, value, default: float) -> float:
+    """Coerce a SOC input to a finite, in-range float.
+
+    Non-numeric / non-finite -> default. Finite but out-of-range -> clamped to
+    the SOC_INPUT_LIMITS[key] bounds. Used by migration seeding, config-flow
+    prefill consumption, and number construction so a bad value can never reach
+    the SOC calculator.
+    """
+    lo, hi = SOC_INPUT_LIMITS[key]
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if not math.isfinite(v):
+        return float(default)
+    return float(min(hi, max(lo, v)))
 
 
 class RateLog:

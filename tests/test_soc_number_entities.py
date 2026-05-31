@@ -165,3 +165,20 @@ def test_build_soc_numbers_uses_defaults_when_seed_missing() -> None:
     assert by_key["target_soc"].native_value == 80
     assert by_key["battery_capacity"].native_value == 50
     assert by_key["soc_correction"].native_value == 7.5
+
+
+def test_seed_is_normalized_on_construction() -> None:
+    """A bad seed is clamped/defaulted so it can't reach the calculator."""
+    updater = _updater()
+    calc = CachedSOCCalculator()
+
+    n_high = EveusBatteryCapacityNumber(updater, calc, seed=999, device_number=1)
+    assert n_high.native_value == 160  # clamped to max
+
+    n_low = EveusBatteryCapacityNumber(updater, calc, seed=0, device_number=1)
+    assert n_low.native_value == 10  # clamped to min
+
+    n_nan = EveusBatteryCapacityNumber(
+        updater, calc, seed=float("nan"), device_number=1
+    )
+    assert n_nan.native_value == 50  # default

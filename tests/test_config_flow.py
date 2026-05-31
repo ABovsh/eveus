@@ -930,3 +930,23 @@ def test_options_flow_toggles_mode() -> None:
 
     assert result["type"] == "create_entry"
     assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
+
+
+def test_merge_entry_data_preserves_soc_values() -> None:
+    """Reconfigure/reauth (incoming lacks SOC keys) must not drop SOC values."""
+    existing = {
+        "device_number": 2,
+        CONF_INITIAL_SOC: 65,
+        CONF_TARGET_SOC: 95,
+        CONF_BATTERY_CAPACITY: 64,
+        CONF_SOC_CORRECTION: 9,
+    }
+    incoming = {CONF_SCHEME: "http", CONF_SOC_MODE: SOC_MODE_BASIC}
+
+    merged = config_flow._merge_entry_data(existing, incoming)
+
+    assert merged["device_number"] == 2
+    assert merged[CONF_INITIAL_SOC] == 65
+    assert merged[CONF_TARGET_SOC] == 95
+    assert merged[CONF_BATTERY_CAPACITY] == 64
+    assert merged[CONF_SOC_CORRECTION] == 9
