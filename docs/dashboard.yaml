@@ -305,7 +305,4 @@ sections:
             name: Leakage Peak
           - entity: sensor.eveus_ev_charger_battery_voltage
             name: Internal Battery
-          - entity: sensor.eveus_ev_charger_input_entities_status
-            name: SOC Helpers Status
-            icon: mdi:cog-outline
 cards: []

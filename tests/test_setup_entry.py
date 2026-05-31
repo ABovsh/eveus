@@ -532,6 +532,32 @@ def test_async_setup_entry_migrates_verbose_soc_number_entity_ids(
     ]
 
 
+def test_async_setup_entry_migrates_verbose_soc_ids_when_unique_lookup_misses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _FakeEntityRegistry(
+        registered={
+            "number.eveus_ev_charger_initial_soc",
+            "number.eveus_ev_charger_target_soc",
+            "number.eveus_ev_charger_battery_capacity",
+            "number.eveus_ev_charger_soc_correction",
+        }
+    )
+    hass = _hass()
+    entry = _Entry(_data(**{CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert registry.renamed == [
+        ("number.eveus_ev_charger_initial_soc", "number.eveus_initial_soc"),
+        ("number.eveus_ev_charger_target_soc", "number.eveus_target_soc"),
+        ("number.eveus_ev_charger_battery_capacity", "number.eveus_battery_capacity"),
+        ("number.eveus_ev_charger_soc_correction", "number.eveus_soc_correction"),
+    ]
+
+
 def test_migration_advanced_when_helpers_registered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

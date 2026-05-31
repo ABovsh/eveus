@@ -137,12 +137,14 @@ def _migrate_soc_number_entity_ids(reg: er.EntityRegistry, device_number: int) -
 
     for key in _SOC_NUMBER_ENTITY_KEYS:
         unique_id = f"{new_prefix}_{key}"
+        expected_old_entity_id = f"number.{old_prefix}_{key}"
+        new_entity_id = f"number.{new_prefix}_{key}"
         current_entity_id = reg.async_get_entity_id("number", DOMAIN, unique_id)
+        if current_entity_id is None and reg.async_get(expected_old_entity_id) is not None:
+            current_entity_id = expected_old_entity_id
         if current_entity_id is None:
             continue
 
-        expected_old_entity_id = f"number.{old_prefix}_{key}"
-        new_entity_id = f"number.{new_prefix}_{key}"
         if current_entity_id != expected_old_entity_id or current_entity_id == new_entity_id:
             continue
         if reg.async_get(new_entity_id) is not None:
