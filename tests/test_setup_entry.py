@@ -349,7 +349,7 @@ def test_select_setup_creates_time_zone_entity() -> None:
 
 def test_number_setup_creates_current_entity() -> None:
     added: list[object] = []
-    entry = _Entry(_data())
+    entry = _Entry(_data(soc_mode="basic"))
     entry.runtime_data = SimpleNamespace(
         updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
         device_number=3,
