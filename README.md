@@ -15,15 +15,35 @@
 - Discussion: [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 - Issues: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues)
 
-## Why use it
+<img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
 
-- **Local only.** Home Assistant talks directly to the charger over your LAN. No Eveus cloud, account, relay, or telemetry.
-- **Full charging dashboard.** Live voltage/current/power, energy counters, session cost, tariffs, schedules, adaptive throttle state, temperatures, Wi-Fi signal, and connection health.
-- **Native controls.** Current slider, stop/one-charge switches, adaptive mode, schedule toggles, schedule time pickers, time-zone select, counter reset buttons, sync time, and force refresh.
-- **SOC without helpers.** Advanced SOC mode creates native `number.eveus_*` inputs and SOC/ETA sensors automatically.
-- **Automation ready.** `Car Connected`, `Session Active`, `Charging Finish Time`, `Session Cost`, schedule controls, and connection quality are real entities, not templates you have to maintain.
-- **Multi-charger capable.** Add multiple Eveus chargers; each gets its own device, coordinator, and entity namespace.
-- **Built for messy LAN reality.** Offline chargers are handled quietly, polling backs off, commands show Home Assistant errors on failure, and diagnostics redact sensitive fields.
+Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, multi-charger support, and automation-friendly entities so you never have to write a template sensor.
+
+## ✨ Highlights
+
+### 🔌 Local-only, no cloud
+Talks to the charger directly over your LAN via its HTTP API. No Eveus account, no cloud relay, no telemetry leaving your network — it keeps working when the internet is down. Supports `http://` or `https://`, custom ports, and either IP or hostname.
+
+### ⚡ Live electrical telemetry
+Voltage, current, power, and the active current-limit setpoint refreshed on every poll — plus per-phase voltage/current on 3-phase setups, box and plug temperatures, ground status, and the charger's internal backup-battery voltage.
+
+### 💰 Source-of-truth energy & cost
+Session Energy, Total Energy, and two resettable counters (A/B) in kWh, each with a running ₴ cost. **Session Cost** reads the charger's native money field, so it is integrated at the rate active at each moment and never jumps when the tariff switches mid-session (e.g. night→day at 07:00). Primary / Active / Rate 2 / Rate 3 prices are exposed too.
+
+### 🔋 EV battery SOC — no helpers needed
+Pick **Advanced** mode at setup and the integration creates its own SOC inputs as native entities — `number.eveus_initial_soc`, `number.eveus_target_soc`, `number.eveus_battery_capacity`, `number.eveus_soc_correction` — and the SOC Energy / SOC Percent / Time-to-Target / Charging Finish Time sensors. No `input_number` helpers to create by hand. Pick **Basic** if you only want charging control. Switch modes anytime from **Configure**.
+
+### 🤖 Adaptive charging & schedule visibility
+Toggle the charger's adaptive throttle and read its selected current cap and voltage threshold. Both on-device schedule slots are exposed as switches plus native HH:MM time pickers, with summary sensors.
+
+### 🧩 Automation-ready entities
+`Car Connected`, `Session Active`, `Charging Finish Time` (a real `timestamp`), `Session Cost`, schedule controls, and `Connection Quality` are first-class entities — no template sensors to maintain.
+
+### 🛰️ Multi-charger
+Add multiple Eveus chargers; each gets its own device, coordinator, and entity namespace.
+
+### 🩺 Built for messy LAN reality
+Offline chargers are handled quietly, polling backs off, commands surface a Home Assistant error toast on failure, and diagnostics downloads redact credentials and identifying fields.
 
 ## Requirements
 
@@ -167,14 +187,22 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 
 ## Dashboard
 
-A ready-to-paste Lovelace view is included at [`docs/dashboard.yaml`](docs/dashboard.yaml). It covers live status, SOC, controls, session totals, tariffs, schedules, adaptive mode, diagnostics, and 24-hour mini graphs.
+A complete, ready-to-paste Lovelace view that exposes **every Eveus capability** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml). It covers:
 
-Requirements: [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) for the graph cards.
+- Live status tiles (state, car connected, voltage/current/power)
+- SOC card with the four `number.eveus_*` inputs and the SOC/ETA sensors
+- All writable controls — current slider, stop / one-charge switches, adaptive mode, time-zone select, sync / refresh / reset buttons
+- Both on-device schedule slots with native HH:MM time pickers
+- Session totals, lifetime counters, tariffs, and session cost
+- Diagnostics — temperatures, leakage, Wi-Fi signal, connection quality
+- 24-hour mini-graph charts for power, current, and temperatures
 
-Install: open a dashboard -> **Edit dashboard** -> **Raw configuration editor**, then paste the view under `views:`. If your entity IDs differ, use Home Assistant's entity picker or find-and-replace.
+**Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the graph cards).
 
-<img width="1189" height="711" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
-<img width="1185" height="577" alt="Eveus dashboard details" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
+**Install:** open your dashboard → **⋮ → Edit dashboard → ⋮ → Raw configuration editor**, then paste the view under `views:`. If your device slug differs from `eveus_ev_charger`, use Home Assistant's entity picker or a find-and-replace.
+
+<img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
+<img width="1185" alt="Eveus dashboard details" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
 
 ## Troubleshooting
 
