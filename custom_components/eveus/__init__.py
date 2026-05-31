@@ -15,6 +15,7 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
 )
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
@@ -25,6 +26,14 @@ from .const import (
     CONF_PHASES,
     DEFAULT_PHASES,
     PHASE_OPTIONS,
+    CONF_SOC_MODE,
+    SOC_MODE_BASIC,
+    SOC_MODE_ADVANCED,
+    get_soc_mode,
+    CONF_BATTERY_CAPACITY,
+    CONF_SOC_CORRECTION,
+    DEFAULT_BATTERY_CAPACITY,
+    DEFAULT_SOC_CORRECTION,
 )
 from .common_network import EveusUpdater
 from .utils import get_next_device_number, is_device_number_taken
@@ -34,7 +43,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-CONFIG_ENTRY_VERSION = 3
+CONFIG_ENTRY_VERSION = 4
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -90,6 +99,15 @@ def _delete_invalid_config_issue(hass: HomeAssistant, entry: ConfigEntry) -> Non
     ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
 
 
+def _legacy_helpers_present(hass: HomeAssistant) -> bool:
+    """True when the old input_number SOC helpers are registered."""
+    reg = er.async_get(hass)
+    return bool(
+        reg.async_get("input_number.ev_initial_soc")
+        and reg.async_get("input_number.ev_battery_capacity")
+    )
+
+
 async def async_setup(_hass: HomeAssistant, _config: dict[str, Any]) -> bool:
     """Set up the Eveus component."""
     return True
@@ -127,6 +145,29 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if CONF_PHASES not in new_data:
         new_data[CONF_PHASES] = DEFAULT_PHASES
+
+    if CONF_SOC_MODE not in new_data:
+        if _legacy_helpers_present(hass):
+            new_data[CONF_SOC_MODE] = SOC_MODE_ADVANCED
+            for entity_id, key, default in (
+                (
+                    "input_number.ev_battery_capacity",
+                    CONF_BATTERY_CAPACITY,
+                    DEFAULT_BATTERY_CAPACITY,
+                ),
+                (
+                    "input_number.ev_soc_correction",
+                    CONF_SOC_CORRECTION,
+                    DEFAULT_SOC_CORRECTION,
+                ),
+            ):
+                st = hass.states.get(entity_id)
+                try:
+                    new_data[key] = float(st.state) if st is not None else default
+                except (TypeError, ValueError):
+                    new_data[key] = default
+        else:
+            new_data[CONF_SOC_MODE] = SOC_MODE_BASIC
 
     update_kwargs: dict[str, Any] = {}
     if new_data != entry.data:
@@ -206,6 +247,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
             _LOGGER.debug("Normalized Eveus device number %d", device_number)
+
+        # Purge the retired "Input Entities Status" sensor from the entity
+        # registry so it does not linger as an unavailable/orphan entity after
+        # upgrade. Its unique_id follows the base scheme keyed on device_number.
+        from .utils import get_device_suffix
+
+        reg = er.async_get(hass)
+        status_unique_id = (
+            f"eveus{get_device_suffix(device_number)}_input_entities_status"
+        )
+        stale = reg.async_get_entity_id("sensor", DOMAIN, status_unique_id)
+        if stale:
+            reg.async_remove(stale)
+
+        if get_soc_mode(entry) == SOC_MODE_ADVANCED and _legacy_helpers_present(hass):
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                f"soc_dashboard_update_{entry.entry_id}",
+                is_fixable=False,
+                is_persistent=True,
+                issue_domain=DOMAIN,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="soc_dashboard_update",
+            )
 
         updater = EveusUpdater(
             host=host,

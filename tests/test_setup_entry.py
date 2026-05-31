@@ -10,7 +10,13 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, Co
 
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 import custom_components.eveus as eveus
-from custom_components.eveus.const import CONF_MODEL, MODEL_16A
+from custom_components.eveus.const import (
+    CONF_MODEL,
+    CONF_SOC_MODE,
+    MODEL_16A,
+    SOC_MODE_ADVANCED,
+    SOC_MODE_BASIC,
+)
 from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
 from custom_components.eveus.sensor import async_setup_entry as async_setup_sensor_entry
 from custom_components.eveus.button import (
@@ -113,6 +119,10 @@ def _data(**overrides: object) -> dict[str, object]:
 def _patch_issue_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eveus.ir, "async_create_issue", lambda *args, **kwargs: None)
     monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *args, **kwargs: None)
+    # The setup path now consults the entity registry (status-sensor purge and
+    # SOC-mode detection). Default to an empty registry so the stub hass used by
+    # these tests does not need a real registry; individual tests override this.
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: _FakeEntityRegistry())
 
 
 def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -374,6 +384,93 @@ def test_number_setup_creates_current_entity() -> None:
     assert "Money Limit" not in names
     current = next(e for e in added if e.name == "Charging Current")
     assert current.unique_id == "eveus3_charging_current"
+
+
+class _FakeEntityRegistry:
+    """Minimal entity-registry stand-in exercising the SOC detector + purge."""
+
+    def __init__(self, registered: set[str] | None = None) -> None:
+        # registered: set of "domain.object_id" entity_ids present in the registry
+        self.registered = set(registered or set())
+        # map of (platform, domain, unique_id) -> entity_id for our entities
+        self.by_unique: dict[tuple[str, str, str], str] = {}
+        self.removed: list[str] = []
+
+    def async_get(self, entity_id: str) -> object | None:
+        return object() if entity_id in self.registered else None
+
+    def async_get_entity_id(self, platform: str, domain: str, unique_id: str) -> str | None:
+        return self.by_unique.get((platform, domain, unique_id))
+
+    def async_remove(self, entity_id: str) -> None:
+        self.removed.append(entity_id)
+
+
+class _MigrateEntries:
+    """Config-entries stub that applies update kwargs back onto the entry."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def async_update_entry(self, entry: object, **kwargs: object) -> None:
+        self.calls.append(kwargs)
+        for key, value in kwargs.items():
+            setattr(entry, key, value)
+
+
+def _migrate_entry() -> SimpleNamespace:
+    return SimpleNamespace(
+        data={
+            CONF_HOST: TEST_HOST,
+            CONF_USERNAME: TEST_USERNAME,
+            CONF_PASSWORD: TEST_PASSWORD,
+            CONF_MODEL: MODEL_16A,
+            "scheme": "http",
+            "phases": 1,
+        },
+        unique_id=TEST_HOST,
+        title=f"Eveus Charger ({TEST_HOST})",
+        version=3,
+    )
+
+
+def test_migration_advanced_when_helpers_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _FakeEntityRegistry(
+        registered={
+            "input_number.ev_initial_soc",
+            "input_number.ev_battery_capacity",
+        }
+    )
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+
+    hass = SimpleNamespace(
+        config_entries=_MigrateEntries(),
+        states=SimpleNamespace(get=lambda entity_id: None),
+    )
+    entry = _migrate_entry()
+
+    assert asyncio.run(eveus.async_migrate_entry(hass, entry)) is True
+
+    assert entry.version == 4
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_ADVANCED
+
+
+def test_migration_basic_when_no_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = _FakeEntityRegistry(registered=set())
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+
+    hass = SimpleNamespace(
+        config_entries=_MigrateEntries(),
+        states=SimpleNamespace(get=lambda entity_id: None),
+    )
+    entry = _migrate_entry()
+
+    assert asyncio.run(eveus.async_migrate_entry(hass, entry)) is True
+
+    assert entry.version == 4
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
 
 
 def test_reset_counter_buttons_send_reset_commands() -> None:
