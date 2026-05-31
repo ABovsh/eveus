@@ -9,7 +9,16 @@
                     "username": "Username",
                     "password": "Password",
                     "model": "Charger Model (16A, 32A or 48A)",
-                    "phases": "Phases (1 = single-phase, 3 = three-phase)"
+                    "phases": "Phases (1 = single-phase, 3 = three-phase)",
+                    "soc_mode": "SOC monitoring"
+                }
+            },
+            "soc": {
+                "title": "SOC Monitoring Setup",
+                "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.",
+                "data": {
+                    "battery_capacity": "Battery capacity (kWh)",
+                    "soc_correction": "Charging efficiency loss (%)"
                 }
             },
             "reconfigure": {
@@ -46,6 +55,51 @@
             "wrong_device": "The credentials belong to a different charger"
         }
     },
+    "options": {
+        "step": {
+            "init": {
+                "title": "SOC Monitoring",
+                "data": {
+                    "soc_mode": "SOC monitoring"
+                }
+            }
+        }
+    },
+    "selector": {
+        "soc_mode": {
+            "options": {
+                "basic": "Basic (charging control only)",
+                "advanced": "Advanced (SOC + time-to-target)"
+            }
+        }
+    },
+    "entity": {
+        "number": {
+            "charging_current": {
+                "name": "Charging Current",
+                "state_attributes": {
+                    "min": {
+                        "name": "Minimum Current"
+                    },
+                    "max": {
+                        "name": "Maximum Current"
+                    }
+                }
+            },
+            "initial_soc": {
+                "name": "Initial SOC"
+            },
+            "target_soc": {
+                "name": "Target SOC"
+            },
+            "battery_capacity": {
+                "name": "Battery Capacity"
+            },
+            "soc_correction": {
+                "name": "SOC Correction"
+            }
+        }
+    },
     "issues": {
         "invalid_config": {
             "title": "Eveus charger setup needs attention",
@@ -59,7 +113,7 @@
                             "username": "Username",
                             "password": "Password",
                             "model": "Charger Model (16A, 32A or 48A)",
-                    "phases": "Phases (1 = single-phase, 3 = three-phase)"
+                            "phases": "Phases (1 = single-phase, 3 = three-phase)"
                         }
                     }
                 },
@@ -75,6 +129,10 @@
                     "fixed": "Eveus charger setup updated"
                 }
             }
+        },
+        "soc_dashboard_update": {
+            "title": "Eveus: update your SOC dashboard cards",
+            "description": "SOC inputs are now provided by native `number.eveus_*` entities (Initial SOC, Target SOC, Battery Capacity, SOC Correction). Repoint any dashboard cards or automations that set the old `input_number.ev_*` helpers to the matching `number.eveus_*` entities. Once nothing references them, you can delete the old `input_number.ev_*` helpers."
         }
     }
 }
