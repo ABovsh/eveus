@@ -1,11 +1,18 @@
 # Changelog
 
-## 4.10.0-rc.1 - unreleased
+## 4.10.0-rc.1 - 2026-05-31
+
+### ✨ New
+- **SOC monitoring modes.** Choose **Basic** (charging control only) or **Advanced** during setup. Advanced now creates its own `number.eveus_initial_soc`, `number.eveus_target_soc`, `number.eveus_battery_capacity`, and `number.eveus_soc_correction` entities automatically — no manual `input_number` helpers to create. Switch modes anytime from the integration's Configure dialog.
+
+### 🔧 Changed
+- SOC %/kWh sensors are available as soon as the charger is online (no longer wait on external helpers).
+
+### ⚠️ Behavior change
+- The old `input_number.ev_*` helpers are no longer read. Existing SOC users are moved to Advanced with their Battery Capacity and SOC Correction carried over; update any dashboard cards that set `input_number.ev_*` to the new `number.eveus_*` entities, then you may delete the old helpers.
 
 ### ⚠️ Breaking
-
-- **Removed `sensor.eveus_input_entities_status`.** This diagnostic only nagged you to create the optional `input_number.*` SOC helpers. Advanced mode now auto-creates native `number.eveus_*` SOC entities, so the nag sensor is obsolete and has been deleted. Its registry entry is purged automatically on upgrade; any dashboard card or automation referencing it should be removed.
-- **SOC/ETA sensors are created only in Advanced SOC mode.** `SOC Energy`, `SOC Percent`, `Time to Target SOC`, and `Charging Finish Time` are no longer created in Basic mode, where no SOC inputs exist to feed them.
+- Removed the `Input Entities Status` diagnostic sensor — it only existed to prompt for manual helper creation, which Advanced mode now handles.
 
 ## 4.9.2 - 2026-05-29
 

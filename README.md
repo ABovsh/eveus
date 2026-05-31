@@ -5,7 +5,7 @@
 💬 **Discussion:** [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.9.2-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.10.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -30,12 +30,14 @@ Voltage, current, power, and the active current-limit setpoint, refreshed on eve
 - **Session Cost** — reads the charger's native `sessionMoney` field, so it is integrated at the rate that was active at each moment. The session total never jumps backward or forward when the tariff switches mid-session (e.g. night→day at 07:00).
 - **Primary / Active / Rate 2 / Rate 3 Cost** — current electricity rates in ₴/kWh, plus diagnostic status sensors showing which rate schedules are enabled.
 
-### 🔋 Optional EV battery (SOC) estimates
-Add four `input_number` helpers and the integration estimates:
-- **SOC Energy** in kWh, **SOC Percent**, and **Time to Target SOC** as a human-readable string for cards.
-- **Charging Finish Time** as a `device_class: timestamp` for automations and timestamp cards.
+### 🔋 EV battery (SOC) estimates
+Pick a **SOC monitoring** mode during setup:
+- **Basic** — charging control only, no SOC sensors.
+- **Advanced** — the integration auto-creates four native `number.eveus_*` entities (Initial SOC, Target SOC, Battery Capacity, SOC Correction) and estimates:
+  - **SOC Energy** in kWh, **SOC Percent**, and **Time to Target SOC** as a human-readable string for cards.
+  - **Charging Finish Time** as a `device_class: timestamp` for automations and timestamp cards.
 
-Without the helpers, SOC sensors stay unavailable and everything else works normally. SOC math uses the charger-native `sessionEnergy` so there is no fragile per-restart baseline state to manage.
+No manual `input_number` helpers are needed. Switch modes anytime from the integration's **Configure** dialog. SOC math uses the charger-native `sessionEnergy` so there is no fragile per-restart baseline state to manage.
 
 ### 🤖 Adaptive charging & schedule visibility
 Eveus chargers can throttle current automatically when the supply voltage sags, and run two configurable time-window slots for scheduled charging. The integration exposes both:
@@ -148,7 +150,6 @@ When the integration is configured for a **3-phase** charger (`Phases = 3` in se
 | Connection Quality | Recent success-rate %, with latency and health attributes *(diag)* |
 | Rate 2 Status | Whether Rate 2 schedule is enabled *(diag)* |
 | Rate 3 Status | Whether Rate 3 schedule is enabled *(diag)* |
-| Input Entities Status | Reports missing/invalid optional SOC helpers *(diag)* |
 
 ### Adaptive charging & schedules
 
@@ -171,7 +172,7 @@ These exist specifically to replace template sensors users typically build on to
 | Entity | Type | Description |
 | --- | --- | --- |
 | `binary_sensor.eveus_car_connected` | `device_class: plug` | `on` whenever a vehicle is electrically connected (Connected, Charging, Charge Complete, or Paused). Uses canonical numeric state values — stable across charger firmware label changes |
-| `sensor.eveus_charging_finish_time` | `device_class: timestamp` | Absolute UTC time when target SOC will be reached. Minute-aligned so it does not jitter every poll. Returns unavailable when not charging, helpers missing, or target already reached |
+| `sensor.eveus_charging_finish_time` | `device_class: timestamp` | Absolute UTC time when target SOC will be reached. Minute-aligned so it does not jitter every poll. Returns unavailable when not charging, in Basic mode, or target already reached |
 
 ### Controls
 
@@ -189,9 +190,9 @@ These exist specifically to replace template sensors users typically build on to
 
 Controls use **optimistic UI**: the slider/switch updates immediately, then reconciles with the next charger response.
 
-### Optional SOC sensors
+### SOC sensors (Advanced mode)
 
-Created automatically. Show as *unavailable* until you add the helpers in the next section.
+Created automatically in **Advanced** SOC mode. Driven by the native `number.eveus_*` SOC entities (see below).
 
 | Entity | Description |
 | --- | --- |
@@ -214,18 +215,21 @@ See the dashboard YAML used to render these views: [`docs/dashboard.yaml`](docs/
 <img width="1185" height="577" alt="image" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
 
 
-## Optional SOC helpers
+## SOC monitoring
 
-SOC tracking is optional. Energy/cost/controls/diagnostics all work without it. To enable SOC estimates, create these four `input_number` helpers in **Settings → Devices & Services → Helpers**:
+SOC tracking is optional. Energy/cost/controls/diagnostics all work without it. Pick the mode during setup (or change it later under **Settings → Devices & Services → Eveus → Configure**):
 
-| Helper entity ID | Name | Unit | Min | Max | Step | Initial |
+- **Basic** — charging control only. No SOC sensors are created.
+- **Advanced** — the integration creates four native input entities automatically. No manual `input_number` helpers required:
+
+| Entity ID | Name | Unit | Min | Max | Step | Default |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| `input_number.ev_battery_capacity` | EV Battery Capacity | kWh | 10 | 160 | 1 | 80 |
-| `input_number.ev_initial_soc` | Initial EV State of Charge | % | 0 | 100 | 1 | 20 |
-| `input_number.ev_soc_correction` | Charging Efficiency Loss | % | 0 | 15 | 0.1 | 7.5 |
-| `input_number.ev_target_soc` | Target SOC | % | 0 | 100 | 5 | 80 |
+| `number.eveus_battery_capacity` | Battery Capacity | kWh | 10 | 160 | 1 | 80 |
+| `number.eveus_initial_soc` | Initial SOC | % | 0 | 100 | 1 | 20 |
+| `number.eveus_soc_correction` | SOC Correction | % | 0 | 15 | 0.1 | 7.5 |
+| `number.eveus_target_soc` | Target SOC | % | 0 | 100 | 5 | 80 |
 
-The **Input Entities Status** diagnostic sensor tells you which helpers are still missing or out of range.
+> **Migrating from older versions:** existing SOC users are moved to **Advanced** automatically, with Battery Capacity and SOC Correction carried over. Repoint any dashboard cards or automations that set the old `input_number.ev_*` helpers to the new `number.eveus_*` entities, then delete the old helpers. The integration raises a repair notice with the same instructions.
 
 ### How SOC is calculated
 
@@ -246,7 +250,7 @@ sessionEnergy = 16 kWh  →  usable = 14.4 kWh  →  SOC = 38%
 
 Changing **Initial SOC** mid-session is fine — SOC reprojects from the new value on the next poll.
 
-**Split-charging across plug-out/plug-in:** the charger starts a fresh session every time the cable is reinserted, so `sessionEnergy` resets to 0. If you unplug at 50% and plug back in later, update `input_number.ev_initial_soc` to the current dashboard value (manually, or from an automation triggered by `binary_sensor.eveus_car_connected` going `off`) before charging resumes — otherwise SOC will project from the old value.
+**Split-charging across plug-out/plug-in:** the charger starts a fresh session every time the cable is reinserted, so `sessionEnergy` resets to 0. If you unplug at 50% and plug back in later, update `number.eveus_initial_soc` to the current dashboard value (manually, or from an automation triggered by `binary_sensor.eveus_car_connected` going `off`) before charging resumes — otherwise SOC will project from the old value.
 
 ## Troubleshooting
 
@@ -267,9 +271,9 @@ Changing **Initial SOC** mid-session is fine — SOC reprojects from the new val
 
 ### SOC sensors are unavailable
 
-- Create the optional `input_number.ev_*` helpers (see above).
-- Check **Input Entities Status** for missing / invalid helpers.
-- Confirm helper values are numeric and within the declared range.
+- Confirm SOC monitoring is set to **Advanced** (Settings → Devices & Services → Eveus → Configure). Basic mode creates no SOC sensors.
+- Confirm the charger is online — SOC sensors populate once the first poll succeeds.
+- Check the `number.eveus_*` SOC entities hold sensible values (battery capacity, initial/target SOC, correction).
 
 ### Charger is powered off
 
