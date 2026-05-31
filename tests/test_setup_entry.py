@@ -19,6 +19,12 @@ from custom_components.eveus.const import (
 )
 from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
 from custom_components.eveus.sensor import async_setup_entry as async_setup_sensor_entry
+from custom_components.eveus.ev_sensors import (
+    ChargingFinishTimeSensor,
+    EVSocKwhSensor,
+    EVSocPercentSensor,
+    TimeToTargetSocSensor,
+)
 from custom_components.eveus.button import (
     EveusResetCounterAButton,
     EveusResetCounterBButton,
@@ -271,6 +277,52 @@ def test_sensor_setup_creates_standard_and_ev_sensors() -> None:
     )
 
     assert len(added) >= 20
+
+
+def _setup_sensors_for_mode(soc_mode: str | None) -> list[object]:
+    """Run the sensor platform setup and return the added entities."""
+    added: list[object] = []
+    overrides = {} if soc_mode is None else {"soc_mode": soc_mode}
+    entry = _Entry(_data(**overrides))
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
+        device_number=1,
+        soc_calculator=object(),
+        phases=1,
+    )
+    asyncio.run(
+        async_setup_sensor_entry(
+            object(),
+            entry,
+            lambda entities, update_before_add=False: added.extend(entities),
+        )
+    )
+    return added
+
+
+def test_soc_sensors_only_in_advanced() -> None:
+    soc_classes = (
+        EVSocKwhSensor,
+        EVSocPercentSensor,
+        TimeToTargetSocSensor,
+        ChargingFinishTimeSensor,
+    )
+
+    advanced = _setup_sensors_for_mode(SOC_MODE_ADVANCED)
+    advanced_types = {type(entity) for entity in advanced}
+    for cls in soc_classes:
+        assert cls in advanced_types, f"{cls.__name__} missing in Advanced mode"
+
+    basic = _setup_sensors_for_mode(SOC_MODE_BASIC)
+    basic_types = {type(entity) for entity in basic}
+    for cls in soc_classes:
+        assert cls not in basic_types, f"{cls.__name__} present in Basic mode"
+
+    # The retired status sensor must never be created in either mode.
+    for entities in (advanced, basic):
+        assert not any(
+            type(entity).__name__ == "InputEntitiesStatusSensor" for entity in entities
+        )
 
 
 def test_switch_setup_creates_control_entities() -> None:

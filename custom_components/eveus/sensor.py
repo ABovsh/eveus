@@ -7,14 +7,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
-from .const import CONF_MODEL, MODEL_MAX_CURRENT
+from .const import CONF_MODEL, MODEL_MAX_CURRENT, get_soc_mode, SOC_MODE_ADVANCED
 from .sensor_definitions import get_sensor_specifications
 from .ev_sensors import (
     ChargingFinishTimeSensor,
     EVSocKwhSensor,
     EVSocPercentSensor,
     TimeToTargetSocSensor,
-    InputEntitiesStatusSensor,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,13 +36,14 @@ async def async_setup_entry(
     )
     standard_sensors = [spec.create_sensor(updater, device_number) for spec in sensor_specs]
 
-    ev_sensors = [
-        EVSocKwhSensor(updater, device_number, soc_calculator),
-        EVSocPercentSensor(updater, device_number, soc_calculator),
-        TimeToTargetSocSensor(updater, device_number, soc_calculator),
-        ChargingFinishTimeSensor(updater, device_number, soc_calculator),
-        InputEntitiesStatusSensor(updater, device_number),
-    ]
+    ev_sensors: list[object] = []
+    if get_soc_mode(entry) == SOC_MODE_ADVANCED:
+        ev_sensors = [
+            EVSocKwhSensor(updater, device_number, soc_calculator),
+            EVSocPercentSensor(updater, device_number, soc_calculator),
+            TimeToTargetSocSensor(updater, device_number, soc_calculator),
+            ChargingFinishTimeSensor(updater, device_number, soc_calculator),
+        ]
 
     sensors = standard_sensors + ev_sensors
     async_add_entities(sensors, update_before_add=False)
