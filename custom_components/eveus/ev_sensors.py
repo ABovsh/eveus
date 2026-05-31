@@ -183,7 +183,7 @@ class BaseEVHelperSensor(EveusSensorBase):
         through 4.5.x: there is nothing to snapshot, restore, or invalidate.
 
         Trade-off: split charging across plug-in/out cycles requires the user
-        to update ``input_number.ev_initial_soc`` before unplugging, since the
+        to update ``number.eveus_initial_soc`` before unplugging, since the
         charger starts a fresh session count on the next plug-in.
         """
         value = get_safe_value(self._updater.data, "sessionEnergy", float)

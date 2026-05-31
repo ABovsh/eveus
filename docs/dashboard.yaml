@@ -13,16 +13,16 @@ sections:
       - type: entities
         show_header_toggle: false
         entities:
-          - entity: number.eveus_ev_charger_battery_capacity
+          - entity: number.eveus_battery_capacity
             name: Battery Capacity
             icon: mdi:car-battery
-          - entity: number.eveus_ev_charger_initial_soc
+          - entity: number.eveus_initial_soc
             name: Initial SOC
             icon: mdi:battery-50
-          - entity: number.eveus_ev_charger_target_soc
+          - entity: number.eveus_target_soc
             name: Target SOC
             icon: mdi:battery-high
-          - entity: number.eveus_ev_charger_soc_correction
+          - entity: number.eveus_soc_correction
             name: Charging Loss
             icon: mdi:battery-minus-variant
           - type: divider

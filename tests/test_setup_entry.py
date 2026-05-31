@@ -447,6 +447,7 @@ class _FakeEntityRegistry:
         # map of (platform, domain, unique_id) -> entity_id for our entities
         self.by_unique: dict[tuple[str, str, str], str] = {}
         self.removed: list[str] = []
+        self.renamed: list[tuple[str, str]] = []
 
     def async_get(self, entity_id: str) -> object | None:
         return object() if entity_id in self.registered else None
@@ -456,6 +457,17 @@ class _FakeEntityRegistry:
 
     def async_remove(self, entity_id: str) -> None:
         self.removed.append(entity_id)
+
+    def async_update_entity(self, entity_id: str, **kwargs: object) -> None:
+        new_entity_id = kwargs.get("new_entity_id")
+        if not isinstance(new_entity_id, str):
+            return
+        self.renamed.append((entity_id, new_entity_id))
+        self.registered.discard(entity_id)
+        self.registered.add(new_entity_id)
+        for key, value in list(self.by_unique.items()):
+            if value == entity_id:
+                self.by_unique[key] = new_entity_id
 
 
 class _MigrateEntries:
@@ -484,6 +496,40 @@ def _migrate_entry() -> SimpleNamespace:
         title=f"Eveus Charger ({TEST_HOST})",
         version=3,
     )
+
+
+def test_async_setup_entry_migrates_verbose_soc_number_entity_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _FakeEntityRegistry(
+        registered={
+            "number.eveus_ev_charger_initial_soc",
+            "number.eveus_ev_charger_target_soc",
+            "number.eveus_ev_charger_battery_capacity",
+            "number.eveus_ev_charger_soc_correction",
+        }
+    )
+    registry.by_unique.update(
+        {
+            ("number", "eveus", "eveus_initial_soc"): "number.eveus_ev_charger_initial_soc",
+            ("number", "eveus", "eveus_target_soc"): "number.eveus_ev_charger_target_soc",
+            ("number", "eveus", "eveus_battery_capacity"): "number.eveus_ev_charger_battery_capacity",
+            ("number", "eveus", "eveus_soc_correction"): "number.eveus_ev_charger_soc_correction",
+        }
+    )
+    hass = _hass()
+    entry = _Entry(_data(**{CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert registry.renamed == [
+        ("number.eveus_ev_charger_initial_soc", "number.eveus_initial_soc"),
+        ("number.eveus_ev_charger_target_soc", "number.eveus_target_soc"),
+        ("number.eveus_ev_charger_battery_capacity", "number.eveus_battery_capacity"),
+        ("number.eveus_ev_charger_soc_correction", "number.eveus_soc_correction"),
+    ]
 
 
 def test_migration_advanced_when_helpers_registered(
