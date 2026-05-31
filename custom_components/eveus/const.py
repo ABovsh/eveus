@@ -52,6 +52,42 @@ CONF_PHASES: Final[str] = "phases"
 PHASE_OPTIONS: Final[List[int]] = [1, 3]
 DEFAULT_PHASES: Final[int] = 1
 
+# SOC monitoring mode
+CONF_SOC_MODE: Final[str] = "soc_mode"
+SOC_MODE_BASIC: Final[str] = "basic"
+SOC_MODE_ADVANCED: Final[str] = "advanced"
+SOC_MODE_OPTIONS: Final[List[str]] = [SOC_MODE_BASIC, SOC_MODE_ADVANCED]
+
+# SOC input seed keys (stored in entry.data) + defaults
+CONF_INITIAL_SOC: Final[str] = "initial_soc"
+CONF_TARGET_SOC: Final[str] = "target_soc"
+CONF_BATTERY_CAPACITY: Final[str] = "battery_capacity"
+CONF_SOC_CORRECTION: Final[str] = "soc_correction"
+
+DEFAULT_INITIAL_SOC: Final[float] = 20
+DEFAULT_TARGET_SOC: Final[float] = 80
+DEFAULT_BATTERY_CAPACITY: Final[float] = 50
+SOC_CORRECTION_MAX: Final[float] = 20
+
+# (min, max) guardrails shared by number ranges and config-flow validation.
+SOC_INPUT_LIMITS: Final[Dict[str, tuple]] = {
+    "initial_soc": (0, 100),
+    "target_soc": (0, 100),
+    "battery_capacity": (10, 160),
+    "soc_correction": (0, SOC_CORRECTION_MAX),
+}
+
+
+def soc_update_signal(entry_id: str) -> str:
+    """Per-entry dispatcher signal fired when a SOC input value changes."""
+    return f"eveus_soc_update_{entry_id}"
+
+
+def get_soc_mode(entry) -> str:
+    """Return the SOC mode for a config entry (defaults to advanced)."""
+    return entry.data.get(CONF_SOC_MODE, SOC_MODE_ADVANCED)
+
+
 # Rate States
 RATE_STATES: Final[Dict[int, str]] = {
     0: "Primary Rate",
