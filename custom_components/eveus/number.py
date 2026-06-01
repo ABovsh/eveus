@@ -240,7 +240,6 @@ class EveusSocConfigNumber(
 
     def __init__(self, updater, soc_calculator, seed, device_number: int = 1) -> None:
         """Initialize the SOC-input number entity."""
-        self.ENTITY_NAME = self._attr_name
         super().__init__(updater, device_number)
         self._attr_suggested_object_id = f"eveus{get_device_suffix(device_number)}_{self._soc_key}"
         self._soc_calculator = soc_calculator
@@ -290,7 +289,7 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
     """Initial state of charge (%)."""
 
     _soc_key = "initial_soc"
-    _attr_name = "Initial SOC"
+    ENTITY_NAME = "Initial SOC"
     _attr_icon = "mdi:battery-charging-40"
     _attr_native_unit_of_measurement = "%"
     _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["initial_soc"]
@@ -302,7 +301,7 @@ class EveusTargetSocNumber(EveusSocConfigNumber):
     """Target state of charge (%)."""
 
     _soc_key = "target_soc"
-    _attr_name = "Target SOC"
+    ENTITY_NAME = "Target SOC"
     _attr_icon = "mdi:battery-charging-high"
     _attr_native_unit_of_measurement = "%"
     _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["target_soc"]
@@ -314,7 +313,7 @@ class EveusBatteryCapacityNumber(EveusSocConfigNumber):
     """Battery capacity (kWh)."""
 
     _soc_key = "battery_capacity"
-    _attr_name = "Battery Capacity"
+    ENTITY_NAME = "Battery Capacity"
     _attr_icon = "mdi:car-battery"
     _attr_native_unit_of_measurement = "kWh"
     _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["battery_capacity"]
@@ -326,7 +325,7 @@ class EveusSocCorrectionNumber(EveusSocConfigNumber):
     """SOC charging-loss correction (%)."""
 
     _soc_key = "soc_correction"
-    _attr_name = "SOC Correction"
+    ENTITY_NAME = "SOC Correction"
     _attr_icon = "mdi:chart-bell-curve"
     _attr_native_unit_of_measurement = "%"
     _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["soc_correction"]

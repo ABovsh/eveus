@@ -13,6 +13,7 @@
 - SOC %/kWh sensors are available as soon as the charger is online (no longer wait on external helpers).
 - **Minimum Home Assistant version is now 2025.1.**
 - The **SOC monitoring** field is now labelled in the Reconfigure and repair dialogs (previously showed a raw key).
+- Native SOC input entities keep Home Assistant's normal device-prefixed IDs such as `number.eveus_ev_charger_initial_soc`; the integration no longer asks Home Assistant to rename them to `number.eveus_initial_soc`.
 
 ### 🐛 Fixed
 - An out-of-range or non-numeric value sent to the SOC inputs (Initial SOC, Target SOC, Battery Capacity, SOC Correction) is rejected instead of silently snapping to a limit.

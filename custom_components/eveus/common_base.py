@@ -48,13 +48,12 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         if self.ENTITY_NAME is None:
             raise NotImplementedError("ENTITY_NAME must be defined in child class")
 
-        self._attr_name = self.ENTITY_NAME
         device_suffix = get_device_suffix(device_number)
         entity_key = self.ENTITY_NAME.lower().replace(" ", "_")
         self._attr_unique_id = f"eveus{device_suffix}_{entity_key}"
-        # Localized display name comes from translations[entity.<platform>.<key>.name];
-        # _attr_name above stays as the English fallback (and keeps unique_id and the
-        # generated object_id stable for English installs).
+        # Localized display name comes from translations[entity.<platform>.<key>.name].
+        # Do not set _attr_name here: Home Assistant gives _attr_name precedence
+        # over translation_key and would otherwise keep every entity name English.
         self._attr_translation_key = entity_key
         self._attr_device_info = self._build_device_info()
         self._device_info_finalized = self._device_info_has_firmware()
@@ -63,6 +62,18 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         return self._entity_available
+
+    @property
+    def name(self) -> str | None:
+        """Return translated HA name, or the English fallback before HA binds a platform."""
+        if self.platform_data is None:
+            return self.ENTITY_NAME
+        return super().name
+
+    @property
+    def suggested_object_id(self) -> str | None:
+        """Return stable English object id seed regardless of frontend language."""
+        return self.ENTITY_NAME
 
     def _update_availability_state(
         self,

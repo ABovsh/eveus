@@ -500,7 +500,7 @@ def _migrate_entry() -> SimpleNamespace:
     )
 
 
-def test_async_setup_entry_migrates_verbose_soc_number_entity_ids(
+def test_async_setup_entry_keeps_device_prefixed_soc_number_entity_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = _FakeEntityRegistry(
@@ -526,15 +526,10 @@ def test_async_setup_entry_migrates_verbose_soc_number_entity_ids(
 
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
 
-    assert registry.renamed == [
-        ("number.eveus_ev_charger_initial_soc", "number.eveus_initial_soc"),
-        ("number.eveus_ev_charger_target_soc", "number.eveus_target_soc"),
-        ("number.eveus_ev_charger_battery_capacity", "number.eveus_battery_capacity"),
-        ("number.eveus_ev_charger_soc_correction", "number.eveus_soc_correction"),
-    ]
+    assert registry.renamed == []
 
 
-def test_async_setup_entry_migrates_verbose_soc_ids_when_unique_lookup_misses(
+def test_async_setup_entry_keeps_device_prefixed_soc_ids_when_unique_lookup_misses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = _FakeEntityRegistry(
@@ -552,12 +547,7 @@ def test_async_setup_entry_migrates_verbose_soc_ids_when_unique_lookup_misses(
 
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
 
-    assert registry.renamed == [
-        ("number.eveus_ev_charger_initial_soc", "number.eveus_initial_soc"),
-        ("number.eveus_ev_charger_target_soc", "number.eveus_target_soc"),
-        ("number.eveus_ev_charger_battery_capacity", "number.eveus_battery_capacity"),
-        ("number.eveus_ev_charger_soc_correction", "number.eveus_soc_correction"),
-    ]
+    assert registry.renamed == []
 
 
 def test_migration_advanced_when_helpers_registered(
