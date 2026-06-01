@@ -167,6 +167,58 @@ def test_entity_translations_are_consistent_across_locales() -> None:
     assert name_paths(strings) == name_paths(en) == name_paths(uk)
 
 
+def _flatten_translation_paths(section: dict, prefix: str = "") -> set[str]:
+    paths: set[str] = set()
+    for key, value in section.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            paths.update(_flatten_translation_paths(value, path))
+        else:
+            paths.add(path)
+    return paths
+
+
+def test_translation_trees_are_consistent_across_locales() -> None:
+    """strings.json, en.json and uk.json expose the same translation keys."""
+    base = ROOT / "custom_components" / "eveus"
+    strings = json.loads((base / "strings.json").read_text())
+    en = json.loads((base / "translations" / "en.json").read_text())
+    uk = json.loads((base / "translations" / "uk.json").read_text())
+
+    assert _flatten_translation_paths(strings) == _flatten_translation_paths(en)
+    assert _flatten_translation_paths(en) == _flatten_translation_paths(uk)
+
+
+def test_ocpp_warning_is_a_repair_issue_translation() -> None:
+    """The OCPP warning is created through the issue registry, not options flow."""
+    base = ROOT / "custom_components" / "eveus"
+    for relative in (
+        "strings.json",
+        "translations/en.json",
+        "translations/uk.json",
+    ):
+        translations = json.loads((base / relative).read_text())
+        assert "ocpp_enabled" in translations["issues"]
+        assert "ocpp_enabled" not in translations.get("options", {})
+
+
+def test_ukrainian_translation_has_no_known_untranslated_ui_phrases() -> None:
+    """Guard against the known English phrases left in uk.json."""
+    uk_text = (
+        ROOT / "custom_components" / "eveus" / "translations" / "uk.json"
+    ).read_text()
+
+    for phrase in (
+        "Connect to OCPP",
+        " or ",
+        "Settings → Devices & Services",
+        "Charger Model",
+        "Username",
+        "Password",
+    ):
+        assert phrase not in uk_text
+
+
 def test_brand_images_are_complete_and_sized() -> None:
     brand_dir = ROOT / "custom_components" / "eveus" / "brand"
     expected_sizes = {
