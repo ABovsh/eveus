@@ -320,6 +320,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             hass=hass,
             scheme=scheme,
             config_entry=entry,
+            device_number=device_number,
         )
         from .ev_sensors import CachedSOCCalculator
 

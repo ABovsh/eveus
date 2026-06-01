@@ -63,13 +63,22 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         hass: HomeAssistant,
         scheme: str = DEFAULT_SCHEME,
         config_entry: ConfigEntry | None = None,
+        device_number: int | None = None,
     ) -> None:
         """Initialize updater."""
+        # HA logs the coordinator name at ERROR/INFO level on poll failures, so
+        # it must stay host-free to honor the host-redaction-in-logs guarantee.
+        # The device number keeps multi-charger logs distinguishable instead.
+        coordinator_name = (
+            f"Eveus EV Charger {device_number}"
+            if device_number is not None
+            else "Eveus EV Charger"
+        )
         super().__init__(
             hass,
             _LOGGER,
             config_entry=config_entry,
-            name=f"Eveus EV Charger {host}",
+            name=coordinator_name,
             update_interval=_CHARGING_INTERVAL,
         )
         self.host = host

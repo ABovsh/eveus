@@ -108,6 +108,21 @@ def test_update_data_uses_configured_https_scheme_and_port(
     assert updater.connection_quality["consecutive_failures"] == 0
 
 
+def test_coordinator_name_does_not_leak_host() -> None:
+    # HA's DataUpdateCoordinator logs ``self.name`` at ERROR/INFO level on every
+    # poll timeout/connection error, so the coordinator name must not embed the
+    # charger host/IP — otherwise it defeats the host-redaction in logs.
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    assert TEST_HOST not in updater.name
+
+    numbered = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), device_number=2
+    )
+    # Multi-charger logs stay distinguishable via the device number, not the host.
+    assert TEST_HOST not in numbered.name
+    assert "2" in numbered.name
+
+
 def test_coordinator_compatibility_helpers() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
