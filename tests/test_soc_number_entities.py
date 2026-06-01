@@ -84,7 +84,10 @@ def test_set_value_rejects_non_finite_input(monkeypatch, bad) -> None:
     assert n_cap.native_value == 50
 
 
-def test_soc_numbers_suggest_simple_entity_ids() -> None:
+def test_soc_numbers_suggest_stable_object_ids() -> None:
+    # suggested_object_id is what Home Assistant actually uses to derive the
+    # entity_id; the base class returns ENTITY_NAME (language-independent), which
+    # HA slugifies and device-prefixes into e.g. number.eveus_ev_charger_initial_soc.
     updater = _updater()
     calc = CachedSOCCalculator()
 
@@ -100,15 +103,23 @@ def test_soc_numbers_suggest_simple_entity_ids() -> None:
         device_number=1,
     )
 
-    assert {n._soc_key: n._attr_suggested_object_id for n in nums} == {
-        "initial_soc": "eveus_initial_soc",
-        "target_soc": "eveus_target_soc",
-        "battery_capacity": "eveus_battery_capacity",
-        "soc_correction": "eveus_soc_correction",
+    assert {n._soc_key: n.suggested_object_id for n in nums} == {
+        "initial_soc": "Initial SOC",
+        "target_soc": "Target SOC",
+        "battery_capacity": "Battery Capacity",
+        "soc_correction": "SOC Correction",
     }
 
+    # The device number is carried by unique_id, not suggested_object_id; HA
+    # disambiguates the second charger's entity_id from its distinct device name.
     nums_2 = build_soc_numbers(updater, calc, seeds={}, device_number=2)
-    assert {n._soc_key: n._attr_suggested_object_id for n in nums_2} == {
+    assert {n._soc_key: n.suggested_object_id for n in nums_2} == {
+        "initial_soc": "Initial SOC",
+        "target_soc": "Target SOC",
+        "battery_capacity": "Battery Capacity",
+        "soc_correction": "SOC Correction",
+    }
+    assert {n._soc_key: n._attr_unique_id for n in nums_2} == {
         "initial_soc": "eveus2_initial_soc",
         "target_soc": "eveus2_target_soc",
         "battery_capacity": "eveus2_battery_capacity",

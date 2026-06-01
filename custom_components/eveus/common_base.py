@@ -66,7 +66,11 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     @property
     def name(self) -> str | None:
         """Return translated HA name, or the English fallback before HA binds a platform."""
-        if self.platform_data is None:
+        # Use ``platform`` (stable since well before our minimum HA 2025.1) rather
+        # than ``platform_data`` (added later, absent on 2025.1) to detect binding.
+        # Both flip from None together in add_to_platform_start, so this is an
+        # exact equivalent that also runs on the minimum supported HA version.
+        if self.platform is None:
             return self.ENTITY_NAME
         return super().name
 

@@ -47,7 +47,7 @@ from .common_base import (
     OptimisticControlMixin,
     WriteOnChangeMixin,
 )
-from .utils import get_device_suffix, get_safe_value, normalize_soc_input
+from .utils import get_safe_value, normalize_soc_input
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -241,7 +241,6 @@ class EveusSocConfigNumber(
     def __init__(self, updater, soc_calculator, seed, device_number: int = 1) -> None:
         """Initialize the SOC-input number entity."""
         super().__init__(updater, device_number)
-        self._attr_suggested_object_id = f"eveus{get_device_suffix(device_number)}_{self._soc_key}"
         self._soc_calculator = soc_calculator
         default = _SOC_DEFAULTS[self._soc_key]
         self._attr_native_value = normalize_soc_input(self._soc_key, seed, default)
