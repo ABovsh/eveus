@@ -4,7 +4,7 @@
 
 ### ✨ New
 - **SOC monitoring modes.** Choose **Basic** (charging control only) or **Advanced** during setup. Advanced now creates its own `number.eveus_initial_soc`, `number.eveus_target_soc`, `number.eveus_battery_capacity`, and `number.eveus_soc_correction` entities automatically — no manual `input_number` helpers to create. Switch modes anytime from the integration's Configure dialog.
-- **Ukrainian translation.** Setup, the SOC-monitoring options, the **SOC monitoring** field, and the dashboard-migration notice are now available in Ukrainian.
+- **Ukrainian translation.** Setup, the SOC-monitoring options and field, the dashboard-migration notice, and **all entity names** (sensors, controls, buttons, schedules) are now shown in Ukrainian when Home Assistant runs in Ukrainian. Entity IDs are unchanged.
 
 ### 🔧 Changed
 - SOC %/kWh sensors are available as soon as the charger is online (no longer wait on external helpers).

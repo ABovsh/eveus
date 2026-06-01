@@ -94,10 +94,196 @@
                 "name": "Цільовий SOC"
             },
             "battery_capacity": {
-                "name": "Ємність батареї"
+                "name": "Ємність акумулятора"
             },
             "soc_correction": {
                 "name": "Корекція SOC"
+            }
+        },
+        "sensor": {
+            "voltage": {
+                "name": "Напруга"
+            },
+            "current": {
+                "name": "Струм"
+            },
+            "power": {
+                "name": "Потужність"
+            },
+            "current_set": {
+                "name": "Встановлений струм"
+            },
+            "session_energy": {
+                "name": "Енергія сесії"
+            },
+            "total_energy": {
+                "name": "Загальна енергія"
+            },
+            "counter_a_energy": {
+                "name": "Енергія лічильника A"
+            },
+            "counter_b_energy": {
+                "name": "Енергія лічильника B"
+            },
+            "state": {
+                "name": "Стан"
+            },
+            "substate": {
+                "name": "Підстан"
+            },
+            "ground": {
+                "name": "Заземлення"
+            },
+            "system_time": {
+                "name": "Системний час"
+            },
+            "box_temperature": {
+                "name": "Температура корпусу"
+            },
+            "plug_temperature": {
+                "name": "Температура конектора"
+            },
+            "battery_voltage": {
+                "name": "Напруга акумулятора"
+            },
+            "leakage_current": {
+                "name": "Струм витоку"
+            },
+            "leakage_current_peak": {
+                "name": "Піковий струм витоку"
+            },
+            "wifi_signal": {
+                "name": "Сигнал WiFi"
+            },
+            "current_phase_2": {
+                "name": "Струм фази 2"
+            },
+            "current_phase_3": {
+                "name": "Струм фази 3"
+            },
+            "voltage_phase_2": {
+                "name": "Напруга фази 2"
+            },
+            "voltage_phase_3": {
+                "name": "Напруга фази 3"
+            },
+            "session_time": {
+                "name": "Час сесії"
+            },
+            "counter_a_cost": {
+                "name": "Вартість лічильника A"
+            },
+            "counter_b_cost": {
+                "name": "Вартість лічильника B"
+            },
+            "primary_rate_cost": {
+                "name": "Вартість основного тарифу"
+            },
+            "active_rate_cost": {
+                "name": "Вартість активного тарифу"
+            },
+            "rate_2_cost": {
+                "name": "Вартість тарифу 2"
+            },
+            "rate_3_cost": {
+                "name": "Вартість тарифу 3"
+            },
+            "rate_2_status": {
+                "name": "Статус тарифу 2"
+            },
+            "rate_3_status": {
+                "name": "Статус тарифу 3"
+            },
+            "session_cost": {
+                "name": "Вартість сесії"
+            },
+            "adaptive_charging": {
+                "name": "Адаптивне заряджання"
+            },
+            "adaptive_current_limit": {
+                "name": "Ліміт адаптивного струму"
+            },
+            "adaptive_voltage_threshold": {
+                "name": "Поріг адаптивної напруги"
+            },
+            "schedule_1": {
+                "name": "Розклад 1"
+            },
+            "schedule_2": {
+                "name": "Розклад 2"
+            },
+            "connection_quality": {
+                "name": "Якість з'єднання"
+            },
+            "soc_energy": {
+                "name": "Енергія SOC"
+            },
+            "soc_percent": {
+                "name": "Відсоток SOC"
+            },
+            "time_to_target_soc": {
+                "name": "Час до цільового SOC"
+            },
+            "charging_finish_time": {
+                "name": "Час завершення заряджання"
+            }
+        },
+        "binary_sensor": {
+            "car_connected": {
+                "name": "Автомобіль підключено"
+            },
+            "session_active": {
+                "name": "Сесія активна"
+            }
+        },
+        "switch": {
+            "stop_charging": {
+                "name": "Зупинити заряджання"
+            },
+            "one_charge": {
+                "name": "Одне заряджання"
+            },
+            "adaptive_mode": {
+                "name": "Адаптивний режим"
+            },
+            "schedule_1_enabled": {
+                "name": "Розклад 1 увімкнено"
+            },
+            "schedule_2_enabled": {
+                "name": "Розклад 2 увімкнено"
+            }
+        },
+        "button": {
+            "force_refresh": {
+                "name": "Примусове оновлення"
+            },
+            "reset_counter_a": {
+                "name": "Скинути лічильник A"
+            },
+            "reset_counter_b": {
+                "name": "Скинути лічильник B"
+            },
+            "sync_time": {
+                "name": "Синхронізувати час"
+            }
+        },
+        "select": {
+            "time_zone": {
+                "name": "Часовий пояс"
+            }
+        },
+        "time": {
+            "schedule_1_start": {
+                "name": "Початок розкладу 1"
+            },
+            "schedule_1_stop": {
+                "name": "Завершення розкладу 1"
+            },
+            "schedule_2_start": {
+                "name": "Початок розкладу 2"
+            },
+            "schedule_2_stop": {
+                "name": "Завершення розкладу 2"
             }
         }
     },

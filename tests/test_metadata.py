@@ -93,6 +93,80 @@ def test_soc_dashboard_repair_issue_lists_exact_entity_replacements() -> None:
         assert f"`{old_entity}` → `{new_entity}`" in description
 
 
+def _slug(name: str) -> str:
+    return name.lower().replace(" ", "_")
+
+
+def _expected_entity_translation_keys() -> dict[str, set[str]]:
+    """Every entity the integration builds, grouped by platform → translation_key.
+
+    Mirrors the `_attr_translation_key = ENTITY_NAME.lower().replace(" ", "_")`
+    rule in common_base, so a new entity that forgets its translation block fails
+    here (and in hassfest) before release.
+    """
+    import sys
+
+    sys.path.insert(0, str(ROOT))
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+    from custom_components.eveus.switch import SWITCH_DESCRIPTIONS
+    from custom_components.eveus.time import TIME_DESCRIPTIONS
+
+    expected: dict[str, set[str]] = {p: set() for p in (
+        "sensor", "number", "switch", "time", "button", "select", "binary_sensor"
+    )}
+    for spec in create_sensor_specifications(phases=3):
+        expected["sensor"].add(_slug(spec.name))
+    for name in ("SOC Energy", "SOC Percent", "Time to Target SOC", "Charging Finish Time"):
+        expected["sensor"].add(_slug(name))
+    for name in ("Charging Current", "Initial SOC", "Target SOC", "Battery Capacity", "SOC Correction"):
+        expected["number"].add(_slug(name))
+    for desc in SWITCH_DESCRIPTIONS:
+        expected["switch"].add(_slug(desc.name))
+    for desc in TIME_DESCRIPTIONS:
+        expected["time"].add(_slug(desc.name))
+    for name in ("Force Refresh", "Reset Counter A", "Reset Counter B", "Sync Time"):
+        expected["button"].add(_slug(name))
+    expected["select"].add(_slug("Time Zone"))
+    for name in ("Car Connected", "Session Active"):
+        expected["binary_sensor"].add(_slug(name))
+    return expected
+
+
+def test_every_entity_has_a_translation_name() -> None:
+    """en.json must carry a name for every entity translation_key the code emits."""
+    en = json.loads(
+        (ROOT / "custom_components" / "eveus" / "translations" / "en.json").read_text()
+    )
+    entity = en["entity"]
+    for platform, keys in _expected_entity_translation_keys().items():
+        present = set(entity.get(platform, {}))
+        missing = keys - present
+        assert not missing, f"{platform}: missing translation names for {sorted(missing)}"
+        extra = present - keys
+        assert not extra, f"{platform}: stale translation names for {sorted(extra)}"
+        for key in keys:
+            assert entity[platform][key].get("name"), f"{platform}.{key} has no name"
+
+
+def test_entity_translations_are_consistent_across_locales() -> None:
+    """strings.json, en.json and uk.json expose the exact same entity key tree."""
+    base = ROOT / "custom_components" / "eveus"
+    strings = json.loads((base / "strings.json").read_text())["entity"]
+    en = json.loads((base / "translations" / "en.json").read_text())["entity"]
+    uk = json.loads((base / "translations" / "uk.json").read_text())["entity"]
+
+    def name_paths(section: dict) -> set[str]:
+        paths: set[str] = set()
+        for platform, ents in section.items():
+            for key, body in ents.items():
+                paths.add(f"{platform}/{key}")
+                for attr in body.get("state_attributes", {}):
+                    paths.add(f"{platform}/{key}/{attr}")
+        return paths
+
+    assert name_paths(strings) == name_paths(en) == name_paths(uk)
+
+
 def test_brand_images_are_complete_and_sized() -> None:
     brand_dir = ROOT / "custom_components" / "eveus" / "brand"
     expected_sizes = {

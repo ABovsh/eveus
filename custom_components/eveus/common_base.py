@@ -52,6 +52,10 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         device_suffix = get_device_suffix(device_number)
         entity_key = self.ENTITY_NAME.lower().replace(" ", "_")
         self._attr_unique_id = f"eveus{device_suffix}_{entity_key}"
+        # Localized display name comes from translations[entity.<platform>.<key>.name];
+        # _attr_name above stays as the English fallback (and keeps unique_id and the
+        # generated object_id stable for English installs).
+        self._attr_translation_key = entity_key
         self._attr_device_info = self._build_device_info()
         self._device_info_finalized = self._device_info_has_firmware()
 
