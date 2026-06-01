@@ -3,7 +3,7 @@
 ## 4.10.0-rc.1 - 2026-06-01
 
 ### ✨ New
-- **SOC monitoring modes.** Choose **Basic** (charging control only) or **Advanced** during setup. Advanced now creates its own `number.eveus_initial_soc`, `number.eveus_target_soc`, `number.eveus_battery_capacity`, and `number.eveus_soc_correction` entities automatically — no manual `input_number` helpers to create. Switch modes anytime from the integration's Configure dialog.
+- **SOC monitoring modes.** Choose **Basic** (charging control only) or **Advanced** during setup. Advanced now creates its own `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, and `number.eveus_ev_charger_soc_correction` entities automatically — no manual `input_number` helpers to create. Switch modes anytime from the integration's Configure dialog.
 - **Connect to OCPP** switch (`switch.eveus_connect_to_ocpp`) — connect the charger to the OCPP backend (used by the Eveus mobile app) directly from Home Assistant, matching the "Connect to OCPP" control in the charger's web interface. When on, the charger links to the OCPP backend; when off, it returns to full local control.
 - **`binary_sensor.eveus_ocpp_connected`** (`device_class: connectivity`, diagnostic) — `on` while the charger holds a live link to the OCPP backend, so you can see at a glance whether the cloud link is actually up.
 - **OCPP-enabled warning.** While OCPP is on, a Home Assistant Repairs warning explains that Charging Current, charge limits, and the charging schedule may be overridden by the OCPP backend and may not take effect, and gives step-by-step instructions for turning OCPP off again (Settings → Devices & Services → Eveus → your charger → the **Connect to OCPP** switch). It clears automatically the moment OCPP is disabled — including when toggled from the mobile app rather than from Home Assistant.
@@ -13,14 +13,14 @@
 - SOC %/kWh sensors are available as soon as the charger is online (no longer wait on external helpers).
 - **Minimum Home Assistant version is now 2025.1.**
 - The **SOC monitoring** field is now labelled in the Reconfigure and repair dialogs (previously showed a raw key).
-- Native SOC input entities keep Home Assistant's normal device-prefixed IDs such as `number.eveus_ev_charger_initial_soc`; the integration no longer asks Home Assistant to rename them to `number.eveus_initial_soc`.
+- Native SOC input entities keep Home Assistant's normal device-prefixed IDs such as `number.eveus_ev_charger_initial_soc`; the integration no longer asks Home Assistant to rename them to shorter `number.eveus_*` IDs.
 
 ### 🐛 Fixed
 - An out-of-range or non-numeric value sent to the SOC inputs (Initial SOC, Target SOC, Battery Capacity, SOC Correction) is rejected instead of silently snapping to a limit.
 - A response whose current setpoint is missing, non-numeric, or not a finite number is refused during polling, so a misrouted host can't briefly come online with a garbage `Charging Current`.
 
 ### ⚠️ Behavior change
-- The old `input_number.ev_*` helpers are no longer read. Existing SOC users are moved to Advanced with their Battery Capacity and SOC Correction carried over; update dashboard cards and automations by replacing the prefix `input_number.ev_` with `number.eveus_`; then you may delete the old helpers.
+- The old `input_number.ev_*` helpers are no longer read. Existing SOC users are moved to Advanced with their Battery Capacity and SOC Correction carried over; update dashboard cards and automations by replacing the prefix `input_number.ev_` with `number.eveus_ev_charger_`; then you may delete the old helpers.
 
 ### ⚠️ Breaking
 - Removed the `Input Entities Status` diagnostic sensor — it only existed to prompt for manual helper creation, which Advanced mode now handles.

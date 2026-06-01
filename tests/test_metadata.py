@@ -85,10 +85,10 @@ def test_soc_dashboard_repair_issue_lists_exact_entity_replacements() -> None:
     description = translations["issues"]["soc_dashboard_update"]["description"]
     assert strings["issues"]["soc_dashboard_update"]["description"] == description
     for old_entity, new_entity in (
-        ("input_number.ev_initial_soc", "number.eveus_initial_soc"),
-        ("input_number.ev_target_soc", "number.eveus_target_soc"),
-        ("input_number.ev_battery_capacity", "number.eveus_battery_capacity"),
-        ("input_number.ev_soc_correction", "number.eveus_soc_correction"),
+        ("input_number.ev_initial_soc", "number.eveus_ev_charger_initial_soc"),
+        ("input_number.ev_target_soc", "number.eveus_ev_charger_target_soc"),
+        ("input_number.ev_battery_capacity", "number.eveus_ev_charger_battery_capacity"),
+        ("input_number.ev_soc_correction", "number.eveus_ev_charger_soc_correction"),
     ):
         assert f"`{old_entity}` → `{new_entity}`" in description
 

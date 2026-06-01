@@ -31,7 +31,7 @@ Voltage, current, power, and the active current-limit setpoint refreshed on ever
 Session Energy, Total Energy, and two resettable counters (A/B) in kWh, each with a running ₴ cost. **Session Cost** reads the charger's native money field, so it is integrated at the rate active at each moment and never jumps when the tariff switches mid-session (e.g. night→day at 07:00). Primary / Active / Rate 2 / Rate 3 prices are exposed too.
 
 ### 🔋 EV battery SOC — no helpers needed
-Pick **Advanced** mode at setup and the integration creates its own SOC inputs as native entities — `number.eveus_initial_soc`, `number.eveus_target_soc`, `number.eveus_battery_capacity`, `number.eveus_soc_correction` — and the SOC Energy / SOC Percent / Time-to-Target / Charging Finish Time sensors. No `input_number` helpers to create by hand. Pick **Basic** if you only want charging control. Switch modes anytime from **Configure**.
+Pick **Advanced** mode at setup and the integration creates its own SOC inputs as native entities — `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, `number.eveus_ev_charger_soc_correction` — and the SOC Energy / SOC Percent / Time-to-Target / Charging Finish Time sensors. No `input_number` helpers to create by hand. Pick **Basic** if you only want charging control. Switch modes anytime from **Configure**.
 
 ### 🤖 Adaptive charging & schedule visibility
 Toggle the charger's adaptive throttle and read its selected current cap and voltage threshold. Both on-device schedule slots are exposed as switches plus native HH:MM time pickers, with summary sensors.
@@ -137,18 +137,18 @@ Advanced mode creates four native input numbers. Older `input_number.ev_*` helpe
 
 | Entity ID | Unit | Range | Default | What it gives you |
 | --- | --- | --- | --- | --- |
-| `number.eveus_initial_soc` | % | 0-100, step 1 | 20 | Battery SOC at the start of the current charging session |
-| `number.eveus_target_soc` | % | 0-100, step 5 | 80 | Target SOC for ETA calculations |
-| `number.eveus_battery_capacity` | kWh | 10-160, step 1 | 50 | EV battery capacity |
-| `number.eveus_soc_correction` | % | 0-20, step 0.5 | 7.5 | Charging loss correction |
+| `number.eveus_ev_charger_initial_soc` | % | 0-100, step 1 | 20 | Battery SOC at the start of the current charging session |
+| `number.eveus_ev_charger_target_soc` | % | 0-100, step 5 | 80 | Target SOC for ETA calculations |
+| `number.eveus_ev_charger_battery_capacity` | kWh | 10-160, step 1 | 50 | EV battery capacity |
+| `number.eveus_ev_charger_soc_correction` | % | 0-20, step 0.5 | 7.5 | Charging loss correction |
 | `sensor.eveus_ev_charger_soc_energy` | kWh | - | - | Estimated energy currently in the EV battery |
 | `sensor.eveus_ev_charger_soc_percent` | % | - | - | Estimated battery percentage |
 | `sensor.eveus_ev_charger_time_to_target_soc` | Sensor | - | - | Human-readable ETA to target SOC |
 | `sensor.eveus_ev_charger_charging_finish_time` | Timestamp | - | - | Absolute finish time for automations and timestamp cards |
 
-Migration from old helpers is intentionally simple: replace the prefix `input_number.ev_` with `number.eveus_` in cards and automations. For example, `input_number.ev_initial_soc` becomes `number.eveus_initial_soc`.
+Migration from old helpers is intentionally simple: replace the prefix `input_number.ev_` with `number.eveus_ev_charger_` in cards and automations. For example, `input_number.ev_initial_soc` becomes `number.eveus_ev_charger_initial_soc`.
 
-SOC uses the charger's native `sessionEnergy` value. The charger resets this value on every new plug-in, so continuous charging sessions survive Home Assistant restarts without a synthetic baseline. If you unplug and later resume charging, update `number.eveus_initial_soc` to the current battery percentage before the next session starts.
+SOC uses the charger's native `sessionEnergy` value. The charger resets this value on every new plug-in, so continuous charging sessions survive Home Assistant restarts without a synthetic baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
 
 ### Adaptive Charging And Schedules
 
@@ -192,7 +192,7 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 A complete, ready-to-paste Lovelace view that exposes **every Eveus capability** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml). It covers:
 
 - Live status tiles (state, car connected, voltage/current/power)
-- SOC card with the four `number.eveus_*` inputs and the SOC/ETA sensors
+- SOC card with the four `number.eveus_ev_charger_*` inputs and the SOC/ETA sensors
 - All writable controls — current slider, stop / one-charge switches, adaptive mode, time-zone select, sync / refresh / reset buttons
 - Both on-device schedule slots with native HH:MM time pickers
 - Session totals, lifetime counters, tariffs, and session cost
@@ -213,7 +213,7 @@ A complete, ready-to-paste Lovelace view that exposes **every Eveus capability**
 | Setup cannot connect | Charger is powered on, HA can reach the charger IP/hostname, credentials are correct, selected model matches the charger |
 | Controls do not respond | Connection Quality, charger online state, credentials via Reconfigure, then wait one coordinator refresh |
 | SOC sensors are missing | SOC monitoring is set to Advanced under Configure, then restart/reload the integration if just changed |
-| SOC looks wrong after unplug/replug | Update `number.eveus_initial_soc` to the real battery percentage before starting the next session |
+| SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
 
 ## Privacy And Diagnostics
