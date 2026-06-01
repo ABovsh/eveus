@@ -155,9 +155,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         value: Any,
         *,
         retry: bool = True,
+        extra: dict[str, Any] | None = None,
     ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
-        success = await self._command_manager.send_command(command, value, retry=retry)
+        success = await self._command_manager.send_command(
+            command, value, retry=retry, extra=extra
+        )
         if success:
             self._schedule_post_command_refresh()
         return success

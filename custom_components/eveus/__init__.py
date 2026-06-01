@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, CONF_HOST, CONF_USERNAME, CONF_PASSWORD
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
@@ -43,6 +43,7 @@ from .common_network import EveusUpdater
 from .utils import (
     get_device_suffix,
     get_next_device_number,
+    get_safe_value,
     is_device_number_taken,
     normalize_soc_input,
 )
@@ -164,6 +165,36 @@ def _migrate_soc_number_entity_ids(reg: er.EntityRegistry, device_number: int) -
                 new_entity_id,
                 err,
             )
+
+
+def _ocpp_issue_id(entry: ConfigEntry) -> str:
+    """Return the repair issue id flagging that OCPP is enabled."""
+    return f"ocpp_enabled_{entry.entry_id}"
+
+
+def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None:
+    """Raise or clear the OCPP-enabled warning based on the latest poll.
+
+    When OCPP is enabled the charger is driven by the OCPP backend / mobile
+    app, which can override Charging Current, limits, and schedule, so those
+    Home Assistant controls may not take effect. Surfaced as a non-fixable
+    warning that auto-clears the moment OCPP is turned off — even if that
+    happens from the mobile app rather than from HA.
+    """
+    value = get_safe_value(updater.data, "ocppEnabled", int) if updater.data else None
+    if value == 1:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _ocpp_issue_id(entry),
+            is_fixable=False,
+            is_persistent=False,
+            issue_domain=DOMAIN,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="ocpp_enabled",
+        )
+    else:
+        ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
 
 
 async def async_setup(_hass: HomeAssistant, _config: dict[str, Any]) -> bool:
@@ -373,6 +404,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         await updater.async_config_entry_first_refresh()
 
+        # Keep the OCPP-enabled warning in sync with every poll, so it reflects
+        # toggles made from the charger UI or mobile app, not just from HA.
+        @callback
+        def _refresh_ocpp_issue() -> None:
+            _update_ocpp_issue(hass, entry, updater)
+
+        entry.async_on_unload(updater.async_add_listener(_refresh_ocpp_issue))
+        _refresh_ocpp_issue()
+
         # DataUpdateCoordinator constructed with config_entry already registers
         # async_shutdown on the entry unload lifecycle — no manual registration.
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -394,4 +434,5 @@ async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:
     """Unload a config entry."""
+    ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

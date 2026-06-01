@@ -127,7 +127,7 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
     for name in ("Force Refresh", "Reset Counter A", "Reset Counter B", "Sync Time"):
         expected["button"].add(_slug(name))
     expected["select"].add(_slug("Time Zone"))
-    for name in ("Car Connected", "Session Active"):
+    for name in ("Car Connected", "Session Active", "OCPP Connected"):
         expected["binary_sensor"].add(_slug(name))
     return expected
 

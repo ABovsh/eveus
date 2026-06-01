@@ -9,6 +9,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
@@ -84,6 +85,35 @@ class EveusSessionActiveBinarySensor(WriteOnChangeMixin, BaseEveusEntity, Binary
         self._write_if_changed(self.is_on)
 
 
+class EveusOcppConnectedBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
+    """True while the charger holds a live link to the OCPP backend."""
+
+    ENTITY_NAME = "OCPP Connected"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:cloud-check"
+
+    def __init__(self, updater, device_number) -> None:
+        super().__init__(updater, device_number)
+        self._init_write_on_change()
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the OCPP backend link is up, or None if unknown."""
+        if not self.available:
+            return None
+        value = get_safe_value(self._updater.data, "ocppconnected", int)
+        if value not in (0, 1):
+            return None
+        return value == 1
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        self._write_if_changed(self.is_on)
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -96,4 +126,5 @@ async def async_setup_entry(
     async_add_entities([
         EveusCarConnectedBinarySensor(updater, device_number),
         EveusSessionActiveBinarySensor(updater, device_number),
+        EveusOcppConnectedBinarySensor(updater, device_number),
     ])

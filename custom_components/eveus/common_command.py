@@ -50,8 +50,20 @@ class CommandManager:
         delay = _COMMAND_RETRY_BACKOFF[attempt] + random.uniform(0, _COMMAND_RETRY_JITTER)
         await asyncio.sleep(delay)
 
-    async def send_command(self, command: str, value: Any, *, retry: bool = True) -> bool:
-        """Send command with rate limiting, retry/backoff, and error handling."""
+    async def send_command(
+        self,
+        command: str,
+        value: Any,
+        *,
+        retry: bool = True,
+        extra: dict[str, Any] | None = None,
+    ) -> bool:
+        """Send command with rate limiting, retry/backoff, and error handling.
+
+        ``extra`` adds sibling form fields to the same request. Some firmware
+        settings (e.g. OCPP) are only honored when several fields are written
+        together as one "save" form, not as a bare single-field write.
+        """
         async with self._lock:
             # Rate limit: minimum 1 second between commands
             time_since_last = time.time() - self._last_command_time
@@ -63,7 +75,7 @@ class CommandManager:
                 retry_attempts = _COMMAND_RETRY_ATTEMPTS if retry else 0
                 for attempt in range(retry_attempts + 1):
                     try:
-                        return await self._post_command(command, value)
+                        return await self._post_command(command, value, extra)
                     except aiohttp.ClientResponseError as err:
                         if err.status == 401:
                             self._consecutive_failures += 1
@@ -113,11 +125,16 @@ class CommandManager:
             finally:
                 self._last_command_time = time.time()
 
-    async def _post_command(self, command: str, value: Any) -> bool:
+    async def _post_command(
+        self, command: str, value: Any, extra: dict[str, Any] | None = None
+    ) -> bool:
         """Issue a single HTTP request to the charger and return success."""
         session = self._updater.get_session()
 
-        payload = urlencode({"pageevent": command, command: value})
+        fields = {"pageevent": command, command: value}
+        if extra:
+            fields.update(extra)
+        payload = urlencode(fields)
         async with session.post(
             self._updater.url_for("/pageEvent"),
             auth=self._updater.basic_auth,

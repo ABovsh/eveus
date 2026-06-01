@@ -4,7 +4,10 @@
 
 ### ✨ New
 - **SOC monitoring modes.** Choose **Basic** (charging control only) or **Advanced** during setup. Advanced now creates its own `number.eveus_initial_soc`, `number.eveus_target_soc`, `number.eveus_battery_capacity`, and `number.eveus_soc_correction` entities automatically — no manual `input_number` helpers to create. Switch modes anytime from the integration's Configure dialog.
-- **Ukrainian translation.** Setup, the SOC-monitoring options and field, the dashboard-migration notice, and **all entity names** (sensors, controls, buttons, schedules) are now shown in Ukrainian when Home Assistant runs in Ukrainian. Entity IDs are unchanged.
+- **Connect to OCPP** switch (`switch.eveus_connect_to_ocpp`) — connect the charger to the OCPP backend (used by the Eveus mobile app) directly from Home Assistant, matching the "Connect to OCPP" control in the charger's web interface. When on, the charger links to the OCPP backend; when off, it returns to full local control.
+- **`binary_sensor.eveus_ocpp_connected`** (`device_class: connectivity`, diagnostic) — `on` while the charger holds a live link to the OCPP backend, so you can see at a glance whether the cloud link is actually up.
+- **OCPP-enabled warning.** While OCPP is on, a Home Assistant Repairs warning explains that Charging Current, charge limits, and the charging schedule may be overridden by the OCPP backend and may not take effect, and gives step-by-step instructions for turning OCPP off again (Settings → Devices & Services → Eveus → your charger → the **Connect to OCPP** switch). It clears automatically the moment OCPP is disabled — including when toggled from the mobile app rather than from Home Assistant.
+- **Ukrainian translation.** Setup, the SOC-monitoring options and field, the dashboard-migration notice, the OCPP warning, and **all entity names** (sensors, controls, buttons, schedules) are now shown in Ukrainian when Home Assistant runs in Ukrainian. Entity IDs are unchanged.
 
 ### 🔧 Changed
 - SOC %/kWh sensors are available as soon as the charger is online (no longer wait on external helpers).
