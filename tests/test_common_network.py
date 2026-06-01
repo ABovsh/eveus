@@ -186,6 +186,26 @@ def test_update_data_raises_update_failed_for_bad_json(
     assert updater.connection_quality["last_error"] == "JSONDecodeError"
 
 
+@pytest.mark.parametrize(
+    "bad_current_set",
+    [float("nan"), float("inf"), "nan", "not-a-number", True],
+)
+def test_update_data_rejects_non_finite_current_set(
+    monkeypatch: pytest.MonkeyPatch,
+    bad_current_set,
+) -> None:
+    """A plausible state with a corrupt currentSet must fail the poll, not come online."""
+    session = _Session(
+        _Response(payload={"state": 4, "currentSet": bad_current_set, "powerMeas": 7200})
+    )
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+    assert updater.connection_quality["last_error"] == "ValueError"
+
+
 def test_update_data_raises_update_failed_for_non_dict_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

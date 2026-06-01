@@ -332,6 +332,18 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # misrouted host that happens to return a plausible bare state.
                 if "currentSet" not in new_data:
                     raise ValueError("Response missing required Eveus 'currentSet' field")
+                # A genuine /main payload always carries a finite numeric
+                # currentSet. Reject NaN/inf/bool/non-numeric here so a misrouted
+                # or corrupt response cannot come online with garbage controls.
+                raw_current_set = new_data["currentSet"]
+                if isinstance(raw_current_set, bool):
+                    raise ValueError("Eveus 'currentSet' field is boolean")
+                try:
+                    current_set_value = float(raw_current_set)
+                except (TypeError, ValueError) as err:
+                    raise ValueError("Eveus 'currentSet' field is not numeric") from err
+                if not math.isfinite(current_set_value):
+                    raise ValueError("Eveus 'currentSet' field is not finite")
                 raw_state = new_data["state"]
                 if isinstance(raw_state, bool):
                     raise ValueError("Eveus 'state' field is boolean")

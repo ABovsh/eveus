@@ -29,7 +29,8 @@
                     "username": "Username",
                     "password": "Password",
                     "model": "Charger Model (16A, 32A or 48A)",
-                    "phases": "Phases (1 = single-phase, 3 = three-phase)"
+                    "phases": "Phases (1 = single-phase, 3 = three-phase)",
+                    "soc_mode": "SOC monitoring"
                 }
             },
             "reauth_confirm": {
@@ -113,7 +114,8 @@
                             "username": "Username",
                             "password": "Password",
                             "model": "Charger Model (16A, 32A or 48A)",
-                            "phases": "Phases (1 = single-phase, 3 = three-phase)"
+                            "phases": "Phases (1 = single-phase, 3 = three-phase)",
+                            "soc_mode": "SOC monitoring"
                         }
                     }
                 },
@@ -131,8 +133,8 @@
             }
         },
         "soc_dashboard_update": {
-            "title": "Eveus: update your SOC dashboard cards",
-            "description": "Eveus now provides SOC inputs as native number entities. For dashboard cards and automations, replace the old helper prefix `input_number.ev_` with `number.eveus_`: `input_number.ev_initial_soc` -> `number.eveus_initial_soc`, `input_number.ev_target_soc` -> `number.eveus_target_soc`, `input_number.ev_battery_capacity` -> `number.eveus_battery_capacity`, and `input_number.ev_soc_correction` -> `number.eveus_soc_correction`. After no dashboard cards or automations reference `input_number.ev_*`, you can delete the old helpers."
+            "title": "Eveus: update SOC cards and automations to use native entities",
+            "description": "Eveus integration now creates the SOC input entities automatically for your Eveus charger device.\n\nThese new native entities replace the manually created `input_number.ev_*` helpers that were used before. The existing values are copied automatically, so you do not need to enter them again.\n\nPlease update all dashboard cards, automations, scripts, and templates that reference the old SOC helper entities.\n\nTo migrate, replace the old entity-ID prefix `input_number.ev_` with the new native Eveus prefix `number.eveus_`. One find-and-replace updates all four SOC inputs:\n\n- `input_number.ev_initial_soc` → `number.eveus_initial_soc`\n- `input_number.ev_target_soc` → `number.eveus_target_soc`\n- `input_number.ev_battery_capacity` → `number.eveus_battery_capacity`\n- `input_number.ev_soc_correction` → `number.eveus_soc_correction`\n\nYour existing `input_number.ev_*` helpers are left untouched. Eveus integration will not delete or modify any of them automatically.\n\nOnce you migrate all dashboards, automations, scripts, and templates to the new `number.eveus_*` entities, you can safely delete the old helpers if you no longer need them."
         }
     }
 }

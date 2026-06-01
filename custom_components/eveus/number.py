@@ -278,8 +278,9 @@ class EveusSocConfigNumber(
 
     async def async_set_native_value(self, value: float) -> None:
         """Clamp, store, persist, and push a new SOC-input value."""
+        raw = _validate_finite_number(value, self.ENTITY_NAME)
         lo, hi = self.native_min_value, self.native_max_value
-        clamped = max(lo, min(hi, float(value)))
+        clamped = max(lo, min(hi, raw))
         self._attr_native_value = clamped
         self._write_if_changed(clamped)
         self._push()

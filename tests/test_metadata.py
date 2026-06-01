@@ -50,7 +50,7 @@ def test_hacs_metadata_has_allowed_keys_only() -> None:
         "render_readme",
         "homeassistant",
     }
-    assert hacs["homeassistant"] == "2024.4.0"
+    assert hacs["homeassistant"] == "2025.1.0"
 
 
 def test_translation_state_attributes_use_dictionary_shape() -> None:
@@ -90,7 +90,7 @@ def test_soc_dashboard_repair_issue_lists_exact_entity_replacements() -> None:
         ("input_number.ev_battery_capacity", "number.eveus_battery_capacity"),
         ("input_number.ev_soc_correction", "number.eveus_soc_correction"),
     ):
-        assert f"`{old_entity}` -> `{new_entity}`" in description
+        assert f"`{old_entity}` → `{new_entity}`" in description
 
 
 def test_brand_images_are_complete_and_sized() -> None:

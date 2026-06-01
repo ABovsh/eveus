@@ -66,6 +66,24 @@ def test_set_value_clamps_to_limits(monkeypatch) -> None:
     assert n_cap.native_value == 10
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), True, "abc"])
+def test_set_value_rejects_non_finite_input(monkeypatch, bad) -> None:
+    """SOC inputs must reject NaN/inf/bool/non-numeric instead of silently clamping."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n_cap = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    n_cap.hass = HelperHass({})
+    disable_state_writes(n_cap)
+    monkeypatch.setattr(number_module, "async_dispatcher_send", lambda *a, **k: None)
+
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(n_cap.async_set_native_value(bad))
+    # Value untouched by the rejected write.
+    assert n_cap.native_value == 50
+
+
 def test_soc_numbers_suggest_simple_entity_ids() -> None:
     updater = _updater()
     calc = CachedSOCCalculator()

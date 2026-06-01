@@ -1,12 +1,19 @@
 # Changelog
 
-## 4.10.0-rc.1 - 2026-05-31
+## 4.10.0-rc.1 - 2026-06-01
 
 ### ✨ New
 - **SOC monitoring modes.** Choose **Basic** (charging control only) or **Advanced** during setup. Advanced now creates its own `number.eveus_initial_soc`, `number.eveus_target_soc`, `number.eveus_battery_capacity`, and `number.eveus_soc_correction` entities automatically — no manual `input_number` helpers to create. Switch modes anytime from the integration's Configure dialog.
+- **Ukrainian translation.** Setup, the SOC-monitoring options, the **SOC monitoring** field, and the dashboard-migration notice are now available in Ukrainian.
 
 ### 🔧 Changed
 - SOC %/kWh sensors are available as soon as the charger is online (no longer wait on external helpers).
+- **Minimum Home Assistant version is now 2025.1.**
+- The **SOC monitoring** field is now labelled in the Reconfigure and repair dialogs (previously showed a raw key).
+
+### 🐛 Fixed
+- An out-of-range or non-numeric value sent to the SOC inputs (Initial SOC, Target SOC, Battery Capacity, SOC Correction) is rejected instead of silently snapping to a limit.
+- A response whose current setpoint is missing, non-numeric, or not a finite number is refused during polling, so a misrouted host can't briefly come online with a garbage `Charging Current`.
 
 ### ⚠️ Behavior change
 - The old `input_number.ev_*` helpers are no longer read. Existing SOC users are moved to Advanced with their Battery Capacity and SOC Correction carried over; update dashboard cards and automations by replacing the prefix `input_number.ev_` with `number.eveus_`; then you may delete the old helpers.
