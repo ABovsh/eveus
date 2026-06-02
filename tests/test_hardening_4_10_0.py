@@ -211,10 +211,10 @@ def test_coordinator_rejects_overflowing_current_set(monkeypatch) -> None:
     assert updater.available is False
 
 
-# --- F11 — SOC ETA says "unavailable" (not "Helpers Required") when helpers
-#           are set but charger telemetry is missing ---------------------------
+# --- F11 — SOC ETA is unknown (not a stale time) when the SOC inputs are set
+#           but charger telemetry is missing -------------------------------------
 
-def test_time_to_target_shows_unavailable_when_telemetry_missing() -> None:
+def test_time_to_target_unknown_when_telemetry_missing() -> None:
     from custom_components.eveus.ev_sensors import (
         TimeToTargetSocSensor,
         CachedSOCCalculator,
@@ -224,10 +224,10 @@ def test_time_to_target_shows_unavailable_when_telemetry_missing() -> None:
     calc.set_value("initial_soc", 20)
     calc.set_value("battery_capacity", 50)
     calc.set_value("soc_correction", 7.5)
-    calc.set_value("target_soc", 80)  # helpers + target all present
+    calc.set_value("target_soc", 80)  # all SOC inputs present
 
     # Updater online but payload carries no power/SOC telemetry.
     updater = _Updater({"state": 4})
     sensor = TimeToTargetSocSensor(updater, 1, calc)
 
-    assert sensor._get_sensor_value() == "unavailable"
+    assert sensor._get_sensor_value() is None

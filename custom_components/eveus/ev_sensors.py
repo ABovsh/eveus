@@ -28,13 +28,6 @@ _LOGGER = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Input entity names
-# =============================================================================
-
-_HELPERS_REQUIRED = "Helpers Required"
-
-
-# =============================================================================
 # Shared SOC calculator (pushed-value holder)
 # =============================================================================
 
@@ -263,38 +256,16 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
     _attr_icon = "mdi:timer"
     _requires_helpers = False
 
-    def __init__(
-        self,
-        updater,
-        device_number: int = 1,
-        soc_calculator: CachedSOCCalculator | None = None,
-    ) -> None:
-        """Initialize with default cached value."""
-        super().__init__(updater, device_number, soc_calculator)
-        self._cached_value = _HELPERS_REQUIRED
-
-    def _get_sensor_value(self) -> str:
-        """Calculate time to target."""
-        if not self._soc_calculator.are_helpers_available():
-            self._cached_value = _HELPERS_REQUIRED
-            return self._cached_value
-
-        if self._soc_calculator.target_soc is None:
-            # The core SOC helpers are present but the optional Target SOC is
-            # not — prompt for the one missing piece instead of the generic
-            # "Helpers Required", which implies nothing is configured.
-            self._cached_value = "Set Target SOC"
-            return self._cached_value
-
+    def _get_sensor_value(self) -> str | None:
+        """Time to target as a UI string, or None (unknown) when it can't be
+        computed yet — SOC inputs not pushed, no Target SOC, or the charger
+        isn't reporting power/SOC telemetry. Returning None drops any stale
+        "2h 15m" instead of freezing it."""
         try:
             inputs = self._resolve_remaining_inputs()
             if inputs is None:
-                # Helpers are configured (checked above) but live charger
-                # telemetry (power/SOC) is missing — show "unavailable" rather
-                # than the misleading "Helpers Required", which implies nothing
-                # is set up. Also drops a stale "2h 15m" instead of freezing it.
-                self._cached_value = "unavailable"
-                return self._cached_value
+                self._cached_value = None
+                return None
             result = calculate_remaining_time(*inputs)
             self._cached_value = result
             return result

@@ -227,11 +227,11 @@ def test_sensitive_keys_flags_identifying_fields_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# I2 — Time to Target SOC: distinguish "set a target" from "no helpers"
+# I2 — Time to Target SOC: unknown (None) when it can't be computed
 # ---------------------------------------------------------------------------
 
-def test_time_to_target_prompts_for_target_when_only_target_missing() -> None:
-    # Core SOC values pushed, but no target_soc.
+def test_time_to_target_unknown_when_target_missing() -> None:
+    # Core SOC values pushed, but no target_soc → ETA can't be computed.
     calc = CachedSOCCalculator()
     calc.set_value("initial_soc", EV_HELPERS["input_number.ev_initial_soc"])
     calc.set_value("battery_capacity", EV_HELPERS["input_number.ev_battery_capacity"])
@@ -240,16 +240,16 @@ def test_time_to_target_prompts_for_target_when_only_target_missing() -> None:
     sensor = TimeToTargetSocSensor(updater, 1, calc)
     disable_state_writes(sensor)
 
-    assert sensor._get_sensor_value() == "Set Target SOC"
+    assert sensor._get_sensor_value() is None
 
 
-def test_time_to_target_reports_helpers_required_when_no_helpers() -> None:
+def test_time_to_target_unknown_when_no_inputs() -> None:
     updater = EveusTestUpdater(data={"powerMeas": 5000, "sessionEnergy": 10})
     sensor = TimeToTargetSocSensor(updater, 1, CachedSOCCalculator())
     sensor.hass = HelperHass({})
     disable_state_writes(sensor)
 
-    assert sensor._get_sensor_value() == "Helpers Required"
+    assert sensor._get_sensor_value() is None
 
 
 # ---------------------------------------------------------------------------

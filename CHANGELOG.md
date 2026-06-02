@@ -2,32 +2,31 @@
 
 ## 4.10.0-rc.1 - 2026-06-01
 
-### ✨ New
-- **Integration mode (Basic or Advanced).** A new **Integration mode** choice at setup lets you decide how much the integration does:
-  - **Basic** — charging control only. No SOC sensors are created.
-  - **Advanced** — everything in Basic, plus battery state-of-charge tracking.
-  In Advanced mode the integration now creates its own SOC inputs as native entities — `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, `number.eveus_ev_charger_soc_correction` — so there are no manual `input_number` helpers to create. You can switch between Basic and Advanced anytime from the integration's **Configure** dialog.
-- **Connect to OCPP control.** A new `switch.eveus_connect_to_ocpp` connects the charger to the OCPP backend (used by the Eveus mobile app) directly from Home Assistant, mirroring the "Connect to OCPP" control in the charger's web interface. Turn it off to return the charger to full local control. A companion `binary_sensor.eveus_ocpp_connected` (connectivity, diagnostic) shows at a glance whether the cloud link is actually up.
-- **OCPP-active warning.** While OCPP is connected, a Home Assistant Repairs notice explains that Charging Current, charge limits, and the charging schedule may be overridden by the OCPP backend, and walks you through turning it off again (Settings → Devices & Services → Eveus → your charger → the **Connect to OCPP** switch). It clears automatically once OCPP is disabled — including when you toggle it from the mobile app rather than Home Assistant.
-- **Ukrainian translation.** Setup, the Integration mode options and field, the dashboard-migration notice, the OCPP warning, and **all entity names** (sensors, controls, buttons, schedules) are shown in Ukrainian when Home Assistant runs in Ukrainian. Entity IDs are unchanged.
+### ✨ Ukrainian localization
+- The integration is now fully available in Ukrainian — setup, the mode options, the migration notice, the OCPP warning, and **every entity name** (sensors, controls, buttons, schedules). It appears automatically when Home Assistant runs in Ukrainian; entity IDs are unchanged.
+
+### ✨ Automatic SOC inputs — no more manual helpers
+- You no longer create `input_number.ev_*` helpers by hand for battery tracking. The integration now creates the four SOC inputs for you as native entities: `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, `number.eveus_ev_charger_soc_correction`.
+- A new **Integration mode** option chooses what the integration sets up:
+  - **Basic** — full charger monitoring and control: voltage, current, power, energy, temperatures, costs, schedules, OCPP, and every switch and button.
+  - **Advanced** — everything in Basic, **plus** EV battery tracking: SOC %, SOC Energy, Time to Target SOC, Charging Finish Time, and the four SOC inputs above.
+- Switch between Basic and Advanced anytime from **Configure**.
+- **Upgrading:** existing SOC users are moved to Advanced automatically, with Battery Capacity and SOC Correction carried over — nothing to re-enter.
+- **If you used the old helpers:** update your dashboards, automations, scripts, and templates to the new entities by replacing the prefix `input_number.ev_` with `number.eveus_ev_charger_`. Once everything points at the new entities, you can delete the old `input_number.ev_*` helpers.
+- The old **Input Entities Status** diagnostic sensor has been removed — it only existed to remind you to create those helpers, which the integration now handles.
+
+### ✨ OCPP control
+- New **Connect to OCPP** switch (`switch.eveus_connect_to_ocpp`) links the charger to the OCPP backend (used by the Eveus mobile app) straight from Home Assistant. Turn it off to return the charger to full local control. A companion `binary_sensor.eveus_ocpp_connected` reflects the charger's reported OCPP connection state.
+- While OCPP is connected, a Home Assistant Repairs notice explains that Charging Current, charge limits, and the charging schedule may be overridden by the OCPP backend, and walks you through turning it off again. It clears automatically once OCPP is disabled — including when toggled from the mobile app.
 
 ### 🔧 Changed
-- SOC %/kWh sensors are available as soon as the charger is online — they no longer wait on external helpers.
 - **Minimum Home Assistant version is now 2025.1.**
-- The mode chooser is now labelled **Integration mode** everywhere it appears (setup, Reconfigure, Configure, and the repair dialog); it previously read "SOC monitoring", which only described the Advanced option.
-- The native SOC inputs keep Home Assistant's normal device-prefixed IDs such as `number.eveus_ev_charger_initial_soc`, instead of being renamed to shorter `number.eveus_*` IDs.
+- SOC %/kWh sensors are available as soon as the charger is online.
 
 ### 🐛 Fixed
 - SOC inputs (Initial SOC, Target SOC, Battery Capacity, SOC Correction) now reject an out-of-range or non-numeric value instead of silently snapping it to the nearest limit.
 - During polling, a reading with a missing or non-finite current setpoint is rejected, so a misrouted host can no longer briefly come online showing a garbage `Charging Current`.
-- The SOC ETA sensors (Time to Target SOC, Charging Finish Time) now show `unavailable` — rather than a stale "Helpers Required" message — when the inputs are set but the charger isn't reporting the telemetry yet.
 - An insecure (`http://`) connection warning now appears before the integration connects, on every setup, Reconfigure, and repair attempt. Bracketed IPv6 addresses are accepted as the charger host.
-
-### ⚠️ Behavior change
-- The old `input_number.ev_*` helpers are no longer read. Existing SOC users are moved to Advanced with their Battery Capacity and SOC Correction carried over; update dashboard cards and automations by replacing the prefix `input_number.ev_` with `number.eveus_ev_charger_`; then you may delete the old helpers.
-
-### ⚠️ Breaking
-- Removed the `Input Entities Status` diagnostic sensor — it only existed to prompt for manual helper creation, which Advanced mode now handles.
 
 ## 4.9.2 - 2026-05-29
 

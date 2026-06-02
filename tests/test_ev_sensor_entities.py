@@ -200,13 +200,16 @@ def test_soc_reprojects_when_initial_soc_changes() -> None:
 
 
 
-def test_time_to_target_returns_helper_required_for_missing_helpers() -> None:
+def test_time_to_target_unknown_when_inputs_not_pushed() -> None:
+    # No SOC inputs pushed yet (e.g. the startup window before the native
+    # number entities load): the ETA can't be computed, so it reports unknown
+    # (None) rather than a placeholder string.
     sensor = TimeToTargetSocSensor(
         EveusTestUpdater({"sessionEnergy": "16", "powerMeas": "7000"})
     )
     sensor.hass = HelperHass({})
 
-    assert sensor._get_sensor_value() == "Helpers Required"
+    assert sensor._get_sensor_value() is None
 
 
 def test_soc_calculator_optional_target_absent_keeps_core_available() -> None:

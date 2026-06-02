@@ -236,6 +236,6 @@ def test_time_to_target_resets_cache_when_helpers_missing() -> None:
     # Prime a stale cached ETA as if a previous tick had succeeded.
     sensor._cached_value = "2h 15m"
 
-    # Helpers unavailable → must reset, not keep showing "2h 15m".
-    assert sensor._get_sensor_value() == "Helpers Required"
-    assert sensor._cached_value == "Helpers Required"
+    # Inputs unavailable → must reset to unknown, not keep showing "2h 15m".
+    assert sensor._get_sensor_value() is None
+    assert sensor._cached_value is None
