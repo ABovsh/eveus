@@ -93,7 +93,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label |
 | `binary_sensor.eveus_ev_charger_car_connected` | Binary sensor | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Binary sensor | Charging session is active or paused |
-| `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | OCPP backend link is up (diagnostic) |
+| `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | Reported OCPP connection state (diagnostic) |
 | `number.eveus_ev_charger_charging_current` | Number | Current limit slider with model-aware bounds |
 | `switch.eveus_ev_charger_stop_charging` | Switch | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Switch | Enable one-charge mode |

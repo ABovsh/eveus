@@ -16,7 +16,7 @@
 - The old **Input Entities Status** diagnostic sensor has been removed — it only existed to remind you to create those helpers, which the integration now handles.
 
 ### ✨ OCPP control
-- New **Connect to OCPP** switch (`switch.eveus_connect_to_ocpp`) links the charger to the OCPP backend (used by the Eveus mobile app) straight from Home Assistant. Turn it off to return the charger to full local control. A companion `binary_sensor.eveus_ocpp_connected` reflects the charger's reported OCPP connection state.
+- New **Connect to OCPP** switch (`switch.eveus_ev_charger_connect_to_ocpp`) links the charger to the OCPP backend (used by the Eveus mobile app) straight from Home Assistant. Turn it off to return the charger to full local control. A companion `binary_sensor.eveus_ev_charger_ocpp_connected` reflects the charger's reported OCPP connection state.
 - While OCPP is connected, a Home Assistant Repairs notice explains that Charging Current, charge limits, and the charging schedule may be overridden by the OCPP backend, and walks you through turning it off again. It clears automatically once OCPP is disabled — including when toggled from the mobile app.
 
 ### 🔧 Changed
