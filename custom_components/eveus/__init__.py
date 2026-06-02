@@ -144,7 +144,10 @@ def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None
             severity=ir.IssueSeverity.WARNING,
             translation_key="ocpp_enabled",
         )
-    else:
+    elif value == 0:
+        # Only an explicit "off" clears the warning. A missing or out-of-domain
+        # ocppEnabled (None) means the firmware dropped/garbled the field — leave
+        # the prior issue state untouched rather than falsely dismissing it.
         ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
 
 
@@ -215,7 +218,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if new_data != entry.data:
         update_kwargs["data"] = new_data
 
-        if getattr(entry, "unique_id", None) == host:
+        if host is not None and getattr(entry, "unique_id", None) == host:
             update_kwargs["unique_id"] = new_data[CONF_HOST]
 
         if isinstance(host, str) and isinstance(entry.title, str) and host in entry.title:
@@ -259,6 +262,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         if not password:
             _create_invalid_config_issue(hass, entry, "missing_password")
             raise ConfigEntryError("No password specified")
+
+        from .config_flow import validate_credentials
+
+        try:
+            # Re-apply the config-flow credential rules to stored data so a
+            # hand-edited or pre-validation entry (over-long, or ':' in the
+            # username, which breaks Basic Auth) surfaces a repair instead of
+            # silently failing every poll.
+            username, password = validate_credentials(username, password)
+        except vol.Invalid as err:
+            _create_invalid_config_issue(hass, entry, "invalid_credentials")
+            raise ConfigEntryError(f"Invalid credentials: {type(err).__name__}") from err
         if model not in MODEL_MAX_CURRENT:
             _create_invalid_config_issue(hass, entry, "invalid_model")
             raise ConfigEntryError("Invalid model specified")
@@ -271,7 +286,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         raw_device_number = entry.data.get("device_number")
         try:
             device_number = int(raw_device_number)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             device_number = None
 
         if (
@@ -327,7 +342,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
         try:
             phases = int(raw_phases)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             phases = DEFAULT_PHASES
         if phases not in PHASE_OPTIONS:
             phases = DEFAULT_PHASES

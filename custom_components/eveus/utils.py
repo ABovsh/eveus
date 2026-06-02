@@ -25,9 +25,14 @@ def normalize_soc_input(key: str, value, default: float) -> float:
     the SOC calculator.
     """
     lo, hi = SOC_INPUT_LIMITS[key]
+    # A bool is an int subclass; float(True) is 1.0, which would masquerade as a
+    # real 1%/1 kWh seed. Reject it so a stray bool falls back to the default.
+    if isinstance(value, bool):
+        return float(default)
     try:
         v = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: float() of a multi-thousand-digit JSON/stored integer.
         return float(default)
     if not math.isfinite(v):
         return float(default)

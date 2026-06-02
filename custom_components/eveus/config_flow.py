@@ -56,6 +56,7 @@ from .const import (
     SOC_INPUT_LIMITS,
     get_soc_mode,
 )
+from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,15 +80,16 @@ _SOC_MODE_SELECTOR = SelectSelector(
 )
 
 
-def _prefill_from_helper(hass, entity_id: str, fallback: float) -> float:
-    """Read a current input_number.* state for prefill, else fallback."""
+def _prefill_from_helper(hass, entity_id: str, key: str, fallback: float) -> float:
+    """Read a current input_number.* state for prefill, else fallback.
+
+    Routes through normalize_soc_input so a non-finite or out-of-range helper
+    state is clamped/rejected rather than seeding the form with a bad default.
+    """
     state = hass.states.get(entity_id)
     if state is None:
         return fallback
-    try:
-        return float(state.state)
-    except (TypeError, ValueError):
-        return fallback
+    return normalize_soc_input(key, state.state, fallback)
 
 
 def build_soc_step_schema(hass) -> vol.Schema:
@@ -95,10 +97,10 @@ def build_soc_step_schema(hass) -> vol.Schema:
     cap_lo, cap_hi = SOC_INPUT_LIMITS["battery_capacity"]
     cor_lo, cor_hi = SOC_INPUT_LIMITS["soc_correction"]
     cap_default = _prefill_from_helper(
-        hass, "input_number.ev_battery_capacity", DEFAULT_BATTERY_CAPACITY
+        hass, "input_number.ev_battery_capacity", "battery_capacity", DEFAULT_BATTERY_CAPACITY
     )
     cor_default = _prefill_from_helper(
-        hass, "input_number.ev_soc_correction", DEFAULT_SOC_CORRECTION
+        hass, "input_number.ev_soc_correction", "soc_correction", DEFAULT_SOC_CORRECTION
     )
     return vol.Schema(
         {
@@ -169,6 +171,11 @@ def _split_host_and_scheme(
     raw_host = raw_host.strip()
     if not raw_host:
         raise vol.Invalid("Host cannot be empty")
+
+    # A bare IPv6 literal (2+ colons, no brackets, no scheme) confuses urlparse,
+    # which reads the trailing group as a port. Bracket it so it parses as a host.
+    if "://" not in raw_host and "[" not in raw_host and raw_host.count(":") >= 2:
+        raw_host = f"[{raw_host}]"
 
     parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
     scheme = parsed.scheme or default_scheme
@@ -298,9 +305,11 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
         raise vol.Invalid("Invalid charger model")
 
     raw_phases = data.get(CONF_PHASES, DEFAULT_PHASES)
+    if isinstance(raw_phases, bool):
+        raise vol.Invalid("Invalid phase count")
     try:
         phases = int(raw_phases)
-    except (TypeError, ValueError) as err:
+    except (TypeError, ValueError, OverflowError) as err:
         raise vol.Invalid("Invalid phase count") from err
     if phases not in PHASE_OPTIONS:
         raise vol.Invalid("Invalid phase count")
@@ -381,6 +390,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except vol.Invalid as err:
         raise InvalidInput(str(err))
 
+    # Warn before connecting: credentials are sent in cleartext over HTTP on the
+    # very first request, so the warning must fire even when the attempt fails
+    # and for every flow that validates (setup, reconfigure, reauth, repair).
+    _warn_if_plaintext(normalized_data[CONF_SCHEME])
+
     try:
         session = aiohttp_client.async_get_clientsession(hass)
         timeout = aiohttp.ClientTimeout(total=10)
@@ -448,7 +462,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(self._host)
                 self._abort_if_unique_id_configured()
 
-                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
                 self._pending_entry = {
                     "title": info["title"],
@@ -527,7 +540,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     self._abort_if_unique_id_configured()
 
-                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
                 return self.async_update_reload_and_abort(
                     entry,
@@ -583,7 +595,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     return self.async_abort(reason="wrong_device")
 
-                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
                 return self.async_update_reload_and_abort(
                     entry,

@@ -352,7 +352,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     raise ValueError("Eveus 'currentSet' field is boolean")
                 try:
                     current_set_value = float(raw_current_set)
-                except (TypeError, ValueError) as err:
+                except (TypeError, ValueError, OverflowError) as err:
+                    # OverflowError: a firmware-supplied integer literal too large
+                    # to fit a float would otherwise escape this guard and the
+                    # outer ValueError handler, skipping failure accounting.
                     raise ValueError("Eveus 'currentSet' field is not numeric") from err
                 if not math.isfinite(current_set_value):
                     raise ValueError("Eveus 'currentSet' field is not finite")

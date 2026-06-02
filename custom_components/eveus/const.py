@@ -84,8 +84,13 @@ def soc_update_signal(entry_id: str) -> str:
 
 
 def get_soc_mode(entry) -> str:
-    """Return the SOC mode for a config entry (defaults to advanced)."""
-    return entry.data.get(CONF_SOC_MODE, SOC_MODE_ADVANCED)
+    """Return the SOC mode for a config entry.
+
+    An absent OR invalid stored value resolves to advanced, so a corrupt
+    ``soc_mode`` can never silently strip the SOC sensors and number entities.
+    """
+    mode = entry.data.get(CONF_SOC_MODE, SOC_MODE_ADVANCED)
+    return mode if mode in SOC_MODE_OPTIONS else SOC_MODE_ADVANCED
 
 
 # Rate States

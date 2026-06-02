@@ -104,8 +104,15 @@ def test_ocpp_issue_cleared_when_disabled(monkeypatch: pytest.MonkeyPatch) -> No
 
     entry = type("E", (), {"entry_id": "abc"})()
 
-    for payload in ({"ocppEnabled": 0}, {}, {"ocppEnabled": None}):
+    # An explicit 0 clears the warning.
+    _update_ocpp_issue(object(), entry, _Updater({"ocppEnabled": 0}))
+    assert deleted == [_ocpp_issue_id(entry)]
+
+    # A missing/None/out-of-domain field must NOT clear it — that means the
+    # firmware dropped/garbled the field, not that the user disabled OCPP.
+    deleted.clear()
+    for payload in ({}, {"ocppEnabled": None}, {"ocppEnabled": "bad"}):
         _update_ocpp_issue(object(), entry, _Updater(payload))
 
     assert not created
-    assert deleted == [_ocpp_issue_id(entry)] * 3
+    assert not deleted

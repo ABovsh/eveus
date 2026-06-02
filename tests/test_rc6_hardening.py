@@ -169,8 +169,13 @@ def test_is_device_number_taken_helper_exists() -> None:
 def test_reauth_emits_plaintext_warning_in_source() -> None:
     import inspect
     from custom_components.eveus import config_flow
-    src = inspect.getsource(config_flow.ConfigFlow.async_step_reauth_confirm)
-    assert "_warn_if_plaintext" in src
+    # The cleartext warning is centralized in validate_input so it fires before
+    # the connect for every flow (setup/reconfigure/reauth/repair), including
+    # failed attempts. Reauth reaches it by calling validate_input.
+    assert "_warn_if_plaintext" in inspect.getsource(config_flow.validate_input)
+    assert "validate_input" in inspect.getsource(
+        config_flow.ConfigFlow.async_step_reauth_confirm
+    )
 
 
 # ---------------------------------------------------------------------------

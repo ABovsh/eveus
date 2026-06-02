@@ -289,9 +289,11 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
         try:
             inputs = self._resolve_remaining_inputs()
             if inputs is None:
-                # Helpers became unavailable mid-session — drop the stale ETA
-                # rather than keeping the last "2h 15m" on screen forever.
-                self._cached_value = _HELPERS_REQUIRED
+                # Helpers are configured (checked above) but live charger
+                # telemetry (power/SOC) is missing — show "unavailable" rather
+                # than the misleading "Helpers Required", which implies nothing
+                # is set up. Also drops a stale "2h 15m" instead of freezing it.
+                self._cached_value = "unavailable"
                 return self._cached_value
             result = calculate_remaining_time(*inputs)
             self._cached_value = result

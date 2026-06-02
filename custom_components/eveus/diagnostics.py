@@ -37,10 +37,26 @@ _SENSITIVE_NAME_RE = re.compile(
 )
 
 
+def _collect_sensitive_keys(value: Any, acc: set[str]) -> None:
+    """Walk nested dicts/lists, adding any key whose name looks identifying."""
+    if isinstance(value, Mapping):
+        for key, sub in value.items():
+            if _SENSITIVE_NAME_RE.search(str(key)):
+                acc.add(key)
+            _collect_sensitive_keys(sub, acc)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _collect_sensitive_keys(item, acc)
+
+
 def _sensitive_keys(data: Mapping[str, Any]) -> set[str]:
-    """Return the explicit + name-heuristic set of keys to redact for `data`."""
+    """Return the explicit + name-heuristic set of keys to redact for `data`.
+
+    The heuristic walks nested structures, so a sensitive key introduced by a
+    future firmware under a nested object is still redacted, not just top-level.
+    """
     keys = set(TO_REDACT)
-    keys.update(key for key in data if _SENSITIVE_NAME_RE.search(str(key)))
+    _collect_sensitive_keys(data, keys)
     return keys
 
 
