@@ -10,7 +10,7 @@
                     "password": "Password",
                     "model": "Charger Model (16A, 32A or 48A)",
                     "phases": "Phases (1 = single-phase, 3 = three-phase)",
-                    "soc_mode": "SOC monitoring"
+                    "soc_mode": "Integration mode"
                 }
             },
             "soc": {
@@ -30,7 +30,7 @@
                     "password": "Password",
                     "model": "Charger Model (16A, 32A or 48A)",
                     "phases": "Phases (1 = single-phase, 3 = three-phase)",
-                    "soc_mode": "SOC monitoring"
+                    "soc_mode": "Integration mode"
                 }
             },
             "reauth_confirm": {
@@ -59,9 +59,9 @@
     "options": {
         "step": {
             "init": {
-                "title": "SOC Monitoring",
+                "title": "Integration mode",
                 "data": {
-                    "soc_mode": "SOC monitoring"
+                    "soc_mode": "Integration mode"
                 }
             }
         }
@@ -307,7 +307,7 @@
                             "password": "Password",
                             "model": "Charger Model (16A, 32A or 48A)",
                             "phases": "Phases (1 = single-phase, 3 = three-phase)",
-                            "soc_mode": "SOC monitoring"
+                            "soc_mode": "Integration mode"
                         }
                     }
                 },

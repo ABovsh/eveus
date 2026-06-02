@@ -75,9 +75,9 @@ Offline chargers are handled quietly, polling backs off, commands surface a Home
 3. Enter the charger address. IP, hostname, full URL, custom port, `http://`, and `https://` are supported.
 4. Enter username and password.
 5. Pick the charger model: **16A**, **32A**, or **48A**.
-6. Pick SOC monitoring mode:
+6. Pick the integration mode:
    - **Basic**: charging control only, no SOC sensors.
-   - **Advanced**: creates SOC input numbers and SOC/ETA sensors.
+   - **Advanced**: also creates SOC input numbers and SOC/ETA sensors.
 
 Use **Configure** to switch Basic/Advanced later. Use **Reconfigure** to change host, credentials, model, or phase count without reinstalling.
 
@@ -212,7 +212,7 @@ A complete, ready-to-paste Lovelace view that exposes **every Eveus capability**
 | --- | --- |
 | Setup cannot connect | Charger is powered on, HA can reach the charger IP/hostname, credentials are correct, selected model matches the charger |
 | Controls do not respond | Connection Quality, charger online state, credentials via Reconfigure, then wait one coordinator refresh |
-| SOC sensors are missing | SOC monitoring is set to Advanced under Configure, then restart/reload the integration if just changed |
+| SOC sensors are missing | Set the integration mode to Advanced under Configure, then restart/reload the integration if just changed |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
 

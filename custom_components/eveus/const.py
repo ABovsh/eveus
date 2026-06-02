@@ -52,7 +52,7 @@ CONF_PHASES: Final[str] = "phases"
 PHASE_OPTIONS: Final[List[int]] = [1, 3]
 DEFAULT_PHASES: Final[int] = 1
 
-# SOC monitoring mode
+# Integration mode (Basic / Advanced); key kept as soc_mode for entry compatibility
 CONF_SOC_MODE: Final[str] = "soc_mode"
 SOC_MODE_BASIC: Final[str] = "basic"
 SOC_MODE_ADVANCED: Final[str] = "advanced"

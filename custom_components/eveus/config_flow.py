@@ -642,7 +642,7 @@ class InvalidDevice(HomeAssistantError):
 
 
 class EveusOptionsFlow(OptionsFlow):
-    """Toggle SOC monitoring mode after setup."""
+    """Toggle the integration mode (Basic / Advanced) after setup."""
 
     def __init__(self, entry) -> None:
         """Store the config entry being edited."""
