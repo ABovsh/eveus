@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.10.0-rc.1 - 2026-06-01
+## 4.10.0 - 2026-06-02
 
 ### ✨ Ukrainian localization
 - The integration is now fully available in Ukrainian — setup, the mode options, the migration notice, the OCPP warning, and **every entity name** (sensors, controls, buttons, schedules). It appears automatically when Home Assistant runs in Ukrainian; entity IDs are unchanged.
