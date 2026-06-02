@@ -13,16 +13,16 @@ sections:
       - type: entities
         show_header_toggle: false
         entities:
-          - entity: number.eveus_battery_capacity
+          - entity: number.eveus_ev_charger_battery_capacity
             name: Battery Capacity
             icon: mdi:car-battery
-          - entity: number.eveus_initial_soc
+          - entity: number.eveus_ev_charger_initial_soc
             name: Initial SOC
             icon: mdi:battery-50
-          - entity: number.eveus_target_soc
+          - entity: number.eveus_ev_charger_target_soc
             name: Target SOC
             icon: mdi:battery-high
-          - entity: number.eveus_soc_correction
+          - entity: number.eveus_ev_charger_soc_correction
             name: Charging Loss
             icon: mdi:battery-minus-variant
           - type: divider
@@ -53,6 +53,10 @@ sections:
         name: Car
         icon: mdi:car-electric
       - type: tile
+        entity: binary_sensor.eveus_ev_charger_session_active
+        name: Session
+        icon: mdi:play-circle-outline
+      - type: tile
         entity: sensor.eveus_ev_charger_power
         name: Power
         icon: mdi:flash
@@ -60,6 +64,10 @@ sections:
       - type: tile
         entity: sensor.eveus_ev_charger_current
         name: Current
+        icon: mdi:current-ac
+      - type: tile
+        entity: sensor.eveus_ev_charger_current_set
+        name: Current Set
         icon: mdi:current-ac
       - type: tile
         entity: sensor.eveus_ev_charger_voltage
@@ -164,6 +172,21 @@ sections:
           - entity: sensor.eveus_ev_charger_adaptive_voltage_threshold
             name: Voltage Threshold
             icon: mdi:sine-wave
+  - type: grid
+    cards:
+      - type: heading
+        heading: OCPP
+        icon: mdi:cloud-sync-outline
+      - type: entities
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: switch.eveus_ev_charger_connect_to_ocpp
+            name: Connect to OCPP
+            icon: mdi:cloud-sync-outline
+          - entity: binary_sensor.eveus_ev_charger_ocpp_connected
+            name: OCPP Connected
+            icon: mdi:cloud-check-outline
   - type: grid
     cards:
       - type: heading
@@ -289,6 +312,9 @@ sections:
           - entity: sensor.eveus_ev_charger_connection_quality
             name: Connection Quality
             icon: mdi:wifi
+          - entity: sensor.eveus_ev_charger_wifi_signal
+            name: WiFi Signal
+            icon: mdi:wifi-strength-2
           - entity: sensor.eveus_ev_charger_ground
             name: Ground
             icon: mdi:earth

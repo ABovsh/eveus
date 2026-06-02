@@ -17,7 +17,7 @@
 
 <img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
 
-Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, multi-charger support, and automation-friendly entities so you never have to write a template sensor.
+Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, optional OCPP backend control, multi-charger support, a localized (English / Ukrainian) UI, and automation-friendly entities so you never have to write a template sensor.
 
 ## ✨ Highlights
 
@@ -38,6 +38,12 @@ Toggle the charger's adaptive throttle and read its selected current cap and vol
 
 ### 🧩 Automation-ready entities
 `Car Connected`, `Session Active`, `Charging Finish Time` (a real `timestamp`), `Session Cost`, schedule controls, and `Connection Quality` are first-class entities — no template sensors to maintain.
+
+### ☁️ OCPP backend control
+Connect the charger to its OCPP backend (for the Eveus mobile app or a charging-network operator) with a single switch, and watch the live connection state via a dedicated binary sensor. While OCPP is on, a Repairs warning explains that Charging Current, limits, and schedules may be overridden by the backend — and how to turn it back off.
+
+### 🌐 Localized UI
+Ships English and Ukrainian translations; Home Assistant renders entity and config-flow text in the user's language automatically.
 
 ### 🛰️ Multi-charger
 Add multiple Eveus chargers; each gets its own device, coordinator, and entity namespace.
@@ -117,6 +123,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 
 | Entity ID | Unit | What it gives you |
 | --- | --- | --- |
+| `sensor.eveus_ev_charger_session_time` | Sensor | Elapsed duration of the current charging session |
 | `sensor.eveus_ev_charger_session_energy` | kWh | Energy delivered in the current session |
 | `sensor.eveus_ev_charger_total_energy` | kWh | Lifetime energy counter |
 | `sensor.eveus_ev_charger_counter_a_energy` | kWh | Resettable energy counter A |
@@ -193,11 +200,11 @@ A complete, ready-to-paste Lovelace view that exposes **every Eveus capability**
 
 - Live status tiles (state, car connected, voltage/current/power)
 - SOC card with the four `number.eveus_ev_charger_*` inputs and the SOC/ETA sensors
-- All writable controls — current slider, stop / one-charge switches, adaptive mode, time-zone select, sync / refresh / reset buttons
+- All writable controls — current slider, stop / one-charge switches, adaptive mode, OCPP backend toggle, time-zone select, sync / refresh / reset buttons
 - Both on-device schedule slots with native HH:MM time pickers
 - Session totals, lifetime counters, tariffs, and session cost
 - Diagnostics — temperatures, leakage, Wi-Fi signal, connection quality
-- 24-hour mini-graph charts for power, current, and temperatures
+- 24-hour mini-graph charts for power and current
 
 **Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the graph cards).
 
