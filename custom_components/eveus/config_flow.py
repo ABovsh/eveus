@@ -305,14 +305,15 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
         raise vol.Invalid("Invalid charger model")
 
     raw_phases = data.get(CONF_PHASES, DEFAULT_PHASES)
+    invalid_phase_count = "Invalid phase count"
     if isinstance(raw_phases, bool):
-        raise vol.Invalid("Invalid phase count")
+        raise vol.Invalid(invalid_phase_count)
     try:
         phases = int(raw_phases)
     except (TypeError, ValueError, OverflowError) as err:
-        raise vol.Invalid("Invalid phase count") from err
+        raise vol.Invalid(invalid_phase_count) from err
     if phases not in PHASE_OPTIONS:
-        raise vol.Invalid("Invalid phase count")
+        raise vol.Invalid(invalid_phase_count)
 
     soc_mode = data.get(CONF_SOC_MODE, SOC_MODE_ADVANCED)
     if soc_mode not in SOC_MODE_OPTIONS:

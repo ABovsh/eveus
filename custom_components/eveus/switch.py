@@ -193,7 +193,7 @@ class BaseSwitchEntity(
 
         try:
             extra = (
-                {key: command_value for key in self._command_extra}
+                dict.fromkeys(self._command_extra, command_value)
                 if self._command_extra
                 else None
             )
