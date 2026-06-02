@@ -10,9 +10,11 @@ from homeassistant.components.number import (
     NumberMode,
     NumberDeviceClass,
     NumberEntityDescription,
+    RestoreNumber,
 )
 from homeassistant.core import HomeAssistant, callback, State
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.const import (
@@ -26,6 +28,18 @@ from .const import (
     CONF_MODEL,
     CONTROL_GRACE_PERIOD,
     OPTIMISTIC_CONTROL_TTL,
+    SOC_INPUT_LIMITS,
+    DEFAULT_INITIAL_SOC,
+    DEFAULT_TARGET_SOC,
+    DEFAULT_BATTERY_CAPACITY,
+    DEFAULT_SOC_CORRECTION,
+    soc_update_signal,
+    get_soc_mode,
+    SOC_MODE_ADVANCED,
+    CONF_INITIAL_SOC,
+    CONF_TARGET_SOC,
+    CONF_BATTERY_CAPACITY,
+    CONF_SOC_CORRECTION,
 )
 from .common_base import (
     BaseEveusEntity,
@@ -33,7 +47,7 @@ from .common_base import (
     OptimisticControlMixin,
     WriteOnChangeMixin,
 )
-from .utils import get_safe_value
+from .utils import get_safe_value, normalize_soc_input
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -208,6 +222,143 @@ class EveusCurrentNumber(EveusNumberEntity):
         self._write_if_changed(current_value)
 
 
+class EveusSocConfigNumber(
+    WriteOnChangeMixin,
+    BaseEveusEntity,
+    RestoreNumber,
+    NumberEntity,
+):
+    """Local SOC-input number: holds a value, pushes it to the SOC calculator.
+
+    Sends nothing to the charger. Persists across restarts via RestoreNumber.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _soc_key: str = ""
+
+    def __init__(self, updater, soc_calculator, seed, device_number: int = 1) -> None:
+        """Initialize the SOC-input number entity."""
+        super().__init__(updater, device_number)
+        self._soc_calculator = soc_calculator
+        default = _SOC_DEFAULTS[self._soc_key]
+        self._attr_native_value = normalize_soc_input(self._soc_key, seed, default)
+        self._init_write_on_change()
+
+    @property
+    def native_value(self) -> float | None:
+        """Return cached value without side effects."""
+        return self._attr_native_value
+
+    @property
+    def available(self) -> bool:
+        """Config inputs are always available regardless of charger state."""
+        return True
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last value (falling back to the seed), then push it."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_number_data()
+        if last is not None and last.native_value is not None:
+            lo, hi = SOC_INPUT_LIMITS[self._soc_key]
+            if lo <= last.native_value <= hi:
+                self._attr_native_value = float(last.native_value)
+        self._push()
+
+    def _push(self) -> None:
+        """Push the current value into the calculator and notify SOC sensors."""
+        self._soc_calculator.set_value(self._soc_key, self._attr_native_value)
+        if self.hass is not None:
+            async_dispatcher_send(
+                self.hass, soc_update_signal(self._updater.config_entry.entry_id)
+            )
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Clamp, store, persist, and push a new SOC-input value."""
+        raw = _validate_finite_number(value, self.ENTITY_NAME)
+        lo, hi = self.native_min_value, self.native_max_value
+        clamped = max(lo, min(hi, raw))
+        self._attr_native_value = clamped
+        self._write_if_changed(clamped)
+        self._push()
+
+
+class EveusInitialSocNumber(EveusSocConfigNumber):
+    """Initial state of charge (%)."""
+
+    _soc_key = "initial_soc"
+    ENTITY_NAME = "Initial SOC"
+    _attr_icon = "mdi:battery-charging-40"
+    _attr_native_unit_of_measurement = "%"
+    _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["initial_soc"]
+    _attr_native_step = 1
+    _attr_mode = NumberMode.SLIDER
+
+
+class EveusTargetSocNumber(EveusSocConfigNumber):
+    """Target state of charge (%)."""
+
+    _soc_key = "target_soc"
+    ENTITY_NAME = "Target SOC"
+    _attr_icon = "mdi:battery-charging-high"
+    _attr_native_unit_of_measurement = "%"
+    _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["target_soc"]
+    _attr_native_step = 5
+    _attr_mode = NumberMode.SLIDER
+
+
+class EveusBatteryCapacityNumber(EveusSocConfigNumber):
+    """Battery capacity (kWh)."""
+
+    _soc_key = "battery_capacity"
+    ENTITY_NAME = "Battery Capacity"
+    _attr_icon = "mdi:car-battery"
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["battery_capacity"]
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+
+
+class EveusSocCorrectionNumber(EveusSocConfigNumber):
+    """SOC charging-loss correction (%)."""
+
+    _soc_key = "soc_correction"
+    ENTITY_NAME = "SOC Correction"
+    _attr_icon = "mdi:chart-bell-curve"
+    _attr_native_unit_of_measurement = "%"
+    _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["soc_correction"]
+    _attr_native_step = 0.5
+    _attr_mode = NumberMode.BOX
+
+
+_SOC_NUMBER_CLASSES = (
+    EveusInitialSocNumber,
+    EveusTargetSocNumber,
+    EveusBatteryCapacityNumber,
+    EveusSocCorrectionNumber,
+)
+
+_SOC_DEFAULTS = {
+    "initial_soc": DEFAULT_INITIAL_SOC,
+    "target_soc": DEFAULT_TARGET_SOC,
+    "battery_capacity": DEFAULT_BATTERY_CAPACITY,
+    "soc_correction": DEFAULT_SOC_CORRECTION,
+}
+
+
+def build_soc_numbers(
+    updater, soc_calculator, seeds: dict, device_number: int = 1
+) -> list:
+    """Build the four SOC config-number entities seeded from `seeds`/defaults."""
+    out = []
+    for cls in _SOC_NUMBER_CLASSES:
+        key = cls._soc_key
+        seed = seeds.get(key, _SOC_DEFAULTS[key])
+        out.append(cls(updater, soc_calculator, seed, device_number))
+    return out
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -219,8 +370,23 @@ async def async_setup_entry(
     device_number = runtime_data.device_number
 
     model = entry.data.get(CONF_MODEL)
-    if not model:
+    entities = []
+    if model:
+        entities.append(EveusCurrentNumber(updater, model, device_number))
+    else:
         _LOGGER.debug("No model specified in config")
-        return
 
-    async_add_entities([EveusCurrentNumber(updater, model, device_number)])
+    if get_soc_mode(entry) == SOC_MODE_ADVANCED:
+        seeds = {
+            "initial_soc": entry.data.get(CONF_INITIAL_SOC),
+            "target_soc": entry.data.get(CONF_TARGET_SOC),
+            "battery_capacity": entry.data.get(CONF_BATTERY_CAPACITY),
+            "soc_correction": entry.data.get(CONF_SOC_CORRECTION),
+        }
+        seeds = {k: v for k, v in seeds.items() if v is not None}
+        entities += build_soc_numbers(
+            updater, runtime_data.soc_calculator, seeds, device_number
+        )
+
+    if entities:
+        async_add_entities(entities)

@@ -488,7 +488,9 @@ class EveusTestUpdater:
         self.data = data or {}
         self.connection_quality = quality or {}
         self.commands: list[tuple[str, object]] = []
+        self.command_extras: list[dict[str, object] | None] = []
         self.command_result = True
+        self.config_entry = SimpleNamespace(entry_id="entry-id")
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
@@ -499,9 +501,12 @@ class EveusTestUpdater:
         value: object,
         *,
         retry: bool = True,
+        extra: dict[str, object] | None = None,
     ) -> bool:
         self.commands.append((command, value))
+        self.command_extras.append(extra)
         self.last_retry = retry
+        self.last_extra = extra
         return self.command_result
 
 

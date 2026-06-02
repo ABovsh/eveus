@@ -32,11 +32,20 @@ from custom_components.eveus.config_flow import (
     validate_input,
 )
 from custom_components.eveus.const import (
+    CONF_BATTERY_CAPACITY,
+    CONF_INITIAL_SOC,
     CONF_MODEL,
     CONF_PHASES,
     CONF_SCHEME,
+    CONF_SOC_CORRECTION,
+    CONF_SOC_MODE,
+    CONF_TARGET_SOC,
+    DEFAULT_INITIAL_SOC,
     DEFAULT_PHASES,
+    DEFAULT_TARGET_SOC,
     MODEL_16A,
+    SOC_MODE_ADVANCED,
+    SOC_MODE_BASIC,
 )
 
 
@@ -193,6 +202,7 @@ def test_normalize_user_input_returns_persistable_config_data() -> None:
         CONF_MODEL: MODEL_16A,
         CONF_SCHEME: "http",
         CONF_PHASES: DEFAULT_PHASES,
+        CONF_SOC_MODE: SOC_MODE_ADVANCED,
     }
 
 
@@ -399,7 +409,9 @@ def test_user_flow_creates_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     }
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
-    result = asyncio.run(flow.async_step_user(_input()))
+    result = asyncio.run(
+        flow.async_step_user(_input(**{CONF_SOC_MODE: SOC_MODE_BASIC}))
+    )
 
     assert result["type"] == "create_entry"
     assert result["data"][CONF_HOST] == TEST_HOST
@@ -762,3 +774,179 @@ def test_safe_phases_default_falls_back_on_corrupt_input() -> None:
     assert config_flow._safe_phases_default(None) == DEFAULT_PHASES
     assert config_flow._safe_phases_default(2) == DEFAULT_PHASES
     assert config_flow._safe_phases_default("3") == 3
+
+
+# --- SOC monitoring mode chooser ---------------------------------------------
+
+
+class _State:
+    def __init__(self, state: str) -> None:
+        self.state = state
+
+
+class _States:
+    def __init__(self, states: dict[str, _State] | None = None) -> None:
+        self._states = states or {}
+
+    def get(self, entity_id: str) -> _State | None:
+        return self._states.get(entity_id)
+
+
+class _HassWithStates:
+    def __init__(self, states: dict[str, _State] | None = None) -> None:
+        self.states = _States(states)
+
+
+def _async_validate_input_factory():
+    async def fake_validate_input(hass, data):
+        return {
+            "title": f"Eveus Charger ({TEST_HOST})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    return fake_validate_input
+
+
+def test_basic_mode_skips_soc_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    flow = config_flow.ConfigFlow()
+    flow.hass = _HassWithStates()
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    flow._abort_if_unique_id_configured = lambda: None
+    flow.async_create_entry = lambda *, title, data: {
+        "type": "create_entry",
+        "title": title,
+        "data": data,
+    }
+    monkeypatch.setattr(
+        config_flow, "validate_input", _async_validate_input_factory()
+    )
+
+    result = asyncio.run(
+        flow.async_step_user(_input(**{CONF_SOC_MODE: SOC_MODE_BASIC}))
+    )
+
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_SOC_MODE] == SOC_MODE_BASIC
+    assert CONF_BATTERY_CAPACITY not in result["data"]
+    assert CONF_SOC_CORRECTION not in result["data"]
+
+
+def _schema_default(schema: vol.Schema, key: str):
+    marker = next(k for k in schema.schema if k.schema == key)
+    return marker.default()
+
+
+def test_advanced_mode_collects_and_prefills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow = config_flow.ConfigFlow()
+    flow.hass = _HassWithStates(
+        {
+            "input_number.ev_battery_capacity": _State("64"),
+            "input_number.ev_soc_correction": _State("9"),
+        }
+    )
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    flow._abort_if_unique_id_configured = lambda: None
+    flow.async_show_form = lambda *, step_id, data_schema=None, errors=None: {
+        "type": "form",
+        "step_id": step_id,
+        "data_schema": data_schema,
+    }
+    flow.async_create_entry = lambda *, title, data: {
+        "type": "create_entry",
+        "title": title,
+        "data": data,
+    }
+    monkeypatch.setattr(
+        config_flow, "validate_input", _async_validate_input_factory()
+    )
+
+    form = asyncio.run(
+        flow.async_step_user(_input(**{CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+    )
+
+    assert form["type"] == "form"
+    assert form["step_id"] == "soc"
+    assert _schema_default(form["data_schema"], CONF_BATTERY_CAPACITY) == 64
+    assert _schema_default(form["data_schema"], CONF_SOC_CORRECTION) == 9
+
+    entry = asyncio.run(
+        flow.async_step_soc(
+            {CONF_BATTERY_CAPACITY: 70, CONF_SOC_CORRECTION: 8}
+        )
+    )
+
+    assert entry["type"] == "create_entry"
+    assert entry["data"][CONF_SOC_MODE] == SOC_MODE_ADVANCED
+    assert entry["data"][CONF_BATTERY_CAPACITY] == 70
+    assert entry["data"][CONF_SOC_CORRECTION] == 8
+    assert entry["data"][CONF_INITIAL_SOC] == DEFAULT_INITIAL_SOC
+    assert entry["data"][CONF_TARGET_SOC] == DEFAULT_TARGET_SOC
+
+
+def test_options_flow_toggles_mode() -> None:
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: TEST_HOST, CONF_SOC_MODE: SOC_MODE_ADVANCED}),
+            "unique_id": TEST_HOST,
+        },
+    )()
+
+    updated: dict[str, object] = {}
+
+    class _ConfigEntries:
+        def async_update_entry(self, entry, *, data):
+            entry.data = data
+            updated["data"] = data
+
+    class _Hass:
+        def __init__(self) -> None:
+            self.config_entries = _ConfigEntries()
+
+    options_flow = config_flow.EveusOptionsFlow(entry)
+    options_flow.hass = _Hass()
+    options_flow.async_show_form = lambda *, step_id, data_schema=None: {
+        "type": "form",
+        "step_id": step_id,
+        "data_schema": data_schema,
+    }
+    options_flow.async_create_entry = lambda *, title, data: {
+        "type": "create_entry",
+        "title": title,
+        "data": data,
+    }
+
+    form = asyncio.run(options_flow.async_step_init())
+    assert form["type"] == "form"
+    assert form["step_id"] == "init"
+
+    result = asyncio.run(
+        options_flow.async_step_init({CONF_SOC_MODE: SOC_MODE_BASIC})
+    )
+
+    assert result["type"] == "create_entry"
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
+
+
+def test_merge_entry_data_preserves_soc_values() -> None:
+    """Reconfigure/reauth (incoming lacks SOC keys) must not drop SOC values."""
+    existing = {
+        "device_number": 2,
+        CONF_INITIAL_SOC: 65,
+        CONF_TARGET_SOC: 95,
+        CONF_BATTERY_CAPACITY: 64,
+        CONF_SOC_CORRECTION: 9,
+    }
+    incoming = {CONF_SCHEME: "http", CONF_SOC_MODE: SOC_MODE_BASIC}
+
+    merged = config_flow._merge_entry_data(existing, incoming)
+
+    assert merged["device_number"] == 2
+    assert merged[CONF_INITIAL_SOC] == 65
+    assert merged[CONF_TARGET_SOC] == 95
+    assert merged[CONF_BATTERY_CAPACITY] == 64
+    assert merged[CONF_SOC_CORRECTION] == 9

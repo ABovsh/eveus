@@ -1,12 +1,10 @@
-# Eveus Home Assistant Integration
+# Eveus EV Charger for Home Assistant
 
-> **Eveus EV charger integration for Home Assistant** — installable via HACS. Local-only polling over your LAN, no cloud, no account.
-
-💬 **Discussion:** [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
+> Local-only Home Assistant integration for Eveus EV chargers. Control charging, monitor power and cost, estimate EV battery SOC, expose schedules and adaptive charging, and build automations without template sensors.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.9.2-blue?style=for-the-badge)
-![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-41BDF5?style=for-the-badge&logo=home-assistant)
+![Version](https://img.shields.io/badge/version-4.10.0-blue?style=for-the-badge)
+![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
 [![Reliability](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=reliability_rating)](https://sonarcloud.io/component_measures?id=ABovsh_eveus&metric=reliability_rating)
@@ -14,78 +12,56 @@
 [![Maintainability](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=sqale_rating)](https://sonarcloud.io/component_measures?id=ABovsh_eveus&metric=sqale_rating)
 [![Coverage](https://img.shields.io/sonar/coverage/ABovsh_eveus?server=https%3A%2F%2Fsonarcloud.io&style=for-the-badge&logo=sonarcloud&label=coverage)](https://sonarcloud.io/component_measures?id=ABovsh_eveus&metric=coverage)
 
-Local-only Home Assistant integration for Eveus EV chargers. Polls the charger directly over your LAN — no cloud, no account, no telemetry. Gives you live power/energy/cost telemetry, charging controls with optimistic UI, optional EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, multi-charger support, and a small set of automation-friendly entities (Car Connected, Charging Finish Time, Session Cost) so you do not need to write template sensors.
+- Discussion: [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
+- Issues: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues)
 
-## Highlights
+<img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
+
+Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, multi-charger support, and automation-friendly entities so you never have to write a template sensor.
+
+## ✨ Highlights
 
 ### 🔌 Local-only, no cloud
-Polls the charger directly over your LAN via its HTTP API. No Eveus account, no cloud relay, no telemetry leaving your network. Works fully offline-from-the-internet. Supports `http://` or `https://`, custom ports, and either IP or hostname.
+Talks to the charger directly over your LAN via its HTTP API. No Eveus account, no cloud relay, no telemetry leaving your network — it keeps working when the internet is down. Supports `http://` or `https://`, custom ports, and either IP or hostname.
 
 ### ⚡ Live electrical telemetry
-Voltage, current, power, and the active current-limit setpoint, refreshed on every coordinator tick. Box temperature, plug temperature, ground status, and the charger's internal backup battery voltage round out the diagnostic picture.
+Voltage, current, power, and the active current-limit setpoint refreshed on every poll — plus per-phase voltage/current on 3-phase setups, box and plug temperatures, ground status, and the charger's internal backup-battery voltage.
 
 ### 💰 Source-of-truth energy & cost
-- **Session Energy**, **Total Energy**, and two resettable counters (**Counter A/B**) — kWh delivered.
-- **Counter A/B Cost** — running ₴ cost on each counter.
-- **Session Cost** — reads the charger's native `sessionMoney` field, so it is integrated at the rate that was active at each moment. The session total never jumps backward or forward when the tariff switches mid-session (e.g. night→day at 07:00).
-- **Primary / Active / Rate 2 / Rate 3 Cost** — current electricity rates in ₴/kWh, plus diagnostic status sensors showing which rate schedules are enabled.
+Session Energy, Total Energy, and two resettable counters (A/B) in kWh, each with a running ₴ cost. **Session Cost** reads the charger's native money field, so it is integrated at the rate active at each moment and never jumps when the tariff switches mid-session (e.g. night→day at 07:00). Primary / Active / Rate 2 / Rate 3 prices are exposed too.
 
-### 🔋 Optional EV battery (SOC) estimates
-Add four `input_number` helpers and the integration estimates:
-- **SOC Energy** in kWh, **SOC Percent**, and **Time to Target SOC** as a human-readable string for cards.
-- **Charging Finish Time** as a `device_class: timestamp` for automations and timestamp cards.
-
-Without the helpers, SOC sensors stay unavailable and everything else works normally. SOC math uses the charger-native `sessionEnergy` so there is no fragile per-restart baseline state to manage.
+### 🔋 EV battery SOC — no helpers needed
+Pick **Advanced** mode at setup and the integration creates its own SOC inputs as native entities — `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, `number.eveus_ev_charger_soc_correction` — and the SOC Energy / SOC Percent / Time-to-Target / Charging Finish Time sensors. No `input_number` helpers to create by hand. Pick **Basic** if you only want charging control. Switch modes anytime from **Configure**.
 
 ### 🤖 Adaptive charging & schedule visibility
-Eveus chargers can throttle current automatically when the supply voltage sags, and run two configurable time-window slots for scheduled charging. The integration exposes both:
-- **Adaptive Charging** (`Active`/`Idle`), **Adaptive Current Limit** (A), **Adaptive Voltage Threshold** (V).
-- **Schedule 1** / **Schedule 2** — enabled/disabled state with `window` (HH:MM–HH:MM), optional current and energy caps as attributes.
+Toggle the charger's adaptive throttle and read its selected current cap and voltage threshold. Both on-device schedule slots are exposed as switches plus native HH:MM time pickers, with summary sensors.
 
-### 🎛 Charging controls with optimistic UI
-- **Charging Current** number slider with model-aware bounds (16 / 32 / 48 A).
-- **Stop Charging** and **One Charge** switches; **Reset Counter A** and **Reset Counter B** buttons.
+### 🧩 Automation-ready entities
+`Car Connected`, `Session Active`, `Charging Finish Time` (a real `timestamp`), `Session Cost`, schedule controls, and `Connection Quality` are first-class entities — no template sensors to maintain.
 
-All controls update the UI immediately and reconcile with the charger on the next poll — no waiting on the round-trip before the slider moves.
+### 🛰️ Multi-charger
+Add multiple Eveus chargers; each gets its own device, coordinator, and entity namespace.
 
-### 🤝 Automation-friendly entities (no templates required)
-Designed to replace the template sensors users typically build on top of Eveus:
-- **`binary_sensor.eveus_car_connected`** (`device_class: plug`) — `on` whenever a vehicle is electrically connected. Uses canonical numeric state values from the charger, so it survives firmware label changes.
-- **`sensor.eveus_charging_finish_time`** (`device_class: timestamp`) — absolute UTC time when target SOC will be reached. Minute-aligned to avoid state jitter every poll. Returns unavailable when not charging or target already reached.
-
-### 📊 Reliability & connection health
-- **Connection Quality** sensor exposes recent success-rate %, average latency, and a health label — useful both as a dashboard tile and as an automation trigger.
-- Powered-off / unreachable chargers are treated as a normal condition. Polling backs off automatically and HA logs stay quiet — no spam in the log book.
-- Coordinator-driven updates skip state writes when nothing changed, so the recorder database doesn't bloat.
-
-### 🏠 Multi-charger support
-Add as many Eveus chargers as you want to one HA instance. Each charger gets its own device, entity namespace (`sensor.eveus_*`, `sensor.eveus2_*`, …), and independent coordinator. Reconfigure or reauthenticate any of them without touching the others.
-
-### 🧰 Setup quality of life
-- **Reconfigure** flow to update IP, credentials, or charger model without reinstalling.
-- **Reauthentication** flow when the charger rejects stored credentials.
-- Setup validates reachability and verifies the response looks like a real Eveus charger before creating the entry.
-- **Repair flow** for rare invalid stored setup data.
-- **HA Diagnostics** download with sensitive fields redacted.
-
-### 🔒 Stable contracts
-Entity IDs and unique IDs are preserved across the 4.x line. Dashboards, automations, scripts, and statistics history from earlier versions keep working after every update.
+### 🩺 Built for messy LAN reality
+Offline chargers are handled quietly, polling backs off, commands surface a Home Assistant error toast on failure, and diagnostics downloads redact credentials and identifying fields.
 
 ## Requirements
 
-| | |
+| Requirement | Details |
 | --- | --- |
-| Home Assistant | 2024.4 or newer |
-| Network | Eveus charger reachable from HA on the local network |
-| Setup | Charger IP/hostname (or full URL), username, password, charger model |
-| Supported models | 16A, 32A, 48A |
+| Home Assistant | 2025.1 or newer |
+| Charger | Eveus 16A, 32A, or 48A charger reachable from Home Assistant |
+| Network | Local LAN access to the charger HTTP API |
+| Setup details | Charger IP/hostname or URL, username, password, model |
 
 ## Installation
 
 ### HACS
 
-1. HACS → **Custom repositories** → add `https://github.com/ABovsh/eveus` as **Integration**.
-2. Search for **Eveus EV Charger**, install, restart Home Assistant.
+1. HACS -> **Custom repositories**.
+2. Add `https://github.com/ABovsh/eveus` as **Integration**.
+3. Install **Eveus EV Charger**.
+4. Restart Home Assistant.
 
 ### Manual
 
@@ -94,199 +70,155 @@ Entity IDs and unique IDs are preserved across the 4.x line. Dashboards, automat
 
 ## Setup
 
-1. **Settings → Devices & Services → Add Integration → Eveus EV Charger**.
-2. Enter the charger address: IP, hostname, or full URL. Use `https://` if the charger is configured for HTTPS; you can append `:port` if non-standard.
-3. Enter the charger username and password.
-4. Pick the charger model: 16A / 32A / 48A.
+1. Go to **Settings -> Devices & Services -> Add Integration**.
+2. Search for **Eveus EV Charger**.
+3. Enter the charger address. IP, hostname, full URL, custom port, `http://`, and `https://` are supported.
+4. Enter username and password.
+5. Pick the charger model: **16A**, **32A**, or **48A**.
+6. Pick SOC monitoring mode:
+   - **Basic**: charging control only, no SOC sensors.
+   - **Advanced**: creates SOC input numbers and SOC/ETA sensors.
 
-To change connection details later: **Settings → Devices & Services → Eveus EV Charger → Reconfigure**. To add another charger, run the same flow again with a different address.
+Use **Configure** to switch Basic/Advanced later. Use **Reconfigure** to change host, credentials, model, or phase count without reinstalling.
 
-## Entities
+## Entity IDs
 
-Every entity below is created automatically. Names and unique IDs are stable across 4.x releases. Diagnostic entities are placed under the device's *Diagnostic* section in HA.
+The tables below show default entity IDs for the first charger named **Eveus EV Charger**. Home Assistant may add suffixes if you rename entities or add multiple chargers. Unique IDs are stable, so your history and dashboard cards survive normal updates.
 
-### Live measurements
+### Charging State And Controls
 
-| Entity | Unit | Description |
+| Entity ID | Type | What it gives you |
 | --- | --- | --- |
-| Voltage | V | Live line voltage |
-| Current | A | Live charging current |
-| Power | W | Live charging power |
-| Box Temperature | °C | Internal charger temperature *(diag)* |
-| Plug Temperature | °C | Plug temperature *(diag)* |
-| Battery Voltage | V | Charger backup battery *(diag)* |
-| Leakage Current | mA | Live RCD reading; `0` is normal, non-zero signals a ground-fault leak *(diag, new in 4.9.0)* |
-| Leakage Current Peak | mA | Peak-hold leakage reading from the firmware *(diag, new in 4.9.0)* |
+| `sensor.eveus_ev_charger_state` | Sensor | Main charger state, such as standby, charging, complete, or error |
+| `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label |
+| `binary_sensor.eveus_ev_charger_car_connected` | Binary sensor | Vehicle is electrically connected |
+| `binary_sensor.eveus_ev_charger_session_active` | Binary sensor | Charging session is active or paused |
+| `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | OCPP backend link is up (diagnostic) |
+| `number.eveus_ev_charger_charging_current` | Number | Current limit slider with model-aware bounds |
+| `switch.eveus_ev_charger_stop_charging` | Switch | Stop/allow charging from the charger side |
+| `switch.eveus_ev_charger_one_charge` | Switch | Enable one-charge mode |
+| `switch.eveus_ev_charger_connect_to_ocpp` | Switch | Connect the charger to the OCPP backend (e.g. for the mobile app). While on, a Repairs warning explains that Charging Current, limits, and schedule may be overridden by the backend, and how to turn OCPP back off |
+| `button.eveus_ev_charger_force_refresh` | Button | Poll the charger immediately |
 
-When the integration is configured for a **3-phase** charger (`Phases = 3` in setup), four additional measurement sensors are exposed: `Current Phase 2`, `Current Phase 3`, `Voltage Phase 2`, `Voltage Phase 3`. *(new in 4.9.0)*
+### Live Electrical Data
 
-### Energy & cost
-
-| Entity | Unit | Description |
+| Entity ID | Unit | What it gives you |
 | --- | --- | --- |
-| Session Energy | kWh | Energy delivered in the current session |
-| Total Energy | kWh | Lifetime delivered energy |
-| Counter A Energy | kWh | Resettable energy counter A |
-| Counter B Energy | kWh | Resettable energy counter B |
-| Counter A Cost | ₴ | Cost accumulated on counter A |
-| Counter B Cost | ₴ | Cost accumulated on counter B |
-| **Session Cost** | ₴ | Cost of the current session — read directly from the charger, integrated at the rate active at each moment (no retroactive re-pricing on tariff switch) |
-| Primary Rate Cost | ₴/kWh | Primary electricity rate |
-| Active Rate Cost | ₴/kWh | Currently active rate |
-| Rate 2 Cost | ₴/kWh | Rate 2 price |
-| Rate 3 Cost | ₴/kWh | Rate 3 price |
+| `sensor.eveus_ev_charger_voltage` | V | Line voltage |
+| `sensor.eveus_ev_charger_current` | A | Charging current |
+| `sensor.eveus_ev_charger_power` | W | Charging power |
+| `sensor.eveus_ev_charger_current_set` | A | Charger current setpoint |
+| `sensor.eveus_ev_charger_current_phase_2` | A | Phase 2 current when `Phases = 3` |
+| `sensor.eveus_ev_charger_current_phase_3` | A | Phase 3 current when `Phases = 3` |
+| `sensor.eveus_ev_charger_voltage_phase_2` | V | Phase 2 voltage when `Phases = 3` |
+| `sensor.eveus_ev_charger_voltage_phase_3` | V | Phase 3 voltage when `Phases = 3` |
 
-### Status & state
+### Energy, Cost, And Tariffs
 
-| Entity | Description |
-| --- | --- |
-| State | High-level charger state *(diag)* |
-| Substate | Detailed substate / error label *(diag)* |
-| Ground | Ground connection status *(diag)* |
-| Session Time | Duration of the current session |
-| System Time | Charger internal clock *(diag)* |
-| Connection Quality | Recent success-rate %, with latency and health attributes *(diag)* |
-| Rate 2 Status | Whether Rate 2 schedule is enabled *(diag)* |
-| Rate 3 Status | Whether Rate 3 schedule is enabled *(diag)* |
-| Input Entities Status | Reports missing/invalid optional SOC helpers *(diag)* |
-
-### Adaptive charging & schedules
-
-The charger has a built-in adaptive mode that throttles current when the supply voltage sags, and two configurable time-window slots for scheduled charging. These entities expose that state so you can build dashboards and automations around them.
-
-| Entity | Description |
-| --- | --- |
-| Adaptive Charging | `Active` / `Idle` — whether the charger is currently throttling current to protect a weak supply *(diag)* |
-| Adaptive Current Limit | Current cap (A) chosen by the adaptive throttle *(diag)* |
-| Adaptive Voltage Threshold | Voltage floor (V) below which the throttle engages *(diag)* |
-| Schedule 1 | `Enabled` / `Disabled` with attributes `window` (HH:MM–HH:MM), `start`, `stop`, optional `current_limit_a`, `energy_limit_kwh` *(diag)* |
-| Schedule 2 | Same as Schedule 1 for the second slot *(diag)* |
-| Schedule 1 / 2 Enabled | Switch — arm or disarm each on-device schedule slot |
-| Schedule 1 / 2 Start, Stop | `time` entities — native HH:MM picker for each slot's window |
-
-### Automation-friendly entities
-
-These exist specifically to replace template sensors users typically build on top of Eveus.
-
-| Entity | Type | Description |
+| Entity ID | Unit | What it gives you |
 | --- | --- | --- |
-| `binary_sensor.eveus_car_connected` | `device_class: plug` | `on` whenever a vehicle is electrically connected (Connected, Charging, Charge Complete, or Paused). Uses canonical numeric state values — stable across charger firmware label changes |
-| `sensor.eveus_charging_finish_time` | `device_class: timestamp` | Absolute UTC time when target SOC will be reached. Minute-aligned so it does not jitter every poll. Returns unavailable when not charging, helpers missing, or target already reached |
+| `sensor.eveus_ev_charger_session_energy` | kWh | Energy delivered in the current session |
+| `sensor.eveus_ev_charger_total_energy` | kWh | Lifetime energy counter |
+| `sensor.eveus_ev_charger_counter_a_energy` | kWh | Resettable energy counter A |
+| `sensor.eveus_ev_charger_counter_b_energy` | kWh | Resettable energy counter B |
+| `sensor.eveus_ev_charger_session_cost` | UAH | Current session cost from the charger |
+| `sensor.eveus_ev_charger_counter_a_cost` | UAH | Cost accumulated on counter A |
+| `sensor.eveus_ev_charger_counter_b_cost` | UAH | Cost accumulated on counter B |
+| `sensor.eveus_ev_charger_primary_rate_cost` | UAH/kWh | Primary tariff |
+| `sensor.eveus_ev_charger_active_rate_cost` | UAH/kWh | Currently active tariff |
+| `sensor.eveus_ev_charger_rate_2_cost` | UAH/kWh | Rate 2 price |
+| `sensor.eveus_ev_charger_rate_3_cost` | UAH/kWh | Rate 3 price |
+| `sensor.eveus_ev_charger_rate_2_status` | Sensor | Whether Rate 2 schedule is enabled |
+| `sensor.eveus_ev_charger_rate_3_status` | Sensor | Whether Rate 3 schedule is enabled |
 
-### Controls
+### SOC And ETA, Advanced Mode
 
-| Entity | Type | Description |
+Advanced mode creates four native input numbers. Older `input_number.ev_*` helpers are no longer read.
+
+| Entity ID | Unit | Range | Default | What it gives you |
+| --- | --- | --- | --- | --- |
+| `number.eveus_ev_charger_initial_soc` | % | 0-100, step 1 | 20 | Battery SOC at the start of the current charging session |
+| `number.eveus_ev_charger_target_soc` | % | 0-100, step 5 | 80 | Target SOC for ETA calculations |
+| `number.eveus_ev_charger_battery_capacity` | kWh | 10-160, step 1 | 50 | EV battery capacity |
+| `number.eveus_ev_charger_soc_correction` | % | 0-20, step 0.5 | 7.5 | Charging loss correction |
+| `sensor.eveus_ev_charger_soc_energy` | kWh | - | - | Estimated energy currently in the EV battery |
+| `sensor.eveus_ev_charger_soc_percent` | % | - | - | Estimated battery percentage |
+| `sensor.eveus_ev_charger_time_to_target_soc` | Sensor | - | - | Human-readable ETA to target SOC |
+| `sensor.eveus_ev_charger_charging_finish_time` | Timestamp | - | - | Absolute finish time for automations and timestamp cards |
+
+Migration from old helpers is intentionally simple: replace the prefix `input_number.ev_` with `number.eveus_ev_charger_` in cards and automations. For example, `input_number.ev_initial_soc` becomes `number.eveus_ev_charger_initial_soc`.
+
+SOC uses the charger's native `sessionEnergy` value. The charger resets this value on every new plug-in, so continuous charging sessions survive Home Assistant restarts without a synthetic baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
+
+### Adaptive Charging And Schedules
+
+| Entity ID | Type | What it gives you |
 | --- | --- | --- |
-| Charging Current | Number | Current-limit slider, model-aware bounds (16/32/48 A) |
-| Stop Charging | Switch | Charger-side stop-charge option |
-| One Charge | Switch | Single charging session |
-| Adaptive Mode | Switch | Toggle the charger's adaptive (AI) throttle on/off *(new in 4.9.0)* |
-| Time Zone | Select | Charger time-zone offset, `-12..+14` *(new in 4.9.0)* |
-| Force Refresh | Button | Force an immediate coordinator poll |
-| Sync Time | Button | Push the host's current UTC time to the charger's clock *(new in 4.9.0)* |
-| Reset Counter A | Button | Reset energy counter A (one-shot action) |
-| Reset Counter B | Button | Reset energy counter B (one-shot action) |
+| `switch.eveus_ev_charger_adaptive_mode` | Switch | Toggle the charger adaptive throttle |
+| `sensor.eveus_ev_charger_adaptive_charging` | Sensor | Whether adaptive throttling is active |
+| `sensor.eveus_ev_charger_adaptive_current_limit` | A | Current cap selected by adaptive mode |
+| `sensor.eveus_ev_charger_adaptive_voltage_threshold` | V | Voltage floor for adaptive throttling |
+| `switch.eveus_ev_charger_schedule_1_enabled` | Switch | Enable or disable schedule slot 1 |
+| `time.eveus_ev_charger_schedule_1_start` | Time | Schedule 1 start time |
+| `time.eveus_ev_charger_schedule_1_stop` | Time | Schedule 1 stop time |
+| `sensor.eveus_ev_charger_schedule_1` | Sensor | Schedule 1 summary and attributes |
+| `switch.eveus_ev_charger_schedule_2_enabled` | Switch | Enable or disable schedule slot 2 |
+| `time.eveus_ev_charger_schedule_2_start` | Time | Schedule 2 start time |
+| `time.eveus_ev_charger_schedule_2_stop` | Time | Schedule 2 stop time |
+| `sensor.eveus_ev_charger_schedule_2` | Sensor | Schedule 2 summary and attributes |
 
-Controls use **optimistic UI**: the slider/switch updates immediately, then reconciles with the next charger response.
+### Diagnostics And Maintenance
 
-### Optional SOC sensors
-
-Created automatically. Show as *unavailable* until you add the helpers in the next section.
-
-| Entity | Description |
-| --- | --- |
-| SOC Energy | Estimated battery energy in kWh |
-| SOC Percent | Estimated battery percentage |
-| Time to Target SOC | Human-readable ETA to target SOC (e.g. `2h 15m`). For automations prefer `Charging Finish Time` |
+| Entity ID | Unit | What it gives you |
+| --- | --- | --- |
+| `sensor.eveus_ev_charger_connection_quality` | % | Recent polling success, latency, and health attributes |
+| `sensor.eveus_ev_charger_ground` | Sensor | Ground status |
+| `sensor.eveus_ev_charger_system_time` | Sensor | Charger internal clock |
+| `sensor.eveus_ev_charger_box_temperature` | °C | Charger body temperature |
+| `sensor.eveus_ev_charger_plug_temperature` | °C | Plug temperature |
+| `sensor.eveus_ev_charger_battery_voltage` | V | Charger backup battery voltage |
+| `sensor.eveus_ev_charger_leakage_current` | mA | Current leakage reading |
+| `sensor.eveus_ev_charger_leakage_current_peak` | mA | Peak leakage reading |
+| `sensor.eveus_ev_charger_wifi_signal` | dBm | Charger Wi-Fi signal |
+| `select.eveus_ev_charger_time_zone` | Select | Charger time-zone offset, `-12` to `+14` |
+| `button.eveus_ev_charger_sync_time` | Button | Push Home Assistant time to the charger |
+| `button.eveus_ev_charger_reset_counter_a` | Button | Reset counter A |
+| `button.eveus_ev_charger_reset_counter_b` | Button | Reset counter B |
+| `update.eveus_ev_charger_update` | Update | HACS update entity |
+| `switch.eveus_ev_charger_pre_release` | Switch | HACS pre-release toggle |
 
 ## Dashboard
 
-A ready-to-paste Lovelace view exposing every Eveus capability — live status tiles, all writable controls (current slider, switches, time-zone select, refresh / sync / reset buttons), both on-device schedule slots with native HH:MM time pickers, adaptive-mode card, 24-hour mini-graph charts, session totals, tariffs, and diagnostics — ships in [`docs/dashboard.yaml`](docs/dashboard.yaml).
+A complete, ready-to-paste Lovelace view that exposes **every Eveus capability** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml). It covers:
 
-**Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin.
+- Live status tiles (state, car connected, voltage/current/power)
+- SOC card with the four `number.eveus_ev_charger_*` inputs and the SOC/ETA sensors
+- All writable controls — current slider, stop / one-charge switches, adaptive mode, time-zone select, sync / refresh / reset buttons
+- Both on-device schedule slots with native HH:MM time pickers
+- Session totals, lifetime counters, tariffs, and session cost
+- Diagnostics — temperatures, leakage, Wi-Fi signal, connection quality
+- 24-hour mini-graph charts for power, current, and temperatures
 
-**Install:** open your dashboard → ⋮ → *Edit dashboard* → ⋮ → *Raw configuration editor*, then paste the view under `views:`. If your device slug differs from `eveus_ev_charger`, do a find-and-replace.
+**Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the graph cards).
 
-## Screenshots
+**Install:** open your dashboard → **⋮ → Edit dashboard → ⋮ → Raw configuration editor**, then paste the view under `views:`. If your device slug differs from `eveus_ev_charger`, use Home Assistant's entity picker or a find-and-replace.
 
-See the dashboard YAML used to render these views: [`docs/dashboard.yaml`](docs/dashboard.yaml).
-<img width="1189" height="711" alt="image" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
-<img width="1185" height="577" alt="image" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
-
-
-## Optional SOC helpers
-
-SOC tracking is optional. Energy/cost/controls/diagnostics all work without it. To enable SOC estimates, create these four `input_number` helpers in **Settings → Devices & Services → Helpers**:
-
-| Helper entity ID | Name | Unit | Min | Max | Step | Initial |
-| --- | --- | --- | ---: | ---: | ---: | ---: |
-| `input_number.ev_battery_capacity` | EV Battery Capacity | kWh | 10 | 160 | 1 | 80 |
-| `input_number.ev_initial_soc` | Initial EV State of Charge | % | 0 | 100 | 1 | 20 |
-| `input_number.ev_soc_correction` | Charging Efficiency Loss | % | 0 | 15 | 0.1 | 7.5 |
-| `input_number.ev_target_soc` | Target SOC | % | 0 | 100 | 5 | 80 |
-
-The **Input Entities Status** diagnostic sensor tells you which helpers are still missing or out of range.
-
-### How SOC is calculated
-
-SOC uses the charger's native `sessionEnergy` field (kWh delivered in the current session). The charger resets it to zero on every new plug-in, so the integration does not need to snapshot or persist a baseline across restarts — the behavior is structural.
-
-```
-charged kWh = sessionEnergy
-usable kWh  = sessionEnergy × (1 − charging_loss / 100)
-SOC %       = initial_soc + (usable kWh / battery_capacity) × 100
-```
-
-Example — 80 kWh battery, Initial SOC 20%, loss 10%:
-
-```
-sessionEnergy = 10 kWh  →  usable = 9    kWh  →  SOC = 31%
-sessionEnergy = 16 kWh  →  usable = 14.4 kWh  →  SOC = 38%
-```
-
-Changing **Initial SOC** mid-session is fine — SOC reprojects from the new value on the next poll.
-
-**Split-charging across plug-out/plug-in:** the charger starts a fresh session every time the cable is reinserted, so `sessionEnergy` resets to 0. If you unplug at 50% and plug back in later, update `input_number.ev_initial_soc` to the current dashboard value (manually, or from an automation triggered by `binary_sensor.eveus_car_connected` going `off`) before charging resumes — otherwise SOC will project from the old value.
+<img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
+<img width="1185" alt="Eveus dashboard details" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
 
 ## Troubleshooting
 
-### Setup cannot connect
+| Problem | What to check |
+| --- | --- |
+| Setup cannot connect | Charger is powered on, HA can reach the charger IP/hostname, credentials are correct, selected model matches the charger |
+| Controls do not respond | Connection Quality, charger online state, credentials via Reconfigure, then wait one coordinator refresh |
+| SOC sensors are missing | SOC monitoring is set to Advanced under Configure, then restart/reload the integration if just changed |
+| SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
+| Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
 
-- Confirm the charger is powered on and connected to Wi-Fi.
-- Open `http://<charger-ip>` from a browser on the same network.
-- Verify the IP / hostname.
-- Confirm HA can reach the charger's network segment.
-- Confirm the selected charger model matches the real device.
+## Privacy And Diagnostics
 
-### Controls do not respond
-
-- Check **Connection Quality**.
-- Confirm the charger is online.
-- Verify the stored credentials via **Reconfigure**.
-- Wait one coordinator refresh after sending a command.
-
-### SOC sensors are unavailable
-
-- Create the optional `input_number.ev_*` helpers (see above).
-- Check **Input Entities Status** for missing / invalid helpers.
-- Confirm helper values are numeric and within the declared range.
-
-### Charger is powered off
-
-This is expected. The integration backs off polling automatically and keeps Home Assistant logs quiet — no spam in the log book.
-
-## Reliability notes
-
-- Multi-charger: add as many Eveus chargers as you want.
-- Setup validates reachability and an Eveus-compatible response before creating the entry.
-- HA diagnostics download is supported, with credentials redacted.
-- Repair flow handles rare invalid stored setup data.
-- Coordinator-driven updates skip state writes when nothing changed.
-- Existing entity IDs / unique IDs are preserved across the 4.x line — dashboards and automations from older versions continue to work.
-
-## Support
-
-Bug reports, feature requests, and release discussions: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues).
+The integration stores only the charger connection details needed by Home Assistant. Diagnostics downloads redact credentials and identifying fields before export. Charger communication stays on your LAN.
 
 ## License
 

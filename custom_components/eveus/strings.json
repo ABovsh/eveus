@@ -9,7 +9,16 @@
                     "username": "Username",
                     "password": "Password",
                     "model": "Charger Model (16A, 32A or 48A)",
-                    "phases": "Phases (1 = single-phase, 3 = three-phase)"
+                    "phases": "Phases (1 = single-phase, 3 = three-phase)",
+                    "soc_mode": "SOC monitoring"
+                }
+            },
+            "soc": {
+                "title": "SOC Monitoring Setup",
+                "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.",
+                "data": {
+                    "battery_capacity": "Battery capacity (kWh)",
+                    "soc_correction": "Charging efficiency loss (%)"
                 }
             },
             "reconfigure": {
@@ -20,7 +29,8 @@
                     "username": "Username",
                     "password": "Password",
                     "model": "Charger Model (16A, 32A or 48A)",
-                    "phases": "Phases (1 = single-phase, 3 = three-phase)"
+                    "phases": "Phases (1 = single-phase, 3 = three-phase)",
+                    "soc_mode": "SOC monitoring"
                 }
             },
             "reauth_confirm": {
@@ -46,6 +56,243 @@
             "wrong_device": "The credentials belong to a different charger"
         }
     },
+    "options": {
+        "step": {
+            "init": {
+                "title": "SOC Monitoring",
+                "data": {
+                    "soc_mode": "SOC monitoring"
+                }
+            }
+        }
+    },
+    "selector": {
+        "soc_mode": {
+            "options": {
+                "basic": "Basic (charging control only)",
+                "advanced": "Advanced (SOC + time-to-target)"
+            }
+        }
+    },
+    "entity": {
+        "number": {
+            "charging_current": {
+                "name": "Charging Current",
+                "state_attributes": {
+                    "min": {
+                        "name": "Minimum Current"
+                    },
+                    "max": {
+                        "name": "Maximum Current"
+                    }
+                }
+            },
+            "initial_soc": {
+                "name": "Initial SOC"
+            },
+            "target_soc": {
+                "name": "Target SOC"
+            },
+            "battery_capacity": {
+                "name": "Battery Capacity"
+            },
+            "soc_correction": {
+                "name": "SOC Correction"
+            }
+        },
+        "sensor": {
+            "voltage": {
+                "name": "Voltage"
+            },
+            "current": {
+                "name": "Current"
+            },
+            "power": {
+                "name": "Power"
+            },
+            "current_set": {
+                "name": "Current Set"
+            },
+            "session_energy": {
+                "name": "Session Energy"
+            },
+            "total_energy": {
+                "name": "Total Energy"
+            },
+            "counter_a_energy": {
+                "name": "Counter A Energy"
+            },
+            "counter_b_energy": {
+                "name": "Counter B Energy"
+            },
+            "state": {
+                "name": "State"
+            },
+            "substate": {
+                "name": "Substate"
+            },
+            "ground": {
+                "name": "Ground"
+            },
+            "system_time": {
+                "name": "System Time"
+            },
+            "box_temperature": {
+                "name": "Box Temperature"
+            },
+            "plug_temperature": {
+                "name": "Plug Temperature"
+            },
+            "battery_voltage": {
+                "name": "Battery Voltage"
+            },
+            "leakage_current": {
+                "name": "Leakage Current"
+            },
+            "leakage_current_peak": {
+                "name": "Leakage Current Peak"
+            },
+            "wifi_signal": {
+                "name": "WiFi Signal"
+            },
+            "current_phase_2": {
+                "name": "Current Phase 2"
+            },
+            "current_phase_3": {
+                "name": "Current Phase 3"
+            },
+            "voltage_phase_2": {
+                "name": "Voltage Phase 2"
+            },
+            "voltage_phase_3": {
+                "name": "Voltage Phase 3"
+            },
+            "session_time": {
+                "name": "Session Time"
+            },
+            "counter_a_cost": {
+                "name": "Counter A Cost"
+            },
+            "counter_b_cost": {
+                "name": "Counter B Cost"
+            },
+            "primary_rate_cost": {
+                "name": "Primary Rate Cost"
+            },
+            "active_rate_cost": {
+                "name": "Active Rate Cost"
+            },
+            "rate_2_cost": {
+                "name": "Rate 2 Cost"
+            },
+            "rate_3_cost": {
+                "name": "Rate 3 Cost"
+            },
+            "rate_2_status": {
+                "name": "Rate 2 Status"
+            },
+            "rate_3_status": {
+                "name": "Rate 3 Status"
+            },
+            "session_cost": {
+                "name": "Session Cost"
+            },
+            "adaptive_charging": {
+                "name": "Adaptive Charging"
+            },
+            "adaptive_current_limit": {
+                "name": "Adaptive Current Limit"
+            },
+            "adaptive_voltage_threshold": {
+                "name": "Adaptive Voltage Threshold"
+            },
+            "schedule_1": {
+                "name": "Schedule 1"
+            },
+            "schedule_2": {
+                "name": "Schedule 2"
+            },
+            "connection_quality": {
+                "name": "Connection Quality"
+            },
+            "soc_energy": {
+                "name": "SOC Energy"
+            },
+            "soc_percent": {
+                "name": "SOC Percent"
+            },
+            "time_to_target_soc": {
+                "name": "Time to Target SOC"
+            },
+            "charging_finish_time": {
+                "name": "Charging Finish Time"
+            }
+        },
+        "binary_sensor": {
+            "car_connected": {
+                "name": "Car Connected"
+            },
+            "session_active": {
+                "name": "Session Active"
+            },
+            "ocpp_connected": {
+                "name": "OCPP Connected"
+            }
+        },
+        "switch": {
+            "stop_charging": {
+                "name": "Stop Charging"
+            },
+            "one_charge": {
+                "name": "One Charge"
+            },
+            "adaptive_mode": {
+                "name": "Adaptive Mode"
+            },
+            "schedule_1_enabled": {
+                "name": "Schedule 1 Enabled"
+            },
+            "schedule_2_enabled": {
+                "name": "Schedule 2 Enabled"
+            },
+            "connect_to_ocpp": {
+                "name": "Connect to OCPP"
+            }
+        },
+        "button": {
+            "force_refresh": {
+                "name": "Force Refresh"
+            },
+            "reset_counter_a": {
+                "name": "Reset Counter A"
+            },
+            "reset_counter_b": {
+                "name": "Reset Counter B"
+            },
+            "sync_time": {
+                "name": "Sync Time"
+            }
+        },
+        "select": {
+            "time_zone": {
+                "name": "Time Zone"
+            }
+        },
+        "time": {
+            "schedule_1_start": {
+                "name": "Schedule 1 Start"
+            },
+            "schedule_1_stop": {
+                "name": "Schedule 1 Stop"
+            },
+            "schedule_2_start": {
+                "name": "Schedule 2 Start"
+            },
+            "schedule_2_stop": {
+                "name": "Schedule 2 Stop"
+            }
+        }
+    },
     "issues": {
         "invalid_config": {
             "title": "Eveus charger setup needs attention",
@@ -59,7 +306,8 @@
                             "username": "Username",
                             "password": "Password",
                             "model": "Charger Model (16A, 32A or 48A)",
-                    "phases": "Phases (1 = single-phase, 3 = three-phase)"
+                            "phases": "Phases (1 = single-phase, 3 = three-phase)",
+                            "soc_mode": "SOC monitoring"
                         }
                     }
                 },
@@ -75,6 +323,14 @@
                     "fixed": "Eveus charger setup updated"
                 }
             }
+        },
+        "soc_dashboard_update": {
+            "title": "Eveus: update SOC cards and automations to use native SOC entities",
+            "description": "The Eveus integration now creates SOC input entities automatically for your charger.\n\nThese native entities replace the old manually created `input_number.ev_*` helpers. Existing values are copied automatically, so you do not need to enter them again.\n\nUpdate any dashboard cards, automations, scripts, or templates that still use the old helper entities.\n\nReplace this old prefix:\n\n`input_number.ev_`\n\nwith this new Eveus integration prefix:\n\n`number.eveus_ev_charger_`\n\nThis updates all four SOC inputs:\n\n`input_number.ev_initial_soc` → `number.eveus_ev_charger_initial_soc`\n\n`input_number.ev_target_soc` → `number.eveus_ev_charger_target_soc`\n\n`input_number.ev_battery_capacity` → `number.eveus_ev_charger_battery_capacity`\n\n`input_number.ev_soc_correction` → `number.eveus_ev_charger_soc_correction`\n\nThe Eveus integration does not delete or modify your old `input_number.ev_*` helpers.\n\nAfter you update all dashboards, automations, scripts, and templates to the new `number.eveus_ev_charger_*` entities, you can delete the old helpers if you no longer need them."
+        },
+        "ocpp_enabled": {
+            "title": "Eveus: OCPP is enabled, Home Assistant control may be limited",
+            "description": "OCPP is currently enabled on your Eveus charger.\n\nWhile OCPP is enabled, the charger may follow commands from the OCPP server or the Grizzl-E Connect mobile app instead of Home Assistant. Some Home Assistant controls may not apply or may be overwritten.\n\nThis can affect:\n\n- Charging current\n- Charge limits\n- Charging schedule\n\nTo restore full Home Assistant control, turn off the **Connect to OCPP** switch for your Eveus charger.\n\nThe Eveus integration will clear this warning automatically after OCPP is turned off."
         }
     }
 }

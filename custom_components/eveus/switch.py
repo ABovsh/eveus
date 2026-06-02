@@ -29,6 +29,10 @@ class EveusSwitchEntityDescription(SwitchEntityDescription, frozen_or_thawed=Tru
 
     command: str
     state_key: str
+    # Sibling form fields written alongside ``command`` in the same request,
+    # each set to the same on/off value. Required for settings the firmware
+    # only accepts as a bundled "save" form (e.g. OCPP needs ocppVendor).
+    command_extra: tuple[str, ...] = ()
 
 
 SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
@@ -72,6 +76,15 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         command="sh2Enabled",
         state_key="sh2Enabled",
     ),
+    EveusSwitchEntityDescription(
+        key="ocpp",
+        name="Connect to OCPP",
+        icon="mdi:cloud-sync",
+        entity_category=EntityCategory.CONFIG,
+        command="ocppEnabled",
+        state_key="ocppEnabled",
+        command_extra=("ocppVendor",),
+    ),
 )
 
 
@@ -98,6 +111,7 @@ class BaseSwitchEntity(
         super().__init__(updater, device_number)
         self._command = entity_description.command
         self._state_key = entity_description.state_key
+        self._command_extra = entity_description.command_extra
         self._pending_command: bool | None = None
         self._init_optimistic_control()
         self._attr_is_on = None
@@ -178,7 +192,14 @@ class BaseSwitchEntity(
         self._write_if_changed(self._attr_is_on)
 
         try:
-            success = await self._updater.send_command(self._command, command_value)
+            extra = (
+                {key: command_value for key in self._command_extra}
+                if self._command_extra
+                else None
+            )
+            success = await self._updater.send_command(
+                self._command, command_value, extra=extra
+            )
             if success:
                 self._set_optimistic_value(bool(command_value))
             return success

@@ -13,16 +13,16 @@ sections:
       - type: entities
         show_header_toggle: false
         entities:
-          - entity: input_number.ev_battery_capacity
+          - entity: number.eveus_battery_capacity
             name: Battery Capacity
             icon: mdi:car-battery
-          - entity: input_number.ev_initial_soc
+          - entity: number.eveus_initial_soc
             name: Initial SOC
             icon: mdi:battery-50
-          - entity: input_number.ev_target_soc
+          - entity: number.eveus_target_soc
             name: Target SOC
             icon: mdi:battery-high
-          - entity: input_number.ev_soc_correction
+          - entity: number.eveus_soc_correction
             name: Charging Loss
             icon: mdi:battery-minus-variant
           - type: divider
@@ -305,7 +305,4 @@ sections:
             name: Leakage Peak
           - entity: sensor.eveus_ev_charger_battery_voltage
             name: Internal Battery
-          - entity: sensor.eveus_ev_charger_input_entities_status
-            name: SOC Helpers Status
-            icon: mdi:cog-outline
 cards: []

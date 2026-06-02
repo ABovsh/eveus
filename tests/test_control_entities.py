@@ -424,7 +424,7 @@ def test_number_setup_entry_skips_entity_when_model_is_missing() -> None:
         "Entry",
         (),
         {
-            "data": {},
+            "data": {"soc_mode": "basic"},
             "runtime_data": type(
                 "RuntimeData",
                 (),

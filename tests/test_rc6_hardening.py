@@ -23,14 +23,14 @@ from custom_components.eveus import utils
 
 def test_zero_soc_correction_is_preserved() -> None:
     calc = ev_sensors.CachedSOCCalculator()
-    calc._input_cache.soc_correction = 0.0
+    calc.set_value("soc_correction", 0.0)
     assert calc._effective_correction() == 0.0
     assert calc.soc_correction == 0.0
 
 
 def test_missing_soc_correction_falls_back_to_default() -> None:
     calc = ev_sensors.CachedSOCCalculator()
-    calc._input_cache.soc_correction = None
+    calc.set_value("soc_correction", None)
     assert calc._effective_correction() == ev_sensors.DEFAULT_SOC_CORRECTION
 
 
@@ -155,17 +155,6 @@ def test_system_time_rejects_far_future() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F20 — Input Entities Status stays available when charger is offline
-# ---------------------------------------------------------------------------
-
-def test_input_status_sensor_always_available() -> None:
-    sensor = ev_sensors.InputEntitiesStatusSensor(
-        EveusTestUpdater({}, available=False), 1
-    )
-    assert sensor.available is True
-
-
-# ---------------------------------------------------------------------------
 # F04 — duplicate device numbers are detected
 # ---------------------------------------------------------------------------
 
@@ -180,8 +169,13 @@ def test_is_device_number_taken_helper_exists() -> None:
 def test_reauth_emits_plaintext_warning_in_source() -> None:
     import inspect
     from custom_components.eveus import config_flow
-    src = inspect.getsource(config_flow.ConfigFlow.async_step_reauth_confirm)
-    assert "_warn_if_plaintext" in src
+    # The cleartext warning is centralized in validate_input so it fires before
+    # the connect for every flow (setup/reconfigure/reauth/repair), including
+    # failed attempts. Reauth reaches it by calling validate_input.
+    assert "_warn_if_plaintext" in inspect.getsource(config_flow.validate_input)
+    assert "validate_input" in inspect.getsource(
+        config_flow.ConfigFlow.async_step_reauth_confirm
+    )
 
 
 # ---------------------------------------------------------------------------

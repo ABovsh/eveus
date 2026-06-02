@@ -63,13 +63,22 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         hass: HomeAssistant,
         scheme: str = DEFAULT_SCHEME,
         config_entry: ConfigEntry | None = None,
+        device_number: int | None = None,
     ) -> None:
         """Initialize updater."""
+        # HA logs the coordinator name at ERROR/INFO level on poll failures, so
+        # it must stay host-free to honor the host-redaction-in-logs guarantee.
+        # The device number keeps multi-charger logs distinguishable instead.
+        coordinator_name = (
+            f"Eveus EV Charger {device_number}"
+            if device_number is not None
+            else "Eveus EV Charger"
+        )
         super().__init__(
             hass,
             _LOGGER,
             config_entry=config_entry,
-            name=f"Eveus EV Charger {host}",
+            name=coordinator_name,
             update_interval=_CHARGING_INTERVAL,
         )
         self.host = host
@@ -155,9 +164,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         value: Any,
         *,
         retry: bool = True,
+        extra: dict[str, Any] | None = None,
     ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
-        success = await self._command_manager.send_command(command, value, retry=retry)
+        success = await self._command_manager.send_command(
+            command, value, retry=retry, extra=extra
+        )
         if success:
             self._schedule_post_command_refresh()
         return success
@@ -332,6 +344,21 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # misrouted host that happens to return a plausible bare state.
                 if "currentSet" not in new_data:
                     raise ValueError("Response missing required Eveus 'currentSet' field")
+                # A genuine /main payload always carries a finite numeric
+                # currentSet. Reject NaN/inf/bool/non-numeric here so a misrouted
+                # or corrupt response cannot come online with garbage controls.
+                raw_current_set = new_data["currentSet"]
+                if isinstance(raw_current_set, bool):
+                    raise ValueError("Eveus 'currentSet' field is boolean")
+                try:
+                    current_set_value = float(raw_current_set)
+                except (TypeError, ValueError, OverflowError) as err:
+                    # OverflowError: a firmware-supplied integer literal too large
+                    # to fit a float would otherwise escape this guard and the
+                    # outer ValueError handler, skipping failure accounting.
+                    raise ValueError("Eveus 'currentSet' field is not numeric") from err
+                if not math.isfinite(current_set_value):
+                    raise ValueError("Eveus 'currentSet' field is not finite")
                 raw_state = new_data["state"]
                 if isinstance(raw_state, bool):
                     raise ValueError("Eveus 'state' field is boolean")

@@ -8,13 +8,14 @@ from typing import TYPE_CHECKING, Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, CONF_HOST, CONF_USERNAME, CONF_PASSWORD
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
     ConfigEntryNotReady,
 )
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
@@ -25,16 +26,34 @@ from .const import (
     CONF_PHASES,
     DEFAULT_PHASES,
     PHASE_OPTIONS,
+    CONF_SOC_MODE,
+    SOC_MODE_BASIC,
+    SOC_MODE_ADVANCED,
+    get_soc_mode,
+    CONF_INITIAL_SOC,
+    CONF_TARGET_SOC,
+    CONF_BATTERY_CAPACITY,
+    CONF_SOC_CORRECTION,
+    DEFAULT_INITIAL_SOC,
+    DEFAULT_TARGET_SOC,
+    DEFAULT_BATTERY_CAPACITY,
+    DEFAULT_SOC_CORRECTION,
 )
 from .common_network import EveusUpdater
-from .utils import get_next_device_number, is_device_number_taken
+from .utils import (
+    get_device_suffix,
+    get_next_device_number,
+    get_safe_value,
+    is_device_number_taken,
+    normalize_soc_input,
+)
 
 if TYPE_CHECKING:
     from .ev_sensors import CachedSOCCalculator
 
 _LOGGER = logging.getLogger(__name__)
 
-CONFIG_ENTRY_VERSION = 3
+CONFIG_ENTRY_VERSION = 4
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -90,6 +109,48 @@ def _delete_invalid_config_issue(hass: HomeAssistant, entry: ConfigEntry) -> Non
     ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
 
 
+def _legacy_helpers_present(hass: HomeAssistant) -> bool:
+    """True when the old input_number SOC helpers are registered."""
+    reg = er.async_get(hass)
+    return bool(
+        reg.async_get("input_number.ev_initial_soc")
+        and reg.async_get("input_number.ev_battery_capacity")
+    )
+
+
+def _ocpp_issue_id(entry: ConfigEntry) -> str:
+    """Return the repair issue id flagging that OCPP is enabled."""
+    return f"ocpp_enabled_{entry.entry_id}"
+
+
+def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None:
+    """Raise or clear the OCPP-enabled warning based on the latest poll.
+
+    When OCPP is enabled the charger is driven by the OCPP backend / mobile
+    app, which can override Charging Current, limits, and schedule, so those
+    Home Assistant controls may not take effect. Surfaced as a non-fixable
+    warning that auto-clears the moment OCPP is turned off — even if that
+    happens from the mobile app rather than from HA.
+    """
+    value = get_safe_value(updater.data, "ocppEnabled", int) if updater.data else None
+    if value == 1:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _ocpp_issue_id(entry),
+            is_fixable=False,
+            is_persistent=False,
+            issue_domain=DOMAIN,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="ocpp_enabled",
+        )
+    elif value == 0:
+        # Only an explicit "off" clears the warning. A missing or out-of-domain
+        # ocppEnabled (None) means the firmware dropped/garbled the field — leave
+        # the prior issue state untouched rather than falsely dismissing it.
+        ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
+
+
 async def async_setup(_hass: HomeAssistant, _config: dict[str, Any]) -> bool:
     """Set up the Eveus component."""
     return True
@@ -128,11 +189,36 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if CONF_PHASES not in new_data:
         new_data[CONF_PHASES] = DEFAULT_PHASES
 
+    if CONF_SOC_MODE not in new_data:
+        if _legacy_helpers_present(hass):
+            new_data[CONF_SOC_MODE] = SOC_MODE_ADVANCED
+            for entity_id, key, default in (
+                ("input_number.ev_initial_soc", CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC),
+                ("input_number.ev_target_soc", CONF_TARGET_SOC, DEFAULT_TARGET_SOC),
+                (
+                    "input_number.ev_battery_capacity",
+                    CONF_BATTERY_CAPACITY,
+                    DEFAULT_BATTERY_CAPACITY,
+                ),
+                (
+                    "input_number.ev_soc_correction",
+                    CONF_SOC_CORRECTION,
+                    DEFAULT_SOC_CORRECTION,
+                ),
+            ):
+                st = hass.states.get(entity_id)
+                # CONF_* values equal the SOC_INPUT_LIMITS keys.
+                new_data[key] = normalize_soc_input(
+                    key, st.state if st is not None else None, default
+                )
+        else:
+            new_data[CONF_SOC_MODE] = SOC_MODE_BASIC
+
     update_kwargs: dict[str, Any] = {}
     if new_data != entry.data:
         update_kwargs["data"] = new_data
 
-        if getattr(entry, "unique_id", None) == host:
+        if host is not None and getattr(entry, "unique_id", None) == host:
             update_kwargs["unique_id"] = new_data[CONF_HOST]
 
         if isinstance(host, str) and isinstance(entry.title, str) and host in entry.title:
@@ -176,6 +262,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         if not password:
             _create_invalid_config_issue(hass, entry, "missing_password")
             raise ConfigEntryError("No password specified")
+
+        from .config_flow import validate_credentials
+
+        try:
+            # Re-apply the config-flow credential rules to stored data so a
+            # hand-edited or pre-validation entry (over-long, or ':' in the
+            # username, which breaks Basic Auth) surfaces a repair instead of
+            # silently failing every poll.
+            username, password = validate_credentials(username, password)
+        except vol.Invalid as err:
+            _create_invalid_config_issue(hass, entry, "invalid_credentials")
+            raise ConfigEntryError(f"Invalid credentials: {type(err).__name__}") from err
         if model not in MODEL_MAX_CURRENT:
             _create_invalid_config_issue(hass, entry, "invalid_model")
             raise ConfigEntryError("Invalid model specified")
@@ -188,7 +286,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         raw_device_number = entry.data.get("device_number")
         try:
             device_number = int(raw_device_number)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             device_number = None
 
         if (
@@ -207,6 +305,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             hass.config_entries.async_update_entry(entry, data=new_data)
             _LOGGER.debug("Normalized Eveus device number %d", device_number)
 
+        # Purge the retired "Input Entities Status" sensor from the entity
+        # registry so it does not linger as an unavailable/orphan entity after
+        # upgrade. Its unique_id follows the base scheme keyed on device_number.
+        reg = er.async_get(hass)
+        status_unique_id = (
+            f"eveus{get_device_suffix(device_number)}_input_entities_status"
+        )
+        stale = reg.async_get_entity_id("sensor", DOMAIN, status_unique_id)
+        if stale:
+            reg.async_remove(stale)
+
+        if get_soc_mode(entry) == SOC_MODE_ADVANCED and _legacy_helpers_present(hass):
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                f"soc_dashboard_update_{entry.entry_id}",
+                is_fixable=False,
+                is_persistent=True,
+                issue_domain=DOMAIN,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="soc_dashboard_update",
+            )
+
         updater = EveusUpdater(
             host=host,
             username=username,
@@ -214,13 +335,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             hass=hass,
             scheme=scheme,
             config_entry=entry,
+            device_number=device_number,
         )
         from .ev_sensors import CachedSOCCalculator
 
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
         try:
             phases = int(raw_phases)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             phases = DEFAULT_PHASES
         if phases not in PHASE_OPTIONS:
             phases = DEFAULT_PHASES
@@ -247,6 +369,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         await updater.async_config_entry_first_refresh()
 
+        # Keep the OCPP-enabled warning in sync with every poll, so it reflects
+        # toggles made from the charger UI or mobile app, not just from HA.
+        @callback
+        def _refresh_ocpp_issue() -> None:
+            _update_ocpp_issue(hass, entry, updater)
+
+        entry.async_on_unload(updater.async_add_listener(_refresh_ocpp_issue))
+        _refresh_ocpp_issue()
+
         # DataUpdateCoordinator constructed with config_entry already registers
         # async_shutdown on the entry unload lifecycle — no manual registration.
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -268,4 +399,5 @@ async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:
     """Unload a config entry."""
+    ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

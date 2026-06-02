@@ -14,12 +14,16 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.config_entries import OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -38,14 +42,76 @@ from .const import (
     CONF_PHASES,
     DEFAULT_PHASES,
     PHASE_OPTIONS,
+    CONF_SOC_MODE,
+    SOC_MODE_ADVANCED,
+    SOC_MODE_OPTIONS,
+    CONF_INITIAL_SOC,
+    CONF_TARGET_SOC,
+    CONF_BATTERY_CAPACITY,
+    CONF_SOC_CORRECTION,
+    DEFAULT_INITIAL_SOC,
+    DEFAULT_TARGET_SOC,
+    DEFAULT_BATTERY_CAPACITY,
+    DEFAULT_SOC_CORRECTION,
+    SOC_INPUT_LIMITS,
+    get_soc_mode,
 )
+from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 _HOSTNAME_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
 
 # Keys outside the user-editable form that must survive reconfigure/reauth/repair.
-_PRESERVED_ENTRY_KEYS: tuple[str, ...] = ("device_number",)
+_PRESERVED_ENTRY_KEYS: tuple[str, ...] = (
+    "device_number",
+    CONF_INITIAL_SOC,
+    CONF_TARGET_SOC,
+    CONF_BATTERY_CAPACITY,
+    CONF_SOC_CORRECTION,
+)
+
+_SOC_MODE_SELECTOR = SelectSelector(
+    SelectSelectorConfig(
+        options=SOC_MODE_OPTIONS,
+        translation_key="soc_mode",
+        mode=SelectSelectorMode.DROPDOWN,
+    )
+)
+
+
+def _prefill_from_helper(hass, entity_id: str, key: str, fallback: float) -> float:
+    """Read a current input_number.* state for prefill, else fallback.
+
+    Routes through normalize_soc_input so a non-finite or out-of-range helper
+    state is clamped/rejected rather than seeding the form with a bad default.
+    """
+    state = hass.states.get(entity_id)
+    if state is None:
+        return fallback
+    return normalize_soc_input(key, state.state, fallback)
+
+
+def build_soc_step_schema(hass) -> vol.Schema:
+    """Build the advanced-mode SOC value step, prefilled from any ev_* helpers."""
+    cap_lo, cap_hi = SOC_INPUT_LIMITS["battery_capacity"]
+    cor_lo, cor_hi = SOC_INPUT_LIMITS["soc_correction"]
+    cap_default = _prefill_from_helper(
+        hass, "input_number.ev_battery_capacity", "battery_capacity", DEFAULT_BATTERY_CAPACITY
+    )
+    cor_default = _prefill_from_helper(
+        hass, "input_number.ev_soc_correction", "soc_correction", DEFAULT_SOC_CORRECTION
+    )
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_BATTERY_CAPACITY, default=cap_default
+            ): vol.All(vol.Coerce(float), vol.Range(min=cap_lo, max=cap_hi)),
+            vol.Required(
+                CONF_SOC_CORRECTION, default=cor_default
+            ): vol.All(vol.Coerce(float), vol.Range(min=cor_lo, max=cor_hi)),
+        }
+    )
 
 
 def _merge_entry_data(
@@ -105,6 +171,11 @@ def _split_host_and_scheme(
     raw_host = raw_host.strip()
     if not raw_host:
         raise vol.Invalid("Host cannot be empty")
+
+    # A bare IPv6 literal (2+ colons, no brackets, no scheme) confuses urlparse,
+    # which reads the trailing group as a port. Bracket it so it parses as a host.
+    if "://" not in raw_host and "[" not in raw_host and raw_host.count(":") >= 2:
+        raw_host = f"[{raw_host}]"
 
     parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
     scheme = parsed.scheme or default_scheme
@@ -234,12 +305,18 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
         raise vol.Invalid("Invalid charger model")
 
     raw_phases = data.get(CONF_PHASES, DEFAULT_PHASES)
+    if isinstance(raw_phases, bool):
+        raise vol.Invalid("Invalid phase count")
     try:
         phases = int(raw_phases)
-    except (TypeError, ValueError) as err:
+    except (TypeError, ValueError, OverflowError) as err:
         raise vol.Invalid("Invalid phase count") from err
     if phases not in PHASE_OPTIONS:
         raise vol.Invalid("Invalid phase count")
+
+    soc_mode = data.get(CONF_SOC_MODE, SOC_MODE_ADVANCED)
+    if soc_mode not in SOC_MODE_OPTIONS:
+        raise vol.Invalid("Invalid SOC mode")
 
     return {
         CONF_HOST: host,
@@ -248,6 +325,7 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
         CONF_MODEL: model,
         CONF_SCHEME: scheme,
         CONF_PHASES: phases,
+        CONF_SOC_MODE: soc_mode,
     }
 
 
@@ -281,6 +359,10 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
                 CONF_PHASES,
                 default=_safe_phases_default(defaults.get(CONF_PHASES)),
             ): vol.In(PHASE_OPTIONS),
+            vol.Required(
+                CONF_SOC_MODE,
+                default=defaults.get(CONF_SOC_MODE, SOC_MODE_ADVANCED),
+            ): _SOC_MODE_SELECTOR,
         }
     )
 
@@ -307,6 +389,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         normalized_data = normalize_user_input(data)
     except vol.Invalid as err:
         raise InvalidInput(str(err))
+
+    # Warn before connecting: credentials are sent in cleartext over HTTP on the
+    # very first request, so the warning must fire even when the attempt fails
+    # and for every flow that validates (setup, reconfigure, reauth, repair).
+    _warn_if_plaintext(normalized_data[CONF_SCHEME])
 
     try:
         session = aiohttp_client.async_get_clientsession(hass)
@@ -358,6 +445,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._host: str | None = None
+        self._pending_entry: dict[str, Any] | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -374,12 +462,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(self._host)
                 self._abort_if_unique_id_configured()
 
-                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
-                return self.async_create_entry(
-                    title=info["title"],
-                    data=entry_data,
-                )
+                self._pending_entry = {
+                    "title": info["title"],
+                    "data": entry_data,
+                }
+                if entry_data.get(CONF_SOC_MODE) == SOC_MODE_ADVANCED:
+                    return await self.async_step_soc()
+                return self._finish_entry()
 
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -401,6 +491,39 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    def _finish_entry(self) -> FlowResult:
+        """Create the entry from the pending payload, seeding advanced defaults."""
+        data = dict(self._pending_entry["data"])
+        if data.get(CONF_SOC_MODE) == SOC_MODE_ADVANCED:
+            data.setdefault(CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC)
+            data.setdefault(CONF_TARGET_SOC, DEFAULT_TARGET_SOC)
+        return self.async_create_entry(
+            title=self._pending_entry["title"], data=data
+        )
+
+    async def async_step_soc(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Collect the set-once SOC values for advanced mode."""
+        if user_input is not None:
+            self._pending_entry["data"].update(
+                {
+                    CONF_BATTERY_CAPACITY: user_input[CONF_BATTERY_CAPACITY],
+                    CONF_SOC_CORRECTION: user_input[CONF_SOC_CORRECTION],
+                }
+            )
+            return self._finish_entry()
+        return self.async_show_form(
+            step_id="soc",
+            data_schema=build_soc_step_schema(self.hass),
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry) -> "EveusOptionsFlow":
+        """Return the options flow handler for toggling SOC mode."""
+        return EveusOptionsFlow(config_entry)
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -417,7 +540,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     self._abort_if_unique_id_configured()
 
-                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
                 return self.async_update_reload_and_abort(
                     entry,
@@ -473,7 +595,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     return self.async_abort(reason="wrong_device")
 
-                _warn_if_plaintext(entry_data.get(CONF_SCHEME))
 
                 return self.async_update_reload_and_abort(
                     entry,
@@ -517,3 +638,29 @@ class InvalidInput(HomeAssistantError):
 
 class InvalidDevice(HomeAssistantError):
     """Error to indicate invalid device response or capabilities."""
+
+
+class EveusOptionsFlow(OptionsFlow):
+    """Toggle SOC monitoring mode after setup."""
+
+    def __init__(self, entry) -> None:
+        """Store the config entry being edited."""
+        self._entry = entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show and apply the SOC mode chooser."""
+        if user_input is not None:
+            new_data = dict(self._entry.data)
+            new_data[CONF_SOC_MODE] = user_input[CONF_SOC_MODE]
+            self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+            return self.async_create_entry(title="", data={})
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_SOC_MODE, default=get_soc_mode(self._entry)
+                ): _SOC_MODE_SELECTOR,
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

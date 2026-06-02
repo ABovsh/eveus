@@ -231,10 +231,13 @@ def test_sensitive_keys_flags_identifying_fields_only() -> None:
 # ---------------------------------------------------------------------------
 
 def test_time_to_target_prompts_for_target_when_only_target_missing() -> None:
-    no_target = {k: v for k, v in EV_HELPERS.items() if k != "input_number.ev_target_soc"}
+    # Core SOC values pushed, but no target_soc.
+    calc = CachedSOCCalculator()
+    calc.set_value("initial_soc", EV_HELPERS["input_number.ev_initial_soc"])
+    calc.set_value("battery_capacity", EV_HELPERS["input_number.ev_battery_capacity"])
+    calc.set_value("soc_correction", EV_HELPERS["input_number.ev_soc_correction"])
     updater = EveusTestUpdater(data={"powerMeas": 5000, "sessionEnergy": 10})
-    sensor = TimeToTargetSocSensor(updater, 1, CachedSOCCalculator())
-    sensor.hass = HelperHass(no_target)
+    sensor = TimeToTargetSocSensor(updater, 1, calc)
     disable_state_writes(sensor)
 
     assert sensor._get_sensor_value() == "Set Target SOC"

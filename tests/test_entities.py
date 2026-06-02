@@ -338,6 +338,27 @@ def test_number_entity_keeps_backward_compatible_unique_id_and_limits() -> None:
     assert entity.native_max_value == 16
 
 
+def test_entities_do_not_set_name_attr_so_translation_keys_are_used() -> None:
+    updater = _Updater()
+    sensor = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="battery_voltage",
+            name="Battery Voltage",
+            value_fn=lambda updater, hass: None,
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+    number = EveusCurrentNumber(updater, "16A")
+
+    assert not hasattr(sensor, "_attr_name")
+    assert sensor.translation_key == "battery_voltage"
+    assert sensor.unique_id == "eveus_battery_voltage"
+    assert not hasattr(number, "_attr_name")
+    assert number.translation_key == "charging_current"
+    assert number.unique_id == "eveus_charging_current"
+
+
 def test_control_state_properties_do_not_mutate_cached_device_state() -> None:
     updater = _Updater()
     number = EveusCurrentNumber(updater, "16A")

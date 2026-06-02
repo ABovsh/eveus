@@ -30,8 +30,11 @@ class _Updater:
     def async_add_listener(self, *args, **kwargs):
         return lambda: None
 
-    async def send_command(self, command, value, *, retry: bool = True) -> bool:
+    async def send_command(
+        self, command, value, *, retry: bool = True, extra=None
+    ) -> bool:
         self.commands.append((command, value))
+        self.last_extra = extra
         return self.command_result
 
 
