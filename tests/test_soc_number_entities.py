@@ -4,6 +4,7 @@ import asyncio
 import pytest
 
 from conftest import EveusTestUpdater, HelperHass, disable_state_writes
+from custom_components.eveus.const import MODEL_16A, SOC_MODE_ADVANCED
 from custom_components.eveus import number as number_module
 from custom_components.eveus.ev_sensors import CachedSOCCalculator
 from custom_components.eveus.number import (
@@ -226,6 +227,52 @@ def test_build_soc_numbers_uses_defaults_when_seed_missing() -> None:
     assert by_key["target_soc"].native_value == 80
     assert by_key["battery_capacity"].native_value == 50
     assert by_key["soc_correction"].native_value == 7.5
+
+
+def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
+    added: list[object] = []
+    calculator = CachedSOCCalculator()
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": {
+                "model": MODEL_16A,
+                "soc_mode": SOC_MODE_ADVANCED,
+                "initial_soc": 25,
+                "target_soc": 85,
+                "battery_capacity": 70,
+                "soc_correction": 5,
+            },
+            "runtime_data": type(
+                "RuntimeData",
+                (),
+                {
+                    "updater": _updater(),
+                    "device_number": 2,
+                    "soc_calculator": calculator,
+                },
+            )(),
+        },
+    )()
+
+    asyncio.run(number_module.async_setup_entry(None, entry, lambda entities: added.extend(entities)))
+
+    assert [entity.name for entity in added] == [
+        "Charging Current",
+        "Initial SOC",
+        "Target SOC",
+        "Battery Capacity",
+        "SOC Correction",
+    ]
+    assert [entity.unique_id for entity in added] == [
+        "eveus2_charging_current",
+        "eveus2_initial_soc",
+        "eveus2_target_soc",
+        "eveus2_battery_capacity",
+        "eveus2_soc_correction",
+    ]
+    assert [entity.native_value for entity in added[1:]] == [25, 85, 70, 5]
 
 
 def test_seed_is_normalized_on_construction() -> None:

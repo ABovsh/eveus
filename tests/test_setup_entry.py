@@ -11,8 +11,11 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, Co
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 import custom_components.eveus as eveus
 from custom_components.eveus.const import (
+    CONF_PHASES,
     CONF_MODEL,
+    CONF_SCHEME,
     CONF_SOC_MODE,
+    DEFAULT_PHASES,
     MODEL_16A,
     SOC_MODE_ADVANCED,
     SOC_MODE_BASIC,
@@ -121,6 +124,10 @@ def _data(**overrides: object) -> dict[str, object]:
     return data
 
 
+def test_async_setup_returns_true() -> None:
+    assert asyncio.run(eveus.async_setup(object(), {})) is True
+
+
 @pytest.fixture(autouse=True)
 def _patch_issue_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eveus.ir, "async_create_issue", lambda *args, **kwargs: None)
@@ -146,6 +153,19 @@ def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatc
     assert hass.config_entries.forwarded
     # async_shutdown is registered by DataUpdateCoordinator itself (via the
     # config_entry= constructor argument); we no longer hook it manually.
+
+
+def test_async_setup_entry_accepts_already_normalized_device_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = _hass()
+    entry = _Entry(_data(device_number=2))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert entry.runtime_data.device_number == 2
+    assert hass.config_entries.updated == []
 
 
 def test_async_setup_entry_propagates_auth_failure(
@@ -194,6 +214,37 @@ def test_async_setup_entry_rejects_invalid_stored_data(overrides: dict[str, obje
     }
 
 
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({CONF_HOST: 123}, "Host is not a string"),
+        ({CONF_HOST: "http://charger.local/main"}, "Invalid host:"),
+        ({CONF_USERNAME: "bad:user"}, "Invalid credentials:"),
+    ],
+)
+def test_async_setup_entry_rejects_hardened_stored_data_edges(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ConfigEntryError, match=message):
+        asyncio.run(eveus.async_setup_entry(_hass(), _Entry(_data(**overrides))))
+
+
+def test_async_setup_entry_rejects_invalid_scheme_returned_after_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.eveus import config_flow
+
+    monkeypatch.setattr(
+        config_flow,
+        "_split_host_and_scheme",
+        lambda host, scheme="http": (host, "ftp"),
+    )
+
+    with pytest.raises(ConfigEntryError, match="Invalid scheme"):
+        asyncio.run(eveus.async_setup_entry(_hass(), _Entry(_data())))
+
+
 def test_async_setup_entry_creates_repair_for_invalid_stored_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -216,6 +267,119 @@ def test_async_setup_entry_creates_repair_for_invalid_stored_data(
     assert created
     assert created[0]["translation_key"] == "invalid_config"
     assert created[0]["is_fixable"] is True
+
+
+def test_async_setup_entry_purges_retired_status_sensor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _FakeEntityRegistry()
+    registry.by_unique[
+        ("sensor", "eveus", "eveus_input_entities_status")
+    ] = "sensor.eveus_input_entities_status"
+    hass = _hass()
+    entry = _Entry(_data(device_number=1))
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert registry.removed == ["sensor.eveus_input_entities_status"]
+
+
+def test_async_setup_entry_creates_soc_dashboard_issue_for_legacy_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[dict[str, object]] = []
+    registry = _FakeEntityRegistry(
+        registered={
+            "input_number.ev_initial_soc",
+            "input_number.ev_battery_capacity",
+        }
+    )
+    hass = _hass()
+    entry = _Entry(_data(device_number=1, **{CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_create_issue",
+        lambda hass, domain, issue_id, **kw: created.append({"issue_id": issue_id, **kw}),
+    )
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert created == [
+        {
+            "issue_id": "soc_dashboard_update_entry-id",
+            "is_fixable": False,
+            "is_persistent": True,
+            "issue_domain": "eveus",
+            "severity": eveus.ir.IssueSeverity.WARNING,
+            "translation_key": "soc_dashboard_update",
+        }
+    ]
+
+
+def test_async_setup_entry_normalizes_invalid_phase_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = _hass()
+    entry = _Entry(_data(device_number=1, **{CONF_PHASES: "bad"}))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert entry.runtime_data.phases == DEFAULT_PHASES
+    assert hass.config_entries.updated == [
+        {"data": {**_data(device_number=1, **{CONF_PHASES: DEFAULT_PHASES})}}
+    ]
+
+
+def test_async_setup_entry_normalizes_unsupported_phase_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = _hass()
+    entry = _Entry(_data(device_number=1, **{CONF_PHASES: 2}))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert entry.runtime_data.phases == DEFAULT_PHASES
+    assert hass.config_entries.updated == [
+        {"data": {**_data(device_number=1, **{CONF_PHASES: DEFAULT_PHASES})}}
+    ]
+
+
+def test_async_setup_entry_raises_ocpp_issue_on_first_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OcppUpdater(_Updater):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)
+            self.data = {"ocppEnabled": 1}
+
+    created: list[dict[str, object]] = []
+    hass = _hass()
+    entry = _Entry(_data(device_number=1))
+    monkeypatch.setattr(eveus, "EveusUpdater", OcppUpdater)
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_create_issue",
+        lambda hass, domain, issue_id, **kw: created.append({"issue_id": issue_id, **kw}),
+    )
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert created == [
+        {
+            "issue_id": "ocpp_enabled_entry-id",
+            "is_fixable": False,
+            "is_persistent": False,
+            "issue_domain": "eveus",
+            "severity": eveus.ir.IssueSeverity.WARNING,
+            "translation_key": "ocpp_enabled",
+        }
+    ]
 
 
 def test_async_setup_entry_normalizes_stored_device_number(
@@ -498,6 +662,58 @@ def _migrate_entry() -> SimpleNamespace:
         title=f"Eveus Charger ({TEST_HOST})",
         version=3,
     )
+
+
+def test_migration_strips_legacy_url_path_query_and_fragment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _FakeEntityRegistry(registered=set())
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+
+    hass = SimpleNamespace(
+        config_entries=_MigrateEntries(),
+        states=SimpleNamespace(get=lambda entity_id: None),
+    )
+    entry = _migrate_entry()
+    entry.data = {
+        **entry.data,
+        CONF_HOST: f"http://{TEST_HOST}/main?x=1#frag",
+    }
+    entry.unique_id = entry.data[CONF_HOST]
+    entry.title = f"Eveus Charger ({entry.data[CONF_HOST]})"
+
+    assert asyncio.run(eveus.async_migrate_entry(hass, entry)) is True
+
+    assert entry.data[CONF_HOST] == TEST_HOST
+    assert entry.data[CONF_SCHEME] == "http"
+    assert entry.unique_id == TEST_HOST
+    assert entry.title == f"Eveus Charger ({TEST_HOST})"
+
+
+def test_migration_survives_malformed_legacy_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import urllib.parse
+
+    registry = _FakeEntityRegistry(registered=set())
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(
+        urllib.parse,
+        "urlparse",
+        lambda host: (_ for _ in ()).throw(ValueError("malformed")),
+    )
+
+    hass = SimpleNamespace(
+        config_entries=_MigrateEntries(),
+        states=SimpleNamespace(get=lambda entity_id: None),
+    )
+    entry = _migrate_entry()
+    entry.data = {**entry.data, CONF_HOST: f"http://{TEST_HOST}"}
+
+    assert asyncio.run(eveus.async_migrate_entry(hass, entry)) is True
+
+    assert entry.version == 4
+    assert entry.data[CONF_HOST] == TEST_HOST
 
 
 def test_async_setup_entry_keeps_device_prefixed_soc_number_entity_ids(

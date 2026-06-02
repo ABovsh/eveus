@@ -54,6 +54,15 @@ def test_soc_calculator_reports_missing_and_invalid_helpers() -> None:
     assert calculator.get_soc_percent(0) == 20  # Initial SOC fallback
 
 
+def test_soc_calculator_ignores_unknown_pushed_keys() -> None:
+    calculator = CachedSOCCalculator()
+
+    calculator.set_value("future_key", 123)
+
+    assert calculator.are_helpers_available() is False
+    assert not hasattr(calculator, "future_key")
+
+
 def test_missing_optional_soc_helpers_are_quiet_at_normal_log_levels(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -95,6 +104,35 @@ def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
     # 20% × 80 kWh = 16.0. Avoids the entity going "unknown" at cold start.
     assert kwh._get_sensor_value() == pytest.approx(16.0)
     assert percent._get_sensor_value() == 20
+
+
+def test_soc_sensors_return_unknown_for_invalid_session_energy() -> None:
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    updater = EveusTestUpdater({"sessionEnergy": "16"})
+    kwh = EVSocKwhSensor(updater, 1, calculator)
+    percent = EVSocPercentSensor(updater, 1, calculator)
+
+    assert kwh._get_sensor_value() == pytest.approx(30.4)
+    assert percent._get_sensor_value() == 38
+
+    updater.data = {"sessionEnergy": "-1"}
+
+    assert kwh._get_sensor_value() is None
+    assert percent._get_sensor_value() is None
+
+
+def test_soc_sensors_keep_cached_value_when_inputs_temporarily_missing() -> None:
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    updater = EveusTestUpdater({"sessionEnergy": "16"})
+    kwh = EVSocKwhSensor(updater, 1, calculator)
+    percent = EVSocPercentSensor(updater, 1, calculator)
+
+    assert kwh._get_sensor_value() == pytest.approx(30.4)
+    assert percent._get_sensor_value() == 38
+    calculator.set_value("battery_capacity", None)
+
+    assert kwh._get_sensor_value() == pytest.approx(30.4)
+    assert percent._get_sensor_value() == 38
 
 
 def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:
@@ -155,6 +193,20 @@ def test_helper_sensor_available_property_is_pure() -> None:
     assert hass.states.calls == []
 
 
+def test_required_helper_sensor_is_unavailable_until_inputs_are_pushed() -> None:
+    class RequiredSensor(BaseEVHelperSensor):
+        ENTITY_NAME = "Required Helper"
+        _requires_helpers = True
+
+    sensor = RequiredSensor(EveusTestUpdater({}))
+
+    assert sensor.available is False
+
+    push_helpers(sensor._soc_calculator, EV_HELPERS)
+
+    assert sensor.available is True
+
+
 def test_helper_sensor_coordinator_update_computes_value_when_online() -> None:
     writes = 0
     calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
@@ -175,6 +227,43 @@ def test_helper_sensor_coordinator_update_computes_value_when_online() -> None:
     # sessionEnergy=16, initial=20%, capacity=80, loss=10 → 16 + 14.4 = 30.4 kWh
     assert sensor.native_value == pytest.approx(30.4)
     assert writes == 1
+
+
+def test_helper_sensor_soc_input_change_is_quiet_when_nothing_changes() -> None:
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "16"}), 1, calculator)
+    sensor.hass = HelperHass(EV_HELPERS)
+    writes = 0
+
+    def write_state() -> None:
+        nonlocal writes
+        writes += 1
+
+    sensor.async_write_ha_state = write_state
+    sensor._update_native_value()
+
+    sensor._on_soc_input_changed()
+
+    assert writes == 0
+
+
+def test_helper_sensor_coordinator_update_is_quiet_when_nothing_changes() -> None:
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "16"}), 1, calculator)
+    sensor.hass = HelperHass(EV_HELPERS)
+    writes = 0
+
+    def write_state() -> None:
+        nonlocal writes
+        writes += 1
+
+    sensor.async_write_ha_state = write_state
+    sensor._handle_coordinator_update()
+    writes = 0
+
+    sensor._handle_coordinator_update()
+
+    assert writes == 0
 
 
 def test_soc_reprojects_when_initial_soc_changes() -> None:
@@ -247,6 +336,24 @@ def test_soc_calculator_contains_soc_math_exceptions(monkeypatch: pytest.MonkeyP
     )
 
     assert calculator.get_soc_kwh(1) is None
+
+
+def test_charging_finish_time_contains_calculation_exceptions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    sensor = ChargingFinishTimeSensor(
+        EveusTestUpdater({"sessionEnergy": "16", "powerMeas": "7000"}),
+        1,
+        calculator,
+    )
+    monkeypatch.setattr(
+        ev_sensors,
+        "calculate_remaining_seconds",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    assert sensor._get_sensor_value() is None
 
 
 def test_helper_sensor_soc_input_change_writes_for_changed_value() -> None:

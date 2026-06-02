@@ -189,6 +189,19 @@ def test_command_manager_urlencodes_command_payload() -> None:
     assert session.calls[0]["data"] == "pageevent=profile+name&profile+name=eco+mode"
 
 
+def test_command_manager_includes_extra_form_fields() -> None:
+    session = _Session(_Response())
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(
+        manager.send_command("ocppEnabled", 1, extra={"ocppVendor": 1})
+    ) is True
+
+    assert session.calls[0]["data"] == (
+        "pageevent=ocppEnabled&ocppEnabled=1&ocppVendor=1"
+    )
+
+
 async def _no_sleep(_seconds: float) -> None:
     return None
 
@@ -214,6 +227,19 @@ def test_command_manager_non_auth_response_error_retries_and_fails(
     assert asyncio.run(manager.send_command("currentSet", 16)) is False
 
     assert len(session.calls) == 3
+    assert manager.consecutive_failures == 1
+
+
+def test_command_manager_does_not_retry_permanent_response_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", _no_sleep)
+    session = _Session(_Response(response_status=400))
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("currentSet", 16)) is False
+
+    assert len(session.calls) == 1
     assert manager.consecutive_failures == 1
 
 

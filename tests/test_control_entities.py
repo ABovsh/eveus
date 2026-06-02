@@ -94,6 +94,20 @@ def test_current_number_update_clears_stale_mismatched_optimistic_value() -> Non
     assert entity._last_device_value == 10
 
 
+@pytest.mark.parametrize("payload", [{}, {"currentSet": "99"}, {"currentSet": "bad"}])
+def test_current_number_update_ignores_missing_or_invalid_device_values(
+    payload: dict[str, object],
+) -> None:
+    updater = _Updater(payload)
+    entity = EveusCurrentNumber(updater, "16A")
+    _disable_state_writes(entity)
+
+    entity._handle_coordinator_update()
+
+    assert entity._last_device_value is None
+    assert entity.native_value is None
+
+
 def test_current_number_ignores_stale_coordinator_update_while_command_pending() -> None:
     updater = _Updater({"currentSet": "10"})
     entity = EveusCurrentNumber(updater, "16A")

@@ -90,6 +90,36 @@ def test_base_entity_availability_grace_and_cache_paths() -> None:
     assert entity.available is False
 
 
+def test_base_entity_availability_stays_available_during_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 100.0
+    monkeypatch.setattr("custom_components.eveus.common_base.time.time", lambda: now)
+    updater = _Updater()
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+
+    updater.available = False
+    assert entity._update_availability_state() is False
+    assert entity.available is True
+    assert entity._unavailable_since == 100.0
+
+    now = 105.0
+    assert entity._update_availability_state(grace_period=10) is False
+    assert entity.available is True
+
+    now = 111.0
+    assert entity._update_availability_state(grace_period=10) is True
+    assert entity.available is False
+
+
 def test_available_property_is_pure_until_coordinator_update() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
@@ -472,6 +502,28 @@ def test_base_entity_finalize_device_info_paths(monkeypatch: pytest.MonkeyPatch)
     assert entity.device_info["sw_version"] == "R3.05.2"
 
 
+def test_base_entity_finalize_waits_for_real_firmware(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = _Updater()
+    updater.data = {}
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: None,
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+    monkeypatch.setattr(entity, "_build_device_info", lambda: {"sw_version": "Unknown"})
+    updater.data = {"verFWMain": "Unknown"}
+
+    entity._maybe_finalize_device_info()
+
+    assert entity._device_info_finalized is False
+
+
 def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.MonkeyPatch) -> None:
     updater = _Updater()
     updater.data = {}
@@ -513,6 +565,57 @@ def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.Monkey
                 "manufacturer": "Eveus",
                 "hw_version": "W1.0",
                 "serial_number": "EV-12345",
+            },
+        )
+    ]
+
+
+def test_base_entity_finalize_updates_registry_with_minimal_device_info(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = _Updater()
+    updater.data = {}
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="power",
+            name="Power",
+            value_fn=lambda updater, hass: None,
+            sensor_type=SensorType.MEASUREMENT,
+        ),
+    )
+    entity.hass = object()
+    updater.data = {"verFWMain": "R3.05.2"}
+    monkeypatch.setattr(
+        entity,
+        "_build_device_info",
+        lambda: {
+            "sw_version": "R3.05.2",
+            "model": "Eveus EV Charger",
+            "manufacturer": "Eveus",
+            "identifiers": {("eveus", TEST_HOST)},
+        },
+    )
+    updates: list[tuple[str, dict[str, object]]] = []
+
+    class Registry:
+        def async_get_device(self, *, identifiers):
+            return SimpleNamespace(id="device-id")
+
+        def async_update_device(self, device_id, **kwargs):
+            updates.append((device_id, kwargs))
+
+    monkeypatch.setattr("custom_components.eveus.common_base.dr.async_get", lambda hass: Registry())
+
+    entity._maybe_finalize_device_info()
+
+    assert updates == [
+        (
+            "device-id",
+            {
+                "sw_version": "R3.05.2",
+                "model": "Eveus EV Charger",
+                "manufacturer": "Eveus",
             },
         )
     ]

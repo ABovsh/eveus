@@ -152,6 +152,36 @@ def test_timezone_select_raises_on_failure() -> None:
     assert updater.commands == [("timeZone", 3)]
 
 
+def test_timezone_select_rolls_back_when_command_raises() -> None:
+    """Transport exceptions clear optimistic UI instead of leaving a stale value."""
+
+    class RaisingUpdater(_Updater):
+        async def send_command(self, command: str, value: object, *, retry: bool = True) -> bool:
+            self.commands.append((command, value))
+            raise RuntimeError("transport failed")
+
+    updater = RaisingUpdater({"timeZone": 0})
+    select = EveusTimeZoneSelect(updater)
+    _disable_state_writes(select)
+
+    with pytest.raises(RuntimeError, match="transport failed"):
+        asyncio.run(select.async_select_option("+3"))
+
+    assert updater.commands == [("timeZone", 3)]
+    assert select._optimistic_value is None
+    assert select.current_option == "0"
+
+
+def test_timezone_select_update_handles_missing_device_option() -> None:
+    updater = _Updater({})
+    select = EveusTimeZoneSelect(updater)
+    _disable_state_writes(select)
+
+    select._handle_coordinator_update()
+
+    assert select.current_option is None
+
+
 def test_timezone_select_holds_optimistic_value_until_device_confirms() -> None:
     """After a successful write, current_option reflects the picked value even
     if the next poll still returns the old timeZone — prevents the UI snap-back

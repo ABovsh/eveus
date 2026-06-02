@@ -1,6 +1,8 @@
 """Unit tests for generated sensor value definitions."""
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -223,6 +225,7 @@ def test_session_time_and_active_rate_attributes_handle_edge_cases() -> None:
     assert sensors.get_session_time_attrs(_updater({}, available=False), None) == {}
     assert sensors.get_session_time_attrs(_updater({"sessionTime": "bad"}), None) == {}
 
+    assert sensors.get_active_rate_cost(_updater({}), None) is None
     assert sensors.get_active_rate_cost(_updater({"activeTarif": "5"}), None) is None
     assert sensors.get_active_rate_cost(_updater({"activeTarif": "2"}), None) is None
     assert sensors.get_active_rate_attrs(_updater({"activeTarif": "9"}), None) == {
@@ -261,6 +264,17 @@ def test_adaptive_and_schedule_helpers_cover_invalid_and_cap_paths() -> None:
     assert schedule(_updater({"sh1Enabled": "0"}), None) == "Disabled"
     assert schedule(_updater({"sh1Enabled": "2"}), None) is None
     assert attrs(_updater({"sh1Start": "-1", "sh1Stop": "1440"}), None) == {}
+    assert attrs(
+        _updater(
+            {
+                "sh1CurrentEnable": "1",
+                "sh1CurrentValue": "99",
+                "sh1EnergyEnable": "1",
+                "sh1EnergyValue": "999",
+            }
+        ),
+        None,
+    ) == {}
     assert attrs(_updater({}, available=False), None) == {}
 
 
@@ -316,6 +330,23 @@ def test_connection_quality_clamps_and_handles_metric_errors() -> None:
     assert sensors.get_connection_attrs(BrokenMetrics(), None) == {"status": "Error"}
 
 
+def test_connection_attrs_handles_offline_and_includes_wifi_rssi() -> None:
+    assert sensors.get_connection_attrs(_updater({}, available=False), None) == {}
+
+    updater = _updater(
+        {"RSSI": "-68"},
+        available=True,
+    )
+    updater.connection_quality = {"success_rate": 90, "latency_avg": 0.25}
+
+    assert sensors.get_connection_attrs(updater, None) == {
+        "connection_quality": 90,
+        "latency_avg": 0.0,
+        "status": "Good",
+        "wifi_rssi": -68,
+    }
+
+
 def test_system_time_handles_invalid_timestamp_without_raising() -> None:
     assert sensors.get_system_time(_updater({"systemTime": "bad"}), None) is None
 
@@ -360,3 +391,68 @@ def test_optimized_sensor_contract_for_offline_and_attribute_errors() -> None:
 
     updater.available = True
     assert sensor._update_extra_state_attributes() is False
+
+
+def test_optimized_sensor_value_exceptions_are_logged_and_contained() -> None:
+    updater = _updater({"value": "1"})
+    spec = sensors.SensorSpec(
+        key="broken_value",
+        name="Broken Value",
+        value_fn=lambda updater, hass: (_ for _ in ()).throw(RuntimeError("boom")),
+        sensor_type=sensors.SensorType.DIAGNOSTIC,
+    )
+    sensor = spec.create_sensor(updater)
+
+    assert sensor._update_native_value() is False
+    assert sensor.native_value is None
+
+
+def test_optimized_sensor_attribute_exceptions_clear_previous_attributes() -> None:
+    updater = _updater({"value": "1"})
+    spec = sensors.SensorSpec(
+        key="broken_attrs",
+        name="Broken Attributes",
+        value_fn=lambda updater, hass: 1,
+        sensor_type=sensors.SensorType.DIAGNOSTIC,
+        attributes_fn=lambda updater, hass: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    sensor = spec.create_sensor(updater)
+    sensor._attr_extra_state_attributes = {"old": "value"}
+
+    assert sensor._update_extra_state_attributes() is True
+    assert sensor.extra_state_attributes == {}
+
+
+def test_monetary_cost_sensor_restores_last_reset_and_invalid_state() -> None:
+    spec = sensors.SensorSpec(
+        key="session_cost",
+        name="Session Cost",
+        value_fn=sensors.get_session_cost,
+        sensor_type=sensors.SensorType.ENERGY,
+        tracks_reset=True,
+    )
+    sensor = spec.create_sensor(_updater({"sessionMoney": "1.23"}))
+    restored_at = datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc)
+    state = SimpleNamespace(state="bad", attributes={"last_reset": restored_at})
+
+    asyncio.run(sensor._async_restore_state(state))
+
+    assert sensor.last_reset == restored_at
+    assert sensor._prev_cost_value is None
+
+
+def test_monetary_cost_sensor_ignores_unparseable_last_reset() -> None:
+    spec = sensors.SensorSpec(
+        key="session_cost",
+        name="Session Cost",
+        value_fn=sensors.get_session_cost,
+        sensor_type=sensors.SensorType.ENERGY,
+        tracks_reset=True,
+    )
+    sensor = spec.create_sensor(_updater({"sessionMoney": "1.23"}))
+    state = SimpleNamespace(state="2.5", attributes={"last_reset": "not-a-date"})
+
+    asyncio.run(sensor._async_restore_state(state))
+
+    assert sensor.last_reset is None
+    assert sensor._prev_cost_value == pytest.approx(2.5)

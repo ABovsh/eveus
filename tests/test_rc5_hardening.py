@@ -63,6 +63,80 @@ def test_session_active_mapping(state: int, expected: bool | None) -> None:
     assert sensor.is_on is expected
 
 
+def test_session_active_returns_unknown_when_unavailable() -> None:
+    updater = EveusTestUpdater({"state": 4}, available=False)
+    sensor = bs.EveusSessionActiveBinarySensor(updater, 1)
+    sensor._entity_available = False
+
+    assert sensor.is_on is None
+
+
+def test_session_active_coordinator_update_writes_only_on_change() -> None:
+    updater = EveusTestUpdater({"state": 4})
+    sensor = bs.EveusSessionActiveBinarySensor(updater, 1)
+    sensor._entity_available = True
+    sensor.hass = object()
+    writes: list[bool | None] = []
+    sensor.async_write_ha_state = lambda: writes.append(sensor.is_on)
+    sensor._maybe_finalize_device_info = lambda: None
+    sensor._update_availability_state = lambda: False
+
+    sensor._handle_coordinator_update()
+    sensor._handle_coordinator_update()
+    updater.data = {"state": 2}
+    sensor._handle_coordinator_update()
+
+    assert writes == [True, False]
+
+
+def test_ocpp_connected_rejects_out_of_domain_value() -> None:
+    updater = EveusTestUpdater({"ocppconnected": 2})
+    sensor = bs.EveusOcppConnectedBinarySensor(updater, 1)
+
+    assert sensor.is_on is None
+
+
+def test_ocpp_connected_coordinator_update_writes_only_on_change() -> None:
+    updater = EveusTestUpdater({"ocppconnected": 1})
+    sensor = bs.EveusOcppConnectedBinarySensor(updater, 1)
+    sensor._entity_available = True
+    sensor.hass = object()
+    writes: list[bool | None] = []
+    sensor.async_write_ha_state = lambda: writes.append(sensor.is_on)
+    sensor._maybe_finalize_device_info = lambda: None
+    sensor._update_availability_state = lambda: False
+
+    sensor._handle_coordinator_update()
+    updater.data = {"ocppconnected": 0}
+    sensor._handle_coordinator_update()
+    sensor._handle_coordinator_update()
+
+    assert writes == [True, False]
+
+
+def test_binary_sensor_setup_entry_adds_all_status_entities() -> None:
+    added: list[object] = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(
+            updater=EveusTestUpdater({}),
+            device_number=2,
+        )
+    )
+
+    asyncio.run(bs.async_setup_entry(None, entry, lambda entities: added.extend(entities)))
+
+    assert [type(entity) for entity in added] == [
+        bs.EveusCarConnectedBinarySensor,
+        bs.EveusSessionActiveBinarySensor,
+        bs.EveusOcppConnectedBinarySensor,
+    ]
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_car_connected",
+        "eveus2_session_active",
+        "eveus2_ocpp_connected",
+    }
+
+
 # ---------------------------------------------------------------------------
 # F05 — Substate returns None when state itself is invalid
 # ---------------------------------------------------------------------------
