@@ -260,6 +260,14 @@ def _make_value_getter(
     return getter
 
 
+def _make_enum_getter(key: str, mapping: dict[int, str]):
+    """Read an int key and map it to a label, else None."""
+    def getter(updater, hass) -> Optional[str]:
+        value = _get_data_value(updater, key, int)
+        return mapping.get(value)
+    return getter
+
+
 # Measurement getters
 get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
 get_current = _make_value_getter("curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT)
@@ -333,14 +341,7 @@ def get_charger_substate(updater, hass) -> Optional[str]:
     return get_normal_substate(substate)
 
 
-def get_ground_status(updater, hass) -> Optional[str]:
-    """Get ground status."""
-    value = _get_data_value(updater, "ground", int)
-    if value == 1:
-        return "Connected"
-    if value == 0:
-        return "Not Connected"
-    return None
+get_ground_status = _make_enum_getter("ground", {1: "Connected", 0: "Not Connected"})
 
 
 def get_session_time(updater, hass) -> Optional[str]:
@@ -404,14 +405,7 @@ def get_active_rate_attrs(updater, hass) -> dict:
 
 def _make_rate_status_getter(rate_key: str):
     """Factory for rate status sensors."""
-    def getter(updater, hass) -> Optional[str]:
-        enabled = _get_data_value(updater, rate_key, int)
-        if enabled == 1:
-            return "Enabled"
-        if enabled == 0:
-            return "Disabled"
-        return None
-    return getter
+    return _make_enum_getter(rate_key, {1: "Enabled", 0: "Disabled"})
 
 
 # =============================================================================
@@ -429,14 +423,7 @@ get_session_cost = _make_value_getter("sessionMoney", precision=2, minimum=0)
 # Adaptive charging (AI mode) and scheduled slots
 # =============================================================================
 
-def get_adaptive_charging_state(updater, hass) -> Optional[str]:
-    """Adaptive (AI) mode active/idle."""
-    value = _get_data_value(updater, "aiStatus", int)
-    if value == 1:
-        return "Active"
-    if value == 0:
-        return "Idle"
-    return None
+get_adaptive_charging_state = _make_enum_getter("aiStatus", {1: "Active", 0: "Idle"})
 
 
 get_adaptive_current = _make_value_getter(
@@ -457,14 +444,7 @@ def _format_minutes(value: Optional[int]) -> Optional[str]:
 def _make_schedule_getter(slot: int):
     """Slot enabled/disabled state."""
     key = f"sh{slot}Enabled"
-    def getter(updater, hass) -> Optional[str]:
-        value = _get_data_value(updater, key, int)
-        if value == 1:
-            return "Enabled"
-        if value == 0:
-            return "Disabled"
-        return None
-    return getter
+    return _make_enum_getter(key, {1: "Enabled", 0: "Disabled"})
 
 
 def _make_schedule_attrs(slot: int):

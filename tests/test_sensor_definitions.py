@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.helpers.entity import EntityCategory
 
+from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus import sensor_definitions as sensors
 
 
@@ -18,6 +19,19 @@ def _updater(data: dict[str, object], *, available: bool = True) -> SimpleNamesp
         connection_quality={},
         host="192.168.1.50",
     )
+
+
+@pytest.fixture
+def make_updater():
+    return _updater
+
+
+def test_enum_getter_maps_values(make_updater):
+    g = sd._make_enum_getter("sh1Enabled", {1: "Enabled", 0: "Disabled"})
+    assert g(make_updater({"sh1Enabled": 1}), None) == "Enabled"
+    assert g(make_updater({"sh1Enabled": 0}), None) == "Disabled"
+    assert g(make_updater({"sh1Enabled": 9}), None) is None
+    assert g(make_updater({}), None) is None
 
 
 def test_measurement_getters_convert_device_payload_values() -> None:
