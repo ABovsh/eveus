@@ -3,9 +3,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from homeassistant.util import slugify
 from PIL import Image
+
+from conftest import TEST_HOST
+from custom_components.eveus.common_base import BaseEveusEntity
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -259,6 +264,64 @@ def test_manifest_has_loggers() -> None:
     )
     assert "loggers" in manifest, "manifest.json must declare loggers"
     assert "custom_components.eveus" in manifest["loggers"]
+
+
+def test_device_registry_finalized_once_for_shared_updater(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Firmware finalization writes the shared device registry row only once."""
+
+    class Updater:
+        host = TEST_HOST
+        scheme = "http"
+        available = True
+        last_update_success = True
+        _device_registry_finalized = False
+
+        def __init__(self) -> None:
+            self.data = {}
+
+        def async_add_listener(self, *args: object, **kwargs: object):
+            return lambda: None
+
+    class PowerEntity(BaseEveusEntity):
+        ENTITY_NAME = "Power"
+
+    class VoltageEntity(BaseEveusEntity):
+        ENTITY_NAME = "Voltage"
+
+    updater = Updater()
+    entities = [PowerEntity(updater), VoltageEntity(updater)]
+    for entity in entities:
+        entity.hass = object()
+
+    updates: list[tuple[str, dict[str, object]]] = []
+
+    class Registry:
+        def async_get_device(self, *, identifiers):
+            assert identifiers == {("eveus", TEST_HOST)}
+            return SimpleNamespace(id="device-id")
+
+        def async_update_device(self, device_id, **kwargs):
+            updates.append((device_id, kwargs))
+
+    monkeypatch.setattr(
+        "custom_components.eveus.common_base.dr.async_get",
+        lambda hass: Registry(),
+    )
+
+    for entity in entities:
+        entity._maybe_finalize_device_info()
+
+    updater.data = {
+        "verFWMain": "R3.05.2",
+        "verFWWifi": "W1.0",
+        "serialNum": "EV-12345",
+    }
+    for entity in entities:
+        entity._maybe_finalize_device_info()
+
+    assert len(updates) == 1
 
 
 def test_unit_suite_disables_homeassistant_pytest_plugin(pytestconfig) -> None:

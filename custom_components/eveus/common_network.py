@@ -100,6 +100,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._offline_announced = False
         self._last_error: str | None = None
         self._device_available = True
+        self._device_registry_finalized = False
         self._next_poll_attempt = 0.0
         self._force_refresh_requested = False
         self._pending_refresh_unsubs: list = []

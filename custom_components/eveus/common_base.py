@@ -179,23 +179,25 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
 
         if self.hass is None:
             return
-        registry = dr.async_get(self.hass)
-        identifiers = new_info.get("identifiers")
-        if not identifiers:
-            return
-        device = registry.async_get_device(identifiers=identifiers)
-        if device is None:
-            return
-        update_kwargs: dict[str, Any] = {
-            "sw_version": new_info["sw_version"],
-            "model": new_info.get("model"),
-            "manufacturer": new_info.get("manufacturer"),
-        }
-        if new_info.get("hw_version"):
-            update_kwargs["hw_version"] = new_info["hw_version"]
-        if new_info.get("serial_number"):
-            update_kwargs["serial_number"] = new_info["serial_number"]
-        registry.async_update_device(device.id, **update_kwargs)
+        if not self._updater._device_registry_finalized:
+            registry = dr.async_get(self.hass)
+            identifiers = new_info.get("identifiers")
+            if not identifiers:
+                return
+            device = registry.async_get_device(identifiers=identifiers)
+            if device is None:
+                return
+            update_kwargs: dict[str, Any] = {
+                "sw_version": new_info["sw_version"],
+                "model": new_info.get("model"),
+                "manufacturer": new_info.get("manufacturer"),
+            }
+            if new_info.get("hw_version"):
+                update_kwargs["hw_version"] = new_info["hw_version"]
+            if new_info.get("serial_number"):
+                update_kwargs["serial_number"] = new_info["serial_number"]
+            registry.async_update_device(device.id, **update_kwargs)
+            self._updater._device_registry_finalized = True
 
     async def async_added_to_hass(self) -> None:
         """Handle entity addition with state restoration."""
