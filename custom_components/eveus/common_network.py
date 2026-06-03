@@ -93,6 +93,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # report "healthy" before the charger has ever answered.
         self._last_success_time = 0.0
         self._latency_samples: deque[float] = deque(maxlen=10)
+        self._connection_quality_cache: dict[str, Any] | None = None
 
         self._availability_log = RateLog()
         self._silent_mode = False
@@ -122,6 +123,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def connection_quality(self) -> dict[str, Any]:
         """Connection metrics exposed for diagnostics and sensors."""
+        if self._connection_quality_cache is not None:
+            return self._connection_quality_cache
+
         if self._poll_results:
             success_rate = (sum(self._poll_results) / len(self._poll_results)) * 100
         else:
@@ -131,7 +135,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             if self._latency_samples
             else 0.0
         )
-        return {
+        self._connection_quality_cache = {
             "success_rate": success_rate,
             "latency_avg": avg_latency,
             "consecutive_failures": self._consecutive_failures,
@@ -145,6 +149,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             "last_error": self._last_error,
             "sample_count": len(self._poll_results),
         }
+        return self._connection_quality_cache
 
     @property
     def is_likely_offline(self) -> bool:
@@ -171,6 +176,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         success = await self._command_manager.send_command(
             command, value, retry=retry, extra=extra
         )
+        self._connection_quality_cache = None
         if success:
             self._schedule_post_command_refresh()
         return success
@@ -230,6 +236,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
+        self._connection_quality_cache = None
         was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)
         self._consecutive_failures = 0
@@ -244,6 +251,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
+        self._connection_quality_cache = None
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False

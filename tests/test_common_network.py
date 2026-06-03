@@ -76,6 +76,12 @@ def coordinator(monkeypatch: pytest.MonkeyPatch) -> tuple[EveusUpdater, _Session
     return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass()), session
 
 
+@pytest.fixture
+def updater() -> EveusUpdater:
+    """Create a coordinator for direct state tests."""
+    return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+
 def test_update_data_fetches_payload_and_uses_stable_interval(
     coordinator: tuple[EveusUpdater, _Session],
 ) -> None:
@@ -410,6 +416,19 @@ def test_connection_quality_uses_recent_poll_window() -> None:
 
     assert metrics["success_rate"] == 0
     assert metrics["sample_count"] == 10
+
+
+@pytest.mark.asyncio
+async def test_connection_quality_caches_within_poll(updater: EveusUpdater) -> None:
+    updater._poll_results.extend([1, 1, 0, 1])
+    updater._latency_samples.extend([0.1, 0.2])
+
+    q1 = updater.connection_quality
+    q2 = updater.connection_quality
+
+    assert q1 == q2
+    assert q1["success_rate"] == 75.0
+    assert q1["sample_count"] == 4
 
 
 def test_offline_failure_recording_is_quiet_at_normal_log_levels(
