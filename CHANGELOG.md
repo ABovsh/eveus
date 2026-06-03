@@ -10,6 +10,12 @@
   - Connection-quality metrics computed once per poll; binary-sensor `is_on` logic centralized; on/off status getters unified.
   - Adopted Home Assistant stdlib helpers (`slugify`, `dt.parse_time`, `util.network` host validation, `async_call_later`) in place of hand-rolled equivalents.
 
+## 4.10.1 - 2026-06-03
+
+### 🐛 Fixed
+- A charger whose stored settings were corrupted (for example by a hand-edited or partially-imported configuration) no longer blocks **other** chargers from loading, and no longer leaves the **Reconfigure** form unable to open. Corrupted credentials now raise a fixable repair notice instead of retrying forever.
+- After a restart, the running cost figure (`Counter A Cost`, `Counter B Cost`, `Session Cost`) recovers cleanly from a corrupt stored value, so the next real meter reset is detected correctly and long-term cost statistics keep accumulating without spurious resets.
+
 ## 4.10.0 - 2026-06-02
 
 ### ✨ Ukrainian localization

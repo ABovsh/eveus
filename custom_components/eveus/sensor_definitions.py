@@ -205,12 +205,15 @@ class MonetaryCostSensor(OptimizedEveusSensor):
                 if isinstance(last_reset, str)
                 else last_reset
             )
-            if parsed is not None:
+            if isinstance(parsed, datetime):
                 self._attr_last_reset = parsed
         try:
-            self._prev_cost_value = float(state.state)
+            restored = float(state.state)
         except (TypeError, ValueError):
-            self._prev_cost_value = None
+            restored = None
+        self._prev_cost_value = (
+            restored if restored is not None and math.isfinite(restored) else None
+        )
 
 
 # =============================================================================

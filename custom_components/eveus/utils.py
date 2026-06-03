@@ -82,7 +82,7 @@ def _used_device_numbers(hass: HomeAssistant, exclude_entry_id: str | None = Non
         try:
             if device_number is not None:
                 existing_numbers.add(int(device_number))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
     return existing_numbers
 

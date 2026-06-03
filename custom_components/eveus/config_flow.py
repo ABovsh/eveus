@@ -209,6 +209,8 @@ def validate_host(host: str) -> str:
 
 def validate_credentials(username: str, password: str) -> tuple[str, str]:
     """Validate credentials input."""
+    if not isinstance(username, str) or not isinstance(password, str):
+        raise vol.Invalid("Username and password must be strings")
     username = username.strip()
 
     if not username or not password:
@@ -280,7 +282,7 @@ def _safe_phases_default(raw: Any) -> int:
     """Coerce stored phase data to a valid option, falling back on DEFAULT_PHASES."""
     try:
         value = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return DEFAULT_PHASES
     return value if value in PHASE_OPTIONS else DEFAULT_PHASES
 
