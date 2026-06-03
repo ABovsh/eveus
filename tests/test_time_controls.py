@@ -334,6 +334,22 @@ def test_schedule_time_restore_accepts_clock_state() -> None:
     assert entity.native_value == dt.time(8, 45)
 
 
+def test_schedule_time_restore_accepts_hour_minute_state() -> None:
+    entity = _schedule_entity({})
+
+    asyncio.run(entity._async_restore_state(State("time.test", "07:30")))
+
+    assert entity.native_value == dt.time(7, 30)
+
+
+def test_schedule_time_restore_garbage_state_leaves_native_value_none() -> None:
+    entity = _schedule_entity({})
+
+    asyncio.run(entity._async_restore_state(State("time.test", "not-a-time")))
+
+    assert entity.native_value is None
+
+
 @pytest.mark.parametrize("state", [None, "unknown", "unavailable", "not-a-time"])
 def test_schedule_time_restore_ignores_invalid_state(state: str | None) -> None:
     entity = _schedule_entity({})

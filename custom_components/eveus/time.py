@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as ha_dt
 
 from . import EveusConfigEntry
 from .common_base import (
@@ -174,10 +175,8 @@ class EveusScheduleTimeEntity(
         """Restore previous display value only — no commands sent on startup."""
         if not state or state.state in (None, "unknown", "unavailable"):
             return
-        try:
-            hh, mm = state.state.split(":", 2)[:2]
-            restored = dt.time(hour=int(hh), minute=int(mm))
-        except (ValueError, AttributeError):
+        restored = ha_dt.parse_time(state.state)
+        if restored is None:
             return
         self._last_device_value = time_to_minutes(restored)
         self._last_successful_read = _time.time()
