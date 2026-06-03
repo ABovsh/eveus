@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Final, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
@@ -58,6 +58,7 @@ _MAX_CURRENT = 200
 _MAX_POWER = 100_000
 # Largest plausible per-slot schedule energy cap (kWh).
 _MAX_SCHEDULE_KWH = 200
+_RATE_COST_KEYS: Final = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
 
 
 def _should_log_error(function_name: str) -> bool:
@@ -384,8 +385,7 @@ def get_active_rate_cost(updater, hass) -> Optional[float]:
     active_rate = _get_data_value(updater, "activeTarif", int)
     if active_rate is None:
         return None
-    rate_keys = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
-    key = rate_keys.get(active_rate)
+    key = _RATE_COST_KEYS.get(active_rate)
     if not key:
         return None
     value = _get_data_value(updater, key, float)
