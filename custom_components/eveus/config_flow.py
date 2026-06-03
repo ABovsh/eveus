@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
-import ipaddress
 import math
-import re
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -28,6 +26,7 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+from homeassistant.util.network import is_host_valid, is_ip_address
 
 from .const import (
     CHARGING_STATES,
@@ -60,7 +59,6 @@ from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
-_HOSTNAME_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
 
 # Keys outside the user-editable form that must survive reconfigure/reauth/repair.
 _PRESERVED_ENTRY_KEYS: tuple[str, ...] = (
@@ -141,26 +139,12 @@ def _warn_if_plaintext(scheme: str | None) -> None:
         )
 
 
-def _is_valid_ip(ip: str) -> bool:
-    """Check if string is a valid IP address."""
-    try:
-        ipaddress.ip_address(ip)
-        return True
-    except ValueError:
+def _host_is_valid(host: str) -> bool:
+    """Accept a literal IP or a syntactically valid hostname."""
+    host = (host or "").strip()
+    if not host:
         return False
-
-
-def _is_valid_hostname(hostname: str) -> bool:
-    """Validate hostname."""
-    if not hostname:
-        return False
-    if len(hostname) > 255:
-        return False
-    if hostname[-1] == ".":
-        hostname = hostname[:-1]
-    if not hostname:
-        return False
-    return all(_HOSTNAME_RE.match(x) for x in hostname.split("."))
+    return is_ip_address(host) or is_host_valid(host)
 
 
 def _split_host_and_scheme(
@@ -203,13 +187,13 @@ def _split_host_and_scheme(
     if port is not None and not 1 <= port <= 65535:
         raise vol.Invalid("Invalid port")
 
-    if not _is_valid_ip(hostname) and not _is_valid_hostname(hostname):
+    if not _host_is_valid(hostname):
         raise vol.Invalid("Invalid IP address or hostname")
 
     if hostname.endswith("."):
         hostname = hostname[:-1]
 
-    if not _is_valid_ip(hostname):
+    if not is_ip_address(hostname):
         hostname = hostname.lower()
 
     is_ipv6 = ":" in hostname

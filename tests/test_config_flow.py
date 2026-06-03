@@ -49,6 +49,22 @@ from custom_components.eveus.const import (
 )
 
 
+@pytest.mark.parametrize(
+    ("host", "ok"),
+    [
+        ("192.168.1.50", True),
+        ("eveus.local", True),
+        ("charger-1.lan", True),
+        ("", False),
+        ("256.256.0.1", False),
+        ("bad host", False),
+        ("-bad.com", False),
+    ],
+)
+def test_host_validation_unchanged(host, ok):
+    assert config_flow._host_is_valid(host) is ok
+
+
 class _Response:
     def __init__(
         self,
