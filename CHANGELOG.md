@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### 🐛 Fixed
+- After rapidly changing charging controls (for example toggling Stop Charging and One Charge in quick succession), a slow charger response from a superseded action could briefly overwrite the newer readings. Command-triggered refreshes are now cancelled when a newer command replaces them or when Home Assistant shuts down, so the displayed state always reflects the most recent action.
+
 ### 🔧 Internal / stabilization
 - Quality pass with **no behavior, entity-ID, or user-facing changes**: removed duplication and dead complexity across the integration.
   - Single shared `/main` payload validator used by both config flow and the coordinator (previously two drifting copies).

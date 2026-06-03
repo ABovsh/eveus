@@ -27,8 +27,9 @@ def test_manifest_domain_matches_integration_directory() -> None:
 def test_manifest_readme_and_changelog_versions_match() -> None:
     """Manifest, README badge and CHANGELOG must agree on the release line.
 
-    The release line is the X.Y.Z version published in the manifest, README,
-    and CHANGELOG.
+    The manifest and CHANGELOG pin the full ``X.Y.Z`` patch version, while the
+    README badge tracks the ``X.Y-rc`` release line so it does not need a churn
+    edit on every patch within the same rc cycle.
     """
     import re
 
@@ -39,11 +40,13 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     changelog = (ROOT / "CHANGELOG.md").read_text()
 
     version = manifest["version"]
-    base = re.match(r"^(\d+\.\d+\.\d+)", version)
+    base = re.match(r"^(\d+\.\d+)\.\d+", version)
     assert base is not None, version
-    base_version = base.group(1)
+    minor_line = base.group(1)
 
-    assert f"version-{base_version}-blue" in readme
+    # README badge tracks the MAJOR.MINOR rc line (e.g. ``version-4.10--rc``).
+    assert f"version-{minor_line}--rc-blue" in readme
+    # Manifest and CHANGELOG still agree on the exact patch version.
     assert f"## {version}" in changelog
 
 

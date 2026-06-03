@@ -531,6 +531,56 @@ def test_async_shutdown_cancels_pending_refresh_unsubs() -> None:
     asyncio.run(scenario())
 
 
+def test_inflight_post_command_refresh_is_cancelled_on_shutdown() -> None:
+    """Regression: a fired post-command refresh that is still running must be
+    cancellable on shutdown, not run to completion uncancelled.
+
+    The async_call_later unsub only cancels a timer that has not fired yet.
+    Once the timer fires and the refresh is in flight, shutdown (and a rapid
+    reschedule) must still be able to cancel the running refresh so a slow
+    /main poll cannot publish stale data after teardown.
+    """
+
+    async def scenario() -> None:
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        updater.hass.is_stopping = False
+        started = asyncio.Event()
+        cancelled = False
+
+        async def slow_refresh() -> None:
+            nonlocal cancelled
+            started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+        updater.async_refresh = slow_refresh
+        callbacks: list = []
+
+        def fake_call_later(hass, delay, action):
+            callbacks.append(action)
+            return Mock()
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(common_network, "async_call_later", fake_call_later)
+            updater._schedule_post_command_refresh()
+
+            # Fire the first timer: this starts the in-flight refresh task.
+            run_task = asyncio.ensure_future(callbacks[0](None))
+            await started.wait()
+            assert len(updater._post_command_refresh_tasks) == 1
+
+            await updater.async_shutdown()
+
+        assert cancelled is True
+        assert updater._post_command_refresh_tasks == []
+        await asyncio.gather(run_task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 def test_updater_caches_basic_auth_object() -> None:
     """BasicAuth must be cached on the updater, not rebuilt per poll."""
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())

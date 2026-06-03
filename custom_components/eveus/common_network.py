@@ -104,6 +104,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._next_poll_attempt = 0.0
         self._force_refresh_requested = False
         self._pending_refresh_unsubs: list = []
+        self._post_command_refresh_tasks: list = []
 
     @property
     def basic_auth(self) -> aiohttp.BasicAuth:
@@ -203,18 +204,30 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         cadence as soon as the device actually transitions.
 
         Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
-        always fire relative to the most recent command. Combined with the
-        entity-level optimistic state TTL this prevents stale-read flicker.
+        always fire relative to the most recent command. A timer that has not
+        fired yet is cancelled via its async_call_later unsub; a refresh that
+        has already fired and is still in flight is run as a tracked task so it
+        too can be cancelled on reschedule or shutdown -- otherwise a slow /main
+        poll could complete after a newer command and publish stale data, or
+        outlive async_shutdown. Combined with the entity-level optimistic state
+        TTL this prevents stale-read flicker.
         """
         self._cancel_pending_refreshes()
         for delay in POST_COMMAND_REFRESH_DELAYS:
             async def _run(_now, _delay=delay):
                 if self.hass is None or self.hass.is_stopping:
                     return
+                task = asyncio.ensure_future(self.async_refresh())
+                self._post_command_refresh_tasks.append(task)
                 try:
-                    await self.async_refresh()
+                    await task
+                except asyncio.CancelledError:
+                    raise
                 except Exception:  # noqa: BLE001
                     _LOGGER.debug("Post-command refresh failed", exc_info=True)
+                finally:
+                    if task in self._post_command_refresh_tasks:
+                        self._post_command_refresh_tasks.remove(task)
 
             self._pending_refresh_unsubs.append(async_call_later(self.hass, delay, _run))
 
@@ -225,10 +238,17 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _cancel_pending_refreshes(self) -> None:
         for unsub in self._pop_pending_refreshes():
             unsub()
+        for task in list(self._post_command_refresh_tasks):
+            if not task.done():
+                task.cancel()
 
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
         self._cancel_pending_refreshes()
+        pending = list(self._post_command_refresh_tasks)
+        self._post_command_refresh_tasks.clear()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         await super().async_shutdown()
 
     def _should_log(self) -> bool:
