@@ -5,7 +5,6 @@ import asyncio
 from collections import deque
 from datetime import timedelta
 import logging
-import math
 import time
 from typing import Any
 
@@ -29,6 +28,7 @@ from .const import (
     SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
+from ._payload import PayloadError, validate_main_payload
 from .utils import RateLog
 
 _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
@@ -255,7 +255,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False
-        self._last_error = type(error).__name__
+        self._last_error = "ValueError" if isinstance(error, PayloadError) else type(error).__name__
 
         if self._consecutive_failures > 20:
             self._silent_mode = True
@@ -331,43 +331,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 response.raise_for_status()
 
                 new_data = await response.json(content_type=None)
-                if not isinstance(new_data, dict):
-                    raise ValueError(f"Expected dict, got {type(new_data).__name__}")
-                if "state" not in new_data:
-                    raise ValueError("Response missing required Eveus 'state' field")
-                # Match the config-flow contract: a genuine Eveus /main payload
-                # always carries currentSet. Requiring it here too rejects a
-                # misrouted host that happens to return a plausible bare state.
-                if "currentSet" not in new_data:
-                    raise ValueError("Response missing required Eveus 'currentSet' field")
-                # A genuine /main payload always carries a finite numeric
-                # currentSet. Reject NaN/inf/bool/non-numeric here so a misrouted
-                # or corrupt response cannot come online with garbage controls.
-                raw_current_set = new_data["currentSet"]
-                if isinstance(raw_current_set, bool):
-                    raise ValueError("Eveus 'currentSet' field is boolean")
-                try:
-                    current_set_value = float(raw_current_set)
-                except (TypeError, ValueError, OverflowError) as err:
-                    # OverflowError: a firmware-supplied integer literal too large
-                    # to fit a float would otherwise escape this guard and the
-                    # outer ValueError handler, skipping failure accounting.
-                    raise ValueError("Eveus 'currentSet' field is not numeric") from err
-                if not math.isfinite(current_set_value):
-                    raise ValueError("Eveus 'currentSet' field is not finite")
-                raw_state = new_data["state"]
-                if isinstance(raw_state, bool):
-                    raise ValueError("Eveus 'state' field is boolean")
-                if isinstance(raw_state, float) and not math.isfinite(raw_state):
-                    raise ValueError("Eveus 'state' field is not finite")
-                if isinstance(raw_state, float) and not raw_state.is_integer():
-                    raise ValueError("Eveus 'state' field is not an integer")
-                try:
-                    state_value = int(raw_state)
-                except (TypeError, ValueError, OverflowError) as err:
-                    raise ValueError("Eveus 'state' field is not numeric") from err
-                if state_value not in CHARGING_STATES:
-                    raise ValueError(f"Eveus 'state' value {state_value} outside known domain")
+                # Shared validator retains the historical common-network guards:
+                # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
+                new_data = validate_main_payload(new_data)
 
                 self._record_success(time.time() - start_time, new_data)
                 return new_data

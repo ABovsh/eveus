@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import asyncio
-import math
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -29,15 +28,12 @@ from homeassistant.helpers.selector import (
 from homeassistant.util.network import is_host_valid, is_ip_address
 
 from .const import (
-    CHARGING_STATES,
     DOMAIN,
     MODEL_16A,
     CONF_MODEL,
     CONF_SCHEME,
     DEFAULT_SCHEME,
     MODELS,
-    MIN_CURRENT,
-    MODEL_MAX_CURRENT,
     CONF_PHASES,
     DEFAULT_PHASES,
     PHASE_OPTIONS,
@@ -55,6 +51,7 @@ from .const import (
     SOC_INPUT_LIMITS,
     get_soc_mode,
 )
+from ._payload import PayloadError, validate_main_payload
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
@@ -229,51 +226,16 @@ def validate_device_response(
     model: str,
 ) -> dict[str, Any]:
     """Validate that /main returned an Eveus-compatible payload."""
-    if not isinstance(result, dict):
-        raise CannotConnect("Invalid response format")
-
-    # Match the runtime coordinator contract (common_network.py): /main must
-    # carry both `state` and `currentSet` to be accepted as an Eveus charger.
-    # Validating both here means we fail at config flow instead of letting
-    # setup succeed and then immediately fail on first refresh.
-    if "state" not in result:
-        raise InvalidDevice("Device response is missing state")
-
-    raw_state = result["state"]
-    if isinstance(raw_state, bool):
-        raise InvalidDevice("Device 'state' field is boolean")
-    if isinstance(raw_state, float) and not raw_state.is_integer():
-        raise InvalidDevice("Device 'state' field is not an integer")
     try:
-        state_value = int(raw_state)
-    except (TypeError, ValueError) as err:
-        raise InvalidDevice("Device 'state' field is not numeric") from err
-    if state_value not in CHARGING_STATES:
-        raise InvalidDevice(f"Device reports unknown state {state_value}")
-
-    if "currentSet" not in result:
-        raise InvalidDevice("Device response is missing currentSet")
-
-    try:
-        current_set = float(result["currentSet"])
-    except (TypeError, ValueError) as err:
-        raise InvalidDevice("Device reports invalid current format") from err
-
-    if not math.isfinite(current_set):
-        raise InvalidDevice("Device reports invalid current value")
-
-    if current_set < MIN_CURRENT:
-        raise InvalidDevice("Device reports invalid current setting")
-
-    max_current = MODEL_MAX_CURRENT.get(model)
-    if max_current and current_set > max_current:
-        raise InvalidDevice(
-            f"Device current ({current_set}A) exceeds model maximum ({max_current}A)"
-        )
+        payload = validate_main_payload(result, model, message_style="config_flow")
+    except PayloadError as err:
+        if err.code == "not_dict":
+            raise CannotConnect(str(err)) from err
+        raise InvalidDevice(str(err)) from err
 
     return {
-        "current_set": current_set,
-        "firmware": result.get("verFWMain", "Unknown"),
+        "current_set": float(payload["currentSet"]),
+        "firmware": payload.get("verFWMain", "Unknown"),
     }
 
 
