@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .common_command import CommandManager
@@ -100,7 +101,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._device_available = True
         self._next_poll_attempt = 0.0
         self._force_refresh_requested = False
-        self._post_command_refresh_tasks: list[asyncio.Task] = []
+        self._pending_refresh_unsubs: list = []
 
     @property
     def basic_auth(self) -> aiohttp.BasicAuth:
@@ -182,21 +183,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         finally:
             self._force_refresh_requested = False
 
-    async def _delayed_refresh(self, delay: float) -> None:
-        """Wait `delay` seconds then run an immediate, non-debounced refresh.
-
-        async_refresh (not async_request_refresh) is used because the latter
-        is debounced ~10s inside HA's coordinator and would defeat the whole
-        point of scheduling a quick post-command refresh.
-        """
-        await asyncio.sleep(delay)
-        if self.hass is None or self.hass.is_stopping:
-            return
-        try:
-            await self.async_refresh()
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug("Post-command refresh failed", exc_info=True)
-
     def _schedule_post_command_refresh(self) -> None:
         """Schedule delayed refreshes after a successful command.
 
@@ -215,25 +201,27 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """
         self._cancel_pending_refreshes()
         for delay in POST_COMMAND_REFRESH_DELAYS:
-            task = self.hass.async_create_task(self._delayed_refresh(delay))
-            self._post_command_refresh_tasks.append(task)
+            async def _run(_now, _delay=delay):
+                if self.hass is None or self.hass.is_stopping:
+                    return
+                try:
+                    await self.async_refresh()
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("Post-command refresh failed", exc_info=True)
+
+            self._pending_refresh_unsubs.append(async_call_later(self.hass, delay, _run))
+
+    def _pop_pending_refreshes(self) -> list:
+        pending, self._pending_refresh_unsubs = self._pending_refresh_unsubs, []
+        return pending
 
     def _cancel_pending_refreshes(self) -> None:
-        """Cancel any pending post-command refresh tasks."""
-        for task in self._post_command_refresh_tasks:
-            if not task.done():
-                task.cancel()
-        self._post_command_refresh_tasks.clear()
+        for unsub in self._pop_pending_refreshes():
+            unsub()
 
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
-        pending = list(self._post_command_refresh_tasks)
-        for task in pending:
-            if not task.done():
-                task.cancel()
-        self._post_command_refresh_tasks.clear()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        self._cancel_pending_refreshes()
         await super().async_shutdown()
 
     def _should_log(self) -> bool:
