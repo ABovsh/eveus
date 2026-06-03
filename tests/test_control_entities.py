@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import time
 
 import pytest
@@ -20,6 +21,7 @@ from custom_components.eveus.switch import (
     SWITCH_DESCRIPTIONS,
     async_setup_entry as async_setup_switch_entry,
 )
+from custom_components.eveus.time import EveusScheduleTimeEntity, TIME_DESCRIPTIONS
 
 
 def _one_charge_switch(updater: _Updater) -> BaseSwitchEntity:
@@ -28,6 +30,10 @@ def _one_charge_switch(updater: _Updater) -> BaseSwitchEntity:
 
 def _stop_charging_switch(updater: _Updater) -> BaseSwitchEntity:
     return BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[0])
+
+
+def _schedule_start_time(updater: _Updater) -> EveusScheduleTimeEntity:
+    return EveusScheduleTimeEntity(updater, TIME_DESCRIPTIONS[0])
 
 
 def test_current_number_native_value_precedence_and_restore() -> None:
@@ -79,6 +85,81 @@ def test_current_number_update_reconciles_optimistic_value() -> None:
 
     assert entity._optimistic_value is None
     assert entity._last_device_value == 12
+
+
+def test_command_backed_controls_preserve_optimistic_lifecycle_parity() -> None:
+    cases = [
+        (
+            EveusCurrentNumber(_Updater({"currentSet": "10"}), "16A"),
+            "currentSet",
+            "14",
+            14.0,
+            10.0,
+            14.0,
+            lambda entity: entity.native_value,
+            14.0,
+        ),
+        (
+            _one_charge_switch(_Updater({"oneCharge": "0"})),
+            "oneCharge",
+            "1",
+            True,
+            False,
+            True,
+            lambda entity: entity.is_on,
+            True,
+        ),
+        (
+            _schedule_start_time(_Updater({"sh1Start": "60"})),
+            "sh1Start",
+            "390",
+            390,
+            60,
+            390,
+            lambda entity: entity.native_value,
+            dt.time(6, 30),
+        ),
+    ]
+
+    for (
+        entity,
+        state_key,
+        confirmed_payload,
+        optimistic_value,
+        stale_device_value,
+        confirmed_device_value,
+        visible_value,
+        confirmed_visible,
+    ) in cases:
+        _disable_state_writes(entity)
+        entity._set_optimistic_value(optimistic_value)
+
+        entity._handle_coordinator_update()
+
+        assert entity._optimistic_value == optimistic_value
+        assert entity._last_device_value == stale_device_value
+        assert visible_value(entity) == confirmed_visible
+
+        entity._updater.data = {state_key: confirmed_payload}
+        entity._handle_coordinator_update()
+
+        assert entity._optimistic_value is None
+        assert entity._last_device_value == confirmed_device_value
+        assert visible_value(entity) == confirmed_visible
+
+        entity._set_optimistic_value(optimistic_value)
+        entity._optimistic_value_time = time.time() - 3600
+        entity._updater.data = {state_key: confirmed_payload}
+        entity._handle_coordinator_update()
+
+        assert entity._optimistic_value is None
+        assert visible_value(entity) == confirmed_visible
+
+        entity._updater.data = {}
+        entity._handle_coordinator_update()
+
+        assert entity._last_device_value == confirmed_device_value
+        assert visible_value(entity) == confirmed_visible
 
 
 def test_current_number_update_clears_stale_mismatched_optimistic_value() -> None:

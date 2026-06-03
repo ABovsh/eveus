@@ -44,9 +44,9 @@ from .const import (
 from .common_base import (
     BaseEveusEntity,
     ControlEntityMixin,
-    OptimisticControlMixin,
     WriteOnChangeMixin,
 )
+from .control_base import CommandBackedEntity
 from .utils import get_safe_value, normalize_soc_input
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,9 +80,8 @@ CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
 
 class EveusNumberEntity(
     WriteOnChangeMixin,
-    OptimisticControlMixin[float],
     ControlEntityMixin,
-    BaseEveusEntity,
+    CommandBackedEntity[float],
     NumberEntity,
 ):
     """Base number entity with responsive UI and safety."""
@@ -126,6 +125,40 @@ class EveusCurrentNumber(EveusNumberEntity):
     def native_value(self) -> float | None:
         """Return cached current value without side effects."""
         return self._attr_native_value
+
+    @property
+    def _state_key(self) -> str:
+        """Return the coordinator payload key backing this control."""
+        return self._command
+
+    def _read_device_value(self) -> float | None:
+        """Return the latest valid current value from coordinator data."""
+        if not (self._updater.available and self._updater.data):
+            return None
+        if self._command not in self._updater.data:
+            return None
+        device_value = get_safe_value(self._updater.data, self._command, float)
+        if device_value is not None and (
+            self._attr_native_min_value <= device_value <= self._attr_native_max_value
+        ):
+            return float(device_value)
+        return None
+
+    def _values_equal(self, optimistic: float, device: float) -> bool:
+        """Return whether a device current confirms the optimistic value."""
+        return abs(optimistic - device) < 0.5
+
+    def _resolve_display_value(self) -> float | None:
+        """Resolve the current display value."""
+        return self._resolve_value()
+
+    def _set_display_value(self, value: float | None) -> None:
+        """Store the current display value."""
+        self._attr_native_value = value
+
+    def _get_pending(self) -> float | None:
+        """Return the pending current command sentinel."""
+        return self._pending_value
 
     def _resolve_value(self) -> float | None:
         """Resolve current value from command, optimistic, device, and restore state."""
@@ -192,34 +225,6 @@ class EveusCurrentNumber(EveusNumberEntity):
                     self._attr_native_value = restored_value
         except (TypeError, ValueError) as err:
             _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data — reconcile with device value."""
-        self._maybe_finalize_device_info()
-        self._update_availability_state()
-        if self._pending_value is not None:
-            return
-
-        current_time = time.time()
-
-        if self._updater.available and self._updater.data:
-            if self._command in self._updater.data:
-                device_value = get_safe_value(self._updater.data, self._command, float)
-                if device_value is not None and (
-                    self._attr_native_min_value <= device_value <= self._attr_native_max_value
-                ):
-                    self._reconcile_with_device(
-                        float(device_value),
-                        current_time,
-                        lambda optimistic, device: abs(optimistic - device) < 0.5,
-                    )
-
-        self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
-
-        current_value = self._resolve_value()
-        self._attr_native_value = current_value
-        self._write_if_changed(current_value)
 
 
 class EveusSocConfigNumber(
