@@ -179,7 +179,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
 
         if self.hass is None:
             return
-        if not self._updater._device_registry_finalized:
+        if not getattr(self._updater, "_device_registry_finalized", False):
             registry = dr.async_get(self.hass)
             identifiers = new_info.get("identifiers")
             if not identifiers:
