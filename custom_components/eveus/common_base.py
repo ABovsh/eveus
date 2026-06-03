@@ -11,6 +11,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .const import (
     AVAILABILITY_GRACE_PERIOD,
@@ -49,7 +50,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             raise NotImplementedError("ENTITY_NAME must be defined in child class")
 
         device_suffix = get_device_suffix(device_number)
-        entity_key = self.ENTITY_NAME.lower().replace(" ", "_")
+        entity_key = slugify(self.ENTITY_NAME)
         self._attr_unique_id = f"eveus{device_suffix}_{entity_key}"
         # Localized display name comes from translations[entity.<platform>.<key>.name].
         # Do not set _attr_name here: Home Assistant gives _attr_name precedence

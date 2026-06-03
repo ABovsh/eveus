@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from homeassistant.util import slugify
 from PIL import Image
 
 
@@ -91,6 +92,13 @@ def test_soc_dashboard_repair_issue_lists_exact_entity_replacements() -> None:
         ("input_number.ev_soc_correction", "number.eveus_ev_charger_soc_correction"),
     ):
         assert f"`{old_entity}` → `{new_entity}`" in description
+
+
+def test_entity_key_matches_slugify_for_all_entity_names():
+    names = ['Car Connected', 'OCPP Connected', 'Session Active',
+             'Connection Quality', 'Active Rate Cost']
+    for name in names:
+        assert name.lower().replace(' ', '_') == slugify(name)
 
 
 def _slug(name: str) -> str:
