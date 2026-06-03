@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### 🔧 Internal / stabilization
+- Quality pass with **no behavior, entity-ID, or user-facing changes**: removed duplication and dead complexity across the integration.
+  - Single shared `/main` payload validator used by both config flow and the coordinator (previously two drifting copies).
+  - Extracted a shared `CommandBackedEntity` lifecycle for the number/switch/time controls (reconcile/optimistic/grace logic now single-sourced).
+  - Device-registry firmware finalization now runs once per config entry instead of once per entity.
+  - Connection-quality metrics computed once per poll; binary-sensor `is_on` logic centralized; on/off status getters unified.
+  - Adopted Home Assistant stdlib helpers (`slugify`, `dt.parse_time`, `util.network` host validation, `async_call_later`) in place of hand-rolled equivalents.
+
 ## 4.10.0 - 2026-06-02
 
 ### ✨ Ukrainian localization
