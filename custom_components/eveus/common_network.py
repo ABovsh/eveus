@@ -105,6 +105,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._force_refresh_requested = False
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
+        # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
+        # that completes mid-unload from scheduling fresh refresh timers, and a
+        # just-fired timer from starting a refresh on a torn-down coordinator.
+        self._shutting_down = False
 
     @property
     def basic_auth(self) -> aiohttp.BasicAuth:
@@ -179,7 +183,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             command, value, retry=retry, extra=extra
         )
         self._connection_quality_cache = None
-        if success:
+        if success and not self._shutting_down:
             self._schedule_post_command_refresh()
         return success
 
@@ -215,7 +219,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._cancel_pending_refreshes()
         for delay in POST_COMMAND_REFRESH_DELAYS:
             async def _run(_now, _delay=delay):
-                if self.hass is None or self.hass.is_stopping:
+                if self._shutting_down or self.hass is None or self.hass.is_stopping:
                     return
                 task = asyncio.ensure_future(self.async_refresh())
                 self._post_command_refresh_tasks.append(task)
@@ -244,6 +248,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
+        self._shutting_down = True
         self._cancel_pending_refreshes()
         pending = list(self._post_command_refresh_tasks)
         self._post_command_refresh_tasks.clear()

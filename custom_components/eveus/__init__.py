@@ -151,6 +151,48 @@ def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None
         ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
 
 
+# SOC entities created only in Advanced mode, and per-phase sensors created only
+# for a 3-phase entry. When the user reduces scope (Advanced -> Basic, or 3 -> 1
+# phase) these are no longer built, so their registry rows must be pruned or they
+# linger forever as orphaned "unavailable" entities.
+_ADVANCED_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
+    ("sensor", "soc_energy"),
+    ("sensor", "soc_percent"),
+    ("sensor", "time_to_target_soc"),
+    ("sensor", "charging_finish_time"),
+    ("number", "initial_soc"),
+    ("number", "target_soc"),
+    ("number", "battery_capacity"),
+    ("number", "soc_correction"),
+)
+_THREE_PHASE_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
+    ("sensor", "current_phase_2"),
+    ("sensor", "current_phase_3"),
+    ("sensor", "voltage_phase_2"),
+    ("sensor", "voltage_phase_3"),
+)
+
+
+def _prune_unused_entities(
+    hass: HomeAssistant, device_number: int, soc_mode: str, phases: int
+) -> None:
+    """Remove registry rows for entities not built under the current config."""
+    stale: list[tuple[str, str]] = []
+    if soc_mode != SOC_MODE_ADVANCED:
+        stale.extend(_ADVANCED_ONLY_ENTITIES)
+    if phases != 3:
+        stale.extend(_THREE_PHASE_ONLY_ENTITIES)
+    if not stale:
+        return
+    reg = er.async_get(hass)
+    suffix = get_device_suffix(device_number)
+    for platform, key in stale:
+        unique_id = f"eveus{suffix}_{key}"
+        entity_id = reg.async_get_entity_id(platform, DOMAIN, unique_id)
+        if entity_id:
+            reg.async_remove(entity_id)
+
+
 async def async_setup(_hass: HomeAssistant, _config: dict[str, Any]) -> bool:
     """Set up the Eveus component."""
     return True
@@ -364,6 +406,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
                 phases,
             )
 
+        # Drop registry rows for SOC/phase entities that this config no longer
+        # builds (Advanced -> Basic, or 3 -> 1 phase), before the platforms set
+        # up, so a reduced scope does not leave orphaned entities behind.
+        _prune_unused_entities(hass, device_number, get_soc_mode(entry), phases)
+
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
             device_number=device_number,
@@ -393,8 +440,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
     except (ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady):
         raise
     except Exception as ex:
-        _LOGGER.exception("Unexpected error setting up Eveus integration: %s", ex)
-        raise ConfigEntryNotReady(f"Unexpected error: {ex}")
+        # Log the full traceback locally, but keep the host/URL out of the
+        # user-facing setup error string, matching the redaction used on the
+        # poll and config-flow error paths.
+        _LOGGER.exception("Unexpected error setting up Eveus integration")
+        raise ConfigEntryNotReady(f"Unexpected error: {type(ex).__name__}") from ex
 
 
 async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:

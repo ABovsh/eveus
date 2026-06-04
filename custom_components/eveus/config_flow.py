@@ -165,7 +165,14 @@ def _split_host_and_scheme(
     if "://" not in raw_host and "[" not in raw_host and raw_host.count(":") >= 2:
         raw_host = f"[{raw_host}]"
 
-    parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
+    # urlparse raises ValueError on an unbalanced IPv6 bracket (e.g. "[::1",
+    # "http://[::1"). Map it to vol.Invalid so setup/reconfigure surface
+    # "invalid_input" and a stored bad host raises the repairable invalid-config
+    # issue, instead of a generic "unknown" / ConfigEntryNotReady retry loop.
+    try:
+        parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
+    except ValueError as err:
+        raise vol.Invalid("Invalid IP address or hostname") from err
     scheme = parsed.scheme or default_scheme
     if scheme not in ("http", "https"):
         raise vol.Invalid("Unsupported URL scheme")

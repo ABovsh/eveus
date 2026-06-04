@@ -1,6 +1,7 @@
 """Base entity classes for Eveus integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
@@ -257,6 +258,12 @@ class OptimisticControlMixin(Generic[T]):
         self._last_device_value: T | None = None
         self._last_successful_read = 0.0
         self._last_command_time = 0.0
+        # Serialize rapid repeated commands on the SAME control. The command
+        # manager serializes HTTP at the coordinator level, but the per-entity
+        # pending/optimistic bookkeeping runs around that await; without this an
+        # older command finishing could briefly publish a stale value over a
+        # newer one still in flight (e.g. dragging the Charging Current slider).
+        self._command_lock = asyncio.Lock()
 
     def _clear_optimistic_state(self) -> None:
         """Clear optimistic state when the device is offline."""

@@ -214,27 +214,28 @@ class BaseSwitchEntity(
 
     async def _async_send_command(self, command_value: int) -> bool:
         """Send command with optimistic state."""
-        self._pending_command = bool(command_value)
-        self._attr_is_on = self._pending_command
-        self._write_if_changed(self._attr_is_on)
-
-        try:
-            extra = (
-                dict.fromkeys(self._command_extra, command_value)
-                if self._command_extra
-                else None
-            )
-            success = await self._updater.send_command(
-                self._command, command_value, extra=extra
-            )
-            if success:
-                self._set_optimistic_value(bool(command_value))
-            return success
-        finally:
-            self._pending_command = None
-            self._last_command_time = time.time()
-            self._attr_is_on = self._resolve_state()
+        async with self._command_lock:
+            self._pending_command = bool(command_value)
+            self._attr_is_on = self._pending_command
             self._write_if_changed(self._attr_is_on)
+
+            try:
+                extra = (
+                    dict.fromkeys(self._command_extra, command_value)
+                    if self._command_extra
+                    else None
+                )
+                success = await self._updater.send_command(
+                    self._command, command_value, extra=extra
+                )
+                if success:
+                    self._set_optimistic_value(bool(command_value))
+                return success
+            finally:
+                self._pending_command = None
+                self._last_command_time = time.time()
+                self._attr_is_on = self._resolve_state()
+                self._write_if_changed(self._attr_is_on)
 
     async def _async_send_command_or_raise(self, command_value: int) -> None:
         """Send command and raise HomeAssistantError on failure so HA shows a toast."""

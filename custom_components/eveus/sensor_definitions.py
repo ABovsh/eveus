@@ -64,6 +64,16 @@ _MAX_ENERGY_KWH = 1_000_000
 _MAX_COST = 100_000_000
 # Largest plausible per-slot schedule energy cap (kWh).
 _MAX_SCHEDULE_KWH = 200
+# Sanity ceilings for the remaining MEASUREMENT sensors that feed HA long-term
+# statistics. Without an upper bound a corrupt-but-finite firmware outlier (e.g.
+# temperature1 1e9, tarif 1e100) is recorded permanently and poisons history.
+# Generous on purpose — real readings sit far below these.
+_MIN_TEMPERATURE = -40
+_MAX_TEMPERATURE = 150
+_MAX_LEAK_CURRENT = 100_000
+# `tarif*` fields are reported in hundredths; bound the raw value (checked before
+# the /100 transform) so the published per-kWh rate cannot exceed ~100k.
+_MAX_RATE_HUNDREDTHS = 10_000_000
 _RATE_COST_KEYS: Final = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
 
 
@@ -312,18 +322,32 @@ get_counter_a_cost = _make_value_getter(
 get_counter_b_cost = _make_value_getter(
     "IEM2_money", precision=2, minimum=0, maximum=_MAX_COST
 )
-get_primary_rate_cost = _make_value_getter("tarif", precision=2, transform=_div100, minimum=0)
-get_rate2_cost = _make_value_getter("tarifAValue", precision=2, transform=_div100, minimum=0)
-get_rate3_cost = _make_value_getter("tarifBValue", precision=2, transform=_div100, minimum=0)
+get_primary_rate_cost = _make_value_getter(
+    "tarif", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
+)
+get_rate2_cost = _make_value_getter(
+    "tarifAValue", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
+)
+get_rate3_cost = _make_value_getter(
+    "tarifBValue", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
+)
 
 # Temperature getters
-get_box_temperature = _make_value_getter("temperature1", precision=0)
-get_plug_temperature = _make_value_getter("temperature2", precision=0)
+get_box_temperature = _make_value_getter(
+    "temperature1", precision=0, minimum=_MIN_TEMPERATURE, maximum=_MAX_TEMPERATURE
+)
+get_plug_temperature = _make_value_getter(
+    "temperature2", precision=0, minimum=_MIN_TEMPERATURE, maximum=_MAX_TEMPERATURE
+)
 
 # Other diagnostic getters
-get_battery_voltage = _make_value_getter("vBat", precision=2, minimum=0)
-get_leak_current = _make_value_getter("leakValue", precision=0, minimum=0)
-get_leak_current_peak = _make_value_getter("leakValueH", precision=0, minimum=0)
+get_battery_voltage = _make_value_getter("vBat", precision=2, minimum=0, maximum=_MAX_VOLTAGE)
+get_leak_current = _make_value_getter(
+    "leakValue", precision=0, minimum=0, maximum=_MAX_LEAK_CURRENT
+)
+get_leak_current_peak = _make_value_getter(
+    "leakValueH", precision=0, minimum=0, maximum=_MAX_LEAK_CURRENT
+)
 # RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
 get_wifi_rssi = _make_value_getter("RSSI", precision=0, minimum=-120, maximum=0)
 
@@ -417,7 +441,7 @@ def get_active_rate_cost(updater, hass) -> Optional[float]:
     if not key:
         return None
     value = _get_data_value(updater, key, float)
-    if value is None or value < 0:
+    if value is None or value < 0 or value > _MAX_RATE_HUNDREDTHS:
         return None
     return round(value / 100, 2)
 

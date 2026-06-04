@@ -75,20 +75,21 @@ class EveusTimeZoneSelect(
         if option not in TIMEZONE_OPTIONS:
             raise HomeAssistantError(f"Unsupported time zone: {option}")
         offset = int(option)
-        self._set_optimistic_value(offset)
-        self._write_if_changed(option)
-        try:
-            success = await self._updater.send_command("timeZone", offset)
-        except Exception:
-            self._optimistic_value = None
-            self._write_if_changed(self.current_option)
-            raise
-        if not success:
-            self._optimistic_value = None
-            self._write_if_changed(self.current_option)
-            raise HomeAssistantError(
-                f"Eveus charger did not accept timeZone={option}"
-            )
+        async with self._command_lock:
+            self._set_optimistic_value(offset)
+            self._write_if_changed(option)
+            try:
+                success = await self._updater.send_command("timeZone", offset)
+            except Exception:
+                self._optimistic_value = None
+                self._write_if_changed(self.current_option)
+                raise
+            if not success:
+                self._optimistic_value = None
+                self._write_if_changed(self.current_option)
+                raise HomeAssistantError(
+                    f"Eveus charger did not accept timeZone={option}"
+                )
         _LOGGER.debug("Time zone changed to %s", option)
 
     @callback

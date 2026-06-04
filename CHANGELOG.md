@@ -14,6 +14,15 @@
 - The cumulative energy and cost sensors (`Total Energy`, `Counter A/B Energy`, `Counter A/B Cost`, `Session Energy`, `Session Cost`) now ignore corrupt, impossibly large readings, so a single bad value can no longer poison your long-term energy and cost statistics.
 - `Session Time` reads `unknown` instead of a misleading `0m` when the charger reports an impossible negative duration.
 - Charging commands are now resilient to system-clock changes: a backward time correction can no longer briefly stall the controls.
+- A charger address entered with an unbalanced IPv6 bracket (for example `[2001:db8::1` without the closing `]`) now shows a clear invalid-address message instead of a confusing "unknown" error, and a stored malformed address raises a fixable repair notice instead of retrying setup forever.
+- `Box Temperature`, `Plug Temperature`, `Battery Voltage`, `Leakage Current`, `Leakage Current Peak`, and the per-kWh tariff sensors (`Primary/Active/Rate 2/Rate 3 Cost`) now ignore corrupt, impossible readings, so a single bad value can no longer poison their history and statistics — matching the protection already on the energy and cost sensors.
+- Switching **Integration mode** from Advanced back to Basic now removes the SOC entities it no longer provides (SOC %, SOC Energy, the charging-time estimates, and the four SOC inputs), instead of leaving them behind as permanently unavailable entities.
+- Reconfiguring a charger from 3-phase to single-phase now removes the Phase 2/3 voltage and current sensors, instead of leaving them as dead, unavailable entities.
+- Changing a control rapidly — for example dragging the **Charging Current** slider or quickly re-tapping a switch — no longer briefly flashes an older value before settling on your latest choice.
+- Reloading or removing the integration immediately after sending a control command no longer leaves stray background refreshes running afterwards.
+
+### 🔒 Privacy
+- If setup fails unexpectedly, the error shown in Home Assistant no longer includes the charger's address.
 
 ### 🔧 Internal / stabilization
 - Quality pass with **no behavior, entity-ID, or user-facing changes**: removed duplication and dead complexity across the integration.

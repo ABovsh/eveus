@@ -182,37 +182,42 @@ class EveusCurrentNumber(EveusNumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new current value with optimistic UI."""
-        try:
-            raw = _validate_finite_number(value, _CHARGING_CURRENT_NAME)
-            clamped_value = max(
-                self._attr_native_min_value,
-                min(self._attr_native_max_value, raw),
-            )
-            int_value = int(round(clamped_value))
+        # Validate before taking the lock so a bad value fails fast without
+        # blocking on an in-flight command.
+        raw = _validate_finite_number(value, _CHARGING_CURRENT_NAME)
+        clamped_value = max(
+            self._attr_native_min_value,
+            min(self._attr_native_max_value, raw),
+        )
+        int_value = int(round(clamped_value))
 
-            self._pending_value = float(int_value)
-            self._attr_native_value = self._pending_value
-            self._write_if_changed(self._attr_native_value)
+        async with self._command_lock:
+            try:
+                self._pending_value = float(int_value)
+                self._attr_native_value = self._pending_value
+                self._write_if_changed(self._attr_native_value)
 
-            success = await self._updater.send_command(self._command, int_value)
+                success = await self._updater.send_command(self._command, int_value)
 
-            if success:
-                self._set_optimistic_value(float(int_value))
-            else:
+                if success:
+                    self._set_optimistic_value(float(int_value))
+                else:
+                    raise HomeAssistantError(
+                        f"Eveus charger did not accept charging current = {int_value}A"
+                    )
+
+            except HomeAssistantError:
+                raise
+            except Exception as err:
+                _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)
                 raise HomeAssistantError(
-                    f"Eveus charger did not accept charging current = {int_value}A"
-                )
-
-        except HomeAssistantError:
-            raise
-        except Exception as err:
-            _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)
-            raise HomeAssistantError(f"Failed to set charging current: {err}") from err
-        finally:
-            self._pending_value = None
-            self._last_command_time = time.time()
-            self._attr_native_value = self._resolve_value()
-            self._write_if_changed(self._attr_native_value)
+                    f"Failed to set charging current: {err}"
+                ) from err
+            finally:
+                self._pending_value = None
+                self._last_command_time = time.time()
+                self._attr_native_value = self._resolve_value()
+                self._write_if_changed(self._attr_native_value)
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""

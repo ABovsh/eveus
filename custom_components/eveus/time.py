@@ -179,24 +179,25 @@ class EveusScheduleTimeEntity(
         """Send the new start/stop value to the charger with optimistic UI."""
         minutes = time_to_minutes(value)
 
-        self._pending_value = minutes
-        self._attr_native_value = dt.time(hour=minutes // 60, minute=minutes % 60)
-        self._write_if_changed(self._attr_native_value)
-
-        try:
-            success = await self._updater.send_command(self._command, minutes)
-            if success:
-                self._set_optimistic_value(minutes)
-            else:
-                raise HomeAssistantError(
-                    f"Eveus charger did not accept '{self.name}' = "
-                    f"{self._attr_native_value.strftime('%H:%M')}"
-                )
-        finally:
-            self._pending_value = None
-            self._last_command_time = _time.time()
-            self._attr_native_value = minutes_to_time(self._resolve_minutes())
+        async with self._command_lock:
+            self._pending_value = minutes
+            self._attr_native_value = dt.time(hour=minutes // 60, minute=minutes % 60)
             self._write_if_changed(self._attr_native_value)
+
+            try:
+                success = await self._updater.send_command(self._command, minutes)
+                if success:
+                    self._set_optimistic_value(minutes)
+                else:
+                    raise HomeAssistantError(
+                        f"Eveus charger did not accept '{self.name}' = "
+                        f"{self._attr_native_value.strftime('%H:%M')}"
+                    )
+            finally:
+                self._pending_value = None
+                self._last_command_time = _time.time()
+                self._attr_native_value = minutes_to_time(self._resolve_minutes())
+                self._write_if_changed(self._attr_native_value)
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
