@@ -208,7 +208,35 @@ A complete, ready-to-paste Lovelace view that exposes **every Eveus capability**
 
 **Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the graph cards).
 
-**Install:** open your dashboard → **⋮ → Edit dashboard → ⋮ → Raw configuration editor**, then paste the view under `views:`. If your device slug differs from `eveus_ev_charger`, use Home Assistant's entity picker or a find-and-replace.
+> [!IMPORTANT]
+> `docs/dashboard.yaml` is a **whole dashboard view**, not a single card. Don't try to add it through **"Add Card → Manual"** — that expects one card and will error on this file. It must go into a dashboard's **raw configuration** under `views:`, as described below.
+
+**Install (step by step):**
+
+1. Go to **Settings → Dashboards**. Either open an existing dashboard or click **+ Add Dashboard → New dashboard from scratch** to create a fresh one (recommended, so it lives on its own).
+2. Open the dashboard, then click the **pencil / ✏️ Edit** button (top right).
+3. Click the **⋮ (three dots) → Raw configuration editor**.
+4. You'll see YAML that starts with `views:`. Copy the **entire contents** of [`docs/dashboard.yaml`](docs/dashboard.yaml) and paste it as a new list item under `views:`, like this:
+
+   ```yaml
+   views:
+     - title: Eveus       # ← the whole docs/dashboard.yaml goes here, indented under views:
+       path: eveus
+       type: sections
+       sections:
+         - ...
+   ```
+
+   If the dashboard is brand new and empty, you can replace everything in the editor with:
+
+   ```yaml
+   views:
+     - <paste docs/dashboard.yaml here, indented two spaces under the "- ">
+   ```
+
+5. Click **Save**, then close the editor. The **Eveus** view appears as a new tab.
+
+**If your device slug differs from `eveus_ev_charger`** (e.g. you renamed the charger or have several), find-and-replace `eveus_ev_charger` with your slug, or fix each entity with Home Assistant's entity picker after pasting.
 
 <img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
 <img width="1185" alt="Eveus dashboard details" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
