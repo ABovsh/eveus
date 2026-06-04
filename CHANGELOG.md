@@ -6,6 +6,14 @@
 - After rapidly changing charging controls (for example toggling Stop Charging and One Charge in quick succession), a slow charger response from a superseded action could briefly overwrite the newer readings. Command-triggered refreshes are now cancelled when a newer command replaces them or when Home Assistant shuts down, so the displayed state always reflects the most recent action.
 - A charger whose stored settings were corrupted (for example by a hand-edited or partially-imported configuration) no longer blocks **other** chargers from loading, and no longer leaves the **Reconfigure** form unable to open. Corrupted credentials now raise a fixable repair notice instead of retrying forever.
 - After a restart, the running cost figure (`Counter A Cost`, `Counter B Cost`, `Session Cost`) recovers cleanly from a corrupt stored value, so the next real meter reset is detected correctly and long-term cost statistics keep accumulating without spurious resets.
+- Adding a charger that is already set up — or reconfiguring one to an address another charger already uses — now shows a clear **"already configured"** message instead of a confusing **"unknown error"**.
+- If a repaired charger fails to reload, the repair notice now stays put so you can try again, instead of silently disappearing.
+- The one-time **"update your SOC dashboard"** reminder now clears itself automatically once you remove the old `input_number.ev_*` helpers or switch back to Basic mode, instead of lingering indefinitely.
+- A charger address entered or pasted with hidden/invalid characters is now rejected up front, instead of being silently altered into a different address the integration then tries to connect to.
+- Re-entering your password (reauthentication) now works even if the stored integration-mode setting had somehow become invalid.
+- The cumulative energy and cost sensors (`Total Energy`, `Counter A/B Energy`, `Counter A/B Cost`, `Session Energy`, `Session Cost`) now ignore corrupt, impossibly large readings, so a single bad value can no longer poison your long-term energy and cost statistics.
+- `Session Time` reads `unknown` instead of a misleading `0m` when the charger reports an impossible negative duration.
+- Charging commands are now resilient to system-clock changes: a backward time correction can no longer briefly stall the controls.
 
 ### 🔧 Internal / stabilization
 - Quality pass with **no behavior, entity-ID, or user-facing changes**: removed duplication and dead complexity across the integration.

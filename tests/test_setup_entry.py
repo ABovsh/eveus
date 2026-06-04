@@ -825,3 +825,24 @@ def test_reset_counter_buttons_send_reset_commands() -> None:
         ("rstEM1", 0, False),
         ("rstEM2", 0, False),
     ]
+
+
+def test_async_setup_entry_clears_stale_soc_dashboard_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A-F03: the persistent SOC-dashboard notice is cleared when it no longer
+    applies (Basic mode / no legacy helpers), instead of lingering forever."""
+    deleted: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_delete_issue",
+        lambda hass, domain, issue_id: deleted.append((domain, issue_id)),
+    )
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: _FakeEntityRegistry())
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    hass = _hass()
+    entry = _Entry(_data(**{CONF_SOC_MODE: SOC_MODE_BASIC}))
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    assert ("eveus", "soc_dashboard_update_entry-id") in deleted

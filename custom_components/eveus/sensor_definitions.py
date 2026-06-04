@@ -56,6 +56,12 @@ _MAX_SYSTEM_TIME = 4102444800
 _MAX_VOLTAGE = 500
 _MAX_CURRENT = 200
 _MAX_POWER = 100_000
+# Generous ceilings for the cumulative energy/cost sensors that feed HA
+# long-term statistics. Real lifetime totals sit far below these; the bounds
+# exist purely to reject corrupt finite outliers (e.g. 1e100) that would
+# otherwise be recorded permanently and poison the statistics history.
+_MAX_ENERGY_KWH = 1_000_000
+_MAX_COST = 100_000_000
 # Largest plausible per-slot schedule energy cap (kWh).
 _MAX_SCHEDULE_KWH = 200
 _RATE_COST_KEYS: Final = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
@@ -280,10 +286,18 @@ get_current_set = _make_value_getter(
 )
 
 # Energy getters
-get_session_energy = _make_value_getter("sessionEnergy", precision=2, minimum=0)
-get_total_energy = _make_value_getter("totalEnergy", precision=2, minimum=0)
-get_counter_a_energy = _make_value_getter("IEM1", precision=2, minimum=0)
-get_counter_b_energy = _make_value_getter("IEM2", precision=2, minimum=0)
+get_session_energy = _make_value_getter(
+    "sessionEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
+)
+get_total_energy = _make_value_getter(
+    "totalEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
+)
+get_counter_a_energy = _make_value_getter(
+    "IEM1", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
+)
+get_counter_b_energy = _make_value_getter(
+    "IEM2", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
+)
 
 # Cost getters.
 # Firmware contract:
@@ -292,8 +306,12 @@ get_counter_b_energy = _make_value_getter("IEM2", precision=2, minimum=0)
 #   * `IEM1_money`, `IEM2_money`, `sessionMoney` are already in WHOLE currency
 #     units — DO NOT divide. Verified against R3.05.2 firmware.
 _div100 = lambda v: v / 100
-get_counter_a_cost = _make_value_getter("IEM1_money", precision=2, minimum=0)
-get_counter_b_cost = _make_value_getter("IEM2_money", precision=2, minimum=0)
+get_counter_a_cost = _make_value_getter(
+    "IEM1_money", precision=2, minimum=0, maximum=_MAX_COST
+)
+get_counter_b_cost = _make_value_getter(
+    "IEM2_money", precision=2, minimum=0, maximum=_MAX_COST
+)
 get_primary_rate_cost = _make_value_getter("tarif", precision=2, transform=_div100, minimum=0)
 get_rate2_cost = _make_value_getter("tarifAValue", precision=2, transform=_div100, minimum=0)
 get_rate3_cost = _make_value_getter("tarifBValue", precision=2, transform=_div100, minimum=0)
@@ -350,7 +368,11 @@ get_ground_status = _make_enum_getter("ground", {1: "Connected", 0: "Not Connect
 def get_session_time(updater, hass) -> Optional[str]:
     """Get formatted session time."""
     seconds = _get_data_value(updater, "sessionTime", int)
-    return format_duration(seconds) if seconds is not None else None
+    # A negative duration is physically impossible; surface `unknown` instead of
+    # rendering a plausible-but-wrong `0m`.
+    if seconds is None or seconds < 0:
+        return None
+    return format_duration(seconds)
 
 
 def get_session_time_attrs(updater, hass) -> dict:
@@ -358,7 +380,9 @@ def get_session_time_attrs(updater, hass) -> dict:
     if not updater.available:
         return {}
     seconds = _get_data_value(updater, "sessionTime", int)
-    return {"duration_seconds": seconds} if seconds is not None else {}
+    if seconds is None or seconds < 0:
+        return {}
+    return {"duration_seconds": seconds}
 
 
 def get_system_time(updater, hass) -> Optional[str]:
@@ -419,7 +443,9 @@ def _make_rate_status_getter(rate_key: str):
 # for a stateful accumulator on the integration side.
 # =============================================================================
 
-get_session_cost = _make_value_getter("sessionMoney", precision=2, minimum=0)
+get_session_cost = _make_value_getter(
+    "sessionMoney", precision=2, minimum=0, maximum=_MAX_COST
+)
 
 
 # =============================================================================

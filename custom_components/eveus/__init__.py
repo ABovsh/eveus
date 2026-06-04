@@ -316,17 +316,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         if stale:
             reg.async_remove(stale)
 
+        soc_dashboard_issue_id = f"soc_dashboard_update_{entry.entry_id}"
         if get_soc_mode(entry) == SOC_MODE_ADVANCED and _legacy_helpers_present(hass):
             ir.async_create_issue(
                 hass,
                 DOMAIN,
-                f"soc_dashboard_update_{entry.entry_id}",
+                soc_dashboard_issue_id,
                 is_fixable=False,
                 is_persistent=True,
                 issue_domain=DOMAIN,
                 severity=ir.IssueSeverity.WARNING,
                 translation_key="soc_dashboard_update",
             )
+        else:
+            # Clear the (persistent) notice once the legacy helpers are gone or the
+            # entry leaves Advanced mode — otherwise the warning lingers forever.
+            ir.async_delete_issue(hass, DOMAIN, soc_dashboard_issue_id)
 
         updater = EveusUpdater(
             host=host,

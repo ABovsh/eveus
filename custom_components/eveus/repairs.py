@@ -84,8 +84,11 @@ class InvalidConfigRepairFlow(RepairsFlow):
                     title=info["title"],
                     unique_id=new_unique_id,
                 )
-                ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
+                # Reload BEFORE clearing the issue: if the reload fails the repair
+                # notice must survive so the user can retry, rather than vanishing
+                # behind a generic "unknown" error.
                 await self.hass.config_entries.async_reload(entry.entry_id)
+                ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
                 return self.async_create_entry(title="", data={})
 
             except _AlreadyConfigured:

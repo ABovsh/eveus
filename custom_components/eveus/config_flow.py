@@ -14,7 +14,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.selector import (
@@ -152,6 +152,13 @@ def _split_host_and_scheme(
     raw_host = raw_host.strip()
     if not raw_host:
         raise vol.Invalid("Host cannot be empty")
+
+    # urlparse silently DROPS ASCII control characters (\n, \r, \t) from the
+    # host, so "a\nb.com" would normalize to "ab.com" — a different target than
+    # the user typed. Reject them outright instead of connecting to a host the
+    # user never entered.
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw_host):
+        raise vol.Invalid("Host contains invalid control characters")
 
     # A bare IPv6 literal (2+ colons, no brackets, no scheme) confuses urlparse,
     # which reads the trailing group as a port. Bracket it so it parses as a host.
@@ -430,6 +437,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
                 _LOGGER.debug("Invalid device: %s", str(err))
+            except AbortFlow:
+                # `_abort_if_unique_id_configured()` raises AbortFlow, which is an
+                # Exception subclass. Let it propagate so the duplicate charger
+                # aborts with "already_configured" instead of a generic "unknown".
+                raise
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
@@ -507,6 +519,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
                 _LOGGER.debug("Invalid reconfigure device: %s", str(err))
+            except AbortFlow:
+                # Duplicate-host abort must reach the user as "already_configured"
+                # rather than being swallowed into a generic "unknown" error.
+                raise
             except Exception:
                 _LOGGER.exception("Unexpected reconfigure exception")
                 errors["base"] = "unknown"
@@ -536,6 +552,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 merged_data = dict(entry.data)
                 merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
                 merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                # The reauth form only exposes credentials, so a corrupt stored
+                # soc_mode would otherwise fail validation with no way to fix it.
+                # Normalize it to a valid mode before re-validating.
+                merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
 
                 info = await validate_input(self.hass, merged_data)
                 entry_data = _merge_entry_data(entry.data, info["data"])
