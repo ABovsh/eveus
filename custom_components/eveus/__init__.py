@@ -202,7 +202,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old config entry data."""
     new_data = dict(entry.data)
     host = new_data.get(CONF_HOST)
-    if isinstance(host, str) and host.startswith(("http://", "https://")):  # NOSONAR python:S5332 — local LAN device, HTTPS not available on charger firmware.
+    if isinstance(host, str) and host.lower().startswith(("http://", "https://")):  # NOSONAR python:S5332 — local LAN device, HTTPS not available on charger firmware.
         from urllib.parse import urlparse, urlunparse
         from .config_flow import _split_host_and_scheme
 

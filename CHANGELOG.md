@@ -20,6 +20,9 @@
 - Reconfiguring a charger from 3-phase to single-phase now removes the Phase 2/3 voltage and current sensors, instead of leaving them as dead, unavailable entities.
 - Changing a control rapidly — for example dragging the **Charging Current** slider or quickly re-tapping a switch — no longer briefly flashes an older value before settling on your latest choice.
 - Reloading or removing the integration immediately after sending a control command no longer leaves stray background refreshes running afterwards.
+- `SOC %`, `SOC Energy`, `Time to Target SOC`, and `Charging Finish Time` now ignore corrupt, impossible power or session-energy readings, so a single bad value can no longer show a false full battery, "target reached", or a "< 1 min" estimate — matching the protection already on the `Power` and `Session Energy` sensors.
+- Changing the **Time Zone** no longer briefly snaps back to the previous zone if a routine status update arrives while the charger is still applying the change.
+- A charger whose stored address used an uppercase scheme with a trailing path (for example `HTTP://…/main`) now upgrades cleanly on its own, instead of needing a manual repair.
 
 ### 🔒 Privacy
 - If setup fails unexpectedly, the error shown in Home Assistant no longer includes the charger's address.

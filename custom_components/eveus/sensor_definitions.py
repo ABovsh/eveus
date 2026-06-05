@@ -36,6 +36,8 @@ from .const import (
     ERROR_LOG_RATE_LIMIT,
     MIN_CURRENT,
     MODEL_MAX_CURRENT,
+    MAX_POWER_W,
+    MAX_ENERGY_KWH,
 )
 from .utils import RateLog, get_safe_value, format_duration
 
@@ -55,12 +57,12 @@ _MAX_SYSTEM_TIME = 4102444800
 # 999999) before they reach HA long-term statistics. Generous on purpose.
 _MAX_VOLTAGE = 500
 _MAX_CURRENT = 200
-_MAX_POWER = 100_000
+_MAX_POWER = MAX_POWER_W
 # Generous ceilings for the cumulative energy/cost sensors that feed HA
 # long-term statistics. Real lifetime totals sit far below these; the bounds
 # exist purely to reject corrupt finite outliers (e.g. 1e100) that would
 # otherwise be recorded permanently and poison the statistics history.
-_MAX_ENERGY_KWH = 1_000_000
+_MAX_ENERGY_KWH = MAX_ENERGY_KWH
 _MAX_COST = 100_000_000
 # Largest plausible per-slot schedule energy cap (kWh).
 _MAX_SCHEDULE_KWH = 200
