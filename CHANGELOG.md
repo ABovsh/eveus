@@ -2,39 +2,42 @@
 
 ## 4.10.1 - Unreleased
 
-### 🐛 Fixed
-- After rapidly changing charging controls (for example toggling Stop Charging and One Charge in quick succession), a slow charger response from a superseded action could briefly overwrite the newer readings. Command-triggered refreshes are now cancelled when a newer command replaces them or when Home Assistant shuts down, so the displayed state always reflects the most recent action.
-- A charger whose stored settings were corrupted (for example by a hand-edited or partially-imported configuration) no longer blocks **other** chargers from loading, and no longer leaves the **Reconfigure** form unable to open. Corrupted credentials now raise a fixable repair notice instead of retrying forever.
-- After a restart, the running cost figure (`Counter A Cost`, `Counter B Cost`, `Session Cost`) recovers cleanly from a corrupt stored value, so the next real meter reset is detected correctly and long-term cost statistics keep accumulating without spurious resets.
-- Adding a charger that is already set up — or reconfiguring one to an address another charger already uses — now shows a clear **"already configured"** message instead of a confusing **"unknown error"**.
-- If a repaired charger fails to reload, the repair notice now stays put so you can try again, instead of silently disappearing.
-- The one-time **"update your SOC dashboard"** reminder now clears itself automatically once you remove the old `input_number.ev_*` helpers or switch back to Basic mode, instead of lingering indefinitely.
-- A charger address entered or pasted with hidden/invalid characters is now rejected up front, instead of being silently altered into a different address the integration then tries to connect to.
+A stability-and-polish release. No new entities and nothing to reconfigure — your controls feel snappier, switching modes no longer strands dead entities on your dashboard, and a single bad reading from the charger can no longer corrupt your long-term history.
+
+### ⚡ Controls feel snappier and always show the latest value
+- Dragging the **Charging Current** slider or quickly re-tapping a switch no longer briefly flashes an older value before settling on the one you chose.
+- Toggling controls in quick succession (for example **Stop Charging** then **One Charge**) no longer lets a slow reply from the *previous* action overwrite your newest one — the display always reflects your most recent tap.
+- Changing the **Time Zone** no longer briefly snaps back to the old zone while the charger is still applying the change.
+- Controls stay responsive across system-clock changes — a backward time correction can no longer momentarily stall them.
+- Reloading or removing the integration right after a command no longer leaves stray background refreshes running.
+
+### 🔁 Switch modes without stranding entities on your dashboard
+- Switching **Integration mode** from Advanced back to Basic now cleanly removes the SOC entities it no longer provides (SOC %, SOC Energy, the charging-time estimates, and the four SOC inputs), instead of leaving them behind as permanently *unavailable*.
+- Switching a charger from 3-phase to single-phase now removes the Phase 2/3 voltage and current sensors instead of leaving them as dead entities.
+- That cleanup now waits until the charger has fully reloaded. If the charger is briefly offline during the switch, your old entities — **and their area, name, and dashboard placement** — are kept and tidied up on the next successful load, rather than deleted on an attempt that Home Assistant then retries.
+- The one-time **"update your SOC dashboard"** reminder now clears itself automatically once you remove the old `input_number.ev_*` helpers or return to Basic mode, instead of lingering forever.
+
+### 🛡️ One bad reading can't poison your history anymore
+- Energy and cost sensors (`Total Energy`, `Counter A/B Energy`, `Counter A/B Cost`, `Session Energy`, `Session Cost`) now ignore corrupt, impossibly large spikes — protecting your long-term statistics.
+- The same protection now covers `Box Temperature`, `Plug Temperature`, `Battery Voltage`, `Leakage Current`, `Leakage Current Peak`, and the per-kWh tariff cost sensors.
+- `SOC %`, `SOC Energy`, `Time to Target SOC`, and `Charging Finish Time` now reject impossible power/session-energy readings, so a glitch can no longer fake a full battery, a "target reached", or a "< 1 min" estimate.
+- After a restart, the running cost figures (`Counter A/B Cost`, `Session Cost`) recover cleanly from a corrupt stored value, so the next real meter reset is detected correctly and statistics keep accumulating without phantom resets.
+- `Session Time` now shows `unknown` instead of a misleading `0m` when the charger reports an impossible negative duration.
+
+### 🧰 Clearer, more forgiving setup, reconfigure & repair
+- Adding a charger that's already set up — or pointing one at an address another charger already uses — now shows a clear **"already configured"** message instead of a confusing **"unknown error"**.
+- A charger address pasted with hidden or invalid characters is now rejected up front, instead of being silently altered into a *different* address the integration then tries to reach.
+- An unbalanced IPv6 bracket (for example `[2001:db8::1` with no closing `]`) now gives a clear invalid-address message, and a stored malformed address raises a fixable repair notice instead of retrying setup forever.
+- A stored address that used an uppercase scheme with a trailing path (for example `HTTP://…/main`) now upgrades itself cleanly — no manual repair needed.
 - Re-entering your password (reauthentication) now works even if the stored integration-mode setting had somehow become invalid.
-- The cumulative energy and cost sensors (`Total Energy`, `Counter A/B Energy`, `Counter A/B Cost`, `Session Energy`, `Session Cost`) now ignore corrupt, impossibly large readings, so a single bad value can no longer poison your long-term energy and cost statistics.
-- `Session Time` reads `unknown` instead of a misleading `0m` when the charger reports an impossible negative duration.
-- Charging commands are now resilient to system-clock changes: a backward time correction can no longer briefly stall the controls.
-- A charger address entered with an unbalanced IPv6 bracket (for example `[2001:db8::1` without the closing `]`) now shows a clear invalid-address message instead of a confusing "unknown" error, and a stored malformed address raises a fixable repair notice instead of retrying setup forever.
-- `Box Temperature`, `Plug Temperature`, `Battery Voltage`, `Leakage Current`, `Leakage Current Peak`, and the per-kWh tariff sensors (`Primary/Active/Rate 2/Rate 3 Cost`) now ignore corrupt, impossible readings, so a single bad value can no longer poison their history and statistics — matching the protection already on the energy and cost sensors.
-- Switching **Integration mode** from Advanced back to Basic now removes the SOC entities it no longer provides (SOC %, SOC Energy, the charging-time estimates, and the four SOC inputs), instead of leaving them behind as permanently unavailable entities.
-- Reconfiguring a charger from 3-phase to single-phase now removes the Phase 2/3 voltage and current sensors, instead of leaving them as dead, unavailable entities.
-- Removing those no-longer-used SOC or phase entities now waits until the charger has fully reloaded. If the charger is briefly unreachable during a Basic/single-phase switch, the old entities (and their area, name, and dashboard placement) are preserved and cleaned up on the next successful load, instead of being deleted on a setup attempt that Home Assistant then has to retry.
-- Changing a control rapidly — for example dragging the **Charging Current** slider or quickly re-tapping a switch — no longer briefly flashes an older value before settling on your latest choice.
-- Reloading or removing the integration immediately after sending a control command no longer leaves stray background refreshes running afterwards.
-- `SOC %`, `SOC Energy`, `Time to Target SOC`, and `Charging Finish Time` now ignore corrupt, impossible power or session-energy readings, so a single bad value can no longer show a false full battery, "target reached", or a "< 1 min" estimate — matching the protection already on the `Power` and `Session Energy` sensors.
-- Changing the **Time Zone** no longer briefly snaps back to the previous zone if a routine status update arrives while the charger is still applying the change.
-- A charger whose stored address used an uppercase scheme with a trailing path (for example `HTTP://…/main`) now upgrades cleanly on its own, instead of needing a manual repair.
+- A charger with corrupted stored settings no longer blocks your **other** chargers from loading, and no longer leaves its **Reconfigure** form unable to open — corrupted credentials raise a fixable repair notice instead of retrying forever.
+- If a repaired charger fails to reload, the repair notice now stays put so you can try again, instead of silently vanishing.
 
 ### 🔒 Privacy
 - If setup fails unexpectedly, the error shown in Home Assistant no longer includes the charger's address.
 
-### 🔧 Internal / stabilization
-- Quality pass with **no behavior, entity-ID, or user-facing changes**: removed duplication and dead complexity across the integration.
-  - Single shared `/main` payload validator used by both config flow and the coordinator (previously two drifting copies).
-  - Extracted a shared `CommandBackedEntity` lifecycle for the number/switch/time controls (reconcile/optimistic/grace logic now single-sourced).
-  - Device-registry firmware finalization now runs once per config entry instead of once per entity.
-  - Connection-quality metrics computed once per poll; binary-sensor `is_on` logic centralized; on/off status getters unified.
-  - Adopted Home Assistant stdlib helpers (`slugify`, `dt.parse_time`, `util.network` host validation, `async_call_later`) in place of hand-rolled equivalents.
+### 🧹 Under the hood
+- Behind-the-scenes cleanup with **no entity, behavior, or UI changes** — less duplicated code and slightly lighter polling, so there are fewer places for bugs to hide.
 
 ## 4.10.0 - 2026-06-02
 
