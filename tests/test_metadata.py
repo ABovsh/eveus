@@ -25,11 +25,14 @@ def test_manifest_domain_matches_integration_directory() -> None:
 
 
 def test_manifest_readme_and_changelog_versions_match() -> None:
-    """Manifest, README badge and CHANGELOG must agree on the release line.
+    """Manifest, README badge and CHANGELOG must agree, branch-appropriately.
 
-    The manifest and CHANGELOG pin the full ``X.Y.Z`` patch version, while the
-    README badge tracks the ``X.Y-rc`` release line so it does not need a churn
-    edit on every patch within the same rc cycle.
+    The README badge mirrors the manifest version **exactly**, so the value is
+    correct on whatever branch it lives on: ``main`` carries the final
+    ``X.Y.Z`` (badge ``version-X.Y.Z``) while the ``X.Y-rc`` branch carries the
+    pre-release ``X.Y.Z-rc`` (badge ``version-X.Y.Z--rc``). Shields.io escapes a
+    literal ``-`` as ``--``. The CHANGELOG entry is keyed on the base
+    ``X.Y.Z`` (the ``-rc`` suffix is a manifest/badge marker only).
     """
     import re
 
@@ -40,14 +43,14 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     changelog = (ROOT / "CHANGELOG.md").read_text()
 
     version = manifest["version"]
-    base = re.match(r"^(\d+\.\d+)\.\d+", version)
-    assert base is not None, version
-    minor_line = base.group(1)
+    assert re.match(r"^\d+\.\d+\.\d+(-rc)?$", version), version
+    base = version.split("-", 1)[0]
 
-    # README badge tracks the MAJOR.MINOR rc line (e.g. ``version-4.10--rc``).
-    assert f"version-{minor_line}--rc-blue" in readme
-    # Manifest and CHANGELOG still agree on the exact patch version.
-    assert f"## {version}" in changelog
+    # README badge mirrors the manifest version verbatim (shields escapes - as --).
+    badge_version = version.replace("-", "--")
+    assert f"version-{badge_version}-blue" in readme
+    # CHANGELOG is keyed on the base X.Y.Z, regardless of the -rc marker.
+    assert f"## {base}" in changelog
 
 
 def test_hacs_metadata_has_allowed_keys_only() -> None:
