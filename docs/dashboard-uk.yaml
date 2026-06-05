@@ -48,6 +48,79 @@ sections:
           - entity: sensor.eveus_ev_charger_current_set
             name: Встановлений струм
             icon: mdi:current-ac
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: custom:mini-graph-card
+            name: Потужність
+            icon: mdi:flash
+            hours_to_show: 12
+            points_per_hour: 6
+            line_width: 2
+            smoothing: true
+            height: 90
+            entities:
+              - entity: sensor.eveus_ev_charger_power
+            show:
+              fill: fade
+              labels: true
+              name: false
+          - type: custom:mini-graph-card
+            name: Струм
+            icon: mdi:current-ac
+            hours_to_show: 12
+            points_per_hour: 6
+            line_width: 2
+            height: 90
+            entities:
+              - entity: sensor.eveus_ev_charger_current
+            show:
+              fill: fade
+              labels: true
+              name: false
+  - type: grid
+    cards:
+      - type: heading
+        heading: Адаптивний режим, OCPP і годинник
+        icon: mdi:shield-flash-outline
+        heading_style: title
+      - type: entities
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: switch.eveus_ev_charger_adaptive_mode
+            name: Адаптивний режим
+            icon: mdi:shield-flash-outline
+          - entity: sensor.eveus_ev_charger_adaptive_charging
+            name: Статус
+            icon: mdi:circle-slice-8
+          - entity: sensor.eveus_ev_charger_adaptive_current_limit
+            name: Ліміт струму
+            icon: mdi:current-ac
+          - entity: sensor.eveus_ev_charger_adaptive_voltage_threshold
+            name: Поріг напруги
+            icon: mdi:sine-wave
+          - type: divider
+          - entity: switch.eveus_ev_charger_connect_to_ocpp
+            name: Підключення до OCPP
+            icon: mdi:cloud-sync-outline
+          - entity: binary_sensor.eveus_ev_charger_ocpp_connected
+            name: OCPP підключено
+            icon: mdi:cloud-check-outline
+      - type: entities
+        title: Годинник
+        show_header_toggle: false
+        entities:
+          - entity: select.eveus_ev_charger_time_zone
+            name: Часовий пояс
+            icon: mdi:earth
+          - entity: sensor.eveus_ev_charger_system_time
+            name: Годинник станції
+            icon: mdi:clock-outline
+          - entity: button.eveus_ev_charger_sync_time
+            name: Синхронізувати з HA
+            icon: mdi:clock-check-outline
   - type: grid
     cards:
       - type: heading
@@ -84,59 +157,6 @@ sections:
   - type: grid
     cards:
       - type: heading
-        heading: Заряджання
-        icon: mdi:tune
-      - type: tile
-        entity: number.eveus_ev_charger_charging_current
-        name: Струм заряджання
-        icon: mdi:current-ac
-        features:
-          - type: numeric-input
-            style: slider
-      - type: entities
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: switch.eveus_ev_charger_stop_charging
-            name: Зупинити заряджання
-            icon: mdi:stop-circle-outline
-          - entity: switch.eveus_ev_charger_one_charge
-            name: Одноразове заряджання
-            icon: mdi:lightning-bolt
-          - entity: button.eveus_ev_charger_force_refresh
-            name: Примусове оновлення
-            icon: mdi:refresh
-  - type: grid
-    cards:
-      - type: heading
-        heading: Адаптивний режим і OCPP
-        icon: mdi:shield-flash-outline
-      - type: entities
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: switch.eveus_ev_charger_adaptive_mode
-            name: Адаптивний режим
-            icon: mdi:shield-flash-outline
-          - entity: sensor.eveus_ev_charger_adaptive_charging
-            name: Статус
-            icon: mdi:circle-slice-8
-          - entity: sensor.eveus_ev_charger_adaptive_current_limit
-            name: Ліміт струму
-            icon: mdi:current-ac
-          - entity: sensor.eveus_ev_charger_adaptive_voltage_threshold
-            name: Поріг напруги
-            icon: mdi:sine-wave
-          - type: divider
-          - entity: switch.eveus_ev_charger_connect_to_ocpp
-            name: Підключення до OCPP
-            icon: mdi:cloud-sync-outline
-          - entity: binary_sensor.eveus_ev_charger_ocpp_connected
-            name: OCPP підключено
-            icon: mdi:cloud-check-outline
-  - type: grid
-    cards:
-      - type: heading
         heading: Сесія та тарифи
         icon: mdi:cash-multiple
       - type: entities
@@ -165,6 +185,31 @@ sections:
             name: Тариф 3
           - entity: sensor.eveus_ev_charger_rate_3_cost
             name: Вартість тарифу 3
+  - type: grid
+    cards:
+      - type: heading
+        heading: Заряджання
+        icon: mdi:tune
+      - type: tile
+        entity: number.eveus_ev_charger_charging_current
+        name: Струм заряджання
+        icon: mdi:current-ac
+        features:
+          - type: numeric-input
+            style: slider
+      - type: entities
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: switch.eveus_ev_charger_stop_charging
+            name: Зупинити заряджання
+            icon: mdi:stop-circle-outline
+          - entity: switch.eveus_ev_charger_one_charge
+            name: Одноразове заряджання
+            icon: mdi:lightning-bolt
+          - entity: button.eveus_ev_charger_force_refresh
+            name: Примусове оновлення
+            icon: mdi:refresh
   - type: grid
     cards:
       - type: heading
@@ -199,83 +244,47 @@ sections:
   - type: grid
     cards:
       - type: heading
-        heading: Розклади та годинник
-        icon: mdi:calendar-clock
-      - type: entities
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - type: section
-            label: Розклад 1
-          - entity: switch.eveus_ev_charger_schedule_1_enabled
-            name: Увімкнено
-            icon: mdi:power
-          - entity: time.eveus_ev_charger_schedule_1_start
-            name: Початок
-            icon: mdi:clock-start
-          - entity: time.eveus_ev_charger_schedule_1_stop
-            name: Завершення
-            icon: mdi:clock-end
-          - entity: sensor.eveus_ev_charger_schedule_1
-            name: Вікно
-            icon: mdi:timetable
-          - type: section
-            label: Розклад 2
-          - entity: switch.eveus_ev_charger_schedule_2_enabled
-            name: Увімкнено
-            icon: mdi:power
-          - entity: time.eveus_ev_charger_schedule_2_start
-            name: Початок
-            icon: mdi:clock-start
-          - entity: time.eveus_ev_charger_schedule_2_stop
-            name: Завершення
-            icon: mdi:clock-end
-          - entity: sensor.eveus_ev_charger_schedule_2
-            name: Вікно
-            icon: mdi:timetable
-          - type: section
-            label: Годинник
-          - entity: select.eveus_ev_charger_time_zone
-            name: Часовий пояс
-            icon: mdi:earth
-          - entity: sensor.eveus_ev_charger_system_time
-            name: Годинник станції
-            icon: mdi:clock-outline
-          - entity: button.eveus_ev_charger_sync_time
-            name: Синхронізувати з HA
-            icon: mdi:clock-check-outline
-  - type: grid
-    cards:
-      - type: heading
-        heading: Останні 24 год
-        icon: mdi:chart-line
-      - type: custom:mini-graph-card
-        name: Потужність
-        icon: mdi:flash
-        hours_to_show: 24
-        points_per_hour: 6
-        line_width: 2
-        smoothing: true
-        height: 90
-        entities:
-          - entity: sensor.eveus_ev_charger_power
-        show:
-          fill: fade
-          labels: true
-          name: false
-      - type: custom:mini-graph-card
-        name: Струм
-        icon: mdi:current-ac
-        hours_to_show: 24
-        points_per_hour: 6
-        line_width: 2
-        height: 90
-        entities:
-          - entity: sensor.eveus_ev_charger_current
-        show:
-          fill: fade
-          labels: true
-          name: false
+        heading: Розклади
+        heading_style: title
+        icon: mdi:clipboard-clock-outline
+      - square: false
+        type: grid
+        columns: 1
+        cards:
+          - type: entities
+            show_header_toggle: false
+            state_color: true
+            entities:
+              - entity: switch.eveus_ev_charger_schedule_1_enabled
+                name: Увімкнено
+                icon: mdi:power
+              - entity: time.eveus_ev_charger_schedule_1_start
+                name: Початок
+                icon: mdi:clock-start
+              - entity: time.eveus_ev_charger_schedule_1_stop
+                name: Завершення
+                icon: mdi:clock-end
+              - entity: sensor.eveus_ev_charger_schedule_1
+                name: Вікно
+                icon: mdi:timetable
+            title: Розклад 1
+          - type: entities
+            title: Розклад 2
+            show_header_toggle: false
+            state_color: true
+            entities:
+              - entity: switch.eveus_ev_charger_schedule_2_enabled
+                name: Увімкнено
+                icon: mdi:power
+              - entity: time.eveus_ev_charger_schedule_2_start
+                name: Початок
+                icon: mdi:clock-start
+              - entity: time.eveus_ev_charger_schedule_2_stop
+                name: Завершення
+                icon: mdi:clock-end
+              - entity: sensor.eveus_ev_charger_schedule_2
+                name: Вікно
+                icon: mdi:timetable
   - type: grid
     cards:
       - type: heading
