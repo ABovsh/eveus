@@ -3,7 +3,7 @@
 > Local-only Home Assistant integration for Eveus EV chargers. Control charging, monitor power and cost, estimate EV battery SOC, expose schedules and adaptive charging, and build automations without template sensors.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.10--rc-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.10.1-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -15,7 +15,7 @@
 - Discussion: [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 - Issues: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues)
 
-<img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
+<img width="1063" height="763" alt="image" src="https://github.com/user-attachments/assets/4c9ece28-8977-47d0-8fbc-78a69b95dac9" />
 
 Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, optional OCPP backend control, multi-charger support, a localized (English / Ukrainian) UI, and automation-friendly entities so you never have to write a template sensor.
 
@@ -196,26 +196,18 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 
 ## Dashboard
 
-A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.1**). It is organized into nine compact, auto-packing sections:
-
-- **Status** — hero tiles (state, power, current, voltage) plus substate, car connected, session active, current setpoint
-- **EV Battery** — the four `number.eveus_ev_charger_*` SOC inputs and the SOC / ETA sensors
-- **Charging** — current slider, stop / one-charge switches, force refresh
-- **Adaptive & OCPP** — adaptive throttle with its readouts, plus the OCPP backend toggle and state
-- **Session & Tariffs** — current-session totals and cost, plus the active / primary / Rate 2 / Rate 3 prices
-- **Counters** — lifetime energy and both resettable A/B counters with cost and reset
-- **Schedules & Clock** — both on-device schedule slots with native HH:MM pickers, plus time-zone, charger clock, and sync
-- **Last 24 h** — mini-graph charts for power and current
-- **Diagnostics** — connection quality, Wi-Fi, temperatures, ground, leakage, internal battery
-
+A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.1**). 
 **Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the two graph cards). Every other card is built-in.
-
+<img width="1059" height="761" alt="image" src="https://github.com/user-attachments/assets/cc349dc9-612f-4919-897d-53d8bf53772a" />
+<img width="1085" height="449" alt="image" src="https://github.com/user-attachments/assets/90ce8edf-f5c1-4229-9b6c-0504165cacb2" />
 **Language:** the view ships in two interchangeable files — [`docs/dashboard.yaml`](docs/dashboard.yaml) (English) and [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) (Ukrainian, identical layout). Home Assistant does not translate dashboard labels automatically, so each file carries its own labels; the entity IDs are identical, so you can switch files anytime without touching history or automations.
+
 
 **3-phase setups:** add `sensor.eveus_ev_charger_current_phase_2`/`_3` and `…_voltage_phase_2`/`_3` to the **Status** section — those sensors exist only when `Phases = 3`.
 
 > [!IMPORTANT]
 > `docs/dashboard.yaml` is a **whole dashboard view**, not a single card. Don't try to add it through **"Add Card → Manual"** — that expects one card and will error on this file. It must go into a dashboard's **raw configuration** under `views:`, as described below.
+
 
 **Install (step by step):**
 
@@ -243,10 +235,6 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 5. Click **Save**, then close the editor. The **Eveus** view appears as a new tab.
 
 **If your device slug differs from `eveus_ev_charger`** (e.g. you renamed the charger or have several), find-and-replace `eveus_ev_charger` with your slug, or fix each entity with Home Assistant's entity picker after pasting.
-
-<!-- TODO(v1.1): refresh these two screenshots — they still show the pre-v1.1 layout -->
-<img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
-<img width="1185" alt="Eveus dashboard details" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
 
 ## Troubleshooting
 
