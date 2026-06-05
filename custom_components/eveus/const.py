@@ -31,6 +31,21 @@ ERROR_LOG_RATE_LIMIT: Final[int] = 300
 STATE_CACHE_TTL: Final[int] = 60
 OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 
+# CR2032 coin cell inside the charger (reported as `vBat`). A low reading is
+# surfaced as an informational "replace soon" notice (we don't model exactly
+# which charger functions depend on it, only that some may be limited). The
+# CR2032 discharge curve
+# is flat until end of life, then drops off a cliff. The charger
+# is observed to run fine down to ~2.1 V, so the warning holds off until below
+# 2.0 V — deep on the discharge tail but still at the edge of the RTC's retention
+# floor, replace-now territory. The clear threshold sits above the fire threshold
+# so a reading hovering at the edge can't flap, and the warning only fires after
+# several consecutive low polls so a single glitchy ADC read can't raise a scary
+# "replace your battery" notice.
+BATTERY_LOW_THRESHOLD_VOLTS: Final[float] = 2.0
+BATTERY_OK_THRESHOLD_VOLTS: Final[float] = 2.3
+BATTERY_LOW_DEBOUNCE_POLLS: Final[int] = 3
+
 # Current limits
 MIN_CURRENT: Final[int] = 7
 MODEL_16A: Final[str] = "16A"

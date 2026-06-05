@@ -331,6 +331,10 @@
         "ocpp_enabled": {
             "title": "Eveus: OCPP is enabled, Home Assistant control may be limited",
             "description": "OCPP is currently enabled on your Eveus charger.\n\nWhile OCPP is enabled, the charger may follow commands from the OCPP server or the Grizzl-E Connect mobile app instead of Home Assistant. Some Home Assistant controls may not apply or may be overwritten.\n\nThis can affect:\n\n- Charging current\n- Charge limits\n- Charging schedule\n\nTo restore full Home Assistant control, turn off the **Connect to OCPP** switch for your Eveus charger.\n\nThe Eveus integration will clear this warning automatically after OCPP is turned off."
+        },
+        "battery_low": {
+            "title": "Eveus: charger battery is low, replace it soon",
+            "description": "The CR2032 coin-cell battery inside your Eveus charger is low.\n\nWhile it is low, some charger functions may be limited.\n\nWhat to do:\n\n- Replace it with a fresh, good-quality CR2032 cell.\n\nThe Eveus integration will clear this warning automatically once a new battery reads a healthy voltage."
         }
     }
 }
