@@ -52,6 +52,12 @@ _UPDATE_INTERVALS = {
     OFFLINE_UPDATE_INTERVAL: _OFFLINE_INTERVAL,
 }
 
+# Longest the offline backoff ever defers the next poll. Used both to set the
+# deadline and to bound the skip check, so a backward wall-clock step (which
+# would otherwise leave the deadline far in the future) can't strand the
+# charger as unavailable: a remaining wait beyond this means the clock moved.
+_MAX_OFFLINE_BACKOFF = min(RETRY_DELAY * 4, 300)
+
 
 class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     """Data coordinator for an Eveus charger."""
@@ -102,7 +108,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._device_available = True
         self._device_registry_finalized = False
         self._next_poll_attempt = 0.0
-        self._force_refresh_requested = False
+        self._force_refresh_requests = 0
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
         # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
@@ -188,12 +194,17 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         return success
 
     async def async_force_refresh(self) -> None:
-        """Force an immediate refresh, bypassing one offline-backoff skip."""
-        self._force_refresh_requested = True
+        """Force an immediate refresh, bypassing offline-backoff skips.
+
+        The bypass is scoped to this call via a counter rather than a single
+        consumable flag, so a scheduled poll that interleaves with the forced
+        refresh cannot steal the bypass and leave the forced poll skipped.
+        """
+        self._force_refresh_requests += 1
         try:
             await self.async_refresh()
         finally:
-            self._force_refresh_requested = False
+            self._force_refresh_requests -= 1
 
     def _schedule_post_command_refresh(self) -> None:
         """Schedule delayed refreshes after a successful command.
@@ -290,7 +301,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._silent_mode = True
 
         if self.is_likely_offline:
-            self._next_poll_attempt = time.time() + min(RETRY_DELAY * 4, 300)
+            self._next_poll_attempt = time.time() + _MAX_OFFLINE_BACKOFF
             self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
             if not self._offline_announced:
                 _LOGGER.debug("Eveus device appears offline, reducing poll frequency")
@@ -343,9 +354,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
         start_time = time.time()
-        bypass_backoff = self._force_refresh_requested
-        self._force_refresh_requested = False
-        if self._next_poll_attempt > start_time and not bypass_backoff:
+        bypass_backoff = self._force_refresh_requests > 0
+        backoff_remaining = self._next_poll_attempt - start_time
+        if 0 < backoff_remaining <= _MAX_OFFLINE_BACKOFF and not bypass_backoff:
             raise UpdateFailed("Skipping Eveus poll during offline backoff")
 
         try:

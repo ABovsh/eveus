@@ -29,6 +29,7 @@ _NETWORK_MESSAGES = {
     "current_bool": "Eveus 'currentSet' field is boolean",
     "current_not_numeric": "Eveus 'currentSet' field is not numeric",
     "current_not_finite": "Eveus 'currentSet' field is not finite",
+    "current_not_integer": "Eveus 'currentSet' field is not an integer",
     "current_below_min": "Eveus 'currentSet' field below minimum",
     "current_above_model": (
         "Eveus 'currentSet' value {current_set} exceeds model maximum {max_current}"
@@ -47,6 +48,7 @@ _CONFIG_FLOW_MESSAGES = {
     "current_bool": "Device reports invalid current setting",
     "current_not_numeric": "Device reports invalid current format",
     "current_not_finite": "Device reports invalid current value",
+    "current_not_integer": "Device 'currentSet' field is not an integer",
     "current_below_min": "Device reports invalid current setting",
     "current_above_model": (
         "Device current ({current_set}A) exceeds model maximum ({max_current}A)"
@@ -108,6 +110,11 @@ def validate_main_payload(
         ) from err
     if not math.isfinite(current_set):
         _raise(message_style, "current_not_finite")
+    # The amp setpoint is always a whole number; a fractional value (e.g. 7.5,
+    # or "7.5") is corrupt. Reject it instead of letting the display getter round
+    # it to a plausible whole-amp value. Mirrors the integer `state` guard above.
+    if not current_set.is_integer():
+        _raise(message_style, "current_not_integer")
     if current_set < MIN_CURRENT:
         _raise(message_style, "current_below_min")
 

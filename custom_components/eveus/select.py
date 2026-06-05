@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -18,7 +18,7 @@ from .common_base import (
     OptimisticControlMixin,
     WriteOnChangeMixin,
 )
-from .const import OPTIMISTIC_CONTROL_TTL
+from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,7 +57,14 @@ class EveusTimeZoneSelect(
         self._command_pending = False
 
     def _device_option(self) -> str | None:
-        """Resolve the formatted timezone string from coordinator data."""
+        """Resolve the formatted timezone string from fresh coordinator data.
+
+        Gated on availability like the other controls: the coordinator retains
+        the last payload after failed polls, so without this gate an offline
+        charger would reconcile against a stale `timeZone` and revert the choice.
+        """
+        if not self._updater.available:
+            return None
         value = get_safe_value(self._updater.data or {}, "timeZone", int, None)
         if value is None:
             return None
@@ -66,10 +73,35 @@ class EveusTimeZoneSelect(
 
     @property
     def current_option(self) -> str | None:
-        """Return optimistic value while pending; otherwise the device value."""
+        """Return optimistic value while pending; else device value; else the
+        last good value through the grace window (restored across restarts)."""
         if self._optimistic_value_is_valid(time.time(), OPTIMISTIC_CONTROL_TTL):
             return _format_tz(self._optimistic_value)
-        return self._device_option()
+        device = self._device_option()
+        if device is not None:
+            return device
+        if (
+            self._last_device_value is not None
+            and time.time() - self._last_successful_read < CONTROL_GRACE_PERIOD
+        ):
+            return _format_tz(self._last_device_value)
+        return None
+
+    async def _async_restore_state(self, state: State) -> None:
+        """Seed the last device value from the restored HA state.
+
+        Lets the select show its previous offset through the grace window after a
+        restart while the charger is still offline, instead of dropping to
+        `unknown` until the first successful poll.
+        """
+        if state is None or state.state in (None, "unknown", "unavailable"):
+            return
+        if state.state in TIMEZONE_OPTIONS:
+            try:
+                self._last_device_value = int(state.state)
+                self._last_successful_read = time.time()
+            except (TypeError, ValueError):
+                pass
 
     async def async_select_option(self, option: str) -> None:
         """Send `timeZone=<int>` to the charger with optimistic UI."""

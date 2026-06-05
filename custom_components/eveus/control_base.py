@@ -51,6 +51,11 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         self._maybe_finalize_device_info()
         self._update_availability_state()
         if self._get_pending() is not None:
+            # A command is in flight: keep the displayed value pinned to the
+            # optimistic/pending value (don't reconcile against a poll), but still
+            # push an availability transition so the control can't show a stale
+            # "available" if the charger drops offline mid-command.
+            self._write_availability_only()  # type: ignore[attr-defined]
             return
 
         current_time = time.time()

@@ -38,6 +38,7 @@ from .const import (
     MODEL_MAX_CURRENT,
     MAX_POWER_W,
     MAX_ENERGY_KWH,
+    MAX_SESSION_TIME_SECONDS,
 )
 from .utils import RateLog, get_safe_value, format_duration
 
@@ -394,9 +395,10 @@ get_ground_status = _make_enum_getter("ground", {1: "Connected", 0: "Not Connect
 def get_session_time(updater, hass) -> Optional[str]:
     """Get formatted session time."""
     seconds = _get_data_value(updater, "sessionTime", int)
-    # A negative duration is physically impossible; surface `unknown` instead of
-    # rendering a plausible-but-wrong `0m`.
-    if seconds is None or seconds < 0:
+    # A negative duration is physically impossible; an absurd one (corrupt RTC /
+    # counter) would render an overlong state string. Surface `unknown` for both
+    # instead of a plausible-but-wrong value.
+    if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
         return None
     return format_duration(seconds)
 
@@ -502,7 +504,7 @@ def _make_schedule_getter(slot: int):
     return _make_enum_getter(key, {1: "Enabled", 0: "Disabled"})
 
 
-def _make_schedule_attrs(slot: int):
+def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
     """Slot details: window, optional current/energy caps."""
     def getter(updater, hass) -> dict:
         if not updater.available:
@@ -516,7 +518,7 @@ def _make_schedule_attrs(slot: int):
             attrs["stop"] = stop
         if _get_data_value(updater, f"sh{slot}CurrentEnable", int) == 1:
             cur = _get_data_value(updater, f"sh{slot}CurrentValue", int)
-            if cur is not None and MIN_CURRENT <= cur <= _MAX_MODEL_CURRENT:
+            if cur is not None and MIN_CURRENT <= cur <= max_current:
                 attrs["current_limit_a"] = cur
         if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
             energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)
@@ -607,6 +609,12 @@ def create_sensor_specifications(
     # ceiling shared by all models.
     current_set_getter = _make_value_getter(
         "currentSet", precision=0, minimum=MIN_CURRENT, maximum=max_current
+    )
+
+    # Bound the adaptive throttle's reported limit to this model too — like
+    # Current Set, an aiModecurrent above the charger's capability is corrupt.
+    adaptive_current_getter = _make_value_getter(
+        "aiModecurrent", precision=0, minimum=0, maximum=max_current
     )
 
     # Measurement sensors
@@ -847,7 +855,7 @@ def create_sensor_specifications(
         ),
         SensorSpec(
             key="adaptive_current_limit", name="Adaptive Current Limit",
-            value_fn=get_adaptive_current,
+            value_fn=adaptive_current_getter,
             sensor_type=SensorType.DIAGNOSTIC, icon=ICON_CURRENT_AC,
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
@@ -866,14 +874,14 @@ def create_sensor_specifications(
         SensorSpec(
             key="schedule_1", name="Schedule 1",
             value_fn=_make_schedule_getter(1),
-            attributes_fn=_make_schedule_attrs(1),
+            attributes_fn=_make_schedule_attrs(1, max_current),
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
             key="schedule_2", name="Schedule 2",
             value_fn=_make_schedule_getter(2),
-            attributes_fn=_make_schedule_attrs(2),
+            attributes_fn=_make_schedule_attrs(2, max_current),
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
             category=EntityCategory.DIAGNOSTIC,
         ),
