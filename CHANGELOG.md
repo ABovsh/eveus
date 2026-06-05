@@ -17,6 +17,9 @@
 ### 🔒 Privacy
 - **Upgrading an old entry whose stored address contained embedded credentials** now strips those credentials from both the stored address and the integration title.
 
+### 📊 Dashboard
+- **The English dashboard (`docs/dashboard.yaml`) was reworked to use screen space more effectively**, and a matching **Ukrainian dashboard (`docs/dashboard-uk.yaml`) was created from it** with the identical layout and added alongside.
+
 ## 4.10.1 - 2026-06-05
 
 ### 🐛 Fixed
