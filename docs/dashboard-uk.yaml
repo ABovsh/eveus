@@ -1,7 +1,7 @@
-# Eveus Dashboard v1.1
-# Ready-to-paste Lovelace "Sections" view exposing every Eveus entity.
-# Paste under `views:` in a dashboard's raw configuration (see README → Dashboard).
-# Ukrainian variant: docs/dashboard-uk.yaml
+# Eveus Dashboard v1.1 (UA)
+# Готовий до вставки Lovelace-вигляд «Розділи» з усіма сутностями Eveus.
+# Вставте під `views:` у режимі редагування YAML (див. README → Dashboard).
+# English variant: docs/dashboard.yaml
 title: Eveus
 path: eveus
 icon: mdi:ev-station
@@ -12,83 +12,83 @@ sections:
   - type: grid
     cards:
       - type: heading
-        heading: Status
+        heading: Стан
         icon: mdi:ev-station
       - type: tile
         entity: sensor.eveus_ev_charger_state
-        name: State
+        name: Стан
         icon: mdi:ev-station
         color: primary
       - type: tile
         entity: sensor.eveus_ev_charger_power
-        name: Power
+        name: Потужність
         icon: mdi:flash
         color: amber
       - type: tile
         entity: sensor.eveus_ev_charger_current
-        name: Current
+        name: Струм
         icon: mdi:current-ac
       - type: tile
         entity: sensor.eveus_ev_charger_voltage
-        name: Voltage
+        name: Напруга
         icon: mdi:sine-wave
       - type: entities
         show_header_toggle: false
         state_color: true
         entities:
           - entity: sensor.eveus_ev_charger_substate
-            name: Substate
+            name: Детальний стан
             icon: mdi:information-outline
           - entity: binary_sensor.eveus_ev_charger_car_connected
-            name: Car Connected
+            name: Автомобіль підключено
             icon: mdi:car-electric
           - entity: binary_sensor.eveus_ev_charger_session_active
-            name: Session Active
+            name: Сесія активна
             icon: mdi:play-circle-outline
           - entity: sensor.eveus_ev_charger_current_set
-            name: Current Set
+            name: Встановлений струм
             icon: mdi:current-ac
   - type: grid
     cards:
       - type: heading
-        heading: EV Battery
+        heading: Батарея авто
         icon: mdi:car-battery
       - type: entities
         show_header_toggle: false
         entities:
           - entity: number.eveus_ev_charger_battery_capacity
-            name: Battery Capacity
+            name: Ємність акумулятора
             icon: mdi:car-battery
           - entity: number.eveus_ev_charger_initial_soc
-            name: Initial SOC
+            name: Початковий SOC
             icon: mdi:battery-50
           - entity: number.eveus_ev_charger_target_soc
-            name: Target SOC
+            name: Цільовий SOC
             icon: mdi:battery-high
           - entity: number.eveus_ev_charger_soc_correction
-            name: Charging Loss
+            name: Втрати заряджання
             icon: mdi:battery-minus-variant
           - type: divider
           - entity: sensor.eveus_ev_charger_soc_percent
-            name: Current SOC
+            name: Поточний заряд
             icon: mdi:battery
           - entity: sensor.eveus_ev_charger_soc_energy
-            name: SOC Energy
+            name: Енергія батареї
             icon: mdi:battery-charging
           - entity: sensor.eveus_ev_charger_time_to_target_soc
-            name: Time to Target
+            name: Час до цілі
             icon: mdi:clock-fast
           - entity: sensor.eveus_ev_charger_charging_finish_time
-            name: ETA Finish
+            name: Час завершення
             icon: mdi:clock-end
   - type: grid
     cards:
       - type: heading
-        heading: Charging
+        heading: Заряджання
         icon: mdi:tune
       - type: tile
         entity: number.eveus_ev_charger_charging_current
-        name: Charging Current
+        name: Струм заряджання
         icon: mdi:current-ac
         features:
           - type: numeric-input
@@ -98,159 +98,159 @@ sections:
         state_color: true
         entities:
           - entity: switch.eveus_ev_charger_stop_charging
-            name: Stop Charging
+            name: Зупинити заряджання
             icon: mdi:stop-circle-outline
           - entity: switch.eveus_ev_charger_one_charge
-            name: One Charge
+            name: Одноразове заряджання
             icon: mdi:lightning-bolt
           - entity: button.eveus_ev_charger_force_refresh
-            name: Force Refresh
+            name: Примусове оновлення
             icon: mdi:refresh
   - type: grid
     cards:
       - type: heading
-        heading: Adaptive & OCPP
+        heading: Адаптивний режим і OCPP
         icon: mdi:shield-flash-outline
       - type: entities
         show_header_toggle: false
         state_color: true
         entities:
           - entity: switch.eveus_ev_charger_adaptive_mode
-            name: Adaptive Mode
+            name: Адаптивний режим
             icon: mdi:shield-flash-outline
           - entity: sensor.eveus_ev_charger_adaptive_charging
-            name: Status
+            name: Статус
             icon: mdi:circle-slice-8
           - entity: sensor.eveus_ev_charger_adaptive_current_limit
-            name: Current Limit
+            name: Ліміт струму
             icon: mdi:current-ac
           - entity: sensor.eveus_ev_charger_adaptive_voltage_threshold
-            name: Voltage Threshold
+            name: Поріг напруги
             icon: mdi:sine-wave
           - type: divider
           - entity: switch.eveus_ev_charger_connect_to_ocpp
-            name: Connect to OCPP
+            name: Підключення до OCPP
             icon: mdi:cloud-sync-outline
           - entity: binary_sensor.eveus_ev_charger_ocpp_connected
-            name: OCPP Connected
+            name: OCPP підключено
             icon: mdi:cloud-check-outline
   - type: grid
     cards:
       - type: heading
-        heading: Session & Tariffs
+        heading: Сесія та тарифи
         icon: mdi:cash-multiple
       - type: entities
         show_header_toggle: false
         entities:
           - entity: sensor.eveus_ev_charger_session_time
-            name: Duration
+            name: Тривалість
             icon: mdi:timer-sand
           - entity: sensor.eveus_ev_charger_session_energy
-            name: Energy
+            name: Енергія
             icon: mdi:battery-charging
           - entity: sensor.eveus_ev_charger_session_cost
-            name: Cost
+            name: Вартість
             icon: mdi:cash
           - type: divider
           - entity: sensor.eveus_ev_charger_active_rate_cost
-            name: Active Tariff
+            name: Активний тариф
             icon: mdi:cash-multiple
           - entity: sensor.eveus_ev_charger_primary_rate_cost
-            name: Primary Rate
+            name: Основний тариф
           - entity: sensor.eveus_ev_charger_rate_2_status
-            name: Rate 2
+            name: Тариф 2
           - entity: sensor.eveus_ev_charger_rate_2_cost
-            name: Rate 2 Cost
+            name: Вартість тарифу 2
           - entity: sensor.eveus_ev_charger_rate_3_status
-            name: Rate 3
+            name: Тариф 3
           - entity: sensor.eveus_ev_charger_rate_3_cost
-            name: Rate 3 Cost
+            name: Вартість тарифу 3
   - type: grid
     cards:
       - type: heading
-        heading: Counters
+        heading: Лічильники
         icon: mdi:counter
       - type: entities
         show_header_toggle: false
         entities:
           - entity: sensor.eveus_ev_charger_total_energy
-            name: Lifetime Energy
+            name: Загальна енергія
             icon: mdi:counter
           - type: divider
           - entity: sensor.eveus_ev_charger_counter_a_energy
-            name: Counter A
+            name: Лічильник A
             icon: mdi:numeric-1-box-outline
           - entity: sensor.eveus_ev_charger_counter_a_cost
-            name: Counter A Cost
+            name: Вартість лічильника A
             icon: mdi:cash
           - entity: button.eveus_ev_charger_reset_counter_a
-            name: Reset Counter A
+            name: Скинути лічильник A
             icon: mdi:restart
           - type: divider
           - entity: sensor.eveus_ev_charger_counter_b_energy
-            name: Counter B
+            name: Лічильник B
             icon: mdi:numeric-2-box-outline
           - entity: sensor.eveus_ev_charger_counter_b_cost
-            name: Counter B Cost
+            name: Вартість лічильника B
             icon: mdi:cash
           - entity: button.eveus_ev_charger_reset_counter_b
-            name: Reset Counter B
+            name: Скинути лічильник B
             icon: mdi:restart
   - type: grid
     cards:
       - type: heading
-        heading: Schedules & Clock
+        heading: Розклади та годинник
         icon: mdi:calendar-clock
       - type: entities
         show_header_toggle: false
         state_color: true
         entities:
           - type: section
-            label: Schedule 1
+            label: Розклад 1
           - entity: switch.eveus_ev_charger_schedule_1_enabled
-            name: Enabled
+            name: Увімкнено
             icon: mdi:power
           - entity: time.eveus_ev_charger_schedule_1_start
-            name: Start
+            name: Початок
             icon: mdi:clock-start
           - entity: time.eveus_ev_charger_schedule_1_stop
-            name: Stop
+            name: Завершення
             icon: mdi:clock-end
           - entity: sensor.eveus_ev_charger_schedule_1
-            name: Window
+            name: Вікно
             icon: mdi:timetable
           - type: section
-            label: Schedule 2
+            label: Розклад 2
           - entity: switch.eveus_ev_charger_schedule_2_enabled
-            name: Enabled
+            name: Увімкнено
             icon: mdi:power
           - entity: time.eveus_ev_charger_schedule_2_start
-            name: Start
+            name: Початок
             icon: mdi:clock-start
           - entity: time.eveus_ev_charger_schedule_2_stop
-            name: Stop
+            name: Завершення
             icon: mdi:clock-end
           - entity: sensor.eveus_ev_charger_schedule_2
-            name: Window
+            name: Вікно
             icon: mdi:timetable
           - type: section
-            label: Clock
+            label: Годинник
           - entity: select.eveus_ev_charger_time_zone
-            name: Time Zone
+            name: Часовий пояс
             icon: mdi:earth
           - entity: sensor.eveus_ev_charger_system_time
-            name: Charger Clock
+            name: Годинник станції
             icon: mdi:clock-outline
           - entity: button.eveus_ev_charger_sync_time
-            name: Sync Clock to HA
+            name: Синхронізувати з HA
             icon: mdi:clock-check-outline
   - type: grid
     cards:
       - type: heading
-        heading: Last 24 h
+        heading: Останні 24 год
         icon: mdi:chart-line
       - type: custom:mini-graph-card
-        name: Power
+        name: Потужність
         icon: mdi:flash
         hours_to_show: 24
         points_per_hour: 6
@@ -264,7 +264,7 @@ sections:
           labels: true
           name: false
       - type: custom:mini-graph-card
-        name: Current
+        name: Струм
         icon: mdi:current-ac
         hours_to_show: 24
         points_per_hour: 6
@@ -279,35 +279,35 @@ sections:
   - type: grid
     cards:
       - type: heading
-        heading: Diagnostics
+        heading: Діагностика
         icon: mdi:stethoscope
       - type: entities
         show_header_toggle: false
         entities:
           - entity: sensor.eveus_ev_charger_connection_quality
-            name: Connection Quality
+            name: Якість з'єднання
             icon: mdi:wifi
           - entity: sensor.eveus_ev_charger_wifi_signal
-            name: WiFi Signal
+            name: Сигнал WiFi
             icon: mdi:wifi-strength-2
           - type: divider
           - entity: sensor.eveus_ev_charger_box_temperature
-            name: Box Temp
+            name: Температура корпусу
             icon: mdi:thermometer
           - entity: sensor.eveus_ev_charger_plug_temperature
-            name: Plug Temp
+            name: Температура конектора
             icon: mdi:thermometer-lines
           - type: divider
           - entity: sensor.eveus_ev_charger_ground
-            name: Ground
+            name: Заземлення
             icon: mdi:earth
           - entity: sensor.eveus_ev_charger_leakage_current
-            name: Leakage
+            name: Струм витоку
             icon: mdi:flash-alert
           - entity: sensor.eveus_ev_charger_leakage_current_peak
-            name: Leakage Peak
+            name: Піковий струм витоку
             icon: mdi:flash-alert-outline
           - entity: sensor.eveus_ev_charger_battery_voltage
-            name: Internal Battery
+            name: Внутрішня батарея
             icon: mdi:car-battery
 cards: []

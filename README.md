@@ -196,17 +196,23 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 
 ## Dashboard
 
-A complete, ready-to-paste Lovelace view that exposes **every Eveus capability** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml). It covers:
+A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.1**). It is organized into nine compact, auto-packing sections:
 
-- Live status tiles (state, car connected, voltage/current/power)
-- SOC card with the four `number.eveus_ev_charger_*` inputs and the SOC/ETA sensors
-- All writable controls — current slider, stop / one-charge switches, adaptive mode, OCPP backend toggle, time-zone select, sync / refresh / reset buttons
-- Both on-device schedule slots with native HH:MM time pickers
-- Session totals, lifetime counters, tariffs, and session cost
-- Diagnostics — temperatures, leakage, Wi-Fi signal, connection quality
-- 24-hour mini-graph charts for power and current
+- **Status** — hero tiles (state, power, current, voltage) plus substate, car connected, session active, current setpoint
+- **EV Battery** — the four `number.eveus_ev_charger_*` SOC inputs and the SOC / ETA sensors
+- **Charging** — current slider, stop / one-charge switches, force refresh
+- **Adaptive & OCPP** — adaptive throttle with its readouts, plus the OCPP backend toggle and state
+- **Session & Tariffs** — current-session totals and cost, plus the active / primary / Rate 2 / Rate 3 prices
+- **Counters** — lifetime energy and both resettable A/B counters with cost and reset
+- **Schedules & Clock** — both on-device schedule slots with native HH:MM pickers, plus time-zone, charger clock, and sync
+- **Last 24 h** — mini-graph charts for power and current
+- **Diagnostics** — connection quality, Wi-Fi, temperatures, ground, leakage, internal battery
 
-**Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the graph cards).
+**Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the two graph cards). Every other card is built-in.
+
+**Language:** the view ships in two interchangeable files — [`docs/dashboard.yaml`](docs/dashboard.yaml) (English) and [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) (Ukrainian, identical layout). Home Assistant does not translate dashboard labels automatically, so each file carries its own labels; the entity IDs are identical, so you can switch files anytime without touching history or automations.
+
+**3-phase setups:** add `sensor.eveus_ev_charger_current_phase_2`/`_3` and `…_voltage_phase_2`/`_3` to the **Status** section — those sensors exist only when `Phases = 3`.
 
 > [!IMPORTANT]
 > `docs/dashboard.yaml` is a **whole dashboard view**, not a single card. Don't try to add it through **"Add Card → Manual"** — that expects one card and will error on this file. It must go into a dashboard's **raw configuration** under `views:`, as described below.
@@ -216,7 +222,7 @@ A complete, ready-to-paste Lovelace view that exposes **every Eveus capability**
 1. Go to **Settings → Dashboards**. Either open an existing dashboard or click **+ Add Dashboard → New dashboard from scratch** to create a fresh one (recommended, so it lives on its own).
 2. Open the dashboard, then click the **pencil / ✏️ Edit** button (top right).
 3. Click the **⋮ (three dots) → Raw configuration editor**.
-4. You'll see YAML that starts with `views:`. Copy the **entire contents** of [`docs/dashboard.yaml`](docs/dashboard.yaml) and paste it as a new list item under `views:`, like this:
+4. You'll see YAML that starts with `views:`. Copy the **entire contents** of [`docs/dashboard.yaml`](docs/dashboard.yaml) (or [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) for the Ukrainian version) and paste it as a new list item under `views:`, like this:
 
    ```yaml
    views:
@@ -238,6 +244,7 @@ A complete, ready-to-paste Lovelace view that exposes **every Eveus capability**
 
 **If your device slug differs from `eveus_ev_charger`** (e.g. you renamed the charger or have several), find-and-replace `eveus_ev_charger` with your slug, or fix each entity with Home Assistant's entity picker after pasting.
 
+<!-- TODO(v1.1): refresh these two screenshots — they still show the pre-v1.1 layout -->
 <img width="1189" alt="Eveus dashboard overview" src="https://github.com/user-attachments/assets/7a591592-7d0e-49a4-ac46-a8232638fc42" />
 <img width="1185" alt="Eveus dashboard details" src="https://github.com/user-attachments/assets/c3b1f004-8b01-408b-8dfe-c84823009d2b" />
 
