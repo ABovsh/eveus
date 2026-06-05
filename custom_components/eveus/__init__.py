@@ -406,11 +406,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
                 phases,
             )
 
-        # Drop registry rows for SOC/phase entities that this config no longer
-        # builds (Advanced -> Basic, or 3 -> 1 phase), before the platforms set
-        # up, so a reduced scope does not leave orphaned entities behind.
-        _prune_unused_entities(hass, device_number, get_soc_mode(entry), phases)
-
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
             device_number=device_number,
@@ -434,6 +429,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # async_shutdown on the entry unload lifecycle — no manual registration.
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         entry.async_on_unload(entry.add_update_listener(update_listener))
+
+        # Drop registry rows for SOC/phase entities that this config no longer
+        # builds (Advanced -> Basic, or 3 -> 1 phase). Deferred until the entry
+        # is fully committed (first refresh + platforms up) so a transient
+        # setup failure that HA will retry cannot permanently delete entities —
+        # along with their area, disabled state, and custom entity_id — for a
+        # reduced scope that never actually finished loading.
+        _prune_unused_entities(hass, device_number, get_soc_mode(entry), phases)
 
         return True
 

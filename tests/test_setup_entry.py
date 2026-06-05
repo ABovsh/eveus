@@ -194,6 +194,52 @@ def test_async_setup_entry_wraps_unexpected_refresh_failure(
     assert hass.config_entries.forwarded == []
 
 
+def _registry_with_soc_orphan() -> "_FakeEntityRegistry":
+    """Registry holding a SOC sensor row that Basic mode would prune."""
+    registry = _FakeEntityRegistry()
+    registry.by_unique[("sensor", "eveus", "eveus_soc_energy")] = "sensor.eveus_soc_energy"
+    return registry
+
+
+def test_async_setup_entry_defers_pruning_until_setup_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient first-refresh failure must not delete registry rows.
+
+    Pruning is destructive (it drops user customizations: area, disabled
+    state, custom entity_id). It must only run once the entry is committed,
+    otherwise a Basic/1-phase reduction plus a flaky charger permanently
+    loses entities on a setup attempt that HA will simply retry.
+    """
+    registry = _registry_with_soc_orphan()
+    hass = _hass()
+    entry = _Entry(_data(**{CONF_SOC_MODE: SOC_MODE_BASIC}))
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(eveus, "EveusUpdater", _UnexpectedFailingUpdater)
+
+    with pytest.raises(ConfigEntryNotReady):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert hass.config_entries.forwarded == []
+    assert registry.removed == []
+
+
+def test_async_setup_entry_prunes_orphans_after_successful_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a committed setup, the reduced scope still drops its orphans."""
+    registry = _registry_with_soc_orphan()
+    hass = _hass()
+    entry = _Entry(_data(**{CONF_SOC_MODE: SOC_MODE_BASIC}))
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert hass.config_entries.forwarded
+    assert "sensor.eveus_soc_energy" in registry.removed
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
