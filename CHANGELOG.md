@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.10.1 - Unreleased
+## 4.10.1 - 2026-06-05
 
 A stability-and-polish release. No new entities and nothing to reconfigure — your controls feel snappier, switching modes no longer strands dead entities on your dashboard, and a single bad reading from the charger can no longer corrupt your long-term history.
 
