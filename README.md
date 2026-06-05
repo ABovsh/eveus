@@ -246,6 +246,17 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
 
+### Repair notices
+
+The integration surfaces issues through Home Assistant **Settings → Devices & Services → Repairs**. Each notice clears itself automatically once the underlying condition is resolved.
+
+| Notice | When it appears | What to do |
+| --- | --- | --- |
+| Charger setup needs attention | Stored connection details are incomplete or invalid | Open the repair and re-enter the charger details (fixable in place) |
+| Update SOC cards and automations | Legacy `input_number.ev_*` helpers are still present | Switch dashboards/automations to the native `number.eveus_ev_charger_*` entities |
+| OCPP is enabled | OCPP is turned on, so the OCPP server or mobile app may override HA controls | Turn off the **Connect to OCPP** switch to restore full HA control |
+| Charger battery is low | The charger's internal CR2032 coin-cell reads low for several polls | Replace it with a fresh, good-quality CR2032 cell |
+
 ## Privacy And Diagnostics
 
 The integration stores only the charger connection details needed by Home Assistant. Diagnostics downloads redact credentials and identifying fields before export. Charger communication stays on your LAN.
