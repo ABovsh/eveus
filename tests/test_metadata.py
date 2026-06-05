@@ -28,11 +28,12 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     """Manifest, README badge and CHANGELOG must agree, branch-appropriately.
 
     The README badge mirrors the manifest version **exactly**, so the value is
-    correct on whatever branch it lives on: ``main`` carries the final
-    ``X.Y.Z`` (badge ``version-X.Y.Z``) while the ``X.Y-rc`` branch carries the
-    pre-release ``X.Y.Z-rc`` (badge ``version-X.Y.Z--rc``). Shields.io escapes a
-    literal ``-`` as ``--``. The CHANGELOG entry is keyed on the base
-    ``X.Y.Z`` (the ``-rc`` suffix is a manifest/badge marker only).
+    correct on whatever branch it lives on. ``main`` carries the final patch
+    version ``X.Y.Z`` (badge ``version-X.Y.Z``). The ephemeral ``X.Y-rc``
+    branch carries the minor-line pre-release marker ``X.Y-rc`` — no patch
+    number (badge ``version-X.Y--rc``); shields.io escapes a literal ``-`` as
+    ``--``. The CHANGELOG entry is keyed on the version line: the exact
+    ``## X.Y.Z`` on main, or any ``## X.Y.`` patch on that minor while on rc.
     """
     import re
 
@@ -43,14 +44,21 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     changelog = (ROOT / "CHANGELOG.md").read_text()
 
     version = manifest["version"]
-    assert re.match(r"^\d+\.\d+\.\d+(-rc)?$", version), version
-    base = version.split("-", 1)[0]
+    is_rc = version.endswith("-rc")
 
     # README badge mirrors the manifest version verbatim (shields escapes - as --).
     badge_version = version.replace("-", "--")
     assert f"version-{badge_version}-blue" in readme
-    # CHANGELOG is keyed on the base X.Y.Z, regardless of the -rc marker.
-    assert f"## {base}" in changelog
+
+    if is_rc:
+        # rc branch: minor-line marker only, e.g. "4.12-rc".
+        assert re.match(r"^\d+\.\d+-rc$", version), version
+        minor = version[: -len("-rc")]
+        assert f"## {minor}." in changelog
+    else:
+        # main: final patch version, e.g. "4.11.0".
+        assert re.match(r"^\d+\.\d+\.\d+$", version), version
+        assert f"## {version}" in changelog
 
 
 def test_hacs_metadata_has_allowed_keys_only() -> None:
