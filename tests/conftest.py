@@ -177,6 +177,19 @@ def _install_homeassistant_stub() -> None:
 
     data_entry_flow = types.ModuleType("homeassistant.data_entry_flow")
     data_entry_flow.FlowResult = dict[str, Any]
+
+    class _FlowError(Exception):
+        """Stub mirroring homeassistant.data_entry_flow.FlowError."""
+
+    class _AbortFlow(_FlowError):
+        """Stub mirroring homeassistant.data_entry_flow.AbortFlow."""
+
+        def __init__(self, reason: str = "", *args: Any) -> None:
+            super().__init__(reason, *args)
+            self.reason = reason
+
+    data_entry_flow.FlowError = _FlowError
+    data_entry_flow.AbortFlow = _AbortFlow
     sys.modules["homeassistant.data_entry_flow"] = data_entry_flow
 
     config_entries = types.ModuleType("homeassistant.config_entries")

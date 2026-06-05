@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Final, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
@@ -36,6 +36,8 @@ from .const import (
     ERROR_LOG_RATE_LIMIT,
     MIN_CURRENT,
     MODEL_MAX_CURRENT,
+    MAX_POWER_W,
+    MAX_ENERGY_KWH,
 )
 from .utils import RateLog, get_safe_value, format_duration
 
@@ -55,9 +57,26 @@ _MAX_SYSTEM_TIME = 4102444800
 # 999999) before they reach HA long-term statistics. Generous on purpose.
 _MAX_VOLTAGE = 500
 _MAX_CURRENT = 200
-_MAX_POWER = 100_000
+_MAX_POWER = MAX_POWER_W
+# Generous ceilings for the cumulative energy/cost sensors that feed HA
+# long-term statistics. Real lifetime totals sit far below these; the bounds
+# exist purely to reject corrupt finite outliers (e.g. 1e100) that would
+# otherwise be recorded permanently and poison the statistics history.
+_MAX_ENERGY_KWH = MAX_ENERGY_KWH
+_MAX_COST = 100_000_000
 # Largest plausible per-slot schedule energy cap (kWh).
 _MAX_SCHEDULE_KWH = 200
+# Sanity ceilings for the remaining MEASUREMENT sensors that feed HA long-term
+# statistics. Without an upper bound a corrupt-but-finite firmware outlier (e.g.
+# temperature1 1e9, tarif 1e100) is recorded permanently and poisons history.
+# Generous on purpose — real readings sit far below these.
+_MIN_TEMPERATURE = -40
+_MAX_TEMPERATURE = 150
+_MAX_LEAK_CURRENT = 100_000
+# `tarif*` fields are reported in hundredths; bound the raw value (checked before
+# the /100 transform) so the published per-kWh rate cannot exceed ~100k.
+_MAX_RATE_HUNDREDTHS = 10_000_000
+_RATE_COST_KEYS: Final = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
 
 
 def _should_log_error(function_name: str) -> bool:
@@ -204,12 +223,15 @@ class MonetaryCostSensor(OptimizedEveusSensor):
                 if isinstance(last_reset, str)
                 else last_reset
             )
-            if parsed is not None:
+            if isinstance(parsed, datetime):
                 self._attr_last_reset = parsed
         try:
-            self._prev_cost_value = float(state.state)
+            restored = float(state.state)
         except (TypeError, ValueError):
-            self._prev_cost_value = None
+            restored = None
+        self._prev_cost_value = (
+            restored if restored is not None and math.isfinite(restored) else None
+        )
 
 
 # =============================================================================
@@ -259,6 +281,14 @@ def _make_value_getter(
     return getter
 
 
+def _make_enum_getter(key: str, mapping: dict[int, str]):
+    """Read an int key and map it to a label, else None."""
+    def getter(updater, hass) -> Optional[str]:
+        value = _get_data_value(updater, key, int)
+        return mapping.get(value)
+    return getter
+
+
 # Measurement getters
 get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
 get_current = _make_value_getter("curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT)
@@ -268,10 +298,18 @@ get_current_set = _make_value_getter(
 )
 
 # Energy getters
-get_session_energy = _make_value_getter("sessionEnergy", precision=2, minimum=0)
-get_total_energy = _make_value_getter("totalEnergy", precision=2, minimum=0)
-get_counter_a_energy = _make_value_getter("IEM1", precision=2, minimum=0)
-get_counter_b_energy = _make_value_getter("IEM2", precision=2, minimum=0)
+get_session_energy = _make_value_getter(
+    "sessionEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
+)
+get_total_energy = _make_value_getter(
+    "totalEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
+)
+get_counter_a_energy = _make_value_getter(
+    "IEM1", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
+)
+get_counter_b_energy = _make_value_getter(
+    "IEM2", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
+)
 
 # Cost getters.
 # Firmware contract:
@@ -280,20 +318,38 @@ get_counter_b_energy = _make_value_getter("IEM2", precision=2, minimum=0)
 #   * `IEM1_money`, `IEM2_money`, `sessionMoney` are already in WHOLE currency
 #     units — DO NOT divide. Verified against R3.05.2 firmware.
 _div100 = lambda v: v / 100
-get_counter_a_cost = _make_value_getter("IEM1_money", precision=2, minimum=0)
-get_counter_b_cost = _make_value_getter("IEM2_money", precision=2, minimum=0)
-get_primary_rate_cost = _make_value_getter("tarif", precision=2, transform=_div100, minimum=0)
-get_rate2_cost = _make_value_getter("tarifAValue", precision=2, transform=_div100, minimum=0)
-get_rate3_cost = _make_value_getter("tarifBValue", precision=2, transform=_div100, minimum=0)
+get_counter_a_cost = _make_value_getter(
+    "IEM1_money", precision=2, minimum=0, maximum=_MAX_COST
+)
+get_counter_b_cost = _make_value_getter(
+    "IEM2_money", precision=2, minimum=0, maximum=_MAX_COST
+)
+get_primary_rate_cost = _make_value_getter(
+    "tarif", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
+)
+get_rate2_cost = _make_value_getter(
+    "tarifAValue", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
+)
+get_rate3_cost = _make_value_getter(
+    "tarifBValue", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
+)
 
 # Temperature getters
-get_box_temperature = _make_value_getter("temperature1", precision=0)
-get_plug_temperature = _make_value_getter("temperature2", precision=0)
+get_box_temperature = _make_value_getter(
+    "temperature1", precision=0, minimum=_MIN_TEMPERATURE, maximum=_MAX_TEMPERATURE
+)
+get_plug_temperature = _make_value_getter(
+    "temperature2", precision=0, minimum=_MIN_TEMPERATURE, maximum=_MAX_TEMPERATURE
+)
 
 # Other diagnostic getters
-get_battery_voltage = _make_value_getter("vBat", precision=2, minimum=0)
-get_leak_current = _make_value_getter("leakValue", precision=0, minimum=0)
-get_leak_current_peak = _make_value_getter("leakValueH", precision=0, minimum=0)
+get_battery_voltage = _make_value_getter("vBat", precision=2, minimum=0, maximum=_MAX_VOLTAGE)
+get_leak_current = _make_value_getter(
+    "leakValue", precision=0, minimum=0, maximum=_MAX_LEAK_CURRENT
+)
+get_leak_current_peak = _make_value_getter(
+    "leakValueH", precision=0, minimum=0, maximum=_MAX_LEAK_CURRENT
+)
 # RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
 get_wifi_rssi = _make_value_getter("RSSI", precision=0, minimum=-120, maximum=0)
 
@@ -332,20 +388,17 @@ def get_charger_substate(updater, hass) -> Optional[str]:
     return get_normal_substate(substate)
 
 
-def get_ground_status(updater, hass) -> Optional[str]:
-    """Get ground status."""
-    value = _get_data_value(updater, "ground", int)
-    if value == 1:
-        return "Connected"
-    if value == 0:
-        return "Not Connected"
-    return None
+get_ground_status = _make_enum_getter("ground", {1: "Connected", 0: "Not Connected"})
 
 
 def get_session_time(updater, hass) -> Optional[str]:
     """Get formatted session time."""
     seconds = _get_data_value(updater, "sessionTime", int)
-    return format_duration(seconds) if seconds is not None else None
+    # A negative duration is physically impossible; surface `unknown` instead of
+    # rendering a plausible-but-wrong `0m`.
+    if seconds is None or seconds < 0:
+        return None
+    return format_duration(seconds)
 
 
 def get_session_time_attrs(updater, hass) -> dict:
@@ -353,7 +406,9 @@ def get_session_time_attrs(updater, hass) -> dict:
     if not updater.available:
         return {}
     seconds = _get_data_value(updater, "sessionTime", int)
-    return {"duration_seconds": seconds} if seconds is not None else {}
+    if seconds is None or seconds < 0:
+        return {}
+    return {"duration_seconds": seconds}
 
 
 def get_system_time(updater, hass) -> Optional[str]:
@@ -384,12 +439,11 @@ def get_active_rate_cost(updater, hass) -> Optional[float]:
     active_rate = _get_data_value(updater, "activeTarif", int)
     if active_rate is None:
         return None
-    rate_keys = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
-    key = rate_keys.get(active_rate)
+    key = _RATE_COST_KEYS.get(active_rate)
     if not key:
         return None
     value = _get_data_value(updater, key, float)
-    if value is None or value < 0:
+    if value is None or value < 0 or value > _MAX_RATE_HUNDREDTHS:
         return None
     return round(value / 100, 2)
 
@@ -404,14 +458,7 @@ def get_active_rate_attrs(updater, hass) -> dict:
 
 def _make_rate_status_getter(rate_key: str):
     """Factory for rate status sensors."""
-    def getter(updater, hass) -> Optional[str]:
-        enabled = _get_data_value(updater, rate_key, int)
-        if enabled == 1:
-            return "Enabled"
-        if enabled == 0:
-            return "Disabled"
-        return None
-    return getter
+    return _make_enum_getter(rate_key, {1: "Enabled", 0: "Disabled"})
 
 
 # =============================================================================
@@ -422,21 +469,16 @@ def _make_rate_status_getter(rate_key: str):
 # for a stateful accumulator on the integration side.
 # =============================================================================
 
-get_session_cost = _make_value_getter("sessionMoney", precision=2, minimum=0)
+get_session_cost = _make_value_getter(
+    "sessionMoney", precision=2, minimum=0, maximum=_MAX_COST
+)
 
 
 # =============================================================================
 # Adaptive charging (AI mode) and scheduled slots
 # =============================================================================
 
-def get_adaptive_charging_state(updater, hass) -> Optional[str]:
-    """Adaptive (AI) mode active/idle."""
-    value = _get_data_value(updater, "aiStatus", int)
-    if value == 1:
-        return "Active"
-    if value == 0:
-        return "Idle"
-    return None
+get_adaptive_charging_state = _make_enum_getter("aiStatus", {1: "Active", 0: "Idle"})
 
 
 get_adaptive_current = _make_value_getter(
@@ -457,14 +499,7 @@ def _format_minutes(value: Optional[int]) -> Optional[str]:
 def _make_schedule_getter(slot: int):
     """Slot enabled/disabled state."""
     key = f"sh{slot}Enabled"
-    def getter(updater, hass) -> Optional[str]:
-        value = _get_data_value(updater, key, int)
-        if value == 1:
-            return "Enabled"
-        if value == 0:
-            return "Disabled"
-        return None
-    return getter
+    return _make_enum_getter(key, {1: "Enabled", 0: "Disabled"})
 
 
 def _make_schedule_attrs(slot: int):

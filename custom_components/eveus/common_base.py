@@ -1,6 +1,7 @@
 """Base entity classes for Eveus integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
@@ -11,6 +12,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .const import (
     AVAILABILITY_GRACE_PERIOD,
@@ -49,7 +51,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             raise NotImplementedError("ENTITY_NAME must be defined in child class")
 
         device_suffix = get_device_suffix(device_number)
-        entity_key = self.ENTITY_NAME.lower().replace(" ", "_")
+        entity_key = slugify(self.ENTITY_NAME)
         self._attr_unique_id = f"eveus{device_suffix}_{entity_key}"
         # Localized display name comes from translations[entity.<platform>.<key>.name].
         # Do not set _attr_name here: Home Assistant gives _attr_name precedence
@@ -178,23 +180,25 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
 
         if self.hass is None:
             return
-        registry = dr.async_get(self.hass)
-        identifiers = new_info.get("identifiers")
-        if not identifiers:
-            return
-        device = registry.async_get_device(identifiers=identifiers)
-        if device is None:
-            return
-        update_kwargs: dict[str, Any] = {
-            "sw_version": new_info["sw_version"],
-            "model": new_info.get("model"),
-            "manufacturer": new_info.get("manufacturer"),
-        }
-        if new_info.get("hw_version"):
-            update_kwargs["hw_version"] = new_info["hw_version"]
-        if new_info.get("serial_number"):
-            update_kwargs["serial_number"] = new_info["serial_number"]
-        registry.async_update_device(device.id, **update_kwargs)
+        if not getattr(self._updater, "_device_registry_finalized", False):
+            registry = dr.async_get(self.hass)
+            identifiers = new_info.get("identifiers")
+            if not identifiers:
+                return
+            device = registry.async_get_device(identifiers=identifiers)
+            if device is None:
+                return
+            update_kwargs: dict[str, Any] = {
+                "sw_version": new_info["sw_version"],
+                "model": new_info.get("model"),
+                "manufacturer": new_info.get("manufacturer"),
+            }
+            if new_info.get("hw_version"):
+                update_kwargs["hw_version"] = new_info["hw_version"]
+            if new_info.get("serial_number"):
+                update_kwargs["serial_number"] = new_info["serial_number"]
+            registry.async_update_device(device.id, **update_kwargs)
+            self._updater._device_registry_finalized = True
 
     async def async_added_to_hass(self) -> None:
         """Handle entity addition with state restoration."""
@@ -254,6 +258,12 @@ class OptimisticControlMixin(Generic[T]):
         self._last_device_value: T | None = None
         self._last_successful_read = 0.0
         self._last_command_time = 0.0
+        # Serialize rapid repeated commands on the SAME control. The command
+        # manager serializes HTTP at the coordinator level, but the per-entity
+        # pending/optimistic bookkeeping runs around that await; without this an
+        # older command finishing could briefly publish a stale value over a
+        # newer one still in flight (e.g. dragging the Charging Current slider).
+        self._command_lock = asyncio.Lock()
 
     def _clear_optimistic_state(self) -> None:
         """Clear optimistic state when the device is offline."""

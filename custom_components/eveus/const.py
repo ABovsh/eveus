@@ -44,6 +44,12 @@ MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
     MODEL_48A: 48,
 }
 
+# Upper sanity ceilings for live telemetry, shared by the display sensors and
+# the SOC/ETA calculations so both reject the same corrupt finite outliers
+# (a finite but impossible value like 1e100) instead of only the display side.
+MAX_POWER_W: Final[int] = 100_000
+MAX_ENERGY_KWH: Final[int] = 1_000_000
+
 # Configuration
 CONF_MODEL: Final[str] = "model"
 CONF_SCHEME: Final[str] = "scheme"

@@ -1,5 +1,44 @@
 # Changelog
 
+## 4.10.1 - 2026-06-05
+
+A stability-and-polish release. No new entities and nothing to reconfigure — your controls feel snappier, switching modes no longer strands dead entities on your dashboard, and a single bad reading from the charger can no longer corrupt your long-term history.
+
+### ⚡ Controls feel snappier and always show the latest value
+- Dragging the **Charging Current** slider or quickly re-tapping a switch no longer briefly flashes an older value before settling on the one you chose.
+- Toggling controls in quick succession (for example **Stop Charging** then **One Charge**) no longer lets a slow reply from the *previous* action overwrite your newest one — the display always reflects your most recent tap.
+- Changing the **Time Zone** no longer briefly snaps back to the old zone while the charger is still applying the change.
+- Controls stay responsive across system-clock changes — a backward time correction can no longer momentarily stall them.
+- Reloading or removing the integration right after a command no longer leaves stray background refreshes running.
+
+### 🔁 Switch modes without stranding entities on your dashboard
+- Switching **Integration mode** from Advanced back to Basic now cleanly removes the SOC entities it no longer provides (SOC %, SOC Energy, the charging-time estimates, and the four SOC inputs), instead of leaving them behind as permanently *unavailable*.
+- Switching a charger from 3-phase to single-phase now removes the Phase 2/3 voltage and current sensors instead of leaving them as dead entities.
+- That cleanup now waits until the charger has fully reloaded. If the charger is briefly offline during the switch, your old entities — **and their area, name, and dashboard placement** — are kept and tidied up on the next successful load, rather than deleted on an attempt that Home Assistant then retries.
+- The one-time **"update your SOC dashboard"** reminder now clears itself automatically once you remove the old `input_number.ev_*` helpers or return to Basic mode, instead of lingering forever.
+
+### 🛡️ One bad reading can't poison your history anymore
+- Energy and cost sensors (`Total Energy`, `Counter A/B Energy`, `Counter A/B Cost`, `Session Energy`, `Session Cost`) now ignore corrupt, impossibly large spikes — protecting your long-term statistics.
+- The same protection now covers `Box Temperature`, `Plug Temperature`, `Battery Voltage`, `Leakage Current`, `Leakage Current Peak`, and the per-kWh tariff cost sensors.
+- `SOC %`, `SOC Energy`, `Time to Target SOC`, and `Charging Finish Time` now reject impossible power/session-energy readings, so a glitch can no longer fake a full battery, a "target reached", or a "< 1 min" estimate.
+- After a restart, the running cost figures (`Counter A/B Cost`, `Session Cost`) recover cleanly from a corrupt stored value, so the next real meter reset is detected correctly and statistics keep accumulating without phantom resets.
+- `Session Time` now shows `unknown` instead of a misleading `0m` when the charger reports an impossible negative duration.
+
+### 🧰 Clearer, more forgiving setup, reconfigure & repair
+- Adding a charger that's already set up — or pointing one at an address another charger already uses — now shows a clear **"already configured"** message instead of a confusing **"unknown error"**.
+- A charger address pasted with hidden or invalid characters is now rejected up front, instead of being silently altered into a *different* address the integration then tries to reach.
+- An unbalanced IPv6 bracket (for example `[2001:db8::1` with no closing `]`) now gives a clear invalid-address message, and a stored malformed address raises a fixable repair notice instead of retrying setup forever.
+- A stored address that used an uppercase scheme with a trailing path (for example `HTTP://…/main`) now upgrades itself cleanly — no manual repair needed.
+- Re-entering your password (reauthentication) now works even if the stored integration-mode setting had somehow become invalid.
+- A charger with corrupted stored settings no longer blocks your **other** chargers from loading, and no longer leaves its **Reconfigure** form unable to open — corrupted credentials raise a fixable repair notice instead of retrying forever.
+- If a repaired charger fails to reload, the repair notice now stays put so you can try again, instead of silently vanishing.
+
+### 🔒 Privacy
+- If setup fails unexpectedly, the error shown in Home Assistant no longer includes the charger's address.
+
+### 🧹 Under the hood
+- Behind-the-scenes cleanup with **no entity, behavior, or UI changes** — less duplicated code and slightly lighter polling, so there are fewer places for bugs to hide.
+
 ## 4.10.0 - 2026-06-02
 
 ### ✨ Ukrainian localization

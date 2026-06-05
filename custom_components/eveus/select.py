@@ -54,6 +54,7 @@ class EveusTimeZoneSelect(
         super().__init__(updater, device_number)
         self._init_optimistic_control()
         self._init_write_on_change()
+        self._command_pending = False
 
     def _device_option(self) -> str | None:
         """Resolve the formatted timezone string from coordinator data."""
@@ -75,20 +76,31 @@ class EveusTimeZoneSelect(
         if option not in TIMEZONE_OPTIONS:
             raise HomeAssistantError(f"Unsupported time zone: {option}")
         offset = int(option)
-        self._set_optimistic_value(offset)
-        self._write_if_changed(option)
-        try:
-            success = await self._updater.send_command("timeZone", offset)
-        except Exception:
-            self._optimistic_value = None
-            self._write_if_changed(self.current_option)
-            raise
-        if not success:
-            self._optimistic_value = None
-            self._write_if_changed(self.current_option)
-            raise HomeAssistantError(
-                f"Eveus charger did not accept timeZone={option}"
-            )
+        async with self._command_lock:
+            self._set_optimistic_value(offset)
+            # Suppress reconciliation while the command is in flight: the charger
+            # can take longer than the optimistic mismatch TTL to reflect the new
+            # zone, so a routine poll mid-command must not expire our value.
+            self._command_pending = True
+            self._write_if_changed(option)
+            try:
+                success = await self._updater.send_command("timeZone", offset)
+            except Exception:
+                self._optimistic_value = None
+                self._write_if_changed(self.current_option)
+                raise
+            finally:
+                self._command_pending = False
+            if not success:
+                self._optimistic_value = None
+                self._write_if_changed(self.current_option)
+                raise HomeAssistantError(
+                    f"Eveus charger did not accept timeZone={option}"
+                )
+            # Re-stamp optimistic on success so a stale poll arriving right after
+            # the command can't immediately expire it before the charger reports
+            # the new zone.
+            self._set_optimistic_value(offset)
         _LOGGER.debug("Time zone changed to %s", option)
 
     @callback
@@ -96,6 +108,11 @@ class EveusTimeZoneSelect(
         """Push HA state only when the visible option or availability changes."""
         self._maybe_finalize_device_info()
         self._update_availability_state()
+        if self._command_pending:
+            # Mirror the other controls: don't reconcile against device data
+            # while our own command is still in flight.
+            self._write_if_changed(self.current_option)
+            return
         current_time = time.time()
         device_option = self._device_option()
         if device_option is not None:

@@ -17,7 +17,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from custom_components.eveus._payload import PayloadError, validate_main_payload
 from custom_components.eveus import sensor_definitions as sd
+from custom_components.eveus.const import MODEL_16A
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "real_main_response.json"
@@ -106,3 +108,33 @@ def test_required_top_level_fields_present(real_payload) -> None:
     }
     missing = required - real_payload.keys()
     assert not missing, f"firmware drift: missing top-level fields {sorted(missing)}"
+
+
+def test_validate_main_payload_accepts_real_payload(real_payload) -> None:
+    assert validate_main_payload(real_payload, MODEL_16A) is real_payload
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        (["not", "a", "dict"], "Expected dict, got list"),
+        ({}, "Response missing required Eveus 'state' field"),
+        ({"state": True, "currentSet": 16}, "Eveus 'state' field is boolean"),
+        ({"state": float("inf"), "currentSet": 16}, "Eveus 'state' field is not finite"),
+        ({"state": 2.5, "currentSet": 16}, "Eveus 'state' field is not an integer"),
+        ({"state": "bad", "currentSet": 16}, "Eveus 'state' field is not numeric"),
+        ({"state": 99, "currentSet": 16}, "Eveus 'state' value 99 outside known domain"),
+        ({"state": 2}, "Response missing required Eveus 'currentSet' field"),
+        ({"state": 2, "currentSet": True}, "Eveus 'currentSet' field is boolean"),
+        ({"state": 2, "currentSet": "bad"}, "Eveus 'currentSet' field is not numeric"),
+        ({"state": 2, "currentSet": float("inf")}, "Eveus 'currentSet' field is not finite"),
+        ({"state": 2, "currentSet": 6}, "Eveus 'currentSet' field below minimum"),
+        (
+            {"state": 2, "currentSet": 17},
+            "Eveus 'currentSet' value 17.0 exceeds model maximum 16",
+        ),
+    ],
+)
+def test_validate_main_payload_rejects_invalid_payloads(payload, match) -> None:
+    with pytest.raises(PayloadError, match=match):
+        validate_main_payload(payload, MODEL_16A)

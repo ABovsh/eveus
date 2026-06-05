@@ -13,11 +13,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
 from .common_base import (
-    BaseEveusEntity,
     ControlEntityMixin,
-    OptimisticControlMixin,
     WriteOnChangeMixin,
 )
+from .control_base import CommandBackedEntity
 from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
 from .utils import get_safe_value
 
@@ -90,9 +89,8 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
 
 class BaseSwitchEntity(
     WriteOnChangeMixin,
-    OptimisticControlMixin[bool],
     ControlEntityMixin,
-    BaseEveusEntity,
+    CommandBackedEntity[bool],
     SwitchEntity,
 ):
     """Description-driven switch entity with optimistic UI state."""
@@ -149,6 +147,35 @@ class BaseSwitchEntity(
         """Return cached switch state without side effects (None = unknown)."""
         return self._attr_is_on
 
+    def _read_device_value(self) -> bool | None:
+        """Return the latest valid switch state from coordinator data."""
+        if not (
+            self._updater.available
+            and self._updater.data
+            and self._state_key in self._updater.data
+        ):
+            return None
+        device_value = get_safe_value(self._updater.data, self._state_key, int)
+        if device_value in (0, 1):
+            return bool(device_value)
+        return None
+
+    def _values_equal(self, optimistic: bool, device: bool) -> bool:
+        """Return whether a device switch state confirms the optimistic value."""
+        return optimistic == device
+
+    def _resolve_display_value(self) -> bool | None:
+        """Resolve the switch display value."""
+        return self._resolve_state()
+
+    def _set_display_value(self, value: bool | None) -> None:
+        """Store the switch display value."""
+        self._attr_is_on = value
+
+    def _get_pending(self) -> bool | None:
+        """Return the pending switch command sentinel."""
+        return self._pending_command
+
     async def async_added_to_hass(self) -> None:
         """Resolve the initial state after restore/coordinator data is available."""
         await super().async_added_to_hass()
@@ -187,27 +214,28 @@ class BaseSwitchEntity(
 
     async def _async_send_command(self, command_value: int) -> bool:
         """Send command with optimistic state."""
-        self._pending_command = bool(command_value)
-        self._attr_is_on = self._pending_command
-        self._write_if_changed(self._attr_is_on)
-
-        try:
-            extra = (
-                dict.fromkeys(self._command_extra, command_value)
-                if self._command_extra
-                else None
-            )
-            success = await self._updater.send_command(
-                self._command, command_value, extra=extra
-            )
-            if success:
-                self._set_optimistic_value(bool(command_value))
-            return success
-        finally:
-            self._pending_command = None
-            self._last_command_time = time.time()
-            self._attr_is_on = self._resolve_state()
+        async with self._command_lock:
+            self._pending_command = bool(command_value)
+            self._attr_is_on = self._pending_command
             self._write_if_changed(self._attr_is_on)
+
+            try:
+                extra = (
+                    dict.fromkeys(self._command_extra, command_value)
+                    if self._command_extra
+                    else None
+                )
+                success = await self._updater.send_command(
+                    self._command, command_value, extra=extra
+                )
+                if success:
+                    self._set_optimistic_value(bool(command_value))
+                return success
+            finally:
+                self._pending_command = None
+                self._last_command_time = time.time()
+                self._attr_is_on = self._resolve_state()
+                self._write_if_changed(self._attr_is_on)
 
     async def _async_send_command_or_raise(self, command_value: int) -> None:
         """Send command and raise HomeAssistantError on failure so HA shows a toast."""
@@ -224,34 +252,6 @@ class BaseSwitchEntity(
             self._last_device_value = state.state == "on"
             self._last_successful_read = time.time()
             self._attr_is_on = self._last_device_value
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data and reconcile with device state.
-
-        Only writes HA state when the on/off result or availability actually
-        changes — coordinator ticks every 30s would otherwise generate
-        unnecessary state_changed events for every control entity.
-        """
-        self._maybe_finalize_device_info()
-        self._update_availability_state()
-        if self._pending_command is not None:
-            return
-
-        current_time = time.time()
-        if self._updater.available and self._updater.data and self._state_key in self._updater.data:
-            device_value = get_safe_value(self._updater.data, self._state_key, int)
-            if device_value in (0, 1):
-                self._reconcile_with_device(
-                    bool(device_value),
-                    current_time,
-                    lambda optimistic, device: optimistic == device,
-                )
-
-        self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
-        self._attr_is_on = self._resolve_state()
-        self._write_if_changed(self._attr_is_on)
-
 
 async def async_setup_entry(
     _hass: HomeAssistant,

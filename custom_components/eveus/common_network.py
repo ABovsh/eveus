@@ -5,7 +5,6 @@ import asyncio
 from collections import deque
 from datetime import timedelta
 import logging
-import math
 import time
 from typing import Any
 
@@ -14,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .common_command import CommandManager
@@ -28,6 +28,7 @@ from .const import (
     SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
+from ._payload import PayloadError, validate_main_payload
 from .utils import RateLog
 
 _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
@@ -92,15 +93,22 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # report "healthy" before the charger has ever answered.
         self._last_success_time = 0.0
         self._latency_samples: deque[float] = deque(maxlen=10)
+        self._connection_quality_cache: dict[str, Any] | None = None
 
         self._availability_log = RateLog()
         self._silent_mode = False
         self._offline_announced = False
         self._last_error: str | None = None
         self._device_available = True
+        self._device_registry_finalized = False
         self._next_poll_attempt = 0.0
         self._force_refresh_requested = False
-        self._post_command_refresh_tasks: list[asyncio.Task] = []
+        self._pending_refresh_unsubs: list = []
+        self._post_command_refresh_tasks: list = []
+        # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
+        # that completes mid-unload from scheduling fresh refresh timers, and a
+        # just-fired timer from starting a refresh on a torn-down coordinator.
+        self._shutting_down = False
 
     @property
     def basic_auth(self) -> aiohttp.BasicAuth:
@@ -121,6 +129,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def connection_quality(self) -> dict[str, Any]:
         """Connection metrics exposed for diagnostics and sensors."""
+        if self._connection_quality_cache is not None:
+            return self._connection_quality_cache
+
         if self._poll_results:
             success_rate = (sum(self._poll_results) / len(self._poll_results)) * 100
         else:
@@ -130,7 +141,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             if self._latency_samples
             else 0.0
         )
-        return {
+        self._connection_quality_cache = {
             "success_rate": success_rate,
             "latency_avg": avg_latency,
             "consecutive_failures": self._consecutive_failures,
@@ -144,6 +155,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             "last_error": self._last_error,
             "sample_count": len(self._poll_results),
         }
+        return self._connection_quality_cache
 
     @property
     def is_likely_offline(self) -> bool:
@@ -170,7 +182,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         success = await self._command_manager.send_command(
             command, value, retry=retry, extra=extra
         )
-        if success:
+        self._connection_quality_cache = None
+        if success and not self._shutting_down:
             self._schedule_post_command_refresh()
         return success
 
@@ -181,21 +194,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             await self.async_refresh()
         finally:
             self._force_refresh_requested = False
-
-    async def _delayed_refresh(self, delay: float) -> None:
-        """Wait `delay` seconds then run an immediate, non-debounced refresh.
-
-        async_refresh (not async_request_refresh) is used because the latter
-        is debounced ~10s inside HA's coordinator and would defeat the whole
-        point of scheduling a quick post-command refresh.
-        """
-        await asyncio.sleep(delay)
-        if self.hass is None or self.hass.is_stopping:
-            return
-        try:
-            await self.async_refresh()
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug("Post-command refresh failed", exc_info=True)
 
     def _schedule_post_command_refresh(self) -> None:
         """Schedule delayed refreshes after a successful command.
@@ -210,27 +208,49 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         cadence as soon as the device actually transitions.
 
         Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
-        always fire relative to the most recent command. Combined with the
-        entity-level optimistic state TTL this prevents stale-read flicker.
+        always fire relative to the most recent command. A timer that has not
+        fired yet is cancelled via its async_call_later unsub; a refresh that
+        has already fired and is still in flight is run as a tracked task so it
+        too can be cancelled on reschedule or shutdown -- otherwise a slow /main
+        poll could complete after a newer command and publish stale data, or
+        outlive async_shutdown. Combined with the entity-level optimistic state
+        TTL this prevents stale-read flicker.
         """
         self._cancel_pending_refreshes()
         for delay in POST_COMMAND_REFRESH_DELAYS:
-            task = self.hass.async_create_task(self._delayed_refresh(delay))
-            self._post_command_refresh_tasks.append(task)
+            async def _run(_now, _delay=delay):
+                if self._shutting_down or self.hass is None or self.hass.is_stopping:
+                    return
+                task = asyncio.ensure_future(self.async_refresh())
+                self._post_command_refresh_tasks.append(task)
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("Post-command refresh failed", exc_info=True)
+                finally:
+                    if task in self._post_command_refresh_tasks:
+                        self._post_command_refresh_tasks.remove(task)
+
+            self._pending_refresh_unsubs.append(async_call_later(self.hass, delay, _run))
+
+    def _pop_pending_refreshes(self) -> list:
+        pending, self._pending_refresh_unsubs = self._pending_refresh_unsubs, []
+        return pending
 
     def _cancel_pending_refreshes(self) -> None:
-        """Cancel any pending post-command refresh tasks."""
-        for task in self._post_command_refresh_tasks:
+        for unsub in self._pop_pending_refreshes():
+            unsub()
+        for task in list(self._post_command_refresh_tasks):
             if not task.done():
                 task.cancel()
-        self._post_command_refresh_tasks.clear()
 
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
+        self._shutting_down = True
+        self._cancel_pending_refreshes()
         pending = list(self._post_command_refresh_tasks)
-        for task in pending:
-            if not task.done():
-                task.cancel()
         self._post_command_refresh_tasks.clear()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
@@ -242,6 +262,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
+        self._connection_quality_cache = None
         was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)
         self._consecutive_failures = 0
@@ -256,10 +277,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
+        self._connection_quality_cache = None
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False
-        self._last_error = type(error).__name__
+        self._last_error = "ValueError" if isinstance(error, PayloadError) else type(error).__name__
 
         if self._consecutive_failures > 20:
             self._silent_mode = True
@@ -335,43 +357,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 response.raise_for_status()
 
                 new_data = await response.json(content_type=None)
-                if not isinstance(new_data, dict):
-                    raise ValueError(f"Expected dict, got {type(new_data).__name__}")
-                if "state" not in new_data:
-                    raise ValueError("Response missing required Eveus 'state' field")
-                # Match the config-flow contract: a genuine Eveus /main payload
-                # always carries currentSet. Requiring it here too rejects a
-                # misrouted host that happens to return a plausible bare state.
-                if "currentSet" not in new_data:
-                    raise ValueError("Response missing required Eveus 'currentSet' field")
-                # A genuine /main payload always carries a finite numeric
-                # currentSet. Reject NaN/inf/bool/non-numeric here so a misrouted
-                # or corrupt response cannot come online with garbage controls.
-                raw_current_set = new_data["currentSet"]
-                if isinstance(raw_current_set, bool):
-                    raise ValueError("Eveus 'currentSet' field is boolean")
-                try:
-                    current_set_value = float(raw_current_set)
-                except (TypeError, ValueError, OverflowError) as err:
-                    # OverflowError: a firmware-supplied integer literal too large
-                    # to fit a float would otherwise escape this guard and the
-                    # outer ValueError handler, skipping failure accounting.
-                    raise ValueError("Eveus 'currentSet' field is not numeric") from err
-                if not math.isfinite(current_set_value):
-                    raise ValueError("Eveus 'currentSet' field is not finite")
-                raw_state = new_data["state"]
-                if isinstance(raw_state, bool):
-                    raise ValueError("Eveus 'state' field is boolean")
-                if isinstance(raw_state, float) and not math.isfinite(raw_state):
-                    raise ValueError("Eveus 'state' field is not finite")
-                if isinstance(raw_state, float) and not raw_state.is_integer():
-                    raise ValueError("Eveus 'state' field is not an integer")
-                try:
-                    state_value = int(raw_state)
-                except (TypeError, ValueError, OverflowError) as err:
-                    raise ValueError("Eveus 'state' field is not numeric") from err
-                if state_value not in CHARGING_STATES:
-                    raise ValueError(f"Eveus 'state' value {state_value} outside known domain")
+                # Shared validator retains the historical common-network guards:
+                # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
+                new_data = validate_main_payload(new_data)
 
                 self._record_success(time.time() - start_time, new_data)
                 return new_data

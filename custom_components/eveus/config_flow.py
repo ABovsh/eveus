@@ -3,9 +3,6 @@ from __future__ import annotations
 
 import logging
 import asyncio
-import ipaddress
-import math
-import re
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -17,7 +14,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.selector import (
@@ -28,17 +25,15 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+from homeassistant.util.network import is_host_valid, is_ip_address
 
 from .const import (
-    CHARGING_STATES,
     DOMAIN,
     MODEL_16A,
     CONF_MODEL,
     CONF_SCHEME,
     DEFAULT_SCHEME,
     MODELS,
-    MIN_CURRENT,
-    MODEL_MAX_CURRENT,
     CONF_PHASES,
     DEFAULT_PHASES,
     PHASE_OPTIONS,
@@ -56,11 +51,11 @@ from .const import (
     SOC_INPUT_LIMITS,
     get_soc_mode,
 )
+from ._payload import PayloadError, validate_main_payload
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
-_HOSTNAME_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
 
 # Keys outside the user-editable form that must survive reconfigure/reauth/repair.
 _PRESERVED_ENTRY_KEYS: tuple[str, ...] = (
@@ -141,26 +136,12 @@ def _warn_if_plaintext(scheme: str | None) -> None:
         )
 
 
-def _is_valid_ip(ip: str) -> bool:
-    """Check if string is a valid IP address."""
-    try:
-        ipaddress.ip_address(ip)
-        return True
-    except ValueError:
+def _host_is_valid(host: str) -> bool:
+    """Accept a literal IP or a syntactically valid hostname."""
+    host = (host or "").strip()
+    if not host:
         return False
-
-
-def _is_valid_hostname(hostname: str) -> bool:
-    """Validate hostname."""
-    if not hostname:
-        return False
-    if len(hostname) > 255:
-        return False
-    if hostname[-1] == ".":
-        hostname = hostname[:-1]
-    if not hostname:
-        return False
-    return all(_HOSTNAME_RE.match(x) for x in hostname.split("."))
+    return is_ip_address(host) or is_host_valid(host)
 
 
 def _split_host_and_scheme(
@@ -172,12 +153,26 @@ def _split_host_and_scheme(
     if not raw_host:
         raise vol.Invalid("Host cannot be empty")
 
+    # urlparse silently DROPS ASCII control characters (\n, \r, \t) from the
+    # host, so "a\nb.com" would normalize to "ab.com" — a different target than
+    # the user typed. Reject them outright instead of connecting to a host the
+    # user never entered.
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw_host):
+        raise vol.Invalid("Host contains invalid control characters")
+
     # A bare IPv6 literal (2+ colons, no brackets, no scheme) confuses urlparse,
     # which reads the trailing group as a port. Bracket it so it parses as a host.
     if "://" not in raw_host and "[" not in raw_host and raw_host.count(":") >= 2:
         raw_host = f"[{raw_host}]"
 
-    parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
+    # urlparse raises ValueError on an unbalanced IPv6 bracket (e.g. "[::1",
+    # "http://[::1"). Map it to vol.Invalid so setup/reconfigure surface
+    # "invalid_input" and a stored bad host raises the repairable invalid-config
+    # issue, instead of a generic "unknown" / ConfigEntryNotReady retry loop.
+    try:
+        parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
+    except ValueError as err:
+        raise vol.Invalid("Invalid IP address or hostname") from err
     scheme = parsed.scheme or default_scheme
     if scheme not in ("http", "https"):
         raise vol.Invalid("Unsupported URL scheme")
@@ -203,13 +198,13 @@ def _split_host_and_scheme(
     if port is not None and not 1 <= port <= 65535:
         raise vol.Invalid("Invalid port")
 
-    if not _is_valid_ip(hostname) and not _is_valid_hostname(hostname):
+    if not _host_is_valid(hostname):
         raise vol.Invalid("Invalid IP address or hostname")
 
     if hostname.endswith("."):
         hostname = hostname[:-1]
 
-    if not _is_valid_ip(hostname):
+    if not is_ip_address(hostname):
         hostname = hostname.lower()
 
     is_ipv6 = ":" in hostname
@@ -228,6 +223,8 @@ def validate_host(host: str) -> str:
 
 def validate_credentials(username: str, password: str) -> tuple[str, str]:
     """Validate credentials input."""
+    if not isinstance(username, str) or not isinstance(password, str):
+        raise vol.Invalid("Username and password must be strings")
     username = username.strip()
 
     if not username or not password:
@@ -245,51 +242,16 @@ def validate_device_response(
     model: str,
 ) -> dict[str, Any]:
     """Validate that /main returned an Eveus-compatible payload."""
-    if not isinstance(result, dict):
-        raise CannotConnect("Invalid response format")
-
-    # Match the runtime coordinator contract (common_network.py): /main must
-    # carry both `state` and `currentSet` to be accepted as an Eveus charger.
-    # Validating both here means we fail at config flow instead of letting
-    # setup succeed and then immediately fail on first refresh.
-    if "state" not in result:
-        raise InvalidDevice("Device response is missing state")
-
-    raw_state = result["state"]
-    if isinstance(raw_state, bool):
-        raise InvalidDevice("Device 'state' field is boolean")
-    if isinstance(raw_state, float) and not raw_state.is_integer():
-        raise InvalidDevice("Device 'state' field is not an integer")
     try:
-        state_value = int(raw_state)
-    except (TypeError, ValueError) as err:
-        raise InvalidDevice("Device 'state' field is not numeric") from err
-    if state_value not in CHARGING_STATES:
-        raise InvalidDevice(f"Device reports unknown state {state_value}")
-
-    if "currentSet" not in result:
-        raise InvalidDevice("Device response is missing currentSet")
-
-    try:
-        current_set = float(result["currentSet"])
-    except (TypeError, ValueError) as err:
-        raise InvalidDevice("Device reports invalid current format") from err
-
-    if not math.isfinite(current_set):
-        raise InvalidDevice("Device reports invalid current value")
-
-    if current_set < MIN_CURRENT:
-        raise InvalidDevice("Device reports invalid current setting")
-
-    max_current = MODEL_MAX_CURRENT.get(model)
-    if max_current and current_set > max_current:
-        raise InvalidDevice(
-            f"Device current ({current_set}A) exceeds model maximum ({max_current}A)"
-        )
+        payload = validate_main_payload(result, model, message_style="config_flow")
+    except PayloadError as err:
+        if err.code == "not_dict":
+            raise CannotConnect(str(err)) from err
+        raise InvalidDevice(str(err)) from err
 
     return {
-        "current_set": current_set,
-        "firmware": result.get("verFWMain", "Unknown"),
+        "current_set": float(payload["currentSet"]),
+        "firmware": payload.get("verFWMain", "Unknown"),
     }
 
 
@@ -334,7 +296,7 @@ def _safe_phases_default(raw: Any) -> int:
     """Coerce stored phase data to a valid option, falling back on DEFAULT_PHASES."""
     try:
         value = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return DEFAULT_PHASES
     return value if value in PHASE_OPTIONS else DEFAULT_PHASES
 
@@ -482,6 +444,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
                 _LOGGER.debug("Invalid device: %s", str(err))
+            except AbortFlow:
+                # `_abort_if_unique_id_configured()` raises AbortFlow, which is an
+                # Exception subclass. Let it propagate so the duplicate charger
+                # aborts with "already_configured" instead of a generic "unknown".
+                raise
             except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
@@ -559,6 +526,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
                 _LOGGER.debug("Invalid reconfigure device: %s", str(err))
+            except AbortFlow:
+                # Duplicate-host abort must reach the user as "already_configured"
+                # rather than being swallowed into a generic "unknown" error.
+                raise
             except Exception:
                 _LOGGER.exception("Unexpected reconfigure exception")
                 errors["base"] = "unknown"
@@ -588,6 +559,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 merged_data = dict(entry.data)
                 merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
                 merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                # The reauth form only exposes credentials, so a corrupt stored
+                # soc_mode would otherwise fail validation with no way to fix it.
+                # Normalize it to a valid mode before re-validating.
+                merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
 
                 info = await validate_input(self.hass, merged_data)
                 entry_data = _merge_entry_data(entry.data, info["data"])

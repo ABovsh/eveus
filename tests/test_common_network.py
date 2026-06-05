@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -73,6 +74,12 @@ def coordinator(monkeypatch: pytest.MonkeyPatch) -> tuple[EveusUpdater, _Session
     session = _Session(_Response(payload={"state": 4, "currentSet": 16, "powerMeas": 7200}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass()), session
+
+
+@pytest.fixture
+def updater() -> EveusUpdater:
+    """Create a coordinator for direct state tests."""
+    return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
 
 def test_update_data_fetches_payload_and_uses_stable_interval(
@@ -292,66 +299,88 @@ def test_force_refresh_bypasses_offline_backoff_once(
     assert len(session.calls) == 1
 
 
-def test_send_command_schedules_delayed_refresh_only_after_success() -> None:
-    """Successful command must schedule one task per refresh delay; rapid
-    re-commands cancel the previous tasks; failures schedule nothing."""
+def test_send_command_schedules_post_command_refresh_only_after_success() -> None:
+    """Successful command must schedule one timer per refresh delay; rapid
+    re-commands cancel the previous timers; failures schedule nothing."""
     delays = common_network.POST_COMMAND_REFRESH_DELAYS
 
     async def scenario() -> None:
-        class _LoopHass:
-            is_stopping = False
-
-            def async_create_task(self, coro):
-                return asyncio.get_event_loop().create_task(coro)
-
-        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _LoopHass())
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
         recorded_delays: list[float] = []
+        unsubs: list[Mock] = []
 
-        async def fake_delayed_refresh(self, delay: float) -> None:
+        def fake_call_later(hass, delay, action):
             recorded_delays.append(delay)
-            try:
-                await asyncio.sleep(delay)
-            except asyncio.CancelledError:
-                raise
+            unsub = Mock()
+            unsubs.append(unsub)
+            return unsub
 
-        # Replace the actual refresh with a sleep so we can observe tasks.
-        original = EveusUpdater._delayed_refresh
-        EveusUpdater._delayed_refresh = fake_delayed_refresh  # type: ignore[assignment]
-        try:
-            async def successful(command: str, value: object, **kwargs: object) -> bool:
-                return True
+        async def successful(command: str, value: object, **kwargs: object) -> bool:
+            return True
 
-            async def failed(command: str, value: object, **kwargs: object) -> bool:
-                return False
+        async def failed(command: str, value: object, **kwargs: object) -> bool:
+            return False
 
-            updater._command_manager = SimpleNamespace(send_command=successful)
+        updater._command_manager = SimpleNamespace(send_command=successful)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(common_network, "async_call_later", fake_call_later)
 
             assert await updater.send_command("currentSet", 16) is True
-            await asyncio.sleep(0)  # let tasks register
-            first_tasks = list(updater._post_command_refresh_tasks)
-            assert len(first_tasks) == len(delays)
+            first_unsubs = list(updater._pending_refresh_unsubs)
+            assert len(first_unsubs) == len(delays)
             assert tuple(recorded_delays[: len(delays)]) == delays
 
             # Rapid second command cancels first batch and schedules new one.
             assert await updater.send_command("currentSet", 10) is True
-            await asyncio.sleep(0)
-            assert all(t.cancelled() or t.done() for t in first_tasks)
-            assert len(updater._post_command_refresh_tasks) == len(delays)
+            assert all(unsub.called for unsub in first_unsubs)
+            assert len(updater._pending_refresh_unsubs) == len(delays)
 
-            # Failure must not schedule anything new or cancel pending tasks.
-            second_batch = list(updater._post_command_refresh_tasks)
+            # Failure must not schedule anything new or cancel pending timers.
+            second_batch = list(updater._pending_refresh_unsubs)
             updater._command_manager = SimpleNamespace(send_command=failed)
             assert await updater.send_command("currentSet", 12) is False
-            await asyncio.sleep(0)
-            assert updater._post_command_refresh_tasks == second_batch
-
-            # Cleanup
-            for t in updater._post_command_refresh_tasks:
-                t.cancel()
-        finally:
-            EveusUpdater._delayed_refresh = original  # type: ignore[assignment]
+            assert updater._pending_refresh_unsubs == second_batch
 
     asyncio.run(scenario())
+
+
+def test_rescheduling_then_shutdown_clears_pending_refresh_unsubs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    unsubs: list[Mock] = []
+
+    def fake_call_later(hass, delay, action):
+        unsub = Mock()
+        unsubs.append(unsub)
+        return unsub
+
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+
+    updater._schedule_post_command_refresh()
+    updater._schedule_post_command_refresh()
+
+    asyncio.run(updater.async_shutdown())
+
+    assert updater._pending_refresh_unsubs == []
+
+
+def test_schedule_post_command_refresh_registers_one_unsub_per_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    def fake_call_later(hass, delay, action):
+        return Mock()
+
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+
+    updater._schedule_post_command_refresh()
+
+    assert len(updater._pending_refresh_unsubs) == len(
+        common_network.POST_COMMAND_REFRESH_DELAYS
+    )
 
 
 def test_failure_recording_reduces_polling_when_device_appears_offline() -> None:
@@ -387,6 +416,19 @@ def test_connection_quality_uses_recent_poll_window() -> None:
 
     assert metrics["success_rate"] == 0
     assert metrics["sample_count"] == 10
+
+
+@pytest.mark.asyncio
+async def test_connection_quality_caches_within_poll(updater: EveusUpdater) -> None:
+    updater._poll_results.extend([1, 1, 0, 1])
+    updater._latency_samples.extend([0.1, 0.2])
+
+    q1 = updater.connection_quality
+    q2 = updater.connection_quality
+
+    assert q1 == q2
+    assert q1["success_rate"] == 75.0
+    assert q1["sample_count"] == 4
 
 
 def test_offline_failure_recording_is_quiet_at_normal_log_levels(
@@ -473,41 +515,68 @@ def test_current_setpoint_rounding_not_truncation() -> None:
     assert int(15.99) == 15  # confirms old behaviour was wrong
 
 
-def test_async_shutdown_awaits_cancelled_tasks() -> None:
-    """Regression: async_shutdown must await cancelled tasks to avoid
-    'Task was destroyed but it is pending!' log warnings on reload."""
+def test_async_shutdown_cancels_pending_refresh_unsubs() -> None:
+    """Regression: async_shutdown must cancel pending refresh timers."""
 
     async def scenario() -> None:
-        class _LoopHass:
-            is_stopping = False
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        unsub = Mock()
+        updater._pending_refresh_unsubs.append(unsub)
 
-            def async_create_task(self, coro):
-                return asyncio.get_event_loop().create_task(coro)
-
-        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _LoopHass())
-
-        running = asyncio.Event()
-        finished = asyncio.Event()
-
-        async def _long_refresh(delay: float) -> None:
-            running.set()
-            try:
-                await asyncio.sleep(delay)
-            except asyncio.CancelledError:
-                finished.set()
-                raise
-
-        updater._post_command_refresh_tasks.append(
-            asyncio.get_event_loop().create_task(_long_refresh(60))
-        )
-
-        await running.wait()
-
-        # shutdown must cancel and AWAIT so the task finishes cleanly
         await updater.async_shutdown()
 
-        assert finished.is_set(), "Cancelled task was not awaited by async_shutdown"
+        unsub.assert_called_once_with()
+        assert updater._pending_refresh_unsubs == []
+
+    asyncio.run(scenario())
+
+
+def test_inflight_post_command_refresh_is_cancelled_on_shutdown() -> None:
+    """Regression: a fired post-command refresh that is still running must be
+    cancellable on shutdown, not run to completion uncancelled.
+
+    The async_call_later unsub only cancels a timer that has not fired yet.
+    Once the timer fires and the refresh is in flight, shutdown (and a rapid
+    reschedule) must still be able to cancel the running refresh so a slow
+    /main poll cannot publish stale data after teardown.
+    """
+
+    async def scenario() -> None:
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        updater.hass.is_stopping = False
+        started = asyncio.Event()
+        cancelled = False
+
+        async def slow_refresh() -> None:
+            nonlocal cancelled
+            started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+        updater.async_refresh = slow_refresh
+        callbacks: list = []
+
+        def fake_call_later(hass, delay, action):
+            callbacks.append(action)
+            return Mock()
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(common_network, "async_call_later", fake_call_later)
+            updater._schedule_post_command_refresh()
+
+            # Fire the first timer: this starts the in-flight refresh task.
+            run_task = asyncio.ensure_future(callbacks[0](None))
+            await started.wait()
+            assert len(updater._post_command_refresh_tasks) == 1
+
+            await updater.async_shutdown()
+
+        assert cancelled is True
         assert updater._post_command_refresh_tasks == []
+        await asyncio.gather(run_task, return_exceptions=True)
 
     asyncio.run(scenario())
 
@@ -543,44 +612,50 @@ def test_force_refresh_resets_flag_after_refresh_failure() -> None:
     assert updater._force_refresh_requested is False
 
 
-def test_delayed_refresh_exits_when_hass_is_stopping(
+def test_scheduled_refresh_exits_when_hass_is_stopping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def no_sleep(delay: float) -> None:
-        return None
-
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater.hass = SimpleNamespace(is_stopping=True)
     refreshed = False
+    callbacks = []
 
     async def refresh() -> None:
         nonlocal refreshed
         refreshed = True
 
-    updater.async_refresh = refresh
-    monkeypatch.setattr(common_network.asyncio, "sleep", no_sleep)
+    def fake_call_later(hass, delay, action):
+        callbacks.append(action)
+        return Mock()
 
-    asyncio.run(updater._delayed_refresh(1))
+    updater.async_refresh = refresh
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+
+    updater._schedule_post_command_refresh()
+    asyncio.run(callbacks[0](None))
 
     assert refreshed is False
 
 
-def test_delayed_refresh_swallows_refresh_errors(
+def test_scheduled_refresh_swallows_refresh_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def no_sleep(delay: float) -> None:
-        return None
-
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater.hass = SimpleNamespace(is_stopping=False)
+    callbacks = []
 
     async def refresh() -> None:
         raise RuntimeError("refresh failed")
 
-    updater.async_refresh = refresh
-    monkeypatch.setattr(common_network.asyncio, "sleep", no_sleep)
+    def fake_call_later(hass, delay, action):
+        callbacks.append(action)
+        return Mock()
 
-    asyncio.run(updater._delayed_refresh(1))
+    updater.async_refresh = refresh
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+
+    updater._schedule_post_command_refresh()
+    asyncio.run(callbacks[0](None))
 
 
 def test_tune_interval_handles_invalid_state_and_custom_interval() -> None:

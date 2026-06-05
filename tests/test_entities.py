@@ -5,8 +5,11 @@ import logging
 from types import SimpleNamespace
 
 import pytest
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.helpers.entity import EntityCategory
 from conftest import TEST_BASE_URL, TEST_HOST, EveusTestUpdater
 from custom_components.eveus import common
+from custom_components.eveus import binary_sensor as binary_sensor_mod
 from custom_components.eveus.common_base import (
     BaseEveusEntity,
     EveusSensorBase,
@@ -23,6 +26,7 @@ from custom_components.eveus.switch import (
     BaseSwitchEntity,
     SWITCH_DESCRIPTIONS,
 )
+from custom_components.eveus.const import SESSION_ACTIVE_STATES
 
 
 class _Updater:
@@ -45,6 +49,23 @@ class _Updater:
         return lambda: None
 
 
+def _make_binary_sensor(name: str, data: dict, *, available: bool = True):
+    updater = EveusTestUpdater(data, available=available)
+    descriptions = getattr(binary_sensor_mod, "BINARY_SENSORS", None)
+    if descriptions is not None:
+        description = next(item for item in descriptions if item.name == name)
+        entity = binary_sensor_mod.EveusBinarySensor(updater, description, 1)
+    else:
+        class_name = {
+            "Car Connected": "EveusCarConnectedBinarySensor",
+            "Session Active": "EveusSessionActiveBinarySensor",
+            "OCPP Connected": "EveusOcppConnectedBinarySensor",
+        }[name]
+        entity = getattr(binary_sensor_mod, class_name)(updater, 1)
+    entity._entity_available = available
+    return entity
+
+
 def test_sensor_uses_fresh_coordinator_data_without_ttl_cache() -> None:
     updater = _Updater()
     spec = SensorSpec(
@@ -64,6 +85,85 @@ def test_sensor_uses_fresh_coordinator_data_without_ttl_cache() -> None:
     updater.data["powerMeas"] = "1000"
     sensor._handle_coordinator_update()
     assert sensor.native_value == 1000
+
+
+@pytest.mark.parametrize(
+    "name,device_class,icon,entity_category",
+    [
+        ("Car Connected", BinarySensorDeviceClass.PLUG, "mdi:ev-plug-type2", None),
+        ("Session Active", BinarySensorDeviceClass.RUNNING, "mdi:ev-station", None),
+        (
+            "OCPP Connected",
+            BinarySensorDeviceClass.CONNECTIVITY,
+            "mdi:cloud-check",
+            EntityCategory.DIAGNOSTIC,
+        ),
+    ],
+)
+def test_binary_sensor_metadata_is_backward_compatible(
+    name: str,
+    device_class: str,
+    icon: str,
+    entity_category: EntityCategory | None,
+) -> None:
+    entity = _make_binary_sensor(name, {})
+
+    assert entity.ENTITY_NAME == name
+    assert entity.device_class == device_class
+    assert entity.icon == icon
+    assert entity.entity_category == entity_category
+
+
+@pytest.mark.parametrize(
+    "state,expected",
+    [
+        (4, True),
+        (2, False),
+        (7, None),
+        (99, None),
+    ],
+)
+def test_car_connected_binary_sensor_truth_table(
+    state: int,
+    expected: bool | None,
+) -> None:
+    entity = _make_binary_sensor("Car Connected", {"state": state})
+
+    assert entity.is_on is expected
+
+
+@pytest.mark.parametrize(
+    "state,expected",
+    [
+        (next(iter(SESSION_ACTIVE_STATES)), True),
+        (3, False),
+        (99, None),
+    ],
+)
+def test_session_active_binary_sensor_truth_table(
+    state: int,
+    expected: bool | None,
+) -> None:
+    entity = _make_binary_sensor("Session Active", {"state": state})
+
+    assert entity.is_on is expected
+
+
+@pytest.mark.parametrize(
+    "data,expected",
+    [
+        ({"ocppconnected": 1}, True),
+        ({"ocppconnected": 0}, False),
+        ({}, None),
+    ],
+)
+def test_ocpp_connected_binary_sensor_truth_table(
+    data: dict,
+    expected: bool | None,
+) -> None:
+    entity = _make_binary_sensor("OCPP Connected", data)
+
+    assert entity.is_on is expected
 
 
 def test_base_entity_availability_grace_and_cache_paths() -> None:

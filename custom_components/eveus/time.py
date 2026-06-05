@@ -11,14 +11,14 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as ha_dt
 
 from . import EveusConfigEntry
 from .common_base import (
-    BaseEveusEntity,
     ControlEntityMixin,
-    OptimisticControlMixin,
     WriteOnChangeMixin,
 )
+from .control_base import CommandBackedEntity
 from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
 from .utils import get_safe_value
 
@@ -89,9 +89,8 @@ def time_to_minutes(value: dt.time) -> int:
 
 class EveusScheduleTimeEntity(
     WriteOnChangeMixin,
-    OptimisticControlMixin[int],
     ControlEntityMixin,
-    BaseEveusEntity,
+    CommandBackedEntity[int],
     TimeEntity,
 ):
     """A writable schedule time field (start or stop) backed by the charger."""
@@ -125,6 +124,35 @@ class EveusScheduleTimeEntity(
         """Return cached time without side effects."""
         return self._attr_native_value
 
+    def _read_device_value(self) -> int | None:
+        """Return the latest valid schedule minutes from coordinator data."""
+        if not (
+            self._updater.available
+            and self._updater.data
+            and self._state_key in self._updater.data
+        ):
+            return None
+        device_value = get_safe_value(self._updater.data, self._state_key, int)
+        if device_value is not None and 0 <= device_value < 1440:
+            return int(device_value)
+        return None
+
+    def _values_equal(self, optimistic: int, device: int) -> bool:
+        """Return whether device minutes confirm the optimistic value."""
+        return optimistic == device
+
+    def _resolve_display_value(self) -> dt.time | None:
+        """Resolve the schedule time display value."""
+        return minutes_to_time(self._resolve_minutes())
+
+    def _set_display_value(self, value: dt.time | None) -> None:
+        """Store the schedule time display value."""
+        self._attr_native_value = value
+
+    def _get_pending(self) -> int | None:
+        """Return the pending schedule command sentinel."""
+        return self._pending_value
+
     def _resolve_minutes(self) -> int | None:
         """Resolve minutes value from optimistic, device, or restore state."""
         current_time = _time.time()
@@ -151,66 +179,36 @@ class EveusScheduleTimeEntity(
         """Send the new start/stop value to the charger with optimistic UI."""
         minutes = time_to_minutes(value)
 
-        self._pending_value = minutes
-        self._attr_native_value = dt.time(hour=minutes // 60, minute=minutes % 60)
-        self._write_if_changed(self._attr_native_value)
-
-        try:
-            success = await self._updater.send_command(self._command, minutes)
-            if success:
-                self._set_optimistic_value(minutes)
-            else:
-                raise HomeAssistantError(
-                    f"Eveus charger did not accept '{self.name}' = "
-                    f"{self._attr_native_value.strftime('%H:%M')}"
-                )
-        finally:
-            self._pending_value = None
-            self._last_command_time = _time.time()
-            self._attr_native_value = minutes_to_time(self._resolve_minutes())
+        async with self._command_lock:
+            self._pending_value = minutes
+            self._attr_native_value = dt.time(hour=minutes // 60, minute=minutes % 60)
             self._write_if_changed(self._attr_native_value)
+
+            try:
+                success = await self._updater.send_command(self._command, minutes)
+                if success:
+                    self._set_optimistic_value(minutes)
+                else:
+                    raise HomeAssistantError(
+                        f"Eveus charger did not accept '{self.name}' = "
+                        f"{self._attr_native_value.strftime('%H:%M')}"
+                    )
+            finally:
+                self._pending_value = None
+                self._last_command_time = _time.time()
+                self._attr_native_value = minutes_to_time(self._resolve_minutes())
+                self._write_if_changed(self._attr_native_value)
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
         if not state or state.state in (None, "unknown", "unavailable"):
             return
-        try:
-            hh, mm = state.state.split(":", 2)[:2]
-            restored = dt.time(hour=int(hh), minute=int(mm))
-        except (ValueError, AttributeError):
+        restored = ha_dt.parse_time(state.state)
+        if restored is None:
             return
         self._last_device_value = time_to_minutes(restored)
         self._last_successful_read = _time.time()
         self._attr_native_value = restored
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Reconcile cached value with the latest coordinator payload."""
-        self._maybe_finalize_device_info()
-        self._update_availability_state()
-        if self._pending_value is not None:
-            return
-
-        current_time = _time.time()
-        if (
-            self._updater.available
-            and self._updater.data
-            and self._state_key in self._updater.data
-        ):
-            device_value = get_safe_value(self._updater.data, self._state_key, int)
-            if device_value is not None and 0 <= device_value < 1440:
-                self._reconcile_with_device(
-                    int(device_value),
-                    current_time,
-                    lambda optimistic, device: optimistic == device,
-                )
-
-        self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
-
-        new_value = minutes_to_time(self._resolve_minutes())
-        self._attr_native_value = new_value
-        self._write_if_changed(new_value)
-
 
 async def async_setup_entry(
     _hass: HomeAssistant,

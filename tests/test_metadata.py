@@ -3,8 +3,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+from homeassistant.util import slugify
 from PIL import Image
+
+from conftest import TEST_HOST
+from custom_components.eveus.common_base import BaseEveusEntity
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,8 +27,9 @@ def test_manifest_domain_matches_integration_directory() -> None:
 def test_manifest_readme_and_changelog_versions_match() -> None:
     """Manifest, README badge and CHANGELOG must agree on the release line.
 
-    The release line is the X.Y.Z version published in the manifest, README,
-    and CHANGELOG.
+    The manifest and CHANGELOG pin the full ``X.Y.Z`` patch version, while the
+    README badge tracks the ``X.Y-rc`` release line so it does not need a churn
+    edit on every patch within the same rc cycle.
     """
     import re
 
@@ -33,11 +40,13 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     changelog = (ROOT / "CHANGELOG.md").read_text()
 
     version = manifest["version"]
-    base = re.match(r"^(\d+\.\d+\.\d+)", version)
+    base = re.match(r"^(\d+\.\d+)\.\d+", version)
     assert base is not None, version
-    base_version = base.group(1)
+    minor_line = base.group(1)
 
-    assert f"version-{base_version}-blue" in readme
+    # README badge tracks the MAJOR.MINOR rc line (e.g. ``version-4.10--rc``).
+    assert f"version-{minor_line}--rc-blue" in readme
+    # Manifest and CHANGELOG still agree on the exact patch version.
     assert f"## {version}" in changelog
 
 
@@ -91,6 +100,13 @@ def test_soc_dashboard_repair_issue_lists_exact_entity_replacements() -> None:
         ("input_number.ev_soc_correction", "number.eveus_ev_charger_soc_correction"),
     ):
         assert f"`{old_entity}` → `{new_entity}`" in description
+
+
+def test_entity_key_matches_slugify_for_all_entity_names():
+    names = ['Car Connected', 'OCPP Connected', 'Session Active',
+             'Connection Quality', 'Active Rate Cost']
+    for name in names:
+        assert name.lower().replace(' ', '_') == slugify(name)
 
 
 def _slug(name: str) -> str:
@@ -251,6 +267,64 @@ def test_manifest_has_loggers() -> None:
     )
     assert "loggers" in manifest, "manifest.json must declare loggers"
     assert "custom_components.eveus" in manifest["loggers"]
+
+
+def test_device_registry_finalized_once_for_shared_updater(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Firmware finalization writes the shared device registry row only once."""
+
+    class Updater:
+        host = TEST_HOST
+        scheme = "http"
+        available = True
+        last_update_success = True
+        _device_registry_finalized = False
+
+        def __init__(self) -> None:
+            self.data = {}
+
+        def async_add_listener(self, *args: object, **kwargs: object):
+            return lambda: None
+
+    class PowerEntity(BaseEveusEntity):
+        ENTITY_NAME = "Power"
+
+    class VoltageEntity(BaseEveusEntity):
+        ENTITY_NAME = "Voltage"
+
+    updater = Updater()
+    entities = [PowerEntity(updater), VoltageEntity(updater)]
+    for entity in entities:
+        entity.hass = object()
+
+    updates: list[tuple[str, dict[str, object]]] = []
+
+    class Registry:
+        def async_get_device(self, *, identifiers):
+            assert identifiers == {("eveus", TEST_HOST)}
+            return SimpleNamespace(id="device-id")
+
+        def async_update_device(self, device_id, **kwargs):
+            updates.append((device_id, kwargs))
+
+    monkeypatch.setattr(
+        "custom_components.eveus.common_base.dr.async_get",
+        lambda hass: Registry(),
+    )
+
+    for entity in entities:
+        entity._maybe_finalize_device_info()
+
+    updater.data = {
+        "verFWMain": "R3.05.2",
+        "verFWWifi": "W1.0",
+        "serialNum": "EV-12345",
+    }
+    for entity in entities:
+        entity._maybe_finalize_device_info()
+
+    assert len(updates) == 1
 
 
 def test_unit_suite_disables_homeassistant_pytest_plugin(pytestconfig) -> None:

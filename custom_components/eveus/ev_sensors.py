@@ -22,7 +22,7 @@ from .utils import (
     calculate_soc_percent,
     get_safe_value,
 )
-from .const import DEFAULT_SOC_CORRECTION, soc_update_signal
+from .const import DEFAULT_SOC_CORRECTION, MAX_ENERGY_KWH, MAX_POWER_W, soc_update_signal
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -159,6 +159,11 @@ class BaseEVHelperSensor(EveusSensorBase):
         energy_charged = self._get_energy_charged()
         if power_meas is None or energy_charged is None:
             return None
+        # Reject a finite-but-impossible power outlier (e.g. 1e100) so a corrupt
+        # payload can't make the ETA collapse to "< 1m" — the same ceiling the
+        # Power sensor applies.
+        if not 0 <= power_meas <= MAX_POWER_W:
+            return None
         battery_capacity = self._soc_calculator.battery_capacity
         target_soc = self._soc_calculator.target_soc
         soc_correction = self._soc_calculator.soc_correction
@@ -180,7 +185,10 @@ class BaseEVHelperSensor(EveusSensorBase):
         charger starts a fresh session count on the next plug-in.
         """
         value = get_safe_value(self._updater.data, "sessionEnergy", float)
-        if value is None or value < 0:
+        # Reject a finite-but-impossible session-energy outlier (e.g. 1e100) so a
+        # corrupt payload can't drive SOC %/kWh to a false full-battery reading;
+        # matches the ceiling the Session Energy sensor applies.
+        if value is None or not 0 <= value <= MAX_ENERGY_KWH:
             return None
         return value
 

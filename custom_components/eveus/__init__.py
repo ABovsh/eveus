@@ -151,6 +151,48 @@ def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None
         ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
 
 
+# SOC entities created only in Advanced mode, and per-phase sensors created only
+# for a 3-phase entry. When the user reduces scope (Advanced -> Basic, or 3 -> 1
+# phase) these are no longer built, so their registry rows must be pruned or they
+# linger forever as orphaned "unavailable" entities.
+_ADVANCED_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
+    ("sensor", "soc_energy"),
+    ("sensor", "soc_percent"),
+    ("sensor", "time_to_target_soc"),
+    ("sensor", "charging_finish_time"),
+    ("number", "initial_soc"),
+    ("number", "target_soc"),
+    ("number", "battery_capacity"),
+    ("number", "soc_correction"),
+)
+_THREE_PHASE_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
+    ("sensor", "current_phase_2"),
+    ("sensor", "current_phase_3"),
+    ("sensor", "voltage_phase_2"),
+    ("sensor", "voltage_phase_3"),
+)
+
+
+def _prune_unused_entities(
+    hass: HomeAssistant, device_number: int, soc_mode: str, phases: int
+) -> None:
+    """Remove registry rows for entities not built under the current config."""
+    stale: list[tuple[str, str]] = []
+    if soc_mode != SOC_MODE_ADVANCED:
+        stale.extend(_ADVANCED_ONLY_ENTITIES)
+    if phases != 3:
+        stale.extend(_THREE_PHASE_ONLY_ENTITIES)
+    if not stale:
+        return
+    reg = er.async_get(hass)
+    suffix = get_device_suffix(device_number)
+    for platform, key in stale:
+        unique_id = f"eveus{suffix}_{key}"
+        entity_id = reg.async_get_entity_id(platform, DOMAIN, unique_id)
+        if entity_id:
+            reg.async_remove(entity_id)
+
+
 async def async_setup(_hass: HomeAssistant, _config: dict[str, Any]) -> bool:
     """Set up the Eveus component."""
     return True
@@ -160,7 +202,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old config entry data."""
     new_data = dict(entry.data)
     host = new_data.get(CONF_HOST)
-    if isinstance(host, str) and host.startswith(("http://", "https://")):  # NOSONAR python:S5332 — local LAN device, HTTPS not available on charger firmware.
+    if isinstance(host, str) and host.lower().startswith(("http://", "https://")):  # NOSONAR python:S5332 — local LAN device, HTTPS not available on charger firmware.
         from urllib.parse import urlparse, urlunparse
         from .config_flow import _split_host_and_scheme
 
@@ -316,17 +358,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         if stale:
             reg.async_remove(stale)
 
+        soc_dashboard_issue_id = f"soc_dashboard_update_{entry.entry_id}"
         if get_soc_mode(entry) == SOC_MODE_ADVANCED and _legacy_helpers_present(hass):
             ir.async_create_issue(
                 hass,
                 DOMAIN,
-                f"soc_dashboard_update_{entry.entry_id}",
+                soc_dashboard_issue_id,
                 is_fixable=False,
                 is_persistent=True,
                 issue_domain=DOMAIN,
                 severity=ir.IssueSeverity.WARNING,
                 translation_key="soc_dashboard_update",
             )
+        else:
+            # Clear the (persistent) notice once the legacy helpers are gone or the
+            # entry leaves Advanced mode — otherwise the warning lingers forever.
+            ir.async_delete_issue(hass, DOMAIN, soc_dashboard_issue_id)
 
         updater = EveusUpdater(
             host=host,
@@ -383,13 +430,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         entry.async_on_unload(entry.add_update_listener(update_listener))
 
+        # Drop registry rows for SOC/phase entities that this config no longer
+        # builds (Advanced -> Basic, or 3 -> 1 phase). Deferred until the entry
+        # is fully committed (first refresh + platforms up) so a transient
+        # setup failure that HA will retry cannot permanently delete entities —
+        # along with their area, disabled state, and custom entity_id — for a
+        # reduced scope that never actually finished loading.
+        _prune_unused_entities(hass, device_number, get_soc_mode(entry), phases)
+
         return True
 
     except (ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady):
         raise
     except Exception as ex:
-        _LOGGER.exception("Unexpected error setting up Eveus integration: %s", ex)
-        raise ConfigEntryNotReady(f"Unexpected error: {ex}")
+        # Log the full traceback locally, but keep the host/URL out of the
+        # user-facing setup error string, matching the redaction used on the
+        # poll and config-flow error paths.
+        _LOGGER.exception("Unexpected error setting up Eveus integration")
+        raise ConfigEntryNotReady(f"Unexpected error: {type(ex).__name__}") from ex
 
 
 async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
