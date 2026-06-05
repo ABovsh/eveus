@@ -49,6 +49,10 @@ MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
 # (a finite but impossible value like 1e100) instead of only the display side.
 MAX_POWER_W: Final[int] = 100_000
 MAX_ENERGY_KWH: Final[int] = 1_000_000
+# Upper sanity cap for session duration (seconds). A charging session never runs
+# anywhere near a year; the bound only rejects corrupt outliers that would
+# otherwise render an overlong HA state string.
+MAX_SESSION_TIME_SECONDS: Final[int] = 366 * 24 * 3600
 
 # Configuration
 CONF_MODEL: Final[str] = "model"

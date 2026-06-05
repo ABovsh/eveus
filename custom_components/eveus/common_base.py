@@ -275,18 +275,23 @@ class OptimisticControlMixin(Generic[T]):
         self._optimistic_value_time = time.time()
 
     def _optimistic_value_is_valid(self, current_time: float, ttl: float) -> bool:
-        """Return whether the optimistic value should still be trusted."""
-        return (
-            self._optimistic_value is not None
-            and current_time - self._optimistic_value_time < ttl
-        )
+        """Return whether the optimistic value should still be trusted.
+
+        Uses a wall-clock delta, so a backward system-clock step makes the age
+        negative; treat that as expired (untrustworthy timer) instead of
+        "valid forever".
+        """
+        if self._optimistic_value is None:
+            return False
+        age = current_time - self._optimistic_value_time
+        return 0 <= age < ttl
 
     def _expire_optimistic_value(self, current_time: float, ttl: float) -> None:
-        """Expire optimistic state after its absolute TTL."""
-        if (
-            self._optimistic_value is not None
-            and current_time - self._optimistic_value_time >= ttl
-        ):
+        """Expire optimistic state after its absolute TTL (or a backward clock)."""
+        if self._optimistic_value is None:
+            return
+        age = current_time - self._optimistic_value_time
+        if not 0 <= age < ttl:
             self._optimistic_value = None
 
     def _reconcile_with_device(
@@ -303,9 +308,11 @@ class OptimisticControlMixin(Generic[T]):
 
         if self._optimistic_value is None:
             return
+        age = current_time - self._optimistic_value_time
         if (
             confirm_fn(self._optimistic_value, new_value)
-            or current_time - self._optimistic_value_time > mismatch_ttl
+            or age > mismatch_ttl
+            or age < 0
         ):
             self._optimistic_value = None
 
@@ -337,6 +344,20 @@ class WriteOnChangeMixin:
         ):
             return False
         self._last_written_value = value
+        self._last_written_available = available_now
+        self.async_write_ha_state()  # type: ignore[attr-defined]
+        return True
+
+    def _write_availability_only(self) -> bool:
+        """Push HA state for an availability change without touching the value.
+
+        Used while a command is in flight: the displayed value must stay pinned
+        to the optimistic/pending value, but an availability transition (e.g. the
+        charger going offline mid-command) must still reach HA.
+        """
+        available_now = self.available  # type: ignore[attr-defined]
+        if available_now == self._last_written_available:
+            return False
         self._last_written_available = available_now
         self.async_write_ha_state()  # type: ignore[attr-defined]
         return True

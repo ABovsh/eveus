@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.10.2 - Unreleased
+
+### 🐛 Fixed
+- **Controls recover cleanly when the system clock jumps backward** (NTP correction, VM resume, manual change): a control no longer stays stuck on its last set value, and the charger no longer stays *unavailable* until the clock catches up.
+- **A control now reflects the charger dropping offline mid-command** instead of briefly showing a stale *available* state.
+- **Force Refresh reliably bypasses the offline back-off** even if a routine poll lands at the same moment.
+- **Time Zone keeps your selection during a brief outage** and restores the last shown value after a restart, instead of snapping back to the old zone or going *unknown*.
+- **More corrupt readings read as `unknown` instead of plausible-but-wrong values:** a fractional Charging Current setpoint, an Adaptive Current Limit or schedule current limit above your charger model's maximum, and an absurd Session Time.
+- **The charging-time estimate can no longer freeze on a stale value** caused by a corrupt power reading.
+- **A malformed firmware field can no longer appear as a bogus device firmware version** on the Devices page.
+
+### 🔒 Privacy
+- **Upgrading an old entry whose stored address contained embedded credentials** now strips those credentials from both the stored address and the integration title.
+
 ## 4.10.1 - 2026-06-05
 
 ### 🐛 Fixed

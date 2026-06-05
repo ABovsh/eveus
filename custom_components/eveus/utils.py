@@ -175,7 +175,10 @@ def get_safe_value(
 
 def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
     """Coerce a /main field to a trimmed string or a fallback."""
-    if value is None:
+    # bool is an int subclass; reject it and other non-scalar containers so a
+    # malformed firmware field (e.g. verFWMain=true) can't render as "True" and
+    # get permanently finalized into device_info.
+    if value is None or isinstance(value, (bool, dict, list, tuple, set)):
         return fallback
     text = str(value).strip()
     return text if len(text) >= min_len else fallback
@@ -356,7 +359,13 @@ def _remaining_seconds_or_state(
         if power_kw <= 0:
             return _REMAINING_NOT_CHARGING
 
-        return remaining_kwh / power_kw * 3600
+        # A finite-but-tiny power_kw can overflow the division to +inf; surface
+        # that as "unavailable" rather than returning inf (which int() would
+        # later reject) or freezing a stale ETA.
+        seconds = remaining_kwh / power_kw * 3600
+        if not math.isfinite(seconds):
+            return _REMAINING_UNAVAILABLE
+        return seconds
 
     except Exception as err:
         _LOGGER.debug("Error computing remaining seconds: %s", err, exc_info=True)

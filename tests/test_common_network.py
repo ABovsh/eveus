@@ -291,7 +291,7 @@ def test_force_refresh_bypasses_offline_backoff_once(
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._next_poll_attempt = time.time() + RETRY_DELAY
-    updater._force_refresh_requested = True
+    updater._force_refresh_requests = 1
 
     data = asyncio.run(updater._async_update_data())
 
@@ -609,7 +609,7 @@ def test_force_refresh_resets_flag_after_refresh_failure() -> None:
     with pytest.raises(RuntimeError):
         asyncio.run(updater.async_force_refresh())
 
-    assert updater._force_refresh_requested is False
+    assert updater._force_refresh_requests == 0
 
 
 def test_scheduled_refresh_exits_when_hass_is_stopping(
@@ -673,3 +673,17 @@ def test_tune_interval_handles_invalid_state_and_custom_interval() -> None:
 
     updater._set_update_interval(123)
     assert updater.update_interval == timedelta(seconds=123)
+
+
+def test_backward_clock_does_not_strand_offline_backoff(
+    coordinator: tuple[EveusUpdater, _Session],
+) -> None:
+    """A backward wall-clock step leaves a stale deadline far beyond any real
+    backoff window; the poll must proceed instead of being skipped forever."""
+    updater, session = coordinator
+    updater._next_poll_attempt = time.time() + 100000
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["currentSet"] == 16
+    assert len(session.calls) == 1

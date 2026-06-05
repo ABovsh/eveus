@@ -206,14 +206,25 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         from urllib.parse import urlparse, urlunparse
         from .config_flow import _split_host_and_scheme
 
-        # Legacy entries may have stored a full URL with path (e.g. ".../main").
-        # Strip the path/query/fragment before validation so migration recovers
-        # cleanly instead of leaving a malformed host on the entry.
+        # Legacy entries may have stored a full URL with path (e.g. ".../main")
+        # and/or embedded userinfo (http://user:pass@host). Strip the
+        # path/query/fragment AND any credentials before validation so migration
+        # recovers cleanly — and so leftover credentials can't survive in the
+        # host or, via the title rewrite below, in the config-entry title.
         sanitized = host
         try:
             parts = urlparse(host)
-            if parts.path not in ("", "/") or parts.query or parts.fragment:
-                sanitized = urlunparse((parts.scheme, parts.netloc, "", "", "", ""))
+            # netloc is "[user[:pass]@]host[:port]"; drop everything up to and
+            # including the last '@' (preserves IPv6 brackets, which follow it).
+            netloc = parts.netloc.rsplit("@", 1)[-1]
+            if netloc and (
+                parts.username
+                or parts.password
+                or parts.path not in ("", "/")
+                or parts.query
+                or parts.fragment
+            ):
+                sanitized = urlunparse((parts.scheme, netloc, "", "", "", ""))
         except ValueError:
             sanitized = host
 
