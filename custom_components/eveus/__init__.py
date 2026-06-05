@@ -38,6 +38,9 @@ from .const import (
     DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
+    BATTERY_LOW_THRESHOLD_VOLTS,
+    BATTERY_OK_THRESHOLD_VOLTS,
+    BATTERY_LOW_DEBOUNCE_POLLS,
 )
 from .common_network import EveusUpdater
 from .utils import (
@@ -149,6 +152,73 @@ def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None
         # ocppEnabled (None) means the firmware dropped/garbled the field — leave
         # the prior issue state untouched rather than falsely dismissing it.
         ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
+
+
+def _battery_low_issue_id(entry: ConfigEntry) -> str:
+    """Return the repair issue id for a depleted RTC backup battery."""
+    return f"battery_low_{entry.entry_id}"
+
+
+class _BatteryLowTracker:
+    """Decide when to raise/clear the low RTC-battery warning.
+
+    Applies hysteresis (fire below the low threshold, clear only above the
+    higher OK threshold) and debounce (only fire after several consecutive low
+    readings), so a battery hovering at the edge or a single glitchy ADC read
+    can't make the warning flap or raise a false alarm.
+    """
+
+    def __init__(self) -> None:
+        self._low_streak = 0
+        self._active = False
+
+    def evaluate(self, value: float | None) -> bool | None:
+        """Return True to raise, False to clear, or None to leave unchanged.
+
+        A missing/non-positive reading (offline or garbled `vBat`) is treated as
+        "not low": it neither advances the debounce streak nor clears an active
+        warning, mirroring how the OCPP warning ignores dropped fields.
+        """
+        if value is None or value <= 0:
+            return None
+        if value < BATTERY_LOW_THRESHOLD_VOLTS:
+            self._low_streak += 1
+            if self._low_streak >= BATTERY_LOW_DEBOUNCE_POLLS and not self._active:
+                self._active = True
+                return True
+            return None
+        # value >= low threshold: a healthy-enough reading restarts the debounce.
+        self._low_streak = 0
+        if value >= BATTERY_OK_THRESHOLD_VOLTS and self._active:
+            self._active = False
+            return False
+        return None
+
+
+def _update_battery_low_issue(
+    hass: HomeAssistant, entry: ConfigEntry, updater, tracker: _BatteryLowTracker
+) -> None:
+    """Raise or clear the low RTC-battery warning based on the latest poll.
+
+    The CR2032 coin cell only keeps the charger's clock/settings, so this is a
+    non-fixable informational warning (the fix is a physical battery swap) that
+    auto-clears once the replacement reads healthy.
+    """
+    value = get_safe_value(updater.data, "vBat", float) if updater.data else None
+    decision = tracker.evaluate(value)
+    if decision is True:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _battery_low_issue_id(entry),
+            is_fixable=False,
+            is_persistent=False,
+            issue_domain=DOMAIN,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="battery_low",
+        )
+    elif decision is False:
+        ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
 
 
 # SOC entities created only in Advanced mode, and per-phase sensors created only
@@ -436,6 +506,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         entry.async_on_unload(updater.async_add_listener(_refresh_ocpp_issue))
         _refresh_ocpp_issue()
 
+        # Track the RTC backup battery (vBat) across polls and warn when the
+        # CR2032 is depleted, with debounce/hysteresis held in the tracker.
+        battery_tracker = _BatteryLowTracker()
+
+        @callback
+        def _refresh_battery_issue() -> None:
+            _update_battery_low_issue(hass, entry, updater, battery_tracker)
+
+        entry.async_on_unload(updater.async_add_listener(_refresh_battery_issue))
+        _refresh_battery_issue()
+
         # DataUpdateCoordinator constructed with config_entry already registers
         # async_shutdown on the entry unload lifecycle — no manual registration.
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -469,4 +550,5 @@ async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:
     """Unload a config entry."""
     ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

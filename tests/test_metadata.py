@@ -218,6 +218,20 @@ def test_ocpp_warning_is_a_repair_issue_translation() -> None:
         assert "ocpp_enabled" not in translations.get("options", {})
 
 
+def test_battery_low_warning_is_a_repair_issue_translation() -> None:
+    """The low RTC-battery warning is a repair issue with title + description."""
+    base = ROOT / "custom_components" / "eveus"
+    for relative in (
+        "strings.json",
+        "translations/en.json",
+        "translations/uk.json",
+    ):
+        translations = json.loads((base / relative).read_text())
+        issue = translations["issues"]["battery_low"]
+        assert issue["title"]
+        assert issue["description"]
+
+
 def test_ukrainian_translation_has_no_known_untranslated_ui_phrases() -> None:
     """Guard against the known English phrases left in uk.json."""
     uk_text = (

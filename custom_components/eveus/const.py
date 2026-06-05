@@ -31,6 +31,18 @@ ERROR_LOG_RATE_LIMIT: Final[int] = 300
 STATE_CACHE_TTL: Final[int] = 60
 OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 
+# RTC backup battery (CR2032 coin cell, reported as `vBat`). The cell only keeps
+# the charger's clock/settings, so a low warning is informational. The CR2032
+# discharge curve is flat until end of life: a reading below 2.5 V means the cell
+# is on its steep tail but still comfortably above the ~2.0 V where the RTC loses
+# data — early enough to replace it before settings are lost. The clear threshold
+# sits above the fire threshold so a reading hovering at the edge can't flap, and
+# the warning only fires after several consecutive low polls so a single glitchy
+# ADC read can't raise a scary "replace your battery" notice.
+BATTERY_LOW_THRESHOLD_VOLTS: Final[float] = 2.5
+BATTERY_OK_THRESHOLD_VOLTS: Final[float] = 2.7
+BATTERY_LOW_DEBOUNCE_POLLS: Final[int] = 3
+
 # Current limits
 MIN_CURRENT: Final[int] = 7
 MODEL_16A: Final[str] = "16A"
