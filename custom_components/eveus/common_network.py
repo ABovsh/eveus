@@ -242,7 +242,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _cancel_pending_refreshes(self) -> None:
         for unsub in self._pop_pending_refreshes():
             unsub()
-        for task in list(self._post_command_refresh_tasks):
+        # task.cancel() schedules each task's done-callback via the event loop,
+        # so _post_command_refresh_tasks is not mutated during this loop —
+        # iterate it directly rather than over a throwaway snapshot.
+        for task in self._post_command_refresh_tasks:
             if not task.done():
                 task.cancel()
 

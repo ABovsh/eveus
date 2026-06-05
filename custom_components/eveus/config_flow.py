@@ -57,6 +57,8 @@ from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
+_INVALID_HOST_MSG = "Invalid IP address or hostname"
+
 # Keys outside the user-editable form that must survive reconfigure/reauth/repair.
 _PRESERVED_ENTRY_KEYS: tuple[str, ...] = (
     "device_number",
@@ -172,7 +174,7 @@ def _split_host_and_scheme(
     try:
         parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
     except ValueError as err:
-        raise vol.Invalid("Invalid IP address or hostname") from err
+        raise vol.Invalid(_INVALID_HOST_MSG) from err
     scheme = parsed.scheme or default_scheme
     if scheme not in ("http", "https"):
         raise vol.Invalid("Unsupported URL scheme")
@@ -188,7 +190,7 @@ def _split_host_and_scheme(
 
     hostname = parsed.hostname
     if not hostname:
-        raise vol.Invalid("Invalid IP address or hostname")
+        raise vol.Invalid(_INVALID_HOST_MSG)
 
     try:
         port = parsed.port
@@ -199,7 +201,7 @@ def _split_host_and_scheme(
         raise vol.Invalid("Invalid port")
 
     if not _host_is_valid(hostname):
-        raise vol.Invalid("Invalid IP address or hostname")
+        raise vol.Invalid(_INVALID_HOST_MSG)
 
     if hostname.endswith("."):
         hostname = hostname[:-1]
