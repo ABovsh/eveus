@@ -200,9 +200,8 @@ def _update_battery_low_issue(
 ) -> None:
     """Raise or clear the low coin-cell warning based on the latest poll.
 
-    The CR2032 is not used for charging, so this is a non-fixable informational
-    warning (the fix is a physical battery swap) that auto-clears once the
-    replacement reads healthy.
+    Non-fixable informational warning (the fix is a physical battery swap) that
+    auto-clears once the replacement reads healthy.
     """
     value = get_safe_value(updater.data, "vBat", float) if updater.data else None
     decision = tracker.evaluate(value)

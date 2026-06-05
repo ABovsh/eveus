@@ -3,7 +3,7 @@
 ## 4.11.0 - Unreleased
 
 ### ✨ Added
-- **Low charger battery warning.** Home Assistant now raises a repair notice when the charger's internal CR2032 coin-cell battery runs low, so you can replace it in time. This battery is not used for charging, so charging is never affected, and the notice clears itself once a fresh battery is fitted.
+- **Low charger battery warning.** Home Assistant now raises a repair notice when the charger's internal CR2032 coin-cell battery runs low, so you can replace it in time. While the battery is low some charger functions may be limited; the notice clears itself once a fresh battery is fitted.
 
 ## 4.10.2 - Unreleased
 

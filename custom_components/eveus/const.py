@@ -31,9 +31,10 @@ ERROR_LOG_RATE_LIMIT: Final[int] = 300
 STATE_CACHE_TTL: Final[int] = 60
 OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 
-# CR2032 coin cell inside the charger (reported as `vBat`). It is not used for
-# charging, so a low reading is informational — surface it as a "replace soon"
-# notice rather than anything that blocks operation. The CR2032 discharge curve
+# CR2032 coin cell inside the charger (reported as `vBat`). A low reading is
+# surfaced as an informational "replace soon" notice (we don't model exactly
+# which charger functions depend on it, only that some may be limited). The
+# CR2032 discharge curve
 # is flat until end of life, then drops off a cliff. The charger
 # is observed to run fine down to ~2.1 V, so the warning holds off until below
 # 2.0 V — deep on the discharge tail but still at the edge of the RTC's retention

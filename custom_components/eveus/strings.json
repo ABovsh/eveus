@@ -334,7 +334,7 @@
         },
         "battery_low": {
             "title": "Eveus: charger battery is low, replace it soon",
-            "description": "The CR2032 coin-cell battery inside your Eveus charger is low.\n\nThis battery is not used to charge your car, so charging is not affected.\n\nWhat to do:\n\n- Replace it with a fresh, good-quality CR2032 cell.\n\nThe Eveus integration will clear this warning automatically once a new battery reads a healthy voltage."
+            "description": "The CR2032 coin-cell battery inside your Eveus charger is low.\n\nWhile it is low, some charger functions may be limited.\n\nWhat to do:\n\n- Replace it with a fresh, good-quality CR2032 cell.\n\nThe Eveus integration will clear this warning automatically once a new battery reads a healthy voltage."
         }
     }
 }
