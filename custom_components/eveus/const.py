@@ -31,9 +31,10 @@ ERROR_LOG_RATE_LIMIT: Final[int] = 300
 STATE_CACHE_TTL: Final[int] = 60
 OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 
-# RTC backup battery (CR2032 coin cell, reported as `vBat`). The cell only keeps
-# the charger's clock/settings, so a low warning is informational. The CR2032
-# discharge curve is flat until end of life, then drops off a cliff. The charger
+# CR2032 coin cell inside the charger (reported as `vBat`). It is not used for
+# charging, so a low reading is informational — surface it as a "replace soon"
+# notice rather than anything that blocks operation. The CR2032 discharge curve
+# is flat until end of life, then drops off a cliff. The charger
 # is observed to run fine down to ~2.1 V, so the warning holds off until below
 # 2.0 V — deep on the discharge tail but still at the edge of the RTC's retention
 # floor, replace-now territory. The clear threshold sits above the fire threshold

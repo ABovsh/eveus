@@ -155,7 +155,7 @@ def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None
 
 
 def _battery_low_issue_id(entry: ConfigEntry) -> str:
-    """Return the repair issue id for a depleted RTC backup battery."""
+    """Return the repair issue id for a depleted CR2032 coin cell."""
     return f"battery_low_{entry.entry_id}"
 
 
@@ -198,11 +198,11 @@ class _BatteryLowTracker:
 def _update_battery_low_issue(
     hass: HomeAssistant, entry: ConfigEntry, updater, tracker: _BatteryLowTracker
 ) -> None:
-    """Raise or clear the low RTC-battery warning based on the latest poll.
+    """Raise or clear the low coin-cell warning based on the latest poll.
 
-    The CR2032 coin cell only keeps the charger's clock/settings, so this is a
-    non-fixable informational warning (the fix is a physical battery swap) that
-    auto-clears once the replacement reads healthy.
+    The CR2032 is not used for charging, so this is a non-fixable informational
+    warning (the fix is a physical battery swap) that auto-clears once the
+    replacement reads healthy.
     """
     value = get_safe_value(updater.data, "vBat", float) if updater.data else None
     decision = tracker.evaluate(value)
@@ -506,8 +506,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         entry.async_on_unload(updater.async_add_listener(_refresh_ocpp_issue))
         _refresh_ocpp_issue()
 
-        # Track the RTC backup battery (vBat) across polls and warn when the
-        # CR2032 is depleted, with debounce/hysteresis held in the tracker.
+        # Track the CR2032 coin cell (vBat) across polls and warn when it is
+        # depleted, with debounce/hysteresis held in the tracker.
         battery_tracker = _BatteryLowTracker()
 
         @callback
