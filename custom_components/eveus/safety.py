@@ -12,9 +12,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Mapping
 
+from homeassistant.helpers import issue_registry as ir
+
 from .const import (
     CHARGING_STATES,
     DEVICE_STATE_ERROR,
+    DOMAIN,
     ERROR_STATES,
     FAULT_RECOVERY_POLLS,
     GROUND_CLEAR_POLLS,
@@ -296,3 +299,127 @@ def evaluate_policy_signals(
         recovered = True
 
     return trigger, recovered
+
+
+def matching_firmware_fault(policy: SafetyPolicy, data: Mapping[str, Any]) -> bool:
+    """Return whether the current payload carries this policy's firmware fault."""
+    fault = _fault_code(data)
+    return isinstance(fault, int) and fault in policy.fault_codes
+
+
+def _create_issue(hass, entry, policy: SafetyPolicy) -> None:
+    """Create one persistent, non-fixable safety issue."""
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        safety_issue_id(entry, policy.key),
+        is_fixable=False,
+        is_persistent=True,
+        issue_domain=DOMAIN,
+        severity=(
+            ir.IssueSeverity.WARNING
+            if policy.key == "ground_control_disabled"
+            else ir.IssueSeverity.ERROR
+        ),
+        translation_key=f"safety_{policy.key}",
+    )
+
+
+@dataclass(slots=True)
+class SafetyPolicyState:
+    """Mutable per-policy debounce/recovery counters."""
+
+    trigger_streak: int = 0
+    recovery_streak: int = 0
+    recovered: bool = False
+
+
+class EveusSafetyManager:
+    """Evaluate and reconcile safety issues for one config entry.
+
+    Registered as a coordinator listener: each successful poll runs ``process``,
+    which holds debounce, recovery hysteresis, latching, and ignored-issue
+    handling. It performs no I/O and sends no charger commands.
+    """
+
+    def __init__(self, hass, entry, updater) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._updater = updater
+        self._states = {policy.key: SafetyPolicyState() for policy in POLICIES}
+
+    def process(self) -> None:
+        """Reconcile every policy against the latest successful payload.
+
+        A failed or unavailable poll is skipped entirely so stale cached data is
+        never replayed into a debounce or recovery streak.
+        """
+        if (
+            not self._updater.available
+            or not self._updater.last_update_success
+            or not isinstance(self._updater.data, dict)
+        ):
+            return
+        data = self._updater.data
+        for policy in POLICIES:
+            self._process_policy(policy, self._states[policy.key], data)
+
+    def _process_policy(
+        self,
+        policy: SafetyPolicy,
+        state: SafetyPolicyState,
+        data: Mapping[str, Any],
+    ) -> None:
+        """Reconcile one policy against one fresh successful payload."""
+        trigger, recovered = evaluate_policy_signals(policy, data)
+        issue_id = safety_issue_id(self._entry, policy.key)
+        issue = ir.async_get(self._hass).async_get_issue(DOMAIN, issue_id)
+
+        if trigger is True:
+            state.recovery_streak = 0
+            state.recovered = False
+            if matching_firmware_fault(policy, data):
+                # An authoritative fault bypasses raw debounce entirely.
+                state.trigger_streak = policy.trigger_polls
+            else:
+                state.trigger_streak = min(
+                    state.trigger_streak + 1, policy.trigger_polls
+                )
+            if state.trigger_streak >= policy.trigger_polls and issue is None:
+                _create_issue(self._hass, self._entry, policy)
+            return
+
+        # trigger is False -> condition absent; None -> unknown, leave streak.
+        if trigger is False:
+            state.trigger_streak = 0
+
+        if issue is None:
+            state.recovery_streak = 0
+            state.recovered = False
+            return
+
+        if recovered is True:
+            state.recovery_streak = min(
+                state.recovery_streak + 1, policy.recovery_polls
+            )
+            state.recovered = state.recovery_streak >= policy.recovery_polls
+        elif recovered is False:
+            state.recovery_streak = 0
+            state.recovered = False
+        # recovered is None -> unknown: leave recovery streak untouched.
+
+        if not state.recovered:
+            return
+
+        # Auto-clear issues delete on confirmed recovery. Latched issues persist
+        # until the user has also pressed Ignore (dismissed_version set);
+        # deleting then clears HA's stored dismissal so a future separate
+        # incident with the same ID can alert again.
+        if (
+            policy.lifecycle is SafetyLifecycle.AUTO_CLEAR
+            or issue.dismissed_version is not None
+        ):
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+            state.trigger_streak = 0
+            state.recovery_streak = 0
+            state.recovered = False

@@ -11,9 +11,18 @@ import pytest
 
 from homeassistant.helpers import issue_registry as ir
 
-from custom_components.eveus.const import ERROR_STATES
+from custom_components.eveus.const import (
+    DOMAIN,
+    ERROR_STATES,
+    GROUND_CONTROL_TRIGGER_POLLS,
+    GROUND_TRIGGER_POLLS,
+    LEAKAGE_TRIGGER_POLLS,
+    TEMPERATURE_RECOVERY_POLLS,
+    TEMPERATURE_TRIGGER_POLLS,
+)
 from custom_components.eveus.safety import (
     POLICIES,
+    EveusSafetyManager,
     SafetyLifecycle,
     evaluate_policy_signals,
     safety_issue_id,
@@ -205,3 +214,209 @@ def test_unknown_or_corrupt_values_leave_signals_unknown() -> None:
 def test_matching_firmware_fault_triggers_immediately() -> None:
     assert _signals("plug_overheat", {"state": 7, "subState": 6})[0] is True
     assert _signals("leakage_detected", {"state": 7, "subState": 4})[0] is True
+
+
+def _manager(payload: dict[str, object] | None = None):
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(entry_id="entry")
+    updater = SimpleNamespace(
+        data={} if payload is None else payload,
+        available=True,
+        last_update_success=True,
+    )
+    return hass, entry, updater, EveusSafetyManager(hass, entry, updater)
+
+
+def _issue(hass, entry, key: str):
+    return ir.async_get(hass).async_get_issue("eveus", safety_issue_id(entry, key))
+
+
+def test_raw_temperature_requires_consecutive_valid_polls() -> None:
+    hass, entry, updater, manager = _manager({"state": 2, "temperature1": 85})
+    for _ in range(TEMPERATURE_TRIGGER_POLLS - 1):
+        manager.process()
+        assert _issue(hass, entry, "box_overheat") is None
+    manager.process()
+    assert _issue(hass, entry, "box_overheat") is not None
+
+
+def test_healthy_reading_resets_partial_trigger_streak() -> None:
+    hass, entry, updater, manager = _manager({"state": 2, "ground": 0})
+    for _ in range(GROUND_TRIGGER_POLLS - 1):
+        manager.process()
+    updater.data = {"state": 2, "ground": 1}
+    manager.process()
+    updater.data = {"state": 2, "ground": 0}
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is None
+
+
+def test_unknown_reading_neither_advances_nor_resets_streak() -> None:
+    hass, entry, updater, manager = _manager({"state": 2, "leakValue": 30})
+    manager.process()
+    updater.data = {"state": 2}
+    manager.process()
+    assert _issue(hass, entry, "leakage_detected") is None
+    updater.data = {"state": 2, "leakValue": 30}
+    manager.process()
+    assert _issue(hass, entry, "leakage_detected") is not None
+
+
+def test_failed_poll_does_not_replay_stale_data_into_debounce() -> None:
+    hass, entry, updater, manager = _manager({"state": 2, "temperature1": 85})
+    manager.process()
+    updater.available = False
+    updater.last_update_success = False
+    manager.process()
+    assert _issue(hass, entry, "box_overheat") is None
+    updater.available = True
+    updater.last_update_success = True
+    manager.process()
+    assert _issue(hass, entry, "box_overheat") is not None
+
+
+def test_firmware_fault_bypasses_raw_debounce() -> None:
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    manager.process()
+    assert _issue(hass, entry, "box_overheat") is not None
+
+
+def test_ground_missing_auto_clears_after_confirmed_recovery() -> None:
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 1, "ground": 0})
+    manager.process()
+    updater.data = {"state": 2, "ground": 1}
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is None
+
+
+def test_recovered_latched_issue_remains_until_ignored() -> None:
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    manager.process()
+    updater.data = {"state": 2, "temperature1": 70}
+    for _ in range(TEMPERATURE_RECOVERY_POLLS):
+        manager.process()
+    assert _issue(hass, entry, "box_overheat") is not None
+    ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
+    manager.process()
+    assert _issue(hass, entry, "box_overheat") is None
+
+
+def test_ignored_active_latched_issue_waits_for_recovery() -> None:
+    hass, entry, updater, manager = _manager(
+        {"state": 7, "subState": 2, "leakValue": 40}
+    )
+    manager.process()
+    ir.async_ignore_issue(
+        hass, "eveus", safety_issue_id(entry, "leakage_detected"), True
+    )
+    manager.process()
+    assert _issue(hass, entry, "leakage_detected") is not None
+
+
+def test_deleted_recovered_issue_can_alert_on_future_incident() -> None:
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    manager.process()
+    ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
+    updater.data = {"state": 2, "temperature1": 70}
+    for _ in range(TEMPERATURE_RECOVERY_POLLS):
+        manager.process()
+    assert _issue(hass, entry, "box_overheat") is None
+    updater.data = {"state": 7, "subState": 5}
+    manager.process()
+    assert _issue(hass, entry, "box_overheat") is not None
+    assert _issue(hass, entry, "box_overheat").dismissed_version is None
+
+
+def test_unknown_poll_leaves_existing_issue_and_recovery_streak_untouched() -> None:
+    # Raise via firmware fault, take one confirmed-recovery poll, then feed an
+    # unknown poll: it must neither delete the issue nor reset the recovery
+    # streak, so the next valid recovery poll still completes the clear.
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 1, "ground": 0})
+    manager.process()
+    updater.data = {"state": 2, "ground": 1}
+    manager.process()  # recovery streak -> 1 of GROUND_CLEAR_POLLS (2)
+    assert _issue(hass, entry, "ground_missing") is not None
+
+    updater.data = {}  # unknown: trigger and recovered both None
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None  # not advanced/cleared
+
+    updater.data = {"state": 2, "ground": 1}
+    manager.process()  # streak preserved at 1 -> now 2 -> auto-clear
+    assert _issue(hass, entry, "ground_missing") is None
+
+
+def test_recurring_condition_resets_recovery_streak_before_clear() -> None:
+    # A reading in the hysteresis band (75 < t < 85) neither triggers nor counts
+    # as recovered; while the issue is open it must reset banked recovery so a
+    # later clear needs the full streak again. Made observable by ignoring first
+    # (latched + ignored deletes on confirmed recovery).
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    manager.process()  # firmware overheat -> issue raised
+    ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
+
+    updater.data = {"state": 2, "temperature1": 70}
+    manager.process()  # recovery streak -> 1
+    updater.data = {"state": 2, "temperature1": 80}  # band: not recovered
+    manager.process()  # recovery streak reset to 0
+    assert _issue(hass, entry, "box_overheat") is not None
+
+    updater.data = {"state": 2, "temperature1": 70}
+    manager.process()  # streak 1
+    manager.process()  # streak 2 -> would clear here had the reset not happened
+    assert _issue(hass, entry, "box_overheat") is not None
+    manager.process()  # streak 3 of TEMPERATURE_RECOVERY_POLLS -> clears
+    assert _issue(hass, entry, "box_overheat") is None
+
+
+@pytest.mark.parametrize(
+    ("key", "payload", "polls", "expected_severity"),
+    [
+        ("ground_missing", {"state": 7, "subState": 1}, 1, ir.IssueSeverity.ERROR),
+        (
+            "ground_control_disabled",
+            {"state": 2, "groundCtrl": 0},
+            GROUND_CONTROL_TRIGGER_POLLS,
+            ir.IssueSeverity.WARNING,
+        ),
+        ("leakage_detected", {"state": 7, "subState": 2}, 1, ir.IssueSeverity.ERROR),
+        ("relay_fault", {"state": 7, "subState": 3}, 1, ir.IssueSeverity.ERROR),
+        ("box_overheat", {"state": 7, "subState": 5}, 1, ir.IssueSeverity.ERROR),
+        ("plug_overheat", {"state": 7, "subState": 6}, 1, ir.IssueSeverity.ERROR),
+        ("pilot_fault", {"state": 7, "subState": 7}, 1, ir.IssueSeverity.ERROR),
+        ("low_voltage", {"state": 7, "subState": 8}, 1, ir.IssueSeverity.ERROR),
+        ("diode_fault", {"state": 7, "subState": 9}, 1, ir.IssueSeverity.ERROR),
+        ("overcurrent", {"state": 7, "subState": 10}, 1, ir.IssueSeverity.ERROR),
+        ("interface_timeout", {"state": 7, "subState": 11}, 1, ir.IssueSeverity.ERROR),
+        ("software_failure", {"state": 7, "subState": 12}, 1, ir.IssueSeverity.ERROR),
+        ("gfci_test_failure", {"state": 7, "subState": 13}, 1, ir.IssueSeverity.ERROR),
+        ("high_voltage", {"state": 7, "subState": 14}, 1, ir.IssueSeverity.ERROR),
+    ],
+)
+def test_issue_creation_metadata_and_no_active_poll_churn(
+    monkeypatch, key, payload, polls, expected_severity
+) -> None:
+    original_create = ir.async_create_issue
+    create_calls = []
+
+    def capture_create(hass, domain, issue_id, **kwargs):
+        create_calls.append((domain, issue_id, kwargs))
+        original_create(hass, domain, issue_id, **kwargs)
+
+    monkeypatch.setattr(ir, "async_create_issue", capture_create)
+    hass, entry, updater, manager = _manager(payload)
+
+    for _ in range(polls):
+        manager.process()
+    manager.process()
+
+    assert len(create_calls) == 1
+    domain, issue_id, kwargs = create_calls[0]
+    assert domain == DOMAIN
+    assert issue_id == safety_issue_id(entry, key)
+    assert kwargs["is_fixable"] is False
+    assert kwargs["is_persistent"] is True
+    assert kwargs["severity"] is expected_severity
+    assert kwargs["translation_key"] == f"safety_{key}"
