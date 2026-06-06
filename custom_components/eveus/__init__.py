@@ -518,9 +518,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         # Surface dangerous charger conditions (missing ground, leakage,
         # overheat, and firmware safety faults) as Home Assistant Repairs
-        # notices. The manager owns its own debounce/hysteresis/latching and is
-        # deliberately not torn down on unload, so incidents and ignored state
-        # survive reloads, restarts, and temporary charger outages.
+        # notices. The manager owns its own debounce/hysteresis/latching. Its
+        # listener is removed on unload (below), and its in-memory streaks reset
+        # on reload — but the safety issues themselves are persistent and are
+        # deliberately never deleted on unload, so incidents and ignored state
+        # survive reloads, restarts, and temporary charger outages; the manager
+        # reconciles recovery against the surviving issue after the next poll.
         from .safety import EveusSafetyManager
 
         safety_manager = EveusSafetyManager(hass, entry, updater)

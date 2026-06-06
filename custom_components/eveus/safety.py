@@ -271,13 +271,21 @@ def evaluate_policy_signals(
     one with no raw recovery treats raw as already recovered so recovery depends
     only on the firmware fault clearing.
     """
-    fault = _fault_code(data)
-    if fault is _UNKNOWN:
-        fault_matches: bool | None = None
-        fault_recovered: bool | None = None
+    if not policy.fault_codes:
+        # Purely raw policy (e.g. ground control disabled): the charger has no
+        # firmware fault code for it, so the firmware state is irrelevant and
+        # must not gate trigger or recovery — otherwise an unrelated malformed
+        # `state` field would freeze an auto-clear notice forever.
+        fault_matches: bool | None = False
+        fault_recovered: bool | None = True
     else:
-        fault_matches = fault in policy.fault_codes
-        fault_recovered = not fault_matches
+        fault = _fault_code(data)
+        if fault is _UNKNOWN:
+            fault_matches = None
+            fault_recovered = None
+        else:
+            fault_matches = fault in policy.fault_codes
+            fault_recovered = not fault_matches
 
     raw_trigger = policy.raw_trigger(data) if policy.raw_trigger else False
     raw_recovered = policy.raw_recovered(data) if policy.raw_recovered else True

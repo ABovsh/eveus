@@ -183,6 +183,22 @@ def test_ground_control_disabled_is_a_separate_signal() -> None:
     )
 
 
+def test_ground_control_disabled_recovers_despite_unknown_state() -> None:
+    # This policy has no firmware fault code: it is purely a groundCtrl raw
+    # check. A malformed/missing `state` field must not block its recovery when
+    # groundCtrl reads enabled, or an auto-clear notice could persist forever.
+    assert _signals("ground_control_disabled", {"groundCtrl": 1}) == (False, True)
+    assert (
+        _signals(
+            "ground_control_disabled",
+            {"state": 7, "subState": 99, "groundCtrl": 1},
+        )
+        == (False, True)
+    )
+    # But an unknown groundCtrl itself must still leave recovery unknown.
+    assert _signals("ground_control_disabled", {"state": 2})[1] is None
+
+
 def test_temperature_uses_85_trigger_and_75_recovery_hysteresis() -> None:
     assert _signals("box_overheat", {"state": 2, "temperature1": 85}) == (True, False)
     assert _signals("box_overheat", {"state": 2, "temperature1": 80}) == (False, False)
