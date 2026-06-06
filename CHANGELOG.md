@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.12.0 - Unreleased
+
+### ✨ Added
+- **Safety problems now surface in Home Assistant Repairs.** Eveus reports dangerous grounding, leakage, overheating, and charger fault conditions with conservative confirmation rules to avoid false alarms.
+
 ## 4.11.0 - 2026-06-05
 
 ### ✨ Added
