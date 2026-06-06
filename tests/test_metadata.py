@@ -26,15 +26,12 @@ def test_manifest_domain_matches_integration_directory() -> None:
 
 
 def test_manifest_readme_and_changelog_versions_match() -> None:
-    """Manifest, README badge and CHANGELOG must agree, branch-appropriately.
+    """Manifest, README badge and CHANGELOG must agree.
 
-    The README badge mirrors the manifest version **exactly**, so the value is
-    correct on whatever branch it lives on. ``main`` carries the final patch
-    version ``X.Y.Z`` (badge ``version-X.Y.Z``). The ephemeral ``X.Y-rc``
-    branch carries the minor-line pre-release marker ``X.Y-rc`` — no patch
-    number (badge ``version-X.Y--rc``); shields.io escapes a literal ``-`` as
-    ``--``. The CHANGELOG entry is keyed on the version line: the exact
-    ``## X.Y.Z`` on main, or any ``## X.Y.`` patch on that minor while on rc.
+    Home Assistant's manifest validator accepts final ``X.Y.Z`` versions and
+    PEP 440-style prereleases such as ``X.Y.Zb1``. The README badge mirrors the
+    manifest version exactly. Prereleases document changes under the matching
+    final-version CHANGELOG heading.
     """
     import re
 
@@ -45,21 +42,18 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     changelog = (ROOT / "CHANGELOG.md").read_text()
 
     version = manifest["version"]
-    is_rc = version.endswith("-rc")
+    final_match = re.fullmatch(r"(\d+\.\d+\.\d+)", version)
+    prerelease_match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:a|b|rc)\d+", version)
+    assert final_match or prerelease_match, version
 
     # README badge mirrors the manifest version verbatim (shields escapes - as --).
     badge_version = version.replace("-", "--")
     assert f"version-{badge_version}-blue" in readme
 
-    if is_rc:
-        # rc branch: minor-line marker only, e.g. "4.12-rc".
-        assert re.match(r"^\d+\.\d+-rc$", version), version
-        minor = version[: -len("-rc")]
-        assert f"## {minor}." in changelog
-    else:
-        # main: final patch version, e.g. "4.11.0".
-        assert re.match(r"^\d+\.\d+\.\d+$", version), version
-        assert f"## {version}" in changelog
+    changelog_version = (
+        prerelease_match.group(1) if prerelease_match is not None else version
+    )
+    assert f"## {changelog_version}" in changelog
 
 
 def test_hacs_metadata_has_allowed_keys_only() -> None:
