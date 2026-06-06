@@ -39,6 +39,9 @@ from .const import (
     MAX_POWER_W,
     MAX_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
+    MIN_VALID_TEMPERATURE_C,
+    MAX_VALID_TEMPERATURE_C,
+    MAX_VALID_LEAKAGE_CURRENT_MA,
 )
 from .utils import RateLog, get_safe_value, format_duration
 
@@ -70,10 +73,9 @@ _MAX_SCHEDULE_KWH = 200
 # Sanity ceilings for the remaining MEASUREMENT sensors that feed HA long-term
 # statistics. Without an upper bound a corrupt-but-finite firmware outlier (e.g.
 # temperature1 1e9, tarif 1e100) is recorded permanently and poisons history.
-# Generous on purpose — real readings sit far below these.
-_MIN_TEMPERATURE = -40
-_MAX_TEMPERATURE = 150
-_MAX_LEAK_CURRENT = 100_000
+# Generous on purpose — real readings sit far below these. Temperature and
+# leakage bounds are shared with safety.py (via const) so the display sensors
+# and the safety detector apply identical physical-sanity limits.
 # `tarif*` fields are reported in hundredths; bound the raw value (checked before
 # the /100 transform) so the published per-kWh rate cannot exceed ~100k.
 _MAX_RATE_HUNDREDTHS = 10_000_000
@@ -337,19 +339,25 @@ get_rate3_cost = _make_value_getter(
 
 # Temperature getters
 get_box_temperature = _make_value_getter(
-    "temperature1", precision=0, minimum=_MIN_TEMPERATURE, maximum=_MAX_TEMPERATURE
+    "temperature1",
+    precision=0,
+    minimum=MIN_VALID_TEMPERATURE_C,
+    maximum=MAX_VALID_TEMPERATURE_C,
 )
 get_plug_temperature = _make_value_getter(
-    "temperature2", precision=0, minimum=_MIN_TEMPERATURE, maximum=_MAX_TEMPERATURE
+    "temperature2",
+    precision=0,
+    minimum=MIN_VALID_TEMPERATURE_C,
+    maximum=MAX_VALID_TEMPERATURE_C,
 )
 
 # Other diagnostic getters
 get_battery_voltage = _make_value_getter("vBat", precision=2, minimum=0, maximum=_MAX_VOLTAGE)
 get_leak_current = _make_value_getter(
-    "leakValue", precision=0, minimum=0, maximum=_MAX_LEAK_CURRENT
+    "leakValue", precision=0, minimum=0, maximum=MAX_VALID_LEAKAGE_CURRENT_MA
 )
 get_leak_current_peak = _make_value_getter(
-    "leakValueH", precision=0, minimum=0, maximum=_MAX_LEAK_CURRENT
+    "leakValueH", precision=0, minimum=0, maximum=MAX_VALID_LEAKAGE_CURRENT_MA
 )
 # RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
 get_wifi_rssi = _make_value_getter("RSSI", precision=0, minimum=-120, maximum=0)

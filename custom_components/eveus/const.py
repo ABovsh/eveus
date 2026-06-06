@@ -46,6 +46,28 @@ BATTERY_LOW_THRESHOLD_VOLTS: Final[float] = 2.0
 BATTERY_OK_THRESHOLD_VOLTS: Final[float] = 2.3
 BATTERY_LOW_DEBOUNCE_POLLS: Final[int] = 3
 
+# Safety repair thresholds. Firmware faults trigger immediately; raw telemetry
+# requires consecutive valid polls and recovery hysteresis to prevent flapping.
+GROUND_TRIGGER_POLLS: Final[int] = 3
+GROUND_CLEAR_POLLS: Final[int] = 2
+GROUND_CONTROL_TRIGGER_POLLS: Final[int] = 3
+GROUND_CONTROL_CLEAR_POLLS: Final[int] = 2
+
+TEMPERATURE_HIGH_C: Final[float] = 85.0
+TEMPERATURE_RECOVERED_C: Final[float] = 75.0
+TEMPERATURE_TRIGGER_POLLS: Final[int] = 2
+TEMPERATURE_RECOVERY_POLLS: Final[int] = 3
+MIN_VALID_TEMPERATURE_C: Final[float] = -40.0
+MAX_VALID_TEMPERATURE_C: Final[float] = 150.0
+
+LEAKAGE_HIGH_MA: Final[float] = 30.0
+LEAKAGE_RECOVERED_MA: Final[float] = 15.0
+LEAKAGE_TRIGGER_POLLS: Final[int] = 2
+LEAKAGE_RECOVERY_POLLS: Final[int] = 3
+MAX_VALID_LEAKAGE_CURRENT_MA: Final[float] = 100_000.0
+
+FAULT_RECOVERY_POLLS: Final[int] = 2
+
 # Current limits
 MIN_CURRENT: Final[int] = 7
 MODEL_16A: Final[str] = "16A"

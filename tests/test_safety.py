@@ -9,6 +9,13 @@ import pytest
 
 from homeassistant.helpers import issue_registry as ir
 
+from custom_components.eveus.const import ERROR_STATES
+from custom_components.eveus.safety import (
+    POLICIES,
+    SafetyLifecycle,
+    safety_issue_id,
+)
+
 
 # ---------------------------------------------------------------------------
 # In-memory issue-registry double.
@@ -99,3 +106,29 @@ def test_fake_issue_registry_models_ignored_state() -> None:
     issue = ir.async_get(hass).async_get_issue("eveus", "safety_test_entry")
     assert issue is not None
     assert issue.dismissed_version is not None
+
+
+def test_all_firmware_fault_codes_are_covered_exactly_once() -> None:
+    owners: dict[int, list[str]] = {code: [] for code in ERROR_STATES if code != 0}
+    for policy in POLICIES:
+        for code in policy.fault_codes:
+            owners[code].append(policy.key)
+
+    assert set(owners) == set(range(1, 15))
+    assert all(len(policy_keys) == 1 for policy_keys in owners.values())
+    assert owners[2] == ["leakage_detected"]
+    assert owners[4] == ["leakage_detected"]
+
+
+def test_policy_lifecycles_match_safety_contract() -> None:
+    by_key = {policy.key: policy for policy in POLICIES}
+    assert by_key["ground_missing"].lifecycle is SafetyLifecycle.AUTO_CLEAR
+    assert by_key["ground_control_disabled"].lifecycle is SafetyLifecycle.AUTO_CLEAR
+    for key in set(by_key) - {"ground_missing", "ground_control_disabled"}:
+        assert by_key[key].lifecycle is SafetyLifecycle.LATCHED
+
+
+def test_safety_issue_ids_are_entry_scoped() -> None:
+    one = SimpleNamespace(entry_id="one")
+    two = SimpleNamespace(entry_id="two")
+    assert safety_issue_id(one, "box_overheat") != safety_issue_id(two, "box_overheat")
