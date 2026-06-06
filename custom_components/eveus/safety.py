@@ -13,16 +13,27 @@ from enum import Enum
 from typing import Any, Callable, Mapping
 
 from .const import (
+    CHARGING_STATES,
+    DEVICE_STATE_ERROR,
+    ERROR_STATES,
     FAULT_RECOVERY_POLLS,
     GROUND_CLEAR_POLLS,
     GROUND_CONTROL_CLEAR_POLLS,
     GROUND_CONTROL_TRIGGER_POLLS,
     GROUND_TRIGGER_POLLS,
+    LEAKAGE_HIGH_MA,
+    LEAKAGE_RECOVERED_MA,
     LEAKAGE_RECOVERY_POLLS,
     LEAKAGE_TRIGGER_POLLS,
+    MAX_VALID_LEAKAGE_CURRENT_MA,
+    MAX_VALID_TEMPERATURE_C,
+    MIN_VALID_TEMPERATURE_C,
+    TEMPERATURE_HIGH_C,
+    TEMPERATURE_RECOVERED_C,
     TEMPERATURE_RECOVERY_POLLS,
     TEMPERATURE_TRIGGER_POLLS,
 )
+from .utils import get_safe_value
 
 # A raw-telemetry signal returns True (condition present), False (absent), or
 # None (unknown — missing/corrupt/out-of-domain data that must not move any
@@ -75,17 +86,106 @@ def _policy(
     )
 
 
+# Sentinel distinct from ``None``: ``None`` means "no firmware fault", whereas
+# ``_UNKNOWN`` means the fault state itself could not be read and must not move
+# any counter.
+_UNKNOWN = object()
+
+
+def _fault_code(data: Mapping[str, Any]) -> int | None | object:
+    """Return the firmware fault code, ``None`` (no fault), or ``_UNKNOWN``.
+
+    ``_UNKNOWN`` covers a missing/out-of-domain ``state`` or, while in the error
+    state, a missing/out-of-domain ``subState`` — neither may advance or reset a
+    trigger or recovery streak.
+    """
+    state = get_safe_value(data, "state", int)
+    if state not in CHARGING_STATES:
+        return _UNKNOWN
+    if state != DEVICE_STATE_ERROR:
+        return None
+    substate = get_safe_value(data, "subState", int)
+    return substate if substate in ERROR_STATES and substate != 0 else _UNKNOWN
+
+
+def _equals(key: str, expected: int, allowed: frozenset[int]) -> Signal:
+    """Tri-state equality on an enum field; unknown when value is out of domain."""
+
+    def evaluate(data: Mapping[str, Any]) -> bool | None:
+        value = get_safe_value(data, key, int)
+        if value not in allowed:
+            return None
+        return value == expected
+
+    return evaluate
+
+
+def _bounded_float(
+    key: str, *, minimum: float, maximum: float
+) -> Callable[[Mapping[str, Any]], float | None]:
+    """Return a finite reading within physical bounds, else ``None`` (unknown).
+
+    A finite but impossible outlier (e.g. ``temperature1=1e9``) is unknown, not
+    an event — the same physical-sanity bounds the display sensors apply.
+    """
+
+    def evaluate(data: Mapping[str, Any]) -> float | None:
+        value = get_safe_value(data, key, float)
+        if value is None or not minimum <= value <= maximum:
+            return None
+        return value
+
+    return evaluate
+
+
+def _at_least(key: str, threshold: float, *, minimum: float, maximum: float) -> Signal:
+    value_of = _bounded_float(key, minimum=minimum, maximum=maximum)
+
+    def evaluate(data: Mapping[str, Any]) -> bool | None:
+        value = value_of(data)
+        return None if value is None else value >= threshold
+
+    return evaluate
+
+
+def _at_most(key: str, threshold: float, *, minimum: float, maximum: float) -> Signal:
+    value_of = _bounded_float(key, minimum=minimum, maximum=maximum)
+
+    def evaluate(data: Mapping[str, Any]) -> bool | None:
+        value = value_of(data)
+        return None if value is None else value <= threshold
+
+    return evaluate
+
+
+def _below(key: str, threshold: float, *, minimum: float, maximum: float) -> Signal:
+    value_of = _bounded_float(key, minimum=minimum, maximum=maximum)
+
+    def evaluate(data: Mapping[str, Any]) -> bool | None:
+        value = value_of(data)
+        return None if value is None else value < threshold
+
+    return evaluate
+
+
+_GROUND_DOMAIN = frozenset({0, 1})
+
+
 POLICIES: tuple[SafetyPolicy, ...] = (
     _policy(
         "ground_missing",
         1,
         lifecycle=SafetyLifecycle.AUTO_CLEAR,
+        raw_trigger=_equals("ground", 0, _GROUND_DOMAIN),
+        raw_recovered=_equals("ground", 1, _GROUND_DOMAIN),
         trigger_polls=GROUND_TRIGGER_POLLS,
         recovery_polls=GROUND_CLEAR_POLLS,
     ),
     _policy(
         "ground_control_disabled",
         lifecycle=SafetyLifecycle.AUTO_CLEAR,
+        raw_trigger=_equals("groundCtrl", 0, _GROUND_DOMAIN),
+        raw_recovered=_equals("groundCtrl", 1, _GROUND_DOMAIN),
         trigger_polls=GROUND_CONTROL_TRIGGER_POLLS,
         recovery_polls=GROUND_CONTROL_CLEAR_POLLS,
     ),
@@ -93,6 +193,18 @@ POLICIES: tuple[SafetyPolicy, ...] = (
         "leakage_detected",
         2,
         4,
+        raw_trigger=_at_least(
+            "leakValue",
+            LEAKAGE_HIGH_MA,
+            minimum=0,
+            maximum=MAX_VALID_LEAKAGE_CURRENT_MA,
+        ),
+        raw_recovered=_below(
+            "leakValue",
+            LEAKAGE_RECOVERED_MA,
+            minimum=0,
+            maximum=MAX_VALID_LEAKAGE_CURRENT_MA,
+        ),
         trigger_polls=LEAKAGE_TRIGGER_POLLS,
         recovery_polls=LEAKAGE_RECOVERY_POLLS,
     ),
@@ -100,12 +212,36 @@ POLICIES: tuple[SafetyPolicy, ...] = (
     _policy(
         "box_overheat",
         5,
+        raw_trigger=_at_least(
+            "temperature1",
+            TEMPERATURE_HIGH_C,
+            minimum=MIN_VALID_TEMPERATURE_C,
+            maximum=MAX_VALID_TEMPERATURE_C,
+        ),
+        raw_recovered=_at_most(
+            "temperature1",
+            TEMPERATURE_RECOVERED_C,
+            minimum=MIN_VALID_TEMPERATURE_C,
+            maximum=MAX_VALID_TEMPERATURE_C,
+        ),
         trigger_polls=TEMPERATURE_TRIGGER_POLLS,
         recovery_polls=TEMPERATURE_RECOVERY_POLLS,
     ),
     _policy(
         "plug_overheat",
         6,
+        raw_trigger=_at_least(
+            "temperature2",
+            TEMPERATURE_HIGH_C,
+            minimum=MIN_VALID_TEMPERATURE_C,
+            maximum=MAX_VALID_TEMPERATURE_C,
+        ),
+        raw_recovered=_at_most(
+            "temperature2",
+            TEMPERATURE_RECOVERED_C,
+            minimum=MIN_VALID_TEMPERATURE_C,
+            maximum=MAX_VALID_TEMPERATURE_C,
+        ),
         trigger_polls=TEMPERATURE_TRIGGER_POLLS,
         recovery_polls=TEMPERATURE_RECOVERY_POLLS,
     ),
@@ -118,3 +254,45 @@ POLICIES: tuple[SafetyPolicy, ...] = (
     _policy("gfci_test_failure", 13),
     _policy("high_voltage", 14),
 )
+
+
+def evaluate_policy_signals(
+    policy: SafetyPolicy, data: Mapping[str, Any]
+) -> tuple[bool | None, bool | None]:
+    """Return ``(trigger, recovered)`` tri-state signals for one policy.
+
+    An authoritative firmware fault wins immediately. Otherwise the raw signal
+    decides. ``None`` (unknown) is preserved end-to-end so the caller never
+    advances or resets a streak from missing/corrupt data. A policy with no raw
+    trigger cannot fire from raw telemetry (``raw_trigger`` defaults to absent);
+    one with no raw recovery treats raw as already recovered so recovery depends
+    only on the firmware fault clearing.
+    """
+    fault = _fault_code(data)
+    if fault is _UNKNOWN:
+        fault_matches: bool | None = None
+        fault_recovered: bool | None = None
+    else:
+        fault_matches = fault in policy.fault_codes
+        fault_recovered = not fault_matches
+
+    raw_trigger = policy.raw_trigger(data) if policy.raw_trigger else False
+    raw_recovered = policy.raw_recovered(data) if policy.raw_recovered else True
+
+    if fault_matches is True or raw_trigger is True:
+        trigger: bool | None = True
+    elif policy.raw_trigger is not None and raw_trigger is None:
+        trigger = None
+    elif policy.raw_trigger is None and fault_matches is None:
+        trigger = None
+    else:
+        trigger = False
+
+    if fault_recovered is False or raw_recovered is False:
+        recovered: bool | None = False
+    elif fault_recovered is None or raw_recovered is None:
+        recovered = None
+    else:
+        recovered = True
+
+    return trigger, recovered

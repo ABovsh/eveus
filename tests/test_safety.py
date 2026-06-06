@@ -1,7 +1,9 @@
 """Tests for Eveus safety Repairs notices."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,8 +15,16 @@ from custom_components.eveus.const import ERROR_STATES
 from custom_components.eveus.safety import (
     POLICIES,
     SafetyLifecycle,
+    evaluate_policy_signals,
     safety_issue_id,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _signals(key: str, payload: dict[str, object]) -> tuple[bool | None, bool | None]:
+    policy = next(policy for policy in POLICIES if policy.key == key)
+    return evaluate_policy_signals(policy, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -132,3 +142,66 @@ def test_safety_issue_ids_are_entry_scoped() -> None:
     one = SimpleNamespace(entry_id="one")
     two = SimpleNamespace(entry_id="two")
     assert safety_issue_id(one, "box_overheat") != safety_issue_id(two, "box_overheat")
+
+
+def test_real_safe_payload_has_no_dangerous_trigger() -> None:
+    payload = json.loads((ROOT / "tests/fixtures/real_main_response.json").read_text())
+    triggered = {
+        policy.key
+        for policy in POLICIES
+        if evaluate_policy_signals(policy, payload)[0] is True
+    }
+    assert triggered == {"ground_control_disabled"}
+
+
+def test_missing_ground_triggers_even_when_ground_control_is_disabled() -> None:
+    trigger, recovered = _signals(
+        "ground_missing",
+        {"state": 2, "subState": 0, "ground": 0, "groundCtrl": 0},
+    )
+    assert trigger is True
+    assert recovered is False
+
+
+def test_ground_control_disabled_is_a_separate_signal() -> None:
+    assert _signals("ground_control_disabled", {"state": 2, "groundCtrl": 0}) == (
+        True,
+        False,
+    )
+    assert _signals("ground_control_disabled", {"state": 2, "groundCtrl": 1}) == (
+        False,
+        True,
+    )
+
+
+def test_temperature_uses_85_trigger_and_75_recovery_hysteresis() -> None:
+    assert _signals("box_overheat", {"state": 2, "temperature1": 85}) == (True, False)
+    assert _signals("box_overheat", {"state": 2, "temperature1": 80}) == (False, False)
+    assert _signals("box_overheat", {"state": 2, "temperature1": 75}) == (False, True)
+
+
+def test_leakage_peak_never_triggers_without_live_leakage() -> None:
+    assert _signals(
+        "leakage_detected",
+        {"state": 2, "leakValue": 0, "leakValueH": 90},
+    ) == (False, True)
+
+
+def test_unknown_or_corrupt_values_leave_signals_unknown() -> None:
+    for payload in (
+        {},
+        {"state": 2, "temperature1": None},
+        {"state": 2, "temperature1": True},
+        {"state": 2, "temperature1": float("nan")},
+        {"state": 2, "temperature1": 1e9},
+        {"state": 7},
+        {"state": 7, "subState": 99},
+    ):
+        trigger, recovered = _signals("box_overheat", payload)
+        assert trigger is None
+        assert recovered is None
+
+
+def test_matching_firmware_fault_triggers_immediately() -> None:
+    assert _signals("plug_overheat", {"state": 7, "subState": 6})[0] is True
+    assert _signals("leakage_detected", {"state": 7, "subState": 4})[0] is True
