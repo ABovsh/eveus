@@ -9,6 +9,8 @@ venv/
 # Internal/private docs & dev artifacts — never publish to GitHub
 # superpowers skill plans & specs
 docs/superpowers/
+# internal feature backlog & planning notes
+docs/internal/
 # /simplify, audit & review assessments
 *-assessment-*.md
 AUDIT_FINDINGS*.md
