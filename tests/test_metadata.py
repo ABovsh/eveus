@@ -11,6 +11,7 @@ from PIL import Image
 
 from conftest import TEST_HOST
 from custom_components.eveus.common_base import BaseEveusEntity
+from custom_components.eveus.safety import POLICIES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -241,6 +242,36 @@ def test_battery_low_warning_is_a_repair_issue_translation() -> None:
         issue = translations["issues"]["battery_low"]
         assert issue["title"]
         assert issue["description"]
+
+
+def test_all_safety_repair_issue_translations_are_present() -> None:
+    base = ROOT / "custom_components" / "eveus"
+    expected = {f"safety_{policy.key}" for policy in POLICIES}
+    loaded = {}
+    for relative in ("strings.json", "translations/en.json", "translations/uk.json"):
+        translations = json.loads((base / relative).read_text())
+        loaded[relative] = translations
+        for key in expected:
+            issue = translations["issues"][key]
+            assert issue["title"].startswith("Eveus:")
+            assert len(issue["title"]) <= 90
+            assert len(issue["description"]) <= 550
+
+    assert all(
+        "What to do:\n\n-"
+        in loaded["translations/en.json"]["issues"][key]["description"]
+        for key in expected
+    )
+    assert all(
+        "Що зробити:\n\n-"
+        in loaded["translations/uk.json"]["issues"][key]["description"]
+        for key in expected
+    )
+    assert all(
+        loaded["strings.json"]["issues"][key]
+        == loaded["translations/en.json"]["issues"][key]
+        for key in expected
+    )
 
 
 def test_ukrainian_translation_has_no_known_untranslated_ui_phrases() -> None:

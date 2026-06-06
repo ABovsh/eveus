@@ -335,6 +335,62 @@
         "battery_low": {
             "title": "Eveus: charger battery is low, replace it soon",
             "description": "The CR2032 coin-cell battery inside your Eveus charger is low.\n\nWhile it is low, some charger functions may be limited.\n\nWhat to do:\n\n- Replace it with a fresh, good-quality CR2032 cell.\n\nThe Eveus integration will clear this warning automatically once a new battery reads a healthy voltage."
+        },
+        "safety_ground_missing": {
+            "title": "Eveus: ground connection is missing, stop charging",
+            "description": "The charger reports no ground connection.\n\nCharging without a working ground can be dangerous.\n\nWhat to do:\n\n- Stop charging and have the grounding checked by a qualified electrician.\n\nThe Eveus integration will clear this warning automatically once the ground connection is stable."
+        },
+        "safety_ground_control_disabled": {
+            "title": "Eveus: ground protection is disabled",
+            "description": "Ground protection is disabled on the charger.\n\nThe charger may continue charging when the ground connection is missing.\n\nWhat to do:\n\n- Enable ground protection in the charger settings, if supported.\n\nIf this is intentional, press Ignore. The Eveus integration will clear this warning automatically after ground protection is enabled."
+        },
+        "safety_leakage_detected": {
+            "title": "Eveus: current leakage detected, stop charging",
+            "description": "The charger reports current leakage.\n\nContinuing to charge may be dangerous.\n\nWhat to do:\n\n- Stop charging and have the vehicle, cable, and electrical installation checked by qualified service personnel.\n\nThis warning remains until the leakage stops and you press Ignore."
+        },
+        "safety_relay_fault": {
+            "title": "Eveus: relay fault detected, stop charging",
+            "description": "The charger reports a relay fault.\n\nThe relay may not switch charging power safely.\n\nWhat to do:\n\n- Stop using the charger and contact Eveus service or a qualified electrician.\n\nThis warning remains until the fault clears and you press Ignore."
+        },
+        "safety_box_overheat": {
+            "title": "Eveus: charger temperature is too high, stop charging",
+            "description": "The charger reports that its body temperature is too high.\n\nWhat to do:\n\n- Stop charging and let the charger cool.\n- Check ventilation and have the charger inspected if this repeats.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
+        },
+        "safety_plug_overheat": {
+            "title": "Eveus: plug temperature is too high, stop charging",
+            "description": "The charger reports that the plug temperature is too high.\n\nWhat to do:\n\n- Stop charging and let the plug cool.\n- Once safe, have the plug, socket, and cable inspected.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
+        },
+        "safety_pilot_fault": {
+            "title": "Eveus: control pilot fault detected, stop charging",
+            "description": "The charger reports a control pilot fault and cannot confirm a safe charging connection.\n\nWhat to do:\n\n- Stop charging and have the cable and vehicle connection checked.\n\nThis warning remains until the fault clears and you press Ignore."
+        },
+        "safety_low_voltage": {
+            "title": "Eveus: supply voltage is too low, pause charging",
+            "description": "The charger reports that supply voltage is too low.\n\nWhat to do:\n\n- Pause charging until voltage is stable.\n- If this repeats, have the electrical supply checked.\n\nThis warning remains until the fault clears and you press Ignore."
+        },
+        "safety_diode_fault": {
+            "title": "Eveus: vehicle diode fault detected, stop charging",
+            "description": "The charger reports a vehicle diode fault.\n\nWhat to do:\n\n- Stop charging and have the vehicle and charging cable checked.\n\nThis warning remains until the fault clears and you press Ignore."
+        },
+        "safety_overcurrent": {
+            "title": "Eveus: charging current is too high, stop charging",
+            "description": "The charger reports charging current above its safe limit.\n\nWhat to do:\n\n- Stop charging and have the charger, cable, and electrical installation checked.\n\nThis warning remains until the fault clears and you press Ignore."
+        },
+        "safety_interface_timeout": {
+            "title": "Eveus: internal communication fault detected",
+            "description": "The charger reports an internal communication timeout.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact Eveus support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
+        },
+        "safety_software_failure": {
+            "title": "Eveus: internal software fault detected",
+            "description": "The charger reports an internal software failure.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact Eveus support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
+        },
+        "safety_gfci_test_failure": {
+            "title": "Eveus: ground-fault protection test failed",
+            "description": "The charger reports that its ground-fault protection self-test failed.\n\nCharging may not be protected from current leakage.\n\nWhat to do:\n\n- Stop using the charger and have it inspected before charging again.\n\nThis warning remains until the fault clears and you press Ignore."
+        },
+        "safety_high_voltage": {
+            "title": "Eveus: supply voltage is too high, stop charging",
+            "description": "The charger reports that supply voltage is too high.\n\nWhat to do:\n\n- Stop charging until voltage is stable.\n- If this repeats, have the electrical supply checked.\n\nThis warning remains until the fault clears and you press Ignore."
         }
     }
 }
