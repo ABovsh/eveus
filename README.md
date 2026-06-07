@@ -54,16 +54,16 @@ Your charger already protects itself — this integration makes those protection
 **What it watches:**
 
 - **Missing ground** — warns when the charger reports no protective earth connection.
-- **Ground protection control** — a dedicated `switch.eveus_ev_charger_ground_protection` lets you see and manage the charger's missing-ground shutdown protection; a separate notice warns whenever that protection is turned off, independently of whether ground is currently present.
+- **Ground protection control** — a dedicated `switch.eveus_ev_charger_ground_protection` mirrors the charger's ground-monitoring setting. When it is on, the charger checks for a protective earth connection and blocks charging if ground is missing; when it is off, the charger only reports ground status and lets charging continue without a detected ground. A separate notice warns whenever that protection is turned off, so you always know the charger is allowed to run without confirmed ground.
 - **Box / plug overheating** — warns from the charger's own overheat fault **and** as an early warning at a sustained **80 °C**, before the charger automatically stops charging at **85 °C**.
-- **Current leakage (GFCI)** — warns when residual-current leakage is detected.
+- **Current leakage (GFCI)** — warns when residual-current leakage above the charger's **30 mA** threshold is detected.
 - **Grid voltage** — surfaces the charger's low-voltage and high-voltage protection faults.
-- **Hardware & firmware faults** — relay, pilot, diode, overcurrent, GFCI self-test, interface-timeout, and software faults.
+- **Charger protection faults** — relay, pilot, diode, overcurrent, GFCI self-test, interface-timeout, and software faults reported by the charger's own protection logic.
 - **Low backup battery** — warns when the charger's internal CR2032 coin-cell runs low, so you can replace it before charger functions degrade.
 
 **How it behaves:**
 
-- The charger's own firmware faults alert **immediately**; raw grounding, temperature, and leakage readings use **confirmation counting and recovery hysteresis**, so a single glitchy poll can't raise a false alarm.
+- The faults the charger reports itself alert **immediately**; raw grounding, temperature, and leakage readings use **confirmation counting and recovery hysteresis**, so a single glitchy poll can't raise a false alarm.
 - Notices carry **clear repair messages** in English and Ukrainian — what the condition means and the recommended next step.
 - Grounding and other recoverable notices clear themselves after confirmed recovery; serious incidents stay visible until you acknowledge them, then reset so a future separate incident can alert again.
 
