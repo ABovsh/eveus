@@ -615,6 +615,7 @@ def test_switch_setup_creates_control_entities() -> None:
         "Adaptive Mode",
         "Schedule 1 Enabled",
         "Schedule 2 Enabled",
+        "Ground Protection",
         "Connect to OCPP",
     ]
     assert {entity.unique_id for entity in added} == {
@@ -623,6 +624,7 @@ def test_switch_setup_creates_control_entities() -> None:
         "eveus2_adaptive_mode",
         "eveus2_schedule_1_enabled",
         "eveus2_schedule_2_enabled",
+        "eveus2_ground_protection",
         "eveus2_connect_to_ocpp",
     }
 

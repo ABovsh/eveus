@@ -381,3 +381,36 @@ def test_unit_suite_disables_homeassistant_pytest_plugin(pytestconfig) -> None:
     """The fast unit path must not load the Home Assistant pytest plugin."""
 
     assert not pytestconfig.pluginmanager.hasplugin("homeassistant")
+
+
+def test_ground_repair_copy_explains_independent_conditions_and_switch() -> None:
+    base = ROOT / "custom_components" / "eveus"
+    en = json.loads((base / "translations" / "en.json").read_text())
+    uk = json.loads((base / "translations" / "uk.json").read_text())
+
+    en_missing = en["issues"]["safety_ground_missing"]["description"]
+    en_disabled = en["issues"]["safety_ground_control_disabled"]["description"]
+    assert "independently" in en_missing
+    assert "**Ground Protection** switch" in en_disabled
+    assert "separate" in en_disabled
+
+    uk_missing = uk["issues"]["safety_ground_missing"]["description"]
+    uk_disabled = uk["issues"]["safety_ground_control_disabled"]["description"]
+    assert "незалежно" in uk_missing
+    assert "перемикач **Захист заземлення**" in uk_disabled
+    assert "окреме" in uk_disabled
+
+
+def test_thermal_repair_copy_explains_early_warning_before_stop() -> None:
+    base = ROOT / "custom_components" / "eveus"
+    documents = (
+        json.loads((base / "strings.json").read_text()),
+        json.loads((base / "translations" / "en.json").read_text()),
+        json.loads((base / "translations" / "uk.json").read_text()),
+    )
+
+    for document in documents:
+        for key in ("safety_box_overheat", "safety_plug_overheat"):
+            description = document["issues"][key]["description"]
+            assert "80 °C" in description
+            assert "85 °C" in description

@@ -76,6 +76,15 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         state_key="sh2Enabled",
     ),
     EveusSwitchEntityDescription(
+        key="ground_protection",
+        name="Ground Protection",
+        icon="mdi:shield-earth",
+        entity_category=EntityCategory.CONFIG,
+        entity_registry_enabled_default=False,
+        command="groundCtrl",
+        state_key="groundCtrl",
+    ),
+    EveusSwitchEntityDescription(
         key="ocpp",
         name="Connect to OCPP",
         icon="mdi:cloud-sync",

@@ -255,6 +255,9 @@
             "schedule_2_enabled": {
                 "name": "Schedule 2 Enabled"
             },
+            "ground_protection": {
+                "name": "Ground Protection"
+            },
             "connect_to_ocpp": {
                 "name": "Connect to OCPP"
             }
@@ -338,31 +341,31 @@
         },
         "safety_ground_missing": {
             "title": "Eveus: ground connection is missing, stop charging",
-            "description": "The charger reports no ground connection.\n\nCharging without a working ground can be dangerous.\n\nWhat to do:\n\n- Stop charging and have the grounding checked by a qualified electrician.\n\nThe Eveus integration will clear this warning automatically once the ground connection is stable."
+            "description": "The charger reports no ground connection.\n\nThis is a physical grounding fault, reported independently of the **Ground Protection** switch, so you may also see a separate warning if that protection is disabled.\n\nCharging without a working ground can be dangerous.\n\nWhat to do:\n\n- Stop charging and have the grounding checked by a qualified electrician.\n- Keep the **Ground Protection** switch enabled unless an electrician confirms a reason not to.\n\nThe Eveus integration clears this warning automatically once the ground connection is stable."
         },
         "safety_ground_control_disabled": {
             "title": "Eveus: ground protection is disabled",
-            "description": "Ground protection is disabled on the charger.\n\nThe charger may continue charging when the ground connection is missing.\n\nWhat to do:\n\n- Enable ground protection in the charger settings, if supported.\n\nIf this is intentional, press Ignore. The Eveus integration will clear this warning automatically after ground protection is enabled."
+            "description": "Ground protection is disabled on the charger.\n\nThe charger may continue charging when the ground connection is missing. If ground is also missing, Eveus will show a separate **Ground connection is missing** repair issue.\n\nWhat to do:\n\n- Turn on the **Ground Protection** switch for your Eveus charger.\n\nIf this is intentional, press Ignore. The Eveus integration will clear this warning automatically after ground protection is enabled."
         },
         "safety_leakage_detected": {
             "title": "Eveus: current leakage detected, stop charging",
-            "description": "The charger reports current leakage.\n\nContinuing to charge may be dangerous.\n\nWhat to do:\n\n- Stop charging and have the vehicle, cable, and electrical installation checked by qualified service personnel.\n\nThis warning remains until the leakage stops and you press Ignore."
+            "description": "The charger reports current leakage.\n\nContinuing to charge may be dangerous.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the vehicle, cable, or installation may need checking.\n\nThis warning remains until the leakage stops and you press Ignore."
         },
         "safety_relay_fault": {
             "title": "Eveus: relay fault detected, stop charging",
-            "description": "The charger reports a relay fault.\n\nThe relay may not switch charging power safely.\n\nWhat to do:\n\n- Stop using the charger and contact Eveus service or a qualified electrician.\n\nThis warning remains until the fault clears and you press Ignore."
+            "description": "The charger reports a relay fault.\n\nThe relay may not switch charging power safely.\n\nWhat to do:\n\n- Stop using the charger and contact the charger manufacturer's support.\n\nThis warning remains until the fault clears and you press Ignore."
         },
         "safety_box_overheat": {
             "title": "Eveus: charger temperature is too high, stop charging",
-            "description": "The charger reports that its body temperature is too high.\n\nWhat to do:\n\n- Stop charging and let the charger cool.\n- Check ventilation and have the charger inspected if this repeats.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
+            "description": "The charger reports an overheat fault or a sustained body temperature of at least 80 °C.\n\nHome Assistant warns before the charger automatically stops charging at 85 °C.\n\nWhat to do:\n\n- Stop charging and let the charger cool.\n- Check ventilation and contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
         },
         "safety_plug_overheat": {
             "title": "Eveus: plug temperature is too high, stop charging",
-            "description": "The charger reports that the plug temperature is too high.\n\nWhat to do:\n\n- Stop charging and let the plug cool.\n- Once safe, have the plug, socket, and cable inspected.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
+            "description": "The charger reports an overheat fault or a sustained plug temperature of at least 80 °C.\n\nHome Assistant warns before the charger automatically stops charging at 85 °C.\n\nWhat to do:\n\n- Stop charging and let the plug cool.\n- Once safe, contact the charger manufacturer's support to have the plug, socket, and cable checked.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
         },
         "safety_pilot_fault": {
             "title": "Eveus: control pilot fault detected, stop charging",
-            "description": "The charger reports a control pilot fault and cannot confirm a safe charging connection.\n\nWhat to do:\n\n- Stop charging and have the cable and vehicle connection checked.\n\nThis warning remains until the fault clears and you press Ignore."
+            "description": "The charger reports a control pilot fault and cannot confirm a safe charging connection.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the cable or vehicle connection may be at fault.\n\nThis warning remains until the fault clears and you press Ignore."
         },
         "safety_low_voltage": {
             "title": "Eveus: supply voltage is too low, pause charging",
@@ -370,23 +373,23 @@
         },
         "safety_diode_fault": {
             "title": "Eveus: vehicle diode fault detected, stop charging",
-            "description": "The charger reports a vehicle diode fault.\n\nWhat to do:\n\n- Stop charging and have the vehicle and charging cable checked.\n\nThis warning remains until the fault clears and you press Ignore."
+            "description": "The charger reports a vehicle diode fault.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the vehicle or charging cable may be at fault.\n\nThis warning remains until the fault clears and you press Ignore."
         },
         "safety_overcurrent": {
             "title": "Eveus: charging current is too high, stop charging",
-            "description": "The charger reports charging current above its safe limit.\n\nWhat to do:\n\n- Stop charging and have the charger, cable, and electrical installation checked.\n\nThis warning remains until the fault clears and you press Ignore."
+            "description": "The charger reports charging current above its safe limit.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the charger, cable, or installation may need checking.\n\nThis warning remains until the fault clears and you press Ignore."
         },
         "safety_interface_timeout": {
             "title": "Eveus: internal communication fault detected",
-            "description": "The charger reports an internal communication timeout.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact Eveus support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
+            "description": "The charger reports an internal communication timeout.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
         },
         "safety_software_failure": {
             "title": "Eveus: internal software fault detected",
-            "description": "The charger reports an internal software failure.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact Eveus support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
+            "description": "The charger reports an internal software failure.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
         },
         "safety_gfci_test_failure": {
             "title": "Eveus: ground-fault protection test failed",
-            "description": "The charger reports that its ground-fault protection self-test failed.\n\nCharging may not be protected from current leakage.\n\nWhat to do:\n\n- Stop using the charger and have it inspected before charging again.\n\nThis warning remains until the fault clears and you press Ignore."
+            "description": "The charger reports that its ground-fault protection self-test failed.\n\nCharging may not be protected from current leakage.\n\nWhat to do:\n\n- Stop using the charger and contact the charger manufacturer's support before charging again.\n\nThis warning remains until the fault clears and you press Ignore."
         },
         "safety_high_voltage": {
             "title": "Eveus: supply voltage is too high, stop charging",

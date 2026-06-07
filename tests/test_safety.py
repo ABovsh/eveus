@@ -14,6 +14,8 @@ from homeassistant.helpers import issue_registry as ir
 from custom_components.eveus.const import (
     DOMAIN,
     ERROR_STATES,
+    GROUND_CLEAR_POLLS,
+    GROUND_CONTROL_CLEAR_POLLS,
     GROUND_CONTROL_TRIGGER_POLLS,
     GROUND_TRIGGER_POLLS,
     LEAKAGE_TRIGGER_POLLS,
@@ -183,6 +185,42 @@ def test_ground_control_disabled_is_a_separate_signal() -> None:
     )
 
 
+def test_missing_ground_and_disabled_ground_control_raise_independent_issues() -> None:
+    hass, entry, updater, manager = _manager(
+        {"state": 2, "subState": 0, "ground": 0, "groundCtrl": 0}
+    )
+
+    for _ in range(max(GROUND_TRIGGER_POLLS, GROUND_CONTROL_TRIGGER_POLLS)):
+        manager.process()
+
+    assert _issue(hass, entry, "ground_missing") is not None
+    assert _issue(hass, entry, "ground_control_disabled") is not None
+
+    updater.data = {"state": 2, "subState": 0, "ground": 0, "groundCtrl": 1}
+    for _ in range(GROUND_CONTROL_CLEAR_POLLS):
+        manager.process()
+
+    assert _issue(hass, entry, "ground_missing") is not None
+    assert _issue(hass, entry, "ground_control_disabled") is None
+
+    hass, entry, updater, manager = _manager(
+        {"state": 2, "subState": 0, "ground": 0, "groundCtrl": 0}
+    )
+
+    for _ in range(max(GROUND_TRIGGER_POLLS, GROUND_CONTROL_TRIGGER_POLLS)):
+        manager.process()
+
+    assert _issue(hass, entry, "ground_missing") is not None
+    assert _issue(hass, entry, "ground_control_disabled") is not None
+
+    updater.data = {"state": 2, "subState": 0, "ground": 1, "groundCtrl": 0}
+    for _ in range(GROUND_CLEAR_POLLS):
+        manager.process()
+
+    assert _issue(hass, entry, "ground_missing") is None
+    assert _issue(hass, entry, "ground_control_disabled") is not None
+
+
 def test_ground_control_disabled_recovers_despite_unknown_state() -> None:
     # This policy has no firmware fault code: it is purely a groundCtrl raw
     # check. A malformed/missing `state` field must not block its recovery when
@@ -199,9 +237,13 @@ def test_ground_control_disabled_recovers_despite_unknown_state() -> None:
     assert _signals("ground_control_disabled", {"state": 2})[1] is None
 
 
-def test_temperature_uses_85_trigger_and_75_recovery_hysteresis() -> None:
-    assert _signals("box_overheat", {"state": 2, "temperature1": 85}) == (True, False)
-    assert _signals("box_overheat", {"state": 2, "temperature1": 80}) == (False, False)
+def test_temperature_warns_at_80_before_85_stop_and_uses_75_recovery_hysteresis() -> None:
+    assert _signals("box_overheat", {"state": 2, "temperature1": 80}) == (True, False)
+    assert _signals("plug_overheat", {"state": 2, "temperature2": 80}) == (True, False)
+    assert _signals("box_overheat", {"state": 2, "temperature1": 79.9}) == (
+        False,
+        False,
+    )
     assert _signals("box_overheat", {"state": 2, "temperature1": 75}) == (False, True)
 
 
@@ -248,7 +290,7 @@ def _issue(hass, entry, key: str):
 
 
 def test_raw_temperature_requires_consecutive_valid_polls() -> None:
-    hass, entry, updater, manager = _manager({"state": 2, "temperature1": 85})
+    hass, entry, updater, manager = _manager({"state": 2, "temperature1": 80})
     for _ in range(TEMPERATURE_TRIGGER_POLLS - 1):
         manager.process()
         assert _issue(hass, entry, "box_overheat") is None
@@ -279,7 +321,7 @@ def test_unknown_reading_neither_advances_nor_resets_streak() -> None:
 
 
 def test_failed_poll_does_not_replay_stale_data_into_debounce() -> None:
-    hass, entry, updater, manager = _manager({"state": 2, "temperature1": 85})
+    hass, entry, updater, manager = _manager({"state": 2, "temperature1": 80})
     manager.process()
     updater.available = False
     updater.last_update_success = False
@@ -378,7 +420,7 @@ def test_recovered_then_acknowledged_issue_realerts_through_hysteresis_band() ->
         manager.process()
     ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
 
-    updater.data = {"state": 2, "temperature1": 80}  # band: neither trigger nor recover
+    updater.data = {"state": 2, "temperature1": 78}  # band: neither trigger nor recover
     manager.process()
     updater.data = {"state": 7, "subState": 5}  # fresh overheat
     manager.process()
@@ -421,7 +463,7 @@ def test_unknown_poll_leaves_existing_issue_and_recovery_streak_untouched() -> N
 
 
 def test_recurring_condition_resets_recovery_streak_before_clear() -> None:
-    # A reading in the hysteresis band (75 < t < 85) neither triggers nor counts
+    # A reading in the hysteresis band (75 < t < 80) neither triggers nor counts
     # as recovered; while the issue is open it must reset banked recovery so a
     # later clear needs the full streak again. Made observable by ignoring first
     # (latched + ignored deletes on confirmed recovery).
@@ -431,7 +473,7 @@ def test_recurring_condition_resets_recovery_streak_before_clear() -> None:
 
     updater.data = {"state": 2, "temperature1": 70}
     manager.process()  # recovery streak -> 1
-    updater.data = {"state": 2, "temperature1": 80}  # band: not recovered
+    updater.data = {"state": 2, "temperature1": 78}  # band: not recovered
     manager.process()  # recovery streak reset to 0
     assert _issue(hass, entry, "box_overheat") is not None
 
