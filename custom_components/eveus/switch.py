@@ -80,7 +80,6 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         name="Ground Protection",
         icon="mdi:shield-earth",
         entity_category=EntityCategory.CONFIG,
-        entity_registry_enabled_default=False,
         command="groundCtrl",
         state_key="groundCtrl",
     ),

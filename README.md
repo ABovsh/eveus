@@ -131,7 +131,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | `number.eveus_ev_charger_charging_current` | Number | Current limit slider with model-aware bounds |
 | `switch.eveus_ev_charger_stop_charging` | Switch | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Switch | Enable one-charge mode |
-| `switch.eveus_ev_charger_ground_protection` | Switch | Enable or disable the charger's missing-ground shutdown protection. Disabled by default in the entity registry because turning it off bypasses a safety protection |
+| `switch.eveus_ev_charger_ground_protection` | Switch | Enable or disable the charger's missing-ground shutdown protection. Turning it off lets charging continue without a detected ground |
 | `switch.eveus_ev_charger_connect_to_ocpp` | Switch | Connect the charger to the OCPP backend (e.g. for the mobile app). While on, a Repairs warning explains that Charging Current, limits, and schedule may be overridden by the backend, and how to turn OCPP back off |
 | `button.eveus_ev_charger_force_refresh` | Button | Poll the charger immediately |
 

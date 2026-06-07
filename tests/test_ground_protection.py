@@ -29,7 +29,7 @@ def test_ground_protection_switch_contract() -> None:
     assert description.command == "groundCtrl"
     assert description.state_key == "groundCtrl"
     assert description.entity_category is EntityCategory.CONFIG
-    assert description.entity_registry_enabled_default is False
+    assert description.entity_registry_enabled_default is True
 
 
 def test_ground_protection_switch_reads_device_state() -> None:
