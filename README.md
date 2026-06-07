@@ -21,6 +21,26 @@ Local-only Home Assistant integration for Eveus EV chargers. It polls the charge
 
 ## ✨ Highlights
 
+### 🛡️ Safety watchdog — turns the charger's protections into Home Assistant notices
+Your charger already protects itself — this integration makes those protections **visible and actionable inside Home Assistant**, so a dangerous condition can't go unnoticed. Each dangerous condition surfaces as a Home Assistant **Repairs** notice with a clear, plain-language explanation of what happened and what to do next (English and Ukrainian).
+
+**What it watches:**
+
+- **Missing ground** — warns when the charger reports no protective earth connection.
+- **Ground protection control** — a dedicated `switch.eveus_ev_charger_ground_protection` mirrors the charger's ground-monitoring setting. When it is on, the charger checks for a protective earth connection and blocks charging if ground is missing; when it is off, the charger only reports ground status and lets charging continue without a detected ground. A separate notice warns whenever that protection is turned off, so you always know when the charger is allowed to run without confirmed ground.
+- **Box / plug overheating** — warns from the charger's own overheat fault **and** as an early warning at a sustained **80 °C**, before the charger automatically stops charging at **85 °C**.
+- **Current leakage (GFCI)** — warns when residual-current leakage above the charger's **30 mA** threshold is detected.
+- **Charger protection faults** — relay, pilot, diode, overcurrent, **low/high grid voltage**, GFCI self-test, interface-timeout, and software faults reported by the charger's own protection logic.
+- **Low backup battery** — warns when the charger's internal CR2032 coin-cell runs low, so you can replace it before charger functions degrade.
+
+**How it behaves:**
+
+- The faults the charger reports itself alert **immediately**; raw grounding, temperature, and leakage readings use **confirmation counting and recovery hysteresis**, so a single glitchy poll can't raise a false alarm.
+- Recoverable notices (such as grounding) clear themselves after confirmed recovery; serious incidents stay visible until you press **Ignore**, then reset so a future separate incident can alert again.
+- The integration **monitors and reports** — the only safety setting it can change is the Ground Protection switch you operate yourself. It does not replace the charger's built-in protection or a qualified electrician.
+
+See the [Safety notices](#-safety-notices) section for the full list of conditions and recommended actions.
+
 ### 🔌 Local-only, no cloud
 Talks to the charger directly over your LAN via its HTTP API. No Eveus account, no cloud relay, no telemetry leaving your network — it keeps working when the internet is down. Supports `http://` or `https://`, custom ports, and either IP or hostname.
 
@@ -47,27 +67,6 @@ Ships English and Ukrainian translations; Home Assistant renders entity and conf
 
 ### 🛰️ Multi-charger
 Add multiple Eveus chargers; each gets its own device, coordinator, and entity namespace.
-
-### 🛡️ Safety watchdog
-Your charger already protects itself — this integration makes those protections **visible and actionable inside Home Assistant** so a dangerous condition can't go unnoticed. Dangerous conditions surface as Home Assistant **Repairs** notices, each with a plain-language explanation of what happened and what to do next.
-
-**What it watches:**
-
-- **Missing ground** — warns when the charger reports no protective earth connection.
-- **Ground protection control** — a dedicated `switch.eveus_ev_charger_ground_protection` mirrors the charger's ground-monitoring setting. When it is on, the charger checks for a protective earth connection and blocks charging if ground is missing; when it is off, the charger only reports ground status and lets charging continue without a detected ground. A separate notice warns whenever that protection is turned off, so you always know the charger is allowed to run without confirmed ground.
-- **Box / plug overheating** — warns from the charger's own overheat fault **and** as an early warning at a sustained **80 °C**, before the charger automatically stops charging at **85 °C**.
-- **Current leakage (GFCI)** — warns when residual-current leakage above the charger's **30 mA** threshold is detected.
-- **Grid voltage** — surfaces the charger's low-voltage and high-voltage protection faults.
-- **Charger protection faults** — relay, pilot, diode, overcurrent, GFCI self-test, interface-timeout, and software faults reported by the charger's own protection logic.
-- **Low backup battery** — warns when the charger's internal CR2032 coin-cell runs low, so you can replace it before charger functions degrade.
-
-**How it behaves:**
-
-- The faults the charger reports itself alert **immediately**; raw grounding, temperature, and leakage readings use **confirmation counting and recovery hysteresis**, so a single glitchy poll can't raise a false alarm.
-- Notices carry **clear repair messages** in English and Ukrainian — what the condition means and the recommended next step.
-- Grounding and other recoverable notices clear themselves after confirmed recovery; serious incidents stay visible until you acknowledge them, then reset so a future separate incident can alert again.
-
-The integration **monitors and reports**, and the only safety setting it can change is the Ground Protection switch you operate yourself. It does not replace the charger's built-in protection or a qualified electrician.
 
 ### 🩺 Built for messy LAN reality
 Offline chargers are handled quietly, polling backs off, commands surface a Home Assistant error toast on failure, and diagnostics downloads redact credentials and identifying fields.
@@ -107,6 +106,29 @@ Offline chargers are handled quietly, polling backs off, commands surface a Home
    - **Advanced**: also creates SOC input numbers and SOC/ETA sensors.
 
 Use **Configure** to switch Basic/Advanced later. Use **Reconfigure** to change host, credentials, model, or phase count without reinstalling.
+
+## 🛡️ Safety notices
+
+Dangerous and configuration conditions surface through Home Assistant **Settings → Devices & Services → Repairs**, each with a plain-language message (English and Ukrainian). Recoverable safety notices clear themselves automatically once the condition is resolved; serious incidents stay visible until you press **Ignore**, then reset after recovery so a future separate incident can alert again.
+
+### Safety conditions
+
+| Notice | When it appears | What to do |
+| --- | --- | --- |
+| Ground is missing | The charger reports a grounding fault or repeatedly reports no ground, independently of the Ground Protection switch | Stop charging and have the grounding checked by a qualified electrician; clears automatically after stable grounding returns |
+| Ground protection is disabled | The charger repeatedly reports that ground protection is turned off, independently of whether ground is currently connected | Turn on the **Ground Protection** switch — the charger is allowed to charge without a confirmed ground while it is off |
+| Box or plug overheating | The charger reports an overheat fault, or a sustained temperature at/above **80 °C** (early warning before the charger stops at **85 °C**) | Stop using the charger, let it cool, and contact the charger manufacturer's support if it repeats |
+| Current leakage (GFCI) | The charger reports a leakage fault or sustained leakage above its **30 mA** threshold | Stop using the charger and contact the charger manufacturer's support |
+| Charger protection fault | Relay, pilot, diode, overcurrent, low/high voltage, GFCI self-test, interface-timeout, or software fault reported by the charger | Stop or avoid charging and contact the charger manufacturer's support |
+| Charger backup battery is low | The charger's internal CR2032 coin-cell reads low for several polls | Replace it with a fresh, good-quality CR2032 cell |
+
+### Configuration notices
+
+| Notice | When it appears | What to do |
+| --- | --- | --- |
+| Charger setup needs attention | Stored connection details are incomplete or invalid | Open the repair and re-enter the charger details (fixable in place) |
+| OCPP is enabled | OCPP is on, so the OCPP server or mobile app may override HA controls | Turn off the **Connect to OCPP** switch to restore full HA control |
+| Update SOC cards and automations | Legacy `input_number.ev_*` helpers are still present | Switch dashboards/automations to the native `number.eveus_ev_charger_*` entities |
 
 ## Entity IDs
 
@@ -267,22 +289,7 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 | SOC sensors are missing | Set the integration mode to Advanced under Configure, then restart/reload the integration if just changed |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
-
-### Repair notices
-
-The integration surfaces issues through Home Assistant **Settings → Devices & Services → Repairs**. Most notices clear themselves automatically once the underlying condition is resolved. Grounding notices clear automatically after confirmed recovery. Serious safety incidents remain visible after recovery until you press **Ignore**; after an ignored incident recovers, it is reset so a future separate incident can alert again.
-
-| Notice | When it appears | What to do |
-| --- | --- | --- |
-| Charger setup needs attention | Stored connection details are incomplete or invalid | Open the repair and re-enter the charger details (fixable in place) |
-| Update SOC cards and automations | Legacy `input_number.ev_*` helpers are still present | Switch dashboards/automations to the native `number.eveus_ev_charger_*` entities |
-| OCPP is enabled | OCPP is turned on, so the OCPP server or mobile app may override HA controls | Turn off the **Connect to OCPP** switch to restore full HA control |
-| Charger battery is low | The charger's internal CR2032 coin-cell reads low for several polls | Replace it with a fresh, good-quality CR2032 cell |
-| Ground is missing | The charger reports a grounding fault or repeatedly reports no ground, regardless of the Ground Protection switch state | Stop charging and have the grounding checked; clears automatically after stable grounding returns |
-| Protective ground control is disabled | The charger repeatedly reports that ground protection is disabled, regardless of whether ground is currently connected | Turn on the **Ground Protection** switch; if ground is also missing, both grounding notices appear |
-| Leakage detected | The charger reports a leakage fault or sustained live leakage at the GFCI threshold | Stop using the charger and contact the charger manufacturer's support |
-| Box or plug overheating | The charger reports overheat or sustained temperature at/above 80 °C, before the charger stops at 85 °C | Stop using the charger, let it cool, and contact the charger manufacturer's support if it repeats |
-| Charger safety fault | Relay, pilot, diode, overcurrent, voltage, GFCI-test, interface, or software fault | Stop or avoid charging and contact the charger manufacturer's support |
+| A Repairs notice appeared | See [Safety notices](#-safety-notices) for what each one means and what to do |
 
 ## Privacy And Diagnostics
 
