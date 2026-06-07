@@ -345,6 +345,62 @@ def test_deleted_recovered_issue_can_alert_on_future_incident() -> None:
     assert _issue(hass, entry, "box_overheat").dismissed_version is None
 
 
+def test_recovered_then_acknowledged_issue_realerts_on_immediate_retrigger() -> None:
+    # A latched issue that fully recovers BEFORE the user acknowledges (so it is
+    # not deleted yet, by design it stays visible), is then acknowledged, and
+    # re-triggers on the very next poll with no intervening recovered poll. The
+    # new excursion must surface a fresh, un-dismissed notice rather than staying
+    # hidden under the old acknowledgement.
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    manager.process()  # firmware overheat -> issue raised
+    updater.data = {"state": 2, "temperature1": 70}
+    for _ in range(TEMPERATURE_RECOVERY_POLLS):
+        manager.process()  # confirmed recovery, latched + not ignored -> stays
+    assert _issue(hass, entry, "box_overheat") is not None
+    ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
+
+    updater.data = {"state": 7, "subState": 5}  # re-trigger, no cool poll first
+    manager.process()
+    issue = _issue(hass, entry, "box_overheat")
+    assert issue is not None
+    assert issue.dismissed_version is None
+
+
+def test_recovered_then_acknowledged_issue_realerts_through_hysteresis_band() -> None:
+    # After confirmed recovery + acknowledgement, a reading in the hysteresis
+    # band (which resets the transient recovery streak) followed by a fresh
+    # overheat must still re-alert -- the "recovered since raised" memory has to
+    # survive the band, or the new excursion stays hidden under the old ack.
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    manager.process()
+    updater.data = {"state": 2, "temperature1": 70}
+    for _ in range(TEMPERATURE_RECOVERY_POLLS):
+        manager.process()
+    ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
+
+    updater.data = {"state": 2, "temperature1": 80}  # band: neither trigger nor recover
+    manager.process()
+    updater.data = {"state": 7, "subState": 5}  # fresh overheat
+    manager.process()
+    issue = _issue(hass, entry, "box_overheat")
+    assert issue is not None
+    assert issue.dismissed_version is None
+
+
+def test_ongoing_acknowledged_issue_stays_quiet_without_recovery() -> None:
+    # Guard against over-correction: an issue acknowledged while STILL active
+    # (never recovered) must remain dismissed across continued triggers -- only a
+    # genuine recover-then-retrigger may re-alert.
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    manager.process()
+    ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
+    for _ in range(3):
+        manager.process()  # still overheating, still acknowledged
+    issue = _issue(hass, entry, "box_overheat")
+    assert issue is not None
+    assert issue.dismissed_version is not None
+
+
 def test_unknown_poll_leaves_existing_issue_and_recovery_streak_untouched() -> None:
     # Raise via firmware fault, take one confirmed-recovery poll, then feed an
     # unknown poll: it must neither delete the issue nor reset the recovery

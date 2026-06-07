@@ -3,7 +3,7 @@
 > Local-only Home Assistant integration for Eveus EV chargers. Control charging, monitor power and cost, estimate EV battery SOC, expose schedules and adaptive charging, surface dangerous-condition safety notices, and build automations without template sensors.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.12.0b1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.12.0b2-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)

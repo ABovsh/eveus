@@ -6,6 +6,9 @@
 - **Safety problems now surface in Home Assistant Repairs.** Eveus warns about a missing ground, current leakage, box/plug overheating, and relay, pilot, diode, overcurrent, voltage, GFCI-test, interface, and software faults. Faults reported by the charger's own firmware alert immediately; the raw grounding, temperature, and leakage checks require several consecutive readings and apply recovery hysteresis, so a single glitchy poll cannot raise a false alarm.
 - **Safety notices match the seriousness of the condition.** Grounding notices clear automatically after confirmed recovery; serious incidents stay visible until you press **Ignore**, then reset after recovery so a future separate incident can alert again. The integration only reports conditions — it never sends charger commands, changes charger settings, or replaces the charger's built-in protection.
 
+### 🐛 Fixed
+- **A repeat safety condition always warns you again.** If a serious safety notice (such as box or plug overheat) had already cleared by the time you pressed **Ignore**, a later recurrence now raises a fresh notice instead of staying hidden under the earlier acknowledgement — including when the temperature briefly hovers in the recovery band in between.
+
 ## 4.11.0 - 2026-06-05
 
 ### ✨ Added

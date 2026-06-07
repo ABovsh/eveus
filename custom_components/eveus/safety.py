@@ -340,6 +340,12 @@ class SafetyPolicyState:
     trigger_streak: int = 0
     recovery_streak: int = 0
     recovered: bool = False
+    # Sticky memory: the current issue was confirmed recovered at some point
+    # since it was raised. Unlike ``recovered`` (which a hysteresis-band reading
+    # resets), this survives until the issue is deleted, so a fresh trigger after
+    # a genuine recovery can re-alert even when the user has already dismissed
+    # the now-stale notice.
+    recovered_since_raised: bool = False
 
 
 class EveusSafetyManager:
@@ -393,8 +399,23 @@ class EveusSafetyManager:
                 state.trigger_streak = min(
                     state.trigger_streak + 1, policy.trigger_polls
                 )
-            if state.trigger_streak >= policy.trigger_polls and issue is None:
-                _create_issue(self._hass, self._entry, policy)
+            if state.trigger_streak >= policy.trigger_polls:
+                # A dismissed notice whose incident already fully recovered is a
+                # closed incident. Delete it so this fresh excursion surfaces a
+                # new, un-dismissed notice instead of staying hidden under the
+                # old acknowledgement. An ongoing fault dismissed while active
+                # (never recovered) keeps its dismissal — recovered_since_raised
+                # stays False — so it correctly remains quiet.
+                if (
+                    issue is not None
+                    and issue.dismissed_version is not None
+                    and state.recovered_since_raised
+                ):
+                    ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+                    issue = None
+                if issue is None:
+                    _create_issue(self._hass, self._entry, policy)
+                    state.recovered_since_raised = False
             return
 
         # trigger is False -> condition absent; None -> unknown, leave streak.
@@ -419,6 +440,11 @@ class EveusSafetyManager:
         if not state.recovered:
             return
 
+        # Confirmed recovery of the live issue: remember it (sticky) so a later
+        # re-trigger can re-alert even if the user dismisses the stale notice
+        # before the next recovered poll deletes it.
+        state.recovered_since_raised = True
+
         # Auto-clear issues delete on confirmed recovery. Latched issues persist
         # until the user has also pressed Ignore (dismissed_version set);
         # deleting then clears HA's stored dismissal so a future separate
@@ -431,3 +457,4 @@ class EveusSafetyManager:
             state.trigger_streak = 0
             state.recovery_streak = 0
             state.recovered = False
+            state.recovered_since_raised = False
