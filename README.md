@@ -3,7 +3,7 @@
 > Local-only Home Assistant integration for Eveus EV chargers. Control charging, monitor power and cost, estimate EV battery SOC, expose schedules and adaptive charging, surface dangerous-condition safety notices, and build automations without template sensors.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.12.0b3-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.12.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -20,26 +20,6 @@
 Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, optional OCPP backend control, multi-charger support, a localized (English / Ukrainian) UI, proactive safety notices for dangerous charger conditions, and automation-friendly entities so you never have to write a template sensor.
 
 ## ✨ Highlights
-
-### 🛡️ Safety watchdog — turns the charger's protections into Home Assistant notices
-Your charger already protects itself — this integration makes those protections **visible and actionable inside Home Assistant**, so a dangerous condition can't go unnoticed. Each dangerous condition surfaces as a Home Assistant **Repairs** notice with a clear, plain-language explanation of what happened and what to do next (English and Ukrainian).
-
-**What it watches:**
-
-- **Missing ground** — warns when the charger reports no protective earth connection.
-- **Ground protection control** — a dedicated `switch.eveus_ev_charger_ground_protection` mirrors the charger's ground-monitoring setting. When it is on, the charger checks for a protective earth connection and blocks charging if ground is missing; when it is off, the charger only reports ground status and lets charging continue without a detected ground. A separate notice warns whenever that protection is turned off, so you always know when the charger is allowed to run without confirmed ground.
-- **Box / plug overheating** — warns from the charger's own overheat fault **and** as an early warning at a sustained **80 °C**, before the charger automatically stops charging at **85 °C**.
-- **Current leakage (GFCI)** — warns when residual-current leakage above the charger's **30 mA** threshold is detected.
-- **Charger protection faults** — relay, pilot, diode, overcurrent, **low/high grid voltage**, GFCI self-test, interface-timeout, and software faults reported by the charger's own protection logic.
-- **Low backup battery** — warns when the charger's internal CR2032 coin-cell runs low, so you can replace it before charger functions degrade.
-
-**How it behaves:**
-
-- The faults the charger reports itself alert **immediately**; raw grounding, temperature, and leakage readings use **confirmation counting and recovery hysteresis**, so a single glitchy poll can't raise a false alarm.
-- Recoverable notices (such as grounding) clear themselves after confirmed recovery; serious incidents stay visible until you press **Ignore**, then reset so a future separate incident can alert again.
-- The integration **monitors and reports** — the only safety setting it can change is the Ground Protection switch you operate yourself. It does not replace the charger's built-in protection or a qualified electrician.
-
-See the [Safety notices](#-safety-notices) section for the full list of conditions and recommended actions.
 
 ### 🔌 Local-only, no cloud
 Talks to the charger directly over your LAN via its HTTP API. No Eveus account, no cloud relay, no telemetry leaving your network — it keeps working when the internet is down. Supports `http://` or `https://`, custom ports, and either IP or hostname.
@@ -70,6 +50,11 @@ Add multiple Eveus chargers; each gets its own device, coordinator, and entity n
 
 ### 🩺 Built for messy LAN reality
 Offline chargers are handled quietly, polling backs off, commands surface a Home Assistant error toast on failure, and diagnostics downloads redact credentials and identifying fields.
+
+### 🛡️ Safety watchdog
+Your charger already protects itself — this integration makes those protections **visible and actionable in Home Assistant**. Missing ground, a disabled ground-protection setting, box/plug overheating (an early warning at **80 °C**, before the charger stops at **85 °C**), current leakage above **30 mA**, low/high voltage, the charger's own protection faults, and a low backup battery each surface as a clear **Repairs** notice in English and Ukrainian. A dedicated **Ground Protection** switch lets you manage the charger's missing-ground shutdown from HA, and confirmation counting plus recovery hysteresis keep a single glitchy poll from raising a false alarm.
+
+See [Safety notices](#-safety-notices) for the full list of conditions and recommended actions.
 
 ## Requirements
 

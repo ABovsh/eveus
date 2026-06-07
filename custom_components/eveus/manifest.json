@@ -11,5 +11,5 @@
     "loggers": ["custom_components.eveus"],
     "quality_scale": "silver",
     "requirements": [],
-    "version": "4.12.0b3"
+    "version": "4.12.0"
 }

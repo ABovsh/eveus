@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.12.0 - Unreleased
+## 4.12.0 - 2026-06-07
 
 ### ✨ Added
 - **Safety problems now surface in Home Assistant Repairs.** Eveus warns about a missing ground, disabled ground protection, current leakage, box/plug overheating, and relay, pilot, diode, overcurrent, low/high voltage, GFCI-test, interface, and software faults. Faults the charger reports itself alert immediately; the raw grounding, temperature, and leakage checks require several consecutive readings and apply recovery hysteresis, so a single glitchy poll cannot raise a false alarm. The raw temperature check now warns at 80 °C, before the charger stops charging at 85 °C, so you get an early heads-up. Each notice carries a clear, plain-language repair message in English and Ukrainian explaining what happened and what to do — and now points you to the charger manufacturer's support for hardware faults.
