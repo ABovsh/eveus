@@ -205,7 +205,7 @@ sections:
             icon: mdi:lightning-bolt
           - entity: switch.eveus_ev_charger_ground_protection
             name: Ground Protection
-            icon: mdi:shield-earth
+            icon: mdi:shield-check
           - entity: button.eveus_ev_charger_force_refresh
             name: Force Refresh
             icon: mdi:refresh

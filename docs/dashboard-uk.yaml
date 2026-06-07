@@ -209,7 +209,7 @@ sections:
             icon: mdi:lightning-bolt
           - entity: switch.eveus_ev_charger_ground_protection
             name: Захист заземлення
-            icon: mdi:shield-earth
+            icon: mdi:shield-check
           - entity: button.eveus_ev_charger_force_refresh
             name: Примусове оновлення
             icon: mdi:refresh
