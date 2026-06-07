@@ -1,9 +1,9 @@
 # Eveus EV Charger for Home Assistant
 
-> Local-only Home Assistant integration for Eveus EV chargers. Control charging, monitor power and cost, estimate EV battery SOC, expose schedules and adaptive charging, and build automations without template sensors.
+> Local-only Home Assistant integration for Eveus EV chargers. Control charging, monitor power and cost, estimate EV battery SOC, expose schedules and adaptive charging, surface dangerous-condition safety notices, and build automations without template sensors.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.11.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.12.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -17,7 +17,7 @@
 
 <img width="1063" height="763" alt="image" src="https://github.com/user-attachments/assets/4c9ece28-8977-47d0-8fbc-78a69b95dac9" />
 
-Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, optional OCPP backend control, multi-charger support, a localized (English / Ukrainian) UI, and automation-friendly entities so you never have to write a template sensor.
+Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, optional OCPP backend control, multi-charger support, a localized (English / Ukrainian) UI, proactive safety notices for dangerous charger conditions, and automation-friendly entities so you never have to write a template sensor.
 
 ## ✨ Highlights
 
@@ -50,6 +50,11 @@ Add multiple Eveus chargers; each gets its own device, coordinator, and entity n
 
 ### 🩺 Built for messy LAN reality
 Offline chargers are handled quietly, polling backs off, commands surface a Home Assistant error toast on failure, and diagnostics downloads redact credentials and identifying fields.
+
+### 🛡️ Safety watchdog
+Your charger already protects itself — this integration makes those protections **visible and actionable in Home Assistant**. Missing ground, a disabled ground-protection setting, box/plug overheating (an early warning at **80 °C**, before the charger stops at **85 °C**), current leakage above **30 mA**, low/high voltage, the charger's own protection faults, and a low backup battery each surface as a clear **Repairs** notice in English and Ukrainian. A dedicated **Ground Protection** switch lets you manage the charger's missing-ground shutdown from HA, and confirmation counting plus recovery hysteresis keep a single glitchy poll from raising a false alarm.
+
+See [Safety notices](#-safety-notices) for the full list of conditions and recommended actions.
 
 ## Requirements
 
@@ -87,6 +92,29 @@ Offline chargers are handled quietly, polling backs off, commands surface a Home
 
 Use **Configure** to switch Basic/Advanced later. Use **Reconfigure** to change host, credentials, model, or phase count without reinstalling.
 
+## 🛡️ Safety notices
+
+Dangerous and configuration conditions surface through Home Assistant **Settings → Devices & Services → Repairs**, each with a plain-language message (English and Ukrainian). Recoverable safety notices clear themselves automatically once the condition is resolved; serious incidents stay visible until you press **Ignore**, then reset after recovery so a future separate incident can alert again.
+
+### Safety conditions
+
+| Notice | When it appears | What to do |
+| --- | --- | --- |
+| Ground is missing | The charger reports a grounding fault or repeatedly reports no ground, independently of the Ground Protection switch | Stop charging and have the grounding checked by a qualified electrician; clears automatically after stable grounding returns |
+| Ground protection is disabled | The charger repeatedly reports that ground protection is turned off, independently of whether ground is currently connected | Turn on the **Ground Protection** switch — the charger is allowed to charge without a confirmed ground while it is off |
+| Box or plug overheating | The charger reports an overheat fault, or a sustained temperature at/above **80 °C** (early warning before the charger stops at **85 °C**) | Stop using the charger, let it cool, and contact the charger manufacturer's support if it repeats |
+| Current leakage (GFCI) | The charger reports a leakage fault or sustained leakage above its **30 mA** threshold | Stop using the charger and contact the charger manufacturer's support |
+| Charger protection fault | Relay, pilot, diode, overcurrent, low/high voltage, GFCI self-test, interface-timeout, or software fault reported by the charger | Stop or avoid charging and contact the charger manufacturer's support |
+| Charger backup battery is low | The charger's internal CR2032 coin-cell reads low for several polls | Replace it with a fresh, good-quality CR2032 cell |
+
+### Configuration notices
+
+| Notice | When it appears | What to do |
+| --- | --- | --- |
+| Charger setup needs attention | Stored connection details are incomplete or invalid | Open the repair and re-enter the charger details (fixable in place) |
+| OCPP is enabled | OCPP is on, so the OCPP server or mobile app may override HA controls | Turn off the **Connect to OCPP** switch to restore full HA control |
+| Update SOC cards and automations | Legacy `input_number.ev_*` helpers are still present | Switch dashboards/automations to the native `number.eveus_ev_charger_*` entities |
+
 ## Entity IDs
 
 The tables below show default entity IDs for the first charger named **Eveus EV Charger**. Home Assistant may add suffixes if you rename entities or add multiple chargers. Unique IDs are stable, so your history and dashboard cards survive normal updates.
@@ -103,6 +131,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | `number.eveus_ev_charger_charging_current` | Number | Current limit slider with model-aware bounds |
 | `switch.eveus_ev_charger_stop_charging` | Switch | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Switch | Enable one-charge mode |
+| `switch.eveus_ev_charger_ground_protection` | Switch | Enable or disable the charger's missing-ground shutdown protection. Disabled by default in the entity registry because turning it off bypasses a safety protection |
 | `switch.eveus_ev_charger_connect_to_ocpp` | Switch | Connect the charger to the OCPP backend (e.g. for the mobile app). While on, a Repairs warning explains that Charging Current, limits, and schedule may be overridden by the backend, and how to turn OCPP back off |
 | `button.eveus_ev_charger_force_refresh` | Button | Poll the charger immediately |
 
@@ -245,17 +274,7 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 | SOC sensors are missing | Set the integration mode to Advanced under Configure, then restart/reload the integration if just changed |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
-
-### Repair notices
-
-The integration surfaces issues through Home Assistant **Settings → Devices & Services → Repairs**. Each notice clears itself automatically once the underlying condition is resolved.
-
-| Notice | When it appears | What to do |
-| --- | --- | --- |
-| Charger setup needs attention | Stored connection details are incomplete or invalid | Open the repair and re-enter the charger details (fixable in place) |
-| Update SOC cards and automations | Legacy `input_number.ev_*` helpers are still present | Switch dashboards/automations to the native `number.eveus_ev_charger_*` entities |
-| OCPP is enabled | OCPP is turned on, so the OCPP server or mobile app may override HA controls | Turn off the **Connect to OCPP** switch to restore full HA control |
-| Charger battery is low | The charger's internal CR2032 coin-cell reads low for several polls | Replace it with a fresh, good-quality CR2032 cell |
+| A Repairs notice appeared | See [Safety notices](#-safety-notices) for what each one means and what to do |
 
 ## Privacy And Diagnostics
 

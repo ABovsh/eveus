@@ -516,6 +516,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         entry.async_on_unload(updater.async_add_listener(_refresh_battery_issue))
         _refresh_battery_issue()
 
+        # Surface dangerous charger conditions (missing ground, leakage,
+        # overheat, and firmware safety faults) as Home Assistant Repairs
+        # notices. The manager owns its own debounce/hysteresis/latching. Its
+        # listener is removed on unload (below), and its in-memory streaks reset
+        # on reload — but the safety issues themselves are persistent and are
+        # deliberately never deleted on unload, so incidents and ignored state
+        # survive reloads, restarts, and temporary charger outages; the manager
+        # reconciles recovery against the surviving issue after the next poll.
+        from .safety import EveusSafetyManager
+
+        safety_manager = EveusSafetyManager(hass, entry, updater)
+        entry.async_on_unload(updater.async_add_listener(safety_manager.process))
+        safety_manager.process()
+
         # DataUpdateCoordinator constructed with config_entry already registers
         # async_shutdown on the entry unload lifecycle — no manual registration.
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

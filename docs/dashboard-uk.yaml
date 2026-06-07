@@ -207,6 +207,9 @@ sections:
           - entity: switch.eveus_ev_charger_one_charge
             name: Одноразове заряджання
             icon: mdi:lightning-bolt
+          - entity: switch.eveus_ev_charger_ground_protection
+            name: Захист заземлення
+            icon: mdi:shield-earth
           - entity: button.eveus_ev_charger_force_refresh
             name: Примусове оновлення
             icon: mdi:refresh

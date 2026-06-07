@@ -203,6 +203,9 @@ sections:
           - entity: switch.eveus_ev_charger_one_charge
             name: One Charge
             icon: mdi:lightning-bolt
+          - entity: switch.eveus_ev_charger_ground_protection
+            name: Ground Protection
+            icon: mdi:shield-earth
           - entity: button.eveus_ev_charger_force_refresh
             name: Force Refresh
             icon: mdi:refresh

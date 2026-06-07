@@ -11,6 +11,7 @@ from PIL import Image
 
 from conftest import TEST_HOST
 from custom_components.eveus.common_base import BaseEveusEntity
+from custom_components.eveus.safety import POLICIES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,15 +26,12 @@ def test_manifest_domain_matches_integration_directory() -> None:
 
 
 def test_manifest_readme_and_changelog_versions_match() -> None:
-    """Manifest, README badge and CHANGELOG must agree, branch-appropriately.
+    """Manifest, README badge and CHANGELOG must agree.
 
-    The README badge mirrors the manifest version **exactly**, so the value is
-    correct on whatever branch it lives on. ``main`` carries the final patch
-    version ``X.Y.Z`` (badge ``version-X.Y.Z``). The ephemeral ``X.Y-rc``
-    branch carries the minor-line pre-release marker ``X.Y-rc`` — no patch
-    number (badge ``version-X.Y--rc``); shields.io escapes a literal ``-`` as
-    ``--``. The CHANGELOG entry is keyed on the version line: the exact
-    ``## X.Y.Z`` on main, or any ``## X.Y.`` patch on that minor while on rc.
+    Home Assistant's manifest validator accepts final ``X.Y.Z`` versions and
+    PEP 440-style prereleases such as ``X.Y.Zb1``. The README badge mirrors the
+    manifest version exactly. Prereleases document changes under the matching
+    final-version CHANGELOG heading.
     """
     import re
 
@@ -44,21 +42,18 @@ def test_manifest_readme_and_changelog_versions_match() -> None:
     changelog = (ROOT / "CHANGELOG.md").read_text()
 
     version = manifest["version"]
-    is_rc = version.endswith("-rc")
+    final_match = re.fullmatch(r"(\d+\.\d+\.\d+)", version)
+    prerelease_match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:a|b|rc)\d+", version)
+    assert final_match or prerelease_match, version
 
     # README badge mirrors the manifest version verbatim (shields escapes - as --).
     badge_version = version.replace("-", "--")
     assert f"version-{badge_version}-blue" in readme
 
-    if is_rc:
-        # rc branch: minor-line marker only, e.g. "4.12-rc".
-        assert re.match(r"^\d+\.\d+-rc$", version), version
-        minor = version[: -len("-rc")]
-        assert f"## {minor}." in changelog
-    else:
-        # main: final patch version, e.g. "4.11.0".
-        assert re.match(r"^\d+\.\d+\.\d+$", version), version
-        assert f"## {version}" in changelog
+    changelog_version = (
+        prerelease_match.group(1) if prerelease_match is not None else version
+    )
+    assert f"## {changelog_version}" in changelog
 
 
 def test_hacs_metadata_has_allowed_keys_only() -> None:
@@ -243,6 +238,36 @@ def test_battery_low_warning_is_a_repair_issue_translation() -> None:
         assert issue["description"]
 
 
+def test_all_safety_repair_issue_translations_are_present() -> None:
+    base = ROOT / "custom_components" / "eveus"
+    expected = {f"safety_{policy.key}" for policy in POLICIES}
+    loaded = {}
+    for relative in ("strings.json", "translations/en.json", "translations/uk.json"):
+        translations = json.loads((base / relative).read_text())
+        loaded[relative] = translations
+        for key in expected:
+            issue = translations["issues"][key]
+            assert issue["title"].startswith("Eveus:")
+            assert len(issue["title"]) <= 90
+            assert len(issue["description"]) <= 550
+
+    assert all(
+        "What to do:\n\n-"
+        in loaded["translations/en.json"]["issues"][key]["description"]
+        for key in expected
+    )
+    assert all(
+        "Що зробити:\n\n-"
+        in loaded["translations/uk.json"]["issues"][key]["description"]
+        for key in expected
+    )
+    assert all(
+        loaded["strings.json"]["issues"][key]
+        == loaded["translations/en.json"]["issues"][key]
+        for key in expected
+    )
+
+
 def test_ukrainian_translation_has_no_known_untranslated_ui_phrases() -> None:
     """Guard against the known English phrases left in uk.json."""
     uk_text = (
@@ -356,3 +381,36 @@ def test_unit_suite_disables_homeassistant_pytest_plugin(pytestconfig) -> None:
     """The fast unit path must not load the Home Assistant pytest plugin."""
 
     assert not pytestconfig.pluginmanager.hasplugin("homeassistant")
+
+
+def test_ground_repair_copy_explains_independent_conditions_and_switch() -> None:
+    base = ROOT / "custom_components" / "eveus"
+    en = json.loads((base / "translations" / "en.json").read_text())
+    uk = json.loads((base / "translations" / "uk.json").read_text())
+
+    en_missing = en["issues"]["safety_ground_missing"]["description"]
+    en_disabled = en["issues"]["safety_ground_control_disabled"]["description"]
+    assert "independently" in en_missing
+    assert "**Ground Protection** switch" in en_disabled
+    assert "separate" in en_disabled
+
+    uk_missing = uk["issues"]["safety_ground_missing"]["description"]
+    uk_disabled = uk["issues"]["safety_ground_control_disabled"]["description"]
+    assert "незалежно" in uk_missing
+    assert "перемикач **Захист заземлення**" in uk_disabled
+    assert "окреме" in uk_disabled
+
+
+def test_thermal_repair_copy_explains_early_warning_before_stop() -> None:
+    base = ROOT / "custom_components" / "eveus"
+    documents = (
+        json.loads((base / "strings.json").read_text()),
+        json.loads((base / "translations" / "en.json").read_text()),
+        json.loads((base / "translations" / "uk.json").read_text()),
+    )
+
+    for document in documents:
+        for key in ("safety_box_overheat", "safety_plug_overheat"):
+            description = document["issues"][key]["description"]
+            assert "80 °C" in description
+            assert "85 °C" in description

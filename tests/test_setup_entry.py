@@ -88,8 +88,10 @@ class _Updater:
         self.available = True
         self.last_update_success = True
         self.data = {"currentSet": "16"}
+        self.listeners: list[object] = []
 
-    def async_add_listener(self, *args: object, **kwargs: object):
+    def async_add_listener(self, update_callback: object, *args: object, **kwargs: object):
+        self.listeners.append(update_callback)
         return lambda: None
 
     async def async_config_entry_first_refresh(self) -> None:
@@ -107,6 +109,20 @@ class _AuthFailingUpdater(_Updater):
 class _UnexpectedFailingUpdater(_Updater):
     async def async_config_entry_first_refresh(self) -> None:
         raise RuntimeError("network stack exploded")
+
+
+class _SafetyManager:
+    instances: list["_SafetyManager"] = []
+
+    def __init__(self, hass: object, entry: object, updater: object) -> None:
+        self.hass = hass
+        self.entry = entry
+        self.updater = updater
+        self.process_calls = 0
+        self.instances.append(self)
+
+    def process(self) -> None:
+        self.process_calls += 1
 
 
 def _hass() -> SimpleNamespace:
@@ -132,6 +148,14 @@ def test_async_setup_returns_true() -> None:
 def _patch_issue_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eveus.ir, "async_create_issue", lambda *args, **kwargs: None)
     monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *args, **kwargs: None)
+    # The safety manager (wired on first refresh) looks up existing issues via
+    # the registry; the real HA implementation rejects the stub SimpleNamespace
+    # hass. Report "no issue present" so setup runs against the lightweight hass.
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_get",
+        lambda hass: SimpleNamespace(async_get_issue=lambda domain, issue_id: None),
+    )
     # The setup path now consults the entity registry (status-sensor purge and
     # SOC-mode detection). Default to an empty registry so the stub hass used by
     # these tests does not need a real registry; individual tests override this.
@@ -453,6 +477,40 @@ def test_update_listener_and_unload_entry() -> None:
     assert hass.config_entries.unloaded
 
 
+def test_async_setup_entry_registers_and_runs_safety_manager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.eveus import safety
+
+    _SafetyManager.instances.clear()
+    hass = _hass()
+    entry = _Entry(_data(device_number=1))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(safety, "EveusSafetyManager", _SafetyManager)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    manager = _SafetyManager.instances[0]
+    assert manager.entry is entry
+    assert manager.updater is entry.runtime_data.updater
+    assert manager.process_calls == 1
+    assert manager.process in entry.runtime_data.updater.listeners
+
+
+def test_unload_does_not_delete_safety_issues(monkeypatch: pytest.MonkeyPatch) -> None:
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_delete_issue",
+        lambda hass, domain, issue_id: deleted.append(issue_id),
+    )
+    hass = _hass()
+    entry = _Entry(_data())
+
+    assert asyncio.run(eveus.async_unload_entry(hass, entry)) is True
+    assert all(not issue_id.startswith("safety_") for issue_id in deleted)
+
+
 def test_unload_entry_propagates_platform_unload_failure() -> None:
     class _FailingConfigEntries(_ConfigEntries):
         async def async_unload_platforms(self, entry: object, platforms: object) -> bool:
@@ -557,6 +615,7 @@ def test_switch_setup_creates_control_entities() -> None:
         "Adaptive Mode",
         "Schedule 1 Enabled",
         "Schedule 2 Enabled",
+        "Ground Protection",
         "Connect to OCPP",
     ]
     assert {entity.unique_id for entity in added} == {
@@ -565,6 +624,7 @@ def test_switch_setup_creates_control_entities() -> None:
         "eveus2_adaptive_mode",
         "eveus2_schedule_1_enabled",
         "eveus2_schedule_2_enabled",
+        "eveus2_ground_protection",
         "eveus2_connect_to_ocpp",
     }
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.12.0 - 2026-06-07
+
+### ✨ Added
+- **Safety problems now surface in Home Assistant Repairs.** Eveus warns about a missing ground, disabled ground protection, current leakage, box/plug overheating, and relay, pilot, diode, overcurrent, low/high voltage, GFCI-test, interface, and software faults. Faults the charger reports itself alert immediately; the raw grounding, temperature, and leakage checks require several consecutive readings and apply recovery hysteresis, so a single glitchy poll cannot raise a false alarm. The raw temperature check now warns at 80 °C, before the charger stops charging at 85 °C, so you get an early heads-up. Each notice carries a clear, plain-language repair message in English and Ukrainian explaining what happened and what to do — and now points you to the charger manufacturer's support for hardware faults.
+- **Ground protection can now be controlled from Home Assistant.** The new opt-in **Ground Protection** switch (`switch.eveus_ev_charger_ground_protection`) mirrors the charger's `groundCtrl` setting. When it is on, the charger checks for a protective earth connection and blocks charging if ground is missing; when it is off, the charger only reports ground status and lets charging continue without a detected ground. It is disabled by default in the entity registry because turning it off bypasses a safety protection. Missing ground and disabled protection remain two independent Repairs notices.
+- **Both dashboards now include the Ground Protection control.** The English (`docs/dashboard.yaml`) and Ukrainian (`docs/dashboard-uk.yaml`) Lovelace views add the new switch alongside the existing charging controls.
+- **Safety notices match the seriousness of the condition.** Grounding and other recoverable notices clear automatically after confirmed recovery; serious incidents stay visible until you press **Ignore**, then reset after recovery so a future separate incident can alert again. The integration monitors and reports; the only safety setting it can change is the Ground Protection switch you operate yourself, and it does not replace the charger's built-in protection or a qualified electrician.
+
+### 🐛 Fixed
+- **A repeat safety condition always warns you again.** If a serious safety notice (such as box or plug overheat) had already cleared by the time you pressed **Ignore**, a later recurrence now raises a fresh notice instead of staying hidden under the earlier acknowledgement — including when the temperature briefly hovers in the recovery band in between.
+
 ## 4.11.0 - 2026-06-05
 
 ### ✨ Added
