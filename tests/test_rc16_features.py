@@ -115,6 +115,68 @@ class TestCostToTargetSoc:
         assert sensor._get_sensor_value() == 0.0
 
 
+# =============================================================================
+# #16 Transition-aware burst polling
+# =============================================================================
+
+from conftest import TEST_PASSWORD, TEST_USERNAME
+from custom_components.eveus.common_network import EveusUpdater
+
+
+class _Hass:
+    loop = None
+
+
+def _updater() -> EveusUpdater:
+    return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+
+class TestTransitionBurstPolling:
+    def _burst_counter(self, updater, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            updater, "_schedule_post_command_refresh", lambda: calls.append(1)
+        )
+        return calls
+
+    def test_state_transition_triggers_burst(self, monkeypatch):
+        updater = _updater()
+        calls = self._burst_counter(updater, monkeypatch)
+        updater._record_success(0.1, {"state": 2})
+        updater._record_success(0.1, {"state": 4})
+        assert len(calls) == 1
+
+    def test_first_poll_does_not_burst(self, monkeypatch):
+        updater = _updater()
+        calls = self._burst_counter(updater, monkeypatch)
+        updater._record_success(0.1, {"state": 4})
+        assert calls == []
+
+    def test_unchanged_state_does_not_burst(self, monkeypatch):
+        updater = _updater()
+        calls = self._burst_counter(updater, monkeypatch)
+        updater._record_success(0.1, {"state": 4})
+        updater._record_success(0.1, {"state": 4})
+        assert calls == []
+
+    def test_flapping_state_is_debounced(self, monkeypatch):
+        updater = _updater()
+        calls = self._burst_counter(updater, monkeypatch)
+        updater._record_success(0.1, {"state": 2})
+        updater._record_success(0.1, {"state": 4})
+        updater._record_success(0.1, {"state": 2})
+        updater._record_success(0.1, {"state": 4})
+        assert len(calls) == 1
+
+    def test_invalid_state_neither_bursts_nor_clears_memory(self, monkeypatch):
+        updater = _updater()
+        calls = self._burst_counter(updater, monkeypatch)
+        updater._record_success(0.1, {"state": 2})
+        updater._record_success(0.1, {})  # validator normally rejects; be safe
+        updater._record_success(0.1, {"state": 2})
+        assert calls == []
+
+
 def test_advanced_only_prune_list_covers_target_soc_forecast_sensors():
     from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
 

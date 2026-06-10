@@ -42,6 +42,13 @@ _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_
 # almost a minute).
 POST_COMMAND_REFRESH_DELAYS: tuple[int, ...] = (3, 10, 20)
 
+# Minimum gap between transition-triggered poll bursts. A state transition
+# observed between two scheduled polls (schedule/charger-UI/OCPP-started
+# session, fault, unplug) triggers the same short refresh burst as a command,
+# so external changes surface quickly without raising idle traffic. The gap
+# stops a flapping state from keeping the coordinator in a permanent burst.
+TRANSITION_BURST_MIN_GAP: float = 30.0
+
 _LOGGER = logging.getLogger(__name__)
 _CHARGING_INTERVAL = timedelta(seconds=CHARGING_UPDATE_INTERVAL)
 _IDLE_INTERVAL = timedelta(seconds=IDLE_UPDATE_INTERVAL)
@@ -112,6 +119,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._device_available = True
         self._device_registry_finalized = False
         self._next_poll_attempt = 0.0
+        self._last_observed_state: int | None = None
+        self._last_burst_monotonic: float | None = None
         self._force_refresh_requests = 0
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
@@ -315,6 +324,33 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._offline_announced = False
         self._last_error = None
         self._tune_update_interval(new_data, preserve_offline=was_likely_offline)
+        self._maybe_burst_on_transition(new_data)
+
+    def _maybe_burst_on_transition(self, data: dict[str, Any]) -> None:
+        """Briefly poll fast after an observed device state transition.
+
+        Covers transitions HA did not initiate (schedules, the charger's own
+        UI, OCPP). An invalid/missing state neither bursts nor clears the
+        transition memory, so a glitched payload can't fabricate a transition
+        on the next valid poll.
+        """
+        try:
+            state = int(data.get("state")) if data.get("state") is not None else None
+        except (TypeError, ValueError):
+            state = None
+        if state is None or state not in CHARGING_STATES:
+            return
+        previous, self._last_observed_state = self._last_observed_state, state
+        if previous is None or previous == state or self._shutting_down:
+            return
+        now = time.monotonic()
+        if (
+            self._last_burst_monotonic is not None
+            and now - self._last_burst_monotonic < TRANSITION_BURST_MIN_GAP
+        ):
+            return
+        self._last_burst_monotonic = now
+        self._schedule_post_command_refresh()
 
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
