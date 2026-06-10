@@ -313,7 +313,9 @@ class EnergyToTargetSocSensor(BaseEVHelperSensor):
     """
 
     ENTITY_NAME = "Energy to Target SOC"
-    _attr_device_class = SensorDeviceClass.ENERGY_STORAGE
+    # No device class: this is energy still NEEDED from the grid, not energy
+    # currently stored — ENERGY_STORAGE would mislabel it, and ENERGY requires
+    # TOTAL/TOTAL_INCREASING. Plain kWh + MEASUREMENT is the honest contract.
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:battery-arrow-up"
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -327,7 +329,17 @@ class EnergyToTargetSocSensor(BaseEVHelperSensor):
             return None
         if self._session_energy_is_invalid():
             return None
-        energy_charged = self._get_energy_charged() or 0.0
+        energy_charged = self._get_energy_charged()
+        if energy_charged is None:
+            # Field absent entirely (a present-but-corrupt value returned None
+            # above). Before a session starts that simply means 0 kWh delivered;
+            # during an ACTIVE session it's anomalous telemetry, and falling
+            # back to 0 would snap the forecast back to the full from-initial-
+            # SOC estimate — go unknown instead.
+            state = get_safe_value(self._updater.data, "state", int)
+            if state in SESSION_ACTIVE_STATES:
+                return None
+            energy_charged = 0.0
         # Work in kWh, not the whole-percent rounded SOC: on a large battery a
         # rounded-up percent would zero the estimate with real energy missing.
         current_kwh = calc.get_soc_kwh(energy_charged)

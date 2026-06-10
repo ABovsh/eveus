@@ -85,6 +85,11 @@ FAULT_RECOVERY_POLLS: Final[int] = 2
 CLOCK_DRIFT_THRESHOLD_SECONDS: Final[int] = 600
 CLOCK_DRIFT_TRIGGER_POLLS: Final[int] = 3
 CLOCK_DRIFT_CLEAR_POLLS: Final[int] = 2
+# Recovery hysteresis (same idea as the battery-voltage OK threshold): once the
+# notice is active, drift must drop below this — not merely under the trigger
+# threshold — to count toward clearing, so a clock hovering at nine minutes
+# wrong can't silently dismiss the warning. A real fix (Sync Time) lands ~0.
+CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS: Final[int] = 120
 # Sanity window for the charger RTC (matches the System Time sensor's bound).
 MAX_VALID_SYSTEM_TIME: Final[int] = 4102444800
 # Plausible charger timeZone offsets, hours.

@@ -227,3 +227,98 @@ def test_reject_fractional_validator() -> None:
     assert _reject_fractional("3") == "3"
     with pytest.raises(vol.Invalid):
         _reject_fractional(3.9)
+
+
+# ---------------------------------------------------------------------------
+# Round 2 adversarial findings (R2-A09/A14/A15/A16)
+# ---------------------------------------------------------------------------
+
+
+def test_clock_drift_does_not_clear_while_still_minutes_wrong() -> None:
+    # R2-A09: with the warning active, drift dropping just under the trigger
+    # threshold (still ~9 minutes wrong) must NOT clear the notice; only a
+    # genuinely re-synced clock (below the clear threshold) does.
+    import time as _t
+
+    from custom_components.eveus import _ClockDriftTracker
+
+    def _payload(drift: float, tz: int = 3) -> dict:
+        return {"systemTime": int(_t.time() + drift + tz * 3600), "timeZone": tz}
+
+    tracker = _ClockDriftTracker()
+    for _ in range(2):
+        tracker.evaluate(_payload(900))
+    assert tracker.evaluate(_payload(900)) is True
+    # Hovering just under the trigger threshold: never clears.
+    for _ in range(5):
+        assert tracker.evaluate(_payload(590)) is None
+    # Truly back in sync: clears after the configured streak.
+    assert tracker.evaluate(_payload(10)) is None
+    assert tracker.evaluate(_payload(10)) is False
+
+
+def test_clock_drift_hover_then_resync_needs_consecutive_in_sync_polls() -> None:
+    # R2-A09: in-sync polls interleaved with hysteresis-band polls must not
+    # accumulate toward clearing — the clear streak is consecutive.
+    import time as _t
+
+    from custom_components.eveus import _ClockDriftTracker
+
+    def _payload(drift: float, tz: int = 3) -> dict:
+        return {"systemTime": int(_t.time() + drift + tz * 3600), "timeZone": tz}
+
+    tracker = _ClockDriftTracker()
+    for _ in range(3):
+        tracker.evaluate(_payload(900))
+    assert tracker.evaluate(_payload(10)) is None
+    assert tracker.evaluate(_payload(500)) is None  # band: resets the streak
+    assert tracker.evaluate(_payload(10)) is None
+    assert tracker.evaluate(_payload(10)) is False
+
+
+def test_energy_to_target_unknown_when_session_energy_absent_mid_session() -> None:
+    # R2-A14: firmware dropping sessionEnergy during an ACTIVE session must
+    # blank the forecast, not reset it to the full from-initial-SOC estimate.
+    calc = _push_helpers(CachedSOCCalculator())
+    sensor = EnergyToTargetSocSensor(
+        EveusTestUpdater({"state": 4}), 1, calc
+    )
+    assert sensor._get_sensor_value() is None
+
+
+def test_energy_to_target_zero_fallback_outside_active_session() -> None:
+    # R2-A14: before a session starts (idle charger, no sessionEnergy field)
+    # the 0-kWh-delivered fallback keeps producing the full estimate.
+    calc = _push_helpers(CachedSOCCalculator())
+    sensor = EnergyToTargetSocSensor(
+        EveusTestUpdater({"state": 2}), 1, calc
+    )
+    assert sensor._get_sensor_value() is not None
+
+
+def test_energy_to_target_has_no_storage_device_class() -> None:
+    # R2-A15: the sensor reports energy still NEEDED from the grid, not energy
+    # currently stored — ENERGY_STORAGE semantics would mislabel it.
+    calc = _push_helpers(CachedSOCCalculator())
+    sensor = EnergyToTargetSocSensor(EveusTestUpdater({}), 1, calc)
+    assert sensor.device_class is None
+    assert sensor._attr_native_unit_of_measurement == "kWh"
+
+
+def test_diagnostics_heuristic_redacts_credential_like_keys() -> None:
+    # R2-A16: common credential-ish names must hit the heuristic, nested too.
+    from custom_components.eveus.diagnostics import _sensitive_keys
+
+    data = {
+        "api_key": "x",
+        "authorization": "x",
+        "credentials": {"private_key": "x"},
+        "pwd": "x",
+        "battery_capacity": 80,
+        "phases": 3,
+    }
+    keys = _sensitive_keys(data)
+    for k in ("api_key", "authorization", "credentials", "private_key", "pwd"):
+        assert k in keys, k
+    assert "battery_capacity" not in keys
+    assert "phases" not in keys

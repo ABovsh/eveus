@@ -32,7 +32,7 @@ TO_REDACT = {
 # match these substrings.
 _SENSITIVE_NAME_RE = re.compile(
     r"ssid|passw|secret|token|serial|imei|uuid|mac|addr|ipaddr|"
-    r"ip_addr|latitude|longitude|geoloc|crc",
+    r"ip_addr|latitude|longitude|geoloc|crc|auth|credential|key|pwd|pin",
     re.IGNORECASE,
 )
 

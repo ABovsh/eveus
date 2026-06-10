@@ -49,6 +49,7 @@ from .const import (
     CLOCK_DRIFT_THRESHOLD_SECONDS,
     CLOCK_DRIFT_TRIGGER_POLLS,
     CLOCK_DRIFT_CLEAR_POLLS,
+    CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS,
     MAX_VALID_SYSTEM_TIME,
     MIN_VALID_TIMEZONE_H,
     MAX_VALID_TIMEZONE_H,
@@ -286,6 +287,12 @@ class _ClockDriftTracker:
                 return True
             return None
         self._drift_streak = 0
+        if self._active and drift > CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS:
+            # Hysteresis band: under the trigger threshold but still minutes
+            # wrong — not "recovered". Clearing requires consecutive polls
+            # genuinely back in sync, so reset the streak.
+            self._ok_streak = 0
+            return None
         self._ok_streak += 1
         if self._active and self._ok_streak >= CLOCK_DRIFT_CLEAR_POLLS:
             self._active = False
