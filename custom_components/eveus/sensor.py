@@ -49,10 +49,10 @@ async def async_setup_entry(
     async_add_entities(sensors, update_before_add=False)
 
     _LOGGER.debug(
-        "Created %d sensors (%d standard, %d EV-specific) for %s (device %d)",
+        "Created %d sensors (%d standard, %d EV-specific) for entry %s (device %d)",
         len(sensors),
         len(standard_sensors),
         len(ev_sensors),
-        entry.title,
+        entry.entry_id,
         device_number,
     )

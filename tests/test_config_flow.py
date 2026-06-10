@@ -500,11 +500,17 @@ def test_reconfigure_flow_updates_entry(monkeypatch: pytest.MonkeyPatch) -> None
         "reason": "reconfigure_successful",
         **kwargs,
     }
+    migrated: list[tuple[str, str]] = []
+    flow._migrate_device_identifiers = (
+        lambda entry, old, new: migrated.append((old, new))
+    )
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(
         flow.async_step_reconfigure(_input(**{CONF_HOST: TEST_HOST_ALT}))
     )
+
+    assert migrated == [(TEST_HOST, TEST_HOST_ALT)]
 
     assert result["type"] == "abort"
     assert result["unique_id"] == TEST_HOST_ALT

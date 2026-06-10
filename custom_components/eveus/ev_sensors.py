@@ -22,7 +22,13 @@ from .utils import (
     calculate_soc_percent,
     get_safe_value,
 )
-from .const import DEFAULT_SOC_CORRECTION, MAX_ENERGY_KWH, MAX_POWER_W, soc_update_signal
+from .const import (
+    DEFAULT_SOC_CORRECTION,
+    MAX_ENERGY_KWH,
+    MAX_POWER_W,
+    SESSION_ACTIVE_STATES,
+    soc_update_signal,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -155,7 +161,16 @@ class BaseEVHelperSensor(EveusSensorBase):
         """
         if not self._soc_calculator.are_helpers_available():
             return None
-        power_meas = get_safe_value(self._updater.data, "powerMeas", float)
+        # Only an actively charging session has a meaningful ETA. Residual
+        # standby power in Connected/Complete/Error states would otherwise
+        # produce an absurd-but-plausible time-to-target and finish timestamp,
+        # so outside an active session the power is treated as zero and the
+        # sensors resolve to their "Not charging" / unknown states.
+        state = get_safe_value(self._updater.data, "state", int)
+        if state not in SESSION_ACTIVE_STATES:
+            power_meas: float | None = 0.0
+        else:
+            power_meas = get_safe_value(self._updater.data, "powerMeas", float)
         energy_charged = self._get_energy_charged()
         if power_meas is None or energy_charged is None:
             return None

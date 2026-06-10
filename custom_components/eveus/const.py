@@ -45,6 +45,10 @@ OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 BATTERY_LOW_THRESHOLD_VOLTS: Final[float] = 2.0
 BATTERY_OK_THRESHOLD_VOLTS: Final[float] = 2.3
 BATTERY_LOW_DEBOUNCE_POLLS: Final[int] = 3
+# A CR2032 cell cannot physically read above a few volts; anything higher is a
+# corrupt sample and must neither advance the debounce nor clear an active
+# warning.
+BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS: Final[float] = 5.0
 
 # Safety repair thresholds. Firmware faults trigger immediately; raw telemetry
 # requires consecutive valid polls and recovery hysteresis to prevent flapping.

@@ -196,7 +196,9 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
     manufacturer = _safe_str(data.get("manufacturer"), fallback="Eveus")
     model = _safe_str(data.get("model"), fallback="Eveus EV Charger")
     serial = data.get("serialNum") or data.get("stationId")
-    serial_str = str(serial).strip() if serial else ""
+    # _safe_str rejects bools/containers so a malformed firmware field can't
+    # become the literal device serial in the registry.
+    serial_str = _safe_str(serial, fallback="") or ""
 
     device_suffix = get_device_display_suffix(device_number)
     device_identifier = get_device_identifier(host, device_number)

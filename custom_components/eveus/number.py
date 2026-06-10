@@ -13,7 +13,7 @@ from homeassistant.components.number import (
     RestoreNumber,
 )
 from homeassistant.core import HomeAssistant, callback, State
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
@@ -175,7 +175,9 @@ class EveusCurrentNumber(EveusNumberEntity):
                 return float(device_value)
 
         if self._last_device_value is not None:
-            if current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
+            # 0 <= age: a backward wall-clock jump must not extend the grace
+            # window indefinitely (mirrors the optimistic-state TTL guard).
+            if 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
                 return self._last_device_value
 
         return None
@@ -206,7 +208,9 @@ class EveusCurrentNumber(EveusNumberEntity):
                         f"Eveus charger did not accept charging current = {int_value}A"
                     )
 
-            except HomeAssistantError:
+            except (HomeAssistantError, ConfigEntryAuthFailed):
+                # ConfigEntryAuthFailed must propagate untouched so Home
+                # Assistant starts the reauthentication flow on a 401.
                 raise
             except Exception as err:
                 _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)

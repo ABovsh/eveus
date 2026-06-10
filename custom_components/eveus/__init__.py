@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
     BATTERY_LOW_THRESHOLD_VOLTS,
+    BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
     BATTERY_OK_THRESHOLD_VOLTS,
     BATTERY_LOW_DEBOUNCE_POLLS,
 )
@@ -179,7 +180,7 @@ class _BatteryLowTracker:
         "not low": it neither advances the debounce streak nor clears an active
         warning, mirroring how the OCPP warning ignores dropped fields.
         """
-        if value is None or value <= 0:
+        if value is None or value <= 0 or value > BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS:
             return None
         if value < BATTERY_LOW_THRESHOLD_VOLTS:
             self._low_streak += 1
@@ -202,7 +203,14 @@ def _update_battery_low_issue(
 
     Non-fixable informational warning (the fix is a physical battery swap) that
     auto-clears once the replacement reads healthy.
+
+    A failed or unavailable poll is skipped entirely: the coordinator notifies
+    listeners on failed refreshes too while retaining the previous payload, so
+    without this guard one genuine low reading followed by an outage would
+    replay the stale sample into the debounce and raise a false warning.
     """
+    if not updater.available or not updater.last_update_success:
+        return
     value = get_safe_value(updater.data, "vBat", float) if updater.data else None
     decision = tracker.evaluate(value)
     if decision is True:
@@ -271,7 +279,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old config entry data."""
     new_data = dict(entry.data)
     host = new_data.get(CONF_HOST)
-    if isinstance(host, str) and host.lower().startswith(("http://", "https://")):  # NOSONAR python:S5332 — local LAN device, HTTPS not available on charger firmware.
+    if isinstance(host, str) and host:
         from urllib.parse import urlparse, urlunparse
         from .config_flow import _split_host_and_scheme
 
@@ -281,24 +289,30 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # recovers cleanly — and so leftover credentials can't survive in the
         # host or, via the title rewrite below, in the config-entry title.
         sanitized = host
-        try:
-            parts = urlparse(host)
+        if host.lower().startswith(("http://", "https://")):  # NOSONAR python:S5332 — local LAN device, HTTPS not available on charger firmware.
+            try:
+                parts = urlparse(host)
             # netloc is "[user[:pass]@]host[:port]"; drop everything up to and
             # including the last '@' (preserves IPv6 brackets, which follow it).
-            netloc = parts.netloc.rsplit("@", 1)[-1]
-            if netloc and (
-                parts.username
-                or parts.password
-                or parts.path not in ("", "/")
-                or parts.query
-                or parts.fragment
-            ):
-                sanitized = urlunparse((parts.scheme, netloc, "", "", "", ""))
-        except ValueError:
-            sanitized = host
+                netloc = parts.netloc.rsplit("@", 1)[-1]
+                if netloc and (
+                    parts.username
+                    or parts.password
+                    or parts.path not in ("", "/")
+                    or parts.query
+                    or parts.fragment
+                ):
+                    sanitized = urlunparse((parts.scheme, netloc, "", "", "", ""))
+            except ValueError:
+                sanitized = host
 
+        # Canonicalize bare hosts too (case, trailing dot): a legacy entry that
+        # keeps a non-canonical spelling in data/unique_id would let the same
+        # charger be re-added under the canonical spelling as a duplicate.
         try:
-            new_data[CONF_HOST], new_data[CONF_SCHEME] = _split_host_and_scheme(sanitized)
+            new_data[CONF_HOST], new_data[CONF_SCHEME] = _split_host_and_scheme(
+                sanitized, new_data.get(CONF_SCHEME, DEFAULT_SCHEME)
+            )
         except vol.Invalid:
             _LOGGER.warning(
                 "Could not normalize stored Eveus host for entry %s",
@@ -341,7 +355,22 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_kwargs["data"] = new_data
 
         if host is not None and getattr(entry, "unique_id", None) == host:
-            update_kwargs["unique_id"] = new_data[CONF_HOST]
+            new_unique_id = new_data[CONF_HOST]
+            collision = any(
+                other.entry_id != entry.entry_id and other.unique_id == new_unique_id
+                for other in hass.config_entries.async_entries(DOMAIN)
+            )
+            if collision:
+                # Two legacy entries differ only in address spelling; rewriting
+                # would give them the same identity. Keep the old unique_id and
+                # let the user resolve the duplicate explicitly.
+                _LOGGER.warning(
+                    "Skipping unique_id canonicalization for entry %s: "
+                    "another entry already uses the canonical id",
+                    entry.entry_id,
+                )
+            else:
+                update_kwargs["unique_id"] = new_unique_id
 
         if isinstance(host, str) and isinstance(entry.title, str) and host in entry.title:
             update_kwargs["title"] = entry.title.replace(host, new_data[CONF_HOST])
@@ -562,6 +591,11 @@ async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:
     """Unload a config entry."""
-    ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
-    ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    # Delete the per-entry issues only after the platforms actually unloaded:
+    # if unloading fails the entry stays loaded with its trackers latched, and a
+    # prematurely deleted issue could not be recreated until full recovery.
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
+    return unloaded

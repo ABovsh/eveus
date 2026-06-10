@@ -416,7 +416,9 @@ def get_session_time_attrs(updater, hass) -> dict:
     if not updater.available:
         return {}
     seconds = _get_data_value(updater, "sessionTime", int)
-    if seconds is None or seconds < 0:
+    # Mirror the state getter's bounds: an absurd duration must not leak into
+    # the attribute while the visible state already reads unknown.
+    if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
         return {}
     return {"duration_seconds": seconds}
 

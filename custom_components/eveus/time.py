@@ -170,7 +170,7 @@ class EveusScheduleTimeEntity(
                 return int(device_value)
 
         if self._last_device_value is not None:
-            if current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
+            if 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
                 return self._last_device_value
 
         return None

@@ -40,7 +40,7 @@ def test_ev_sensors_keep_soc_calculator_per_instance() -> None:
 def test_time_to_target_soc_uses_shared_calculator() -> None:
     calculator = _push(CachedSOCCalculator())
     sensor = TimeToTargetSocSensor(
-        EveusTestUpdater({"sessionEnergy": "0", "powerMeas": "7000"}),
+        EveusTestUpdater({"sessionEnergy": "0", "powerMeas": "7000", "state": 4}),
         1,
         calculator,
     )

@@ -51,6 +51,9 @@ class _ConfigEntries:
     def async_get_entry(self, entry_id: str) -> object | None:
         return None
 
+    def async_entries(self, _domain=None):
+        return []
+
     def async_update_entry(self, entry: object, **kwargs: object) -> None:
         self.updated.append(kwargs)
 
@@ -747,6 +750,9 @@ class _MigrateEntries:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+
+    def async_entries(self, _domain=None):
+        return []
 
     def async_update_entry(self, entry: object, **kwargs: object) -> None:
         self.calls.append(kwargs)

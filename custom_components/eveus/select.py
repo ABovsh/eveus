@@ -82,7 +82,7 @@ class EveusTimeZoneSelect(
             return device
         if (
             self._last_device_value is not None
-            and time.time() - self._last_successful_read < CONTROL_GRACE_PERIOD
+            and 0 <= time.time() - self._last_successful_read < CONTROL_GRACE_PERIOD
         ):
             return _format_tz(self._last_device_value)
         return None

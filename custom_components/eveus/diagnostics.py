@@ -69,7 +69,7 @@ async def async_get_config_entry_diagnostics(
     payload: dict[str, Any] = {
         "entry": {
             "title": "Eveus Charger",
-            "data": async_redact_data(dict(entry.data), TO_REDACT),
+            "data": async_redact_data(dict(entry.data), _sensitive_keys(dict(entry.data))),
             "device_number": (
                 runtime_data.device_number if runtime_data is not None else None
             ),

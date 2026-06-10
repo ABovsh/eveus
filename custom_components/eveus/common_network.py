@@ -98,6 +98,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # 0.0 until the first successful poll, so connection_quality does not
         # report "healthy" before the charger has ever answered.
         self._last_success_time = 0.0
+        # Monotonic twin of _last_success_time: ages must survive wall-clock
+        # corrections (NTP, VM resume), which would otherwise freeze offline
+        # detection and health reporting until wall time catches up.
+        self._last_success_monotonic = 0.0
         self._latency_samples: deque[float] = deque(maxlen=10)
         self._connection_quality_cache: dict[str, Any] | None = None
 
@@ -136,7 +140,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def connection_quality(self) -> dict[str, Any]:
         """Connection metrics exposed for diagnostics and sensors."""
         if self._connection_quality_cache is not None:
-            return self._connection_quality_cache
+            # is_healthy is time-dependent; recompute it on every read so a
+            # cached snapshot can't keep reporting "healthy" while polling is
+            # stalled past the freshness threshold.
+            return {
+                **self._connection_quality_cache,
+                "is_healthy": self._is_healthy(
+                    self._connection_quality_cache["success_rate"]
+                ),
+            }
 
         if self._poll_results:
             success_rate = (sum(self._poll_results) / len(self._poll_results)) * 100
@@ -152,21 +164,31 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             "latency_avg": avg_latency,
             "consecutive_failures": self._consecutive_failures,
             "consecutive_command_failures": self._command_manager.consecutive_failures,
-            "is_healthy": (
-                self._last_success_time > 0
-                and success_rate > 80
-                and time.time() - self._last_success_time < 300
-            ),
+            "is_healthy": self._is_healthy(success_rate),
             "last_success_time": self._last_success_time,
             "last_error": self._last_error,
             "sample_count": len(self._poll_results),
         }
         return self._connection_quality_cache
 
+    def _seconds_since_success(self) -> float:
+        """Age of the last successful poll, immune to wall-clock jumps."""
+        if self._last_success_monotonic <= 0:
+            return float("inf")
+        return time.monotonic() - self._last_success_monotonic
+
+    def _is_healthy(self, success_rate: float) -> bool:
+        """Whether the connection is currently considered healthy."""
+        return (
+            self._last_success_time > 0
+            and success_rate > 80
+            and self._seconds_since_success() < 300
+        )
+
     @property
     def is_likely_offline(self) -> bool:
         """Check if the device appears to be powered off."""
-        return self._consecutive_failures > 10 and time.time() - self._last_success_time > 600
+        return self._consecutive_failures > 10 and self._seconds_since_success() > 600
 
     def get_session(self) -> aiohttp.ClientSession:
         """Get Home Assistant shared HTTP session."""
@@ -185,10 +207,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         extra: dict[str, Any] | None = None,
     ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
-        success = await self._command_manager.send_command(
-            command, value, retry=retry, extra=extra
-        )
-        self._connection_quality_cache = None
+        try:
+            success = await self._command_manager.send_command(
+                command, value, retry=retry, extra=extra
+            )
+        finally:
+            # Invalidate even on the raising path (401 -> ConfigEntryAuthFailed)
+            # so the cached consecutive_command_failures can't go stale.
+            self._connection_quality_cache = None
         if success and not self._shutting_down:
             self._schedule_post_command_refresh()
         return success
@@ -283,6 +309,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._device_available = True
         self._next_poll_attempt = 0.0
         self._last_success_time = time.time()
+        self._last_success_monotonic = time.monotonic()
         self._latency_samples.append(response_time)
         self._silent_mode = False
         self._offline_announced = False
@@ -354,6 +381,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
         start_time = time.time()
+        # Latency is measured on the monotonic clock so a wall-clock step during
+        # the request can't record a negative or absurd sample.
+        start_monotonic = time.monotonic()
         bypass_backoff = self._force_refresh_requests > 0
         backoff_remaining = self._next_poll_attempt - start_time
         if 0 < backoff_remaining <= _MAX_OFFLINE_BACKOFF and not bypass_backoff:
@@ -375,7 +405,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
                 new_data = validate_main_payload(new_data)
 
-                self._record_success(time.time() - start_time, new_data)
+                self._record_success(time.monotonic() - start_monotonic, new_data)
                 return new_data
 
         except ConfigEntryAuthFailed:

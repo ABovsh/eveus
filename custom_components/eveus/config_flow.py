@@ -16,7 +16,7 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers import aiohttp_client, device_registry as dr
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
@@ -89,6 +89,13 @@ def _prefill_from_helper(hass, entity_id: str, key: str, fallback: float) -> flo
     return normalize_soc_input(key, state.state, fallback)
 
 
+def _reject_bool(value):
+    """Refuse booleans before float coercion (True would store as 1.0)."""
+    if isinstance(value, bool):
+        raise vol.Invalid("Boolean values are not accepted for numeric fields")
+    return value
+
+
 def build_soc_step_schema(hass) -> vol.Schema:
     """Build the advanced-mode SOC value step, prefilled from any ev_* helpers."""
     cap_lo, cap_hi = SOC_INPUT_LIMITS["battery_capacity"]
@@ -103,10 +110,10 @@ def build_soc_step_schema(hass) -> vol.Schema:
         {
             vol.Required(
                 CONF_BATTERY_CAPACITY, default=cap_default
-            ): vol.All(vol.Coerce(float), vol.Range(min=cap_lo, max=cap_hi)),
+            ): vol.All(_reject_bool, vol.Coerce(float), vol.Range(min=cap_lo, max=cap_hi)),
             vol.Required(
                 CONF_SOC_CORRECTION, default=cor_default
-            ): vol.All(vol.Coerce(float), vol.Range(min=cor_lo, max=cor_hi)),
+            ): vol.All(_reject_bool, vol.Coerce(float), vol.Range(min=cor_lo, max=cor_hi)),
         }
     )
 
@@ -235,6 +242,16 @@ def validate_credentials(username: str, password: str) -> tuple[str, str]:
         raise vol.Invalid("Username and password must be less than 32 characters")
     if ":" in username:
         raise vol.Invalid("Username cannot contain ':'")
+
+    # aiohttp encodes Basic Auth as latin-1 at request time; credentials it
+    # cannot encode would otherwise surface later as a confusing
+    # "cannot connect" instead of an actionable invalid-credentials error.
+    try:
+        aiohttp.BasicAuth(username, password).encode()
+    except UnicodeEncodeError as err:
+        raise vol.Invalid(
+            "Username and password must use Latin-1 compatible characters"
+        ) from err
 
     return username, password
 
@@ -494,6 +511,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return the options flow handler for toggling SOC mode."""
         return EveusOptionsFlow(config_entry)
 
+    def _migrate_device_identifiers(self, entry, old_host: str, new_host: str) -> None:
+        """Rewrite host-based device identifiers after an address change."""
+        registry = dr.async_get(self.hass)
+        for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+            new_identifiers = set()
+            changed = False
+            for domain, ident in device.identifiers:
+                if domain == DOMAIN and ident == old_host:
+                    new_identifiers.add((domain, new_host))
+                    changed = True
+                elif domain == DOMAIN and ident.startswith(f"{old_host}_"):
+                    suffix = ident[len(old_host):]
+                    new_identifiers.add((domain, f"{new_host}{suffix}"))
+                    changed = True
+                else:
+                    new_identifiers.add((domain, ident))
+            if changed:
+                registry.async_update_device(device.id, new_identifiers=new_identifiers)
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -510,6 +546,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     self._abort_if_unique_id_configured()
 
+
+                old_host = entry.data.get(CONF_HOST)
+                new_host = entry_data[CONF_HOST]
+                if old_host and old_host != new_host:
+                    # The registry device is identified by host; migrate it so
+                    # area assignments, custom names, and dashboard references
+                    # follow the charger to its new address instead of leaving
+                    # an orphaned device behind.
+                    self._migrate_device_identifiers(entry, old_host, new_host)
 
                 return self.async_update_reload_and_abort(
                     entry,
@@ -573,6 +618,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     return self.async_abort(reason="wrong_device")
 
+
+                old_host = entry.data.get(CONF_HOST)
+                new_host = entry_data[CONF_HOST]
+                if old_host and old_host != new_host:
+                    # The registry device is identified by host; migrate it so
+                    # area assignments, custom names, and dashboard references
+                    # follow the charger to its new address instead of leaving
+                    # an orphaned device behind.
+                    self._migrate_device_identifiers(entry, old_host, new_host)
 
                 return self.async_update_reload_and_abort(
                     entry,

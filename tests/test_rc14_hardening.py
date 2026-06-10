@@ -157,6 +157,9 @@ class _ConfigEntries:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
+    def async_entries(self, _domain=None):
+        return []
+
     def async_update_entry(self, entry: object, **kwargs: object) -> None:
         self.calls.append(kwargs)
 

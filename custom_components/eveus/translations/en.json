@@ -319,7 +319,8 @@
                     "invalid_auth": "Invalid username or password",
                     "invalid_input": "Invalid input provided, please check your entries",
                     "invalid_device": "Device validation failed, please check the charger model",
-                    "unknown": "Unexpected error occurred"
+                    "unknown": "Unexpected error occurred",
+                    "already_configured": "Device is already configured"
                 },
                 "abort": {
                     "entry_missing": "The Eveus charger setup no longer exists",

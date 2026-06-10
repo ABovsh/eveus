@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.12.1 - 2026-06-10
+
+### 🐛 Fixed
+- **A brief outage can no longer raise a false "replace battery" warning.** While the charger is unreachable, the low-battery check now skips the stale last reading instead of re-counting it toward the alarm threshold — and an implausible voltage spike from a glitchy reading no longer silently clears a genuine low-battery warning.
+- **Re-entering your password now also starts from the Charging Current slider.** If the charger rejects the stored credentials while you change the charging current, Home Assistant now opens the re-authentication flow instead of showing only a generic error.
+- **System clock corrections are handled everywhere.** After a backward clock jump (NTP correction, resuming a VM), offline detection no longer freezes, controls no longer keep presenting last-known values indefinitely, entities leave their availability grace window on time, and connection-latency statistics can no longer record impossible values.
+- **Controls go unavailable on schedule.** When the charger drops offline between polls, an entity's grace window now expires exactly when configured instead of stretching until the next poll.
+- **No more phantom charging estimates.** *Time to Target SOC* shows **Not charging** and *Charging Finish Time* stays empty whenever the charger isn't actually charging — residual standby power in a connected or finished state can no longer fabricate an estimate. *Session Time* also no longer exposes an absurd duration attribute while its state already reads *unknown*.
+- **A reload that fails keeps its notices.** If the integration fails to unload cleanly, its repair notices stay visible instead of silently disappearing.
+- **Duplicate entries for the same charger are prevented.** A stored address differing only in letter case or a trailing dot now upgrades to its canonical spelling on startup (existing duplicates are left untouched and reported in the log).
+- **Changing a charger's address keeps its device.** After Reconfigure, the device's area assignment, custom name, and dashboard references follow the charger to its new address instead of leaving an orphaned device behind.
+- **Clearer messages in setup and repairs.** A username or password with characters the charger login cannot transmit is rejected up front with a clear message instead of failing later as "cannot connect", and the repair form now says **"Device is already configured"** (in English and Ukrainian) when you enter an address that belongs to another charger.
+- **The Devices page keeps up with the charger.** A firmware update is now reflected without restarting Home Assistant, and a malformed serial number from the charger can no longer be written into the device registry. Health diagnostics also re-evaluate connection freshness on every read instead of reporting a cached verdict.
+
+### 🔒 Privacy
+- **Debug logs no longer include the charger's address** when the sensor platform loads.
+- **Diagnostics downloads redact any configuration field with a credential-like name**, not just the known ones.
+
 ## 4.12.0 - 2026-06-07
 
 ### ✨ Added

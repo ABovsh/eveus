@@ -386,6 +386,7 @@ def test_schedule_post_command_refresh_registers_one_unsub_per_delay(
 def test_failure_recording_reduces_polling_when_device_appears_offline() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._last_success_time = time.time() - 700
+    updater._last_success_monotonic = time.monotonic() - 700
     updater._consecutive_failures = 10
 
     updater._record_failure(asyncio.TimeoutError())
@@ -436,6 +437,7 @@ def test_offline_failure_recording_is_quiet_at_normal_log_levels(
 ) -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._last_success_time = time.time() - 700
+    updater._last_success_monotonic = time.monotonic() - 700
     updater._consecutive_failures = 10
 
     with caplog.at_level(logging.INFO, logger="custom_components.eveus.common_network"):
@@ -458,6 +460,7 @@ def test_tune_interval_preserves_offline_cadence_when_likely_offline(
 
     updater._consecutive_failures = 11
     updater._last_success_time = time.time() - 700
+    updater._last_success_monotonic = time.monotonic() - 700
 
     assert updater.is_likely_offline is True
 
@@ -496,16 +499,19 @@ def test_is_likely_offline_transitions() -> None:
     # Failures without time — still online.
     updater._consecutive_failures = 11
     updater._last_success_time = time.time()
+    updater._last_success_monotonic = time.monotonic()
     assert updater.is_likely_offline is False
 
     # Time without failures — still online.
     updater._consecutive_failures = 5
     updater._last_success_time = time.time() - 700
+    updater._last_success_monotonic = time.monotonic() - 700
     assert updater.is_likely_offline is False
 
     # Both conditions met — offline.
     updater._consecutive_failures = 11
     updater._last_success_time = time.time() - 700
+    updater._last_success_monotonic = time.monotonic() - 700
     assert updater.is_likely_offline is True
 
 
