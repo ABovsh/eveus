@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.12.1 - 2026-06-10
+## Unreleased
 
 ### 🐛 Fixed
 - **A brief outage can no longer raise a false "replace battery" warning.** While the charger is unreachable, the low-battery check now skips the stale last reading instead of re-counting it toward the alarm threshold — and an implausible voltage spike from a glitchy reading no longer silently clears a genuine low-battery warning.
