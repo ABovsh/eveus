@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+# NOT `import time`: this package has a `time.py` platform module, and the
+# import system overwrites a package-global named `time` with that submodule
+# the moment HA loads the time platform.
+from time import time as _wall_clock
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -42,6 +46,12 @@ from .const import (
     BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
     BATTERY_OK_THRESHOLD_VOLTS,
     BATTERY_LOW_DEBOUNCE_POLLS,
+    CLOCK_DRIFT_THRESHOLD_SECONDS,
+    CLOCK_DRIFT_TRIGGER_POLLS,
+    CLOCK_DRIFT_CLEAR_POLLS,
+    MAX_VALID_SYSTEM_TIME,
+    MIN_VALID_TIMEZONE_H,
+    MAX_VALID_TIMEZONE_H,
 )
 from .common_network import EveusUpdater
 from .utils import (
@@ -226,6 +236,84 @@ def _update_battery_low_issue(
         )
     elif decision is False:
         ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
+
+
+def _clock_drift_issue_id(entry: ConfigEntry) -> str:
+    """Return the repair issue id for a drifted charger clock."""
+    return f"clock_drift_{entry.entry_id}"
+
+
+class _ClockDriftTracker:
+    """Decide when to raise/clear the charger clock-drift notice.
+
+    The charger stores ``systemTime`` as UTC but reports it in /main shifted
+    by ``timeZone`` hours, so charger UTC is ``systemTime - timeZone*3600``.
+    Fires only after several consecutive polls more than the threshold away
+    from Home Assistant's clock; clears only after consecutive in-sync polls.
+    Missing/corrupt time fields neither advance nor reset either streak,
+    mirroring the other notice trackers. This tracker only reports — fixing
+    the clock stays a user action (Sync Time button).
+    """
+
+    def __init__(self) -> None:
+        self._drift_streak = 0
+        self._ok_streak = 0
+        self._active = False
+
+    def evaluate(self, data: dict[str, Any] | None) -> bool | None:
+        """Return True to raise, False to clear, or None to leave unchanged."""
+        system_time = get_safe_value(data, "systemTime", int)
+        tz_hours = get_safe_value(data, "timeZone", int)
+        if (
+            system_time is None
+            or tz_hours is None
+            or not 0 < system_time <= MAX_VALID_SYSTEM_TIME
+            or not MIN_VALID_TIMEZONE_H <= tz_hours <= MAX_VALID_TIMEZONE_H
+        ):
+            return None
+        charger_utc = system_time - tz_hours * 3600
+        drift = abs(charger_utc - _wall_clock())
+        if drift > CLOCK_DRIFT_THRESHOLD_SECONDS:
+            self._ok_streak = 0
+            self._drift_streak += 1
+            if self._drift_streak >= CLOCK_DRIFT_TRIGGER_POLLS and not self._active:
+                self._active = True
+                return True
+            return None
+        self._drift_streak = 0
+        self._ok_streak += 1
+        if self._active and self._ok_streak >= CLOCK_DRIFT_CLEAR_POLLS:
+            self._active = False
+            return False
+        return None
+
+
+def _update_clock_drift_issue(
+    hass: HomeAssistant, entry: ConfigEntry, updater, tracker: _ClockDriftTracker
+) -> None:
+    """Raise or clear the clock-drift notice based on the latest poll.
+
+    Non-fixable warning: the guided fix is the Time Zone select plus the Sync
+    Time button — the integration deliberately never rewrites the charger
+    clock on its own. Skips failed/unavailable polls so stale data is never
+    replayed into the debounce (same guard as the battery notice).
+    """
+    if not updater.available or not updater.last_update_success:
+        return
+    decision = tracker.evaluate(updater.data if isinstance(updater.data, dict) else None)
+    if decision is True:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _clock_drift_issue_id(entry),
+            is_fixable=False,
+            is_persistent=False,
+            issue_domain=DOMAIN,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="clock_drift",
+        )
+    elif decision is False:
+        ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
 
 
 # SOC entities created only in Advanced mode, and per-phase sensors created only
@@ -547,6 +635,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         entry.async_on_unload(updater.async_add_listener(_refresh_battery_issue))
         _refresh_battery_issue()
 
+        # Warn when the charger clock has drifted from Home Assistant by more
+        # than 10 minutes (schedules/tariffs would mistime). Report-only: the
+        # notice walks the user to the Time Zone select + Sync Time button.
+        clock_tracker = _ClockDriftTracker()
+
+        @callback
+        def _refresh_clock_drift_issue() -> None:
+            _update_clock_drift_issue(hass, entry, updater, clock_tracker)
+
+        entry.async_on_unload(updater.async_add_listener(_refresh_clock_drift_issue))
+        _refresh_clock_drift_issue()
+
         # Surface dangerous charger conditions (missing ground, leakage,
         # overheat, and firmware safety faults) as Home Assistant Repairs
         # notices. The manager owns its own debounce/hysteresis/latching. Its
@@ -600,4 +700,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bo
     if unloaded:
         ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
         ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
     return unloaded

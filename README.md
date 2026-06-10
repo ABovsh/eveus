@@ -113,6 +113,7 @@ Dangerous and configuration conditions surface through Home Assistant **Settings
 | --- | --- | --- |
 | Charger setup needs attention | Stored connection details are incomplete or invalid | Open the repair and re-enter the charger details (fixable in place) |
 | OCPP is enabled | OCPP is on, so the OCPP server or mobile app may override HA controls | Turn off the **Connect to OCPP** switch to restore full HA control |
+| Charger clock is off | The charger clock differs from Home Assistant by more than 10 minutes for several polls, so schedules and tariff windows may mistime | Check the **Time Zone** select, then press the **Sync Time** button; the notice clears once the clocks agree |
 | Update SOC cards and automations | Legacy `input_number.ev_*` helpers are still present | Switch dashboards/automations to the native `number.eveus_ev_charger_*` entities |
 
 ## Entity IDs
@@ -181,6 +182,8 @@ Advanced mode creates four native input numbers. Older `input_number.ev_*` helpe
 | `sensor.eveus_ev_charger_soc_percent` | % | - | - | Estimated battery percentage |
 | `sensor.eveus_ev_charger_time_to_target_soc` | Sensor | - | - | Human-readable ETA to target SOC |
 | `sensor.eveus_ev_charger_charging_finish_time` | Timestamp | - | - | Absolute finish time for automations and timestamp cards |
+| `sensor.eveus_ev_charger_energy_to_target_soc` | kWh | - | - | Grid energy still needed to reach Target SOC (charging losses included) |
+| `sensor.eveus_ev_charger_cost_to_target_soc` | UAH | - | - | Forecast cost of reaching Target SOC at the active tariff rate |
 
 Migration from old helpers is intentionally simple: replace the prefix `input_number.ev_` with `number.eveus_ev_charger_` in cards and automations. For example, `input_number.ev_initial_soc` becomes `number.eveus_ev_charger_initial_soc`.
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### ✨ New
+- **Energy to Target SOC and Cost to Target SOC sensors (Advanced mode).** `sensor.eveus_ev_charger_energy_to_target_soc` shows how many kWh still have to come from the grid to reach your Target SOC (charging losses included), and `sensor.eveus_ev_charger_cost_to_target_soc` prices that energy at the charger's currently active tariff rate. Both are created only when the integration runs in Advanced mode.
+- **Drifted charger clock now raises a Repairs notice.** When the charger's clock differs from Home Assistant by more than 10 minutes for several polls, a warning explains that schedules and tariff windows may mistime and walks you through the fix: verify the **Time Zone** select, then press **Sync Time**. The notice clears automatically once the clocks agree; the integration never changes the charger clock on its own. Available in English and Ukrainian.
+
+### 🔧 Changed
+- **Externally started charging shows up fast.** When the charger changes state on its own (a schedule kicks in, the session is started from the charger UI or OCPP, a fault occurs), the integration now briefly polls faster — the same quick follow-up it already did after commands from Home Assistant — without raising idle traffic.
+- **Smarter retries while the charger is powered off.** Repeated failed polls now back off progressively (up to 5 minutes between attempts) instead of retrying on a fixed short cycle, multiple chargers no longer retry in lockstep, and recovery is confirmed over two successful polls before fast polling resumes. The Force Refresh button still polls immediately.
+- **Device page no longer shows a misleading hardware version.** The charger's Wi-Fi module firmware was previously displayed as the device "hardware version"; the field is now removed (the charger does not report a hardware revision). The Wi-Fi firmware remains visible in the diagnostics download.
+
 ### 🐛 Fixed
 - **A brief outage can no longer raise a false "replace battery" warning.** While the charger is unreachable, the low-battery check now skips the stale last reading instead of re-counting it toward the alarm threshold — and an implausible voltage spike from a glitchy reading no longer silently clears a genuine low-battery warning.
 - **Re-entering your password now also starts from the Charging Current slider.** If the charger rejects the stored credentials while you change the charging current, Home Assistant now opens the re-authentication flow instead of showing only a generic error.

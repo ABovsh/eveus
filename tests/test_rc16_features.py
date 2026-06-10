@@ -247,6 +247,69 @@ class TestProgressiveOfflineBackoff:
         assert updater._force_refresh_requests == 0
 
 
+# =============================================================================
+# #49 Charger clock-drift notice
+# =============================================================================
+
+from custom_components.eveus import _ClockDriftTracker
+
+
+def _payload(drift_seconds: float, tz: int = 3) -> dict:
+    return {
+        "systemTime": int(time.time() + drift_seconds + tz * 3600),
+        "timeZone": tz,
+    }
+
+
+class TestClockDriftTracker:
+    def test_fires_after_three_polls_above_ten_minutes(self):
+        tracker = _ClockDriftTracker()
+        assert tracker.evaluate(_payload(900)) is None
+        assert tracker.evaluate(_payload(900)) is None
+        assert tracker.evaluate(_payload(900)) is True
+
+    def test_negative_drift_also_fires(self):
+        tracker = _ClockDriftTracker()
+        for _ in range(2):
+            tracker.evaluate(_payload(-900))
+        assert tracker.evaluate(_payload(-900)) is True
+
+    def test_small_drift_never_fires_and_clears_after_two_polls(self):
+        tracker = _ClockDriftTracker()
+        for _ in range(3):
+            tracker.evaluate(_payload(900))
+        assert tracker.evaluate(_payload(30)) is None
+        assert tracker.evaluate(_payload(30)) is False
+
+    def test_one_in_sync_poll_resets_debounce(self):
+        tracker = _ClockDriftTracker()
+        tracker.evaluate(_payload(900))
+        tracker.evaluate(_payload(900))
+        tracker.evaluate(_payload(0))
+        assert tracker.evaluate(_payload(900)) is None
+
+    def test_missing_or_corrupt_fields_leave_state_unchanged(self):
+        tracker = _ClockDriftTracker()
+        tracker.evaluate(_payload(900))
+        tracker.evaluate(_payload(900))
+        assert tracker.evaluate({}) is None
+        assert tracker.evaluate({"systemTime": -5, "timeZone": 3}) is None
+        assert tracker.evaluate({"systemTime": "x", "timeZone": 99}) is None
+        # Streak survived the garbage: the next valid drifted poll fires.
+        assert tracker.evaluate(_payload(900)) is True
+
+    def test_translations_cover_clock_drift_in_en_and_uk(self):
+        import json
+        from pathlib import Path
+
+        base = Path("custom_components/eveus")
+        for name in ("translations/en.json", "translations/uk.json", "strings.json"):
+            issues = json.loads((base / name).read_text())["issues"]
+            assert "clock_drift" in issues, name
+            assert "Sync Time" in issues["clock_drift"]["description"] or \
+                "Синхрон" in issues["clock_drift"]["description"], name
+
+
 def test_advanced_only_prune_list_covers_target_soc_forecast_sensors():
     from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
 

@@ -72,6 +72,21 @@ MAX_VALID_LEAKAGE_CURRENT_MA: Final[float] = 100_000.0
 
 FAULT_RECOVERY_POLLS: Final[int] = 2
 
+# Charger clock drift vs Home Assistant. Beyond the threshold, schedules and
+# tariff windows execute at the wrong wall-clock time, so a Repairs notice
+# points the user at the Time Zone select and the Sync Time button. Debounced
+# like the other notices so a single corrupt RTC reading can't alarm, and the
+# notice clears only after consecutive in-sync polls. The integration never
+# rewrites the charger clock by itself.
+CLOCK_DRIFT_THRESHOLD_SECONDS: Final[int] = 600
+CLOCK_DRIFT_TRIGGER_POLLS: Final[int] = 3
+CLOCK_DRIFT_CLEAR_POLLS: Final[int] = 2
+# Sanity window for the charger RTC (matches the System Time sensor's bound).
+MAX_VALID_SYSTEM_TIME: Final[int] = 4102444800
+# Plausible charger timeZone offsets, hours.
+MIN_VALID_TIMEZONE_H: Final[int] = -12
+MAX_VALID_TIMEZONE_H: Final[int] = 14
+
 # Current limits
 MIN_CURRENT: Final[int] = 7
 MODEL_16A: Final[str] = "16A"

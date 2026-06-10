@@ -1,400 +1,410 @@
 {
-    "config": {
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Eveus Charger",
+        "description": "Enter your Eveus charger connection details.",
+        "data": {
+          "host": "IP Address",
+          "username": "Username",
+          "password": "Password",
+          "model": "Charger Model (16A, 32A or 48A)",
+          "phases": "Phases (1 = single-phase, 3 = three-phase)",
+          "soc_mode": "Integration mode"
+        }
+      },
+      "soc": {
+        "title": "SOC Monitoring Setup",
+        "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.",
+        "data": {
+          "battery_capacity": "Battery capacity (kWh)",
+          "soc_correction": "Charging efficiency loss (%)"
+        }
+      },
+      "reconfigure": {
+        "title": "Update Eveus Charger",
+        "description": "Update your Eveus charger connection details.",
+        "data": {
+          "host": "IP Address",
+          "username": "Username",
+          "password": "Password",
+          "model": "Charger Model (16A, 32A or 48A)",
+          "phases": "Phases (1 = single-phase, 3 = three-phase)",
+          "soc_mode": "Integration mode"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update Eveus Credentials",
+        "description": "The Eveus charger rejected the stored username or password. Enter the updated credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to charger, please verify the IP address",
+      "invalid_auth": "Invalid username or password",
+      "invalid_input": "Invalid input provided, please check your entries",
+      "invalid_device": "Device validation failed, please check the charger model",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reauth_successful": "Eveus credentials updated",
+      "reconfigure_successful": "Eveus charger settings updated",
+      "wrong_device": "The credentials belong to a different charger"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Integration mode",
+        "data": {
+          "soc_mode": "Integration mode"
+        }
+      }
+    }
+  },
+  "selector": {
+    "soc_mode": {
+      "options": {
+        "basic": "Basic (charging control only)",
+        "advanced": "Advanced (SOC + time-to-target)"
+      }
+    }
+  },
+  "entity": {
+    "number": {
+      "charging_current": {
+        "name": "Charging Current",
+        "state_attributes": {
+          "min": {
+            "name": "Minimum Current"
+          },
+          "max": {
+            "name": "Maximum Current"
+          }
+        }
+      },
+      "initial_soc": {
+        "name": "Initial SOC"
+      },
+      "target_soc": {
+        "name": "Target SOC"
+      },
+      "battery_capacity": {
+        "name": "Battery Capacity"
+      },
+      "soc_correction": {
+        "name": "SOC Correction"
+      }
+    },
+    "sensor": {
+      "voltage": {
+        "name": "Voltage"
+      },
+      "current": {
+        "name": "Current"
+      },
+      "power": {
+        "name": "Power"
+      },
+      "current_set": {
+        "name": "Current Set"
+      },
+      "session_energy": {
+        "name": "Session Energy"
+      },
+      "total_energy": {
+        "name": "Total Energy"
+      },
+      "counter_a_energy": {
+        "name": "Counter A Energy"
+      },
+      "counter_b_energy": {
+        "name": "Counter B Energy"
+      },
+      "state": {
+        "name": "State"
+      },
+      "substate": {
+        "name": "Substate"
+      },
+      "ground": {
+        "name": "Ground"
+      },
+      "system_time": {
+        "name": "System Time"
+      },
+      "box_temperature": {
+        "name": "Box Temperature"
+      },
+      "plug_temperature": {
+        "name": "Plug Temperature"
+      },
+      "battery_voltage": {
+        "name": "Battery Voltage"
+      },
+      "leakage_current": {
+        "name": "Leakage Current"
+      },
+      "leakage_current_peak": {
+        "name": "Leakage Current Peak"
+      },
+      "wifi_signal": {
+        "name": "WiFi Signal"
+      },
+      "current_phase_2": {
+        "name": "Current Phase 2"
+      },
+      "current_phase_3": {
+        "name": "Current Phase 3"
+      },
+      "voltage_phase_2": {
+        "name": "Voltage Phase 2"
+      },
+      "voltage_phase_3": {
+        "name": "Voltage Phase 3"
+      },
+      "session_time": {
+        "name": "Session Time"
+      },
+      "counter_a_cost": {
+        "name": "Counter A Cost"
+      },
+      "counter_b_cost": {
+        "name": "Counter B Cost"
+      },
+      "primary_rate_cost": {
+        "name": "Primary Rate Cost"
+      },
+      "active_rate_cost": {
+        "name": "Active Rate Cost"
+      },
+      "rate_2_cost": {
+        "name": "Rate 2 Cost"
+      },
+      "rate_3_cost": {
+        "name": "Rate 3 Cost"
+      },
+      "rate_2_status": {
+        "name": "Rate 2 Status"
+      },
+      "rate_3_status": {
+        "name": "Rate 3 Status"
+      },
+      "session_cost": {
+        "name": "Session Cost"
+      },
+      "adaptive_charging": {
+        "name": "Adaptive Charging"
+      },
+      "adaptive_current_limit": {
+        "name": "Adaptive Current Limit"
+      },
+      "adaptive_voltage_threshold": {
+        "name": "Adaptive Voltage Threshold"
+      },
+      "schedule_1": {
+        "name": "Schedule 1"
+      },
+      "schedule_2": {
+        "name": "Schedule 2"
+      },
+      "connection_quality": {
+        "name": "Connection Quality"
+      },
+      "soc_energy": {
+        "name": "SOC Energy"
+      },
+      "soc_percent": {
+        "name": "SOC Percent"
+      },
+      "time_to_target_soc": {
+        "name": "Time to Target SOC"
+      },
+      "charging_finish_time": {
+        "name": "Charging Finish Time"
+      },
+      "energy_to_target_soc": {
+        "name": "Energy to Target SOC"
+      },
+      "cost_to_target_soc": {
+        "name": "Cost to Target SOC"
+      }
+    },
+    "binary_sensor": {
+      "car_connected": {
+        "name": "Car Connected"
+      },
+      "session_active": {
+        "name": "Session Active"
+      },
+      "ocpp_connected": {
+        "name": "OCPP Connected"
+      }
+    },
+    "switch": {
+      "stop_charging": {
+        "name": "Stop Charging"
+      },
+      "one_charge": {
+        "name": "One Charge"
+      },
+      "adaptive_mode": {
+        "name": "Adaptive Mode"
+      },
+      "schedule_1_enabled": {
+        "name": "Schedule 1 Enabled"
+      },
+      "schedule_2_enabled": {
+        "name": "Schedule 2 Enabled"
+      },
+      "ground_protection": {
+        "name": "Ground Protection"
+      },
+      "connect_to_ocpp": {
+        "name": "Connect to OCPP"
+      }
+    },
+    "button": {
+      "force_refresh": {
+        "name": "Force Refresh"
+      },
+      "reset_counter_a": {
+        "name": "Reset Counter A"
+      },
+      "reset_counter_b": {
+        "name": "Reset Counter B"
+      },
+      "sync_time": {
+        "name": "Sync Time"
+      }
+    },
+    "select": {
+      "time_zone": {
+        "name": "Time Zone"
+      }
+    },
+    "time": {
+      "schedule_1_start": {
+        "name": "Schedule 1 Start"
+      },
+      "schedule_1_stop": {
+        "name": "Schedule 1 Stop"
+      },
+      "schedule_2_start": {
+        "name": "Schedule 2 Start"
+      },
+      "schedule_2_stop": {
+        "name": "Schedule 2 Stop"
+      }
+    }
+  },
+  "issues": {
+    "invalid_config": {
+      "title": "Eveus charger setup needs attention",
+      "fix_flow": {
         "step": {
-            "user": {
-                "title": "Connect to Eveus Charger",
-                "description": "Enter your Eveus charger connection details.",
-                "data": {
-                    "host": "IP Address",
-                    "username": "Username",
-                    "password": "Password",
-                    "model": "Charger Model (16A, 32A or 48A)",
-                    "phases": "Phases (1 = single-phase, 3 = three-phase)",
-                    "soc_mode": "Integration mode"
-                }
-            },
-            "soc": {
-                "title": "SOC Monitoring Setup",
-                "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.",
-                "data": {
-                    "battery_capacity": "Battery capacity (kWh)",
-                    "soc_correction": "Charging efficiency loss (%)"
-                }
-            },
-            "reconfigure": {
-                "title": "Update Eveus Charger",
-                "description": "Update your Eveus charger connection details.",
-                "data": {
-                    "host": "IP Address",
-                    "username": "Username",
-                    "password": "Password",
-                    "model": "Charger Model (16A, 32A or 48A)",
-                    "phases": "Phases (1 = single-phase, 3 = three-phase)",
-                    "soc_mode": "Integration mode"
-                }
-            },
-            "reauth_confirm": {
-                "title": "Update Eveus Credentials",
-                "description": "The Eveus charger rejected the stored username or password. Enter the updated credentials.",
-                "data": {
-                    "username": "Username",
-                    "password": "Password"
-                }
+          "confirm": {
+            "title": "Update Eveus charger setup",
+            "description": "The stored Eveus charger setup is incomplete or invalid. Enter the charger details again.",
+            "data": {
+              "host": "IP Address",
+              "username": "Username",
+              "password": "Password",
+              "model": "Charger Model (16A, 32A or 48A)",
+              "phases": "Phases (1 = single-phase, 3 = three-phase)",
+              "soc_mode": "Integration mode"
             }
+          }
         },
         "error": {
-            "cannot_connect": "Failed to connect to charger, please verify the IP address",
-            "invalid_auth": "Invalid username or password",
-            "invalid_input": "Invalid input provided, please check your entries",
-            "invalid_device": "Device validation failed, please check the charger model",
-            "unknown": "Unexpected error occurred"
+          "cannot_connect": "Failed to connect to charger, please verify the IP address",
+          "invalid_auth": "Invalid username or password",
+          "invalid_input": "Invalid input provided, please check your entries",
+          "invalid_device": "Device validation failed, please check the charger model",
+          "unknown": "Unexpected error occurred",
+          "already_configured": "Device is already configured"
         },
         "abort": {
-            "already_configured": "Device is already configured",
-            "reauth_successful": "Eveus credentials updated",
-            "reconfigure_successful": "Eveus charger settings updated",
-            "wrong_device": "The credentials belong to a different charger"
+          "entry_missing": "The Eveus charger setup no longer exists",
+          "fixed": "Eveus charger setup updated"
         }
+      }
     },
-    "options": {
-        "step": {
-            "init": {
-                "title": "Integration mode",
-                "data": {
-                    "soc_mode": "Integration mode"
-                }
-            }
-        }
+    "soc_dashboard_update": {
+      "title": "Eveus: update SOC cards and automations to use native SOC entities",
+      "description": "The Eveus integration now creates SOC input entities automatically for your charger.\n\nThese native entities replace the old manually created `input_number.ev_*` helpers. Existing values are copied automatically, so you do not need to enter them again.\n\nUpdate any dashboard cards, automations, scripts, or templates that still use the old helper entities.\n\nReplace this old prefix:\n\n`input_number.ev_`\n\nwith this new Eveus integration prefix:\n\n`number.eveus_ev_charger_`\n\nThis updates all four SOC inputs:\n\n`input_number.ev_initial_soc` → `number.eveus_ev_charger_initial_soc`\n\n`input_number.ev_target_soc` → `number.eveus_ev_charger_target_soc`\n\n`input_number.ev_battery_capacity` → `number.eveus_ev_charger_battery_capacity`\n\n`input_number.ev_soc_correction` → `number.eveus_ev_charger_soc_correction`\n\nThe Eveus integration does not delete or modify your old `input_number.ev_*` helpers.\n\nAfter you update all dashboards, automations, scripts, and templates to the new `number.eveus_ev_charger_*` entities, you can delete the old helpers if you no longer need them."
     },
-    "selector": {
-        "soc_mode": {
-            "options": {
-                "basic": "Basic (charging control only)",
-                "advanced": "Advanced (SOC + time-to-target)"
-            }
-        }
+    "ocpp_enabled": {
+      "title": "Eveus: OCPP is enabled, Home Assistant control may be limited",
+      "description": "OCPP is currently enabled on your Eveus charger.\n\nWhile OCPP is enabled, the charger may follow commands from the OCPP server or the Grizzl-E Connect mobile app instead of Home Assistant. Some Home Assistant controls may not apply or may be overwritten.\n\nThis can affect:\n\n- Charging current\n- Charge limits\n- Charging schedule\n\nTo restore full Home Assistant control, turn off the **Connect to OCPP** switch for your Eveus charger.\n\nThe Eveus integration will clear this warning automatically after OCPP is turned off."
     },
-    "entity": {
-        "number": {
-            "charging_current": {
-                "name": "Charging Current",
-                "state_attributes": {
-                    "min": {
-                        "name": "Minimum Current"
-                    },
-                    "max": {
-                        "name": "Maximum Current"
-                    }
-                }
-            },
-            "initial_soc": {
-                "name": "Initial SOC"
-            },
-            "target_soc": {
-                "name": "Target SOC"
-            },
-            "battery_capacity": {
-                "name": "Battery Capacity"
-            },
-            "soc_correction": {
-                "name": "SOC Correction"
-            }
-        },
-        "sensor": {
-            "voltage": {
-                "name": "Voltage"
-            },
-            "current": {
-                "name": "Current"
-            },
-            "power": {
-                "name": "Power"
-            },
-            "current_set": {
-                "name": "Current Set"
-            },
-            "session_energy": {
-                "name": "Session Energy"
-            },
-            "total_energy": {
-                "name": "Total Energy"
-            },
-            "counter_a_energy": {
-                "name": "Counter A Energy"
-            },
-            "counter_b_energy": {
-                "name": "Counter B Energy"
-            },
-            "state": {
-                "name": "State"
-            },
-            "substate": {
-                "name": "Substate"
-            },
-            "ground": {
-                "name": "Ground"
-            },
-            "system_time": {
-                "name": "System Time"
-            },
-            "box_temperature": {
-                "name": "Box Temperature"
-            },
-            "plug_temperature": {
-                "name": "Plug Temperature"
-            },
-            "battery_voltage": {
-                "name": "Battery Voltage"
-            },
-            "leakage_current": {
-                "name": "Leakage Current"
-            },
-            "leakage_current_peak": {
-                "name": "Leakage Current Peak"
-            },
-            "wifi_signal": {
-                "name": "WiFi Signal"
-            },
-            "current_phase_2": {
-                "name": "Current Phase 2"
-            },
-            "current_phase_3": {
-                "name": "Current Phase 3"
-            },
-            "voltage_phase_2": {
-                "name": "Voltage Phase 2"
-            },
-            "voltage_phase_3": {
-                "name": "Voltage Phase 3"
-            },
-            "session_time": {
-                "name": "Session Time"
-            },
-            "counter_a_cost": {
-                "name": "Counter A Cost"
-            },
-            "counter_b_cost": {
-                "name": "Counter B Cost"
-            },
-            "primary_rate_cost": {
-                "name": "Primary Rate Cost"
-            },
-            "active_rate_cost": {
-                "name": "Active Rate Cost"
-            },
-            "rate_2_cost": {
-                "name": "Rate 2 Cost"
-            },
-            "rate_3_cost": {
-                "name": "Rate 3 Cost"
-            },
-            "rate_2_status": {
-                "name": "Rate 2 Status"
-            },
-            "rate_3_status": {
-                "name": "Rate 3 Status"
-            },
-            "session_cost": {
-                "name": "Session Cost"
-            },
-            "adaptive_charging": {
-                "name": "Adaptive Charging"
-            },
-            "adaptive_current_limit": {
-                "name": "Adaptive Current Limit"
-            },
-            "adaptive_voltage_threshold": {
-                "name": "Adaptive Voltage Threshold"
-            },
-            "schedule_1": {
-                "name": "Schedule 1"
-            },
-            "schedule_2": {
-                "name": "Schedule 2"
-            },
-            "connection_quality": {
-                "name": "Connection Quality"
-            },
-            "soc_energy": {
-                "name": "SOC Energy"
-            },
-            "soc_percent": {
-                "name": "SOC Percent"
-            },
-            "time_to_target_soc": {
-                "name": "Time to Target SOC"
-            },
-            "charging_finish_time": {
-                "name": "Charging Finish Time"
-            }
-        },
-        "binary_sensor": {
-            "car_connected": {
-                "name": "Car Connected"
-            },
-            "session_active": {
-                "name": "Session Active"
-            },
-            "ocpp_connected": {
-                "name": "OCPP Connected"
-            }
-        },
-        "switch": {
-            "stop_charging": {
-                "name": "Stop Charging"
-            },
-            "one_charge": {
-                "name": "One Charge"
-            },
-            "adaptive_mode": {
-                "name": "Adaptive Mode"
-            },
-            "schedule_1_enabled": {
-                "name": "Schedule 1 Enabled"
-            },
-            "schedule_2_enabled": {
-                "name": "Schedule 2 Enabled"
-            },
-            "ground_protection": {
-                "name": "Ground Protection"
-            },
-            "connect_to_ocpp": {
-                "name": "Connect to OCPP"
-            }
-        },
-        "button": {
-            "force_refresh": {
-                "name": "Force Refresh"
-            },
-            "reset_counter_a": {
-                "name": "Reset Counter A"
-            },
-            "reset_counter_b": {
-                "name": "Reset Counter B"
-            },
-            "sync_time": {
-                "name": "Sync Time"
-            }
-        },
-        "select": {
-            "time_zone": {
-                "name": "Time Zone"
-            }
-        },
-        "time": {
-            "schedule_1_start": {
-                "name": "Schedule 1 Start"
-            },
-            "schedule_1_stop": {
-                "name": "Schedule 1 Stop"
-            },
-            "schedule_2_start": {
-                "name": "Schedule 2 Start"
-            },
-            "schedule_2_stop": {
-                "name": "Schedule 2 Stop"
-            }
-        }
+    "battery_low": {
+      "title": "Eveus: charger battery is low, replace it soon",
+      "description": "The CR2032 coin-cell battery inside your Eveus charger is low.\n\nWhile it is low, some charger functions may be limited.\n\nWhat to do:\n\n- Replace it with a fresh, good-quality CR2032 cell.\n\nThe Eveus integration will clear this warning automatically once a new battery reads a healthy voltage."
     },
-    "issues": {
-        "invalid_config": {
-            "title": "Eveus charger setup needs attention",
-            "fix_flow": {
-                "step": {
-                    "confirm": {
-                        "title": "Update Eveus charger setup",
-                        "description": "The stored Eveus charger setup is incomplete or invalid. Enter the charger details again.",
-                        "data": {
-                            "host": "IP Address",
-                            "username": "Username",
-                            "password": "Password",
-                            "model": "Charger Model (16A, 32A or 48A)",
-                            "phases": "Phases (1 = single-phase, 3 = three-phase)",
-                            "soc_mode": "Integration mode"
-                        }
-                    }
-                },
-                "error": {
-                    "cannot_connect": "Failed to connect to charger, please verify the IP address",
-                    "invalid_auth": "Invalid username or password",
-                    "invalid_input": "Invalid input provided, please check your entries",
-                    "invalid_device": "Device validation failed, please check the charger model",
-                    "unknown": "Unexpected error occurred",
-                    "already_configured": "Device is already configured"
-                },
-                "abort": {
-                    "entry_missing": "The Eveus charger setup no longer exists",
-                    "fixed": "Eveus charger setup updated"
-                }
-            }
-        },
-        "soc_dashboard_update": {
-            "title": "Eveus: update SOC cards and automations to use native SOC entities",
-            "description": "The Eveus integration now creates SOC input entities automatically for your charger.\n\nThese native entities replace the old manually created `input_number.ev_*` helpers. Existing values are copied automatically, so you do not need to enter them again.\n\nUpdate any dashboard cards, automations, scripts, or templates that still use the old helper entities.\n\nReplace this old prefix:\n\n`input_number.ev_`\n\nwith this new Eveus integration prefix:\n\n`number.eveus_ev_charger_`\n\nThis updates all four SOC inputs:\n\n`input_number.ev_initial_soc` → `number.eveus_ev_charger_initial_soc`\n\n`input_number.ev_target_soc` → `number.eveus_ev_charger_target_soc`\n\n`input_number.ev_battery_capacity` → `number.eveus_ev_charger_battery_capacity`\n\n`input_number.ev_soc_correction` → `number.eveus_ev_charger_soc_correction`\n\nThe Eveus integration does not delete or modify your old `input_number.ev_*` helpers.\n\nAfter you update all dashboards, automations, scripts, and templates to the new `number.eveus_ev_charger_*` entities, you can delete the old helpers if you no longer need them."
-        },
-        "ocpp_enabled": {
-            "title": "Eveus: OCPP is enabled, Home Assistant control may be limited",
-            "description": "OCPP is currently enabled on your Eveus charger.\n\nWhile OCPP is enabled, the charger may follow commands from the OCPP server or the Grizzl-E Connect mobile app instead of Home Assistant. Some Home Assistant controls may not apply or may be overwritten.\n\nThis can affect:\n\n- Charging current\n- Charge limits\n- Charging schedule\n\nTo restore full Home Assistant control, turn off the **Connect to OCPP** switch for your Eveus charger.\n\nThe Eveus integration will clear this warning automatically after OCPP is turned off."
-        },
-        "battery_low": {
-            "title": "Eveus: charger battery is low, replace it soon",
-            "description": "The CR2032 coin-cell battery inside your Eveus charger is low.\n\nWhile it is low, some charger functions may be limited.\n\nWhat to do:\n\n- Replace it with a fresh, good-quality CR2032 cell.\n\nThe Eveus integration will clear this warning automatically once a new battery reads a healthy voltage."
-        },
-        "safety_ground_missing": {
-            "title": "Eveus: ground connection is missing, stop charging",
-            "description": "The charger reports no ground connection.\n\nThis is a physical grounding fault, reported independently of the **Ground Protection** switch, so you may also see a separate warning if that protection is disabled.\n\nCharging without a working ground can be dangerous.\n\nWhat to do:\n\n- Stop charging and have the grounding checked by a qualified electrician.\n- Keep the **Ground Protection** switch enabled unless an electrician confirms a reason not to.\n\nThe Eveus integration clears this warning automatically once the ground connection is stable."
-        },
-        "safety_ground_control_disabled": {
-            "title": "Eveus: ground protection is disabled",
-            "description": "Ground protection is disabled on the charger.\n\nThe charger may continue charging when the ground connection is missing. If ground is also missing, Eveus will show a separate **Ground connection is missing** repair issue.\n\nWhat to do:\n\n- Turn on the **Ground Protection** switch for your Eveus charger.\n\nIf this is intentional, press Ignore. The Eveus integration will clear this warning automatically after ground protection is enabled."
-        },
-        "safety_leakage_detected": {
-            "title": "Eveus: current leakage detected, stop charging",
-            "description": "The charger reports current leakage.\n\nContinuing to charge may be dangerous.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the vehicle, cable, or installation may need checking.\n\nThis warning remains until the leakage stops and you press Ignore."
-        },
-        "safety_relay_fault": {
-            "title": "Eveus: relay fault detected, stop charging",
-            "description": "The charger reports a relay fault.\n\nThe relay may not switch charging power safely.\n\nWhat to do:\n\n- Stop using the charger and contact the charger manufacturer's support.\n\nThis warning remains until the fault clears and you press Ignore."
-        },
-        "safety_box_overheat": {
-            "title": "Eveus: charger temperature is too high, stop charging",
-            "description": "The charger reports an overheat fault or a sustained body temperature of at least 80 °C.\n\nHome Assistant warns before the charger automatically stops charging at 85 °C.\n\nWhat to do:\n\n- Stop charging and let the charger cool.\n- Check ventilation and contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
-        },
-        "safety_plug_overheat": {
-            "title": "Eveus: plug temperature is too high, stop charging",
-            "description": "The charger reports an overheat fault or a sustained plug temperature of at least 80 °C.\n\nHome Assistant warns before the charger automatically stops charging at 85 °C.\n\nWhat to do:\n\n- Stop charging and let the plug cool.\n- Once safe, contact the charger manufacturer's support to have the plug, socket, and cable checked.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
-        },
-        "safety_pilot_fault": {
-            "title": "Eveus: control pilot fault detected, stop charging",
-            "description": "The charger reports a control pilot fault and cannot confirm a safe charging connection.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the cable or vehicle connection may be at fault.\n\nThis warning remains until the fault clears and you press Ignore."
-        },
-        "safety_low_voltage": {
-            "title": "Eveus: supply voltage is too low, pause charging",
-            "description": "The charger reports that supply voltage is too low.\n\nWhat to do:\n\n- Pause charging until voltage is stable.\n- If this repeats, have the electrical supply checked.\n\nThis warning remains until the fault clears and you press Ignore."
-        },
-        "safety_diode_fault": {
-            "title": "Eveus: vehicle diode fault detected, stop charging",
-            "description": "The charger reports a vehicle diode fault.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the vehicle or charging cable may be at fault.\n\nThis warning remains until the fault clears and you press Ignore."
-        },
-        "safety_overcurrent": {
-            "title": "Eveus: charging current is too high, stop charging",
-            "description": "The charger reports charging current above its safe limit.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the charger, cable, or installation may need checking.\n\nThis warning remains until the fault clears and you press Ignore."
-        },
-        "safety_interface_timeout": {
-            "title": "Eveus: internal communication fault detected",
-            "description": "The charger reports an internal communication timeout.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
-        },
-        "safety_software_failure": {
-            "title": "Eveus: internal software fault detected",
-            "description": "The charger reports an internal software failure.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
-        },
-        "safety_gfci_test_failure": {
-            "title": "Eveus: ground-fault protection test failed",
-            "description": "The charger reports that its ground-fault protection self-test failed.\n\nCharging may not be protected from current leakage.\n\nWhat to do:\n\n- Stop using the charger and contact the charger manufacturer's support before charging again.\n\nThis warning remains until the fault clears and you press Ignore."
-        },
-        "safety_high_voltage": {
-            "title": "Eveus: supply voltage is too high, stop charging",
-            "description": "The charger reports that supply voltage is too high.\n\nWhat to do:\n\n- Stop charging until voltage is stable.\n- If this repeats, have the electrical supply checked.\n\nThis warning remains until the fault clears and you press Ignore."
-        }
+    "safety_ground_missing": {
+      "title": "Eveus: ground connection is missing, stop charging",
+      "description": "The charger reports no ground connection.\n\nThis is a physical grounding fault, reported independently of the **Ground Protection** switch, so you may also see a separate warning if that protection is disabled.\n\nCharging without a working ground can be dangerous.\n\nWhat to do:\n\n- Stop charging and have the grounding checked by a qualified electrician.\n- Keep the **Ground Protection** switch enabled unless an electrician confirms a reason not to.\n\nThe Eveus integration clears this warning automatically once the ground connection is stable."
+    },
+    "safety_ground_control_disabled": {
+      "title": "Eveus: ground protection is disabled",
+      "description": "Ground protection is disabled on the charger.\n\nThe charger may continue charging when the ground connection is missing. If ground is also missing, Eveus will show a separate **Ground connection is missing** repair issue.\n\nWhat to do:\n\n- Turn on the **Ground Protection** switch for your Eveus charger.\n\nIf this is intentional, press Ignore. The Eveus integration will clear this warning automatically after ground protection is enabled."
+    },
+    "safety_leakage_detected": {
+      "title": "Eveus: current leakage detected, stop charging",
+      "description": "The charger reports current leakage.\n\nContinuing to charge may be dangerous.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the vehicle, cable, or installation may need checking.\n\nThis warning remains until the leakage stops and you press Ignore."
+    },
+    "safety_relay_fault": {
+      "title": "Eveus: relay fault detected, stop charging",
+      "description": "The charger reports a relay fault.\n\nThe relay may not switch charging power safely.\n\nWhat to do:\n\n- Stop using the charger and contact the charger manufacturer's support.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "safety_box_overheat": {
+      "title": "Eveus: charger temperature is too high, stop charging",
+      "description": "The charger reports an overheat fault or a sustained body temperature of at least 80 °C.\n\nHome Assistant warns before the charger automatically stops charging at 85 °C.\n\nWhat to do:\n\n- Stop charging and let the charger cool.\n- Check ventilation and contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
+    },
+    "safety_plug_overheat": {
+      "title": "Eveus: plug temperature is too high, stop charging",
+      "description": "The charger reports an overheat fault or a sustained plug temperature of at least 80 °C.\n\nHome Assistant warns before the charger automatically stops charging at 85 °C.\n\nWhat to do:\n\n- Stop charging and let the plug cool.\n- Once safe, contact the charger manufacturer's support to have the plug, socket, and cable checked.\n\nThis warning remains until the temperature returns to normal and you press Ignore."
+    },
+    "safety_pilot_fault": {
+      "title": "Eveus: control pilot fault detected, stop charging",
+      "description": "The charger reports a control pilot fault and cannot confirm a safe charging connection.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the cable or vehicle connection may be at fault.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "safety_low_voltage": {
+      "title": "Eveus: supply voltage is too low, pause charging",
+      "description": "The charger reports that supply voltage is too low.\n\nWhat to do:\n\n- Pause charging until voltage is stable.\n- If this repeats, have the electrical supply checked.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "safety_diode_fault": {
+      "title": "Eveus: vehicle diode fault detected, stop charging",
+      "description": "The charger reports a vehicle diode fault.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the vehicle or charging cable may be at fault.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "safety_overcurrent": {
+      "title": "Eveus: charging current is too high, stop charging",
+      "description": "The charger reports charging current above its safe limit.\n\nWhat to do:\n\n- Stop charging and contact the charger manufacturer's support; the charger, cable, or installation may need checking.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "safety_interface_timeout": {
+      "title": "Eveus: internal communication fault detected",
+      "description": "The charger reports an internal communication timeout.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "safety_software_failure": {
+      "title": "Eveus: internal software fault detected",
+      "description": "The charger reports an internal software failure.\n\nWhat to do:\n\n- Stop charging.\n- Restart the charger only if it is safe. Contact the charger manufacturer's support if this repeats.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "safety_gfci_test_failure": {
+      "title": "Eveus: ground-fault protection test failed",
+      "description": "The charger reports that its ground-fault protection self-test failed.\n\nCharging may not be protected from current leakage.\n\nWhat to do:\n\n- Stop using the charger and contact the charger manufacturer's support before charging again.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "safety_high_voltage": {
+      "title": "Eveus: supply voltage is too high, stop charging",
+      "description": "The charger reports that supply voltage is too high.\n\nWhat to do:\n\n- Stop charging until voltage is stable.\n- If this repeats, have the electrical supply checked.\n\nThis warning remains until the fault clears and you press Ignore."
+    },
+    "clock_drift": {
+      "title": "Eveus: charger clock is off by more than 10 minutes",
+      "description": "The clock inside your Eveus charger differs from Home Assistant by more than 10 minutes.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Check that the **Time Zone** select for your Eveus charger matches your local time zone.\n- Press the **Sync Time** button for your Eveus charger to set its clock from Home Assistant.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again."
     }
+  }
 }
