@@ -1058,3 +1058,46 @@ def test_options_flow_switch_to_advanced_keeps_existing_soc_values() -> None:
     assert entry.data[CONF_SOC_MODE] == SOC_MODE_ADVANCED
     assert entry.data[CONF_BATTERY_CAPACITY] == 70
     assert entry.data[CONF_SOC_CORRECTION] == 5
+
+
+def test_options_flow_soc_submit_rebases_on_live_entry_data() -> None:
+    """A reauth/reconfigure finishing while the SOC form is open must survive."""
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: TEST_HOST, CONF_SOC_MODE: SOC_MODE_BASIC}),
+            "unique_id": TEST_HOST,
+        },
+    )()
+    entry.data.pop(CONF_BATTERY_CAPACITY, None)
+    entry.data.pop(CONF_SOC_CORRECTION, None)
+    flow = _options_flow_for(entry)
+
+    form = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+    assert form["step_id"] == "soc"
+
+    # Reauth completes while the form is open: password and host change.
+    entry.data = {**entry.data, CONF_PASSWORD: "new-secret", CONF_HOST: TEST_HOST_ALT}
+
+    asyncio.run(flow.async_step_soc({CONF_BATTERY_CAPACITY: 64, CONF_SOC_CORRECTION: 9}))
+
+    assert entry.data[CONF_PASSWORD] == "new-secret"
+    assert entry.data[CONF_HOST] == TEST_HOST_ALT
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_ADVANCED
+    assert entry.data[CONF_BATTERY_CAPACITY] == 64
+
+
+def test_soc_step_schema_prefills_from_stored_entry_values() -> None:
+    """Stored SOC values must prefill the form, not generic defaults."""
+    class _Hass:
+        states = type("S", (), {"get": staticmethod(lambda eid: None)})()
+
+    schema = config_flow.build_soc_step_schema(
+        _Hass(), defaults={CONF_SOC_CORRECTION: 4.5}
+    )
+    defaults = {
+        str(key): key.default() for key in schema.schema if hasattr(key, "default")
+    }
+    assert defaults[CONF_SOC_CORRECTION] == 4.5
+    assert defaults[CONF_BATTERY_CAPACITY] == config_flow.DEFAULT_BATTERY_CAPACITY

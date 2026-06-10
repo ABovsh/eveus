@@ -103,15 +103,29 @@ def _reject_fractional(value):
     return value
 
 
-def build_soc_step_schema(hass) -> vol.Schema:
-    """Build the advanced-mode SOC value step, prefilled from any ev_* helpers."""
+def build_soc_step_schema(hass, defaults: Mapping[str, Any] | None = None) -> vol.Schema:
+    """Build the advanced-mode SOC value step, prefilled from any ev_* helpers.
+
+    ``defaults`` (e.g. the live entry data) takes precedence: a value the user
+    already stored must prefill the form so re-submitting it cannot silently
+    replace it with a generic default.
+    """
     cap_lo, cap_hi = SOC_INPUT_LIMITS["battery_capacity"]
     cor_lo, cor_hi = SOC_INPUT_LIMITS["soc_correction"]
-    cap_default = _prefill_from_helper(
-        hass, "input_number.ev_battery_capacity", "battery_capacity", DEFAULT_BATTERY_CAPACITY
+    defaults = defaults or {}
+    cap_default = normalize_soc_input(
+        "battery_capacity",
+        defaults.get(CONF_BATTERY_CAPACITY),
+        _prefill_from_helper(
+            hass, "input_number.ev_battery_capacity", "battery_capacity", DEFAULT_BATTERY_CAPACITY
+        ),
     )
-    cor_default = _prefill_from_helper(
-        hass, "input_number.ev_soc_correction", "soc_correction", DEFAULT_SOC_CORRECTION
+    cor_default = normalize_soc_input(
+        "soc_correction",
+        defaults.get(CONF_SOC_CORRECTION),
+        _prefill_from_helper(
+            hass, "input_number.ev_soc_correction", "soc_correction", DEFAULT_SOC_CORRECTION
+        ),
     )
     return vol.Schema(
         {
@@ -678,7 +692,6 @@ class EveusOptionsFlow(OptionsFlow):
     def __init__(self, entry) -> None:
         """Store the config entry being edited."""
         self._entry = entry
-        self._pending_data: dict[str, Any] | None = None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -694,7 +707,6 @@ class EveusOptionsFlow(OptionsFlow):
                 # First switch to Advanced: collect the set-once SOC values,
                 # same as the setup flow's soc step — otherwise the SOC inputs
                 # would silently start from generic defaults.
-                self._pending_data = new_data
                 return await self.async_step_soc()
             return self._apply(new_data)
         schema = vol.Schema(
@@ -711,7 +723,11 @@ class EveusOptionsFlow(OptionsFlow):
     ) -> FlowResult:
         """Collect the set-once SOC values when first switching to Advanced."""
         if user_input is not None:
-            new_data = dict(self._pending_data)
+            # Rebase on the LIVE entry data, not a snapshot from when the form
+            # opened: a reauth/reconfigure finishing while this form sat open
+            # must not be rolled back to stale credentials/host on submit.
+            new_data = dict(self._entry.data)
+            new_data[CONF_SOC_MODE] = SOC_MODE_ADVANCED
             new_data[CONF_BATTERY_CAPACITY] = user_input[CONF_BATTERY_CAPACITY]
             new_data[CONF_SOC_CORRECTION] = user_input[CONF_SOC_CORRECTION]
             new_data.setdefault(CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC)
@@ -719,7 +735,7 @@ class EveusOptionsFlow(OptionsFlow):
             return self._apply(new_data)
         return self.async_show_form(
             step_id="soc",
-            data_schema=build_soc_step_schema(self.hass),
+            data_schema=build_soc_step_schema(self.hass, defaults=self._entry.data),
         )
 
     def _apply(self, new_data: dict[str, Any]) -> FlowResult:
