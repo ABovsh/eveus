@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from homeassistant.components.number import NumberEntityDescription
 from homeassistant.exceptions import HomeAssistantError
 
 from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME

@@ -16,7 +16,7 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers import aiohttp_client, device_registry as dr
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
@@ -89,24 +89,52 @@ def _prefill_from_helper(hass, entity_id: str, key: str, fallback: float) -> flo
     return normalize_soc_input(key, state.state, fallback)
 
 
-def build_soc_step_schema(hass) -> vol.Schema:
-    """Build the advanced-mode SOC value step, prefilled from any ev_* helpers."""
+def _reject_bool(value):
+    """Refuse booleans before float coercion (True would store as 1.0)."""
+    if isinstance(value, bool):
+        raise vol.Invalid("Boolean values are not accepted for numeric fields")
+    return value
+
+
+def _reject_fractional(value):
+    """Refuse fractional numbers where a whole count is required (3.9 != 3)."""
+    if isinstance(value, float) and not value.is_integer():
+        raise vol.Invalid("Value must be a whole number")
+    return value
+
+
+def build_soc_step_schema(hass, defaults: Mapping[str, Any] | None = None) -> vol.Schema:
+    """Build the advanced-mode SOC value step, prefilled from any ev_* helpers.
+
+    ``defaults`` (e.g. the live entry data) takes precedence: a value the user
+    already stored must prefill the form so re-submitting it cannot silently
+    replace it with a generic default.
+    """
     cap_lo, cap_hi = SOC_INPUT_LIMITS["battery_capacity"]
     cor_lo, cor_hi = SOC_INPUT_LIMITS["soc_correction"]
-    cap_default = _prefill_from_helper(
-        hass, "input_number.ev_battery_capacity", "battery_capacity", DEFAULT_BATTERY_CAPACITY
+    defaults = defaults or {}
+    cap_default = normalize_soc_input(
+        "battery_capacity",
+        defaults.get(CONF_BATTERY_CAPACITY),
+        _prefill_from_helper(
+            hass, "input_number.ev_battery_capacity", "battery_capacity", DEFAULT_BATTERY_CAPACITY
+        ),
     )
-    cor_default = _prefill_from_helper(
-        hass, "input_number.ev_soc_correction", "soc_correction", DEFAULT_SOC_CORRECTION
+    cor_default = normalize_soc_input(
+        "soc_correction",
+        defaults.get(CONF_SOC_CORRECTION),
+        _prefill_from_helper(
+            hass, "input_number.ev_soc_correction", "soc_correction", DEFAULT_SOC_CORRECTION
+        ),
     )
     return vol.Schema(
         {
             vol.Required(
                 CONF_BATTERY_CAPACITY, default=cap_default
-            ): vol.All(vol.Coerce(float), vol.Range(min=cap_lo, max=cap_hi)),
+            ): vol.All(_reject_bool, vol.Coerce(float), vol.Range(min=cap_lo, max=cap_hi)),
             vol.Required(
                 CONF_SOC_CORRECTION, default=cor_default
-            ): vol.All(vol.Coerce(float), vol.Range(min=cor_lo, max=cor_hi)),
+            ): vol.All(_reject_bool, vol.Coerce(float), vol.Range(min=cor_lo, max=cor_hi)),
         }
     )
 
@@ -218,11 +246,6 @@ def _split_host_and_scheme(
     return hostname, scheme
 
 
-def validate_host(host: str) -> str:
-    """Validate host input."""
-    return _split_host_and_scheme(host)[0]
-
-
 def validate_credentials(username: str, password: str) -> tuple[str, str]:
     """Validate credentials input."""
     if not isinstance(username, str) or not isinstance(password, str):
@@ -235,6 +258,16 @@ def validate_credentials(username: str, password: str) -> tuple[str, str]:
         raise vol.Invalid("Username and password must be less than 32 characters")
     if ":" in username:
         raise vol.Invalid("Username cannot contain ':'")
+
+    # aiohttp encodes Basic Auth as latin-1 at request time; credentials it
+    # cannot encode would otherwise surface later as a confusing
+    # "cannot connect" instead of an actionable invalid-credentials error.
+    try:
+        aiohttp.BasicAuth(username, password).encode()
+    except UnicodeEncodeError as err:
+        raise vol.Invalid(
+            "Username and password must use Latin-1 compatible characters"
+        ) from err
 
     return username, password
 
@@ -271,6 +304,8 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
     raw_phases = data.get(CONF_PHASES, DEFAULT_PHASES)
     invalid_phase_count = "Invalid phase count"
     if isinstance(raw_phases, bool):
+        raise vol.Invalid(invalid_phase_count)
+    if isinstance(raw_phases, float) and not raw_phases.is_integer():
         raise vol.Invalid(invalid_phase_count)
     try:
         phases = int(raw_phases)
@@ -326,7 +361,7 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
             # Coerce first: the frontend (mobile app in particular) submits the
             # selected option as a string ("1"/"3"), which bare vol.In rejects
             # with "value must be one of [1, 3]" for every choice (issue #4).
-            ): vol.All(vol.Coerce(int), vol.In(PHASE_OPTIONS)),
+            ): vol.All(_reject_bool, _reject_fractional, vol.Coerce(int), vol.In(PHASE_OPTIONS)),
             vol.Required(
                 CONF_SOC_MODE,
                 default=defaults.get(CONF_SOC_MODE, SOC_MODE_ADVANCED),
@@ -497,6 +532,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return the options flow handler for toggling SOC mode."""
         return EveusOptionsFlow(config_entry)
 
+    def _migrate_device_identifiers(self, entry, old_host: str, new_host: str) -> None:
+        """Rewrite host-based device identifiers after an address change."""
+        registry = dr.async_get(self.hass)
+        for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+            new_identifiers = set()
+            changed = False
+            for domain, ident in device.identifiers:
+                if domain == DOMAIN and ident == old_host:
+                    new_identifiers.add((domain, new_host))
+                    changed = True
+                elif domain == DOMAIN and ident.startswith(f"{old_host}_"):
+                    suffix = ident[len(old_host):]
+                    new_identifiers.add((domain, f"{new_host}{suffix}"))
+                    changed = True
+                else:
+                    new_identifiers.add((domain, ident))
+            if changed:
+                registry.async_update_device(device.id, new_identifiers=new_identifiers)
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -513,6 +567,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     self._abort_if_unique_id_configured()
 
+
+                old_host = entry.data.get(CONF_HOST)
+                new_host = entry_data[CONF_HOST]
+                if old_host and old_host != new_host:
+                    # The registry device is identified by host; migrate it so
+                    # area assignments, custom names, and dashboard references
+                    # follow the charger to its new address instead of leaving
+                    # an orphaned device behind.
+                    self._migrate_device_identifiers(entry, old_host, new_host)
 
                 return self.async_update_reload_and_abort(
                     entry,
@@ -576,7 +639,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     return self.async_abort(reason="wrong_device")
 
-
+                # No device-identifier migration here: the reauth form only
+                # exposes credentials, and any host mismatch aborted above as
+                # wrong_device, so the host cannot change on this path.
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=entry_data[CONF_HOST],
@@ -635,8 +700,15 @@ class EveusOptionsFlow(OptionsFlow):
         if user_input is not None:
             new_data = dict(self._entry.data)
             new_data[CONF_SOC_MODE] = user_input[CONF_SOC_MODE]
-            self.hass.config_entries.async_update_entry(self._entry, data=new_data)
-            return self.async_create_entry(title="", data={})
+            if user_input[CONF_SOC_MODE] == SOC_MODE_ADVANCED and (
+                CONF_BATTERY_CAPACITY not in new_data
+                or CONF_SOC_CORRECTION not in new_data
+            ):
+                # First switch to Advanced: collect the set-once SOC values,
+                # same as the setup flow's soc step — otherwise the SOC inputs
+                # would silently start from generic defaults.
+                return await self.async_step_soc()
+            return self._apply(new_data)
         schema = vol.Schema(
             {
                 vol.Required(
@@ -645,3 +717,28 @@ class EveusOptionsFlow(OptionsFlow):
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
+
+    async def async_step_soc(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Collect the set-once SOC values when first switching to Advanced."""
+        if user_input is not None:
+            # Rebase on the LIVE entry data, not a snapshot from when the form
+            # opened: a reauth/reconfigure finishing while this form sat open
+            # must not be rolled back to stale credentials/host on submit.
+            new_data = dict(self._entry.data)
+            new_data[CONF_SOC_MODE] = SOC_MODE_ADVANCED
+            new_data[CONF_BATTERY_CAPACITY] = user_input[CONF_BATTERY_CAPACITY]
+            new_data[CONF_SOC_CORRECTION] = user_input[CONF_SOC_CORRECTION]
+            new_data.setdefault(CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC)
+            new_data.setdefault(CONF_TARGET_SOC, DEFAULT_TARGET_SOC)
+            return self._apply(new_data)
+        return self.async_show_form(
+            step_id="soc",
+            data_schema=build_soc_step_schema(self.hass, defaults=self._entry.data),
+        )
+
+    def _apply(self, new_data: dict[str, Any]) -> FlowResult:
+        """Persist the updated entry data and finish the flow."""
+        self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+        return self.async_create_entry(title="", data={})

@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from conftest import spec_value_fn
 
 from custom_components.eveus._payload import PayloadError, validate_main_payload
 from custom_components.eveus import sensor_definitions as sd
@@ -40,7 +41,7 @@ GETTERS = [
     (sd.get_voltage, "voltMeas1", float),
     (sd.get_current, "curMeas1", float),
     (sd.get_power, "powerMeas", float),
-    (sd.get_current_set, "currentSet", int),
+    (spec_value_fn("current_set"), "currentSet", int),
     (sd.get_session_energy, "sessionEnergy", float),
     (sd.get_total_energy, "totalEnergy", float),
     (sd.get_counter_a_energy, "IEM1", float),
@@ -54,7 +55,7 @@ GETTERS = [
     (sd.get_plug_temperature, "temperature2", float),
     (sd.get_battery_voltage, "vBat", float),
     (sd.get_session_cost, "sessionMoney", float),
-    (sd.get_adaptive_current, "aiModecurrent", int),
+    (spec_value_fn("adaptive_current_limit"), "aiModecurrent", int),
     (sd.get_adaptive_voltage, "aiVoltage", int),
 ]
 

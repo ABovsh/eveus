@@ -16,7 +16,6 @@ from custom_components.eveus.config_flow import (
 from custom_components.eveus.const import (
     CONF_MODEL,
     CONF_PHASES,
-    CONF_SCHEME,
     DEFAULT_PHASES,
     MODEL_16A,
     PHASE_OPTIONS,
@@ -125,6 +124,7 @@ def test_three_phase_sensors_present_for_three_phase() -> None:
 def test_sensor_setup_includes_three_phase_sensors_when_runtime_phases_is_3() -> None:
     added: list[object] = []
     entry = SimpleNamespace(
+        entry_id="test-entry",
         title="Eveus (test)",
         data={CONF_MODEL: MODEL_16A},
         runtime_data=SimpleNamespace(
@@ -151,6 +151,7 @@ def test_sensor_setup_includes_three_phase_sensors_when_runtime_phases_is_3() ->
 def test_sensor_setup_excludes_three_phase_sensors_when_runtime_phases_is_1() -> None:
     added: list[object] = []
     entry = SimpleNamespace(
+        entry_id="test-entry",
         title="Eveus (test)",
         data={CONF_MODEL: MODEL_16A},
         runtime_data=SimpleNamespace(

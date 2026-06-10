@@ -56,11 +56,11 @@ def test_soc_percent_rejects_session_energy_outlier() -> None:
 
 def test_eta_rejects_power_outlier() -> None:
     bad = TimeToTargetSocSensor(
-        EveusTestUpdater(data={"sessionEnergy": 10, "powerMeas": 1e100}), 1, _soc_calc()
+        EveusTestUpdater(data={"sessionEnergy": 10, "powerMeas": 1e100, "state": 4}), 1, _soc_calc()
     )
     assert bad._get_sensor_value() is None
     good = TimeToTargetSocSensor(
-        EveusTestUpdater(data={"sessionEnergy": 10, "powerMeas": 3000}), 1, _soc_calc()
+        EveusTestUpdater(data={"sessionEnergy": 10, "powerMeas": 3000, "state": 4}), 1, _soc_calc()
     )
     assert isinstance(good._get_sensor_value(), str)
 
@@ -97,6 +97,9 @@ def test_timezone_select_suppresses_reconcile_while_pending() -> None:
 class _ConfigEntries:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+
+    def async_entries(self, _domain=None):
+        return []
 
     def async_update_entry(self, entry: object, **kwargs: object) -> None:
         self.calls.append(kwargs)

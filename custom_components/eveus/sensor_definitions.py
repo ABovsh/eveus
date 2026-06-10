@@ -13,7 +13,6 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.core import callback
 from homeassistant.const import (
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
@@ -296,10 +295,6 @@ def _make_enum_getter(key: str, mapping: dict[int, str]):
 get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
 get_current = _make_value_getter("curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT)
 get_power = _make_value_getter("powerMeas", precision=1, minimum=0, maximum=_MAX_POWER)
-get_current_set = _make_value_getter(
-    "currentSet", precision=0, minimum=MIN_CURRENT, maximum=_MAX_MODEL_CURRENT
-)
-
 # Energy getters
 get_session_energy = _make_value_getter(
     "sessionEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
@@ -416,7 +411,9 @@ def get_session_time_attrs(updater, hass) -> dict:
     if not updater.available:
         return {}
     seconds = _get_data_value(updater, "sessionTime", int)
-    if seconds is None or seconds < 0:
+    # Mirror the state getter's bounds: an absurd duration must not leak into
+    # the attribute while the visible state already reads unknown.
+    if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
         return {}
     return {"duration_seconds": seconds}
 
@@ -491,9 +488,6 @@ get_session_cost = _make_value_getter(
 get_adaptive_charging_state = _make_enum_getter("aiStatus", {1: "Active", 0: "Idle"})
 
 
-get_adaptive_current = _make_value_getter(
-    "aiModecurrent", precision=0, minimum=0, maximum=_MAX_CURRENT
-)
 get_adaptive_voltage = _make_value_getter(
     "aiVoltage", precision=0, minimum=0, maximum=_MAX_VOLTAGE
 )

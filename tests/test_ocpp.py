@@ -116,3 +116,39 @@ def test_ocpp_issue_cleared_when_disabled(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert not created
     assert not deleted
+
+
+def test_ocpp_issue_ignores_failed_or_unavailable_polls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed refresh replays the retained payload — it must change nothing.
+
+    The coordinator notifies listeners on failed refreshes too, so without the
+    availability guard a stale `ocppEnabled` would re-create or (worse) clear
+    the warning while the charger is unreachable.
+    """
+    created: list[str] = []
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        eveus_init.ir,
+        "async_create_issue",
+        lambda hass, domain, issue_id, **kw: created.append(issue_id),
+    )
+    monkeypatch.setattr(
+        eveus_init.ir,
+        "async_delete_issue",
+        lambda hass, domain, issue_id: deleted.append(issue_id),
+    )
+
+    entry = type("E", (), {"entry_id": "abc"})()
+
+    for payload in ({"ocppEnabled": 1}, {"ocppEnabled": 0}):
+        offline = _Updater(payload, available=False)
+        _update_ocpp_issue(object(), entry, offline)
+
+        failed = _Updater(payload)
+        failed.last_update_success = False
+        _update_ocpp_issue(object(), entry, failed)
+
+    assert not created
+    assert not deleted

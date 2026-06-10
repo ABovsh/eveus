@@ -526,3 +526,17 @@ class EveusTestUpdater:
 def disable_state_writes(entity: object) -> None:
     """Replace HA state writes with a no-op for direct entity unit tests."""
     entity.async_write_ha_state = lambda: None
+
+
+def spec_value_fn(key: str, *, phases: int = 1, max_current: int | None = None):
+    """Return the production value_fn registered for a sensor spec key."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    kwargs: dict[str, object] = {"phases": phases}
+    if max_current is not None:
+        kwargs["max_current"] = max_current
+    return next(
+        spec.value_fn
+        for spec in create_sensor_specifications(**kwargs)
+        if spec.key == key
+    )

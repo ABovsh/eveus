@@ -1,7 +1,6 @@
 """Privacy and SOC input hardening tests."""
 from __future__ import annotations
 
-import logging
 
 import pytest
 import voluptuous as vol
@@ -118,7 +117,6 @@ def test_session_cost_is_monetary_total():
 # F22 — Car Connected returns None for error state (7)
 def test_car_connected_error_state_is_unknown():
     from custom_components.eveus.binary_sensor import (
-        EveusCarConnectedBinarySensor,
         _CONNECTED_STATES,
         _PLUG_UNKNOWN_STATES,
     )

@@ -410,7 +410,6 @@ def test_base_entity_device_info_falls_back_when_payload_is_malformed() -> None:
         "manufacturer": "Eveus",
         "model": "Eveus EV Charger",
         "sw_version": "Unknown",
-        "hw_version": "Unknown",
         "configuration_url": TEST_BASE_URL,
     }
 
@@ -504,7 +503,6 @@ def test_common_module_exports_backward_compatible_symbols() -> None:
     assert common.BaseEveusEntity is BaseEveusEntity
     assert common.CommandManager.__name__ == "CommandManager"
     assert common.EveusUpdater.__name__ == "EveusUpdater"
-    assert issubclass(common.EveusConnectionError, common.EveusError)
     assert set(common.__all__) == {
         "BaseEveusEntity",
         "ControlEntityMixin",
@@ -513,7 +511,6 @@ def test_common_module_exports_backward_compatible_symbols() -> None:
         "EveusUpdater",
         "CommandManager",
         "EveusError",
-        "EveusConnectionError",
     }
 
 
@@ -663,7 +660,7 @@ def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.Monkey
                 "sw_version": "R3.05.2",
                 "model": "Eveus EV Charger",
                 "manufacturer": "Eveus",
-                "hw_version": "W1.0",
+                "hw_version": None,
                 "serial_number": "EV-12345",
             },
         )
@@ -716,6 +713,7 @@ def test_base_entity_finalize_updates_registry_with_minimal_device_info(
                 "sw_version": "R3.05.2",
                 "model": "Eveus EV Charger",
                 "manufacturer": "Eveus",
+                "hw_version": None,
             },
         )
     ]

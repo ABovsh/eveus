@@ -10,6 +10,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import State, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
@@ -46,6 +47,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         self._last_known_available = True
         self._unavailable_since: float | None = None
         self._entity_available = True
+        self._grace_recheck_unsub: Callable[[], None] | None = None
 
         if self.ENTITY_NAME is None:
             raise NotImplementedError("ENTITY_NAME must be defined in child class")
@@ -96,6 +98,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         current_time = time.time()
 
         if self._updater.available:
+            self._cancel_grace_recheck()
             if self._unavailable_since is not None:
                 if self._should_log_availability():
                     _LOGGER.debug("%s %s connection restored", label, self.unique_id)
@@ -107,12 +110,31 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         if self._unavailable_since is None:
             self._unavailable_since = current_time
             self._entity_available = True
+            self._schedule_grace_recheck(
+                grace_period,
+                grace_period=grace_period,
+                label=label,
+                clear_optimistic_state=clear_optimistic_state,
+            )
             return previous_available != self._entity_available
 
         unavailable_duration = current_time - self._unavailable_since
+        if unavailable_duration < 0:
+            # Wall clock stepped backward since the outage began; re-anchor so a
+            # negative age can't keep the grace window open indefinitely.
+            self._unavailable_since = current_time
+            unavailable_duration = 0.0
         if unavailable_duration < grace_period:
             self._entity_available = True
+            self._schedule_grace_recheck(
+                grace_period - unavailable_duration,
+                grace_period=grace_period,
+                label=label,
+                clear_optimistic_state=clear_optimistic_state,
+            )
             return previous_available != self._entity_available
+
+        self._cancel_grace_recheck()
 
         if self._last_known_available and self._should_log_availability():
             _LOGGER.debug(
@@ -128,6 +150,47 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
                 clear()
         self._entity_available = False
         return previous_available != self._entity_available
+
+    def _cancel_grace_recheck(self) -> None:
+        """Cancel a scheduled availability grace re-check, if any."""
+        if self._grace_recheck_unsub is not None:
+            self._grace_recheck_unsub()
+            self._grace_recheck_unsub = None
+
+    def _schedule_grace_recheck(
+        self,
+        delay: float,
+        *,
+        grace_period: int,
+        label: str,
+        clear_optimistic_state: bool,
+    ) -> None:
+        """Re-evaluate availability when the grace window expires.
+
+        Availability is otherwise only recomputed inside coordinator callbacks,
+        so with slow (idle/offline) polling a grace period could stretch by up
+        to a full poll interval past its configured duration.
+        """
+        if self.hass is None:
+            return
+        self._cancel_grace_recheck()
+
+        @callback
+        def _recheck(_now) -> None:
+            self._grace_recheck_unsub = None
+            if self._update_availability_state(
+                grace_period=grace_period,
+                label=label,
+                clear_optimistic_state=clear_optimistic_state,
+            ):
+                self.async_write_ha_state()
+
+        self._grace_recheck_unsub = async_call_later(self.hass, delay + 0.5, _recheck)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up scheduled callbacks on removal."""
+        self._cancel_grace_recheck()
+        await super().async_will_remove_from_hass()
 
     def _should_log_availability(self) -> bool:
         """Rate limit availability logging."""
@@ -165,15 +228,28 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         first refresh returned an empty payload (charger offline at HA boot),
         sw_version stays "Unknown" forever. Once a real firmware string lands
         in coordinator data, rebuild and propagate it to the device registry.
+
+        Re-runs when already-finalized metadata drifts (a firmware OTA upgrade,
+        or a serial number that only appeared in a later payload), so the
+        Devices page doesn't show stale values until the next restart.
         """
-        if self._device_info_finalized:
-            return
         if not self._updater.data:
             return
 
         new_info = self._build_device_info()
         if not new_info.get("sw_version") or new_info["sw_version"] == "Unknown":
             return
+
+        if self._device_info_finalized:
+            if new_info == self._attr_device_info:
+                # Even with unchanged metadata the registry write must happen
+                # once per runtime: it clears the legacy hw_version that older
+                # releases stored (Wi-Fi firmware is not a hardware revision).
+                if getattr(self._updater, "_device_registry_finalized", False):
+                    return
+            else:
+                # Metadata drifted after finalization: allow one registry refresh.
+                self._updater._device_registry_finalized = False
 
         self._attr_device_info = new_info
         self._device_info_finalized = True
@@ -193,8 +269,9 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
                 "model": new_info.get("model"),
                 "manufacturer": new_info.get("manufacturer"),
             }
-            if new_info.get("hw_version"):
-                update_kwargs["hw_version"] = new_info["hw_version"]
+            # hw_version is always cleared: earlier releases wrote the Wi-Fi
+            # module firmware there, which is not a hardware revision.
+            update_kwargs["hw_version"] = None
             if new_info.get("serial_number"):
                 update_kwargs["serial_number"] = new_info["serial_number"]
             registry.async_update_device(device.id, **update_kwargs)
@@ -239,8 +316,13 @@ class ControlEntityMixin:
         """Control entities use a shorter grace period for safety."""
         return self._entity_available
 
-    def _update_availability_state(self) -> bool:
-        """Update control availability with a shorter grace period."""
+    def _update_availability_state(self, **_kwargs: Any) -> bool:
+        """Update control availability with a shorter grace period.
+
+        Accepts (and overrides) the base keyword arguments so the scheduled
+        grace re-check callback can call it polymorphically: control entities
+        always use their own shorter grace period and optimistic-state reset.
+        """
         return super()._update_availability_state(
             grace_period=CONTROL_GRACE_PERIOD,
             label=self._control_entity_label,
@@ -257,7 +339,6 @@ class OptimisticControlMixin(Generic[T]):
         self._optimistic_value_time = 0.0
         self._last_device_value: T | None = None
         self._last_successful_read = 0.0
-        self._last_command_time = 0.0
         # Serialize rapid repeated commands on the SAME control. The command
         # manager serializes HTTP at the coordinator level, but the per-entity
         # pending/optimistic bookkeeping runs around that await; without this an

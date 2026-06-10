@@ -1,7 +1,6 @@
 """Setup, authentication, and statistics hardening tests."""
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -10,7 +9,7 @@ import voluptuous as vol
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from conftest import EveusTestUpdater, TEST_HOST
+from conftest import EveusTestUpdater, TEST_HOST, spec_value_fn
 from custom_components.eveus.common_command import CommandManager
 from custom_components.eveus.config_flow import (
     InvalidDevice,
@@ -18,7 +17,6 @@ from custom_components.eveus.config_flow import (
     validate_device_response,
 )
 from custom_components.eveus.sensor_definitions import (
-    get_adaptive_current,
     get_adaptive_voltage,
     get_counter_a_cost,
     get_counter_b_cost,
@@ -77,9 +75,9 @@ def test_tariff_rate_rejects_negative():
 
 # F07 — adaptive current/voltage negative rejected
 def test_adaptive_metrics_reject_negative():
-    assert get_adaptive_current(EveusTestUpdater({"aiModecurrent": -1}), None) is None
+    assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": -1}), None) is None
     assert get_adaptive_voltage(EveusTestUpdater({"aiVoltage": -5}), None) is None
-    assert get_adaptive_current(EveusTestUpdater({"aiModecurrent": 10}), None) == 10
+    assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": 10}), None) == 10
 
 
 # F08 — session_cost uses ₴ symbol as MEASUREMENT (per-session reset, no MONETARY)

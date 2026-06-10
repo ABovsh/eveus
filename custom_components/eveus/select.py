@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, State, callback
@@ -82,7 +81,7 @@ class EveusTimeZoneSelect(
             return device
         if (
             self._last_device_value is not None
-            and time.time() - self._last_successful_read < CONTROL_GRACE_PERIOD
+            and 0 <= time.time() - self._last_successful_read < CONTROL_GRACE_PERIOD
         ):
             return _format_tz(self._last_device_value)
         return None

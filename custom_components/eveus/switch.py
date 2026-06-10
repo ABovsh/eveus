@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -78,7 +78,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
     EveusSwitchEntityDescription(
         key="ground_protection",
         name="Ground Protection",
-        icon="mdi:shield-earth",
+        icon="mdi:shield-check",
         entity_category=EntityCategory.CONFIG,
         command="groundCtrl",
         state_key="groundCtrl",
@@ -207,7 +207,7 @@ class BaseSwitchEntity(
                 return bool(device_value)
 
         if self._last_device_value is not None:
-            if current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
+            if 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
                 return self._last_device_value
 
         return None
@@ -241,7 +241,6 @@ class BaseSwitchEntity(
                 return success
             finally:
                 self._pending_command = None
-                self._last_command_time = time.time()
                 self._attr_is_on = self._resolve_state()
                 self._write_if_changed(self._attr_is_on)
 

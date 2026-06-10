@@ -152,7 +152,7 @@ def _finish_sensor(updater_data: dict, helpers: dict | None = EV_HELPERS):
 
 class TestChargingFinishTime:
     def test_returns_future_timestamp_during_active_charging(self) -> None:
-        sensor = _finish_sensor({"sessionEnergy": "0", "powerMeas": "7000"})
+        sensor = _finish_sensor({"sessionEnergy": "0", "powerMeas": "7000", "state": 4})
         with patch(
             "custom_components.eveus.ev_sensors.dt_util.utcnow",
             return_value=_FIXED_NOW,
@@ -178,11 +178,11 @@ class TestChargingFinishTime:
         # initial_soc + energy ≥ target → seconds == 0 → must return None,
         # not "now". Otherwise the timestamp would point to the past forever.
         # 80 kWh battery, initial 20%, target 80% → need 48 kWh delivered.
-        sensor = _finish_sensor({"sessionEnergy": "60", "powerMeas": "7000"})
+        sensor = _finish_sensor({"sessionEnergy": "60", "powerMeas": "7000", "state": 4})
         assert sensor._get_sensor_value() is None
 
     def test_jitters_only_on_minute_boundary(self) -> None:
-        sensor = _finish_sensor({"sessionEnergy": "0", "powerMeas": "7000"})
+        sensor = _finish_sensor({"sessionEnergy": "0", "powerMeas": "7000", "state": 4})
         # Two close polls a few seconds apart must yield the same minute-stamp.
         with patch(
             "custom_components.eveus.ev_sensors.dt_util.utcnow",

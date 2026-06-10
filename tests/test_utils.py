@@ -64,7 +64,7 @@ def test_get_device_info_suffixes_additional_devices() -> None:
     assert info["identifiers"] == {("eveus", "charger.local_2")}
     assert info["name"] == "Eveus EV Charger 2"
     assert info["sw_version"] == "Unknown"
-    assert info["hw_version"] == "Unknown"
+    assert "hw_version" not in info
 
 
 def test_get_device_info_handles_non_string_versions() -> None:
@@ -74,7 +74,7 @@ def test_get_device_info_handles_non_string_versions() -> None:
     )
 
     assert info["sw_version"] == "303"
-    assert info["hw_version"] == "12"
+    assert "hw_version" not in info
 
 
 def test_format_duration_handles_minutes_hours_and_days() -> None:
@@ -174,7 +174,7 @@ def test_get_device_info_normalizes_too_short_versions() -> None:
     info = utils.get_device_info(TEST_HOST, {"verFWMain": "x", "verFWWifi": ""})
 
     assert info["sw_version"] == "Unknown"
-    assert info["hw_version"] == "Unknown"
+    assert "hw_version" not in info
 
 
 @pytest.mark.parametrize(

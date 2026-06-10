@@ -24,7 +24,7 @@ import pytest
 import voluptuous as vol
 
 from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME, disable_state_writes
-from custom_components.eveus import common_network, config_flow
+from custom_components.eveus import config_flow
 from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.const import MODEL_16A

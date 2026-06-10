@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.13.0 - 2026-06-10
+
+### ✨ New
+- **Energy to Target SOC and Cost to Target SOC sensors (Advanced mode).** `sensor.eveus_ev_charger_energy_to_target_soc` shows how many kWh still have to come from the grid to reach your Target SOC (charging losses included), and `sensor.eveus_ev_charger_cost_to_target_soc` prices that energy at the charger's currently active tariff rate. Both are created only when the integration runs in Advanced mode. If the charger momentarily stops reporting the session energy mid-charge, both estimates read *unknown* instead of jumping back to the full from-start estimate.
+- **Drifted charger clock now raises a Repairs notice.** When the charger's clock differs from Home Assistant by more than 10 minutes for several polls, a warning explains that schedules and tariff windows may mistime and walks you through the fix: verify the **Time Zone** select, then press **Sync Time**. The notice clears automatically once the clocks genuinely agree (within a couple of minutes) — a clock still nine minutes wrong cannot quietly dismiss it; the integration never changes the charger clock on its own. Available in English and Ukrainian.
+
+### 🔧 Changed
+- **Switching to Advanced mode now asks for your battery values.** Choosing Advanced in **Configure** for the first time opens the same battery capacity and charging-efficiency step the initial setup uses, instead of silently starting the SOC entities from generic defaults. If the values were already stored from an earlier Advanced stint, they are kept and the step is skipped.
+- **A wrong password no longer looks like an offline charger.** When the charger rejects the stored credentials, the integration hands off to re-authentication without counting the rejection toward offline detection — so connection diagnostics no longer mislabel an authentication problem as "device offline", and polling resumes immediately after you re-enter the password.
+- **Externally started charging shows up fast.** When the charger changes state on its own (a schedule kicks in, the session is started from the charger UI or OCPP, a fault occurs), the integration now briefly polls faster — the same quick follow-up it already did after commands from Home Assistant — without raising idle traffic.
+- **A powered-back-on charger reappears within a minute.** The offline poll cycle is now 60 seconds (was 120), so switching the charger back on after a session shows it available in Home Assistant in at most 60 seconds — typically about 30. Recovery is still confirmed over two successful polls before fast polling resumes, and the Force Refresh button still polls immediately.
+- **Device page no longer shows a misleading hardware version.** The charger's Wi-Fi module firmware was previously displayed as the device "hardware version"; the field is now removed (the charger does not report a hardware revision). The Wi-Fi firmware remains visible in the diagnostics download.
+- **The OCPP warning ignores stale data while the charger is unreachable**, the same way the battery and clock warnings already do.
+- **Internal cleanup with no functional changes:** several unused leftovers from earlier versions were removed.
+
+### 📊 Dashboard
+- **Both dashboards now show the new target-SOC estimates.** The English (`docs/dashboard.yaml`) and Ukrainian (`docs/dashboard-uk.yaml`) Lovelace views add **Energy to Target** and **Cost to Target** to the SOC card, next to the existing time-to-target and finish-time estimates.
+
+### 🐛 Fixed
+- **A brief outage can no longer raise a false "replace battery" warning.** While the charger is unreachable, the low-battery check now skips the stale last reading instead of re-counting it toward the alarm threshold — and an implausible voltage spike from a glitchy reading no longer silently clears a genuine low-battery warning.
+- **Re-entering your password now also starts from the Charging Current slider.** If the charger rejects the stored credentials while you change the charging current, Home Assistant now opens the re-authentication flow instead of showing only a generic error.
+- **System clock corrections are handled everywhere.** After a backward clock jump (NTP correction, resuming a VM), offline detection no longer freezes, controls no longer keep presenting last-known values indefinitely, entities leave their availability grace window on time, and connection-latency statistics can no longer record impossible values.
+- **Controls go unavailable on schedule.** When the charger drops offline between polls, an entity's grace window now expires exactly when configured instead of stretching until the next poll.
+- **No more phantom charging estimates.** *Time to Target SOC* shows **Not charging** and *Charging Finish Time* stays empty whenever the charger isn't actually charging — residual standby power in a connected or finished state can no longer fabricate an estimate. *Session Time* also no longer exposes an absurd duration attribute while its state already reads *unknown*.
+- **A reload that fails keeps its notices.** If the integration fails to unload cleanly, its repair notices stay visible instead of silently disappearing.
+- **Duplicate entries for the same charger are prevented.** A stored address differing only in letter case or a trailing dot now upgrades to its canonical spelling on startup (existing duplicates are left untouched and reported in the log).
+- **Changing a charger's address keeps its device.** After Reconfigure, the device's area assignment, custom name, and dashboard references follow the charger to its new address instead of leaving an orphaned device behind.
+- **Clearer messages in setup and repairs.** A username or password with characters the charger login cannot transmit is rejected up front with a clear message instead of failing later as "cannot connect", and the repair form now says **"Device is already configured"** (in English and Ukrainian) when you enter an address that belongs to another charger.
+- **The Devices page keeps up with the charger.** A firmware update is now reflected without restarting Home Assistant, and a malformed serial number from the charger can no longer be written into the device registry. Health diagnostics also re-evaluate connection freshness on every read instead of reporting a cached verdict.
+
+### 🔒 Privacy
+- **Debug logs no longer include the charger's address** when the sensor platform loads.
+- **Diagnostics downloads redact any configuration field with a credential-like name**, not just the known ones.
+
 ## 4.12.1 - 2026-06-10
 
 ### 🐛 Fixed

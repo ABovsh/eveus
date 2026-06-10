@@ -9,7 +9,7 @@ import json
 import pytest
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME, spec_value_fn
 from custom_components.eveus import common_command, common_network, config_flow
 from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus import utils
@@ -159,11 +159,11 @@ def test_power_getter_rejects_outlier() -> None:
 
 
 def test_current_set_getter_rejects_above_model_max() -> None:
-    assert sd.get_current_set(EveusTestUpdater({"currentSet": 999}), None) is None
+    assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": 999}), None) is None
 
 
 def test_adaptive_telemetry_rejects_outliers() -> None:
-    assert sd.get_adaptive_current(EveusTestUpdater({"aiModecurrent": 999}), None) is None
+    assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": 999}), None) is None
     assert sd.get_adaptive_voltage(EveusTestUpdater({"aiVoltage": 99999}), None) is None
 
 

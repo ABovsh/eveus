@@ -32,7 +32,7 @@ TO_REDACT = {
 # match these substrings.
 _SENSITIVE_NAME_RE = re.compile(
     r"ssid|passw|secret|token|serial|imei|uuid|mac|addr|ipaddr|"
-    r"ip_addr|latitude|longitude|geoloc|crc",
+    r"ip_addr|latitude|longitude|geoloc|crc|auth|credential|key|pwd|pin",
     re.IGNORECASE,
 )
 
@@ -69,7 +69,7 @@ async def async_get_config_entry_diagnostics(
     payload: dict[str, Any] = {
         "entry": {
             "title": "Eveus Charger",
-            "data": async_redact_data(dict(entry.data), TO_REDACT),
+            "data": async_redact_data(dict(entry.data), _sensitive_keys(dict(entry.data))),
             "device_number": (
                 runtime_data.device_number if runtime_data is not None else None
             ),

@@ -7,7 +7,7 @@ import time as _time
 from dataclasses import dataclass
 
 from homeassistant.components.time import TimeEntity, TimeEntityDescription
-from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -170,7 +170,7 @@ class EveusScheduleTimeEntity(
                 return int(device_value)
 
         if self._last_device_value is not None:
-            if current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
+            if 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
                 return self._last_device_value
 
         return None
@@ -195,7 +195,6 @@ class EveusScheduleTimeEntity(
                     )
             finally:
                 self._pending_value = None
-                self._last_command_time = _time.time()
                 self._attr_native_value = minutes_to_time(self._resolve_minutes())
                 self._write_if_changed(self._attr_native_value)
 

@@ -138,7 +138,8 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
     )}
     for spec in create_sensor_specifications(phases=3):
         expected["sensor"].add(_slug(spec.name))
-    for name in ("SOC Energy", "SOC Percent", "Time to Target SOC", "Charging Finish Time"):
+    for name in ("SOC Energy", "SOC Percent", "Time to Target SOC", "Charging Finish Time",
+                 "Energy to Target SOC", "Cost to Target SOC"):
         expected["sensor"].add(_slug(name))
     for name in ("Charging Current", "Initial SOC", "Target SOC", "Battery Capacity", "SOC Correction"):
         expected["number"].add(_slug(name))

@@ -14,7 +14,7 @@ from conftest import EveusTestUpdater, TEST_HOST, disable_state_writes
 
 from homeassistant.const import CONF_HOST
 
-from custom_components.eveus import CONFIG_ENTRY_VERSION, async_migrate_entry
+from custom_components.eveus import async_migrate_entry
 from custom_components.eveus.const import CONF_SCHEME
 from custom_components.eveus.utils import (
     _safe_str,
@@ -156,6 +156,9 @@ def test_session_time_rejects_absurd_duration() -> None:
 class _ConfigEntries:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+
+    def async_entries(self, _domain=None):
+        return []
 
     def async_update_entry(self, entry: object, **kwargs: object) -> None:
         self.calls.append(kwargs)

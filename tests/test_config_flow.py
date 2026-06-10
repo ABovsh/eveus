@@ -28,7 +28,6 @@ from custom_components.eveus.config_flow import (
     normalize_user_input,
     validate_credentials,
     validate_device_response,
-    validate_host,
     validate_input,
 )
 from custom_components.eveus.const import (
@@ -63,6 +62,11 @@ from custom_components.eveus.const import (
 )
 def test_host_validation_unchanged(host, ok):
     assert config_flow._host_is_valid(host) is ok
+
+
+def validate_host(host: str) -> str:
+    """Exercise the production host parser, returning only the host part."""
+    return config_flow._split_host_and_scheme(host)[0]
 
 
 class _Response:
@@ -500,11 +504,17 @@ def test_reconfigure_flow_updates_entry(monkeypatch: pytest.MonkeyPatch) -> None
         "reason": "reconfigure_successful",
         **kwargs,
     }
+    migrated: list[tuple[str, str]] = []
+    flow._migrate_device_identifiers = (
+        lambda entry, old, new: migrated.append((old, new))
+    )
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(
         flow.async_step_reconfigure(_input(**{CONF_HOST: TEST_HOST_ALT}))
     )
+
+    assert migrated == [(TEST_HOST, TEST_HOST_ALT)]
 
     assert result["type"] == "abort"
     assert result["unique_id"] == TEST_HOST_ALT
@@ -966,3 +976,128 @@ def test_merge_entry_data_preserves_soc_values() -> None:
     assert merged[CONF_TARGET_SOC] == 95
     assert merged[CONF_BATTERY_CAPACITY] == 64
     assert merged[CONF_SOC_CORRECTION] == 9
+
+
+def _options_flow_for(entry):
+    class _ConfigEntries:
+        def async_update_entry(self, entry, *, data):
+            entry.data = data
+
+    class _Hass:
+        def __init__(self) -> None:
+            self.config_entries = _ConfigEntries()
+            self.states = type("S", (), {"get": staticmethod(lambda eid: None)})()
+
+    flow = config_flow.EveusOptionsFlow(entry)
+    flow.hass = _Hass()
+    flow.async_show_form = lambda *, step_id, data_schema=None: {
+        "type": "form",
+        "step_id": step_id,
+        "data_schema": data_schema,
+    }
+    flow.async_create_entry = lambda *, title, data: {
+        "type": "create_entry",
+        "title": title,
+        "data": data,
+    }
+    return flow
+
+
+def test_options_flow_first_switch_to_advanced_collects_soc_values() -> None:
+    """Basic→Advanced via Configure must run the SOC step, like setup does."""
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: TEST_HOST, CONF_SOC_MODE: SOC_MODE_BASIC}),
+            "unique_id": TEST_HOST,
+        },
+    )()
+    entry.data.pop(CONF_BATTERY_CAPACITY, None)
+    entry.data.pop(CONF_SOC_CORRECTION, None)
+    flow = _options_flow_for(entry)
+
+    form = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+    assert form["type"] == "form"
+    assert form["step_id"] == "soc"
+    # Nothing persisted yet — the mode change waits for the SOC values.
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
+
+    result = asyncio.run(
+        flow.async_step_soc({CONF_BATTERY_CAPACITY: 64, CONF_SOC_CORRECTION: 9})
+    )
+    assert result["type"] == "create_entry"
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_ADVANCED
+    assert entry.data[CONF_BATTERY_CAPACITY] == 64
+    assert entry.data[CONF_SOC_CORRECTION] == 9
+    assert entry.data[CONF_INITIAL_SOC] == DEFAULT_INITIAL_SOC
+    assert entry.data[CONF_TARGET_SOC] == DEFAULT_TARGET_SOC
+
+
+def test_options_flow_switch_to_advanced_keeps_existing_soc_values() -> None:
+    """Re-enabling Advanced with stored SOC values must not re-prompt."""
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(
+                **{
+                    CONF_HOST: TEST_HOST,
+                    CONF_SOC_MODE: SOC_MODE_BASIC,
+                    CONF_BATTERY_CAPACITY: 70,
+                    CONF_SOC_CORRECTION: 5,
+                }
+            ),
+            "unique_id": TEST_HOST,
+        },
+    )()
+    flow = _options_flow_for(entry)
+
+    result = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+    assert result["type"] == "create_entry"
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_ADVANCED
+    assert entry.data[CONF_BATTERY_CAPACITY] == 70
+    assert entry.data[CONF_SOC_CORRECTION] == 5
+
+
+def test_options_flow_soc_submit_rebases_on_live_entry_data() -> None:
+    """A reauth/reconfigure finishing while the SOC form is open must survive."""
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: TEST_HOST, CONF_SOC_MODE: SOC_MODE_BASIC}),
+            "unique_id": TEST_HOST,
+        },
+    )()
+    entry.data.pop(CONF_BATTERY_CAPACITY, None)
+    entry.data.pop(CONF_SOC_CORRECTION, None)
+    flow = _options_flow_for(entry)
+
+    form = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+    assert form["step_id"] == "soc"
+
+    # Reauth completes while the form is open: password and host change.
+    entry.data = {**entry.data, CONF_PASSWORD: "new-secret", CONF_HOST: TEST_HOST_ALT}
+
+    asyncio.run(flow.async_step_soc({CONF_BATTERY_CAPACITY: 64, CONF_SOC_CORRECTION: 9}))
+
+    assert entry.data[CONF_PASSWORD] == "new-secret"
+    assert entry.data[CONF_HOST] == TEST_HOST_ALT
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_ADVANCED
+    assert entry.data[CONF_BATTERY_CAPACITY] == 64
+
+
+def test_soc_step_schema_prefills_from_stored_entry_values() -> None:
+    """Stored SOC values must prefill the form, not generic defaults."""
+    class _Hass:
+        states = type("S", (), {"get": staticmethod(lambda eid: None)})()
+
+    schema = config_flow.build_soc_step_schema(
+        _Hass(), defaults={CONF_SOC_CORRECTION: 4.5}
+    )
+    defaults = {
+        str(key): key.default() for key in schema.schema if hasattr(key, "default")
+    }
+    assert defaults[CONF_SOC_CORRECTION] == 4.5
+    assert defaults[CONF_BATTERY_CAPACITY] == config_flow.DEFAULT_BATTERY_CAPACITY

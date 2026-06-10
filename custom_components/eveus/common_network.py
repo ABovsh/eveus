@@ -24,7 +24,6 @@ from .const import (
     ERROR_LOG_RATE_LIMIT,
     IDLE_UPDATE_INTERVAL,
     OFFLINE_UPDATE_INTERVAL,
-    RETRY_DELAY,
     SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
@@ -42,6 +41,13 @@ _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_
 # almost a minute).
 POST_COMMAND_REFRESH_DELAYS: tuple[int, ...] = (3, 10, 20)
 
+# Minimum gap between transition-triggered poll bursts. A state transition
+# observed between two scheduled polls (schedule/charger-UI/OCPP-started
+# session, fault, unplug) triggers the same short refresh burst as a command,
+# so external changes surface quickly without raising idle traffic. The gap
+# stops a flapping state from keeping the coordinator in a permanent burst.
+TRANSITION_BURST_MIN_GAP: float = 30.0
+
 _LOGGER = logging.getLogger(__name__)
 _CHARGING_INTERVAL = timedelta(seconds=CHARGING_UPDATE_INTERVAL)
 _IDLE_INTERVAL = timedelta(seconds=IDLE_UPDATE_INTERVAL)
@@ -52,11 +58,15 @@ _UPDATE_INTERVALS = {
     OFFLINE_UPDATE_INTERVAL: _OFFLINE_INTERVAL,
 }
 
-# Longest the offline backoff ever defers the next poll. Used both to set the
-# deadline and to bound the skip check, so a backward wall-clock step (which
-# would otherwise leave the deadline far in the future) can't strand the
-# charger as unavailable: a remaining wait beyond this means the clock moved.
-_MAX_OFFLINE_BACKOFF = min(RETRY_DELAY * 4, 300)
+# Offline backoff is deliberately flat and short: powering the charger off
+# between sessions is a normal workflow, so a returning charger must show up
+# within one OFFLINE_UPDATE_INTERVAL tick (worst case 60 s). The deadline only
+# dedupes extra attempts inside a cycle (e.g. burst refreshes landing during an
+# outage); it never defers past the next scheduled tick. It also bounds the
+# skip check, so a backward wall-clock step (which would otherwise leave the
+# deadline far in the future) can't strand the charger as unavailable: a
+# remaining wait beyond this means the clock moved.
+_MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
 
 
 class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
@@ -98,6 +108,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # 0.0 until the first successful poll, so connection_quality does not
         # report "healthy" before the charger has ever answered.
         self._last_success_time = 0.0
+        # Monotonic twin of _last_success_time: ages must survive wall-clock
+        # corrections (NTP, VM resume), which would otherwise freeze offline
+        # detection and health reporting until wall time catches up.
+        self._last_success_monotonic = 0.0
         self._latency_samples: deque[float] = deque(maxlen=10)
         self._connection_quality_cache: dict[str, Any] | None = None
 
@@ -108,6 +122,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._device_available = True
         self._device_registry_finalized = False
         self._next_poll_attempt = 0.0
+        # Successful polls still owed at the offline cadence after an outage,
+        # so a single recovered tick can't snap straight back to fast polling.
+        self._offline_probation = 0
+        self._last_observed_state: int | None = None
+        self._last_burst_monotonic: float | None = None
         self._force_refresh_requests = 0
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
@@ -136,7 +155,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def connection_quality(self) -> dict[str, Any]:
         """Connection metrics exposed for diagnostics and sensors."""
         if self._connection_quality_cache is not None:
-            return self._connection_quality_cache
+            # is_healthy is time-dependent; recompute it on every read so a
+            # cached snapshot can't keep reporting "healthy" while polling is
+            # stalled past the freshness threshold.
+            return {
+                **self._connection_quality_cache,
+                "is_healthy": self._is_healthy(
+                    self._connection_quality_cache["success_rate"]
+                ),
+            }
 
         if self._poll_results:
             success_rate = (sum(self._poll_results) / len(self._poll_results)) * 100
@@ -152,21 +179,31 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             "latency_avg": avg_latency,
             "consecutive_failures": self._consecutive_failures,
             "consecutive_command_failures": self._command_manager.consecutive_failures,
-            "is_healthy": (
-                self._last_success_time > 0
-                and success_rate > 80
-                and time.time() - self._last_success_time < 300
-            ),
+            "is_healthy": self._is_healthy(success_rate),
             "last_success_time": self._last_success_time,
             "last_error": self._last_error,
             "sample_count": len(self._poll_results),
         }
         return self._connection_quality_cache
 
+    def _seconds_since_success(self) -> float:
+        """Age of the last successful poll, immune to wall-clock jumps."""
+        if self._last_success_monotonic <= 0:
+            return float("inf")
+        return time.monotonic() - self._last_success_monotonic
+
+    def _is_healthy(self, success_rate: float) -> bool:
+        """Whether the connection is currently considered healthy."""
+        return (
+            self._last_success_time > 0
+            and success_rate > 80
+            and self._seconds_since_success() < 300
+        )
+
     @property
     def is_likely_offline(self) -> bool:
         """Check if the device appears to be powered off."""
-        return self._consecutive_failures > 10 and time.time() - self._last_success_time > 600
+        return self._consecutive_failures > 10 and self._seconds_since_success() > 600
 
     def get_session(self) -> aiohttp.ClientSession:
         """Get Home Assistant shared HTTP session."""
@@ -185,10 +222,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         extra: dict[str, Any] | None = None,
     ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
-        success = await self._command_manager.send_command(
-            command, value, retry=retry, extra=extra
-        )
-        self._connection_quality_cache = None
+        try:
+            success = await self._command_manager.send_command(
+                command, value, retry=retry, extra=extra
+            )
+        finally:
+            # Invalidate even on the raising path (401 -> ConfigEntryAuthFailed)
+            # so the cached consecutive_command_failures can't go stale.
+            self._connection_quality_cache = None
         if success and not self._shutting_down:
             self._schedule_post_command_refresh()
         return success
@@ -256,8 +297,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # task.cancel() schedules each task's done-callback via the event loop,
         # so _post_command_refresh_tasks is not mutated during this loop —
         # iterate it directly rather than over a throwaway snapshot.
+        # Never cancel the task this call is running inside: a tracked refresh
+        # that observes a state transition reschedules the burst synchronously,
+        # and cancelling itself would discard the payload it just fetched.
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:  # not inside a running event loop
+            current = None
         for task in self._post_command_refresh_tasks:
-            if not task.done():
+            if task is not current and not task.done():
                 task.cancel()
 
     async def async_shutdown(self) -> None:
@@ -283,11 +331,49 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._device_available = True
         self._next_poll_attempt = 0.0
         self._last_success_time = time.time()
+        self._last_success_monotonic = time.monotonic()
         self._latency_samples.append(response_time)
         self._silent_mode = False
         self._offline_announced = False
         self._last_error = None
-        self._tune_update_interval(new_data, preserve_offline=was_likely_offline)
+        # Two-success recovery probation: the first successes after a long
+        # outage stay on the offline cadence so one lucky tick (a router blip
+        # mid-outage) doesn't snap polling back to the fast cycle.
+        if was_likely_offline:
+            self._offline_probation = 2
+        elif self._offline_probation:
+            self._offline_probation -= 1
+        self._tune_update_interval(
+            new_data,
+            preserve_offline=was_likely_offline or self._offline_probation > 0,
+        )
+        self._maybe_burst_on_transition(new_data)
+
+    def _maybe_burst_on_transition(self, data: dict[str, Any]) -> None:
+        """Briefly poll fast after an observed device state transition.
+
+        Covers transitions HA did not initiate (schedules, the charger's own
+        UI, OCPP). An invalid/missing state neither bursts nor clears the
+        transition memory, so a glitched payload can't fabricate a transition
+        on the next valid poll.
+        """
+        try:
+            state = int(data.get("state")) if data.get("state") is not None else None
+        except (TypeError, ValueError):
+            state = None
+        if state is None or state not in CHARGING_STATES:
+            return
+        previous, self._last_observed_state = self._last_observed_state, state
+        if previous is None or previous == state or self._shutting_down:
+            return
+        now = time.monotonic()
+        if (
+            self._last_burst_monotonic is not None
+            and now - self._last_burst_monotonic < TRANSITION_BURST_MIN_GAP
+        ):
+            return
+        self._last_burst_monotonic = now
+        self._schedule_post_command_refresh()
 
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
@@ -296,6 +382,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._consecutive_failures += 1
         self._device_available = False
         self._last_error = "ValueError" if isinstance(error, PayloadError) else type(error).__name__
+        # A failure during recovery probation restarts it: the two qualifying
+        # successes must be consecutive, or an unstable link could reach the
+        # fast cadence on alternating good/bad polls.
+        if self._offline_probation:
+            self._offline_probation = 2
 
         if self._consecutive_failures > 20:
             self._silent_mode = True
@@ -354,6 +445,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
         start_time = time.time()
+        # Latency is measured on the monotonic clock so a wall-clock step during
+        # the request can't record a negative or absurd sample.
+        start_monotonic = time.monotonic()
         bypass_backoff = self._force_refresh_requests > 0
         backoff_remaining = self._next_poll_attempt - start_time
         if 0 < backoff_remaining <= _MAX_OFFLINE_BACKOFF and not bypass_backoff:
@@ -366,7 +460,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 timeout=_UPDATE_TIMEOUT_OBJ,
             ) as response:
                 if response.status == 401:
-                    self._record_failure(ConfigEntryAuthFailed("401"))
+                    # An auth rejection is not a connectivity failure: don't
+                    # feed the offline-backoff counters or connection-quality
+                    # stats, or reauth recovery gets misattributed/deferred as
+                    # "device offline". Just mark unavailable and hand off to
+                    # HA's reauth flow.
+                    self._connection_quality_cache = None
+                    self._device_available = False
+                    self._last_error = "ConfigEntryAuthFailed"
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 
@@ -375,7 +476,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
                 new_data = validate_main_payload(new_data)
 
-                self._record_success(time.time() - start_time, new_data)
+                self._record_success(time.monotonic() - start_monotonic, new_data)
                 return new_data
 
         except ConfigEntryAuthFailed:

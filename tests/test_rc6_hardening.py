@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import time
 
 import pytest
 import voluptuous as vol
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
-from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import EveusTestUpdater
 from custom_components.eveus import ev_sensors
 from custom_components.eveus import number as number_mod
 from custom_components.eveus import sensor_definitions as sd
