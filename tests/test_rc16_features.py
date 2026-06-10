@@ -177,6 +177,76 @@ class TestTransitionBurstPolling:
         assert calls == []
 
 
+# =============================================================================
+# #17 Progressive offline backoff + jitter + recovery probation
+# =============================================================================
+
+import time
+
+from custom_components.eveus.const import (
+    CHARGING_UPDATE_INTERVAL,
+    OFFLINE_UPDATE_INTERVAL,
+)
+
+
+def _make_offline(updater: EveusUpdater) -> None:
+    updater._consecutive_failures = 11
+    updater._last_success_monotonic = time.monotonic() - 700
+    updater._last_success_time = time.time() - 700
+
+
+class TestProgressiveOfflineBackoff:
+    def test_backoff_grows_with_continued_failures_and_caps(self):
+        updater = _updater()
+        _make_offline(updater)
+        delays = []
+        for _ in range(6):
+            updater._record_failure(TimeoutError())
+            delays.append(updater._next_poll_attempt - time.time())
+        # Meaningful tier growth, not float noise.
+        assert delays[1] >= delays[0] + 30
+        assert delays[2] >= delays[1] + 30
+        # Capped: the last steps stop growing (within jitter/rounding noise).
+        assert delays[-1] == pytest.approx(delays[-2], abs=1.0)
+        # Cap bounded so the clock-jump guard still accepts the wait.
+        assert delays[-1] <= 360
+
+    def test_jitter_separates_devices(self):
+        a = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), device_number=1)
+        b = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), device_number=2)
+        for upd in (a, b):
+            _make_offline(upd)
+            upd._record_failure(TimeoutError())
+        assert (a._next_poll_attempt - time.time()) != pytest.approx(
+            b._next_poll_attempt - time.time(), abs=0.5
+        )
+
+    def test_recovery_needs_two_successes_before_fast_cadence(self):
+        updater = _updater()
+        _make_offline(updater)
+        updater._record_failure(TimeoutError())
+        updater._record_success(0.1, {"state": 4})
+        assert updater.update_interval.total_seconds() == OFFLINE_UPDATE_INTERVAL
+        updater._record_success(0.1, {"state": 4})
+        assert updater.update_interval.total_seconds() == OFFLINE_UPDATE_INTERVAL
+        updater._record_success(0.1, {"state": 4})
+        assert updater.update_interval.total_seconds() == CHARGING_UPDATE_INTERVAL
+
+    def test_single_blip_does_not_enter_probation(self):
+        # A lone failed poll (not likely-offline) must not delay fast cadence.
+        updater = _updater()
+        updater._record_success(0.1, {"state": 4})
+        updater._record_failure(TimeoutError())
+        updater._record_success(0.1, {"state": 4})
+        assert updater.update_interval.total_seconds() == CHARGING_UPDATE_INTERVAL
+
+    def test_force_refresh_bypass_counter_untouched(self):
+        updater = _updater()
+        _make_offline(updater)
+        updater._record_failure(TimeoutError())
+        assert updater._force_refresh_requests == 0
+
+
 def test_advanced_only_prune_list_covers_target_soc_forecast_sensors():
     from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
 
