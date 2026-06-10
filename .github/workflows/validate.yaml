@@ -1,10 +1,11 @@
 name: Validate
 
+# No schedule: the suite runs on every push/PR — the only time the code can
+# change. Upstream-drift checks (hassfest/HACS requirements) can be run on
+# demand via workflow_dispatch instead of burning a daily run.
 on:
   push:
   pull_request:
-  schedule:
-    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
