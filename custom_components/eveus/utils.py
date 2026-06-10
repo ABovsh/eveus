@@ -192,7 +192,6 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
     page shows real device metadata instead of generic strings.
     """
     firmware = _safe_str(data.get("verFWMain") or data.get("firmware"))
-    hardware = _safe_str(data.get("verFWWifi") or data.get("hardware"))
     manufacturer = _safe_str(data.get("manufacturer"), fallback="Eveus")
     model = _safe_str(data.get("model"), fallback="Eveus EV Charger")
     serial = data.get("serialNum") or data.get("stationId")
@@ -209,7 +208,8 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
         "manufacturer": manufacturer,
         "model": model,
         "sw_version": firmware,
-        "hw_version": hardware,
+        # No hw_version: the firmware exposes no hardware-revision field.
+        # verFWWifi is Wi-Fi module firmware and is surfaced in diagnostics only.
         "configuration_url": f"{scheme}://{host}",
     }
     if serial_str:

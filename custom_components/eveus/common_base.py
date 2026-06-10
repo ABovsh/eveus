@@ -264,8 +264,9 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
                 "model": new_info.get("model"),
                 "manufacturer": new_info.get("manufacturer"),
             }
-            if new_info.get("hw_version"):
-                update_kwargs["hw_version"] = new_info["hw_version"]
+            # hw_version is always cleared: earlier releases wrote the Wi-Fi
+            # module firmware there, which is not a hardware revision.
+            update_kwargs["hw_version"] = None
             if new_info.get("serial_number"):
                 update_kwargs["serial_number"] = new_info["serial_number"]
             registry.async_update_device(device.id, **update_kwargs)
