@@ -96,6 +96,13 @@ def _reject_bool(value):
     return value
 
 
+def _reject_fractional(value):
+    """Refuse fractional numbers where a whole count is required (3.9 != 3)."""
+    if isinstance(value, float) and not value.is_integer():
+        raise vol.Invalid("Value must be a whole number")
+    return value
+
+
 def build_soc_step_schema(hass) -> vol.Schema:
     """Build the advanced-mode SOC value step, prefilled from any ev_* helpers."""
     cap_lo, cap_hi = SOC_INPUT_LIMITS["battery_capacity"]
@@ -289,6 +296,8 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
     invalid_phase_count = "Invalid phase count"
     if isinstance(raw_phases, bool):
         raise vol.Invalid(invalid_phase_count)
+    if isinstance(raw_phases, float) and not raw_phases.is_integer():
+        raise vol.Invalid(invalid_phase_count)
     try:
         phases = int(raw_phases)
     except (TypeError, ValueError, OverflowError) as err:
@@ -343,7 +352,7 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
             # Coerce first: the frontend (mobile app in particular) submits the
             # selected option as a string ("1"/"3"), which bare vol.In rejects
             # with "value must be one of [1, 3]" for every choice (issue #4).
-            ): vol.All(vol.Coerce(int), vol.In(PHASE_OPTIONS)),
+            ): vol.All(_reject_bool, _reject_fractional, vol.Coerce(int), vol.In(PHASE_OPTIONS)),
             vol.Required(
                 CONF_SOC_MODE,
                 default=defaults.get(CONF_SOC_MODE, SOC_MODE_ADVANCED),

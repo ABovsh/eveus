@@ -328,11 +328,13 @@ class EnergyToTargetSocSensor(BaseEVHelperSensor):
         if self._session_energy_is_invalid():
             return None
         energy_charged = self._get_energy_charged() or 0.0
-        current_soc = calc.get_soc_percent(energy_charged)
+        # Work in kWh, not the whole-percent rounded SOC: on a large battery a
+        # rounded-up percent would zero the estimate with real energy missing.
+        current_kwh = calc.get_soc_kwh(energy_charged)
         battery_capacity = calc.battery_capacity
-        if current_soc is None or not battery_capacity:
+        if current_kwh is None or not battery_capacity:
             return None
-        remaining_battery_kwh = (calc.target_soc - current_soc) * battery_capacity / 100
+        remaining_battery_kwh = calc.target_soc * battery_capacity / 100 - current_kwh
         if remaining_battery_kwh <= 0:
             return 0.0
         correction = calc.soc_correction
@@ -354,7 +356,10 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
     """
 
     ENTITY_NAME = "Cost to Target SOC"
-    _attr_device_class = None
+    # Monetary semantics, but no state_class: a forecast that counts down to
+    # zero would only pollute long-term statistics.
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = None
     _attr_native_unit_of_measurement = "UAH"
     _attr_icon = "mdi:cash-clock"
     _attr_suggested_display_precision = 0
@@ -365,6 +370,10 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
         remaining = self._remaining_grid_kwh()
         if remaining is None:
             return None
+        if remaining == 0:
+            # At target the cost is exactly zero regardless of tariff
+            # telemetry; missing tariff data must not blank a known value.
+            return 0.0
         rate = get_active_rate_cost(self._updater, self.hass)
         if rate is None:
             return None

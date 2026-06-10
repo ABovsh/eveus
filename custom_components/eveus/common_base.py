@@ -242,9 +242,14 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
 
         if self._device_info_finalized:
             if new_info == self._attr_device_info:
-                return
-            # Metadata drifted after finalization: allow one registry refresh.
-            self._updater._device_registry_finalized = False
+                # Even with unchanged metadata the registry write must happen
+                # once per runtime: it clears the legacy hw_version that older
+                # releases stored (Wi-Fi firmware is not a hardware revision).
+                if getattr(self._updater, "_device_registry_finalized", False):
+                    return
+            else:
+                # Metadata drifted after finalization: allow one registry refresh.
+                self._updater._device_registry_finalized = False
 
         self._attr_device_info = new_info
         self._device_info_finalized = True
@@ -311,8 +316,13 @@ class ControlEntityMixin:
         """Control entities use a shorter grace period for safety."""
         return self._entity_available
 
-    def _update_availability_state(self) -> bool:
-        """Update control availability with a shorter grace period."""
+    def _update_availability_state(self, **_kwargs: Any) -> bool:
+        """Update control availability with a shorter grace period.
+
+        Accepts (and overrides) the base keyword arguments so the scheduled
+        grace re-check callback can call it polymorphically: control entities
+        always use their own shorter grace period and optimistic-state reset.
+        """
         return super()._update_availability_state(
             grace_period=CONTROL_GRACE_PERIOD,
             label=self._control_entity_label,

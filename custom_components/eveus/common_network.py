@@ -297,8 +297,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # task.cancel() schedules each task's done-callback via the event loop,
         # so _post_command_refresh_tasks is not mutated during this loop —
         # iterate it directly rather than over a throwaway snapshot.
+        # Never cancel the task this call is running inside: a tracked refresh
+        # that observes a state transition reschedules the burst synchronously,
+        # and cancelling itself would discard the payload it just fetched.
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:  # not inside a running event loop
+            current = None
         for task in self._post_command_refresh_tasks:
-            if not task.done():
+            if task is not current and not task.done():
                 task.cancel()
 
     async def async_shutdown(self) -> None:
@@ -375,6 +382,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._consecutive_failures += 1
         self._device_available = False
         self._last_error = "ValueError" if isinstance(error, PayloadError) else type(error).__name__
+        # A failure during recovery probation restarts it: the two qualifying
+        # successes must be consecutive, or an unstable link could reach the
+        # fast cadence on alternating good/bad polls.
+        if self._offline_probation:
+            self._offline_probation = 2
 
         if self._consecutive_failures > 20:
             self._silent_mode = True
