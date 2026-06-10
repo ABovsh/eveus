@@ -31,7 +31,7 @@ Voltage, current, power, and the active current-limit setpoint refreshed on ever
 Session Energy, Total Energy, and two resettable counters (A/B) in kWh, each with a running ₴ cost. **Session Cost** reads the charger's native money field, so it is integrated at the rate active at each moment and never jumps when the tariff switches mid-session (e.g. night→day at 07:00). Primary / Active / Rate 2 / Rate 3 prices are exposed too.
 
 ### 🔋 EV battery SOC — no helpers needed
-Pick **Advanced** mode at setup and the integration creates its own SOC inputs as native entities — `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, `number.eveus_ev_charger_soc_correction` — and the SOC Energy / SOC Percent / Time-to-Target / Charging Finish Time sensors. No `input_number` helpers to create by hand. Pick **Basic** if you only want charging control. Switch modes anytime from **Configure**.
+Pick **Advanced** mode at setup and the integration creates its own SOC inputs as native entities — `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, `number.eveus_ev_charger_soc_correction` — and the SOC Energy / SOC Percent / Time-to-Target / Charging Finish Time / Energy-to-Target / Cost-to-Target sensors. No `input_number` helpers to create by hand. Pick **Basic** if you only want charging control. Switch modes anytime from **Configure**.
 
 ### 🤖 Adaptive charging & schedule visibility
 Toggle the charger's adaptive throttle and read its selected current cap and voltage threshold. Both on-device schedule slots are exposed as switches plus native HH:MM time pickers, with summary sensors.
@@ -90,7 +90,7 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
    - **Basic**: charging control only, no SOC sensors.
    - **Advanced**: also creates SOC input numbers and SOC/ETA sensors.
 
-Use **Configure** to switch Basic/Advanced later. Use **Reconfigure** to change host, credentials, model, or phase count without reinstalling.
+Use **Configure** to switch Basic/Advanced later — switching to Advanced for the first time asks for your battery capacity and charging-efficiency loss, just like setup. Use **Reconfigure** to change host, credentials, model, or phase count without reinstalling.
 
 ## 🛡️ Safety notices
 
