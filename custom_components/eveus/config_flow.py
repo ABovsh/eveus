@@ -630,16 +630,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.unique_id != entry_data[CONF_HOST]:
                     return self.async_abort(reason="wrong_device")
 
-
-                old_host = entry.data.get(CONF_HOST)
-                new_host = entry_data[CONF_HOST]
-                if old_host and old_host != new_host:
-                    # The registry device is identified by host; migrate it so
-                    # area assignments, custom names, and dashboard references
-                    # follow the charger to its new address instead of leaving
-                    # an orphaned device behind.
-                    self._migrate_device_identifiers(entry, old_host, new_host)
-
+                # No device-identifier migration here: the reauth form only
+                # exposes credentials, and any host mismatch aborted above as
+                # wrong_device, so the host cannot change on this path.
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=entry_data[CONF_HOST],
