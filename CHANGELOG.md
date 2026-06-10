@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.13.0 - 2026-06-10
 
 ### ✨ New
 - **Energy to Target SOC and Cost to Target SOC sensors (Advanced mode).** `sensor.eveus_ev_charger_energy_to_target_soc` shows how many kWh still have to come from the grid to reach your Target SOC (charging losses included), and `sensor.eveus_ev_charger_cost_to_target_soc` prices that energy at the charger's currently active tariff rate. Both are created only when the integration runs in Advanced mode. If the charger momentarily stops reporting the session energy mid-charge, both estimates read *unknown* instead of jumping back to the full from-start estimate.
