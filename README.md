@@ -1,6 +1,6 @@
 # Eveus EV Charger for Home Assistant
 
-> Local-only Home Assistant integration for Eveus EV chargers. Control charging, monitor power and cost, estimate EV battery SOC, expose schedules and adaptive charging, surface dangerous-condition safety notices, and build automations without template sensors.
+> Full local control and monitoring for Eveus EV chargers: charging controls, live power and cost, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
 ![Version](https://img.shields.io/badge/version-4.12.0-blue?style=for-the-badge)
@@ -17,42 +17,73 @@
 
 <img width="1063" height="763" alt="image" src="https://github.com/user-attachments/assets/4c9ece28-8977-47d0-8fbc-78a69b95dac9" />
 
-Local-only Home Assistant integration for Eveus EV chargers. It polls the charger directly over your LAN — no cloud, no account, no telemetry — and gives you live power/energy/cost telemetry, charging controls with optimistic UI, native EV battery (SOC) estimates, adaptive-charging and scheduled-slot visibility, optional OCPP backend control, multi-charger support, a localized (English / Ukrainian) UI, proactive safety notices for dangerous charger conditions, and automation-friendly entities so you never have to write a template sensor.
+The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
+
+**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Dashboard](#dashboard) · [Troubleshooting](#troubleshooting)
 
 ## ✨ Highlights
 
-### 🔌 Local-only, no cloud
-Talks to the charger directly over your LAN via its HTTP API. No Eveus account, no cloud relay, no telemetry leaving your network — it keeps working when the internet is down. Supports `http://` or `https://`, custom ports, and either IP or hostname.
-
 ### ⚡ Live electrical telemetry
-Voltage, current, power, and the active current-limit setpoint refreshed on every poll — plus per-phase voltage/current on 3-phase setups, box and plug temperatures, ground status, and the charger's internal backup-battery voltage.
+Everything the charger measures, updated on every poll:
 
-### 💰 Source-of-truth energy & cost
-Session Energy, Total Energy, and two resettable counters (A/B) in kWh, each with a running ₴ cost. **Session Cost** reads the charger's native money field, so it is integrated at the rate active at each moment and never jumps when the tariff switches mid-session (e.g. night→day at 07:00). Primary / Active / Rate 2 / Rate 3 prices are exposed too.
+- **Voltage, current, power** and the active current-limit setpoint
+- **Per-phase voltage and current** on 3-phase setups
+- **Box and plug temperatures**, ground status, backup-battery voltage
 
-### 🔋 EV battery SOC — no helpers needed
-Pick **Advanced** mode at setup and the integration creates its own SOC inputs as native entities — `number.eveus_ev_charger_initial_soc`, `number.eveus_ev_charger_target_soc`, `number.eveus_ev_charger_battery_capacity`, `number.eveus_ev_charger_soc_correction` — and the SOC Energy / SOC Percent / Time-to-Target / Charging Finish Time / Energy-to-Target / Cost-to-Target sensors. No `input_number` helpers to create by hand. Pick **Basic** if you only want charging control. Switch modes anytime from **Configure**.
+### 💰 Accurate energy & cost
+Session Energy, Total Energy, and two resettable counters (A/B), each with a running cost. Costs come from the charger's own meter, so **Session Cost stays correct even when the tariff switches mid-session** (e.g. night→day at 07:00). All tariff rates are exposed as sensors.
 
-### 🤖 Adaptive charging & schedule visibility
-Toggle the charger's adaptive throttle and read its selected current cap and voltage threshold. Both on-device schedule slots are exposed as switches plus native HH:MM time pickers, with summary sensors.
+### 🔋 EV battery SOC estimates
+Pick **Advanced** mode and get battery SOC as native sensors — no helpers to create by hand:
+
+- **SOC %** and **SOC energy (kWh)** — estimated battery level while charging
+- **Time to Target SOC** and **Charging Finish Time** — when charging will be done
+- **Energy / Cost to Target SOC** — what's left to deliver and what it will cost
+- Inputs (initial SOC, target SOC, battery capacity, efficiency loss) are plain `number` entities you can set from any dashboard or automation
+
+Pick **Basic** if you only want charging control. Switch modes anytime via **Configure**.
+
+### 🤖 Adaptive charging & schedules
+The charger can protect weak house wiring by lowering the charging current when mains voltage sags. The integration exposes this fully:
+
+- **Adaptive Mode switch** — turn the feature on or off from HA
+- **Adaptive Charging sensor** — see when throttling is actually active
+- **Adaptive Current Limit / Voltage Threshold** — the cap and the trigger voltage the charger chose
+- **Two on-device schedule slots** — enable switches, native HH:MM time pickers, and summary sensors; charging windows live on the charger, so they survive HA restarts
 
 ### 🧩 Automation-ready entities
-`Car Connected`, `Session Active`, `Charging Finish Time` (a real `timestamp`), `Session Cost`, schedule controls, and `Connection Quality` are first-class entities — no template sensors to maintain.
+The signals automations actually need, as first-class entities:
+
+- `Car Connected` and `Session Active` binary sensors for triggers
+- `Charging Finish Time` as a real `timestamp` — works with countdown cards and time-based automations
+- `Session Cost`, schedule controls, `Connection Quality` — no template sensors to maintain
 
 ### ☁️ OCPP backend control
-Connect the charger to its OCPP backend (for the Eveus mobile app or a charging-network operator) with a single switch, and watch the live connection state via a dedicated binary sensor. While OCPP is on, a Repairs warning explains that Charging Current, limits, and schedules may be overridden by the backend — and how to turn it back off.
+A single switch connects the charger to its OCPP backend (used by the **Grizzl-E Connect** mobile app), and a binary sensor shows the live connection state. While OCPP is on, a Repairs notice reminds you that the backend may override Charging Current, limits, and schedules — and how to switch back to full local control.
 
 ### 🌐 Localized UI
-Ships English and Ukrainian translations; Home Assistant renders entity and config-flow text in the user's language automatically.
+English and Ukrainian translations ship in the box; Home Assistant picks the user's language automatically.
 
 ### 🛰️ Multi-charger
-Add multiple Eveus chargers; each gets its own device, coordinator, and entity namespace.
+Add as many Eveus chargers as you have; each gets its own device and entities.
 
-### 🩺 Built for messy LAN reality
-Offline chargers are handled quietly, polling backs off, commands surface a Home Assistant error toast on failure, and diagnostics downloads redact credentials and identifying fields.
+### 🩺 Robust on real networks
+- **Adaptive polling** — fast while charging, relaxed when idle, and a quick follow-up burst whenever the charger changes state on its own (a schedule kicks in, a session starts from the charger UI or OCPP)
+- **Quiet offline handling** — a powered-off charger doesn't spam your logs, and it reappears in HA within a minute of being switched back on
+- **Honest controls** — every command is confirmed against the charger; failures raise a visible HA error instead of silently pretending
+- **Guided recovery** — a changed password opens a re-authentication flow (and isn't mislabeled as "charger offline"); broken connection settings surface as a fixable Repairs issue
+- **Safe diagnostics** — downloads redact credentials and identifying fields, so they're safe to attach to a GitHub issue
 
 ### 🛡️ Safety watchdog
-Your charger already protects itself — this integration makes those protections **visible and actionable in Home Assistant**. Missing ground, a disabled ground-protection setting, box/plug overheating (an early warning at **80 °C**, before the charger stops at **85 °C**), current leakage above **30 mA**, low/high voltage, the charger's own protection faults, and a low backup battery each surface as a clear **Repairs** notice in English and Ukrainian. A dedicated **Ground Protection** switch lets you manage the charger's missing-ground shutdown from HA, and confirmation counting plus recovery hysteresis keep a single glitchy poll from raising a false alarm.
+Your charger already protects itself — this integration makes those protections **visible and actionable in Home Assistant**. Each condition raises a clear **Repairs** notice (English and Ukrainian):
+
+- **Missing ground**, or ground protection turned off
+- **Overheating** — early warning at **80 °C**, before the charger shuts down at 85 °C
+- **Current leakage** above 30 mA
+- **Charger protection faults** (relay, pilot, overcurrent, voltage, GFCI self-test, …)
+- **Low backup battery** (CR2032)
+
+A dedicated **Ground Protection** switch manages the charger's missing-ground shutdown from HA. Confirmation counting and recovery hysteresis make sure one glitchy reading never raises a false alarm.
 
 See [Safety notices](#-safety-notices) for the full list of conditions and recommended actions.
 
@@ -69,6 +100,10 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
 
 ### HACS
 
+[![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&repository=eveus&category=integration)
+
+Or manually:
+
 1. HACS -> **Custom repositories**.
 2. Add `https://github.com/ABovsh/eveus` as **Integration**.
 3. Install **Eveus EV Charger**.
@@ -81,16 +116,21 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
 
 ## Setup
 
-1. Go to **Settings -> Devices & Services -> Add Integration**.
-2. Search for **Eveus EV Charger**.
-3. Enter the charger address. IP, hostname, full URL, custom port, `http://`, and `https://` are supported.
-4. Enter username and password.
-5. Pick the charger model: **16A**, **32A**, or **48A**.
-6. Pick the integration mode:
-   - **Basic**: charging control only, no SOC sensors.
-   - **Advanced**: also creates SOC input numbers and SOC/ETA sensors.
+[![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=eveus)
 
-Use **Configure** to switch Basic/Advanced later — switching to Advanced for the first time asks for your battery capacity and charging-efficiency loss, just like setup. Use **Reconfigure** to change host, credentials, model, or phase count without reinstalling.
+1. Go to **Settings → Devices & Services → Add Integration** and search for **Eveus EV Charger**.
+2. Enter the charger address — IP, hostname, or full URL (custom port, `http://`, and `https://` all work).
+3. Enter the username and password.
+4. Pick the charger model: **16A**, **32A**, or **48A**.
+5. Pick the integration mode:
+   - **Basic** — charging control and monitoring only.
+   - **Advanced** — adds the SOC inputs and SOC/ETA sensors.
+6. **Advanced only:** a second screen asks for your EV's **battery capacity (kWh)** and **charging efficiency loss (%)**. Both can be changed later from the entities themselves.
+
+Changing things later:
+
+- **Configure** — switch between Basic and Advanced. Switching to Advanced for the first time shows the same battery-capacity screen as setup.
+- **Reconfigure** — change host, credentials, model, or phase count without reinstalling.
 
 ## 🛡️ Safety notices
 
@@ -133,7 +173,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | `switch.eveus_ev_charger_stop_charging` | Switch | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Switch | Enable one-charge mode |
 | `switch.eveus_ev_charger_ground_protection` | Switch | Enable or disable the charger's missing-ground shutdown protection. Turning it off lets charging continue without a detected ground |
-| `switch.eveus_ev_charger_connect_to_ocpp` | Switch | Connect the charger to the OCPP backend (e.g. for the mobile app). While on, a Repairs warning explains that Charging Current, limits, and schedule may be overridden by the backend, and how to turn OCPP back off |
+| `switch.eveus_ev_charger_connect_to_ocpp` | Switch | Connect the charger to the OCPP backend (used by the Grizzl-E Connect mobile app). While on, a Repairs warning explains that Charging Current, limits, and schedule may be overridden by the backend, and how to turn OCPP back off |
 | `button.eveus_ev_charger_force_refresh` | Button | Poll the charger immediately |
 
 ### Live Electrical Data
@@ -282,6 +322,10 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 ## Privacy And Diagnostics
 
 The integration stores only the charger connection details needed by Home Assistant. Diagnostics downloads redact credentials and identifying fields before export. Charger communication stays on your LAN.
+
+---
+
+If this integration is useful to you, please ⭐ the repo — it helps others find it.
 
 ## License
 
