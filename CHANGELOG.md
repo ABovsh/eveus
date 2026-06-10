@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.12.1 - 2026-06-10
+
+### 🐛 Fixed
+- **Setup no longer rejects the Phases dropdown with "value must be one of [1, 3]".** Some Home Assistant frontends (the mobile app in particular) submit the selected phase count as text, which the form rejected for every choice, blocking setup and reconfiguration entirely.
+
 ## 4.12.0 - 2026-06-07
 
 ### ✨ Added
