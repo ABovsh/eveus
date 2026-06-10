@@ -1,17 +1,15 @@
 """Numeric payload hardening tests."""
 from __future__ import annotations
 
-import math
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
-from conftest import EveusTestUpdater
+from conftest import EveusTestUpdater, spec_value_fn
 from custom_components.eveus.utils import get_safe_value
 from custom_components.eveus.sensor_definitions import (
     get_voltage,
     get_current,
     get_power,
-    get_current_set,
     get_session_energy,
     get_leak_current,
     get_connection_quality,
@@ -45,9 +43,9 @@ def test_negative_power_returns_none():
 
 
 def test_current_set_below_minimum_returns_none():
-    assert get_current_set(EveusTestUpdater({"currentSet": 5}), None) is None
-    assert get_current_set(EveusTestUpdater({"currentSet": 7}), None) == 7
-    assert get_current_set(EveusTestUpdater({"currentSet": 16}), None) == 16
+    assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": 5}), None) is None
+    assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": 7}), None) == 7
+    assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": 16}), None) == 16
 
 
 def test_leak_current_negative_returns_none():

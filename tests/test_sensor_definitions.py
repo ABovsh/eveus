@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from conftest import spec_value_fn
 from homeassistant.helpers.entity import EntityCategory
 
 from custom_components.eveus import sensor_definitions as sd
@@ -47,7 +48,7 @@ def test_measurement_getters_convert_device_payload_values() -> None:
     assert sensors.get_voltage(updater, None) == 230
     assert sensors.get_current(updater, None) == pytest.approx(14.2)
     assert sensors.get_power(updater, None) == pytest.approx(3265.6)
-    assert sensors.get_current_set(updater, None) == 16
+    assert spec_value_fn("current_set")(updater, None) == 16
 
 
 def test_state_getters_map_known_values() -> None:

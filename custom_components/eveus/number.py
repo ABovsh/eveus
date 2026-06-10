@@ -12,7 +12,7 @@ from homeassistant.components.number import (
     NumberEntityDescription,
     RestoreNumber,
 )
-from homeassistant.core import HomeAssistant, callback, State
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -219,7 +219,6 @@ class EveusCurrentNumber(EveusNumberEntity):
                 ) from err
             finally:
                 self._pending_value = None
-                self._last_command_time = time.time()
                 self._attr_native_value = self._resolve_value()
                 self._write_if_changed(self._attr_native_value)
 

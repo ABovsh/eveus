@@ -146,6 +146,11 @@ def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None
     warning that auto-clears the moment OCPP is turned off — even if that
     happens from the mobile app rather than from HA.
     """
+    # Skip failed/unavailable polls: the coordinator notifies listeners on
+    # failed refreshes too while retaining the previous payload (same guard as
+    # the battery and clock-drift trackers).
+    if not updater.available or not updater.last_update_success:
+        return
     value = get_safe_value(updater.data, "ocppEnabled", int) if updater.data else None
     if value == 1:
         ir.async_create_issue(

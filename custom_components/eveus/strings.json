@@ -63,6 +63,14 @@
         "data": {
           "soc_mode": "Integration mode"
         }
+      },
+      "soc": {
+        "title": "SOC Monitoring Setup",
+        "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.",
+        "data": {
+          "battery_capacity": "Battery capacity (kWh)",
+          "soc_correction": "Charging efficiency loss (%)"
+        }
       }
     }
   },

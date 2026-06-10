@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -241,7 +241,6 @@ class BaseSwitchEntity(
                 return success
             finally:
                 self._pending_command = None
-                self._last_command_time = time.time()
                 self._attr_is_on = self._resolve_state()
                 self._write_if_changed(self._attr_is_on)
 

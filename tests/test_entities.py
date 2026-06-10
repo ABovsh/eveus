@@ -503,7 +503,6 @@ def test_common_module_exports_backward_compatible_symbols() -> None:
     assert common.BaseEveusEntity is BaseEveusEntity
     assert common.CommandManager.__name__ == "CommandManager"
     assert common.EveusUpdater.__name__ == "EveusUpdater"
-    assert issubclass(common.EveusConnectionError, common.EveusError)
     assert set(common.__all__) == {
         "BaseEveusEntity",
         "ControlEntityMixin",
@@ -512,7 +511,6 @@ def test_common_module_exports_backward_compatible_symbols() -> None:
         "EveusUpdater",
         "CommandManager",
         "EveusError",
-        "EveusConnectionError",
     }
 
 

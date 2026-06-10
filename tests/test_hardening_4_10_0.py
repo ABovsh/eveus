@@ -8,7 +8,6 @@ clamping, and the SOC-ETA "unavailable" message.
 from __future__ import annotations
 
 import asyncio
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -30,7 +29,6 @@ from custom_components.eveus.const import (
     get_soc_mode,
 )
 from custom_components.eveus.utils import normalize_soc_input
-from custom_components.eveus import config_flow
 from custom_components.eveus.config_flow import (
     _split_host_and_scheme,
     normalize_user_input,

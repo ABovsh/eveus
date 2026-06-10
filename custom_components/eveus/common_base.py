@@ -339,7 +339,6 @@ class OptimisticControlMixin(Generic[T]):
         self._optimistic_value_time = 0.0
         self._last_device_value: T | None = None
         self._last_successful_read = 0.0
-        self._last_command_time = 0.0
         # Serialize rapid repeated commands on the SAME control. The command
         # manager serializes HTTP at the coordinator level, but the per-entity
         # pending/optimistic bookkeeping runs around that await; without this an

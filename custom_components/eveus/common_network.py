@@ -460,7 +460,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 timeout=_UPDATE_TIMEOUT_OBJ,
             ) as response:
                 if response.status == 401:
-                    self._record_failure(ConfigEntryAuthFailed("401"))
+                    # An auth rejection is not a connectivity failure: don't
+                    # feed the offline-backoff counters or connection-quality
+                    # stats, or reauth recovery gets misattributed/deferred as
+                    # "device offline". Just mark unavailable and hand off to
+                    # HA's reauth flow.
+                    self._connection_quality_cache = None
+                    self._device_available = False
+                    self._last_error = "ConfigEntryAuthFailed"
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 

@@ -189,7 +189,14 @@ def test_update_data_raises_auth_failed_on_unauthorized(
 
     with pytest.raises(ConfigEntryAuthFailed, match="Invalid authentication"):
         asyncio.run(updater._async_update_data())
-    assert updater.connection_quality["consecutive_failures"] == 1
+    # An auth rejection is not a connectivity failure: it must not feed the
+    # offline-backoff counters, or reauth recovery gets deferred and the
+    # diagnostics misattribute a credentials problem as "device offline".
+    assert updater.connection_quality["consecutive_failures"] == 0
+    assert updater.is_likely_offline is False
+    assert updater._next_poll_attempt == 0.0
+    assert updater.available is False
+    assert updater.connection_quality["last_error"] == "ConfigEntryAuthFailed"
 
 
 def test_update_data_raises_update_failed_for_bad_json(

@@ -14,7 +14,7 @@ from conftest import EveusTestUpdater, TEST_HOST, disable_state_writes
 
 from homeassistant.const import CONF_HOST
 
-from custom_components.eveus import CONFIG_ENTRY_VERSION, async_migrate_entry
+from custom_components.eveus import async_migrate_entry
 from custom_components.eveus.const import CONF_SCHEME
 from custom_components.eveus.utils import (
     _safe_str,

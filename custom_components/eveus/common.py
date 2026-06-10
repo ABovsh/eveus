@@ -15,10 +15,6 @@ class EveusError(HomeAssistantError):
     """Base class for Eveus errors."""
 
 
-class EveusConnectionError(EveusError):
-    """Error indicating connection issues."""
-
-
 __all__ = [
     "BaseEveusEntity",
     "ControlEntityMixin",
@@ -27,5 +23,4 @@ __all__ = [
     "EveusUpdater",
     "CommandManager",
     "EveusError",
-    "EveusConnectionError",
 ]

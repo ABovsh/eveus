@@ -16,7 +16,6 @@ from custom_components.eveus.config_flow import (
 from custom_components.eveus.const import (
     CONF_MODEL,
     CONF_PHASES,
-    CONF_SCHEME,
     DEFAULT_PHASES,
     MODEL_16A,
     PHASE_OPTIONS,
