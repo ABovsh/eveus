@@ -154,6 +154,12 @@ sections:
           - entity: sensor.eveus_ev_charger_charging_finish_time
             name: Час завершення
             icon: mdi:clock-end
+          - entity: sensor.eveus_ev_charger_energy_to_target_soc
+            name: Енергія до цілі
+            icon: mdi:lightning-bolt-outline
+          - entity: sensor.eveus_ev_charger_cost_to_target_soc
+            name: Вартість до цілі
+            icon: mdi:cash-clock
   - type: grid
     cards:
       - type: heading

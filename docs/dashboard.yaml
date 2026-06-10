@@ -150,6 +150,12 @@ sections:
           - entity: sensor.eveus_ev_charger_charging_finish_time
             name: ETA Finish
             icon: mdi:clock-end
+          - entity: sensor.eveus_ev_charger_energy_to_target_soc
+            name: Energy to Target
+            icon: mdi:lightning-bolt-outline
+          - entity: sensor.eveus_ev_charger_cost_to_target_soc
+            name: Cost to Target
+            icon: mdi:cash-clock
   - type: grid
     cards:
       - type: heading

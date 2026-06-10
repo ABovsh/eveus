@@ -11,6 +11,9 @@
 - **A wrong password no longer looks like an offline charger.** When the charger rejects the stored credentials, the integration hands off to re-authentication without counting the rejection toward offline detection — so connection diagnostics no longer mislabel an authentication problem as "device offline", and polling resumes immediately after you re-enter the password.
 - **The OCPP warning ignores stale data while the charger is unreachable**, the same way the battery and clock warnings already do.
 - **Internal cleanup with no functional changes:** several unused leftovers from earlier versions were removed.
+
+### 📊 Dashboard
+- **Both dashboards now show the new target-SOC estimates.** The English (`docs/dashboard.yaml`) and Ukrainian (`docs/dashboard-uk.yaml`) Lovelace views add **Energy to Target** and **Cost to Target** to the SOC card, next to the existing time-to-target and finish-time estimates.
 - **Externally started charging shows up fast.** When the charger changes state on its own (a schedule kicks in, the session is started from the charger UI or OCPP, a fault occurs), the integration now briefly polls faster — the same quick follow-up it already did after commands from Home Assistant — without raising idle traffic.
 - **A powered-back-on charger reappears within a minute.** The offline poll cycle is now 60 seconds (was 120), so switching the charger back on after a session shows it available in Home Assistant in at most 60 seconds — typically about 30. Recovery is still confirmed over two successful polls before fast polling resumes, and the Force Refresh button still polls immediately.
 - **Device page no longer shows a misleading hardware version.** The charger's Wi-Fi module firmware was previously displayed as the device "hardware version"; the field is now removed (the charger does not report a hardware revision). The Wi-Fi firmware remains visible in the diagnostics download.
