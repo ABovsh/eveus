@@ -340,7 +340,10 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
             vol.Required(
                 CONF_PHASES,
                 default=_safe_phases_default(defaults.get(CONF_PHASES)),
-            ): vol.In(PHASE_OPTIONS),
+            # Coerce first: the frontend (mobile app in particular) submits the
+            # selected option as a string ("1"/"3"), which bare vol.In rejects
+            # with "value must be one of [1, 3]" for every choice (issue #4).
+            ): vol.All(vol.Coerce(int), vol.In(PHASE_OPTIONS)),
             vol.Required(
                 CONF_SOC_MODE,
                 default=defaults.get(CONF_SOC_MODE, SOC_MODE_ADVANCED),

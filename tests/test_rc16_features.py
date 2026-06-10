@@ -308,6 +308,31 @@ class TestClockDriftTracker:
                 "Синхрон" in issues["clock_drift"]["description"], name
 
 
+# =============================================================================
+# Issue #4: phases dropdown rejected every choice when submitted as a string
+# =============================================================================
+
+
+def test_user_schema_accepts_phase_count_submitted_as_string():
+    # The mobile-app frontend submits select values as strings; the schema
+    # must coerce "1"/"3" instead of failing "value must be one of [1, 3]".
+    from custom_components.eveus.config_flow import build_user_data_schema
+    from custom_components.eveus.const import CONF_PHASES
+
+    schema = build_user_data_schema()
+    result = schema(
+        {
+            "host": TEST_HOST,
+            "username": TEST_USERNAME,
+            "password": TEST_PASSWORD,
+            "model": "16A",
+            CONF_PHASES: "3",
+            "soc_mode": "basic",
+        }
+    )
+    assert result[CONF_PHASES] == 3
+
+
 def test_advanced_only_prune_list_covers_target_soc_forecast_sensors():
     from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
 

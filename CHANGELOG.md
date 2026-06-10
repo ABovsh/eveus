@@ -12,6 +12,7 @@
 - **Device page no longer shows a misleading hardware version.** The charger's Wi-Fi module firmware was previously displayed as the device "hardware version"; the field is now removed (the charger does not report a hardware revision). The Wi-Fi firmware remains visible in the diagnostics download.
 
 ### 🐛 Fixed
+- **Setup no longer rejects the Phases dropdown with "value must be one of [1, 3]".** Some Home Assistant frontends (the mobile app in particular) submit the selected phase count as text, which the form rejected for every choice, blocking setup and reconfiguration entirely.
 - **A brief outage can no longer raise a false "replace battery" warning.** While the charger is unreachable, the low-battery check now skips the stale last reading instead of re-counting it toward the alarm threshold — and an implausible voltage spike from a glitchy reading no longer silently clears a genuine low-battery warning.
 - **Re-entering your password now also starts from the Charging Current slider.** If the charger rejects the stored credentials while you change the charging current, Home Assistant now opens the re-authentication flow instead of showing only a generic error.
 - **System clock corrections are handled everywhere.** After a backward clock jump (NTP correction, resuming a VM), offline detection no longer freezes, controls no longer keep presenting last-known values indefinitely, entities leave their availability grace window on time, and connection-latency statistics can no longer record impossible values.
