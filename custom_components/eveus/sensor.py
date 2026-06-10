@@ -11,6 +11,8 @@ from .const import CONF_MODEL, MODEL_MAX_CURRENT, get_soc_mode, SOC_MODE_ADVANCE
 from .sensor_definitions import get_sensor_specifications
 from .ev_sensors import (
     ChargingFinishTimeSensor,
+    CostToTargetSocSensor,
+    EnergyToTargetSocSensor,
     EVSocKwhSensor,
     EVSocPercentSensor,
     TimeToTargetSocSensor,
@@ -43,6 +45,8 @@ async def async_setup_entry(
             EVSocPercentSensor(updater, device_number, soc_calculator),
             TimeToTargetSocSensor(updater, device_number, soc_calculator),
             ChargingFinishTimeSensor(updater, device_number, soc_calculator),
+            EnergyToTargetSocSensor(updater, device_number, soc_calculator),
+            CostToTargetSocSensor(updater, device_number, soc_calculator),
         ]
 
     sensors = standard_sensors + ev_sensors

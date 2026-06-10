@@ -237,6 +237,8 @@ _ADVANCED_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
     ("sensor", "soc_percent"),
     ("sensor", "time_to_target_soc"),
     ("sensor", "charging_finish_time"),
+    ("sensor", "energy_to_target_soc"),
+    ("sensor", "cost_to_target_soc"),
     ("number", "initial_soc"),
     ("number", "target_soc"),
     ("number", "battery_capacity"),

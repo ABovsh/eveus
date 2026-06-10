@@ -303,6 +303,74 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             return self._cached_value
 
 
+class EnergyToTargetSocSensor(BaseEVHelperSensor):
+    """Grid energy still needed to reach the Target SOC.
+
+    Converts the remaining battery energy (Target SOC minus current SOC)
+    back into grid kWh by undoing the SOC correction, so the value matches
+    what the meter will actually count. Unknown until the SOC inputs and a
+    Target SOC are set; 0 once the target is reached.
+    """
+
+    ENTITY_NAME = "Energy to Target SOC"
+    _attr_device_class = SensorDeviceClass.ENERGY_STORAGE
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:battery-arrow-up"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+    _requires_helpers = False
+
+    def _remaining_grid_kwh(self) -> Optional[float]:
+        """Grid kWh to target, 0.0 at target, or None when not computable."""
+        calc = self._soc_calculator
+        if not calc.are_helpers_available() or calc.target_soc is None:
+            return None
+        if self._session_energy_is_invalid():
+            return None
+        energy_charged = self._get_energy_charged() or 0.0
+        current_soc = calc.get_soc_percent(energy_charged)
+        battery_capacity = calc.battery_capacity
+        if current_soc is None or not battery_capacity:
+            return None
+        remaining_battery_kwh = (calc.target_soc - current_soc) * battery_capacity / 100
+        if remaining_battery_kwh <= 0:
+            return 0.0
+        correction = calc.soc_correction
+        if not 0 <= correction < 100:
+            return None
+        return remaining_battery_kwh / (1 - correction / 100)
+
+    def _get_sensor_value(self) -> Optional[float]:
+        remaining = self._remaining_grid_kwh()
+        return None if remaining is None else round(remaining, 2)
+
+
+class CostToTargetSocSensor(EnergyToTargetSocSensor):
+    """Forecast cost of reaching the Target SOC at the active tariff rate.
+
+    Prices the remaining grid energy with the charger's currently active
+    tariff (`activeTarif` -> `tarif` / `tarifAValue` / `tarifBValue`), so the
+    forecast drifts only if the active rate changes before the session ends.
+    """
+
+    ENTITY_NAME = "Cost to Target SOC"
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = "UAH"
+    _attr_icon = "mdi:cash-clock"
+    _attr_suggested_display_precision = 0
+
+    def _get_sensor_value(self) -> Optional[float]:
+        from .sensor_definitions import get_active_rate_cost
+
+        remaining = self._remaining_grid_kwh()
+        if remaining is None:
+            return None
+        rate = get_active_rate_cost(self._updater, self.hass)
+        if rate is None:
+            return None
+        return round(remaining * rate, 2)
+
+
 class ChargingFinishTimeSensor(BaseEVHelperSensor):
     """Absolute timestamp when charging is expected to reach target SOC.
 
