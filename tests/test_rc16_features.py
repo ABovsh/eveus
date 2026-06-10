@@ -178,7 +178,7 @@ class TestTransitionBurstPolling:
 
 
 # =============================================================================
-# #17 Progressive offline backoff + jitter + recovery probation
+# #17 Fast offline reconnect + recovery probation
 # =============================================================================
 
 import time
@@ -195,31 +195,29 @@ def _make_offline(updater: EveusUpdater) -> None:
     updater._last_success_time = time.time() - 700
 
 
-class TestProgressiveOfflineBackoff:
-    def test_backoff_grows_with_continued_failures_and_caps(self):
+class TestFastOfflineReconnect:
+    def test_offline_poll_cycle_is_at_most_sixty_seconds(self):
+        # The user powers the charger off between sessions; when it comes
+        # back, it must reappear within one offline cycle. Worst case =
+        # OFFLINE_UPDATE_INTERVAL, so that must be 60 s, and the failure
+        # backoff deadline must never defer past the next tick.
+        assert OFFLINE_UPDATE_INTERVAL <= 60
         updater = _updater()
         _make_offline(updater)
-        delays = []
         for _ in range(6):
             updater._record_failure(TimeoutError())
-            delays.append(updater._next_poll_attempt - time.time())
-        # Meaningful tier growth, not float noise.
-        assert delays[1] >= delays[0] + 30
-        assert delays[2] >= delays[1] + 30
-        # Capped: the last steps stop growing (within jitter/rounding noise).
-        assert delays[-1] == pytest.approx(delays[-2], abs=1.0)
-        # Cap bounded so the clock-jump guard still accepts the wait.
-        assert delays[-1] <= 360
+            delay = updater._next_poll_attempt - time.time()
+            assert delay <= OFFLINE_UPDATE_INTERVAL
+        assert updater.update_interval.total_seconds() == OFFLINE_UPDATE_INTERVAL
 
-    def test_jitter_separates_devices(self):
-        a = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), device_number=1)
-        b = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), device_number=2)
-        for upd in (a, b):
-            _make_offline(upd)
-            upd._record_failure(TimeoutError())
-        assert (a._next_poll_attempt - time.time()) != pytest.approx(
-            b._next_poll_attempt - time.time(), abs=0.5
-        )
+    def test_backoff_does_not_escalate_with_continued_failures(self):
+        updater = _updater()
+        _make_offline(updater)
+        updater._record_failure(TimeoutError())
+        first = updater._next_poll_attempt - time.time()
+        for _ in range(5):
+            updater._record_failure(TimeoutError())
+        assert updater._next_poll_attempt - time.time() == pytest.approx(first, abs=1.0)
 
     def test_recovery_needs_two_successes_before_fast_cadence(self):
         updater = _updater()

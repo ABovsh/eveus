@@ -6,7 +6,11 @@ DOMAIN: Final[str] = "eveus"
 # Update intervals
 CHARGING_UPDATE_INTERVAL: Final[int] = 30
 IDLE_UPDATE_INTERVAL: Final[int] = 60
-OFFLINE_UPDATE_INTERVAL: Final[int] = 120
+# Kept short on purpose: powering the charger off between sessions is a
+# normal workflow here, so a returning charger must reappear in HA within
+# one offline cycle (worst case 60 s). A refused LAN request once a minute
+# is negligible load.
+OFFLINE_UPDATE_INTERVAL: Final[int] = 60
 RETRY_DELAY: Final[int] = 15
 UPDATE_TIMEOUT: Final[int] = 20
 COMMAND_TIMEOUT: Final[int] = 25

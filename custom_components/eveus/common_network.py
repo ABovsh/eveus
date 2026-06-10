@@ -58,23 +58,15 @@ _UPDATE_INTERVALS = {
     OFFLINE_UPDATE_INTERVAL: _OFFLINE_INTERVAL,
 }
 
-# Tiered offline backoff: each further failed poll while the charger looks
-# powered off defers the next attempt longer, easing load during long outages
-# while still probing often enough to catch recovery. The per-device jitter
-# below desynchronizes multi-charger setups so their retries don't align.
-_OFFLINE_BACKOFF_TIERS: tuple[int, ...] = (60, 120, 240, 300)
-
-# Longest the offline backoff ever defers the next poll (largest tier plus the
-# maximum jitter, rounded up). Bounds the skip check, so a backward wall-clock
-# step (which would otherwise leave the deadline far in the future) can't
-# strand the charger as unavailable: a remaining wait beyond this means the
-# clock moved. RETRY_DELAY no longer feeds the offline path.
-_MAX_OFFLINE_BACKOFF = 360
-
-
-def _offline_jitter_factor(device_number: int) -> float:
-    """Deterministic, bounded per-device backoff stretch (0–12%)."""
-    return 1.0 + ((device_number * 7) % 13) / 100
+# Offline backoff is deliberately flat and short: powering the charger off
+# between sessions is a normal workflow, so a returning charger must show up
+# within one OFFLINE_UPDATE_INTERVAL tick (worst case 60 s). The deadline only
+# dedupes extra attempts inside a cycle (e.g. burst refreshes landing during an
+# outage); it never defers past the next scheduled tick. It also bounds the
+# skip check, so a backward wall-clock step (which would otherwise leave the
+# deadline far in the future) can't strand the charger as unavailable: a
+# remaining wait beyond this means the clock moved.
+_MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
 
 
 class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
@@ -130,8 +122,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._device_available = True
         self._device_registry_finalized = False
         self._next_poll_attempt = 0.0
-        self._device_number = device_number if device_number is not None else 1
-        self._offline_backoff_tier = 0
         # Successful polls still owed at the offline cadence after an outage,
         # so a single recovered tick can't snap straight back to fast polling.
         self._offline_probation = 0
@@ -339,7 +329,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._silent_mode = False
         self._offline_announced = False
         self._last_error = None
-        self._offline_backoff_tier = 0
         # Two-success recovery probation: the first successes after a long
         # outage stay on the offline cadence so one lucky tick (a router blip
         # mid-outage) doesn't snap polling back to the fast cycle.
@@ -391,12 +380,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._silent_mode = True
 
         if self.is_likely_offline:
-            tier = min(self._offline_backoff_tier, len(_OFFLINE_BACKOFF_TIERS) - 1)
-            self._offline_backoff_tier += 1
-            backoff = _OFFLINE_BACKOFF_TIERS[tier] * _offline_jitter_factor(
-                self._device_number
-            )
-            self._next_poll_attempt = time.time() + backoff
+            self._next_poll_attempt = time.time() + _MAX_OFFLINE_BACKOFF
             self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
             if not self._offline_announced:
                 _LOGGER.debug("Eveus device appears offline, reducing poll frequency")

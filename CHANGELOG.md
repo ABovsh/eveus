@@ -8,7 +8,7 @@
 
 ### 🔧 Changed
 - **Externally started charging shows up fast.** When the charger changes state on its own (a schedule kicks in, the session is started from the charger UI or OCPP, a fault occurs), the integration now briefly polls faster — the same quick follow-up it already did after commands from Home Assistant — without raising idle traffic.
-- **Smarter retries while the charger is powered off.** Repeated failed polls now back off progressively (up to 5 minutes between attempts) instead of retrying on a fixed short cycle, multiple chargers no longer retry in lockstep, and recovery is confirmed over two successful polls before fast polling resumes. The Force Refresh button still polls immediately.
+- **A powered-back-on charger reappears within a minute.** The offline poll cycle is now 60 seconds (was 120), so switching the charger back on after a session shows it available in Home Assistant in at most 60 seconds — typically about 30. Recovery is still confirmed over two successful polls before fast polling resumes, and the Force Refresh button still polls immediately.
 - **Device page no longer shows a misleading hardware version.** The charger's Wi-Fi module firmware was previously displayed as the device "hardware version"; the field is now removed (the charger does not report a hardware revision). The Wi-Fi firmware remains visible in the diagnostics download.
 
 ### 🐛 Fixed
