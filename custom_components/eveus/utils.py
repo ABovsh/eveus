@@ -8,6 +8,7 @@ from collections.abc import Hashable
 from typing import Any, Callable, TypeVar, Optional, Dict
 
 from homeassistant.core import State, HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DEFAULT_SOC_CORRECTION,
@@ -180,13 +181,16 @@ def get_safe_value(
 # =============================================================================
 
 
-def get_charger_utc_seconds(data: Any) -> Optional[int]:
-    """Decode the charger's clock from a /main payload as UTC epoch seconds.
+def get_charger_wall_clock_seconds(data: Any) -> Optional[int]:
+    """Return the charger's wall clock from a /main payload, validated.
 
-    The charger stores ``systemTime`` as UTC but reports it shifted by
-    ``timeZone`` hours, so charger UTC is ``systemTime - timeZone*3600``.
-    Returns None when either field is missing, corrupt, or outside the
-    plausible RTC / timezone windows.
+    ``systemTime`` is the charger's local wall clock encoded as epoch seconds
+    (stored UTC shifted by the ``timeZone`` select). The wall clock — not the
+    decoded UTC — is what schedules and tariff windows run on, so drift checks
+    must compare it against Home Assistant's local wall clock: comparing UTC
+    to UTC cancels the ``timeZone`` select out and goes blind to a wrong
+    timezone or a DST mismatch. Returns None when either field is missing,
+    corrupt, or outside the plausible RTC / timezone windows.
     """
     system_time = get_safe_value(data, "systemTime", int)
     tz_hours = get_safe_value(data, "timeZone", int)
@@ -197,7 +201,17 @@ def get_charger_utc_seconds(data: Any) -> Optional[int]:
         or not MIN_VALID_TIMEZONE_H <= tz_hours <= MAX_VALID_TIMEZONE_H
     ):
         return None
-    return system_time - tz_hours * 3600
+    return system_time
+
+
+def get_local_wall_clock_seconds() -> int:
+    """Home Assistant's local wall clock as epoch-style seconds.
+
+    DST-aware: uses HA's configured time zone, so the local offset follows
+    summer/winter transitions automatically.
+    """
+    offset = dt_util.now().utcoffset()
+    return int(time.time()) + int(offset.total_seconds() if offset else 0)
 
 
 def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:

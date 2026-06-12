@@ -412,7 +412,7 @@
     },
     "clock_drift": {
       "title": "Eveus: charger clock is off by more than 10 minutes",
-      "description": "The clock inside your Eveus charger differs from Home Assistant by more than 10 minutes (see the **Time Drift** sensor for the exact offset in seconds).\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Check that the **Time Zone** select for your Eveus charger matches your local time zone.\n- Press the **Sync Time** button for your Eveus charger to set its clock from Home Assistant.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
+      "description": "The clock inside your Eveus charger differs from Home Assistant by more than 10 minutes (see the **Time Drift** sensor for the exact offset in seconds).\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.A steady drift of exactly one hour usually means the Time Zone select is wrong — for example after a daylight-saving change, which the charger's fixed offset does not follow.\n\nWhat to do:\n\n- Check that the **Time Zone** select for your Eveus charger matches your local time zone.\n- Press the **Sync Time** button for your Eveus charger to set its clock from Home Assistant.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
     }
   }
 }

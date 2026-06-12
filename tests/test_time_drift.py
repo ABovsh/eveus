@@ -2,13 +2,26 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+from homeassistant.util import dt as dt_util
+
 import custom_components.eveus.sensor_definitions as sd
-from custom_components.eveus.utils import get_charger_utc_seconds
+from custom_components.eveus.utils import get_charger_wall_clock_seconds
 
 TZ_HOURS = 3
 TZ_SHIFT = TZ_HOURS * 3600
+
+
+@pytest.fixture(autouse=True)
+def _ha_in_kyiv_summer():
+    """Pin HA's local clock to UTC+3 (Kyiv summer time) for every test."""
+    original = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(timezone(timedelta(hours=TZ_HOURS)))
+    yield
+    dt_util.set_default_time_zone(original)
 
 
 def _updater(offset_seconds: int | None = None, **overrides):
@@ -20,30 +33,33 @@ def _updater(offset_seconds: int | None = None, **overrides):
     return SimpleNamespace(available=True, data=data)
 
 
-# --- get_charger_utc_seconds (shared helper) ---
+# --- get_charger_wall_clock_seconds (shared helper) ---
 
 
-def test_charger_utc_decodes_timezone_shift() -> None:
+def test_charger_wall_clock_returns_validated_system_time() -> None:
     now = int(time.time())
     data = {"systemTime": str(now + TZ_SHIFT), "timeZone": str(TZ_HOURS)}
-    assert abs(get_charger_utc_seconds(data) - now) <= 1
+    assert get_charger_wall_clock_seconds(data) == now + TZ_SHIFT
 
 
-def test_charger_utc_requires_both_fields() -> None:
+def test_charger_wall_clock_requires_both_fields() -> None:
     now = int(time.time())
-    assert get_charger_utc_seconds({"systemTime": str(now)}) is None
-    assert get_charger_utc_seconds({"timeZone": "3"}) is None
-    assert get_charger_utc_seconds(None) is None
+    assert get_charger_wall_clock_seconds({"systemTime": str(now)}) is None
+    assert get_charger_wall_clock_seconds({"timeZone": "3"}) is None
+    assert get_charger_wall_clock_seconds(None) is None
 
 
-def test_charger_utc_rejects_out_of_range_values() -> None:
-    assert get_charger_utc_seconds({"systemTime": "-1", "timeZone": "3"}) is None
+def test_charger_wall_clock_rejects_out_of_range_values() -> None:
+    assert get_charger_wall_clock_seconds({"systemTime": "-1", "timeZone": "3"}) is None
     assert (
-        get_charger_utc_seconds({"systemTime": "99999999999", "timeZone": "3"}) is None
+        get_charger_wall_clock_seconds({"systemTime": "99999999999", "timeZone": "3"})
+        is None
     )
     now = str(int(time.time()))
-    assert get_charger_utc_seconds({"systemTime": now, "timeZone": "15"}) is None
-    assert get_charger_utc_seconds({"systemTime": now, "timeZone": "-13"}) is None
+    assert get_charger_wall_clock_seconds({"systemTime": now, "timeZone": "15"}) is None
+    assert (
+        get_charger_wall_clock_seconds({"systemTime": now, "timeZone": "-13"}) is None
+    )
 
 
 # --- get_time_drift ---
@@ -173,3 +189,25 @@ def test_time_drift_hysteresis_survives_a_corrupt_poll() -> None:
     assert sd.get_time_drift(updater, None) is None
     _set_offset(updater, 62)
     assert sd.get_time_drift(updater, None) == 60
+
+
+# --- wall-clock awareness: wrong Time Zone select / DST mismatch is visible ---
+
+
+def test_time_drift_detects_wrong_timezone_select() -> None:
+    # Charger clock synced (UTC correct) but its Time Zone select says +2
+    # while HA runs +3: the charger's wall clock is an hour behind, schedules
+    # would mistime, and the sensor must say so.
+    now = int(time.time())
+    updater = SimpleNamespace(
+        available=True,
+        data={"systemTime": str(now + 2 * 3600), "timeZone": "2"},
+    )
+    assert sd.get_time_drift(updater, None) == -3600
+
+
+def test_time_drift_detects_dst_mismatch() -> None:
+    # After a DST change HA moves to +2 (winter) while the charger's fixed
+    # offset stays +3: charger wall clock is now an hour ahead.
+    dt_util.set_default_time_zone(timezone(timedelta(hours=2)))
+    assert sd.get_time_drift(_updater(0), None) == 3600

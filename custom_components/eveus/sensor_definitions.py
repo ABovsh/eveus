@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import math
-import time
 from typing import Any, Callable, Dict, Final, Optional
 from datetime import datetime
 from dataclasses import dataclass
@@ -46,7 +45,13 @@ from .const import (
     TIME_DRIFT_TOLERANCE_SECONDS,
     TIME_DRIFT_QUANTUM_SECONDS,
 )
-from .utils import RateLog, get_charger_utc_seconds, get_safe_value, format_duration
+from .utils import (
+    RateLog,
+    format_duration,
+    get_charger_wall_clock_seconds,
+    get_local_wall_clock_seconds,
+    get_safe_value,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ERROR_LOG_KEYS = 64
@@ -421,22 +426,25 @@ def get_session_time_attrs(updater, hass) -> dict:
 
 
 def get_time_drift(updater, hass) -> Optional[int]:
-    """Charger clock minus Home Assistant clock, in seconds (0 = in sync).
+    """Charger wall clock minus HA local wall clock, in seconds (0 = in sync).
 
     Replaces the old System Time clock readout: a ticking clock changes state
     on every poll and floods the recorder, while the drift is the only part
-    that carries diagnostic value (it pairs with the Sync Time button). Drift
-    within TIME_DRIFT_TOLERANCE_SECONDS reads as exactly 0; larger drifts snap
-    to a TIME_DRIFT_QUANTUM_SECONDS grid. The last reported value is kept on
-    the updater as hysteresis: a raw drift hovering at a band boundary (e.g.
-    5 <-> 6 s) would otherwise alternate between adjacent grid values on every
-    poll, recreating the recorder flooding this sensor exists to avoid.
+    that carries diagnostic value (it pairs with the Sync Time button and the
+    Time Zone select). Wall clocks are compared — not UTC — so a wrong Time
+    Zone select or a DST mismatch shows up as a whole-hour drift instead of
+    being cancelled out. Drift within TIME_DRIFT_TOLERANCE_SECONDS reads as
+    exactly 0; larger drifts snap to a TIME_DRIFT_QUANTUM_SECONDS grid. The
+    last reported value is kept on the updater as hysteresis: a raw drift
+    hovering at a band boundary (e.g. 5 <-> 6 s) would otherwise alternate
+    between adjacent grid values on every poll, recreating the recorder
+    flooding this sensor exists to avoid.
     """
     try:
-        charger_utc = get_charger_utc_seconds(updater.data)
-        if charger_utc is None:
+        charger_wall = get_charger_wall_clock_seconds(updater.data)
+        if charger_wall is None:
             return None
-        drift = charger_utc - int(time.time())
+        drift = charger_wall - get_local_wall_clock_seconds()
         last = getattr(updater, "_time_drift_last_report", None)
         if last is not None and abs(drift - last) <= TIME_DRIFT_QUANTUM_SECONDS:
             return last

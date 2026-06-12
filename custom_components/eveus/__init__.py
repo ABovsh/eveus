@@ -6,7 +6,6 @@ import logging
 # NOT `import time`: this package has a `time.py` platform module, and the
 # import system overwrites a package-global named `time` with that submodule
 # the moment HA loads the time platform.
-from time import time as _wall_clock
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -53,7 +52,8 @@ from .const import (
 )
 from .common_network import EveusUpdater
 from .utils import (
-    get_charger_utc_seconds,
+    get_charger_wall_clock_seconds,
+    get_local_wall_clock_seconds,
     get_device_suffix,
     get_next_device_number,
     get_safe_value,
@@ -250,8 +250,10 @@ def _clock_drift_issue_id(entry: ConfigEntry) -> str:
 class _ClockDriftTracker:
     """Decide when to raise/clear the charger clock-drift notice.
 
-    The charger stores ``systemTime`` as UTC but reports it in /main shifted
-    by ``timeZone`` hours, so charger UTC is ``systemTime - timeZone*3600``.
+    Compares the charger's wall clock (``systemTime``, local-encoded epoch
+    seconds) against Home Assistant's local wall clock — not UTC to UTC, which
+    would cancel the ``timeZone`` select out and miss a wrong timezone or a
+    DST mismatch entirely.
     Fires only after several consecutive polls more than the threshold away
     from Home Assistant's clock; clears only after consecutive in-sync polls.
     Missing/corrupt time fields neither advance nor reset either streak,
@@ -266,10 +268,10 @@ class _ClockDriftTracker:
 
     def evaluate(self, data: dict[str, Any] | None) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged."""
-        charger_utc = get_charger_utc_seconds(data)
-        if charger_utc is None:
+        charger_wall = get_charger_wall_clock_seconds(data)
+        if charger_wall is None:
             return None
-        drift = abs(charger_utc - _wall_clock())
+        drift = abs(charger_wall - get_local_wall_clock_seconds())
         if drift > CLOCK_DRIFT_THRESHOLD_SECONDS:
             self._ok_streak = 0
             self._drift_streak += 1

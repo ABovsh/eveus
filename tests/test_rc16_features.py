@@ -31,6 +31,18 @@ class TestDeviceFirmwareMetadata:
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _ha_local_clock_utc_plus_3():
+    """Clock-drift maths compare wall clocks; pin HA's local offset to +3."""
+    from datetime import timedelta, timezone as _tz
+    from homeassistant.util import dt as dt_util
+
+    original = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(_tz(timedelta(hours=3)))
+    yield
+    dt_util.set_default_time_zone(original)
+
 from conftest import EV_HELPERS, EveusTestUpdater
 from custom_components.eveus.ev_sensors import (
     CachedSOCCalculator,
