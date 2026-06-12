@@ -211,3 +211,76 @@ def test_time_drift_detects_dst_mismatch() -> None:
     # offset stays +3: charger wall clock is now an hour ahead.
     dt_util.set_default_time_zone(timezone(timedelta(hours=2)))
     assert sd.get_time_drift(_updater(0), None) == 3600
+
+
+# --- repair classification: wrong timezone vs clock needs syncing ---
+
+
+def _drift_payload(drift_seconds: int) -> dict:
+    return {
+        "systemTime": int(time.time()) + TZ_SHIFT + drift_seconds,
+        "timeZone": str(TZ_HOURS),
+    }
+
+
+def _fired_tracker(drift_seconds: int):
+    from custom_components.eveus import _ClockDriftTracker
+
+    tracker = _ClockDriftTracker()
+    decision = None
+    for _ in range(3):
+        decision = tracker.evaluate(_drift_payload(drift_seconds))
+    assert decision is True
+    return tracker
+
+
+def test_tracker_classifies_whole_hour_drift_as_timezone() -> None:
+    assert _fired_tracker(-3600).kind == "timezone"
+    assert _fired_tracker(3600).kind == "timezone"
+    # RTC slightly off on top of a wrong-by-two-hours timezone still counts
+    assert _fired_tracker(-7180).kind == "timezone"
+
+
+def test_tracker_classifies_other_drift_as_sync() -> None:
+    assert _fired_tracker(900).kind == "sync"
+    assert _fired_tracker(-1800).kind == "sync"
+
+
+def test_tracker_reports_hours_for_timezone_kind() -> None:
+    assert _fired_tracker(-3600).hours == 1
+    assert _fired_tracker(7220).hours == 2
+
+
+def test_clock_drift_issue_uses_kind_specific_translation_key(monkeypatch) -> None:
+    from types import SimpleNamespace as NS
+
+    from custom_components import eveus
+
+    created: list[dict] = []
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_create_issue",
+        lambda hass, domain, issue_id, **kw: created.append(kw),
+    )
+    entry = NS(entry_id="e1")
+
+    for drift, key in ((-3600, "clock_drift_timezone"), (900, "clock_drift")):
+        tracker = eveus._ClockDriftTracker()
+        updater = NS(available=True, last_update_success=True, data=None)
+        for _ in range(3):
+            updater.data = _drift_payload(drift)
+            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+        assert created[-1]["translation_key"] == key
+    assert created[0]["translation_placeholders"] == {"hours": "1"}
+
+
+def test_timezone_repair_text_exists_in_all_locales() -> None:
+    import json
+    from pathlib import Path
+
+    base = Path("custom_components/eveus")
+    for name in ("strings.json", "translations/en.json", "translations/uk.json"):
+        issues = json.loads((base / name).read_text())["issues"]
+        desc = issues["clock_drift_timezone"]["description"]
+        assert "Time Zone" in desc or "Часовий пояс" in desc, name
+        assert "{hours}" in desc, name

@@ -412,7 +412,11 @@
     },
     "clock_drift": {
       "title": "Eveus: charger clock is off by more than 10 minutes",
-      "description": "The clock inside your Eveus charger differs from Home Assistant by more than 10 minutes (see the **Time Drift** sensor for the exact offset in seconds).\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.A steady drift of exactly one hour usually means the Time Zone select is wrong — for example after a daylight-saving change, which the charger's fixed offset does not follow.\n\nWhat to do:\n\n- Check that the **Time Zone** select for your Eveus charger matches your local time zone.\n- Press the **Sync Time** button for your Eveus charger to set its clock from Home Assistant.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
+      "description": "The clock inside your Eveus charger differs from Home Assistant by more than 10 minutes — see the **Time Drift** sensor for the exact offset in seconds.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Press the **Sync Time** button for your Eveus charger to set its clock from Home Assistant.\n- If the drift comes back, check that the **Time Zone** select matches your local time zone.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
+    },
+    "clock_drift_timezone": {
+      "title": "Eveus: charger Time Zone appears incorrect",
+      "description": "The clock inside your Eveus charger is off from Home Assistant by almost exactly {hours} hour(s) — see the **Time Drift** sensor for the precise offset. A whole-hour drift almost always means the charger's **Time Zone** select is wrong, for example after a daylight-saving change, which the charger's fixed offset does not follow. Pressing **Sync Time** alone will not fix this.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Set the **Time Zone** select for your Eveus charger to match your current local time zone.\n- If a small drift remains afterwards, press the **Sync Time** button.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
     }
   }
 }

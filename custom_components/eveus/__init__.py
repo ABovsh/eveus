@@ -49,6 +49,7 @@ from .const import (
     CLOCK_DRIFT_TRIGGER_POLLS,
     CLOCK_DRIFT_CLEAR_POLLS,
     CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS,
+    CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS,
 )
 from .common_network import EveusUpdater
 from .utils import (
@@ -265,13 +266,31 @@ class _ClockDriftTracker:
         self._drift_streak = 0
         self._ok_streak = 0
         self._active = False
+        # Classification of the most recent drifted reading, used to pick the
+        # repair message: "timezone" when the drift sits at a non-zero whole
+        # hour (wrong Time Zone select or DST mismatch — Sync Time won't fix
+        # it), "sync" for any other offset (the RTC itself is off).
+        self.kind = "sync"
+        self.hours = 0
 
     def evaluate(self, data: dict[str, Any] | None) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged."""
         charger_wall = get_charger_wall_clock_seconds(data)
         if charger_wall is None:
             return None
-        drift = abs(charger_wall - get_local_wall_clock_seconds())
+        signed_drift = charger_wall - get_local_wall_clock_seconds()
+        whole_hours = round(signed_drift / 3600)
+        if (
+            whole_hours != 0
+            and abs(signed_drift - whole_hours * 3600)
+            <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
+        ):
+            self.kind = "timezone"
+            self.hours = abs(whole_hours)
+        else:
+            self.kind = "sync"
+            self.hours = 0
+        drift = abs(signed_drift)
         if drift > CLOCK_DRIFT_THRESHOLD_SECONDS:
             self._ok_streak = 0
             self._drift_streak += 1
@@ -307,6 +326,7 @@ def _update_clock_drift_issue(
         return
     decision = tracker.evaluate(updater.data if isinstance(updater.data, dict) else None)
     if decision is True:
+        timezone_kind = tracker.kind == "timezone"
         ir.async_create_issue(
             hass,
             DOMAIN,
@@ -315,7 +335,12 @@ def _update_clock_drift_issue(
             is_persistent=False,
             issue_domain=DOMAIN,
             severity=ir.IssueSeverity.WARNING,
-            translation_key="clock_drift",
+            translation_key=(
+                "clock_drift_timezone" if timezone_kind else "clock_drift"
+            ),
+            translation_placeholders=(
+                {"hours": str(tracker.hours)} if timezone_kind else None
+            ),
         )
     elif decision is False:
         ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))

@@ -90,6 +90,10 @@ CLOCK_DRIFT_CLEAR_POLLS: Final[int] = 2
 # threshold — to count toward clearing, so a clock hovering at nine minutes
 # wrong can't silently dismiss the warning. A real fix (Sync Time) lands ~0.
 CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS: Final[int] = 120
+# A drift within this distance of a non-zero whole hour is classified as a
+# wrong Time Zone select / DST mismatch (the RTC may be slightly off on top),
+# selecting the timezone-specific repair message instead of the sync one.
+CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS: Final[int] = 300
 # Sanity window for the charger RTC (shared by the Time Drift sensor and the
 # clock-drift Repairs notice via get_charger_utc_seconds).
 MAX_VALID_SYSTEM_TIME: Final[int] = 4102444800
