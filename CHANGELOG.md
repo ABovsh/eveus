@@ -20,6 +20,7 @@
 - **Fixing an address through Repairs keeps the device.** Changing the charger's address via the invalid-configuration repair now carries the device's area, custom name, and dashboard references over to the new address, the same way Reconfigure does.
 - **Force Refresh tells you when it fails.** Pressing the button while the charger is unreachable now shows an error toast instead of silently looking successful.
 - **The SOC migration notice now works for multi-charger setups.** It directs you to your charger's device page to pick its four SOC entities instead of prescribing the first charger's entity IDs, which were wrong for any second charger.
+- **A charging current below 7 A no longer knocks the integration offline.** The charger accepts sub-minimum setpoints from its own UI or app (the car simply floors at ~6 A), but the integration treated such a reading as corrupt and failed every poll until the value rose again. Verified against the real charger; only a negative reading is rejected now.
 - **Hardened against corrupt data.** A current reading no supported charger could produce is rejected instead of accepted as a healthy poll; a corrupt stored phase count can no longer silently delete three-phase entity history; a malformed firmware version, serial number, or model from the charger can no longer overwrite real device details (a valid backup field is used instead); and a corrupt saved SOC value can no longer break entity setup after a restart.
 
 ## 4.13.0 - 2026-06-10

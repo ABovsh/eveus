@@ -388,7 +388,7 @@ def test_validate_input_rejects_malformed_device_response(payload: object) -> No
     "payload",
     [
         {},
-        {"state": 2, "currentSet": "6"},
+        {"state": 2, "currentSet": "-1"},
         {"state": 2, "currentSet": "not-a-number"},
         {"state": 2, "currentSet": "32"},
     ],

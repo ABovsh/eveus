@@ -129,7 +129,7 @@ def test_validate_main_payload_accepts_real_payload(real_payload) -> None:
         ({"state": 2, "currentSet": True}, "Eveus 'currentSet' field is boolean"),
         ({"state": 2, "currentSet": "bad"}, "Eveus 'currentSet' field is not numeric"),
         ({"state": 2, "currentSet": float("inf")}, "Eveus 'currentSet' field is not finite"),
-        ({"state": 2, "currentSet": 6}, "Eveus 'currentSet' field below minimum"),
+        ({"state": 2, "currentSet": -1}, "Eveus 'currentSet' field below minimum"),
         (
             {"state": 2, "currentSet": 17},
             "Eveus 'currentSet' value 17.0 exceeds model maximum 16",

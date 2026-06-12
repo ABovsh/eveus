@@ -403,3 +403,22 @@ def test_soc_number_survives_corrupt_restore_value(monkeypatch) -> None:
     )
     asyncio.run(entity.async_added_to_hass())
     assert entity.native_value == 50  # seed kept, no TypeError
+
+
+# --- live-hardware finding: sub-minimum currentSet is a REAL firmware state ---
+# Verified on R3.05.2 while charging: the firmware clamps OVER-max setpoints to
+# curDesign, but accepts setpoints below its advertised minCurrent verbatim
+# (delivery floors at ~6 A, the IEC 61851 minimum). /main can therefore
+# legitimately report currentSet 1..6 and the poll validator must not fail the
+# whole device over it.
+
+
+def test_payload_accepts_sub_minimum_current() -> None:
+    for amps in (1, 3, 5, 6):
+        payload = {"state": 4, "currentSet": amps}
+        assert _payload.validate_main_payload(payload) is payload
+
+
+def test_payload_still_rejects_negative_current() -> None:
+    with pytest.raises(_payload.PayloadError):
+        _payload.validate_main_payload({"state": 4, "currentSet": -1})
