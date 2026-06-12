@@ -417,6 +417,10 @@
     "clock_drift_timezone": {
       "title": "Eveus: charger Time Zone appears incorrect",
       "description": "The clock inside your Eveus charger is off from Home Assistant by almost exactly {hours} hour(s) — see the **Time Drift** sensor for the precise offset. A whole-hour drift almost always means the charger's **Time Zone** select is wrong, for example after a daylight-saving change, which the charger's fixed offset does not follow. Pressing **Sync Time** alone will not fix this.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Set the **Time Zone** select for your Eveus charger to match your current local time zone.\n- If a small drift remains afterwards, press the **Sync Time** button.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
+    },
+    "clock_drift_fractional_timezone": {
+      "title": "Eveus: your time zone cannot be matched by the charger",
+      "description": "Your Home Assistant time zone uses an offset with a fraction of an hour (for example +5:30), but the charger's **Time Zone** select only supports whole hours. The closest possible setting leaves the charger's clock off by that fraction — see the **Time Drift** sensor for the exact offset.\n\nNeither the **Sync Time** button nor the **Time Zone** select can remove this difference; it is a limitation of the charger firmware.\n\nWhat to do:\n\n- Keep the **Time Zone** select on the closest whole-hour offset.\n- If you use the charger's built-in charging schedules or tariff windows, shift their times by the remaining fraction so they fire when you expect.\n\nThis notice stays as a reminder while the mismatch exists."
     }
   }
 }

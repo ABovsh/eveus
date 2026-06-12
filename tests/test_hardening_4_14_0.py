@@ -123,9 +123,11 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
         eveus._update_clock_drift_issue(object(), entry, updater, tracker)
     assert created[-1]["translation_key"] == "clock_drift"
 
-    # drift morphs to a whole hour while the issue is active
-    updater.data = _drift_payload(-3600)
-    eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+    # drift morphs to a whole hour while the issue is active; the message
+    # switches after the classification holds for the debounce streak
+    for _ in range(3):
+        updater.data = _drift_payload(-3600)
+        eveus._update_clock_drift_issue(object(), entry, updater, tracker)
     assert created[-1]["translation_key"] == "clock_drift_timezone"
     assert created[-1]["translation_placeholders"] == {"hours": "1"}
 
@@ -422,3 +424,133 @@ def test_payload_accepts_sub_minimum_current() -> None:
 def test_payload_still_rejects_negative_current() -> None:
     with pytest.raises(_payload.PayloadError):
         _payload.validate_main_payload({"state": 4, "currentSet": -1})
+
+
+# --- adversarial round: R-F01..R-F04 ---
+
+
+def test_resolve_phases_rejects_boolean() -> None:
+    from custom_components.eveus import _resolve_phases
+
+    # bool is an int subclass: int(True)=1 would otherwise pass as valid and
+    # drive the destructive phase prune.
+    assert _resolve_phases(True) == (1, True)
+    assert _resolve_phases(False) == (1, True)
+
+
+def test_reauth_revalidates_when_host_changes_mid_flight(monkeypatch) -> None:
+    calls: list[str] = []
+
+    entry = SimpleNamespace(
+        data={
+            "host": TEST_HOST,
+            "username": "old",
+            "password": "old",
+            "model": MODEL_16A,
+        },
+        unique_id=TEST_HOST,
+        title="Eveus",
+    )
+
+    async def fake_validate_input(hass, data):
+        calls.append(data["host"])
+        if len(calls) == 1:
+            # a concurrent reconfigure commits a host change mid-validation
+            entry.data = {**entry.data, "host": "newhost.local"}
+            entry.unique_id = "newhost.local"
+        return {
+            "title": f"Eveus Charger ({data['host']})",
+            "data": config_flow.normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    captured = {}
+    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
+        "type": "abort",
+        "reason": "reauth_successful",
+    }
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    asyncio.run(
+        flow.async_step_reauth_confirm(
+            {"username": TEST_USERNAME, "password": TEST_PASSWORD}
+        )
+    )
+    # credentials were re-validated against the live (new) host before commit
+    assert calls == [TEST_HOST, "newhost.local"]
+    assert captured["data"]["host"] == "newhost.local"
+    assert captured["data"]["username"] == TEST_USERNAME
+
+
+def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
+    from datetime import timedelta, timezone as _tz
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components import eveus
+
+    dt_util.set_default_time_zone(_tz(timedelta(hours=5, minutes=30)))  # India
+    created: list[dict] = []
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_create_issue",
+        lambda hass, domain, issue_id, **kw: created.append(kw),
+    )
+    entry = SimpleNamespace(entry_id="e1")
+    tracker = eveus._ClockDriftTracker()
+    updater = SimpleNamespace(available=True, last_update_success=True, data=None)
+
+    # charger synced perfectly with its best achievable whole-hour tz (+5):
+    # wall clock is 30 min behind HA local — the closest the hardware can get.
+    for _ in range(4):
+        updater.data = {
+            "systemTime": str(int(time.time()) + 5 * 3600),
+            "timeZone": "5",
+        }
+        eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+    assert created, "fractional-offset drift must still raise a notice"
+    assert created[-1]["translation_key"] == "clock_drift_fractional_timezone"
+
+
+def test_fractional_timezone_message_exists_in_all_locales() -> None:
+    base = Path("custom_components/eveus")
+    for name in ("strings.json", "translations/en.json", "translations/uk.json"):
+        issues = json.loads((base / name).read_text())["issues"]
+        assert "clock_drift_fractional_timezone" in issues, name
+
+
+def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
+    from custom_components import eveus
+
+    created: list[dict] = []
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_create_issue",
+        lambda hass, domain, issue_id, **kw: created.append(kw),
+    )
+    entry = SimpleNamespace(entry_id="e1")
+    tracker = eveus._ClockDriftTracker()
+    updater = SimpleNamespace(available=True, last_update_success=True, data=None)
+
+    for _ in range(3):
+        updater.data = _drift_payload(900)
+        eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+    base_count = len(created)
+
+    # oscillation across the whole-hour classification boundary must not
+    # re-key on every poll
+    for offset in (3300, 3299, 3300, 3299):
+        updater.data = _drift_payload(offset)
+        eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+    assert len(created) == base_count
+
+    # a stable new classification re-keys after the debounce
+    for _ in range(3):
+        updater.data = _drift_payload(3600)
+        eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+    assert len(created) == base_count + 1
+    assert created[-1]["translation_key"] == "clock_drift_timezone"

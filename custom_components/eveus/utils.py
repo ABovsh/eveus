@@ -204,14 +204,19 @@ def get_charger_wall_clock_seconds(data: Any) -> Optional[int]:
     return system_time
 
 
+def get_local_utc_offset_seconds() -> int:
+    """Home Assistant's current local UTC offset in seconds (DST-aware)."""
+    offset = dt_util.now().utcoffset()
+    return int(offset.total_seconds()) if offset else 0
+
+
 def get_local_wall_clock_seconds() -> int:
     """Home Assistant's local wall clock as epoch-style seconds.
 
     DST-aware: uses HA's configured time zone, so the local offset follows
     summer/winter transitions automatically.
     """
-    offset = dt_util.now().utcoffset()
-    return int(time.time()) + int(offset.total_seconds() if offset else 0)
+    return int(time.time()) + get_local_utc_offset_seconds()
 
 
 def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:

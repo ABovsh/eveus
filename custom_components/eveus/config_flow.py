@@ -624,6 +624,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 info = await validate_input(self.hass, merged_data)
 
+                # A concurrent reconfigure may have changed the connection
+                # details while validation was in flight; the credentials were
+                # then only proven against the OLD address. Re-validate once
+                # against the live details before committing.
+                live = dict(entry.data)
+                if live.get(CONF_HOST) != merged_data.get(CONF_HOST) or live.get(
+                    CONF_SCHEME
+                ) != merged_data.get(CONF_SCHEME):
+                    merged_data = live
+                    merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
+                    merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                    merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
+                    info = await validate_input(self.hass, merged_data)
+
                 # Rebase on LIVE entry data and replace only the credentials:
                 # validate_input ran against a pre-await snapshot, so adopting
                 # its full payload would roll back any options/reconfigure

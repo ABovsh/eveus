@@ -54,6 +54,7 @@ from .const import (
 from .common_network import EveusUpdater
 from .utils import (
     get_charger_wall_clock_seconds,
+    get_local_utc_offset_seconds,
     get_local_wall_clock_seconds,
     get_device_suffix,
     get_next_device_number,
@@ -276,6 +277,11 @@ class _ClockDriftTracker:
         # _update_clock_drift_issue; None while no issue is active.
         self.published: tuple[str, int] | None = None
         self.still_drifted = False
+        # Consecutive polls the live classification has differed from the
+        # published one; re-keying waits for a stable streak so a drift
+        # oscillating across a classification boundary can't rewrite the
+        # issue on every poll.
+        self.rekey_streak = 0
 
     def evaluate(self, data: dict[str, Any] | None) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged."""
@@ -284,7 +290,19 @@ class _ClockDriftTracker:
             return None
         signed_drift = charger_wall - get_local_wall_clock_seconds()
         whole_hours = round(signed_drift / 3600)
-        if (
+        # A fractional local offset (India +5:30, Nepal +5:45) is one the
+        # charger's whole-hour Time Zone select can never represent: the best
+        # achievable wall clocks sit at -residue or +(3600-residue) from HA
+        # local. Drift matching either is the hardware limit, not a fixable
+        # sync/timezone fault — it needs its own guidance.
+        residue = get_local_utc_offset_seconds() % 3600
+        if residue and any(
+            abs(signed_drift - candidate) <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
+            for candidate in (-residue, 3600 - residue)
+        ):
+            self.kind = "fractional"
+            self.hours = 0
+        elif (
             whole_hours != 0
             and abs(signed_drift - whole_hours * 3600)
             <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
@@ -330,17 +348,29 @@ def _update_clock_drift_issue(
     if not updater.available or not updater.last_update_success:
         return
     decision = tracker.evaluate(updater.data if isinstance(updater.data, dict) else None)
-    if decision is True or (
-        # Re-key an ACTIVE issue when the drift's classification changes (sync
-        # <-> whole-hour timezone, or a different hour count) so the repair
-        # never keeps recommending the wrong fix. Only while still drifted —
-        # a clearing-in-progress drift must not flap the message.
+    # Re-key an ACTIVE issue when the drift's classification changes (sync
+    # <-> whole-hour timezone, or a different hour count) so the repair never
+    # keeps recommending the wrong fix. Only while still drifted, and only
+    # after the new classification has held for a full debounce streak — a
+    # drift oscillating across a classification boundary must not rewrite the
+    # issue on every poll.
+    rekey = False
+    if (
         decision is None
         and tracker.published is not None
         and tracker.still_drifted
         and (tracker.kind, tracker.hours) != tracker.published
     ):
-        timezone_kind = tracker.kind == "timezone"
+        tracker.rekey_streak += 1
+        rekey = tracker.rekey_streak >= CLOCK_DRIFT_TRIGGER_POLLS
+    else:
+        tracker.rekey_streak = 0
+
+    if decision is True or rekey:
+        translation_key = {
+            "timezone": "clock_drift_timezone",
+            "fractional": "clock_drift_fractional_timezone",
+        }.get(tracker.kind, "clock_drift")
         ir.async_create_issue(
             hass,
             DOMAIN,
@@ -349,17 +379,17 @@ def _update_clock_drift_issue(
             is_persistent=False,
             issue_domain=DOMAIN,
             severity=ir.IssueSeverity.WARNING,
-            translation_key=(
-                "clock_drift_timezone" if timezone_kind else "clock_drift"
-            ),
+            translation_key=translation_key,
             translation_placeholders=(
-                {"hours": str(tracker.hours)} if timezone_kind else None
+                {"hours": str(tracker.hours)} if tracker.kind == "timezone" else None
             ),
         )
         tracker.published = (tracker.kind, tracker.hours)
+        tracker.rekey_streak = 0
     elif decision is False:
         ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
         tracker.published = None
+        tracker.rekey_streak = 0
 
 
 # SOC entities created only in Advanced mode, and per-phase sensors created only
@@ -400,6 +430,10 @@ def _resolve_phases(raw_phases: Any) -> tuple[int, bool]:
     would permanently delete the phase 2/3 registry rows (areas, custom
     entity IDs) over a corrupt byte.
     """
+    # bool is an int subclass: int(True) == 1 would otherwise count as a
+    # valid one-phase config and drive the destructive prune.
+    if isinstance(raw_phases, bool):
+        return DEFAULT_PHASES, True
     try:
         phases = int(raw_phases)
     except (TypeError, ValueError, OverflowError):
