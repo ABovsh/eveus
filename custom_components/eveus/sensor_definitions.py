@@ -427,17 +427,27 @@ def get_time_drift(updater, hass) -> Optional[int]:
     on every poll and floods the recorder, while the drift is the only part
     that carries diagnostic value (it pairs with the Sync Time button). Drift
     within TIME_DRIFT_TOLERANCE_SECONDS reads as exactly 0; larger drifts snap
-    to a TIME_DRIFT_QUANTUM_SECONDS grid so poll-timing jitter never produces
-    a new recorded state.
+    to a TIME_DRIFT_QUANTUM_SECONDS grid. The last reported value is kept on
+    the updater as hysteresis: a raw drift hovering at a band boundary (e.g.
+    5 <-> 6 s) would otherwise alternate between adjacent grid values on every
+    poll, recreating the recorder flooding this sensor exists to avoid.
     """
     try:
         charger_utc = get_charger_utc_seconds(updater.data)
         if charger_utc is None:
             return None
         drift = charger_utc - int(time.time())
+        last = getattr(updater, "_time_drift_last_report", None)
+        if last is not None and abs(drift - last) <= TIME_DRIFT_QUANTUM_SECONDS:
+            return last
         if abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS:
-            return 0
-        return round(drift / TIME_DRIFT_QUANTUM_SECONDS) * TIME_DRIFT_QUANTUM_SECONDS
+            value = 0
+        else:
+            value = (
+                round(drift / TIME_DRIFT_QUANTUM_SECONDS) * TIME_DRIFT_QUANTUM_SECONDS
+            )
+        updater._time_drift_last_report = value
+        return value
     except Exception as err:
         if _should_log_error("get_time_drift"):
             _LOGGER.debug("Error getting time drift: %s", err, exc_info=True)

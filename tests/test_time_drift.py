@@ -131,3 +131,45 @@ def test_prune_removes_retired_entity_with_device_suffix(monkeypatch) -> None:
     monkeypatch.setattr(eveus.er, "async_get", lambda hass: reg)
     eveus._prune_unused_entities(object(), 2, eveus.SOC_MODE_ADVANCED, 3)
     assert reg.removed == ["sensor.eveus2_system_time"]
+
+
+# --- hysteresis: boundary jitter must not alternate the reported state ---
+
+
+def _set_offset(updater, offset_seconds: int) -> None:
+    updater.data["systemTime"] = str(int(time.time()) + TZ_SHIFT + offset_seconds)
+
+
+def test_time_drift_boundary_jitter_does_not_flap(monkeypatch) -> None:
+    updater = _updater(5)
+    assert sd.get_time_drift(updater, None) == 0
+    # raw drift oscillating 5 <-> 6 across the tolerance boundary stays 0
+    for offset in (6, 5, 6):
+        _set_offset(updater, offset)
+        assert sd.get_time_drift(updater, None) == 0
+
+
+def test_time_drift_quantization_boundary_does_not_flap() -> None:
+    updater = _updater(14)
+    first = sd.get_time_drift(updater, None)
+    for offset in (15, 14, 15):
+        _set_offset(updater, offset)
+        assert sd.get_time_drift(updater, None) == first
+
+
+def test_time_drift_still_tracks_real_drift_changes() -> None:
+    updater = _updater(0)
+    assert sd.get_time_drift(updater, None) == 0
+    _set_offset(updater, 60)
+    assert sd.get_time_drift(updater, None) == 60
+    _set_offset(updater, -120)
+    assert sd.get_time_drift(updater, None) == -120
+
+
+def test_time_drift_hysteresis_survives_a_corrupt_poll() -> None:
+    updater = _updater(60)
+    assert sd.get_time_drift(updater, None) == 60
+    updater.data["systemTime"] = "bad"
+    assert sd.get_time_drift(updater, None) is None
+    _set_offset(updater, 62)
+    assert sd.get_time_drift(updater, None) == 60
