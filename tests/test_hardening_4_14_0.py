@@ -21,11 +21,7 @@ from conftest import (
 )
 from custom_components.eveus import _payload
 from custom_components.eveus import config_flow
-from custom_components.eveus.const import (
-    MODEL_16A,
-    MODEL_32A,
-    MODEL_MAX_CURRENT,
-)
+from custom_components.eveus.const import MODEL_16A, MODEL_32A, MODEL_MAX_CURRENT
 from custom_components.eveus.utils import _safe_str, get_device_info
 
 
@@ -53,39 +49,6 @@ def test_payload_accepts_max_supported_current_without_model() -> None:
     top = max(MODEL_MAX_CURRENT.values())
     payload = {"state": 2, "currentSet": top}
     assert _payload.validate_main_payload(payload) is payload
-
-
-# --- C-F01: model selection validated against the charger's design current ---
-
-
-def test_model_above_design_current_rejected() -> None:
-    with pytest.raises(config_flow.InvalidDevice):
-        config_flow.validate_device_response(
-            {"state": 2, "currentSet": 16, "curDesign": 16}, MODEL_32A
-        )
-
-
-def test_model_matching_design_current_accepted() -> None:
-    info = config_flow.validate_device_response(
-        {"state": 2, "currentSet": 16, "curDesign": 16}, MODEL_16A
-    )
-    assert info["current_set"] == 16.0
-
-
-def test_lower_model_than_design_is_allowed() -> None:
-    # Deliberately limiting a 32A charger to a 16A profile is safe.
-    info = config_flow.validate_device_response(
-        {"state": 2, "currentSet": 16, "curDesign": 32}, MODEL_16A
-    )
-    assert info["current_set"] == 16.0
-
-
-def test_corrupt_design_current_is_ignored() -> None:
-    for bad in (True, "x", float("nan"), -5, 0, 10_000):
-        info = config_flow.validate_device_response(
-            {"state": 2, "currentSet": 16, "curDesign": bad}, MODEL_32A
-        )
-        assert info["current_set"] == 16.0
 
 
 # --- A-F01: invalid stored phases must not prune three-phase entities ---

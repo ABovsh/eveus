@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import asyncio
-import math
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -30,9 +29,7 @@ from homeassistant.util.network import is_host_valid, is_ip_address
 
 from .const import (
     DOMAIN,
-    MIN_CURRENT,
     MODEL_16A,
-    MODEL_MAX_CURRENT,
     CONF_MODEL,
     CONF_SCHEME,
     DEFAULT_SCHEME,
@@ -287,41 +284,15 @@ def validate_device_response(
             raise CannotConnect(str(err)) from err
         raise InvalidDevice(str(err)) from err
 
-    _validate_model_against_design(payload, model)
-
+    # NOTE: the selected model is deliberately NOT validated against the
+    # charger's reported curDesign. The charger enforces its own hardware
+    # current protection internally, so a higher-rated profile cannot make a
+    # 16A unit deliver more than 16A — rejecting the combination would only
+    # block setups over an informational field.
     return {
         "current_set": float(payload["currentSet"]),
         "firmware": payload.get("verFWMain", "Unknown"),
     }
-
-
-_MAX_DESIGN_CURRENT = 100  # amps; anything above is a corrupt field
-
-
-def _validate_model_against_design(payload: dict[str, Any], model: str) -> None:
-    """Reject a selected model rated above the charger's design current.
-
-    The firmware reports its hardware rating in ``curDesign``. Accepting a
-    32A/48A profile on a 16A charger would expose a Charging Current range the
-    hardware cannot deliver. Choosing a LOWER-rated model is allowed (a
-    deliberate limit). A missing or corrupt ``curDesign`` is ignored — the
-    field is informational and must not block setup on schema drift.
-    """
-    raw_design = payload.get("curDesign")
-    if isinstance(raw_design, bool) or raw_design is None:
-        return
-    try:
-        design = float(raw_design)
-    except (TypeError, ValueError, OverflowError):
-        return
-    if not math.isfinite(design) or not MIN_CURRENT <= design <= _MAX_DESIGN_CURRENT:
-        return
-    max_current = MODEL_MAX_CURRENT.get(model)
-    if max_current and max_current > design:
-        raise InvalidDevice(
-            f"Selected model supports up to {max_current}A but the charger "
-            f"reports a {design:g}A design current"
-        )
 
 
 def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
