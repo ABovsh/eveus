@@ -99,3 +99,35 @@ def test_time_drift_spec_replaces_system_time() -> None:
     assert drift.unit == "s"
     assert drift.value_fn is sd.get_time_drift
     assert not hasattr(sd, "get_system_time")
+
+
+# --- registry cleanup: the retired System Time entity is pruned on setup ---
+
+
+class _FakeRegistry:
+    def __init__(self) -> None:
+        self.removed: list[str] = []
+
+    def async_get_entity_id(self, platform: str, domain: str, unique_id: str) -> str:
+        return f"{platform}.{unique_id}"
+
+    def async_remove(self, entity_id: str) -> None:
+        self.removed.append(entity_id)
+
+
+def test_prune_always_removes_retired_system_time_entity(monkeypatch) -> None:
+    from custom_components import eveus
+
+    reg = _FakeRegistry()
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: reg)
+    eveus._prune_unused_entities(object(), 1, eveus.SOC_MODE_ADVANCED, 3)
+    assert reg.removed == ["sensor.eveus_system_time"]
+
+
+def test_prune_removes_retired_entity_with_device_suffix(monkeypatch) -> None:
+    from custom_components import eveus
+
+    reg = _FakeRegistry()
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: reg)
+    eveus._prune_unused_entities(object(), 2, eveus.SOC_MODE_ADVANCED, 3)
+    assert reg.removed == ["sensor.eveus2_system_time"]

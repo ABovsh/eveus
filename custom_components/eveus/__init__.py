@@ -335,6 +335,11 @@ _ADVANCED_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
     ("number", "battery_capacity"),
     ("number", "soc_correction"),
 )
+# Entities retired from the integration entirely; always pruned so users
+# don't keep an orphaned "unavailable" row after updating.
+_REMOVED_ENTITIES: tuple[tuple[str, str], ...] = (
+    ("sensor", "system_time"),  # replaced by time_drift
+)
 _THREE_PHASE_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
     ("sensor", "current_phase_2"),
     ("sensor", "current_phase_3"),
@@ -347,13 +352,11 @@ def _prune_unused_entities(
     hass: HomeAssistant, device_number: int, soc_mode: str, phases: int
 ) -> None:
     """Remove registry rows for entities not built under the current config."""
-    stale: list[tuple[str, str]] = []
+    stale: list[tuple[str, str]] = list(_REMOVED_ENTITIES)
     if soc_mode != SOC_MODE_ADVANCED:
         stale.extend(_ADVANCED_ONLY_ENTITIES)
     if phases != 3:
         stale.extend(_THREE_PHASE_ONLY_ENTITIES)
-    if not stale:
-        return
     reg = er.async_get(hass)
     suffix = get_device_suffix(device_number)
     for platform, key in stale:
