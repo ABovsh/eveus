@@ -254,7 +254,7 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 | --- | --- | --- |
 | `sensor.eveus_ev_charger_connection_quality` | % | Recent polling success, latency, and health attributes |
 | `sensor.eveus_ev_charger_ground` | Sensor | Ground status |
-| `sensor.eveus_ev_charger_system_time` | Sensor | Charger internal clock |
+| `sensor.eveus_ev_charger_time_drift` | s | Charger clock offset vs Home Assistant (0 = in sync; pairs with the Sync Time button) |
 | `sensor.eveus_ev_charger_box_temperature` | °C | Charger body temperature |
 | `sensor.eveus_ev_charger_plug_temperature` | °C | Plug temperature |
 | `sensor.eveus_ev_charger_battery_voltage` | V | Charger backup battery voltage |

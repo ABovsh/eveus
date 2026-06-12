@@ -50,12 +50,10 @@ from .const import (
     CLOCK_DRIFT_TRIGGER_POLLS,
     CLOCK_DRIFT_CLEAR_POLLS,
     CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS,
-    MAX_VALID_SYSTEM_TIME,
-    MIN_VALID_TIMEZONE_H,
-    MAX_VALID_TIMEZONE_H,
 )
 from .common_network import EveusUpdater
 from .utils import (
+    get_charger_utc_seconds,
     get_device_suffix,
     get_next_device_number,
     get_safe_value,
@@ -268,16 +266,9 @@ class _ClockDriftTracker:
 
     def evaluate(self, data: dict[str, Any] | None) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged."""
-        system_time = get_safe_value(data, "systemTime", int)
-        tz_hours = get_safe_value(data, "timeZone", int)
-        if (
-            system_time is None
-            or tz_hours is None
-            or not 0 < system_time <= MAX_VALID_SYSTEM_TIME
-            or not MIN_VALID_TIMEZONE_H <= tz_hours <= MAX_VALID_TIMEZONE_H
-        ):
+        charger_utc = get_charger_utc_seconds(data)
+        if charger_utc is None:
             return None
-        charger_utc = system_time - tz_hours * 3600
         drift = abs(charger_utc - _wall_clock())
         if drift > CLOCK_DRIFT_THRESHOLD_SECONDS:
             self._ok_streak = 0

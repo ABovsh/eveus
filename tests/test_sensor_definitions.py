@@ -362,19 +362,10 @@ def test_connection_attrs_handles_offline_and_includes_wifi_rssi() -> None:
     }
 
 
-def test_system_time_handles_invalid_timestamp_without_raising() -> None:
-    assert sensors.get_system_time(_updater({"systemTime": "bad"}), None) is None
-
-
-def test_system_time_handles_data_access_exception_without_raising() -> None:
-    class BrokenUpdater:
-        available = True
-
-        @property
-        def data(self):
-            raise RuntimeError("data unavailable")
-
-    assert sensors.get_system_time(BrokenUpdater(), None) is None
+def test_time_drift_handles_invalid_timestamp_without_raising() -> None:
+    assert sensors.get_time_drift(
+        _updater({"systemTime": "bad", "timeZone": "3"}), None
+    ) is None
 
 
 def test_optimized_sensor_contract_for_offline_and_attribute_errors() -> None:

@@ -75,10 +75,10 @@ def test_state_and_substate_resolve(real_payload) -> None:
     assert sd.get_ground_status(upd, None) in {"Connected", "Not Connected"}
 
 
-def test_session_time_and_system_time(real_payload) -> None:
+def test_session_time_and_time_drift(real_payload) -> None:
     upd = _updater(real_payload)
     assert sd.get_session_time(upd, None) is not None
-    assert sd.get_system_time(upd, None) is not None
+    assert isinstance(sd.get_time_drift(upd, None), int)
 
 
 def test_active_rate_resolves_to_known_slot(real_payload) -> None:

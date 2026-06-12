@@ -15,7 +15,7 @@ from custom_components.eveus.sensor_definitions import (
     get_ground_status,
     get_session_time,
     get_session_time_attrs,
-    get_system_time,
+    get_time_drift,
 )
 
 
@@ -131,30 +131,25 @@ def test_optimized_sensor_error_paths_are_rate_limited() -> None:
     assert entity.native_value is None
 
 
-def test_session_ground_system_time_and_connection_helpers() -> None:
+def test_session_ground_time_drift_and_connection_helpers() -> None:
     hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kiev"))
     updater = SimpleNamespace(
         available=True,
-        data={"sessionTime": "3660", "ground": "0", "systemTime": "1714300000"},
+        data={
+            "sessionTime": "3660",
+            "ground": "0",
+            "systemTime": "1714300000",
+            "timeZone": "3",
+        },
         connection_quality={"success_rate": 75, "latency_avg": 0.42},
     )
 
     assert get_session_time(updater, hass) == "1h 01m"
     assert get_session_time_attrs(updater, hass) == {"duration_seconds": 3660}
     assert get_ground_status(updater, hass) == "Not Connected"
-    assert get_system_time(updater, hass)
+    assert isinstance(get_time_drift(updater, hass), int)
     assert get_connection_quality(updater, hass) == 75
     assert get_connection_attrs(updater, hass)["status"] == "Fair"
-
-
-def test_system_time_uses_charger_encoded_wall_clock_for_kyiv() -> None:
-    hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kyiv"))
-    updater = SimpleNamespace(
-        available=True,
-        data={"systemTime": "1777725240"},
-    )
-
-    assert get_system_time(updater, hass) == "12:34"
 
 
 def test_connection_helpers_handle_errors() -> None:

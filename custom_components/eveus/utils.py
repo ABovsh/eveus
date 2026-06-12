@@ -9,7 +9,14 @@ from typing import Any, Callable, TypeVar, Optional, Dict
 
 from homeassistant.core import State, HomeAssistant
 
-from .const import DEFAULT_SOC_CORRECTION, DOMAIN, SOC_INPUT_LIMITS
+from .const import (
+    DEFAULT_SOC_CORRECTION,
+    DOMAIN,
+    MAX_VALID_SYSTEM_TIME,
+    MAX_VALID_TIMEZONE_H,
+    MIN_VALID_TIMEZONE_H,
+    SOC_INPUT_LIMITS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -171,6 +178,26 @@ def get_safe_value(
 # =============================================================================
 # Device Information
 # =============================================================================
+
+
+def get_charger_utc_seconds(data: Any) -> Optional[int]:
+    """Decode the charger's clock from a /main payload as UTC epoch seconds.
+
+    The charger stores ``systemTime`` as UTC but reports it shifted by
+    ``timeZone`` hours, so charger UTC is ``systemTime - timeZone*3600``.
+    Returns None when either field is missing, corrupt, or outside the
+    plausible RTC / timezone windows.
+    """
+    system_time = get_safe_value(data, "systemTime", int)
+    tz_hours = get_safe_value(data, "timeZone", int)
+    if (
+        system_time is None
+        or tz_hours is None
+        or not 0 < system_time <= MAX_VALID_SYSTEM_TIME
+        or not MIN_VALID_TIMEZONE_H <= tz_hours <= MAX_VALID_TIMEZONE_H
+    ):
+        return None
+    return system_time - tz_hours * 3600
 
 
 def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:

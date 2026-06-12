@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from typing import Any, Callable, Dict, Final, Optional
-from datetime import datetime, timezone
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -21,6 +22,7 @@ from homeassistant.const import (
     UnitOfEnergy,
     UnitOfPower,
     UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
@@ -41,8 +43,10 @@ from .const import (
     MIN_VALID_TEMPERATURE_C,
     MAX_VALID_TEMPERATURE_C,
     MAX_VALID_LEAKAGE_CURRENT_MA,
+    TIME_DRIFT_TOLERANCE_SECONDS,
+    TIME_DRIFT_QUANTUM_SECONDS,
 )
-from .utils import RateLog, get_safe_value, format_duration
+from .utils import RateLog, get_charger_utc_seconds, get_safe_value, format_duration
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ERROR_LOG_KEYS = 64
@@ -53,8 +57,6 @@ ICON_CURRENCY_UAH = "mdi:currency-uah"
 UNIT_UAH_PER_KWH = "₴/kWh"
 UNIT_UAH = "UAH"
 _MAX_MODEL_CURRENT = max(MODEL_MAX_CURRENT.values())
-# Upper sanity bound for the charger clock (epoch seconds at year 2100).
-_MAX_SYSTEM_TIME = 4102444800
 # Upper sanity ceilings for live telemetry. Real readings sit far below these;
 # the bounds exist only to reject corrupt payload outliers (e.g. powerMeas
 # 999999) before they reach HA long-term statistics. Generous on purpose.
@@ -418,26 +420,27 @@ def get_session_time_attrs(updater, hass) -> dict:
     return {"duration_seconds": seconds}
 
 
-def get_system_time(updater, hass) -> Optional[str]:
-    """Get system time with timezone correction."""
+def get_time_drift(updater, hass) -> Optional[int]:
+    """Charger clock minus Home Assistant clock, in seconds (0 = in sync).
+
+    Replaces the old System Time clock readout: a ticking clock changes state
+    on every poll and floods the recorder, while the drift is the only part
+    that carries diagnostic value (it pairs with the Sync Time button). Drift
+    within TIME_DRIFT_TOLERANCE_SECONDS reads as exactly 0; larger drifts snap
+    to a TIME_DRIFT_QUANTUM_SECONDS grid so poll-timing jitter never produces
+    a new recorded state.
+    """
     try:
-        timestamp = _get_data_value(updater, "systemTime", int)
-        if timestamp is None:
+        charger_utc = get_charger_utc_seconds(updater.data)
+        if charger_utc is None:
             return None
-
-        # Reject obviously corrupt clock values (negative or far-future) so a
-        # bad RTC reading is reported as unknown instead of a plausible time.
-        if timestamp < 0 or timestamp > _MAX_SYSTEM_TIME:
-            return None
-
-        # The charger reports systemTime as a local wall-clock value encoded in
-        # epoch seconds. Applying HA's timezone here shifts the displayed clock
-        # by the local UTC offset, so format the encoded clock directly.
-        return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%H:%M")
-
+        drift = charger_utc - int(time.time())
+        if abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS:
+            return 0
+        return round(drift / TIME_DRIFT_QUANTUM_SECONDS) * TIME_DRIFT_QUANTUM_SECONDS
     except Exception as err:
-        if _should_log_error("get_system_time"):
-            _LOGGER.debug("Error getting system time: %s", err, exc_info=True)
+        if _should_log_error("get_time_drift"):
+            _LOGGER.debug("Error getting time drift: %s", err, exc_info=True)
         return None
 
 
@@ -696,8 +699,9 @@ def create_sensor_specifications(
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
-            key="system_time", name="System Time", value_fn=get_system_time,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:clock-outline",
+            key="time_drift", name="Time Drift", value_fn=get_time_drift,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:clock-alert-outline",
+            unit=UnitOfTime.SECONDS,
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
