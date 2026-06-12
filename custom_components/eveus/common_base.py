@@ -29,6 +29,25 @@ _LOGGER = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+_METADATA_FALLBACKS = {"model": "Eveus EV Charger", "manufacturer": "Eveus"}
+
+
+def _preserve_finalized_metadata(old: dict, new: dict) -> dict:
+    """Keep real device metadata when a partial payload degrades to fallbacks.
+
+    A successful /main that omits optional fields (model, manufacturer,
+    serial) would otherwise count as "metadata drift" and overwrite the real
+    values already finalized in the device registry with generic strings.
+    """
+    merged = dict(new)
+    for key, fallback in _METADATA_FALLBACKS.items():
+        if merged.get(key) == fallback and old.get(key) not in (None, fallback):
+            merged[key] = old[key]
+    if "serial_number" not in merged and old.get("serial_number"):
+        merged["serial_number"] = old["serial_number"]
+    return merged
+
+
 class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     """Base implementation for Eveus entities with state persistence."""
 
@@ -239,6 +258,10 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         new_info = self._build_device_info()
         if not new_info.get("sw_version") or new_info["sw_version"] == "Unknown":
             return
+        if self._device_info_finalized:
+            new_info = _preserve_finalized_metadata(
+                self._attr_device_info or {}, new_info
+            )
 
         if self._device_info_finalized:
             if new_info == self._attr_device_info:

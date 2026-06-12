@@ -89,7 +89,10 @@ def test_repair_issue_translations_are_present() -> None:
     assert "fix_flow" in translations["issues"]["invalid_config"]
 
 
-def test_soc_dashboard_repair_issue_lists_exact_entity_replacements() -> None:
+def test_soc_dashboard_repair_issue_points_at_device_page() -> None:
+    """Multi-charger setups have per-device SOC entity IDs, so the notice must
+    direct users to their charger's device page instead of prescribing the
+    first charger's fixed entity IDs."""
     translations = json.loads(
         (ROOT / "custom_components" / "eveus" / "translations" / "en.json").read_text()
     )
@@ -99,13 +102,10 @@ def test_soc_dashboard_repair_issue_lists_exact_entity_replacements() -> None:
 
     description = translations["issues"]["soc_dashboard_update"]["description"]
     assert strings["issues"]["soc_dashboard_update"]["description"] == description
-    for old_entity, new_entity in (
-        ("input_number.ev_initial_soc", "number.eveus_ev_charger_initial_soc"),
-        ("input_number.ev_target_soc", "number.eveus_ev_charger_target_soc"),
-        ("input_number.ev_battery_capacity", "number.eveus_ev_charger_battery_capacity"),
-        ("input_number.ev_soc_correction", "number.eveus_ev_charger_soc_correction"),
-    ):
-        assert f"`{old_entity}` → `{new_entity}`" in description
+    assert "number.eveus_ev_charger_" not in description
+    assert "device page" in description
+    for entity_name in ("Initial SOC", "Target SOC", "Battery Capacity", "SOC Correction"):
+        assert entity_name in description
 
 
 def test_entity_key_matches_slugify_for_all_entity_names():

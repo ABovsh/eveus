@@ -274,9 +274,15 @@ class EveusSocConfigNumber(
         await super().async_added_to_hass()
         last = await self.async_get_last_number_data()
         if last is not None and last.native_value is not None:
+            # HA restores native_value without type coercion, so a corrupt
+            # stored state must not raise during entity setup.
+            try:
+                restored = float(last.native_value)
+            except (TypeError, ValueError, OverflowError):
+                restored = None
             lo, hi = SOC_INPUT_LIMITS[self._soc_key]
-            if lo <= last.native_value <= hi:
-                self._attr_native_value = float(last.native_value)
+            if restored is not None and lo <= restored <= hi:
+                self._attr_native_value = restored
         self._push()
 
     def _push(self) -> None:

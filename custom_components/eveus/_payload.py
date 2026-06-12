@@ -118,7 +118,13 @@ def validate_main_payload(
     if current_set < MIN_CURRENT:
         _raise(message_style, "current_below_min")
 
-    max_current = MODEL_MAX_CURRENT.get(model) if model is not None else None
+    # Without a configured model, bound by the largest supported charger so a
+    # corrupt currentSet (e.g. 999) cannot pass as a healthy poll.
+    max_current = (
+        MODEL_MAX_CURRENT.get(model)
+        if model is not None
+        else max(MODEL_MAX_CURRENT.values())
+    )
     if max_current and current_set > max_current:
         _raise(
             message_style,

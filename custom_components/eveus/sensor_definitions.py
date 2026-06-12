@@ -117,6 +117,9 @@ class SensorSpec:
     category: Optional[EntityCategory] = None
     attributes_fn: Optional[Callable] = None
     tracks_reset: bool = False
+    # Sensors whose value DESCRIBES connectivity must stay readable while the
+    # poll is failing — that is exactly when their data matters.
+    available_when_offline: bool = False
 
     def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
         """Create sensor instance from specification."""
@@ -149,13 +152,20 @@ class OptimizedEveusSensor(EveusSensorBase):
             self._attr_entity_category = spec.category
         self._attr_extra_state_attributes = {}
 
+    @property
+    def available(self) -> bool:
+        """Connectivity-describing sensors stay available while polls fail."""
+        if self._spec.available_when_offline:
+            return True
+        return super().available
+
     def _should_log_error(self, function_name: str) -> bool:
         """Check if we should log errors for a function (rate limited)."""
         return self._error_log.should_log(ERROR_LOG_RATE_LIMIT, function_name)
 
     def _get_sensor_value(self) -> Any:
         """Return computed sensor value from coordinator data."""
-        if not self._updater.available:
+        if not self._updater.available and not self._spec.available_when_offline:
             return None
 
         try:
@@ -911,6 +921,7 @@ def create_sensor_specifications(
         ),
         SensorSpec(
             key="connection_quality", name="Connection Quality",
+            available_when_offline=True,
             value_fn=get_connection_quality,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:connection",
             state_class=SensorStateClass.MEASUREMENT, unit=PERCENTAGE, precision=0,

@@ -221,6 +221,10 @@ def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
     # get permanently finalized into device_info.
     if value is None or isinstance(value, (bool, dict, list, tuple, set)):
         return fallback
+    # A non-finite float would otherwise become the literal string "nan"/"inf"
+    # in the device registry.
+    if isinstance(value, float) and not math.isfinite(value):
+        return fallback
     text = str(value).strip()
     return text if len(text) >= min_len else fallback
 
@@ -232,13 +236,19 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
     those fields are present we surface them in device_info so the Devices
     page shows real device metadata instead of generic strings.
     """
-    firmware = _safe_str(data.get("verFWMain") or data.get("firmware"))
+    # Sanitize each alias independently: a truthy-but-invalid primary (e.g.
+    # verFWMain=true) must not suppress a valid secondary alias.
+    firmware = _safe_str(data.get("verFWMain"), fallback="") or _safe_str(
+        data.get("firmware")
+    )
     manufacturer = _safe_str(data.get("manufacturer"), fallback="Eveus")
     model = _safe_str(data.get("model"), fallback="Eveus EV Charger")
-    serial = data.get("serialNum") or data.get("stationId")
     # _safe_str rejects bools/containers so a malformed firmware field can't
-    # become the literal device serial in the registry.
-    serial_str = _safe_str(serial, fallback="") or ""
+    # become the literal device serial in the registry; aliases are sanitized
+    # independently so a corrupt primary doesn't hide a valid stationId.
+    serial_str = _safe_str(data.get("serialNum"), fallback="") or _safe_str(
+        data.get("stationId"), fallback=""
+    )
 
     device_suffix = get_device_display_suffix(device_number)
     device_identifier = get_device_identifier(host, device_number)

@@ -37,6 +37,12 @@ class EveusRefreshButton(BaseEveusEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Trigger an immediate (non-debounced) refresh."""
         await self._updater.async_force_refresh()
+        if not self._updater.last_update_success:
+            # Users press this button precisely to verify connectivity; a
+            # silent failure would look like a successful check.
+            raise HomeAssistantError(
+                "Eveus refresh failed: the charger did not respond"
+            )
 
 
 class _EveusResetCounterButton(BaseEveusEntity, ButtonEntity):

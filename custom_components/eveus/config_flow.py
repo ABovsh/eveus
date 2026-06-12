@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import math
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -29,7 +30,9 @@ from homeassistant.util.network import is_host_valid, is_ip_address
 
 from .const import (
     DOMAIN,
+    MIN_CURRENT,
     MODEL_16A,
+    MODEL_MAX_CURRENT,
     CONF_MODEL,
     CONF_SCHEME,
     DEFAULT_SCHEME,
@@ -284,10 +287,41 @@ def validate_device_response(
             raise CannotConnect(str(err)) from err
         raise InvalidDevice(str(err)) from err
 
+    _validate_model_against_design(payload, model)
+
     return {
         "current_set": float(payload["currentSet"]),
         "firmware": payload.get("verFWMain", "Unknown"),
     }
+
+
+_MAX_DESIGN_CURRENT = 100  # amps; anything above is a corrupt field
+
+
+def _validate_model_against_design(payload: dict[str, Any], model: str) -> None:
+    """Reject a selected model rated above the charger's design current.
+
+    The firmware reports its hardware rating in ``curDesign``. Accepting a
+    32A/48A profile on a 16A charger would expose a Charging Current range the
+    hardware cannot deliver. Choosing a LOWER-rated model is allowed (a
+    deliberate limit). A missing or corrupt ``curDesign`` is ignored — the
+    field is informational and must not block setup on schema drift.
+    """
+    raw_design = payload.get("curDesign")
+    if isinstance(raw_design, bool) or raw_design is None:
+        return
+    try:
+        design = float(raw_design)
+    except (TypeError, ValueError, OverflowError):
+        return
+    if not math.isfinite(design) or not MIN_CURRENT <= design <= _MAX_DESIGN_CURRENT:
+        return
+    max_current = MODEL_MAX_CURRENT.get(model)
+    if max_current and max_current > design:
+        raise InvalidDevice(
+            f"Selected model supports up to {max_current}A but the charger "
+            f"reports a {design:g}A design current"
+        )
 
 
 def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
@@ -534,22 +568,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _migrate_device_identifiers(self, entry, old_host: str, new_host: str) -> None:
         """Rewrite host-based device identifiers after an address change."""
-        registry = dr.async_get(self.hass)
-        for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
-            new_identifiers = set()
-            changed = False
-            for domain, ident in device.identifiers:
-                if domain == DOMAIN and ident == old_host:
-                    new_identifiers.add((domain, new_host))
-                    changed = True
-                elif domain == DOMAIN and ident.startswith(f"{old_host}_"):
-                    suffix = ident[len(old_host):]
-                    new_identifiers.add((domain, f"{new_host}{suffix}"))
-                    changed = True
-                else:
-                    new_identifiers.add((domain, ident))
-            if changed:
-                registry.async_update_device(device.id, new_identifiers=new_identifiers)
+        migrate_device_identifiers(self.hass, entry, old_host, new_host)
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -633,7 +652,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
 
                 info = await validate_input(self.hass, merged_data)
-                entry_data = _merge_entry_data(entry.data, info["data"])
+
+                # Rebase on LIVE entry data and replace only the credentials:
+                # validate_input ran against a pre-await snapshot, so adopting
+                # its full payload would roll back any options/reconfigure
+                # change committed while the network validation was in flight.
+                entry_data = dict(entry.data)
+                entry_data[CONF_USERNAME] = merged_data[CONF_USERNAME]
+                entry_data[CONF_PASSWORD] = merged_data[CONF_PASSWORD]
 
                 await self.async_set_unique_id(entry_data[CONF_HOST])
                 if entry.unique_id != entry_data[CONF_HOST]:
@@ -742,3 +768,28 @@ class EveusOptionsFlow(OptionsFlow):
         """Persist the updated entry data and finish the flow."""
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
         return self.async_create_entry(title="", data={})
+
+
+def migrate_device_identifiers(hass, entry, old_host: str, new_host: str) -> None:
+    """Rewrite host-based device identifiers after an address change.
+
+    Shared by the reconfigure flow and the invalid-config repair flow so a
+    host change never orphans the device (its area, custom name, and
+    dashboard references follow the charger to the new address).
+    """
+    registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+        new_identifiers = set()
+        changed = False
+        for domain, ident in device.identifiers:
+            if domain == DOMAIN and ident == old_host:
+                new_identifiers.add((domain, new_host))
+                changed = True
+            elif domain == DOMAIN and ident.startswith(f"{old_host}_"):
+                suffix = ident[len(old_host):]
+                new_identifiers.add((domain, f"{new_host}{suffix}"))
+                changed = True
+            else:
+                new_identifiers.add((domain, ident))
+        if changed:
+            registry.async_update_device(device.id, new_identifiers=new_identifiers)

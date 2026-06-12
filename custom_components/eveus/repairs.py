@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
 from .config_flow import (
+    migrate_device_identifiers,
     CannotConnect,
     InvalidAuth,
     InvalidDevice,
@@ -77,6 +78,14 @@ class InvalidConfigRepairFlow(RepairsFlow):
                         if other.entry_id != entry.entry_id and other.unique_id == new_unique_id:
                             errors["base"] = "already_configured"
                             raise _AlreadyConfigured()
+
+                old_host = entry.data.get(CONF_HOST)
+                new_host = entry_data[CONF_HOST]
+                if old_host and old_host != new_host:
+                    # Keep the device (area, custom name, dashboard references)
+                    # attached to the charger at its new address — same
+                    # migration the reconfigure flow performs.
+                    migrate_device_identifiers(self.hass, entry, old_host, new_host)
 
                 self.hass.config_entries.async_update_entry(
                     entry,

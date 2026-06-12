@@ -272,6 +272,10 @@ class _ClockDriftTracker:
         # it), "sync" for any other offset (the RTC itself is off).
         self.kind = "sync"
         self.hours = 0
+        # (kind, hours) the repair was last published with, owned by
+        # _update_clock_drift_issue; None while no issue is active.
+        self.published: tuple[str, int] | None = None
+        self.still_drifted = False
 
     def evaluate(self, data: dict[str, Any] | None) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged."""
@@ -291,6 +295,7 @@ class _ClockDriftTracker:
             self.kind = "sync"
             self.hours = 0
         drift = abs(signed_drift)
+        self.still_drifted = drift > CLOCK_DRIFT_THRESHOLD_SECONDS
         if drift > CLOCK_DRIFT_THRESHOLD_SECONDS:
             self._ok_streak = 0
             self._drift_streak += 1
@@ -325,7 +330,16 @@ def _update_clock_drift_issue(
     if not updater.available or not updater.last_update_success:
         return
     decision = tracker.evaluate(updater.data if isinstance(updater.data, dict) else None)
-    if decision is True:
+    if decision is True or (
+        # Re-key an ACTIVE issue when the drift's classification changes (sync
+        # <-> whole-hour timezone, or a different hour count) so the repair
+        # never keeps recommending the wrong fix. Only while still drifted —
+        # a clearing-in-progress drift must not flap the message.
+        decision is None
+        and tracker.published is not None
+        and tracker.still_drifted
+        and (tracker.kind, tracker.hours) != tracker.published
+    ):
         timezone_kind = tracker.kind == "timezone"
         ir.async_create_issue(
             hass,
@@ -342,8 +356,10 @@ def _update_clock_drift_issue(
                 {"hours": str(tracker.hours)} if timezone_kind else None
             ),
         )
+        tracker.published = (tracker.kind, tracker.hours)
     elif decision is False:
         ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
+        tracker.published = None
 
 
 # SOC entities created only in Advanced mode, and per-phase sensors created only
@@ -373,6 +389,24 @@ _THREE_PHASE_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
     ("sensor", "voltage_phase_2"),
     ("sensor", "voltage_phase_3"),
 )
+
+
+def _resolve_phases(raw_phases: Any) -> tuple[int, bool]:
+    """Coerce a stored phase count, flagging values that were truly invalid.
+
+    A string "1"/"3" from an older frontend is valid (just mistyped); anything
+    unparseable or outside PHASE_OPTIONS is invalid and must not drive the
+    destructive phase-entity prune — falling back to 1 phase and then pruning
+    would permanently delete the phase 2/3 registry rows (areas, custom
+    entity IDs) over a corrupt byte.
+    """
+    try:
+        phases = int(raw_phases)
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_PHASES, True
+    if phases not in PHASE_OPTIONS:
+        return DEFAULT_PHASES, True
+    return phases, False
 
 
 def _prune_unused_entities(
@@ -619,12 +653,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         from .ev_sensors import CachedSOCCalculator
 
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
-        try:
-            phases = int(raw_phases)
-        except (TypeError, ValueError, OverflowError):
-            phases = DEFAULT_PHASES
-        if phases not in PHASE_OPTIONS:
-            phases = DEFAULT_PHASES
+        phases, phases_were_invalid = _resolve_phases(raw_phases)
         if raw_phases != phases:
             # Persist the normalized value so an invalid stored phase count is
             # not silently re-evaluated (and hiding phase 2/3 entities) on every
@@ -705,7 +734,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # setup failure that HA will retry cannot permanently delete entities —
         # along with their area, disabled state, and custom entity_id — for a
         # reduced scope that never actually finished loading.
-        _prune_unused_entities(hass, device_number, get_soc_mode(entry), phases)
+        _prune_unused_entities(
+            hass,
+            device_number,
+            get_soc_mode(entry),
+            # An invalid stored phase count fell back to 1; don't let that
+            # fallback prune the 3-phase registry rows.
+            3 if phases_were_invalid else phases,
+        )
 
         return True
 
@@ -722,6 +758,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
     """Handle options update."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete every per-entry repair issue when the entry is removed.
+
+    Unload only clears the transient notices; persistent ones (invalid
+    config, SOC dashboard migration, safety incidents) deliberately survive
+    unload — but once the entry itself is gone they would sit in Repairs
+    forever, referencing a charger that no longer exists.
+    """
+    from .safety import POLICIES, safety_issue_id
+
+    ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, f"soc_dashboard_update_{entry.entry_id}")
+    for policy in POLICIES:
+        ir.async_delete_issue(hass, DOMAIN, safety_issue_id(entry, policy.key))
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:
