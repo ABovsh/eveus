@@ -234,6 +234,21 @@ def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
     return text if len(text) >= min_len else fallback
 
 
+# Strings some firmware builds put in a version field to mean "no value". They
+# must not be persisted into the device registry (or combined into a firmware
+# string like "Unknown (GRM070A-…)" that slips past the "== Unknown" guard).
+_PLACEHOLDER_FIRMWARE = frozenset({"unknown", "unavailable", "n/a", "none"})
+
+
+def _real_firmware(*values: Any) -> str:
+    """First sanitized firmware string that isn't a placeholder, else ``""``."""
+    for value in values:
+        text = _safe_str(value, fallback="")
+        if text and text.lower() not in _PLACEHOLDER_FIRMWARE:
+            return text
+    return ""
+
+
 def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
     """Get standardized device information with multi-device support.
 
@@ -249,10 +264,8 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
     # in parentheses. Both are surfaced so neither is hidden. Each alias is
     # sanitized independently (a truthy-but-invalid field like verFWMain=true must
     # not suppress the other); the legacy "firmware" key still backs verFWMain.
-    fw_app = _safe_str(data.get("verFWWifi"), fallback="")
-    fw_module = _safe_str(data.get("verFWMain"), fallback="") or _safe_str(
-        data.get("firmware"), fallback=""
-    )
+    fw_app = _real_firmware(data.get("verFWWifi"))
+    fw_module = _real_firmware(data.get("verFWMain"), data.get("firmware"))
     if fw_app and fw_module:
         firmware = f"{fw_app} ({fw_module})"
     else:

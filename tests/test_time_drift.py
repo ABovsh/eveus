@@ -234,6 +234,21 @@ def _fired_tracker(drift_seconds: int):
     return tracker
 
 
+def test_tracker_missing_time_fields_reset_rekey_state() -> None:
+    # A successful poll that omits the time fields can't classify drift; it must
+    # not advance the re-key streak on stale state or leave `still_drifted` set,
+    # or two such polls could re-publish a stale clock-drift message.
+    from custom_components.eveus import _ClockDriftTracker
+
+    tracker = _ClockDriftTracker()
+    tracker.still_drifted = True
+    tracker.rekey_streak = 2
+
+    assert tracker.evaluate({}) is None
+    assert tracker.still_drifted is False
+    assert tracker.rekey_streak == 0
+
+
 def test_tracker_classifies_whole_hour_drift_as_timezone() -> None:
     assert _fired_tracker(-3600).kind == "timezone"
     assert _fired_tracker(3600).kind == "timezone"

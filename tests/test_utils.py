@@ -70,6 +70,20 @@ def test_get_device_info_shows_both_firmwares_app_leading() -> None:
     assert info["sw_version"] == "1PGRW001A-R3.05.5 (GRM070A-R3.05.4)"
 
 
+def test_get_device_info_ignores_placeholder_firmware() -> None:
+    # A literal placeholder ("Unknown"/"unavailable"/...) in one field must not
+    # leak into the combined string and slip past the "== Unknown" finalize guard.
+    one_bad = utils.get_device_info(
+        TEST_HOST, {"verFWWifi": "Unknown", "verFWMain": "GRM070A-R3.05.4"}
+    )
+    assert one_bad["sw_version"] == "GRM070A-R3.05.4"
+    # Both placeholders collapse to "Unknown" (which the finalize guard rejects).
+    both_bad = utils.get_device_info(
+        TEST_HOST, {"verFWWifi": "unavailable", "verFWMain": "n/a"}
+    )
+    assert both_bad["sw_version"] == "Unknown"
+
+
 def test_get_device_info_firmware_falls_back_to_single_field() -> None:
     # Only the app firmware present -> shown alone (no empty parentheses).
     app_only = utils.get_device_info(TEST_HOST, {"verFWWifi": "1PGRW001A-R3.05.5"})

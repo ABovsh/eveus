@@ -781,6 +781,10 @@ def test_migration_strips_legacy_url_path_query_and_fragment(
 ) -> None:
     registry = _FakeEntityRegistry(registered=set())
     monkeypatch.setattr(eveus.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda *a, **k: None,
+    )
 
     hass = SimpleNamespace(
         config_entries=_MigrateEntries(),

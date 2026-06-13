@@ -287,6 +287,13 @@ class _ClockDriftTracker:
         """Return True to raise, False to clear, or None to leave unchanged."""
         charger_wall = get_charger_wall_clock_seconds(data)
         if charger_wall is None:
+            # A successful poll that simply omits/corrupts the time fields tells
+            # us nothing about the drift. Don't let it advance the re-key streak
+            # on stale classification state, and don't leave `still_drifted` set
+            # from an earlier sample (which would let two such polls re-publish a
+            # stale message).
+            self.still_drifted = False
+            self.rekey_streak = 0
             return None
         signed_drift = charger_wall - get_local_wall_clock_seconds()
         whole_hours = round(signed_drift / 3600)
@@ -562,6 +569,15 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             else:
                 update_kwargs["unique_id"] = new_unique_id
+                if new_data[CONF_HOST] != host:
+                    # The stored address spelling was canonicalized (URL/path/
+                    # credentials stripped, case/trailing-dot normalized). Carry
+                    # the device's area, custom name, and dashboard references to
+                    # the new host identifier so the device isn't orphaned and
+                    # re-created from scratch on the next load.
+                    from .config_flow import migrate_device_identifiers
+
+                    migrate_device_identifiers(hass, entry, host, new_data[CONF_HOST])
 
         if isinstance(host, str) and isinstance(entry.title, str) and host in entry.title:
             update_kwargs["title"] = entry.title.replace(host, new_data[CONF_HOST])

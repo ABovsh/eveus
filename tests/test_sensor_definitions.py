@@ -346,7 +346,14 @@ def test_connection_quality_clamps_and_handles_metric_errors() -> None:
 
 
 def test_connection_attrs_handles_offline_and_includes_wifi_rssi() -> None:
-    assert sensors.get_connection_attrs(_updater({}, available=False), None) == {}
+    # Offline keeps the rolling connectivity attributes (success rate, latency,
+    # status update on failed polls and matter most during an outage); only the
+    # stale payload-derived wifi_rssi is dropped.
+    assert sensors.get_connection_attrs(_updater({}, available=False), None) == {
+        "connection_quality": 100,
+        "latency_avg": 0.0,
+        "status": "Excellent",
+    }
 
     updater = _updater(
         {"RSSI": "-68"},

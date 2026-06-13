@@ -554,3 +554,29 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
         eveus._update_clock_drift_issue(object(), entry, updater, tracker)
     assert len(created) == base_count + 1
     assert created[-1]["translation_key"] == "clock_drift_timezone"
+
+
+def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:
+    """F12: during an outage the rolling connectivity attributes must remain
+    visible (that's when they matter most); only the payload-derived wifi_rssi,
+    which goes stale offline, is dropped."""
+    from custom_components.eveus import sensor_definitions as sd
+
+    offline = SimpleNamespace(
+        available=False,
+        connection_quality={"success_rate": 42, "latency_avg": 1.0},
+        data={"RSSI": -50},
+    )
+    attrs = sd.get_connection_attrs(offline, None)
+    assert attrs["connection_quality"] == 42
+    assert attrs["status"] == "Poor"
+    assert "wifi_rssi" not in attrs  # stale payload value suppressed offline
+
+    online = SimpleNamespace(
+        available=True,
+        connection_quality={"success_rate": 99, "latency_avg": 0.2},
+        data={"RSSI": -50},
+    )
+    online_attrs = sd.get_connection_attrs(online, None)
+    assert online_attrs["status"] == "Excellent"
+    assert online_attrs["wifi_rssi"] == -50

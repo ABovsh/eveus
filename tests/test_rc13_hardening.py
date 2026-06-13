@@ -114,6 +114,10 @@ def test_migration_strips_main_path_for_uppercase_scheme(monkeypatch) -> None:
     from custom_components import eveus
 
     monkeypatch.setattr(eveus.er, "async_get", lambda hass: _EmptyRegistry())
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda *a, **k: None,
+    )
 
     config_entries = _ConfigEntries()
     hass = SimpleNamespace(config_entries=config_entries)

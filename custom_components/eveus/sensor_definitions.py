@@ -182,7 +182,12 @@ class OptimizedEveusSensor(EveusSensorBase):
         previous_attrs = self._attr_extra_state_attributes
         attrs: Dict[str, Any] = {}
         try:
-            if self._updater.available:
+            # Offline-capable sensors (Connection Quality) still compute their
+            # attributes while polls fail: the success-rate/latency/status come
+            # from the rolling connectivity metric, which is exactly what the
+            # user needs to see during an outage. The attribute function itself
+            # drops any stale payload-derived field (e.g. RSSI) when offline.
+            if self._updater.available or self._spec.available_when_offline:
                 attrs = self._spec.attributes_fn(self._updater, self.hass)
         except Exception as err:
             if self._should_log_error(f"attributes_{self._spec.key}"):
@@ -592,8 +597,10 @@ def get_connection_attrs(updater, hass) -> dict:
     Connection Quality — surfacing both in one view makes diagnosis faster.
     """
     try:
-        if not updater.available:
-            return {}
+        # No early-return when offline: success rate, latency, and status come
+        # from the rolling poll metric (updated on failed polls too), so they
+        # stay meaningful during an outage — that's when they matter most. Only
+        # wifi_rssi is payload-derived and goes stale offline, so it is dropped.
         metrics = updater.connection_quality
         success_rate = metrics.get("success_rate", 100)
         latency_avg = max(0.0, metrics.get("latency_avg", 0.0))
@@ -612,9 +619,10 @@ def get_connection_attrs(updater, hass) -> dict:
             "latency_avg": round(latency_avg * 2) / 2,
             "status": status,
         }
-        rssi = get_wifi_rssi(updater, hass)
-        if rssi is not None:
-            attrs["wifi_rssi"] = rssi
+        if updater.available:
+            rssi = get_wifi_rssi(updater, hass)
+            if rssi is not None:
+                attrs["wifi_rssi"] = rssi
         return attrs
     except Exception as err:
         if _should_log_error("get_connection_attrs"):
