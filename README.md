@@ -1,5 +1,7 @@
 # Eveus EV Charger for Home Assistant
 
+**English** | [Українська](README.uk.md)
+
 > Full local control and monitoring for Eveus EV chargers: charging controls, live power and cost, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
