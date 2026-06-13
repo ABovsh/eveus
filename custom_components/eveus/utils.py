@@ -241,11 +241,22 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
     those fields are present we surface them in device_info so the Devices
     page shows real device metadata instead of generic strings.
     """
-    # Sanitize each alias independently: a truthy-but-invalid primary (e.g.
-    # verFWMain=true) must not suppress a valid secondary alias.
-    firmware = _safe_str(data.get("verFWMain"), fallback="") or _safe_str(
-        data.get("firmware")
+    # The charger reports two firmware strings and the field names are misleading
+    # on R3.05.x hardware: verFWWifi (e.g. "1PGRW001A-R3.05.5") is the application
+    # /controller board that gets OTA-updated and is what the charger's own update
+    # UI labels as the version "installed to your EVEUS Pro" — so it leads.
+    # verFWMain (e.g. "GRM070A-R3.05.4") is the lower-level module firmware, shown
+    # in parentheses. Both are surfaced so neither is hidden. Each alias is
+    # sanitized independently (a truthy-but-invalid field like verFWMain=true must
+    # not suppress the other); the legacy "firmware" key still backs verFWMain.
+    fw_app = _safe_str(data.get("verFWWifi"), fallback="")
+    fw_module = _safe_str(data.get("verFWMain"), fallback="") or _safe_str(
+        data.get("firmware"), fallback=""
     )
+    if fw_app and fw_module:
+        firmware = f"{fw_app} ({fw_module})"
+    else:
+        firmware = fw_app or fw_module or "Unknown"
     manufacturer = _safe_str(data.get("manufacturer"), fallback="Eveus")
     model = _safe_str(data.get("model"), fallback="Eveus EV Charger")
     # _safe_str rejects bools/containers so a malformed firmware field can't
@@ -264,8 +275,9 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
         "manufacturer": manufacturer,
         "model": model,
         "sw_version": firmware,
-        # No hw_version: the firmware exposes no hardware-revision field.
-        # verFWWifi is Wi-Fi module firmware and is surfaced in diagnostics only.
+        # No hw_version: the firmware exposes no hardware-revision field. Both
+        # firmware strings (verFWWifi app board + verFWMain module) are folded
+        # into sw_version above; the full raw payload is still in diagnostics.
         "configuration_url": f"{scheme}://{host}",
     }
     if serial_str:

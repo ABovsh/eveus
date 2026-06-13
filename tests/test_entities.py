@@ -596,7 +596,7 @@ def test_base_entity_finalize_device_info_paths(monkeypatch: pytest.MonkeyPatch)
     updater.data = {"verFWMain": "R3.05.2", "verFWWifi": "W1.0"}
     entity._maybe_finalize_device_info()
     assert entity._device_info_finalized is True
-    assert entity.device_info["sw_version"] == "R3.05.2"
+    assert entity.device_info["sw_version"] == "W1.0 (R3.05.2)"
 
 
 def test_base_entity_finalize_waits_for_real_firmware(
@@ -657,7 +657,7 @@ def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.Monkey
         (
             "device-id",
             {
-                "sw_version": "R3.05.2",
+                "sw_version": "W1.0 (R3.05.2)",
                 "model": "Eveus EV Charger",
                 "manufacturer": "Eveus",
                 "hw_version": None,

@@ -18,7 +18,9 @@ class TestDeviceFirmwareMetadata:
             {"verFWMain": "GRM070A-R3.05.2", "verFWWifi": "1PGRW001A-R3.05.2"},
         )
         assert "hw_version" not in info
-        assert info["sw_version"] == "GRM070A-R3.05.2"
+        # Both firmware strings are folded into sw_version, app board (verFWWifi)
+        # leading; neither is exposed as a hardware revision.
+        assert info["sw_version"] == "1PGRW001A-R3.05.2 (GRM070A-R3.05.2)"
 
     def test_device_info_omits_hw_version_even_with_legacy_hardware_key(self):
         info = utils.get_device_info(TEST_HOST, {"verFWMain": "x1", "hardware": "h1"})
