@@ -55,6 +55,11 @@ def _session_active_is_on(data: dict) -> bool | None:
     state = get_safe_value(data, "state", int)
     if state is None or state not in CHARGING_STATES:
         return None
+    if state in _PLUG_UNKNOWN_STATES:
+        # In the error state the firmware cannot tell whether a session is
+        # still active; reporting a definite "off" would falsely trigger
+        # session-ended automations. Mirrors Car Connected.
+        return None
     return state in SESSION_ACTIVE_STATES
 
 

@@ -346,7 +346,14 @@ def test_connection_quality_clamps_and_handles_metric_errors() -> None:
 
 
 def test_connection_attrs_handles_offline_and_includes_wifi_rssi() -> None:
-    assert sensors.get_connection_attrs(_updater({}, available=False), None) == {}
+    # Offline keeps the rolling connectivity attributes (success rate, latency,
+    # status update on failed polls and matter most during an outage); only the
+    # stale payload-derived wifi_rssi is dropped.
+    assert sensors.get_connection_attrs(_updater({}, available=False), None) == {
+        "connection_quality": 100,
+        "latency_avg": 0.0,
+        "status": "Excellent",
+    }
 
     updater = _updater(
         {"RSSI": "-68"},
@@ -362,19 +369,10 @@ def test_connection_attrs_handles_offline_and_includes_wifi_rssi() -> None:
     }
 
 
-def test_system_time_handles_invalid_timestamp_without_raising() -> None:
-    assert sensors.get_system_time(_updater({"systemTime": "bad"}), None) is None
-
-
-def test_system_time_handles_data_access_exception_without_raising() -> None:
-    class BrokenUpdater:
-        available = True
-
-        @property
-        def data(self):
-            raise RuntimeError("data unavailable")
-
-    assert sensors.get_system_time(BrokenUpdater(), None) is None
+def test_time_drift_handles_invalid_timestamp_without_raising() -> None:
+    assert sensors.get_time_drift(
+        _updater({"systemTime": "bad", "timeZone": "3"}), None
+    ) is None
 
 
 def test_optimized_sensor_contract_for_offline_and_attribute_errors() -> None:

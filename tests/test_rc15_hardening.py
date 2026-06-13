@@ -280,7 +280,11 @@ def _migration_hass(entries: _MigrationEntries):
     )
 
 
-def test_migration_canonicalizes_bare_uppercase_host() -> None:
+def test_migration_canonicalizes_bare_uppercase_host(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda *a, **k: None,
+    )
     entries = _MigrationEntries()
     entry = SimpleNamespace(
         entry_id="e1",

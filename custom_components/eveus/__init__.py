@@ -6,7 +6,6 @@ import logging
 # NOT `import time`: this package has a `time.py` platform module, and the
 # import system overwrites a package-global named `time` with that submodule
 # the moment HA loads the time platform.
-from time import time as _wall_clock
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -50,12 +49,13 @@ from .const import (
     CLOCK_DRIFT_TRIGGER_POLLS,
     CLOCK_DRIFT_CLEAR_POLLS,
     CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS,
-    MAX_VALID_SYSTEM_TIME,
-    MIN_VALID_TIMEZONE_H,
-    MAX_VALID_TIMEZONE_H,
+    CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS,
 )
 from .common_network import EveusUpdater
 from .utils import (
+    get_charger_wall_clock_seconds,
+    get_local_utc_offset_seconds,
+    get_local_wall_clock_seconds,
     get_device_suffix,
     get_next_device_number,
     get_safe_value,
@@ -252,8 +252,10 @@ def _clock_drift_issue_id(entry: ConfigEntry) -> str:
 class _ClockDriftTracker:
     """Decide when to raise/clear the charger clock-drift notice.
 
-    The charger stores ``systemTime`` as UTC but reports it in /main shifted
-    by ``timeZone`` hours, so charger UTC is ``systemTime - timeZone*3600``.
+    Compares the charger's wall clock (``systemTime``, local-encoded epoch
+    seconds) against Home Assistant's local wall clock — not UTC to UTC, which
+    would cancel the ``timeZone`` select out and miss a wrong timezone or a
+    DST mismatch entirely.
     Fires only after several consecutive polls more than the threshold away
     from Home Assistant's clock; clears only after consecutive in-sync polls.
     Missing/corrupt time fields neither advance nor reset either streak,
@@ -265,20 +267,60 @@ class _ClockDriftTracker:
         self._drift_streak = 0
         self._ok_streak = 0
         self._active = False
+        # Classification of the most recent drifted reading, used to pick the
+        # repair message: "timezone" when the drift sits at a non-zero whole
+        # hour (wrong Time Zone select or DST mismatch — Sync Time won't fix
+        # it), "sync" for any other offset (the RTC itself is off).
+        self.kind = "sync"
+        self.hours = 0
+        # (kind, hours) the repair was last published with, owned by
+        # _update_clock_drift_issue; None while no issue is active.
+        self.published: tuple[str, int] | None = None
+        self.still_drifted = False
+        # Consecutive polls the live classification has differed from the
+        # published one; re-keying waits for a stable streak so a drift
+        # oscillating across a classification boundary can't rewrite the
+        # issue on every poll.
+        self.rekey_streak = 0
 
     def evaluate(self, data: dict[str, Any] | None) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged."""
-        system_time = get_safe_value(data, "systemTime", int)
-        tz_hours = get_safe_value(data, "timeZone", int)
-        if (
-            system_time is None
-            or tz_hours is None
-            or not 0 < system_time <= MAX_VALID_SYSTEM_TIME
-            or not MIN_VALID_TIMEZONE_H <= tz_hours <= MAX_VALID_TIMEZONE_H
-        ):
+        charger_wall = get_charger_wall_clock_seconds(data)
+        if charger_wall is None:
+            # A successful poll that simply omits/corrupts the time fields tells
+            # us nothing about the drift. Don't let it advance the re-key streak
+            # on stale classification state, and don't leave `still_drifted` set
+            # from an earlier sample (which would let two such polls re-publish a
+            # stale message).
+            self.still_drifted = False
+            self.rekey_streak = 0
             return None
-        charger_utc = system_time - tz_hours * 3600
-        drift = abs(charger_utc - _wall_clock())
+        signed_drift = charger_wall - get_local_wall_clock_seconds()
+        whole_hours = round(signed_drift / 3600)
+        # A fractional local offset (India +5:30, Nepal +5:45) is one the
+        # charger's whole-hour Time Zone select can never represent: the best
+        # achievable wall clocks sit at -residue or +(3600-residue) from HA
+        # local. Drift matching either is the hardware limit, not a fixable
+        # sync/timezone fault — it needs its own guidance.
+        residue = get_local_utc_offset_seconds() % 3600
+        if residue and any(
+            abs(signed_drift - candidate) <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
+            for candidate in (-residue, 3600 - residue)
+        ):
+            self.kind = "fractional"
+            self.hours = 0
+        elif (
+            whole_hours != 0
+            and abs(signed_drift - whole_hours * 3600)
+            <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
+        ):
+            self.kind = "timezone"
+            self.hours = abs(whole_hours)
+        else:
+            self.kind = "sync"
+            self.hours = 0
+        drift = abs(signed_drift)
+        self.still_drifted = drift > CLOCK_DRIFT_THRESHOLD_SECONDS
         if drift > CLOCK_DRIFT_THRESHOLD_SECONDS:
             self._ok_streak = 0
             self._drift_streak += 1
@@ -313,7 +355,29 @@ def _update_clock_drift_issue(
     if not updater.available or not updater.last_update_success:
         return
     decision = tracker.evaluate(updater.data if isinstance(updater.data, dict) else None)
-    if decision is True:
+    # Re-key an ACTIVE issue when the drift's classification changes (sync
+    # <-> whole-hour timezone, or a different hour count) so the repair never
+    # keeps recommending the wrong fix. Only while still drifted, and only
+    # after the new classification has held for a full debounce streak — a
+    # drift oscillating across a classification boundary must not rewrite the
+    # issue on every poll.
+    rekey = False
+    if (
+        decision is None
+        and tracker.published is not None
+        and tracker.still_drifted
+        and (tracker.kind, tracker.hours) != tracker.published
+    ):
+        tracker.rekey_streak += 1
+        rekey = tracker.rekey_streak >= CLOCK_DRIFT_TRIGGER_POLLS
+    else:
+        tracker.rekey_streak = 0
+
+    if decision is True or rekey:
+        translation_key = {
+            "timezone": "clock_drift_timezone",
+            "fractional": "clock_drift_fractional_timezone",
+        }.get(tracker.kind, "clock_drift")
         ir.async_create_issue(
             hass,
             DOMAIN,
@@ -322,10 +386,17 @@ def _update_clock_drift_issue(
             is_persistent=False,
             issue_domain=DOMAIN,
             severity=ir.IssueSeverity.WARNING,
-            translation_key="clock_drift",
+            translation_key=translation_key,
+            translation_placeholders=(
+                {"hours": str(tracker.hours)} if tracker.kind == "timezone" else None
+            ),
         )
+        tracker.published = (tracker.kind, tracker.hours)
+        tracker.rekey_streak = 0
     elif decision is False:
         ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
+        tracker.published = None
+        tracker.rekey_streak = 0
 
 
 # SOC entities created only in Advanced mode, and per-phase sensors created only
@@ -344,6 +415,11 @@ _ADVANCED_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
     ("number", "battery_capacity"),
     ("number", "soc_correction"),
 )
+# Entities retired from the integration entirely; always pruned so users
+# don't keep an orphaned "unavailable" row after updating.
+_REMOVED_ENTITIES: tuple[tuple[str, str], ...] = (
+    ("sensor", "system_time"),  # replaced by time_drift
+)
 _THREE_PHASE_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
     ("sensor", "current_phase_2"),
     ("sensor", "current_phase_3"),
@@ -352,17 +428,37 @@ _THREE_PHASE_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
 )
 
 
+def _resolve_phases(raw_phases: Any) -> tuple[int, bool]:
+    """Coerce a stored phase count, flagging values that were truly invalid.
+
+    A string "1"/"3" from an older frontend is valid (just mistyped); anything
+    unparseable or outside PHASE_OPTIONS is invalid and must not drive the
+    destructive phase-entity prune — falling back to 1 phase and then pruning
+    would permanently delete the phase 2/3 registry rows (areas, custom
+    entity IDs) over a corrupt byte.
+    """
+    # bool is an int subclass: int(True) == 1 would otherwise count as a
+    # valid one-phase config and drive the destructive prune.
+    if isinstance(raw_phases, bool):
+        return DEFAULT_PHASES, True
+    try:
+        phases = int(raw_phases)
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_PHASES, True
+    if phases not in PHASE_OPTIONS:
+        return DEFAULT_PHASES, True
+    return phases, False
+
+
 def _prune_unused_entities(
     hass: HomeAssistant, device_number: int, soc_mode: str, phases: int
 ) -> None:
     """Remove registry rows for entities not built under the current config."""
-    stale: list[tuple[str, str]] = []
+    stale: list[tuple[str, str]] = list(_REMOVED_ENTITIES)
     if soc_mode != SOC_MODE_ADVANCED:
         stale.extend(_ADVANCED_ONLY_ENTITIES)
     if phases != 3:
         stale.extend(_THREE_PHASE_ONLY_ENTITIES)
-    if not stale:
-        return
     reg = er.async_get(hass)
     suffix = get_device_suffix(device_number)
     for platform, key in stale:
@@ -473,6 +569,15 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             else:
                 update_kwargs["unique_id"] = new_unique_id
+                if new_data[CONF_HOST] != host:
+                    # The stored address spelling was canonicalized (URL/path/
+                    # credentials stripped, case/trailing-dot normalized). Carry
+                    # the device's area, custom name, and dashboard references to
+                    # the new host identifier so the device isn't orphaned and
+                    # re-created from scratch on the next load.
+                    from .config_flow import migrate_device_identifiers
+
+                    migrate_device_identifiers(hass, entry, host, new_data[CONF_HOST])
 
         if isinstance(host, str) and isinstance(entry.title, str) and host in entry.title:
             update_kwargs["title"] = entry.title.replace(host, new_data[CONF_HOST])
@@ -598,12 +703,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         from .ev_sensors import CachedSOCCalculator
 
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
-        try:
-            phases = int(raw_phases)
-        except (TypeError, ValueError, OverflowError):
-            phases = DEFAULT_PHASES
-        if phases not in PHASE_OPTIONS:
-            phases = DEFAULT_PHASES
+        phases, phases_were_invalid = _resolve_phases(raw_phases)
         if raw_phases != phases:
             # Persist the normalized value so an invalid stored phase count is
             # not silently re-evaluated (and hiding phase 2/3 entities) on every
@@ -684,7 +784,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # setup failure that HA will retry cannot permanently delete entities —
         # along with their area, disabled state, and custom entity_id — for a
         # reduced scope that never actually finished loading.
-        _prune_unused_entities(hass, device_number, get_soc_mode(entry), phases)
+        _prune_unused_entities(
+            hass,
+            device_number,
+            get_soc_mode(entry),
+            # An invalid stored phase count fell back to 1; don't let that
+            # fallback prune the 3-phase registry rows.
+            3 if phases_were_invalid else phases,
+        )
 
         return True
 
@@ -701,6 +808,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
     """Handle options update."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete every per-entry repair issue when the entry is removed.
+
+    Unload only clears the transient notices; persistent ones (invalid
+    config, SOC dashboard migration, safety incidents) deliberately survive
+    unload — but once the entry itself is gone they would sit in Repairs
+    forever, referencing a charger that no longer exists.
+    """
+    from .safety import POLICIES, safety_issue_id
+
+    ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, f"soc_dashboard_update_{entry.entry_id}")
+    for policy in POLICIES:
+        ir.async_delete_issue(hass, DOMAIN, safety_issue_id(entry, policy.key))
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:

@@ -35,6 +35,22 @@ def _no_legacy_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eveus.er, "async_get", lambda hass: _EmptyRegistry())
 
 
+@pytest.fixture(autouse=True)
+def _stub_identifier_migration(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Record (old_host, new_host) device-identifier migrations during migrate.
+
+    `async_migrate_entry` lazily imports `migrate_device_identifiers` from
+    config_flow; patch it at the source so the lazy import picks up the stub and
+    the SimpleNamespace `hass` never reaches the real device registry.
+    """
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda hass, entry, old_host, new_host: calls.append((old_host, new_host)),
+    )
+    return calls
+
+
 class _ConfigEntries:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -71,6 +87,43 @@ def test_migrate_entry_normalizes_host_and_bumps_version() -> None:
             "version": CONFIG_ENTRY_VERSION,
         }
     ]
+
+
+def test_migrate_entry_migrates_device_identifiers_on_host_change(
+    _stub_identifier_migration: list[tuple[str, str]],
+) -> None:
+    config_entries = _ConfigEntries()
+    hass = SimpleNamespace(config_entries=config_entries)
+    old_host = f"{TEST_BASE_URL}/main"
+    entry = SimpleNamespace(
+        data={CONF_HOST: old_host},
+        unique_id=old_host,
+        title=f"Eveus Charger ({old_host})",
+        version=1,
+    )
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    # The device's identifiers follow the canonicalized host, so the device
+    # (area, custom name, dashboard refs) isn't orphaned on next load.
+    assert _stub_identifier_migration == [(old_host, TEST_HOST)]
+
+
+def test_migrate_entry_no_identifier_migration_when_host_unchanged(
+    _stub_identifier_migration: list[tuple[str, str]],
+) -> None:
+    config_entries = _ConfigEntries()
+    hass = SimpleNamespace(config_entries=config_entries)
+    entry = SimpleNamespace(
+        data={CONF_HOST: TEST_HOST, CONF_SCHEME: "http"},
+        unique_id=TEST_HOST,
+        title=f"Eveus Charger ({TEST_HOST})",
+        version=1,
+    )
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    assert _stub_identifier_migration == []
 
 
 def test_migrate_entry_only_bumps_old_version_when_data_is_current() -> None:

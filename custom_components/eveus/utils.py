@@ -8,8 +8,16 @@ from collections.abc import Hashable
 from typing import Any, Callable, TypeVar, Optional, Dict
 
 from homeassistant.core import State, HomeAssistant
+from homeassistant.util import dt as dt_util
 
-from .const import DEFAULT_SOC_CORRECTION, DOMAIN, SOC_INPUT_LIMITS
+from .const import (
+    DEFAULT_SOC_CORRECTION,
+    DOMAIN,
+    MAX_VALID_SYSTEM_TIME,
+    MAX_VALID_TIMEZONE_H,
+    MIN_VALID_TIMEZONE_H,
+    SOC_INPUT_LIMITS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -173,6 +181,44 @@ def get_safe_value(
 # =============================================================================
 
 
+def get_charger_wall_clock_seconds(data: Any) -> Optional[int]:
+    """Return the charger's wall clock from a /main payload, validated.
+
+    ``systemTime`` is the charger's local wall clock encoded as epoch seconds
+    (stored UTC shifted by the ``timeZone`` select). The wall clock — not the
+    decoded UTC — is what schedules and tariff windows run on, so drift checks
+    must compare it against Home Assistant's local wall clock: comparing UTC
+    to UTC cancels the ``timeZone`` select out and goes blind to a wrong
+    timezone or a DST mismatch. Returns None when either field is missing,
+    corrupt, or outside the plausible RTC / timezone windows.
+    """
+    system_time = get_safe_value(data, "systemTime", int)
+    tz_hours = get_safe_value(data, "timeZone", int)
+    if (
+        system_time is None
+        or tz_hours is None
+        or not 0 < system_time <= MAX_VALID_SYSTEM_TIME
+        or not MIN_VALID_TIMEZONE_H <= tz_hours <= MAX_VALID_TIMEZONE_H
+    ):
+        return None
+    return system_time
+
+
+def get_local_utc_offset_seconds() -> int:
+    """Home Assistant's current local UTC offset in seconds (DST-aware)."""
+    offset = dt_util.now().utcoffset()
+    return int(offset.total_seconds()) if offset else 0
+
+
+def get_local_wall_clock_seconds() -> int:
+    """Home Assistant's local wall clock as epoch-style seconds.
+
+    DST-aware: uses HA's configured time zone, so the local offset follows
+    summer/winter transitions automatically.
+    """
+    return int(time.time()) + get_local_utc_offset_seconds()
+
+
 def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
     """Coerce a /main field to a trimmed string or a fallback."""
     # bool is an int subclass; reject it and other non-scalar containers so a
@@ -180,8 +226,27 @@ def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
     # get permanently finalized into device_info.
     if value is None or isinstance(value, (bool, dict, list, tuple, set)):
         return fallback
+    # A non-finite float would otherwise become the literal string "nan"/"inf"
+    # in the device registry.
+    if isinstance(value, float) and not math.isfinite(value):
+        return fallback
     text = str(value).strip()
     return text if len(text) >= min_len else fallback
+
+
+# Strings some firmware builds put in a version field to mean "no value". They
+# must not be persisted into the device registry (or combined into a firmware
+# string like "Unknown (GRM070A-…)" that slips past the "== Unknown" guard).
+_PLACEHOLDER_FIRMWARE = frozenset({"unknown", "unavailable", "n/a", "none"})
+
+
+def _real_firmware(*values: Any) -> str:
+    """First sanitized firmware string that isn't a placeholder, else ``""``."""
+    for value in values:
+        text = _safe_str(value, fallback="")
+        if text and text.lower() not in _PLACEHOLDER_FIRMWARE:
+            return text
+    return ""
 
 
 def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
@@ -191,13 +256,28 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
     those fields are present we surface them in device_info so the Devices
     page shows real device metadata instead of generic strings.
     """
-    firmware = _safe_str(data.get("verFWMain") or data.get("firmware"))
+    # The charger reports two firmware strings and the field names are misleading
+    # on R3.05.x hardware: verFWWifi (e.g. "1PGRW001A-R3.05.5") is the application
+    # /controller board that gets OTA-updated and is what the charger's own update
+    # UI labels as the version "installed to your EVEUS Pro" — so it leads.
+    # verFWMain (e.g. "GRM070A-R3.05.4") is the lower-level module firmware, shown
+    # in parentheses. Both are surfaced so neither is hidden. Each alias is
+    # sanitized independently (a truthy-but-invalid field like verFWMain=true must
+    # not suppress the other); the legacy "firmware" key still backs verFWMain.
+    fw_app = _real_firmware(data.get("verFWWifi"))
+    fw_module = _real_firmware(data.get("verFWMain"), data.get("firmware"))
+    if fw_app and fw_module:
+        firmware = f"{fw_app} ({fw_module})"
+    else:
+        firmware = fw_app or fw_module or "Unknown"
     manufacturer = _safe_str(data.get("manufacturer"), fallback="Eveus")
     model = _safe_str(data.get("model"), fallback="Eveus EV Charger")
-    serial = data.get("serialNum") or data.get("stationId")
     # _safe_str rejects bools/containers so a malformed firmware field can't
-    # become the literal device serial in the registry.
-    serial_str = _safe_str(serial, fallback="") or ""
+    # become the literal device serial in the registry; aliases are sanitized
+    # independently so a corrupt primary doesn't hide a valid stationId.
+    serial_str = _safe_str(data.get("serialNum"), fallback="") or _safe_str(
+        data.get("stationId"), fallback=""
+    )
 
     device_suffix = get_device_display_suffix(device_number)
     device_identifier = get_device_identifier(host, device_number)
@@ -208,8 +288,9 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
         "manufacturer": manufacturer,
         "model": model,
         "sw_version": firmware,
-        # No hw_version: the firmware exposes no hardware-revision field.
-        # verFWWifi is Wi-Fi module firmware and is surfaced in diagnostics only.
+        # No hw_version: the firmware exposes no hardware-revision field. Both
+        # firmware strings (verFWWifi app board + verFWMain module) are folded
+        # into sw_version above; the full raw payload is still in diagnostics.
         "configuration_url": f"{scheme}://{host}",
     }
     if serial_str:

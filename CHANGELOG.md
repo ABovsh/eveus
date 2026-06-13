@@ -1,5 +1,29 @@
 # Changelog
 
+## 4.14.0 - 2026-06-13
+
+### ⚠️ Breaking
+- **System Time sensor replaced by `sensor.eveus_ev_charger_time_drift`** (thanks to @ababak). The old clock sensor wrote a recorder row every poll (~3,000/day); **Time Drift** shows only how many seconds the charger clock is off from Home Assistant's (`0 s` = in sync) and records a change only when it really drifts — a handful of rows a month. It ignores differences under ~30 s so the value can't flicker, and compares wall clocks so a wrong **Time Zone**/DST shows as a steady one-hour drift. The old entity is removed automatically; swap any dashboard card for the new one (bundled YAMLs updated).
+
+### 🔧 Changed
+- **The device page shows both firmware versions the charger reports again.** The **Firmware** field leads with the version the EVEUS / Grizzl-E app shows as installed (e.g. `1PGRW001A-R3.05.5`) and adds the charger's second firmware string in parentheses (e.g. `GRM070A-R3.05.4`); 4.13 had shown only one. Still updates itself after an over-the-air firmware update.
+- **The drifted-clock warning points at the right fix.** A whole-hour drift raises *"Time Zone appears incorrect"* (use the **Time Zone** select); any other offset points at **Sync Time**, and the message updates if the cause changes. It now compares local clocks, so a wrong Time Zone/DST is detected at all.
+
+### 📊 Dashboard
+- **Charger Clock card replaced by Time Drift** in the English and Ukrainian dashboards.
+
+### 🐛 Fixed
+- **Deleting a charger removes its Repairs notices** instead of leaving them orphaned in Settings → Repairs.
+- **Connection Quality stays readable during an outage** — success rate, latency, and status remain visible instead of going unknown when polls fail.
+- **Charging estimates hold steady through brief outages.** Finish Time, Time to Target SOC, and energy/cost estimates keep their last value during the short post-failure grace window instead of walking later on every failed poll.
+- **Session Active reads unknown in a charger error** instead of a false "off" that could trip session-ended automations.
+- **Re-authenticating preserves a settings change made at the same moment** — only the credentials are updated.
+- **Fixing an address via Repairs keeps the device** — its area, custom name, and dashboard references follow it, as Reconfigure already does.
+- **Force Refresh shows an error** when the charger is unreachable instead of looking successful.
+- **The SOC migration notice works for multi-charger setups** — it points at each charger's device page instead of the first charger's entity IDs.
+- **A charging current below 7 A no longer makes the entities unavailable** — set directly on the charger, the current can drop under the 7 A minimum the web UI and app enforce; the integration used to reject that reading and fail every poll, and now accepts it (only a negative reading is rejected).
+- **Hardened against corrupt charger data** — impossible current readings, corrupt phase counts, malformed firmware/serial/model, and bad saved SOC values can no longer break entities or overwrite real device details.
+
 ## 4.13.0 - 2026-06-10
 
 ### ✨ New

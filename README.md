@@ -5,7 +5,7 @@
 > Full local control and monitoring for Eveus EV chargers: charging controls, current electrical measurements, charging costs, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.13.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.14.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -254,7 +254,7 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 | --- | --- | --- |
 | `sensor.eveus_ev_charger_connection_quality` | % | Recent polling success, latency, and health attributes |
 | `sensor.eveus_ev_charger_ground` | Sensor | Ground status |
-| `sensor.eveus_ev_charger_system_time` | Sensor | Charger internal clock |
+| `sensor.eveus_ev_charger_time_drift` | s | Charger local clock vs Home Assistant local time (0 = in sync; a steady ±3600 means a wrong Time Zone or DST mismatch) |
 | `sensor.eveus_ev_charger_box_temperature` | °C | Charger body temperature |
 | `sensor.eveus_ev_charger_plug_temperature` | °C | Plug temperature |
 | `sensor.eveus_ev_charger_battery_voltage` | V | Charger backup battery voltage |

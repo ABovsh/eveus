@@ -388,7 +388,7 @@ def test_validate_input_rejects_malformed_device_response(payload: object) -> No
     "payload",
     [
         {},
-        {"state": 2, "currentSet": "6"},
+        {"state": 2, "currentSet": "-1"},
         {"state": 2, "currentSet": "not-a-number"},
         {"state": 2, "currentSet": "32"},
     ],
@@ -678,7 +678,10 @@ def test_reauth_step_delegates_to_confirm(monkeypatch: pytest.MonkeyPatch) -> No
     }
 
 
-def test_reauth_flow_aborts_when_host_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reauth_flow_cannot_change_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reauth rebases on live entry data: a validation snapshot reporting a
+    different host can neither change the stored host nor brick the flow."""
+
     async def fake_validate_input(hass, data):
         normalized = normalize_user_input(data)
         normalized[CONF_HOST] = TEST_HOST_ALT
@@ -700,7 +703,11 @@ def test_reauth_flow_aborts_when_host_changes(monkeypatch: pytest.MonkeyPatch) -
     flow.hass = object()
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
-    flow.async_abort = lambda *, reason: {"type": "abort", "reason": reason}
+    captured = {}
+    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
+        "type": "abort",
+        "reason": "reauth_successful",
+    }
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(
@@ -709,7 +716,9 @@ def test_reauth_flow_aborts_when_host_changes(monkeypatch: pytest.MonkeyPatch) -
         )
     )
 
-    assert result == {"type": "abort", "reason": "wrong_device"}
+    assert result["reason"] == "reauth_successful"
+    assert captured["data"][CONF_HOST] == TEST_HOST
+    assert captured["data"][CONF_USERNAME] == TEST_USERNAME
 
 
 @pytest.mark.parametrize(

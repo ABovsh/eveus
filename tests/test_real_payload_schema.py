@@ -75,10 +75,10 @@ def test_state_and_substate_resolve(real_payload) -> None:
     assert sd.get_ground_status(upd, None) in {"Connected", "Not Connected"}
 
 
-def test_session_time_and_system_time(real_payload) -> None:
+def test_session_time_and_time_drift(real_payload) -> None:
     upd = _updater(real_payload)
     assert sd.get_session_time(upd, None) is not None
-    assert sd.get_system_time(upd, None) is not None
+    assert isinstance(sd.get_time_drift(upd, None), int)
 
 
 def test_active_rate_resolves_to_known_slot(real_payload) -> None:
@@ -129,7 +129,7 @@ def test_validate_main_payload_accepts_real_payload(real_payload) -> None:
         ({"state": 2, "currentSet": True}, "Eveus 'currentSet' field is boolean"),
         ({"state": 2, "currentSet": "bad"}, "Eveus 'currentSet' field is not numeric"),
         ({"state": 2, "currentSet": float("inf")}, "Eveus 'currentSet' field is not finite"),
-        ({"state": 2, "currentSet": 6}, "Eveus 'currentSet' field below minimum"),
+        ({"state": 2, "currentSet": -1}, "Eveus 'currentSet' field below minimum"),
         (
             {"state": 2, "currentSet": 17},
             "Eveus 'currentSet' value 17.0 exceeds model maximum 16",

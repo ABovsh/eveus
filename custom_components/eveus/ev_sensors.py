@@ -148,6 +148,15 @@ class BaseEVHelperSensor(EveusSensorBase):
         self._maybe_finalize_device_info()
         previous_available = self.available
         availability_changed = self._update_availability_state()
+        # A FAILED refresh notifies listeners too, with updater.data still
+        # holding the previous payload. Recomputing from it would walk
+        # time-anchored estimates (Charging Finish Time = now + stale
+        # remaining) later on every failed poll, so only availability is
+        # processed until a fresh successful payload arrives.
+        if not self._updater.available or not self._updater.last_update_success:
+            if availability_changed or previous_available != self.available:
+                self.async_write_ha_state()
+            return
         value_changed = self._update_native_value()
         attributes_changed = self._update_extra_state_attributes()
         if availability_changed or previous_available != self.available or value_changed or attributes_changed:

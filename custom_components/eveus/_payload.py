@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-from .const import CHARGING_STATES, MIN_CURRENT, MODEL_MAX_CURRENT
+from .const import CHARGING_STATES, MODEL_MAX_CURRENT
 
 MessageStyle = Literal["network", "config_flow"]
 
@@ -115,10 +115,22 @@ def validate_main_payload(
     # it to a plausible whole-amp value. Mirrors the integer `state` guard above.
     if not current_set.is_integer():
         _raise(message_style, "current_not_integer")
-    if current_set < MIN_CURRENT:
+    # Verified on live hardware (R3.05.2, mid-session): the firmware accepts
+    # setpoints BELOW its advertised minCurrent verbatim (delivery floors at
+    # ~6 A, the IEC 61851 minimum) while clamping over-max values to the
+    # design current. currentSet 1..6 is therefore a legitimate reportable
+    # state — only a negative value is corrupt. Failing the poll here made the
+    # whole device unavailable whenever an external setpoint went below 7 A.
+    if current_set < 0:
         _raise(message_style, "current_below_min")
 
-    max_current = MODEL_MAX_CURRENT.get(model) if model is not None else None
+    # Without a configured model, bound by the largest supported charger so a
+    # corrupt currentSet (e.g. 999) cannot pass as a healthy poll.
+    max_current = (
+        MODEL_MAX_CURRENT.get(model)
+        if model is not None
+        else max(MODEL_MAX_CURRENT.values())
+    )
     if max_current and current_set > max_current:
         _raise(
             message_style,

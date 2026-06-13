@@ -284,6 +284,11 @@ def validate_device_response(
             raise CannotConnect(str(err)) from err
         raise InvalidDevice(str(err)) from err
 
+    # NOTE: the selected model is deliberately NOT validated against the
+    # charger's reported curDesign. The charger enforces its own hardware
+    # current protection internally, so a higher-rated profile cannot make a
+    # 16A unit deliver more than 16A — rejecting the combination would only
+    # block setups over an informational field.
     return {
         "current_set": float(payload["currentSet"]),
         "firmware": payload.get("verFWMain", "Unknown"),
@@ -534,22 +539,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _migrate_device_identifiers(self, entry, old_host: str, new_host: str) -> None:
         """Rewrite host-based device identifiers after an address change."""
-        registry = dr.async_get(self.hass)
-        for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
-            new_identifiers = set()
-            changed = False
-            for domain, ident in device.identifiers:
-                if domain == DOMAIN and ident == old_host:
-                    new_identifiers.add((domain, new_host))
-                    changed = True
-                elif domain == DOMAIN and ident.startswith(f"{old_host}_"):
-                    suffix = ident[len(old_host):]
-                    new_identifiers.add((domain, f"{new_host}{suffix}"))
-                    changed = True
-                else:
-                    new_identifiers.add((domain, ident))
-            if changed:
-                registry.async_update_device(device.id, new_identifiers=new_identifiers)
+        migrate_device_identifiers(self.hass, entry, old_host, new_host)
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -633,7 +623,28 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
 
                 info = await validate_input(self.hass, merged_data)
-                entry_data = _merge_entry_data(entry.data, info["data"])
+
+                # A concurrent reconfigure may have changed the connection
+                # details while validation was in flight; the credentials were
+                # then only proven against the OLD address. Re-validate once
+                # against the live details before committing.
+                live = dict(entry.data)
+                if live.get(CONF_HOST) != merged_data.get(CONF_HOST) or live.get(
+                    CONF_SCHEME
+                ) != merged_data.get(CONF_SCHEME):
+                    merged_data = live
+                    merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
+                    merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                    merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
+                    info = await validate_input(self.hass, merged_data)
+
+                # Rebase on LIVE entry data and replace only the credentials:
+                # validate_input ran against a pre-await snapshot, so adopting
+                # its full payload would roll back any options/reconfigure
+                # change committed while the network validation was in flight.
+                entry_data = dict(entry.data)
+                entry_data[CONF_USERNAME] = merged_data[CONF_USERNAME]
+                entry_data[CONF_PASSWORD] = merged_data[CONF_PASSWORD]
 
                 await self.async_set_unique_id(entry_data[CONF_HOST])
                 if entry.unique_id != entry_data[CONF_HOST]:
@@ -742,3 +753,28 @@ class EveusOptionsFlow(OptionsFlow):
         """Persist the updated entry data and finish the flow."""
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
         return self.async_create_entry(title="", data={})
+
+
+def migrate_device_identifiers(hass, entry, old_host: str, new_host: str) -> None:
+    """Rewrite host-based device identifiers after an address change.
+
+    Shared by the reconfigure flow and the invalid-config repair flow so a
+    host change never orphans the device (its area, custom name, and
+    dashboard references follow the charger to the new address).
+    """
+    registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+        new_identifiers = set()
+        changed = False
+        for domain, ident in device.identifiers:
+            if domain == DOMAIN and ident == old_host:
+                new_identifiers.add((domain, new_host))
+                changed = True
+            elif domain == DOMAIN and ident.startswith(f"{old_host}_"):
+                suffix = ident[len(old_host):]
+                new_identifiers.add((domain, f"{new_host}{suffix}"))
+                changed = True
+            else:
+                new_identifiers.add((domain, ident))
+        if changed:
+            registry.async_update_device(device.id, new_identifiers=new_identifiers)

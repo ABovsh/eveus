@@ -18,7 +18,9 @@ class TestDeviceFirmwareMetadata:
             {"verFWMain": "GRM070A-R3.05.2", "verFWWifi": "1PGRW001A-R3.05.2"},
         )
         assert "hw_version" not in info
-        assert info["sw_version"] == "GRM070A-R3.05.2"
+        # Both firmware strings are folded into sw_version, app board (verFWWifi)
+        # leading; neither is exposed as a hardware revision.
+        assert info["sw_version"] == "1PGRW001A-R3.05.2 (GRM070A-R3.05.2)"
 
     def test_device_info_omits_hw_version_even_with_legacy_hardware_key(self):
         info = utils.get_device_info(TEST_HOST, {"verFWMain": "x1", "hardware": "h1"})
@@ -30,6 +32,18 @@ class TestDeviceFirmwareMetadata:
 # =============================================================================
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _ha_local_clock_utc_plus_3():
+    """Clock-drift maths compare wall clocks; pin HA's local offset to +3."""
+    from datetime import timedelta, timezone as _tz
+    from homeassistant.util import dt as dt_util
+
+    original = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(_tz(timedelta(hours=3)))
+    yield
+    dt_util.set_default_time_zone(original)
 
 from conftest import EV_HELPERS, EveusTestUpdater
 from custom_components.eveus.ev_sensors import (

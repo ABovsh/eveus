@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import math
 from typing import Any, Callable, Dict, Final, Optional
-from datetime import datetime, timezone
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -21,6 +21,7 @@ from homeassistant.const import (
     UnitOfEnergy,
     UnitOfPower,
     UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
@@ -41,8 +42,16 @@ from .const import (
     MIN_VALID_TEMPERATURE_C,
     MAX_VALID_TEMPERATURE_C,
     MAX_VALID_LEAKAGE_CURRENT_MA,
+    TIME_DRIFT_TOLERANCE_SECONDS,
+    TIME_DRIFT_QUANTUM_SECONDS,
 )
-from .utils import RateLog, get_safe_value, format_duration
+from .utils import (
+    RateLog,
+    format_duration,
+    get_charger_wall_clock_seconds,
+    get_local_wall_clock_seconds,
+    get_safe_value,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ERROR_LOG_KEYS = 64
@@ -53,8 +62,6 @@ ICON_CURRENCY_UAH = "mdi:currency-uah"
 UNIT_UAH_PER_KWH = "₴/kWh"
 UNIT_UAH = "UAH"
 _MAX_MODEL_CURRENT = max(MODEL_MAX_CURRENT.values())
-# Upper sanity bound for the charger clock (epoch seconds at year 2100).
-_MAX_SYSTEM_TIME = 4102444800
 # Upper sanity ceilings for live telemetry. Real readings sit far below these;
 # the bounds exist only to reject corrupt payload outliers (e.g. powerMeas
 # 999999) before they reach HA long-term statistics. Generous on purpose.
@@ -110,6 +117,9 @@ class SensorSpec:
     category: Optional[EntityCategory] = None
     attributes_fn: Optional[Callable] = None
     tracks_reset: bool = False
+    # Sensors whose value DESCRIBES connectivity must stay readable while the
+    # poll is failing — that is exactly when their data matters.
+    available_when_offline: bool = False
 
     def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
         """Create sensor instance from specification."""
@@ -142,13 +152,20 @@ class OptimizedEveusSensor(EveusSensorBase):
             self._attr_entity_category = spec.category
         self._attr_extra_state_attributes = {}
 
+    @property
+    def available(self) -> bool:
+        """Connectivity-describing sensors stay available while polls fail."""
+        if self._spec.available_when_offline:
+            return True
+        return super().available
+
     def _should_log_error(self, function_name: str) -> bool:
         """Check if we should log errors for a function (rate limited)."""
         return self._error_log.should_log(ERROR_LOG_RATE_LIMIT, function_name)
 
     def _get_sensor_value(self) -> Any:
         """Return computed sensor value from coordinator data."""
-        if not self._updater.available:
+        if not self._updater.available and not self._spec.available_when_offline:
             return None
 
         try:
@@ -165,7 +182,12 @@ class OptimizedEveusSensor(EveusSensorBase):
         previous_attrs = self._attr_extra_state_attributes
         attrs: Dict[str, Any] = {}
         try:
-            if self._updater.available:
+            # Offline-capable sensors (Connection Quality) still compute their
+            # attributes while polls fail: the success-rate/latency/status come
+            # from the rolling connectivity metric, which is exactly what the
+            # user needs to see during an outage. The attribute function itself
+            # drops any stale payload-derived field (e.g. RSSI) when offline.
+            if self._updater.available or self._spec.available_when_offline:
                 attrs = self._spec.attributes_fn(self._updater, self.hass)
         except Exception as err:
             if self._should_log_error(f"attributes_{self._spec.key}"):
@@ -418,26 +440,40 @@ def get_session_time_attrs(updater, hass) -> dict:
     return {"duration_seconds": seconds}
 
 
-def get_system_time(updater, hass) -> Optional[str]:
-    """Get system time with timezone correction."""
+def get_time_drift(updater, hass) -> Optional[int]:
+    """Charger wall clock minus HA local wall clock, in seconds (0 = in sync).
+
+    Replaces the old System Time clock readout: a ticking clock changes state
+    on every poll and floods the recorder, while the drift is the only part
+    that carries diagnostic value (it pairs with the Sync Time button and the
+    Time Zone select). Wall clocks are compared — not UTC — so a wrong Time
+    Zone select or a DST mismatch shows up as a whole-hour drift instead of
+    being cancelled out. Drift within TIME_DRIFT_TOLERANCE_SECONDS reads as
+    exactly 0; larger drifts snap to a TIME_DRIFT_QUANTUM_SECONDS grid. The
+    last reported value is kept on the updater as hysteresis: a raw drift
+    hovering at a band boundary (e.g. 5 <-> 6 s) would otherwise alternate
+    between adjacent grid values on every poll, recreating the recorder
+    flooding this sensor exists to avoid.
+    """
     try:
-        timestamp = _get_data_value(updater, "systemTime", int)
-        if timestamp is None:
+        charger_wall = get_charger_wall_clock_seconds(updater.data)
+        if charger_wall is None:
             return None
-
-        # Reject obviously corrupt clock values (negative or far-future) so a
-        # bad RTC reading is reported as unknown instead of a plausible time.
-        if timestamp < 0 or timestamp > _MAX_SYSTEM_TIME:
-            return None
-
-        # The charger reports systemTime as a local wall-clock value encoded in
-        # epoch seconds. Applying HA's timezone here shifts the displayed clock
-        # by the local UTC offset, so format the encoded clock directly.
-        return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%H:%M")
-
+        drift = charger_wall - get_local_wall_clock_seconds()
+        last = getattr(updater, "_time_drift_last_report", None)
+        if last is not None and abs(drift - last) <= TIME_DRIFT_QUANTUM_SECONDS:
+            return last
+        if abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS:
+            value = 0
+        else:
+            value = (
+                round(drift / TIME_DRIFT_QUANTUM_SECONDS) * TIME_DRIFT_QUANTUM_SECONDS
+            )
+        updater._time_drift_last_report = value
+        return value
     except Exception as err:
-        if _should_log_error("get_system_time"):
-            _LOGGER.debug("Error getting system time: %s", err, exc_info=True)
+        if _should_log_error("get_time_drift"):
+            _LOGGER.debug("Error getting time drift: %s", err, exc_info=True)
         return None
 
 
@@ -561,8 +597,10 @@ def get_connection_attrs(updater, hass) -> dict:
     Connection Quality — surfacing both in one view makes diagnosis faster.
     """
     try:
-        if not updater.available:
-            return {}
+        # No early-return when offline: success rate, latency, and status come
+        # from the rolling poll metric (updated on failed polls too), so they
+        # stay meaningful during an outage — that's when they matter most. Only
+        # wifi_rssi is payload-derived and goes stale offline, so it is dropped.
         metrics = updater.connection_quality
         success_rate = metrics.get("success_rate", 100)
         latency_avg = max(0.0, metrics.get("latency_avg", 0.0))
@@ -581,9 +619,10 @@ def get_connection_attrs(updater, hass) -> dict:
             "latency_avg": round(latency_avg * 2) / 2,
             "status": status,
         }
-        rssi = get_wifi_rssi(updater, hass)
-        if rssi is not None:
-            attrs["wifi_rssi"] = rssi
+        if updater.available:
+            rssi = get_wifi_rssi(updater, hass)
+            if rssi is not None:
+                attrs["wifi_rssi"] = rssi
         return attrs
     except Exception as err:
         if _should_log_error("get_connection_attrs"):
@@ -696,8 +735,9 @@ def create_sensor_specifications(
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
-            key="system_time", name="System Time", value_fn=get_system_time,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:clock-outline",
+            key="time_drift", name="Time Drift", value_fn=get_time_drift,
+            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:clock-alert-outline",
+            unit=UnitOfTime.SECONDS,
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
@@ -889,6 +929,7 @@ def create_sensor_specifications(
         ),
         SensorSpec(
             key="connection_quality", name="Connection Quality",
+            available_when_offline=True,
             value_fn=get_connection_quality,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:connection",
             state_class=SensorStateClass.MEASUREMENT, unit=PERCENTAGE, precision=0,

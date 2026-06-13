@@ -131,7 +131,10 @@ def test_prune_removes_soc_and_phase_orphans_when_reduced(monkeypatch) -> None:
 def test_prune_keeps_everything_in_advanced_three_phase(monkeypatch) -> None:
     from custom_components import eveus
 
-    assert _prune(monkeypatch, 1, eveus.SOC_MODE_ADVANCED, 3) == []
+    # Only retired entities go — no mode/phase-scoped entity is pruned.
+    assert _prune(monkeypatch, 1, eveus.SOC_MODE_ADVANCED, 3) == [
+        "sensor.eveus_system_time"
+    ]
 
 
 def test_prune_respects_device_suffix_and_keeps_phases_when_three(monkeypatch) -> None:

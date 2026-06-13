@@ -143,13 +143,15 @@ def test_schedule_current_limit_dropped_when_above_model_max() -> None:
 # F19 — corrupt charger clock is reported as unknown
 # ---------------------------------------------------------------------------
 
-def test_system_time_rejects_negative() -> None:
-    assert sd.get_system_time(EveusTestUpdater({"systemTime": -1}), None) is None
+def test_time_drift_rejects_negative_clock() -> None:
+    assert sd.get_time_drift(
+        EveusTestUpdater({"systemTime": -1, "timeZone": 3}), None
+    ) is None
 
 
-def test_system_time_rejects_far_future() -> None:
-    assert sd.get_system_time(
-        EveusTestUpdater({"systemTime": sd._MAX_SYSTEM_TIME + 1}), None
+def test_time_drift_rejects_far_future_clock() -> None:
+    assert sd.get_time_drift(
+        EveusTestUpdater({"systemTime": 99999999999, "timeZone": 3}), None
     ) is None
 
 

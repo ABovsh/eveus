@@ -90,11 +90,21 @@ CLOCK_DRIFT_CLEAR_POLLS: Final[int] = 2
 # threshold — to count toward clearing, so a clock hovering at nine minutes
 # wrong can't silently dismiss the warning. A real fix (Sync Time) lands ~0.
 CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS: Final[int] = 120
-# Sanity window for the charger RTC (matches the System Time sensor's bound).
+# A drift within this distance of a non-zero whole hour is classified as a
+# wrong Time Zone select / DST mismatch (the RTC may be slightly off on top),
+# selecting the timezone-specific repair message instead of the sync one.
+CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS: Final[int] = 300
+# Sanity window for the charger RTC (shared by the Time Drift sensor and the
+# clock-drift Repairs notice via get_charger_utc_seconds).
 MAX_VALID_SYSTEM_TIME: Final[int] = 4102444800
 # Plausible charger timeZone offsets, hours.
 MIN_VALID_TIMEZONE_H: Final[int] = -12
 MAX_VALID_TIMEZONE_H: Final[int] = 14
+# Time Drift sensor banding: drift within the tolerance reads as exactly 0 and
+# larger drifts snap to a coarse grid, so a second or two of poll-timing jitter
+# never produces a new recorded state in the HA database.
+TIME_DRIFT_TOLERANCE_SECONDS: Final[int] = 5
+TIME_DRIFT_QUANTUM_SECONDS: Final[int] = 30
 
 # Current limits
 MIN_CURRENT: Final[int] = 7

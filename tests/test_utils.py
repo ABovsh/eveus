@@ -58,6 +58,41 @@ def test_get_device_info_is_backward_compatible_for_first_device() -> None:
     assert info["configuration_url"] == TEST_BASE_URL
 
 
+def test_get_device_info_shows_both_firmwares_app_leading() -> None:
+    # The charger's own update UI labels verFWWifi (e.g. 1PGRW001A-R3.05.5) as the
+    # version "installed to your EVEUS Pro" — it must lead. verFWMain (GRM070A-...)
+    # is the module firmware and is shown in parentheses. Trailing whitespace the
+    # firmware emits on verFWMain must be trimmed.
+    info = utils.get_device_info(
+        TEST_HOST,
+        {"verFWWifi": "1PGRW001A-R3.05.5", "verFWMain": "GRM070A-R3.05.4 "},
+    )
+    assert info["sw_version"] == "1PGRW001A-R3.05.5 (GRM070A-R3.05.4)"
+
+
+def test_get_device_info_ignores_placeholder_firmware() -> None:
+    # A literal placeholder ("Unknown"/"unavailable"/...) in one field must not
+    # leak into the combined string and slip past the "== Unknown" finalize guard.
+    one_bad = utils.get_device_info(
+        TEST_HOST, {"verFWWifi": "Unknown", "verFWMain": "GRM070A-R3.05.4"}
+    )
+    assert one_bad["sw_version"] == "GRM070A-R3.05.4"
+    # Both placeholders collapse to "Unknown" (which the finalize guard rejects).
+    both_bad = utils.get_device_info(
+        TEST_HOST, {"verFWWifi": "unavailable", "verFWMain": "n/a"}
+    )
+    assert both_bad["sw_version"] == "Unknown"
+
+
+def test_get_device_info_firmware_falls_back_to_single_field() -> None:
+    # Only the app firmware present -> shown alone (no empty parentheses).
+    app_only = utils.get_device_info(TEST_HOST, {"verFWWifi": "1PGRW001A-R3.05.5"})
+    assert app_only["sw_version"] == "1PGRW001A-R3.05.5"
+    # Only the module firmware present -> shown alone (older firmware).
+    module_only = utils.get_device_info(TEST_HOST, {"verFWMain": "GRM070A-R3.05.4"})
+    assert module_only["sw_version"] == "GRM070A-R3.05.4"
+
+
 def test_get_device_info_suffixes_additional_devices() -> None:
     info = utils.get_device_info("charger.local", {}, device_number=2)
 
@@ -73,7 +108,7 @@ def test_get_device_info_handles_non_string_versions() -> None:
         {"verFWMain": 303, "verFWWifi": 12},
     )
 
-    assert info["sw_version"] == "303"
+    assert info["sw_version"] == "12 (303)"
     assert "hw_version" not in info
 
 

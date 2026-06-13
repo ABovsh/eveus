@@ -115,9 +115,9 @@ sections:
           - entity: select.eveus_ev_charger_time_zone
             name: Часовий пояс
             icon: mdi:earth
-          - entity: sensor.eveus_ev_charger_system_time
-            name: Годинник станції
-            icon: mdi:clock-outline
+          - entity: sensor.eveus_ev_charger_time_drift
+            name: Зміщення часу
+            icon: mdi:clock-alert-outline
           - entity: button.eveus_ev_charger_sync_time
             name: Синхронізувати з HA
             icon: mdi:clock-check-outline

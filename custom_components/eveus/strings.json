@@ -142,8 +142,8 @@
       "ground": {
         "name": "Ground"
       },
-      "system_time": {
-        "name": "System Time"
+      "time_drift": {
+        "name": "Time Drift"
       },
       "box_temperature": {
         "name": "Box Temperature"
@@ -344,7 +344,7 @@
     },
     "soc_dashboard_update": {
       "title": "Eveus: update SOC cards and automations to use native SOC entities",
-      "description": "The Eveus integration now creates SOC input entities automatically for your charger.\n\nThese native entities replace the old manually created `input_number.ev_*` helpers. Existing values are copied automatically, so you do not need to enter them again.\n\nUpdate any dashboard cards, automations, scripts, or templates that still use the old helper entities.\n\nReplace this old prefix:\n\n`input_number.ev_`\n\nwith this new Eveus integration prefix:\n\n`number.eveus_ev_charger_`\n\nThis updates all four SOC inputs:\n\n`input_number.ev_initial_soc` → `number.eveus_ev_charger_initial_soc`\n\n`input_number.ev_target_soc` → `number.eveus_ev_charger_target_soc`\n\n`input_number.ev_battery_capacity` → `number.eveus_ev_charger_battery_capacity`\n\n`input_number.ev_soc_correction` → `number.eveus_ev_charger_soc_correction`\n\nThe Eveus integration does not delete or modify your old `input_number.ev_*` helpers.\n\nAfter you update all dashboards, automations, scripts, and templates to the new `number.eveus_ev_charger_*` entities, you can delete the old helpers if you no longer need them."
+      "description": "The Eveus integration now creates SOC input entities automatically for your charger.\n\nThese native entities replace the old manually created `input_number.ev_*` helpers. Existing values are copied automatically, so you do not need to enter them again.\n\nUpdate any dashboard cards, automations, scripts, or templates that still use the old helper entities: open your Eveus charger's device page (Settings → Devices & Services → Eveus → your charger) and use its four SOC number entities — **Initial SOC**, **Target SOC**, **Battery Capacity**, and **SOC Correction** — in place of the old `input_number.ev_*` ones. With several chargers, each device page lists its own four entities; pick them from the charger the card or automation belongs to.\n\nOnce nothing references the old helpers anymore, you can delete them in Settings → Devices & Services → Helpers."
     },
     "ocpp_enabled": {
       "title": "Eveus: OCPP is enabled, Home Assistant control may be limited",
@@ -412,7 +412,15 @@
     },
     "clock_drift": {
       "title": "Eveus: charger clock is off by more than 10 minutes",
-      "description": "The clock inside your Eveus charger differs from Home Assistant by more than 10 minutes.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Check that the **Time Zone** select for your Eveus charger matches your local time zone.\n- Press the **Sync Time** button for your Eveus charger to set its clock from Home Assistant.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again."
+      "description": "The clock inside your Eveus charger differs from Home Assistant by more than 10 minutes — see the **Time Drift** sensor for the exact offset in seconds.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Press the **Sync Time** button for your Eveus charger to set its clock from Home Assistant.\n- If the drift comes back, check that the **Time Zone** select matches your local time zone.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
+    },
+    "clock_drift_timezone": {
+      "title": "Eveus: charger Time Zone appears incorrect",
+      "description": "The clock inside your Eveus charger is off from Home Assistant by almost exactly {hours} hour(s) — see the **Time Drift** sensor for the precise offset. A whole-hour drift almost always means the charger's **Time Zone** select is wrong, for example after a daylight-saving change, which the charger's fixed offset does not follow. Pressing **Sync Time** alone will not fix this.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Set the **Time Zone** select for your Eveus charger to match your current local time zone.\n- If a small drift remains afterwards, press the **Sync Time** button.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
+    },
+    "clock_drift_fractional_timezone": {
+      "title": "Eveus: your time zone cannot be matched by the charger",
+      "description": "Your Home Assistant time zone uses an offset with a fraction of an hour (for example +5:30), but the charger's **Time Zone** select only supports whole hours. The closest possible setting leaves the charger's clock off by that fraction — see the **Time Drift** sensor for the exact offset.\n\nNeither the **Sync Time** button nor the **Time Zone** select can remove this difference; it is a limitation of the charger firmware.\n\nWhat to do:\n\n- Keep the **Time Zone** select on the closest whole-hour offset.\n- If you use the charger's built-in charging schedules or tariff windows, shift their times by the remaining fraction so they fire when you expect.\n\nThis notice stays as a reminder while the mismatch exists."
     }
   }
 }
