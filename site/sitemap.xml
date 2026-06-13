@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://abovsh.github.io/eveus/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://abovsh.github.io/eveus/"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://abovsh.github.io/eveus/uk/"/>
+  </url>
+  <url>
+    <loc>https://abovsh.github.io/eveus/uk/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://abovsh.github.io/eveus/"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://abovsh.github.io/eveus/uk/"/>
+  </url>
+</urlset>

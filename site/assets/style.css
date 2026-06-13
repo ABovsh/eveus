@@ -1,0 +1,183 @@
+:root {
+  color-scheme: dark;
+  --bg: #07111f;
+  --panel: #102238;
+  --panel-soft: #0b1a2c;
+  --text: #eef7ff;
+  --muted: #a8bdd0;
+  --accent: #53d5a7;
+  --accent-dark: #06241c;
+  --line: #27415a;
+  --max: 1120px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 82% 0%, #17496a 0, transparent 32rem),
+    linear-gradient(160deg, var(--bg), #091827 48%, #07111f);
+  color: var(--text);
+  font: 17px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+
+a:focus-visible,
+.button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 4px;
+}
+
+.wrap {
+  width: min(calc(100% - 2rem), var(--max));
+  margin-inline: auto;
+}
+
+header {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.brand {
+  color: var(--text);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.language {
+  font-size: 0.95rem;
+}
+
+.hero {
+  padding: 6rem 0 4rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.15;
+}
+
+h1 {
+  max-width: 860px;
+  margin: 0;
+  font-size: clamp(2.7rem, 8vw, 5.7rem);
+  letter-spacing: -0.055em;
+}
+
+.lead {
+  max-width: 760px;
+  margin: 1.5rem 0 0;
+  color: var(--muted);
+  font-size: clamp(1.1rem, 2vw, 1.35rem);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 2rem;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.72rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.55rem;
+  color: var(--accent);
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.button.primary {
+  background: var(--accent);
+  color: var(--accent-dark);
+}
+
+section {
+  padding: 2rem 0 4rem;
+}
+
+h2 {
+  margin-top: 0;
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  letter-spacing: -0.035em;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.card,
+.install {
+  padding: 1.35rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: linear-gradient(145deg, var(--panel), var(--panel-soft));
+}
+
+.card h3 {
+  margin-top: 0;
+}
+
+.card p,
+.note,
+footer {
+  color: var(--muted);
+}
+
+.install {
+  max-width: 800px;
+}
+
+ol {
+  padding-left: 1.35rem;
+}
+
+code {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+footer {
+  padding: 2rem 0 3rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.95rem;
+}
+
+@media (max-width: 760px) {
+  .hero {
+    padding-top: 4rem;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

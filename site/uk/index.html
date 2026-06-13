@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eveus для Home Assistant | Локальне керування зарядною станцією через HACS</title>
+  <meta name="description" content="Eveus EV Charger — локальна інтеграція зарядної станції Eveus із Home Assistant через HACS: керування заряджанням, енергія, вартість, розклади та сповіщення безпеки.">
+  <link rel="canonical" href="https://abovsh.github.io/eveus/uk/">
+  <link rel="alternate" hreflang="en" href="https://abovsh.github.io/eveus/">
+  <link rel="alternate" hreflang="uk" href="https://abovsh.github.io/eveus/uk/">
+  <link rel="alternate" hreflang="x-default" href="https://abovsh.github.io/eveus/">
+  <link rel="stylesheet" href="../assets/style.css">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Eveus EV Charger для Home Assistant">
+  <meta property="og:description" content="Локальне керування та моніторинг зарядної станції Eveus у Home Assistant через HACS.">
+  <meta property="og:url" content="https://abovsh.github.io/eveus/uk/">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Eveus EV Charger для Home Assistant",
+    "applicationCategory": "HomeAutomationApplication",
+    "operatingSystem": "Home Assistant",
+    "description": "Локальна інтеграція зарядних станцій Eveus із Home Assistant, доступна через HACS.",
+    "softwareVersion": "4.13.0",
+    "url": "https://abovsh.github.io/eveus/uk/",
+    "downloadUrl": "https://github.com/ABovsh/eveus/releases/latest",
+    "codeRepository": "https://github.com/ABovsh/eveus",
+    "license": "https://github.com/ABovsh/eveus/blob/main/LICENSE"
+  }
+  </script>
+</head>
+<body>
+  <header>
+    <nav class="wrap" aria-label="Основна навігація">
+      <a class="brand" href="./">Eveus + Home Assistant</a>
+      <a class="language" href="../" lang="en">English</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero wrap">
+      <p class="eyebrow">Локальна інтеграція Home Assistant</p>
+      <h1>Керуйте зарядною станцією Eveus із Home Assistant.</h1>
+      <p class="lead">Eveus EV Charger підключає Home Assistant безпосередньо до зарядної станції через локальну мережу. Встановіть інтеграцію через HACS, щоб керувати заряджанням, відстежувати потужність і вартість, налаштовувати розклади, оцінювати заряд батареї авто та отримувати сповіщення безпеки.</p>
+      <div class="actions">
+        <a class="button primary" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&amp;repository=eveus&amp;category=integration">Додати до HACS</a>
+        <a class="button" href="https://github.com/ABovsh/eveus">GitHub</a>
+        <a class="button" href="https://github.com/ABovsh/eveus/releases/latest">Останній реліз</a>
+      </div>
+    </section>
+
+    <section class="wrap" id="features">
+      <h2>Усе необхідне для автоматизації заряджання</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>Локальне керування</h3>
+          <p>Керуйте струмом, зупинкою заряджання, розкладами, адаптивним режимом, захистом заземлення та OCPP без хмарного сервісу.</p>
+        </article>
+        <article class="card">
+          <h3>Енергія та вартість</h3>
+          <p>Використовуйте в Home Assistant напругу, струм, потужність, енергію сесії, загальний лічильник, тарифи та вартість від самої станції.</p>
+        </article>
+        <article class="card">
+          <h3>SOC та час завершення</h3>
+          <p>Оцінюйте заряд батареї авто, час до цілі, час завершення, потрібну енергію та очікувану вартість заряджання.</p>
+        </article>
+        <article class="card">
+          <h3>Сповіщення безпеки</h3>
+          <p>Home Assistant Repairs повідомляє про відсутність заземлення, перегрів, витік струму, несправності та низький заряд резервної батарейки.</p>
+        </article>
+        <article class="card">
+          <h3>Стабільність у реальній мережі</h3>
+          <p>Адаптивне опитування, коректна робота офлайн, підтвердження команд, повторна автентифікація та безпечна діагностика.</p>
+        </article>
+        <article class="card">
+          <h3>Українська та англійська</h3>
+          <p>Інтеграція має український та англійський інтерфейс і підтримує кілька зарядних станцій в одному Home Assistant.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="wrap" id="install">
+      <h2>Встановлення Eveus через HACS</h2>
+      <div class="install">
+        <ol>
+          <li>У HACS додайте <code>https://github.com/ABovsh/eveus</code> як користувацький репозиторій типу Integration.</li>
+          <li>Встановіть <strong>Eveus EV Charger</strong> і перезапустіть Home Assistant.</li>
+          <li>Відкрийте Налаштування, Пристрої та служби, Додати інтеграцію та знайдіть <strong>Eveus EV Charger</strong>.</li>
+          <li>Введіть адресу й облікові дані станції, виберіть модель і режим інтеграції.</li>
+        </ol>
+        <p class="note">Підтримуються моделі Eveus 16A, 32A та 48A, доступні для Home Assistant через локальну мережу.</p>
+        <div class="actions">
+          <a class="button primary" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&amp;repository=eveus&amp;category=integration">Відкрити репозиторій у HACS</a>
+          <a class="button" href="https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628">Обговорення</a>
+          <a class="button" href="https://github.com/ABovsh/eveus/issues">Підтримка та помилки</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">Eveus EV Charger — відкрита спільнотна інтеграція для Home Assistant. Це не офіційний проєкт Eveus або Home Assistant.</div>
+  </footer>
+</body>
+</html>
