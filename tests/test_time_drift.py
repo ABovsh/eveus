@@ -80,8 +80,8 @@ def test_time_drift_reports_signed_drift() -> None:
 
 
 def test_time_drift_quantizes_to_suppress_poll_jitter() -> None:
-    # Beyond the tolerance band values snap to a 10 s grid so that ±1-2 s of
-    # poll-timing noise never produces a new recorded state.
+    # Beyond the tolerance band values snap to a 30 s grid so that a handful of
+    # seconds of poll-timing noise never produces a new recorded state.
     assert sd.get_time_drift(_updater(123), None) == 120
     assert sd.get_time_drift(_updater(-123), None) == -120
 
@@ -166,9 +166,9 @@ def test_time_drift_boundary_jitter_does_not_flap(monkeypatch) -> None:
 
 
 def test_time_drift_quantization_boundary_does_not_flap() -> None:
-    updater = _updater(14)
+    updater = _updater(44)
     first = sd.get_time_drift(updater, None)
-    for offset in (15, 14, 15):
+    for offset in (45, 44, 45):
         _set_offset(updater, offset)
         assert sd.get_time_drift(updater, None) == first
 

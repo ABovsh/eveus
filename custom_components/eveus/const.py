@@ -104,7 +104,7 @@ MAX_VALID_TIMEZONE_H: Final[int] = 14
 # larger drifts snap to a coarse grid, so a second or two of poll-timing jitter
 # never produces a new recorded state in the HA database.
 TIME_DRIFT_TOLERANCE_SECONDS: Final[int] = 5
-TIME_DRIFT_QUANTUM_SECONDS: Final[int] = 10
+TIME_DRIFT_QUANTUM_SECONDS: Final[int] = 30
 
 # Current limits
 MIN_CURRENT: Final[int] = 7
