@@ -8,7 +8,7 @@
 > сутності для автоматизацій — без допоміжних шаблонних сенсорів.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Версія](https://img.shields.io/badge/version-4.13.0-blue?style=for-the-badge)
+![Версія](https://img.shields.io/badge/version-4.14.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 - Документація: <https://abovsh.github.io/eveus/uk/>
@@ -313,7 +313,7 @@ Home Assistant може додати суфікс. Унікальні ідент
 | --- | --- | --- |
 | `sensor.eveus_ev_charger_connection_quality` | % | **Якість з'єднання** |
 | `sensor.eveus_ev_charger_ground` | — | **Заземлення** |
-| `sensor.eveus_ev_charger_system_time` | — | **Системний час** |
+| `sensor.eveus_ev_charger_time_drift` | с | **Зсув годинника** (годинник зарядки відносно Home Assistant; 0 = синхронізовано, стале ±3600 = неправильний часовий пояс або DST) |
 | `sensor.eveus_ev_charger_box_temperature` | °C | **Температура корпусу** |
 | `sensor.eveus_ev_charger_plug_temperature` | °C | **Температура конектора** |
 | `sensor.eveus_ev_charger_battery_voltage` | В | **Напруга батарейки** |
