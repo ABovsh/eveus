@@ -1,0 +1,39 @@
+name: Leak Guard
+
+# Fails the build if internal / auto-generated docs (planning artifacts,
+# audit findings, superpowers/internal output) ever land in the repo.
+# Runs on every push and PR regardless of which client or agent pushed,
+# so it cannot be bypassed by a local --no-verify or a force-push.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leak-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Block internal / auto-generated docs
+        run: |
+          set -euo pipefail
+          deny='(^|/)(superpowers|internal)/|_PLAN\.md$|_SPEC\.md$|\.plan\.md$|AUDIT_FINDINGS.*\.md$|-assessment-.*\.md$'
+          bad="$(git ls-files | grep -nE "$deny" || true)"
+          if [ -n "$bad" ]; then
+            echo "::error::Internal/auto-generated docs must never be committed to this public repo:"
+            echo "$bad"
+            echo ""
+            echo "Remove them from the repo (and add the path to .gitignore)."
+            exit 1
+          fi
+          echo "Leak guard passed: no internal docs in tree."
