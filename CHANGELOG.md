@@ -6,7 +6,7 @@
 - **System Time sensor replaced by `sensor.eveus_ev_charger_time_drift`** (thanks to @ababak). The old clock sensor wrote a recorder row every poll (~3,000/day); **Time Drift** shows only how many seconds the charger clock is off from Home Assistant's (`0 s` = in sync) and records a change only when it really drifts — a handful of rows a month. It ignores differences under ~30 s so the value can't flicker, and compares wall clocks so a wrong **Time Zone**/DST shows as a steady one-hour drift. The old entity is removed automatically; swap any dashboard card for the new one (bundled YAMLs updated).
 
 ### 🔧 Changed
-- **The device page shows both charger firmware versions again.** The **Firmware** field reads `Wi-Fi (module)` — e.g. `1PGRW001A-R3.05.5 (GRM070A-R3.05.4)` — leading with the version the EVEUS / Grizzl-E app reports; 4.13 had shown only one. Still updates itself after an over-the-air firmware update.
+- **The device page shows both firmware versions the charger reports again.** The **Firmware** field leads with the version the EVEUS / Grizzl-E app shows as installed (e.g. `1PGRW001A-R3.05.5`) and adds the charger's second firmware string in parentheses (e.g. `GRM070A-R3.05.4`); 4.13 had shown only one. Still updates itself after an over-the-air firmware update.
 - **The drifted-clock warning points at the right fix.** A whole-hour drift raises *"Time Zone appears incorrect"* (use the **Time Zone** select); any other offset points at **Sync Time**, and the message updates if the cause changes. It now compares local clocks, so a wrong Time Zone/DST is detected at all.
 
 ### 📊 Dashboard
@@ -21,7 +21,7 @@
 - **Fixing an address via Repairs keeps the device** — its area, custom name, and dashboard references follow it, as Reconfigure already does.
 - **Force Refresh shows an error** when the charger is unreachable instead of looking successful.
 - **The SOC migration notice works for multi-charger setups** — it points at each charger's device page instead of the first charger's entity IDs.
-- **A charging current below 7 A no longer drops the integration offline** — the charger's own sub-minimum setpoints are accepted (only a negative reading is rejected).
+- **A current set below 7 A from the charger's app or OCPP no longer makes the entities unavailable** — Home Assistant keeps a 7 A floor, but the charger can report a lower setpoint set elsewhere; the integration used to reject that reading and fail every poll, and now accepts it (only a negative reading is rejected).
 - **Hardened against corrupt charger data** — impossible current readings, corrupt phase counts, malformed firmware/serial/model, and bad saved SOC values can no longer break entities or overwrite real device details.
 
 ## 4.13.0 - 2026-06-10
