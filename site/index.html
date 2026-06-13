@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Eveus Home Assistant Integration | Local EV Charger Control via HACS</title>
-  <meta name="description" content="Eveus EV Charger is a local Home Assistant integration available through HACS. Control charging, monitor energy and cost, manage schedules, and receive safety notices.">
+  <title>Eveus EV Charger Home Assistant Integration | HACS</title>
+  <meta name="description" content="The Eveus EV Charger integration gives Home Assistant local control and monitoring of Eveus chargers. Install it through HACS to manage charging, schedules, energy, cost, and safety notices.">
   <link rel="canonical" href="https://abovsh.github.io/eveus/">
   <link rel="alternate" hreflang="en" href="https://abovsh.github.io/eveus/">
   <link rel="alternate" hreflang="uk" href="https://abovsh.github.io/eveus/uk/">
@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="assets/style.css">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Eveus EV Charger for Home Assistant">
-  <meta property="og:description" content="Local Eveus EV charger control and monitoring through Home Assistant and HACS.">
+  <meta property="og:description" content="A HACS integration that gives Home Assistant local control and monitoring of Eveus EV chargers.">
   <meta property="og:url" content="https://abovsh.github.io/eveus/">
   <script type="application/ld+json">
   {
@@ -21,7 +21,7 @@
     "name": "Eveus EV Charger for Home Assistant",
     "applicationCategory": "HomeAutomationApplication",
     "operatingSystem": "Home Assistant",
-    "description": "Local Home Assistant integration for Eveus EV chargers, installable through HACS.",
+    "description": "Home Assistant integration that communicates locally with Eveus EV chargers and is installable through HACS.",
     "softwareVersion": "4.13.0",
     "url": "https://abovsh.github.io/eveus/",
     "downloadUrl": "https://github.com/ABovsh/eveus/releases/latest",
@@ -34,7 +34,7 @@
   <header>
     <nav class="wrap" aria-label="Primary navigation">
       <a class="brand" href="./">Eveus + Home Assistant</a>
-      <a class="language" href="uk/" lang="uk">Українська</a>
+      <span class="language"><strong aria-current="page">English</strong> · <a href="uk/" lang="uk">🇺🇦 Українська</a></span>
     </nav>
   </header>
 
@@ -42,9 +42,10 @@
     <section class="hero wrap">
       <p class="eyebrow">Local-only Home Assistant integration</p>
       <h1>Control your Eveus EV charger from Home Assistant.</h1>
-      <p class="lead">Eveus EV Charger connects Home Assistant directly to your charger over the local network. Install it through HACS to control charging, monitor live power and cost, manage schedules, estimate EV battery SOC, and receive actionable safety notices.</p>
+      <p class="lead">The Eveus EV Charger integration runs in Home Assistant and communicates directly with your charger over the local network. Install the integration through HACS to control charging, monitor electrical measurements and charging costs, manage schedules, estimate EV battery SOC in Advanced mode, and receive actionable safety notices.</p>
       <div class="actions">
         <a class="button primary" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&amp;repository=eveus&amp;category=integration">Add to HACS</a>
+        <a class="button" href="https://github.com/ABovsh/eveus#eveus-ev-charger-for-home-assistant">Full documentation</a>
         <a class="button" href="https://github.com/ABovsh/eveus">View on GitHub</a>
         <a class="button" href="https://github.com/ABovsh/eveus/releases/latest">Latest release</a>
       </div>
@@ -55,41 +56,41 @@
       <div class="grid">
         <article class="card">
           <h3>Local control</h3>
-          <p>Control charging current, stopping, schedules, adaptive charging, ground protection, and OCPP without relying on a cloud service.</p>
+          <p>The integration sends charging-current, stop, schedule, adaptive-mode, and ground-protection commands directly to the charger. It also lets you manage the charger's optional OCPP connection.</p>
         </article>
         <article class="card">
           <h3>Energy and cost</h3>
-          <p>Use the charger's live voltage, current, power, session energy, total energy, counters, tariffs, and cost values in Home Assistant.</p>
+          <p>The integration exposes the charger's current voltage, current, and power measurements, along with session energy, total energy, resettable counters, tariffs, and charging costs.</p>
         </article>
         <article class="card">
           <h3>SOC and ETA</h3>
-          <p>Estimate EV battery state of charge, time to target, finish time, energy remaining, and expected charging cost.</p>
+          <p>In Advanced mode, the integration estimates EV battery state of charge, time to target, finish time, remaining grid energy, and expected cost. These values are derived from charger data and your configured battery details.</p>
         </article>
         <article class="card">
           <h3>Safety notices</h3>
-          <p>Surface missing ground, disabled ground protection, overheating, leakage current, charger faults, and low backup battery through Home Assistant Repairs.</p>
+          <p>The integration creates Home Assistant Repairs issues for confirmed missing ground, disabled ground protection, overheating, excessive leakage current, charger faults, and a low internal backup battery.</p>
         </article>
         <article class="card">
           <h3>Real-network resilience</h3>
-          <p>Adaptive polling, quiet offline handling, command confirmation, reauthentication, safe diagnostics, and guided recovery keep state honest.</p>
+          <p>The integration adapts its polling rate, handles powered-off chargers without repeated log noise, confirms commands against charger responses, starts reauthentication when credentials fail, and redacts exported diagnostics.</p>
         </article>
         <article class="card">
           <h3>English and Ukrainian</h3>
-          <p>The integration includes English and Ukrainian UI translations and supports multiple Eveus chargers in one Home Assistant installation.</p>
+          <p>The integration includes English and Ukrainian Home Assistant translations. You can also add multiple Eveus chargers; Home Assistant creates a separate device and entities for each one.</p>
         </article>
       </div>
     </section>
 
     <section class="wrap" id="install">
-      <h2>Install Eveus through HACS</h2>
+      <h2>Install the integration through HACS</h2>
       <div class="install">
         <ol>
           <li>Open HACS and add <code>https://github.com/ABovsh/eveus</code> as a custom Integration repository.</li>
           <li>Install <strong>Eveus EV Charger</strong> and restart Home Assistant.</li>
-          <li>Open Settings, Devices &amp; Services, Add Integration, then search for <strong>Eveus EV Charger</strong>.</li>
-          <li>Enter the charger address and credentials, then choose your charger model and integration mode.</li>
+          <li>Open <strong>Settings → Devices &amp; Services → Add Integration</strong>, then search for <strong>Eveus EV Charger</strong>.</li>
+          <li>Enter the charger address and credentials, then choose the charger model, phase count, and integration mode.</li>
         </ol>
-        <p class="note">Supported chargers: Eveus 16A, 32A, and 48A models reachable from Home Assistant over the local network.</p>
+        <p class="note">Requirements: an Eveus 16A, 32A, or 48A charger whose local HTTP API is reachable from Home Assistant, plus the charger username and password.</p>
         <div class="actions">
           <a class="button primary" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&amp;repository=eveus&amp;category=integration">Open HACS repository</a>
           <a class="button" href="https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628">Community discussion</a>
@@ -100,7 +101,7 @@
   </main>
 
   <footer>
-    <div class="wrap">Eveus EV Charger is an open-source community integration for Home Assistant. It is not an official Eveus or Home Assistant project.</div>
+    <div class="wrap">Eveus EV Charger is an open-source community integration for Home Assistant. It is not an official product of Eveus or the Home Assistant project.</div>
   </footer>
 </body>
 </html>
