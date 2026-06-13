@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.14.0 - 2026-06-13
 
 ### ⚠️ Breaking
 - **System Time sensor replaced by `sensor.eveus_ev_charger_time_drift`** (thanks to @ababak). The old clock sensor wrote a recorder row every poll (~3,000/day); **Time Drift** shows only how many seconds the charger clock is off from Home Assistant's (`0 s` = in sync) and records a change only when it really drifts — a handful of rows a month. It ignores differences under ~30 s so the value can't flicker, and compares wall clocks so a wrong **Time Zone**/DST shows as a steady one-hour drift. The old entity is removed automatically; swap any dashboard card for the new one (bundled YAMLs updated).
