@@ -21,7 +21,7 @@
 - **Fixing an address via Repairs keeps the device** — its area, custom name, and dashboard references follow it, as Reconfigure already does.
 - **Force Refresh shows an error** when the charger is unreachable instead of looking successful.
 - **The SOC migration notice works for multi-charger setups** — it points at each charger's device page instead of the first charger's entity IDs.
-- **A current set below 7 A from the charger's app or OCPP no longer makes the entities unavailable** — Home Assistant keeps a 7 A floor, but the charger can report a lower setpoint set elsewhere; the integration used to reject that reading and fail every poll, and now accepts it (only a negative reading is rejected).
+- **A charging current below 7 A no longer makes the entities unavailable** — set directly on the charger, the current can drop under the 7 A minimum the web UI and app enforce; the integration used to reject that reading and fail every poll, and now accepts it (only a negative reading is rejected).
 - **Hardened against corrupt charger data** — impossible current readings, corrupt phase counts, malformed firmware/serial/model, and bad saved SOC values can no longer break entities or overwrite real device details.
 
 ## 4.13.0 - 2026-06-10
