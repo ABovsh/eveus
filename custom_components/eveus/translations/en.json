@@ -106,6 +106,18 @@
       },
       "soc_correction": {
         "name": "SOC Correction"
+      },
+      "limit_time": {
+        "name": "Limit: Time"
+      },
+      "limit_energy": {
+        "name": "Limit: Energy"
+      },
+      "limit_cost": {
+        "name": "Limit: Cost"
+      },
+      "minimum_voltage": {
+        "name": "Minimum voltage"
       }
     },
     "sensor": {
@@ -274,6 +286,30 @@
       },
       "connect_to_ocpp": {
         "name": "Connect to OCPP"
+      },
+      "limit_disable_all": {
+        "name": "Limit: disable all"
+      },
+      "limit_time_enabled": {
+        "name": "Limit: Time enabled"
+      },
+      "limit_energy_enabled": {
+        "name": "Limit: Energy enabled"
+      },
+      "limit_cost_enabled": {
+        "name": "Limit: Cost enabled"
+      },
+      "schedule_1_current_limit_enabled": {
+        "name": "Schedule 1 Current limit enabled"
+      },
+      "schedule_1_energy_limit_enabled": {
+        "name": "Schedule 1 Energy limit enabled"
+      },
+      "schedule_2_current_limit_enabled": {
+        "name": "Schedule 2 Current limit enabled"
+      },
+      "schedule_2_energy_limit_enabled": {
+        "name": "Schedule 2 Energy limit enabled"
       }
     },
     "button": {

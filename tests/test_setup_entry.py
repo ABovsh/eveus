@@ -620,6 +620,14 @@ def test_switch_setup_creates_control_entities() -> None:
         "Schedule 2 Enabled",
         "Ground Protection",
         "Connect to OCPP",
+        "Limit: disable all",
+        "Limit: Time enabled",
+        "Limit: Energy enabled",
+        "Limit: Cost enabled",
+        "Schedule 1 Current limit enabled",
+        "Schedule 1 Energy limit enabled",
+        "Schedule 2 Current limit enabled",
+        "Schedule 2 Energy limit enabled",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_stop_charging",
@@ -629,6 +637,14 @@ def test_switch_setup_creates_control_entities() -> None:
         "eveus2_schedule_2_enabled",
         "eveus2_ground_protection",
         "eveus2_connect_to_ocpp",
+        "eveus2_limit_disable_all",
+        "eveus2_limit_time_enabled",
+        "eveus2_limit_energy_enabled",
+        "eveus2_limit_cost_enabled",
+        "eveus2_schedule_1_current_limit_enabled",
+        "eveus2_schedule_1_energy_limit_enabled",
+        "eveus2_schedule_2_current_limit_enabled",
+        "eveus2_schedule_2_energy_limit_enabled",
     }
 
 

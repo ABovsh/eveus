@@ -106,6 +106,18 @@
       },
       "soc_correction": {
         "name": "Корекція SOC"
+      },
+      "limit_time": {
+        "name": "Ліміт: Час"
+      },
+      "limit_energy": {
+        "name": "Ліміт: Енергія"
+      },
+      "limit_cost": {
+        "name": "Ліміт: Вартість"
+      },
+      "minimum_voltage": {
+        "name": "Мінімальна напруга"
       }
     },
     "sensor": {
@@ -274,6 +286,30 @@
       },
       "connect_to_ocpp": {
         "name": "Підключення до OCPP"
+      },
+      "limit_disable_all": {
+        "name": "Ліміт: вимкнути всі"
+      },
+      "limit_time_enabled": {
+        "name": "Ліміт: Час увімкнено"
+      },
+      "limit_energy_enabled": {
+        "name": "Ліміт: Енергія увімкнено"
+      },
+      "limit_cost_enabled": {
+        "name": "Ліміт: Вартість увімкнено"
+      },
+      "schedule_1_current_limit_enabled": {
+        "name": "Розклад 1: ліміт струму увімкнено"
+      },
+      "schedule_1_energy_limit_enabled": {
+        "name": "Розклад 1: ліміт енергії увімкнено"
+      },
+      "schedule_2_current_limit_enabled": {
+        "name": "Розклад 2: ліміт струму увімкнено"
+      },
+      "schedule_2_energy_limit_enabled": {
+        "name": "Розклад 2: ліміт енергії увімкнено"
       }
     },
     "button": {
