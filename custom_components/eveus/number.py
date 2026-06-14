@@ -66,6 +66,19 @@ def _validate_finite_number(value, label: str) -> float:
 
 _CHARGING_CURRENT_NAME = "Charging Current"
 
+
+class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=True):
+    """Declarative description for a charger-backed setpoint number."""
+
+    command: str
+    state_key: str
+    # Independent scales: a device read is multiplied by ``device_to_ha`` to get
+    # HA units; an HA value is multiplied by ``ha_to_device`` for the write. They
+    # differ for the global energy limit (reads kWh 1:1, writes Wh-thousandths).
+    device_to_ha: float = 1.0
+    ha_to_device: float = 1.0
+
+
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     key="charging_current",
     name=_CHARGING_CURRENT_NAME,
@@ -75,6 +88,66 @@ CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     mode=NumberMode.SLIDER,
     native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
     device_class=NumberDeviceClass.CURRENT,
+)
+
+GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
+    EveusSetpointNumberDescription(
+        key="limit_time",
+        name="Limit Time",
+        icon="mdi:timer-sand",
+        entity_category=EntityCategory.CONFIG,
+        command="timeLimit",
+        state_key="timeLimit",
+        device_to_ha=1 / 60,
+        ha_to_device=60.0,
+        native_min_value=0,
+        native_max_value=1440,
+        native_step=5,
+        native_unit_of_measurement="min",
+        mode=NumberMode.BOX,
+    ),
+    EveusSetpointNumberDescription(
+        key="limit_energy",
+        name="Limit Energy",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.CONFIG,
+        command="energyLimit",
+        state_key="energyLimit",
+        device_to_ha=1.0,
+        ha_to_device=1000.0,
+        native_min_value=0,
+        native_max_value=100,
+        native_step=1,
+        native_unit_of_measurement="kWh",
+        mode=NumberMode.BOX,
+    ),
+    EveusSetpointNumberDescription(
+        key="limit_cost",
+        name="Limit Cost",
+        icon="mdi:cash",
+        entity_category=EntityCategory.CONFIG,
+        command="moneyLimit",
+        state_key="moneyLimit",
+        native_min_value=0,
+        native_max_value=10000,
+        native_step=1,
+        native_unit_of_measurement="UAH",
+        mode=NumberMode.BOX,
+    ),
+)
+
+UNDERVOLTAGE_NUMBER = EveusSetpointNumberDescription(
+    key="minimum_voltage",
+    name="Minimum voltage",
+    icon="mdi:sine-wave",
+    entity_category=EntityCategory.CONFIG,
+    command="minVoltage",
+    state_key="minVoltage",
+    native_min_value=180,
+    native_max_value=245,
+    native_step=1,
+    native_unit_of_measurement="V",
+    mode=NumberMode.BOX,
 )
 
 
@@ -233,18 +306,6 @@ class EveusCurrentNumber(EveusNumberEntity):
                     self._attr_native_value = restored_value
         except (TypeError, ValueError) as err:
             _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)
-
-
-class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=True):
-    """Declarative description for a charger-backed setpoint number."""
-
-    command: str
-    state_key: str
-    # Independent scales: a device read is multiplied by ``device_to_ha`` to get
-    # HA units; an HA value is multiplied by ``ha_to_device`` for the write. They
-    # differ for the global energy limit (reads kWh 1:1, writes Wh-thousandths).
-    device_to_ha: float = 1.0
-    ha_to_device: float = 1.0
 
 
 class EveusSetpointNumber(EveusNumberEntity):
@@ -514,6 +575,11 @@ async def async_setup_entry(
     entities = []
     if model:
         entities.append(EveusCurrentNumber(updater, model, device_number))
+        entities += [
+            EveusSetpointNumber(updater, desc, device_number)
+            for desc in GLOBAL_LIMIT_NUMBERS
+        ]
+        entities.append(EveusSetpointNumber(updater, UNDERVOLTAGE_NUMBER, device_number))
     else:
         _LOGGER.debug("No model specified in config")
 

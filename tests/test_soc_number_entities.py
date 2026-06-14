@@ -260,6 +260,10 @@ def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
 
     assert [entity.name for entity in added] == [
         "Charging Current",
+        "Limit Time",
+        "Limit Energy",
+        "Limit Cost",
+        "Minimum voltage",
         "Initial SOC",
         "Target SOC",
         "Battery Capacity",
@@ -267,12 +271,17 @@ def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
     ]
     assert [entity.unique_id for entity in added] == [
         "eveus2_charging_current",
+        "eveus2_limit_time",
+        "eveus2_limit_energy",
+        "eveus2_limit_cost",
+        "eveus2_minimum_voltage",
         "eveus2_initial_soc",
         "eveus2_target_soc",
         "eveus2_battery_capacity",
         "eveus2_soc_correction",
     ]
-    assert [entity.native_value for entity in added[1:]] == [25, 85, 70, 5]
+    # SOC numbers now follow Charging Current + 3 global limits + Minimum voltage.
+    assert [entity.native_value for entity in added[5:]] == [25, 85, 70, 5]
 
 
 def test_seed_is_normalized_on_construction() -> None:
