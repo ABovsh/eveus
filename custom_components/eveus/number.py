@@ -235,6 +235,128 @@ class EveusCurrentNumber(EveusNumberEntity):
             _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)
 
 
+class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=True):
+    """Declarative description for a charger-backed setpoint number."""
+
+    command: str
+    state_key: str
+    # Independent scales: a device read is multiplied by ``device_to_ha`` to get
+    # HA units; an HA value is multiplied by ``ha_to_device`` for the write. They
+    # differ for the global energy limit (reads kWh 1:1, writes Wh-thousandths).
+    device_to_ha: float = 1.0
+    ha_to_device: float = 1.0
+
+
+class EveusSetpointNumber(EveusNumberEntity):
+    """Charger-backed optimistic setpoint number, scaled per description."""
+
+    def __init__(
+        self,
+        updater,
+        description: EveusSetpointNumberDescription,
+        device_number: int = 1,
+        *,
+        min_value: float | None = None,
+        max_value: float | None = None,
+    ) -> None:
+        super().__init__(updater, description, device_number)
+        self._command = description.command
+        self._state_key_value = description.state_key
+        self._device_to_ha = description.device_to_ha
+        self._ha_to_device = description.ha_to_device
+        self._attr_native_min_value = (
+            description.native_min_value if min_value is None else min_value
+        )
+        self._attr_native_max_value = (
+            description.native_max_value if max_value is None else max_value
+        )
+        self._attr_native_step = description.native_step
+        self._attr_native_value = self._resolve_value()
+
+    @property
+    def native_value(self) -> float | None:
+        return self._attr_native_value
+
+    @property
+    def _state_key(self) -> str:
+        return self._state_key_value
+
+    def _read_device_value(self) -> float | None:
+        if not (self._updater.available and self._updater.data):
+            return None
+        if self._state_key_value not in self._updater.data:
+            return None
+        raw = get_safe_value(self._updater.data, self._state_key_value, float)
+        if raw is None:
+            return None
+        value = raw * self._device_to_ha
+        if self._attr_native_min_value <= value <= self._attr_native_max_value:
+            return float(value)
+        return None
+
+    def _values_equal(self, optimistic: float, device: float) -> bool:
+        return abs(optimistic - device) < (self._attr_native_step / 2 or 0.5)
+
+    def _resolve_display_value(self) -> float | None:
+        return self._resolve_value()
+
+    def _set_display_value(self, value: float | None) -> None:
+        self._attr_native_value = value
+
+    def _get_pending(self) -> float | None:
+        return self._pending_value
+
+    def _resolve_value(self) -> float | None:
+        current_time = time.time()
+        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
+            return self._optimistic_value
+        device_value = self._read_device_value()
+        if device_value is not None:
+            return device_value
+        if self._last_device_value is not None and (
+            0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
+        ):
+            return self._last_device_value
+        return None
+
+    async def async_set_native_value(self, value: float) -> None:
+        raw = _validate_finite_number(value, self.ENTITY_NAME)
+        clamped = max(self._attr_native_min_value, min(self._attr_native_max_value, raw))
+        device_value = int(round(clamped * self._ha_to_device))
+        async with self._command_lock:
+            try:
+                self._pending_value = clamped
+                self._attr_native_value = clamped
+                self._write_if_changed(self._attr_native_value)
+                success = await self._updater.send_command(self._command, device_value)
+                if success:
+                    self._set_optimistic_value(clamped)
+                else:
+                    raise HomeAssistantError(
+                        f"Eveus charger did not accept {self.ENTITY_NAME} = {clamped}"
+                    )
+            except (HomeAssistantError, ConfigEntryAuthFailed):
+                raise
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Failed to set %s: %s", self.ENTITY_NAME, err, exc_info=True)
+                raise HomeAssistantError(f"Failed to set {self.ENTITY_NAME}: {err}") from err
+            finally:
+                self._pending_value = None
+                self._attr_native_value = self._resolve_value()
+                self._write_if_changed(self._attr_native_value)
+
+    async def _async_restore_state(self, state: State) -> None:
+        try:
+            if state and state.state not in (None, "unknown", "unavailable"):
+                restored = float(state.state)
+                if self._attr_native_min_value <= restored <= self._attr_native_max_value:
+                    self._last_device_value = restored
+                    self._last_successful_read = time.time()
+                    self._attr_native_value = restored
+        except (TypeError, ValueError) as err:
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)
+
+
 class EveusSocConfigNumber(
     WriteOnChangeMixin,
     BaseEveusEntity,
