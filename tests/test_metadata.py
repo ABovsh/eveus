@@ -143,8 +143,12 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
         expected["sensor"].add(_slug(name))
     for name in ("Charging Current", "Initial SOC", "Target SOC", "Battery Capacity", "SOC Correction"):
         expected["number"].add(_slug(name))
-    from custom_components.eveus.number import GLOBAL_LIMIT_NUMBERS, UNDERVOLTAGE_NUMBER
-    for desc in (*GLOBAL_LIMIT_NUMBERS, UNDERVOLTAGE_NUMBER):
+    from custom_components.eveus.number import (
+        GLOBAL_LIMIT_NUMBERS,
+        SCHEDULE_LIMIT_NUMBERS,
+        UNDERVOLTAGE_NUMBER,
+    )
+    for desc in (*GLOBAL_LIMIT_NUMBERS, UNDERVOLTAGE_NUMBER, *SCHEDULE_LIMIT_NUMBERS):
         expected["number"].add(_slug(desc.name))
     for desc in SWITCH_DESCRIPTIONS:
         expected["switch"].add(slugify(desc.name))

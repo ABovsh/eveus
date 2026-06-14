@@ -118,6 +118,18 @@
       },
       "minimum_voltage": {
         "name": "Minimum voltage"
+      },
+      "schedule_1_current_limit": {
+        "name": "Schedule 1 Current limit"
+      },
+      "schedule_1_energy_limit": {
+        "name": "Schedule 1 Energy limit"
+      },
+      "schedule_2_current_limit": {
+        "name": "Schedule 2 Current limit"
+      },
+      "schedule_2_energy_limit": {
+        "name": "Schedule 2 Energy limit"
       }
     },
     "sensor": {

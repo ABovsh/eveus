@@ -118,6 +118,18 @@
       },
       "minimum_voltage": {
         "name": "Мінімальна напруга"
+      },
+      "schedule_1_current_limit": {
+        "name": "Розклад 1: ліміт струму"
+      },
+      "schedule_1_energy_limit": {
+        "name": "Розклад 1: ліміт енергії"
+      },
+      "schedule_2_current_limit": {
+        "name": "Розклад 2: ліміт струму"
+      },
+      "schedule_2_energy_limit": {
+        "name": "Розклад 2: ліміт енергії"
       }
     },
     "sensor": {

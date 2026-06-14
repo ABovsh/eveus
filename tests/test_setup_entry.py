@@ -716,11 +716,20 @@ def test_number_setup_creates_current_entity() -> None:
         )
     )
 
-    # Charging Current + the three global session limits + Minimum voltage.
-    assert len(added) == 5
+    # Charging Current + global limits + Minimum voltage + schedule limits.
+    assert len(added) == 9
     names = [e.name for e in added]
     assert "Charging Current" in names
-    assert {"Limit Time", "Limit Energy", "Limit Cost", "Minimum voltage"} <= set(names)
+    assert {
+        "Limit Time",
+        "Limit Energy",
+        "Limit Cost",
+        "Minimum voltage",
+        "Schedule 1 Current limit",
+        "Schedule 1 Energy limit",
+        "Schedule 2 Current limit",
+        "Schedule 2 Energy limit",
+    } <= set(names)
     assert "Money Limit" not in names
     current = next(e for e in added if e.name == "Charging Current")
     assert current.unique_id == "eveus3_charging_current"

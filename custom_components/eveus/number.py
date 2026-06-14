@@ -151,6 +151,46 @@ UNDERVOLTAGE_NUMBER = EveusSetpointNumberDescription(
 )
 
 
+def _schedule_current(n: int) -> EveusSetpointNumberDescription:
+    return EveusSetpointNumberDescription(
+        key=f"schedule_{n}_current_limit",
+        name=f"Schedule {n} Current limit",
+        icon="mdi:current-ac",
+        entity_category=EntityCategory.CONFIG,
+        command=f"sh{n}CurrentValue",
+        state_key=f"sh{n}CurrentValue",
+        native_min_value=MIN_CURRENT,
+        native_max_value=32,  # overridden per-model at setup
+        native_step=1,
+        native_unit_of_measurement="A",
+        mode=NumberMode.BOX,
+    )
+
+
+def _schedule_energy(n: int) -> EveusSetpointNumberDescription:
+    return EveusSetpointNumberDescription(
+        key=f"schedule_{n}_energy_limit",
+        name=f"Schedule {n} Energy limit",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.CONFIG,
+        command=f"sh{n}EnergyValue",
+        state_key=f"sh{n}EnergyValue",
+        device_to_ha=1.0,
+        ha_to_device=1.0,  # schedule energy is 1:1 — NOT ×1000
+        native_min_value=0,
+        native_max_value=100,
+        native_step=1,
+        native_unit_of_measurement="kWh",
+        mode=NumberMode.BOX,
+    )
+
+
+SCHEDULE_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
+    _schedule_current(1), _schedule_energy(1),
+    _schedule_current(2), _schedule_energy(2),
+)
+
+
 class EveusNumberEntity(
     WriteOnChangeMixin,
     ControlEntityMixin,
@@ -580,6 +620,14 @@ async def async_setup_entry(
             for desc in GLOBAL_LIMIT_NUMBERS
         ]
         entities.append(EveusSetpointNumber(updater, UNDERVOLTAGE_NUMBER, device_number))
+        model_max = float(MODEL_MAX_CURRENT[model])
+        for desc in SCHEDULE_LIMIT_NUMBERS:
+            max_override = model_max if desc.native_unit_of_measurement == "A" else None
+            entities.append(
+                EveusSetpointNumber(
+                    updater, desc, device_number, max_value=max_override
+                )
+            )
     else:
         _LOGGER.debug("No model specified in config")
 
