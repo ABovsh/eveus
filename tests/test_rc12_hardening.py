@@ -133,7 +133,10 @@ def test_prune_keeps_everything_in_advanced_three_phase(monkeypatch) -> None:
 
     # Only retired entities go — no mode/phase-scoped entity is pruned.
     assert _prune(monkeypatch, 1, eveus.SOC_MODE_ADVANCED, 3) == [
-        "sensor.eveus_system_time"
+        "sensor.eveus_system_time",
+        "switch.eveus_adaptive_mode",
+        "number.eveus_minimum_voltage",
+        "sensor.eveus_adaptive_voltage_threshold",
     ]
 
 

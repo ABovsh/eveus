@@ -131,13 +131,18 @@ class _FakeRegistry:
         self.removed.append(entity_id)
 
 
-def test_prune_always_removes_retired_system_time_entity(monkeypatch) -> None:
+def test_prune_always_removes_retired_entities(monkeypatch) -> None:
     from custom_components import eveus
 
     reg = _FakeRegistry()
     monkeypatch.setattr(eveus.er, "async_get", lambda hass: reg)
     eveus._prune_unused_entities(object(), 1, eveus.SOC_MODE_ADVANCED, 3)
-    assert reg.removed == ["sensor.eveus_system_time"]
+    assert reg.removed == [
+        "sensor.eveus_system_time",
+        "switch.eveus_adaptive_mode",
+        "number.eveus_minimum_voltage",
+        "sensor.eveus_adaptive_voltage_threshold",
+    ]
 
 
 def test_prune_removes_retired_entity_with_device_suffix(monkeypatch) -> None:
@@ -146,7 +151,12 @@ def test_prune_removes_retired_entity_with_device_suffix(monkeypatch) -> None:
     reg = _FakeRegistry()
     monkeypatch.setattr(eveus.er, "async_get", lambda hass: reg)
     eveus._prune_unused_entities(object(), 2, eveus.SOC_MODE_ADVANCED, 3)
-    assert reg.removed == ["sensor.eveus2_system_time"]
+    assert reg.removed == [
+        "sensor.eveus2_system_time",
+        "switch.eveus2_adaptive_mode",
+        "number.eveus2_minimum_voltage",
+        "sensor.eveus2_adaptive_voltage_threshold",
+    ]
 
 
 # --- hysteresis: boundary jitter must not alternate the reported state ---

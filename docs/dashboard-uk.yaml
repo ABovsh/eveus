@@ -89,7 +89,7 @@ sections:
         show_header_toggle: false
         state_color: true
         entities:
-          - entity: switch.eveus_ev_charger_adaptive_mode
+          - entity: select.eveus_ev_charger_adaptive_mode
             name: Адаптивний режим
             icon: mdi:shield-flash-outline
           - entity: sensor.eveus_ev_charger_adaptive_charging
@@ -98,7 +98,7 @@ sections:
           - entity: sensor.eveus_ev_charger_adaptive_current_limit
             name: Ліміт струму
             icon: mdi:current-ac
-          - entity: sensor.eveus_ev_charger_adaptive_voltage_threshold
+          - entity: number.eveus_ev_charger_undervoltage_threshold
             name: Поріг напруги
             icon: mdi:sine-wave
           - type: divider
@@ -219,6 +219,38 @@ sections:
           - entity: button.eveus_ev_charger_force_refresh
             name: Примусове оновлення
             icon: mdi:refresh
+      - type: entities
+        title: Ліміти заряду
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: number.eveus_ev_charger_limit_time
+            name: "Ліміт: Час"
+            icon: mdi:timer-sand
+          - entity: switch.eveus_ev_charger_limit_time_enabled
+            name: "Ліміт: Час увімкнено"
+            icon: mdi:timer-sand
+          - entity: number.eveus_ev_charger_limit_energy
+            name: "Ліміт: Енергія"
+            icon: mdi:lightning-bolt
+          - entity: switch.eveus_ev_charger_limit_energy_enabled
+            name: "Ліміт: Енергія увімкнено"
+            icon: mdi:lightning-bolt
+          - entity: number.eveus_ev_charger_limit_cost
+            name: "Ліміт: Вартість"
+            icon: mdi:cash
+          - entity: switch.eveus_ev_charger_limit_cost_enabled
+            name: "Ліміт: Вартість увімкнено"
+            icon: mdi:cash
+          - entity: switch.eveus_ev_charger_limit_disable_all
+            name: "Ліміт: вимкнути всі"
+            icon: mdi:cancel
+          - entity: switch.eveus_ev_charger_limit_soc_enabled
+            name: "Ліміт: SOC увімкнено"
+            icon: mdi:battery-charging-high
+          - entity: select.eveus_ev_charger_minimum_voltage
+            name: Мінімальна напруга
+            icon: mdi:sine-wave
   - type: grid
     cards:
       - type: heading
@@ -273,6 +305,18 @@ sections:
               - entity: time.eveus_ev_charger_schedule_1_stop
                 name: Завершення
                 icon: mdi:clock-end
+              - entity: number.eveus_ev_charger_schedule_1_current_limit
+                name: "Розклад 1: ліміт струму"
+                icon: mdi:current-ac
+              - entity: switch.eveus_ev_charger_schedule_1_current_limit_enabled
+                name: "Розклад 1: ліміт струму увімкнено"
+                icon: mdi:current-ac
+              - entity: number.eveus_ev_charger_schedule_1_energy_limit
+                name: "Розклад 1: ліміт енергії"
+                icon: mdi:lightning-bolt
+              - entity: switch.eveus_ev_charger_schedule_1_energy_limit_enabled
+                name: "Розклад 1: ліміт енергії увімкнено"
+                icon: mdi:lightning-bolt
               - entity: sensor.eveus_ev_charger_schedule_1
                 name: Вікно
                 icon: mdi:timetable
@@ -291,6 +335,18 @@ sections:
               - entity: time.eveus_ev_charger_schedule_2_stop
                 name: Завершення
                 icon: mdi:clock-end
+              - entity: number.eveus_ev_charger_schedule_2_current_limit
+                name: "Розклад 2: ліміт струму"
+                icon: mdi:current-ac
+              - entity: switch.eveus_ev_charger_schedule_2_current_limit_enabled
+                name: "Розклад 2: ліміт струму увімкнено"
+                icon: mdi:current-ac
+              - entity: number.eveus_ev_charger_schedule_2_energy_limit
+                name: "Розклад 2: ліміт енергії"
+                icon: mdi:lightning-bolt
+              - entity: switch.eveus_ev_charger_schedule_2_energy_limit_enabled
+                name: "Розклад 2: ліміт енергії увімкнено"
+                icon: mdi:lightning-bolt
               - entity: sensor.eveus_ev_charger_schedule_2
                 name: Вікно
                 icon: mdi:timetable

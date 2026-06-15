@@ -66,6 +66,23 @@ def _validate_finite_number(value, label: str) -> float:
 
 _CHARGING_CURRENT_NAME = "Charging Current"
 
+
+class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=True):
+    """Declarative description for a charger-backed setpoint number."""
+
+    command: str
+    state_key: str
+    # Independent scales: a device read is multiplied by ``device_to_ha`` to get
+    # HA units; an HA value is multiplied by ``ha_to_device`` for the write. They
+    # differ for the global energy limit (reads kWh 1:1, writes Wh-thousandths).
+    device_to_ha: float = 1.0
+    ha_to_device: float = 1.0
+    # Decimals to round the displayed value to (None = no rounding). The charger
+    # reports float noise (e.g. ``energyLimit`` 56.00899); this trims the tail so
+    # HA shows what the charger's own web UI shows.
+    display_precision: int | None = None
+
+
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     key="charging_current",
     name=_CHARGING_CURRENT_NAME,
@@ -75,6 +92,108 @@ CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     mode=NumberMode.SLIDER,
     native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
     device_class=NumberDeviceClass.CURRENT,
+)
+
+GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
+    EveusSetpointNumberDescription(
+        key="limit_time",
+        name="Limit Time",
+        icon="mdi:timer-sand",
+        entity_category=EntityCategory.CONFIG,
+        command="timeLimit",
+        state_key="timeLimit",
+        device_to_ha=1 / 60,
+        ha_to_device=60.0,
+        native_min_value=0,
+        native_max_value=1440,
+        native_step=5,
+        native_unit_of_measurement="min",
+        mode=NumberMode.BOX,
+        display_precision=0,
+    ),
+    EveusSetpointNumberDescription(
+        key="limit_energy",
+        name="Limit Energy",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.CONFIG,
+        command="energyLimit",
+        state_key="energyLimit",
+        device_to_ha=1.0,
+        ha_to_device=1000.0,
+        native_min_value=0,
+        native_max_value=100,
+        native_step=1,
+        native_unit_of_measurement="kWh",
+        mode=NumberMode.BOX,
+        display_precision=3,
+    ),
+    EveusSetpointNumberDescription(
+        key="limit_cost",
+        name="Limit Cost",
+        icon="mdi:cash",
+        entity_category=EntityCategory.CONFIG,
+        command="moneyLimit",
+        state_key="moneyLimit",
+        native_min_value=0,
+        native_max_value=10000,
+        native_step=1,
+        native_unit_of_measurement="UAH",
+        mode=NumberMode.BOX,
+    ),
+)
+
+UNDERVOLTAGE_THRESHOLD_NUMBER = EveusSetpointNumberDescription(
+    key="undervoltage_threshold",
+    name="Undervoltage threshold",
+    icon="mdi:flash-alert",
+    entity_category=EntityCategory.CONFIG,
+    command="aiVoltage",
+    state_key="aiVoltage",
+    native_min_value=210,
+    native_max_value=220,
+    native_step=1,
+    native_unit_of_measurement="V",
+    mode=NumberMode.SLIDER,
+)
+
+
+def _schedule_current(n: int) -> EveusSetpointNumberDescription:
+    return EveusSetpointNumberDescription(
+        key=f"schedule_{n}_current_limit",
+        name=f"Schedule {n} Current limit",
+        icon="mdi:current-ac",
+        entity_category=EntityCategory.CONFIG,
+        command=f"sh{n}CurrentValue",
+        state_key=f"sh{n}CurrentValue",
+        native_min_value=MIN_CURRENT,
+        native_max_value=32,  # overridden per-model at setup
+        native_step=1,
+        native_unit_of_measurement="A",
+        mode=NumberMode.BOX,
+    )
+
+
+def _schedule_energy(n: int) -> EveusSetpointNumberDescription:
+    return EveusSetpointNumberDescription(
+        key=f"schedule_{n}_energy_limit",
+        name=f"Schedule {n} Energy limit",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.CONFIG,
+        command=f"sh{n}EnergyValue",
+        state_key=f"sh{n}EnergyValue",
+        device_to_ha=1.0,
+        ha_to_device=1.0,  # schedule energy is 1:1 — NOT ×1000
+        native_min_value=0,
+        native_max_value=100,
+        native_step=1,
+        native_unit_of_measurement="kWh",
+        mode=NumberMode.BOX,
+    )
+
+
+SCHEDULE_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
+    _schedule_current(1), _schedule_energy(1),
+    _schedule_current(2), _schedule_energy(2),
 )
 
 
@@ -235,6 +354,216 @@ class EveusCurrentNumber(EveusNumberEntity):
             _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)
 
 
+class EveusSetpointNumber(EveusNumberEntity):
+    """Charger-backed optimistic setpoint number, scaled per description."""
+
+    def __init__(
+        self,
+        updater,
+        description: EveusSetpointNumberDescription,
+        device_number: int = 1,
+        *,
+        min_value: float | None = None,
+        max_value: float | None = None,
+    ) -> None:
+        super().__init__(updater, description, device_number)
+        self._command = description.command
+        self._state_key_value = description.state_key
+        self._device_to_ha = description.device_to_ha
+        self._ha_to_device = description.ha_to_device
+        self._display_precision = description.display_precision
+        self._attr_native_min_value = (
+            description.native_min_value if min_value is None else min_value
+        )
+        self._attr_native_max_value = (
+            description.native_max_value if max_value is None else max_value
+        )
+        self._attr_native_step = description.native_step
+        self._attr_native_value = self._resolve_value()
+
+    @property
+    def native_value(self) -> float | None:
+        return self._attr_native_value
+
+    @property
+    def _state_key(self) -> str:
+        return self._state_key_value
+
+    def _read_device_value(self) -> float | None:
+        if not (self._updater.available and self._updater.data):
+            return None
+        if self._state_key_value not in self._updater.data:
+            return None
+        raw = get_safe_value(self._updater.data, self._state_key_value, float)
+        if raw is None:
+            return None
+        value = raw * self._device_to_ha
+        if self._display_precision is not None:
+            value = round(value, self._display_precision)
+        if self._attr_native_min_value <= value <= self._attr_native_max_value:
+            return float(value)
+        return None
+
+    def _values_equal(self, optimistic: float, device: float) -> bool:
+        return abs(optimistic - device) < (self._attr_native_step / 2 or 0.5)
+
+    def _resolve_display_value(self) -> float | None:
+        return self._resolve_value()
+
+    def _set_display_value(self, value: float | None) -> None:
+        self._attr_native_value = value
+
+    def _get_pending(self) -> float | None:
+        return self._pending_value
+
+    def _resolve_value(self) -> float | None:
+        current_time = time.time()
+        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
+            return self._optimistic_value
+        device_value = self._read_device_value()
+        if device_value is not None:
+            return device_value
+        if self._last_device_value is not None and (
+            0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
+        ):
+            return self._last_device_value
+        return None
+
+    def _pre_send_refresh(self) -> None:
+        """Hook: refresh dynamic bounds just before clamping a queued write.
+
+        No-op for static-bound numbers; overridden where the min/max can shift
+        while a command waits for ``_command_lock``.
+        """
+
+    async def async_set_native_value(self, value: float) -> None:
+        raw = _validate_finite_number(value, self.ENTITY_NAME)
+        async with self._command_lock:
+            # Clamp INSIDE the lock against a freshly refreshed bound: a write
+            # queued behind another command must honour a dynamic min/max that
+            # shifted while it waited, not the bound captured at enqueue time.
+            self._pre_send_refresh()
+            clamped = max(
+                self._attr_native_min_value, min(self._attr_native_max_value, raw)
+            )
+            device_value = int(round(clamped * self._ha_to_device))
+            try:
+                self._pending_value = clamped
+                self._attr_native_value = clamped
+                self._write_if_changed(self._attr_native_value)
+                success = await self._updater.send_command(self._command, device_value)
+                if success:
+                    self._set_optimistic_value(clamped)
+                else:
+                    raise HomeAssistantError(
+                        f"Eveus charger did not accept {self.ENTITY_NAME} = {clamped}"
+                    )
+            except (HomeAssistantError, ConfigEntryAuthFailed):
+                raise
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Failed to set %s: %s", self.ENTITY_NAME, err, exc_info=True)
+                raise HomeAssistantError(f"Failed to set {self.ENTITY_NAME}: {err}") from err
+            finally:
+                self._pending_value = None
+                self._attr_native_value = self._resolve_value()
+                self._write_if_changed(self._attr_native_value)
+
+    async def _async_restore_state(self, state: State) -> None:
+        try:
+            if state and state.state not in (None, "unknown", "unavailable"):
+                restored = float(state.state)
+                if self._attr_native_min_value <= restored <= self._attr_native_max_value:
+                    self._last_device_value = restored
+                    self._last_successful_read = time.time()
+                    self._attr_native_value = restored
+        except (TypeError, ValueError) as err:
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)
+
+
+class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
+    """Voltage-mode threshold whose lower bound tracks Minimum voltage.
+
+    The charger constrains this setpoint to ``minVoltage + 10`` .. 220 (its web UI
+    derives the slider's lower bound the same way). Recompute the lower bound from
+    the live ``minVoltage`` on every poll so the picker mirrors the charger; fall
+    back to the static description minimum when ``minVoltage`` is unavailable.
+    """
+
+    _MIN_VOLTAGE_KEY = "minVoltage"
+    _MIN_OFFSET = 10.0
+    # Read-acceptance floor: the charger legitimately reports an ``aiVoltage`` BELOW
+    # the current write floor (e.g. minVoltage=200 with a stored aiVoltage=190 from
+    # an earlier config), so the displayed value must NOT be gated on the dynamic
+    # write minimum — only the slider/write range tracks minVoltage+10. Accept any
+    # non-negative voltage up to the max instead.
+    _READ_MIN = 0.0
+
+    def __init__(self, updater, description, device_number: int = 1) -> None:
+        super().__init__(updater, description, device_number)
+        # Static floor used whenever the charger hasn't reported minVoltage yet.
+        self._floor_min_value = self._attr_native_min_value
+        self._refresh_min_bound()
+        # Re-resolve now that read-acceptance is decoupled from the write floor.
+        self._attr_native_value = self._resolve_value()
+
+    def _read_device_value(self) -> float | None:
+        """Accept the charger-reported value across the full read range.
+
+        Deliberately ignores ``native_min_value`` (the dynamic write floor): the
+        firmware can report an ``aiVoltage`` below ``minVoltage + 10``, and
+        rejecting it would blank the entity for a perfectly valid device value.
+        """
+        if not (self._updater.available and self._updater.data):
+            return None
+        if self._state_key_value not in self._updater.data:
+            return None
+        raw = get_safe_value(self._updater.data, self._state_key_value, float)
+        if raw is None:
+            return None
+        value = raw * self._device_to_ha
+        if self._READ_MIN <= value <= self._attr_native_max_value:
+            return float(value)
+        return None
+
+    async def _async_restore_state(self, state: State) -> None:
+        """Restore across the read range, not the (narrower) write floor."""
+        try:
+            if state and state.state not in (None, "unknown", "unavailable"):
+                restored = float(state.state)
+                if self._READ_MIN <= restored <= self._attr_native_max_value:
+                    self._last_device_value = restored
+                    self._last_successful_read = time.time()
+                    self._attr_native_value = restored
+        except (TypeError, ValueError) as err:
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)
+
+    def _refresh_min_bound(self) -> None:
+        """Set the lower bound to ``minVoltage + 10`` when the charger reports it."""
+        dynamic: float | None = None
+        if self._updater.available and self._updater.data:
+            raw = get_safe_value(self._updater.data, self._MIN_VOLTAGE_KEY, float)
+            if raw is not None:
+                dynamic = raw + self._MIN_OFFSET
+        new_min = dynamic if dynamic is not None else self._floor_min_value
+        # Never cross the upper bound — a nonsense minVoltage must not invert the
+        # slider range.
+        self._attr_native_min_value = min(new_min, self._attr_native_max_value)
+
+    def _pre_send_refresh(self) -> None:
+        """Re-derive the dynamic floor before a queued write is clamped/sent."""
+        self._refresh_min_bound()
+
+    def _handle_coordinator_update(self) -> None:
+        previous_min = self._attr_native_min_value
+        self._refresh_min_bound()
+        super()._handle_coordinator_update()
+        # The base handler only writes HA state when value/availability/attributes
+        # change; a shift in the lower bound alone (value unchanged) would leave the
+        # frontend showing a stale slider minimum, so push it explicitly.
+        if self._attr_native_min_value != previous_min:
+            self.async_write_ha_state()
+
+
 class EveusSocConfigNumber(
     WriteOnChangeMixin,
     BaseEveusEntity,
@@ -389,9 +718,25 @@ async def async_setup_entry(
     device_number = runtime_data.device_number
 
     model = entry.data.get(CONF_MODEL)
-    entities = []
+    entities = [
+        EveusUndervoltageThresholdNumber(
+            updater, UNDERVOLTAGE_THRESHOLD_NUMBER, device_number
+        )
+    ]
     if model:
         entities.append(EveusCurrentNumber(updater, model, device_number))
+        entities += [
+            EveusSetpointNumber(updater, desc, device_number)
+            for desc in GLOBAL_LIMIT_NUMBERS
+        ]
+        model_max = float(MODEL_MAX_CURRENT[model])
+        for desc in SCHEDULE_LIMIT_NUMBERS:
+            max_override = model_max if desc.native_unit_of_measurement == "A" else None
+            entities.append(
+                EveusSetpointNumber(
+                    updater, desc, device_number, max_value=max_override
+                )
+            )
     else:
         _LOGGER.debug("No model specified in config")
 

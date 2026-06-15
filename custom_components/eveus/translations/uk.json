@@ -106,6 +106,30 @@
       },
       "soc_correction": {
         "name": "Корекція SOC"
+      },
+      "limit_time": {
+        "name": "Ліміт: Час"
+      },
+      "limit_energy": {
+        "name": "Ліміт: Енергія"
+      },
+      "limit_cost": {
+        "name": "Ліміт: Вартість"
+      },
+      "schedule_1_current_limit": {
+        "name": "Розклад 1: ліміт струму"
+      },
+      "schedule_1_energy_limit": {
+        "name": "Розклад 1: ліміт енергії"
+      },
+      "schedule_2_current_limit": {
+        "name": "Розклад 2: ліміт струму"
+      },
+      "schedule_2_energy_limit": {
+        "name": "Розклад 2: ліміт енергії"
+      },
+      "undervoltage_threshold": {
+        "name": "Поріг зниження напруги"
       }
     },
     "sensor": {
@@ -211,9 +235,6 @@
       "adaptive_current_limit": {
         "name": "Ліміт адаптивного струму"
       },
-      "adaptive_voltage_threshold": {
-        "name": "Поріг адаптивної напруги"
-      },
       "schedule_1": {
         "name": "Розклад 1"
       },
@@ -260,9 +281,6 @@
       "one_charge": {
         "name": "Одноразове заряджання"
       },
-      "adaptive_mode": {
-        "name": "Адаптивний режим"
-      },
       "schedule_1_enabled": {
         "name": "Розклад 1 увімкнено"
       },
@@ -274,6 +292,33 @@
       },
       "connect_to_ocpp": {
         "name": "Підключення до OCPP"
+      },
+      "limit_disable_all": {
+        "name": "Ліміт: вимкнути всі"
+      },
+      "limit_time_enabled": {
+        "name": "Ліміт: Час увімкнено"
+      },
+      "limit_energy_enabled": {
+        "name": "Ліміт: Енергія увімкнено"
+      },
+      "limit_cost_enabled": {
+        "name": "Ліміт: Вартість увімкнено"
+      },
+      "limit_soc_enabled": {
+        "name": "Ліміт: SOC увімкнено"
+      },
+      "schedule_1_current_limit_enabled": {
+        "name": "Розклад 1: ліміт струму увімкнено"
+      },
+      "schedule_1_energy_limit_enabled": {
+        "name": "Розклад 1: ліміт енергії увімкнено"
+      },
+      "schedule_2_current_limit_enabled": {
+        "name": "Розклад 2: ліміт струму увімкнено"
+      },
+      "schedule_2_energy_limit_enabled": {
+        "name": "Розклад 2: ліміт енергії увімкнено"
       }
     },
     "button": {
@@ -291,6 +336,12 @@
       }
     },
     "select": {
+      "adaptive_mode": {
+        "name": "Адаптивний режим"
+      },
+      "minimum_voltage": {
+        "name": "Мінімальна напруга"
+      },
       "time_zone": {
         "name": "Часовий пояс"
       }

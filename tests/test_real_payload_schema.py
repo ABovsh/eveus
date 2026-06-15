@@ -56,7 +56,6 @@ GETTERS = [
     (sd.get_battery_voltage, "vBat", float),
     (sd.get_session_cost, "sessionMoney", float),
     (spec_value_fn("adaptive_current_limit"), "aiModecurrent", int),
-    (sd.get_adaptive_voltage, "aiVoltage", int),
 ]
 
 
@@ -89,7 +88,7 @@ def test_active_rate_resolves_to_known_slot(real_payload) -> None:
 
 def test_adaptive_charging_state_resolves(real_payload) -> None:
     state = sd.get_adaptive_charging_state(_updater(real_payload), None)
-    assert state in {"Active", "Idle"}
+    assert state in {"Off", "Voltage", "Auto", "Power"}
 
 
 def test_schedule_slots_resolve(real_payload) -> None:

@@ -6,18 +6,25 @@ import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import EveusConfigEntry
 from .common_base import (
+    BaseEveusEntity,
     ControlEntityMixin,
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
-from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
+from .const import (
+    CONTROL_GRACE_PERIOD,
+    OPTIMISTIC_CONTROL_TTL,
+    SOC_MODE_ADVANCED,
+    get_soc_mode,
+)
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,14 +59,6 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         state_key="oneCharge",
     ),
     EveusSwitchEntityDescription(
-        key="adaptive_mode",
-        name="Adaptive Mode",
-        icon="mdi:auto-mode",
-        entity_category=EntityCategory.CONFIG,
-        command="aiStatus",
-        state_key="aiStatus",
-    ),
-    EveusSwitchEntityDescription(
         key="schedule_1_enabled",
         name="Schedule 1 Enabled",
         icon="mdi:calendar-clock",
@@ -91,6 +90,70 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         command="ocppEnabled",
         state_key="ocppEnabled",
         command_extra=("ocppVendor",),
+    ),
+    EveusSwitchEntityDescription(
+        key="limit_disable_all",
+        name="Limit: disable all",
+        icon="mdi:cancel",
+        entity_category=EntityCategory.CONFIG,
+        command="suspendLimits",
+        state_key="suspendLimits",
+    ),
+    EveusSwitchEntityDescription(
+        key="limit_time_enabled",
+        name="Limit: Time enabled",
+        icon="mdi:timer-sand",
+        entity_category=EntityCategory.CONFIG,
+        command="timeLimitS",
+        state_key="timeLimitS",
+    ),
+    EveusSwitchEntityDescription(
+        key="limit_energy_enabled",
+        name="Limit: Energy enabled",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.CONFIG,
+        command="energyLimitS",
+        state_key="energyLimitS",
+    ),
+    EveusSwitchEntityDescription(
+        key="limit_cost_enabled",
+        name="Limit: Cost enabled",
+        icon="mdi:cash",
+        entity_category=EntityCategory.CONFIG,
+        command="moneyLimitS",
+        state_key="moneyLimitS",
+    ),
+    EveusSwitchEntityDescription(
+        key="schedule_1_current_limit_enabled",
+        name="Schedule 1 Current limit enabled",
+        icon="mdi:current-ac",
+        entity_category=EntityCategory.CONFIG,
+        command="sh1CurrentEnable",
+        state_key="sh1CurrentEnable",
+    ),
+    EveusSwitchEntityDescription(
+        key="schedule_1_energy_limit_enabled",
+        name="Schedule 1 Energy limit enabled",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.CONFIG,
+        command="sh1EnergyEnable",
+        state_key="sh1EnergyEnable",
+    ),
+    EveusSwitchEntityDescription(
+        key="schedule_2_current_limit_enabled",
+        name="Schedule 2 Current limit enabled",
+        icon="mdi:current-ac",
+        entity_category=EntityCategory.CONFIG,
+        command="sh2CurrentEnable",
+        state_key="sh2CurrentEnable",
+    ),
+    EveusSwitchEntityDescription(
+        key="schedule_2_energy_limit_enabled",
+        name="Schedule 2 Energy limit enabled",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.CONFIG,
+        command="sh2EnergyEnable",
+        state_key="sh2EnergyEnable",
     ),
 )
 
@@ -260,6 +323,70 @@ class BaseSwitchEntity(
             self._last_successful_read = time.time()
             self._attr_is_on = self._last_device_value
 
+
+class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
+    """Local switch: when on, stop charging at Target SOC (Advanced mode).
+
+    Holds its own state (the charger has no SOC field) and pushes it to the
+    SocLimitController, which performs the stop via the existing Stop Charging
+    command. Persists across restarts.
+    """
+
+    ENTITY_NAME = "Limit: SOC enabled"
+    _attr_icon = "mdi:battery-charging-high"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, updater, controller, device_number: int = 1) -> None:
+        super().__init__(updater, device_number)
+        self._controller = controller
+        self._attr_is_on = False
+        self._was_suspended = False
+
+    @property
+    def available(self) -> bool:
+        """Always available — it is a local setting, not charger-backed."""
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        return self._attr_is_on
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        # Turning the master "Disable limits" on switches the SOC limit off too,
+        # alongside the charger's own limits. Only on the off->on transition: you
+        # can still flip it back on while suspended (the controller ignores the
+        # limit meanwhile), and turning the master back off never changes this
+        # switch by itself — it stays where you left it (no auto-enable).
+        data = self._updater.data
+        suspended = (
+            isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) == 1
+        )
+        if suspended and not self._was_suspended and self._attr_is_on:
+            self._attr_is_on = False
+            self._controller.set_enabled(False)
+            self.async_write_ha_state()
+        self._was_suspended = suspended
+        super()._handle_coordinator_update()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state == "on":
+            self._attr_is_on = True
+        self._controller.set_enabled(self._attr_is_on)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self._attr_is_on = True
+        self._controller.set_enabled(True)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self._attr_is_on = False
+        self._controller.set_enabled(False)
+        self.async_write_ha_state()
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -270,7 +397,12 @@ async def async_setup_entry(
     updater = runtime_data.updater
     device_number = runtime_data.device_number
 
-    async_add_entities(
+    entities = [
         BaseSwitchEntity(updater, description, device_number)
         for description in SWITCH_DESCRIPTIONS
-    )
+    ]
+    if get_soc_mode(entry) == SOC_MODE_ADVANCED:
+        entities.append(
+            EveusSocLimitSwitch(updater, runtime_data.soc_limit, device_number)
+        )
+    async_add_entities(entities)

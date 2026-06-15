@@ -116,7 +116,7 @@ def test_entity_key_matches_slugify_for_all_entity_names():
 
 
 def _slug(name: str) -> str:
-    return name.lower().replace(" ", "_")
+    return slugify(name)
 
 
 def _expected_entity_translation_keys() -> dict[str, set[str]]:
@@ -141,15 +141,30 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
     for name in ("SOC Energy", "SOC Percent", "Time to Target SOC", "Charging Finish Time",
                  "Energy to Target SOC", "Cost to Target SOC"):
         expected["sensor"].add(_slug(name))
-    for name in ("Charging Current", "Initial SOC", "Target SOC", "Battery Capacity", "SOC Correction"):
+    for name in (
+        "Charging Current",
+        "Initial SOC",
+        "Target SOC",
+        "Battery Capacity",
+        "SOC Correction",
+        "Undervoltage threshold",
+    ):
         expected["number"].add(_slug(name))
+    from custom_components.eveus.number import (
+        GLOBAL_LIMIT_NUMBERS,
+        SCHEDULE_LIMIT_NUMBERS,
+    )
+    for desc in (*GLOBAL_LIMIT_NUMBERS, *SCHEDULE_LIMIT_NUMBERS):
+        expected["number"].add(_slug(desc.name))
     for desc in SWITCH_DESCRIPTIONS:
-        expected["switch"].add(_slug(desc.name))
+        expected["switch"].add(slugify(desc.name))
+    expected["switch"].add(_slug("Limit: SOC enabled"))
     for desc in TIME_DESCRIPTIONS:
         expected["time"].add(_slug(desc.name))
     for name in ("Force Refresh", "Reset Counter A", "Reset Counter B", "Sync Time"):
         expected["button"].add(_slug(name))
-    expected["select"].add(_slug("Time Zone"))
+    for name in ("Time Zone", "Minimum voltage", "Adaptive Mode"):
+        expected["select"].add(_slug(name))
     for name in ("Car Connected", "Session Active", "OCPP Connected"):
         expected["binary_sensor"].add(_slug(name))
     return expected

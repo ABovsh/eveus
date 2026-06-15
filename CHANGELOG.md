@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.15.0 - 2026-06-15
+
+### ⚠️ Breaking
+- **Adaptive Mode is now a selector, not a switch.** `switch.eveus_ev_charger_adaptive_mode` → `select.eveus_ev_charger_adaptive_mode` with **Off / Voltage / Auto / Power**; the old switch could only force Voltage and couldn't show the active mode. Removed automatically — update automations/cards.
+- **Adaptive voltage threshold is now adjustable.** Read-only `sensor.eveus_ev_charger_adaptive_voltage_threshold` → `number.eveus_ev_charger_undervoltage_threshold`, a 210–220 V slider. Old sensor removed automatically.
+
+### ✨ New
+- **Charge limits controllable from Home Assistant.** Set the charger's Time, Energy and Cost session limits, each with its own enable switch, plus a master **Limit: disable all**.
+- **Stop at a target battery level.** In Advanced mode, **Limit: SOC enabled** stops charging at your **Target SOC** and fires an `eveus_soc_limit_reached` event for notifications. Needs Home Assistant running when the target is reached.
+- **Per-schedule limits.** Each schedule gains its own current and energy cap with enable switches.
+- **Minimum voltage control.** A **Minimum voltage** dropdown sets the charger's undervoltage threshold (150–200 V).
+
 ## 4.14.0 - 2026-06-13
 
 ### ⚠️ Breaking

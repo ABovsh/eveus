@@ -147,6 +147,12 @@ def test_async_setup_returns_true() -> None:
     assert asyncio.run(eveus.async_setup(object(), {})) is True
 
 
+def test_soc_limit_switch_is_advanced_only_prunable():
+    from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
+
+    assert ("switch", "limit_soc_enabled") in _ADVANCED_ONLY_ENTITIES
+
+
 @pytest.fixture(autouse=True)
 def _patch_issue_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eveus.ir, "async_create_issue", lambda *args, **kwargs: None)
@@ -602,6 +608,7 @@ def test_switch_setup_creates_control_entities() -> None:
     entry.runtime_data = SimpleNamespace(
         updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
         device_number=2,
+        soc_limit=object(),
     )
 
     asyncio.run(
@@ -615,20 +622,36 @@ def test_switch_setup_creates_control_entities() -> None:
     assert [entity.name for entity in added] == [
         "Stop Charging",
         "One Charge",
-        "Adaptive Mode",
         "Schedule 1 Enabled",
         "Schedule 2 Enabled",
         "Ground Protection",
         "Connect to OCPP",
+        "Limit: disable all",
+        "Limit: Time enabled",
+        "Limit: Energy enabled",
+        "Limit: Cost enabled",
+        "Schedule 1 Current limit enabled",
+        "Schedule 1 Energy limit enabled",
+        "Schedule 2 Current limit enabled",
+        "Schedule 2 Energy limit enabled",
+        "Limit: SOC enabled",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_stop_charging",
         "eveus2_one_charge",
-        "eveus2_adaptive_mode",
         "eveus2_schedule_1_enabled",
         "eveus2_schedule_2_enabled",
         "eveus2_ground_protection",
         "eveus2_connect_to_ocpp",
+        "eveus2_limit_disable_all",
+        "eveus2_limit_time_enabled",
+        "eveus2_limit_energy_enabled",
+        "eveus2_limit_cost_enabled",
+        "eveus2_schedule_1_current_limit_enabled",
+        "eveus2_schedule_1_energy_limit_enabled",
+        "eveus2_schedule_2_current_limit_enabled",
+        "eveus2_schedule_2_energy_limit_enabled",
+        "eveus2_limit_soc_enabled",
     }
 
 
@@ -662,7 +685,7 @@ def test_button_setup_creates_refresh_and_reset_buttons() -> None:
     }
 
 
-def test_select_setup_creates_time_zone_entity() -> None:
+def test_select_setup_creates_control_entities() -> None:
     from custom_components.eveus.select import async_setup_entry as async_setup_select_entry
 
     added: list[object] = []
@@ -680,8 +703,39 @@ def test_select_setup_creates_time_zone_entity() -> None:
         )
     )
 
-    assert [entity.name for entity in added] == ["Time Zone"]
-    assert {entity.unique_id for entity in added} == {"eveus2_time_zone"}
+    assert [entity.name for entity in added] == [
+        "Time Zone",
+        "Adaptive Mode",
+        "Minimum voltage",
+    ]
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_time_zone",
+        "eveus2_adaptive_mode",
+        "eveus2_minimum_voltage",
+    }
+
+
+def test_select_setup_model_gates_minimum_voltage_only() -> None:
+    from custom_components.eveus.select import async_setup_entry as async_setup_select_entry
+
+    added: list[object] = []
+    data = _data()
+    data.pop(CONF_MODEL)
+    entry = _Entry(data)
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
+        device_number=2,
+    )
+
+    asyncio.run(
+        async_setup_select_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert [entity.name for entity in added] == ["Time Zone", "Adaptive Mode"]
 
 
 def test_number_setup_creates_current_entity() -> None:
@@ -700,17 +754,45 @@ def test_number_setup_creates_current_entity() -> None:
         )
     )
 
-    # 4.9.2-rc2: +3 session-limit Number entities (Energy/Time/Money Limit).
-    # 4.9.2-rc5: Time Limit and Money Limit removed.
-    # 4.9.2-rc6: Energy Limit removed; only Charging Current remains.
-    assert len(added) == 1
+    # Charging Current + global limits + schedule limits + undervoltage threshold.
+    assert len(added) == 9
     names = [e.name for e in added]
     assert "Charging Current" in names
-    assert "Energy Limit" not in names
-    assert "Time Limit" not in names
+    assert {
+        "Limit Time",
+        "Limit Energy",
+        "Limit Cost",
+        "Schedule 1 Current limit",
+        "Schedule 1 Energy limit",
+        "Schedule 2 Current limit",
+        "Schedule 2 Energy limit",
+        "Undervoltage threshold",
+    } <= set(names)
     assert "Money Limit" not in names
     current = next(e for e in added if e.name == "Charging Current")
     assert current.unique_id == "eveus3_charging_current"
+
+
+def test_number_setup_always_creates_undervoltage_threshold() -> None:
+    added: list[object] = []
+    data = _data(soc_mode="basic")
+    data.pop(CONF_MODEL)
+    entry = _Entry(data)
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
+        device_number=2,
+    )
+
+    asyncio.run(
+        async_setup_number_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert [entity.name for entity in added] == ["Undervoltage threshold"]
+    assert added[0].unique_id == "eveus2_undervoltage_threshold"
 
 
 class _FakeEntityRegistry:

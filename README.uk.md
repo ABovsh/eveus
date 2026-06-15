@@ -8,7 +8,7 @@
 > сутності для автоматизацій — без допоміжних шаблонних сенсорів.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Версія](https://img.shields.io/badge/version-4.14.0-blue?style=for-the-badge)
+![Версія](https://img.shields.io/badge/version-4.15.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 - Документація: <https://abovsh.github.io/eveus/uk/>
@@ -67,9 +67,10 @@
 просідає, станція зменшує струм заряджання. Інтеграція надає повне керування
 цією функцією:
 
-- перемикач **Адаптивний режим**;
-- сенсор **Адаптивне заряджання**, який показує фактичне обмеження струму;
-- **Ліміт адаптивного струму** та **Поріг адаптивної напруги**;
+- селектор **Адаптивний режим** із режимами Off / Voltage / Auto / Power;
+- сенсор **Адаптивне заряджання**, який показує активний адаптивний режим;
+- сенсор **Ліміт адаптивного струму**;
+- **Поріг зниження напруги** — задавання порога для режиму Voltage (210–220 В) із HA;
 - два розклади з окремими перемикачами, часом початку й завершення.
 
 Розклади зберігаються на самій зарядній станції, тому продовжують працювати
@@ -223,11 +224,36 @@ Home Assistant може додати суфікс. Унікальні ідент
 | `binary_sensor.eveus_ev_charger_session_active` | Бінарний сенсор | **Сесія активна** |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Бінарний сенсор | **З’єднання з OCPP** |
 | `number.eveus_ev_charger_charging_current` | Число | **Струм заряджання** |
+| `number.eveus_ev_charger_limit_time` | Число | **Ліміт: Час** (min) |
+| `number.eveus_ev_charger_limit_energy` | Число | **Ліміт: Енергія** (kWh) |
+| `number.eveus_ev_charger_limit_cost` | Число | **Ліміт: Вартість** (UAH) |
+| `select.eveus_ev_charger_minimum_voltage` | Вибір | **Мінімальна напруга** (V) |
 | `switch.eveus_ev_charger_stop_charging` | Перемикач | **Зупинити заряджання** |
 | `switch.eveus_ev_charger_one_charge` | Перемикач | **Одноразове заряджання** |
 | `switch.eveus_ev_charger_ground_protection` | Перемикач | **Захист заземлення** |
 | `switch.eveus_ev_charger_connect_to_ocpp` | Перемикач | **Підключення до OCPP** |
+| `switch.eveus_ev_charger_limit_time_enabled` | Перемикач | **Ліміт: Час увімкнено** |
+| `switch.eveus_ev_charger_limit_energy_enabled` | Перемикач | **Ліміт: Енергія увімкнено** |
+| `switch.eveus_ev_charger_limit_cost_enabled` | Перемикач | **Ліміт: Вартість увімкнено** |
+| `switch.eveus_ev_charger_limit_disable_all` | Перемикач | **Ліміт: вимкнути всі** |
+| `switch.eveus_ev_charger_limit_soc_enabled` | Перемикач | **Ліміт: SOC увімкнено** (лише Розширений режим) |
 | `button.eveus_ev_charger_force_refresh` | Кнопка | **Примусове оновлення** |
+
+Зарядна станція самостійно контролює обмеження сесії за часом, енергією та вартістю: встановіть значення й увімкніть відповідний перемикач. **Ліміт: вимкнути всі** призупиняє дію всіх цих обмежень. **Ліміт: SOC увімкнено** контролює інтеграція в Розширеному режимі: коли автомобіль досягає значення **Цільовий SOC**, інтеграція надсилає звичайну команду **Зупинити заряджання** та створює подію `eveus_soc_limit_reached` з полями `device_number`, `soc` і `target_soc`.
+
+Цю подію можна використати у власній автоматизації сповіщення:
+
+```yaml
+automation:
+  - alias: Досягнуто ліміт SOC Eveus
+    triggers:
+      - trigger: event
+        event_type: eveus_soc_limit_reached
+    actions:
+      - action: notify.notify
+        data:
+          message: "Eveus досяг цільового SOC: {{ trigger.event.data.soc }}%"
+```
 
 ### Електричні параметри
 
@@ -294,18 +320,28 @@ Home Assistant може додати суфікс. Унікальні ідент
 
 | Ідентифікатор | Тип | Назва в українському інтерфейсі |
 | --- | --- | --- |
-| `switch.eveus_ev_charger_adaptive_mode` | Перемикач | **Адаптивний режим** |
+| `select.eveus_ev_charger_adaptive_mode` | Вибір | **Адаптивний режим** |
 | `sensor.eveus_ev_charger_adaptive_charging` | Сенсор | **Адаптивне заряджання** |
 | `sensor.eveus_ev_charger_adaptive_current_limit` | А | **Ліміт адаптивного струму** |
-| `sensor.eveus_ev_charger_adaptive_voltage_threshold` | В | **Поріг адаптивної напруги** |
+| `number.eveus_ev_charger_undervoltage_threshold` | В | **Поріг зниження напруги** (210–220 В) |
 | `switch.eveus_ev_charger_schedule_1_enabled` | Перемикач | **Розклад 1 увімкнено** |
 | `time.eveus_ev_charger_schedule_1_start` | Час | **Початок розкладу 1** |
 | `time.eveus_ev_charger_schedule_1_stop` | Час | **Завершення розкладу 1** |
+| `number.eveus_ev_charger_schedule_1_current_limit` | А | **Розклад 1: ліміт струму** |
+| `switch.eveus_ev_charger_schedule_1_current_limit_enabled` | Перемикач | **Розклад 1: ліміт струму увімкнено** |
+| `number.eveus_ev_charger_schedule_1_energy_limit` | кВт·год | **Розклад 1: ліміт енергії** |
+| `switch.eveus_ev_charger_schedule_1_energy_limit_enabled` | Перемикач | **Розклад 1: ліміт енергії увімкнено** |
 | `sensor.eveus_ev_charger_schedule_1` | Сенсор | **Розклад 1** |
 | `switch.eveus_ev_charger_schedule_2_enabled` | Перемикач | **Розклад 2 увімкнено** |
 | `time.eveus_ev_charger_schedule_2_start` | Час | **Початок розкладу 2** |
 | `time.eveus_ev_charger_schedule_2_stop` | Час | **Завершення розкладу 2** |
+| `number.eveus_ev_charger_schedule_2_current_limit` | А | **Розклад 2: ліміт струму** |
+| `switch.eveus_ev_charger_schedule_2_current_limit_enabled` | Перемикач | **Розклад 2: ліміт струму увімкнено** |
+| `number.eveus_ev_charger_schedule_2_energy_limit` | кВт·год | **Розклад 2: ліміт енергії** |
+| `switch.eveus_ev_charger_schedule_2_energy_limit_enabled` | Перемикач | **Розклад 2: ліміт енергії увімкнено** |
 | `sensor.eveus_ev_charger_schedule_2` | Сенсор | **Розклад 2** |
+
+Кожен розклад має власні обмеження струму та енергії з окремими перемикачами.
 
 ### Діагностика та обслуговування
 

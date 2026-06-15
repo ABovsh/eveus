@@ -521,11 +521,8 @@ get_session_cost = _make_value_getter(
 # Adaptive charging (AI mode) and scheduled slots
 # =============================================================================
 
-get_adaptive_charging_state = _make_enum_getter("aiStatus", {1: "Active", 0: "Idle"})
-
-
-get_adaptive_voltage = _make_value_getter(
-    "aiVoltage", precision=0, minimum=0, maximum=_MAX_VOLTAGE
+get_adaptive_charging_state = _make_enum_getter(
+    "aiStatus", {0: "Off", 1: "Voltage", 2: "Auto", 3: "Power"}
 )
 
 
@@ -902,15 +899,6 @@ def create_sensor_specifications(
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
             unit=UnitOfElectricCurrent.AMPERE, precision=0,
-            category=EntityCategory.DIAGNOSTIC,
-        ),
-        SensorSpec(
-            key="adaptive_voltage_threshold", name="Adaptive Voltage Threshold",
-            value_fn=get_adaptive_voltage,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:flash-alert",
-            device_class=SensorDeviceClass.VOLTAGE,
-            state_class=SensorStateClass.MEASUREMENT,
-            unit=UnitOfElectricPotential.VOLT, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(
