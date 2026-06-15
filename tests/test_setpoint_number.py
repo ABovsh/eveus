@@ -136,6 +136,25 @@ def test_undervoltage_threshold_min_never_crosses_max():
     assert ent.native_min_value == 220  # capped at native_max_value
 
 
+def test_threshold_write_reclamps_against_min_raised_while_queued():
+    # F4: a write queued behind the command lock must clamp against the floor as
+    # it is when the command is actually sent, not the floor captured at enqueue.
+    ent, updater = _make_threshold({"aiVoltage": 215, "minVoltage": 150})  # floor 160
+
+    async def scenario():
+        await ent._command_lock.acquire()
+        task = asyncio.ensure_future(ent.async_set_native_value(165))  # valid at 160
+        await asyncio.sleep(0)  # let the write block on the lock
+        # Minimum voltage rises while the write waits -> floor becomes 210.
+        updater.data = {"aiVoltage": 215, "minVoltage": 200}
+        ent._command_lock.release()
+        await task
+        # Must have re-clamped to the NEW floor, not sent the stale 165.
+        updater.send_command.assert_awaited_once_with("aiVoltage", 210)
+
+    asyncio.run(scenario())
+
+
 def test_undervoltage_threshold_accepts_value_below_write_floor():
     # Real charger payload: minVoltage=200 (write floor 210) but a stored
     # aiVoltage=190 below it. The value must still be ACCEPTED and displayed —

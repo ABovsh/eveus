@@ -420,11 +420,24 @@ class EveusSetpointNumber(EveusNumberEntity):
             return self._last_device_value
         return None
 
+    def _pre_send_refresh(self) -> None:
+        """Hook: refresh dynamic bounds just before clamping a queued write.
+
+        No-op for static-bound numbers; overridden where the min/max can shift
+        while a command waits for ``_command_lock``.
+        """
+
     async def async_set_native_value(self, value: float) -> None:
         raw = _validate_finite_number(value, self.ENTITY_NAME)
-        clamped = max(self._attr_native_min_value, min(self._attr_native_max_value, raw))
-        device_value = int(round(clamped * self._ha_to_device))
         async with self._command_lock:
+            # Clamp INSIDE the lock against a freshly refreshed bound: a write
+            # queued behind another command must honour a dynamic min/max that
+            # shifted while it waited, not the bound captured at enqueue time.
+            self._pre_send_refresh()
+            clamped = max(
+                self._attr_native_min_value, min(self._attr_native_max_value, raw)
+            )
+            device_value = int(round(clamped * self._ha_to_device))
             try:
                 self._pending_value = clamped
                 self._attr_native_value = clamped
@@ -526,6 +539,10 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
         # Never cross the upper bound — a nonsense minVoltage must not invert the
         # slider range.
         self._attr_native_min_value = min(new_min, self._attr_native_max_value)
+
+    def _pre_send_refresh(self) -> None:
+        """Re-derive the dynamic floor before a queued write is clamped/sent."""
+        self._refresh_min_bound()
 
     def _handle_coordinator_update(self) -> None:
         previous_min = self._attr_native_min_value

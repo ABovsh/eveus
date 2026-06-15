@@ -35,13 +35,15 @@ class SocLimitController:
         self._updater = updater
         self._calc = soc_calculator
         self._enabled = False
-        # ``_fired`` latches once the stop is CONFIRMED (the session has actually
-        # left the active states), not merely once the command POST returned 2xx.
+        # ``_fired`` latches once the stop is CONFIRMED — the charger itself
+        # reports ``evseEnabled == 0`` — not merely once the command POST
+        # returned 2xx.
         self._fired = False
-        # Set when a Stop command POST succeeded but the charger is still charging:
-        # the stop is "sent, awaiting confirmation". The event is emitted only once
-        # the session ends; until then each active poll re-sends the Stop, so a
-        # command the firmware/OCPP ignored or overrode keeps being enforced.
+        # Set (soc, target) once a Stop POST is accepted; the attempt then awaits
+        # the charger reporting ``evseEnabled == 0``. Confirmation is attributable
+        # to our command (an unrelated unplug leaves ``evseEnabled == 1``), and is
+        # held across retries so an end-of-session poll can't lose it. While it is
+        # set and the charger is still enabled, each active poll re-sends the Stop.
         self._pending: tuple[int, int] | None = None
         # A monotonically increasing "attempt epoch". Each re-arm bumps it so an
         # in-flight _stop() spawned in an older epoch (the switch was toggled or
@@ -86,12 +88,16 @@ class SocLimitController:
             return
         data = self._updater.data
         state = get_safe_value(data, "state", int)
+        evse_enabled = get_safe_value(data, "evseEnabled", int)
+        # Attributable confirmation: our Stop set ``evseEnabled = 0``. Seeing the
+        # charger report 0 (whether still in an active state for one more poll, or
+        # already transitioned out) proves OUR command took — an unrelated unplug
+        # leaves ``evseEnabled == 1``. Checked before the session-over return so a
+        # stop that ends the session in the same poll is never lost.
+        if self._pending is not None and not self._fired and evse_enabled == 0:
+            self._emit_reached(*self._pending)
         if state not in SESSION_ACTIVE_STATES:
-            # Session over. If a Stop was awaiting confirmation, the session
-            # ending IS the confirmation the charge stopped — emit the event now.
-            if self._pending is not None:
-                self._emit_reached(*self._pending)
-            # Re-arm for the next session (and drop any stale attempt).
+            # Session over: re-arm for the next one (and drop any stale attempt).
             if self._fired or self._pending is not None or self._stop_task is not None:
                 self._rearm()
             return
@@ -100,11 +106,9 @@ class SocLimitController:
         if self._stop_task is not None and not self._stop_task.done():
             # A Stop is mid-flight; wait for it before deciding anything.
             return
-        if self._pending is not None:
-            # A Stop POST succeeded yet the charger is STILL charging — the
-            # command did not take (ignored/overridden). Clear the pending mark
-            # and fall through to re-send it this poll.
-            self._pending = None
+        # ``_pending`` is intentionally NOT cleared here: it is the confirmation
+        # token and is held across retries. While it is set and the charger is
+        # still enabled (no evseEnabled==0 yet), we fall through and re-send Stop.
         target = self._calc.target_soc
         if target is None:
             return
@@ -141,9 +145,9 @@ class SocLimitController:
         the command was awaiting, this attempt has been superseded — it touches
         nothing. A successful POST only proves the charger ACCEPTED the request,
         not that charging stopped, so it marks the attempt ``_pending`` rather than
-        emitting the event; ``process()`` confirms via the session leaving the
-        active states (and re-sends each poll until it does). A failed POST leaves
-        no pending mark so the next poll simply retries.
+        emitting the event; ``process()`` confirms via the charger reporting
+        ``evseEnabled == 0`` (and re-sends each poll until it does). A failed POST
+        leaves no pending mark so the next poll simply retries.
         """
         try:
             stopped = await self._updater.send_command("evseEnabled", 0)
