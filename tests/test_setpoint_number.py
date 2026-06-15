@@ -134,3 +134,13 @@ def test_undervoltage_threshold_min_never_crosses_max():
     # A nonsense high minVoltage must not invert the slider range.
     ent, _ = _make_threshold({"aiVoltage": 215, "minVoltage": 300})
     assert ent.native_min_value == 220  # capped at native_max_value
+
+
+def test_undervoltage_threshold_accepts_value_below_write_floor():
+    # Real charger payload: minVoltage=200 (write floor 210) but a stored
+    # aiVoltage=190 below it. The value must still be ACCEPTED and displayed —
+    # only the slider/write range is gated on minVoltage+10.
+    ent, _ = _make_threshold({"aiVoltage": 190, "minVoltage": 200})
+    assert ent.native_min_value == 210          # write floor follows minVoltage+10
+    assert ent._read_device_value() == 190.0    # but the reported value is accepted
+    assert ent.native_value == 190.0

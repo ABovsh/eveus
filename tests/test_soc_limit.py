@@ -46,18 +46,24 @@ def test_fires_stop_once_at_target():
     updater = _updater(state=4, session_energy=30.0)
     ctrl, scheduled, events = _make(calc, updater)
     ctrl.set_enabled(True)
-    ctrl.process()
-    ctrl.process()  # second poll must NOT fire again
+    ctrl.process()                                     # sends Stop, awaits confirm
+    updater.data = {"state": 1, "sessionEnergy": 0.0}  # charger actually stopped
+    ctrl.process()                                     # confirms; no second Stop
     assert len(scheduled) == 1
     updater.send_command.assert_awaited_once_with("evseEnabled", 0)
 
 
-def test_fires_ha_event_on_successful_stop():
+def test_fires_ha_event_only_after_stop_confirmed():
+    # The event means the charge ACTUALLY stopped, not merely that the POST
+    # returned 2xx — it fires only once the session leaves the active states.
+    updater = _updater(state=4, session_energy=30.0)
     ctrl, scheduled, events = _make(
-        _calc(target=80, initial=20, cap=50, corr=0),
-        _updater(state=4, session_energy=30.0),
+        _calc(target=80, initial=20, cap=50, corr=0), updater
     )
     ctrl.set_enabled(True)
+    ctrl.process()
+    assert events == []                                # POST sent, not confirmed
+    updater.data = {"state": 1, "sessionEnergy": 0.0}  # session ended -> confirmed
     ctrl.process()
     assert len(events) == 1
     etype, data = events[0]
@@ -66,9 +72,25 @@ def test_fires_ha_event_on_successful_stop():
     assert data["target_soc"] == 80
 
 
+def test_no_event_and_keeps_enforcing_while_charging_continues():
+    # F1: a Stop the charger accepted (2xx) but did NOT honour — charging stays
+    # active — must never emit a false "reached" event and must keep re-sending
+    # the Stop each poll instead of latching as done.
+    updater = _updater(state=4, session_energy=30.0)  # never leaves active state
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    ctrl.process()
+    ctrl.process()
+    assert len(scheduled) >= 2   # kept enforcing rather than latching
+    assert events == []          # never falsely reported a stop
+
+
 def test_no_event_and_retries_when_stop_fails():
-    # RC-001: a failed Stop must not emit the "reached" event and must re-arm
-    # so the next poll retries this same session.
+    # RC-001: a failed Stop must not emit the "reached" event and must retry
+    # this same session.
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0),
         _updater(state=4, session_energy=30.0, stop_ok=False),
@@ -83,11 +105,15 @@ def test_no_event_and_retries_when_stop_fails():
 def test_redundant_enable_does_not_refire():
     # RC-004: re-asserting the switch on while already enabled must not re-arm.
     calc = _calc(target=80, initial=20, cap=50, corr=0)
-    ctrl, scheduled, events = _make(calc, _updater(state=4, session_energy=30.0))
+    updater = _updater(state=4, session_energy=30.0)
+    ctrl, scheduled, events = _make(calc, updater)
     ctrl.set_enabled(True)
-    ctrl.process()              # fires (1)
-    ctrl.set_enabled(True)      # redundant — must be idempotent
-    ctrl.process()              # must NOT fire again
+    ctrl.process()                                     # Stop sent
+    updater.data = {"state": 1, "sessionEnergy": 0.0}  # stopped -> confirm, re-arm
+    ctrl.process()
+    assert len(events) == 1
+    ctrl.set_enabled(True)                             # redundant — idempotent
+    ctrl.process()                                     # session ended; nothing
     assert len(scheduled) == 1 and len(events) == 1
 
 
@@ -117,11 +143,13 @@ def test_rearms_after_session_ends():
     updater = _updater(state=4, session_energy=30.0)
     ctrl, scheduled, events = _make(calc, updater)
     ctrl.set_enabled(True)
-    ctrl.process()                       # fires (1)
-    updater.data = {"state": 1, "sessionEnergy": 0.0}  # session ended (not charging)
-    ctrl.process()                       # re-arm
+    ctrl.process()                       # session 1: Stop sent
+    updater.data = {"state": 1, "sessionEnergy": 0.0}  # session 1 ended -> confirm (1)
+    ctrl.process()
     updater.data = {"state": 4, "sessionEnergy": 30.0}  # new session at/above target
-    ctrl.process()                       # fires again (2)
+    ctrl.process()                       # session 2: Stop sent
+    updater.data = {"state": 1, "sessionEnergy": 0.0}  # session 2 ended -> confirm (2)
+    ctrl.process()
     assert len(scheduled) == 2 and len(events) == 2
 
 

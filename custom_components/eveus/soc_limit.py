@@ -35,7 +35,14 @@ class SocLimitController:
         self._updater = updater
         self._calc = soc_calculator
         self._enabled = False
+        # ``_fired`` latches once the stop is CONFIRMED (the session has actually
+        # left the active states), not merely once the command POST returned 2xx.
         self._fired = False
+        # Set when a Stop command POST succeeded but the charger is still charging:
+        # the stop is "sent, awaiting confirmation". The event is emitted only once
+        # the session ends; until then each active poll re-sends the Stop, so a
+        # command the firmware/OCPP ignored or overrode keeps being enforced.
+        self._pending: tuple[int, int] | None = None
         # A monotonically increasing "attempt epoch". Each re-arm bumps it so an
         # in-flight _stop() spawned in an older epoch (the switch was toggled or
         # the session changed while its Stop command was awaiting) can neither
@@ -58,6 +65,7 @@ class SocLimitController:
     def _rearm(self) -> None:
         """Reset the latch and invalidate (and cancel) any in-flight stop."""
         self._fired = False
+        self._pending = None
         self._generation += 1
         if self._stop_task is not None and not self._stop_task.done():
             self._stop_task.cancel()
@@ -79,12 +87,24 @@ class SocLimitController:
         data = self._updater.data
         state = get_safe_value(data, "state", int)
         if state not in SESSION_ACTIVE_STATES:
-            # Session over: re-arm for the next one (and drop any stale attempt).
-            if self._fired or self._stop_task is not None:
+            # Session over. If a Stop was awaiting confirmation, the session
+            # ending IS the confirmation the charge stopped — emit the event now.
+            if self._pending is not None:
+                self._emit_reached(*self._pending)
+            # Re-arm for the next session (and drop any stale attempt).
+            if self._fired or self._pending is not None or self._stop_task is not None:
                 self._rearm()
             return
         if self._fired:
             return
+        if self._stop_task is not None and not self._stop_task.done():
+            # A Stop is mid-flight; wait for it before deciding anything.
+            return
+        if self._pending is not None:
+            # A Stop POST succeeded yet the charger is STILL charging — the
+            # command did not take (ignored/overridden). Clear the pending mark
+            # and fall through to re-send it this poll.
+            self._pending = None
         target = self._calc.target_soc
         if target is None:
             return
@@ -94,25 +114,36 @@ class SocLimitController:
         current = self._calc.get_soc_percent(energy)
         if current is None or current < target:
             return
-        # At/above target: hand off to _stop(). Latch _fired now so the next
-        # poll can't spawn a duplicate stop while this one is in flight; _stop
-        # clears the latch again only if it still owns the current epoch and the
-        # command did not actually succeed.
-        self._fired = True
+        # At/above target: hand off to _stop().
         generation = self._generation
         self._stop_task = self._hass.async_create_task(
             self._stop(generation, round(current), round(target))
         )
 
-    async def _stop(self, generation: int, soc: int, target: int) -> None:
-        """Send the existing Stop Charging command; notify only on success.
+    def _emit_reached(self, soc: int, target: int) -> None:
+        """Latch and fire the reached event exactly once for this session."""
+        self._fired = True
+        self._pending = None
+        self._hass.bus.async_fire(
+            EVENT_SOC_LIMIT_REACHED,
+            {
+                "device_number": getattr(self._updater, "device_number", 1),
+                "soc": soc,
+                "target_soc": target,
+            },
+        )
+        _LOGGER.debug("SOC limit confirmed stopped (%s%% >= %s%%)", soc, target)
 
-        Generation-guarded: if the limit was toggled or the session changed
-        while the command was awaiting, this attempt has been superseded — it
-        leaves the latch and fires no event. On a genuine failure within the
-        current epoch the latch is released so the next poll retries; the
-        ``eveus_soc_limit_reached`` event means the charge was actually stopped,
-        not merely that the target was computed.
+    async def _stop(self, generation: int, soc: int, target: int) -> None:
+        """Send the existing Stop Charging command; confirm before notifying.
+
+        Generation-guarded: if the limit was toggled or the session changed while
+        the command was awaiting, this attempt has been superseded — it touches
+        nothing. A successful POST only proves the charger ACCEPTED the request,
+        not that charging stopped, so it marks the attempt ``_pending`` rather than
+        emitting the event; ``process()`` confirms via the session leaving the
+        active states (and re-sends each poll until it does). A failed POST leaves
+        no pending mark so the next poll simply retries.
         """
         try:
             stopped = await self._updater.send_command("evseEnabled", 0)
@@ -125,15 +156,8 @@ class SocLimitController:
             # Superseded by a re-arm; do not disturb the current epoch.
             return
         if not stopped:
-            self._fired = False
             _LOGGER.debug("SOC-limit Stop not accepted; will retry")
             return
-        self._hass.bus.async_fire(
-            EVENT_SOC_LIMIT_REACHED,
-            {
-                "device_number": getattr(self._updater, "device_number", 1),
-                "soc": soc,
-                "target_soc": target,
-            },
-        )
-        _LOGGER.debug("SOC limit reached (%s%% >= %s%%): sent Stop", soc, target)
+        # POST accepted — await session-end confirmation before emitting.
+        self._pending = (soc, target)
+        _LOGGER.debug("SOC-limit Stop sent (%s%% >= %s%%); awaiting confirm", soc, target)

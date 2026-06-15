@@ -469,15 +469,51 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
 
     _MIN_VOLTAGE_KEY = "minVoltage"
     _MIN_OFFSET = 10.0
+    # Read-acceptance floor: the charger legitimately reports an ``aiVoltage`` BELOW
+    # the current write floor (e.g. minVoltage=200 with a stored aiVoltage=190 from
+    # an earlier config), so the displayed value must NOT be gated on the dynamic
+    # write minimum — only the slider/write range tracks minVoltage+10. Accept any
+    # non-negative voltage up to the max instead.
+    _READ_MIN = 0.0
 
     def __init__(self, updater, description, device_number: int = 1) -> None:
         super().__init__(updater, description, device_number)
         # Static floor used whenever the charger hasn't reported minVoltage yet.
         self._floor_min_value = self._attr_native_min_value
         self._refresh_min_bound()
-        # Re-resolve now that the bound may have widened below the static floor,
-        # so a device value under 210 isn't rejected on the very first read.
+        # Re-resolve now that read-acceptance is decoupled from the write floor.
         self._attr_native_value = self._resolve_value()
+
+    def _read_device_value(self) -> float | None:
+        """Accept the charger-reported value across the full read range.
+
+        Deliberately ignores ``native_min_value`` (the dynamic write floor): the
+        firmware can report an ``aiVoltage`` below ``minVoltage + 10``, and
+        rejecting it would blank the entity for a perfectly valid device value.
+        """
+        if not (self._updater.available and self._updater.data):
+            return None
+        if self._state_key_value not in self._updater.data:
+            return None
+        raw = get_safe_value(self._updater.data, self._state_key_value, float)
+        if raw is None:
+            return None
+        value = raw * self._device_to_ha
+        if self._READ_MIN <= value <= self._attr_native_max_value:
+            return float(value)
+        return None
+
+    async def _async_restore_state(self, state: State) -> None:
+        """Restore across the read range, not the (narrower) write floor."""
+        try:
+            if state and state.state not in (None, "unknown", "unavailable"):
+                restored = float(state.state)
+                if self._READ_MIN <= restored <= self._attr_native_max_value:
+                    self._last_device_value = restored
+                    self._last_successful_read = time.time()
+                    self._attr_native_value = restored
+        except (TypeError, ValueError) as err:
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)
 
     def _refresh_min_bound(self) -> None:
         """Set the lower bound to ``minVoltage + 10`` when the charger reports it."""
