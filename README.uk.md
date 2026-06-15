@@ -15,7 +15,10 @@
 - Обговорення: [тема в Home Assistant Community](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 - Проблеми та пропозиції: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues)
 
-<img width="1063" height="763" alt="Панель керування Eveus у Home Assistant" src="https://github.com/user-attachments/assets/4c9ece28-8977-47d0-8fbc-78a69b95dac9" />
+<img width="1183" height="475" alt="image" src="https://github.com/user-attachments/assets/a0a61b0b-3a2b-41e1-9ad4-ff05e8e94ec2" />
+<img width="1181" height="380" alt="image" src="https://github.com/user-attachments/assets/dea0ad18-852a-4909-9693-237b74ece889" />
+<img width="1173" height="619" alt="image" src="https://github.com/user-attachments/assets/cb1a0ce5-685c-4bdf-9a3f-edb46f620fa2" />
+
 
 Інтеграція підключається безпосередньо до зарядної станції через її HTTP API в
 локальній мережі. Вона працює навіть без доступу до інтернету та перетворює
@@ -370,8 +373,9 @@ automation:
 [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) з HACS. Решта
 карток використовує стандартні компоненти Home Assistant.
 
-<img width="1059" height="761" alt="Українська панель керування Eveus" src="https://github.com/user-attachments/assets/cc349dc9-612f-4919-897d-53d8bf53772a" />
-<img width="1085" height="449" alt="Сутності на панелі керування Eveus" src="https://github.com/user-attachments/assets/90ce8edf-f5c1-4229-9b6c-0504165cacb2" />
+<img width="1183" height="475" alt="image" src="https://github.com/user-attachments/assets/a0a61b0b-3a2b-41e1-9ad4-ff05e8e94ec2" />
+<img width="1181" height="380" alt="image" src="https://github.com/user-attachments/assets/dea0ad18-852a-4909-9693-237b74ece889" />
+<img width="1173" height="619" alt="image" src="https://github.com/user-attachments/assets/cb1a0ce5-685c-4bdf-9a3f-edb46f620fa2" />
 
 > [!IMPORTANT]
 > `docs/dashboard-uk.yaml` — це повне представлення панелі, а не окрема картка.
