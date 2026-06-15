@@ -29,6 +29,8 @@ from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
 
+_ICON_ENERGY = "mdi:lightning-bolt"
+
 
 class EveusSwitchEntityDescription(SwitchEntityDescription, frozen_or_thawed=True):
     """Description for Eveus switch entities."""
@@ -53,7 +55,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
     EveusSwitchEntityDescription(
         key="one_charge",
         name="One Charge",
-        icon="mdi:lightning-bolt",
+        icon=_ICON_ENERGY,
         entity_category=EntityCategory.CONFIG,
         command="oneCharge",
         state_key="oneCharge",
@@ -110,7 +112,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
     EveusSwitchEntityDescription(
         key="limit_energy_enabled",
         name="Limit: Energy enabled",
-        icon="mdi:lightning-bolt",
+        icon=_ICON_ENERGY,
         entity_category=EntityCategory.CONFIG,
         command="energyLimitS",
         state_key="energyLimitS",
@@ -134,7 +136,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
     EveusSwitchEntityDescription(
         key="schedule_1_energy_limit_enabled",
         name="Schedule 1 Energy limit enabled",
-        icon="mdi:lightning-bolt",
+        icon=_ICON_ENERGY,
         entity_category=EntityCategory.CONFIG,
         command="sh1EnergyEnable",
         state_key="sh1EnergyEnable",
@@ -150,7 +152,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
     EveusSwitchEntityDescription(
         key="schedule_2_energy_limit_enabled",
         name="Schedule 2 Energy limit enabled",
-        icon="mdi:lightning-bolt",
+        icon=_ICON_ENERGY,
         entity_category=EntityCategory.CONFIG,
         command="sh2EnergyEnable",
         state_key="sh2EnergyEnable",
