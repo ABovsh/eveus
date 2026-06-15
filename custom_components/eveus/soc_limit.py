@@ -192,6 +192,13 @@ class SocLimitController:
         ``evseEnabled == 0`` (and re-sends each poll until it does). A failed POST
         leaves no pending mark so the next poll simply retries.
         """
+        # Record the attempt BEFORE awaiting the command: a poll that completes
+        # while the POST is in flight can observe ``evseEnabled == 0`` (the stop
+        # already took effect at the charger) and must be able to confirm it —
+        # otherwise the boundary re-arm would cancel this task and lose the event.
+        # Bound to this session's energy so a missed boundary can't carry it over.
+        self._pending = (soc, target)
+        self._pending_energy = energy
         try:
             stopped = await self._updater.send_command("evseEnabled", 0)
         except asyncio.CancelledError:
@@ -203,11 +210,12 @@ class SocLimitController:
             # Superseded by a re-arm; do not disturb the current epoch.
             return
         if not stopped:
+            # POST rejected: withdraw the provisional token (unless a poll already
+            # confirmed it while the command was in flight) so a later unrelated 0
+            # can't confirm a stop that never happened; the next poll retries.
+            if not self._fired:
+                self._pending = None
+                self._pending_energy = None
             _LOGGER.debug("SOC-limit Stop not accepted; will retry")
             return
-        # POST accepted — await evseEnabled==0 confirmation before emitting, and
-        # bind the token to this session's energy so a missed boundary can't carry
-        # it into the next session.
-        self._pending = (soc, target)
-        self._pending_energy = energy
         _LOGGER.debug("SOC-limit Stop sent (%s%% >= %s%%); awaiting confirm", soc, target)

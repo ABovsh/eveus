@@ -261,6 +261,44 @@ def test_rearms_after_session_ends():
     assert len(scheduled) == 2 and len(events) == 2
 
 
+def test_confirmation_during_inflight_stop_is_not_lost():
+    # F9: a poll observing evseEnabled==0 while the Stop POST is still in flight
+    # must still confirm — the attempt is recorded before the await, so the
+    # boundary re-arm cannot cancel it and lose the event.
+    async def scenario():
+        calc = _calc(target=80, initial=20, cap=50, corr=0)
+        gate = asyncio.Event()
+        events = []
+
+        async def slow_send(_cmd, _val):
+            await gate.wait()
+            return True
+
+        updater = MagicMock()
+        updater.available = True
+        updater.last_update_success = True
+        updater.device_number = 1
+        updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 1}
+        updater.send_command = slow_send
+
+        hass = MagicMock()
+        hass.async_create_task = lambda coro: asyncio.ensure_future(coro)
+        hass.bus.async_fire = lambda et, data=None: events.append((et, data))
+
+        ctrl = SocLimitController(hass, updater, calc)
+        ctrl.set_enabled(True)
+        ctrl.process()              # spawns Stop; blocks on gate after recording token
+        await asyncio.sleep(0)      # let _stop record _pending then block on send
+        # The stop took effect at the charger before its HTTP response returned:
+        updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0}
+        ctrl.process()              # confirms via the in-flight token
+        gate.set()
+        await asyncio.sleep(0.02)
+        assert len(events) == 1
+
+    asyncio.run(scenario())
+
+
 def test_inflight_stop_superseded_by_toggle_fires_nothing():
     # Adversarial: a Stop awaiting send_command when the limit is toggled
     # off-then-on is a stale (older-generation) attempt — it must be cancelled
