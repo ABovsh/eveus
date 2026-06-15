@@ -48,6 +48,14 @@ Pick **Advanced** mode and get battery SOC as native sensors — no helpers to c
 
 Pick **Basic** if you only want charging control. Switch modes anytime via **Configure**.
 
+### 🛑 Charge limits
+Stop a session automatically — every limit the charger supports, set straight from Home Assistant, each with its own enable switch plus a master **Limit: disable all**:
+
+- **Time, Energy and Cost limits** — stop by session duration, delivered kWh, or session cost
+- **Stop at Target SOC** (Advanced mode) — **Limit: SOC enabled** halts charging when the car reaches your target battery level
+- **Per-schedule caps** — each schedule slot gets its own current and energy limit
+- **One master switch** suspends every limit at once without losing the values
+
 ### 🤖 Adaptive charging & schedules
 The charger can protect weak house wiring by lowering the charging current when mains voltage sags. The integration exposes this fully:
 
