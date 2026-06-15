@@ -215,38 +215,6 @@ sections:
           - entity: button.eveus_ev_charger_force_refresh
             name: Force Refresh
             icon: mdi:refresh
-      - type: entities
-        title: Charge limits
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: number.eveus_ev_charger_limit_time
-            name: "Limit: Time"
-            icon: mdi:timer-sand
-          - entity: switch.eveus_ev_charger_limit_time_enabled
-            name: "Limit: Time enabled"
-            icon: mdi:timer-sand
-          - entity: number.eveus_ev_charger_limit_energy
-            name: "Limit: Energy"
-            icon: mdi:lightning-bolt
-          - entity: switch.eveus_ev_charger_limit_energy_enabled
-            name: "Limit: Energy enabled"
-            icon: mdi:lightning-bolt
-          - entity: number.eveus_ev_charger_limit_cost
-            name: "Limit: Cost"
-            icon: mdi:cash
-          - entity: switch.eveus_ev_charger_limit_cost_enabled
-            name: "Limit: Cost enabled"
-            icon: mdi:cash
-          - entity: switch.eveus_ev_charger_limit_disable_all
-            name: "Limit: disable all"
-            icon: mdi:cancel
-          - entity: switch.eveus_ev_charger_limit_soc_enabled
-            name: "Limit: SOC enabled (Advanced mode only)"
-            icon: mdi:battery-charging-high
-          - entity: select.eveus_ev_charger_minimum_voltage
-            name: Minimum voltage
-            icon: mdi:sine-wave
   - type: grid
     cards:
       - type: heading
@@ -284,100 +252,190 @@ sections:
         heading: Schedules
         heading_style: title
         icon: mdi:clipboard-clock-outline
-      - square: false
-        type: grid
-        columns: 1
+      - type: heading
+        heading: Schedule 1
+        heading_style: subtitle
+        icon: mdi:numeric-1-box-outline
+      - type: grid
+        columns: 2
+        square: false
         cards:
-          - type: entities
-            show_header_toggle: false
-            state_color: true
-            entities:
-              - entity: switch.eveus_ev_charger_schedule_1_enabled
-                name: Enabled
-                icon: mdi:power
-              - entity: time.eveus_ev_charger_schedule_1_start
-                name: Start
-                icon: mdi:clock-start
-              - entity: time.eveus_ev_charger_schedule_1_stop
-                name: Stop
-                icon: mdi:clock-end
-              - entity: number.eveus_ev_charger_schedule_1_current_limit
-                name: Schedule 1 Current limit
-                icon: mdi:current-ac
-              - entity: switch.eveus_ev_charger_schedule_1_current_limit_enabled
-                name: Schedule 1 Current limit enabled
-                icon: mdi:current-ac
-              - entity: number.eveus_ev_charger_schedule_1_energy_limit
-                name: Schedule 1 Energy limit
-                icon: mdi:lightning-bolt
-              - entity: switch.eveus_ev_charger_schedule_1_energy_limit_enabled
-                name: Schedule 1 Energy limit enabled
-                icon: mdi:lightning-bolt
-              - entity: sensor.eveus_ev_charger_schedule_1
-                name: Window
-                icon: mdi:timetable
-            title: Schedule 1
-          - type: entities
-            title: Schedule 2
-            show_header_toggle: false
-            state_color: true
-            entities:
-              - entity: switch.eveus_ev_charger_schedule_2_enabled
-                name: Enabled
-                icon: mdi:power
-              - entity: time.eveus_ev_charger_schedule_2_start
-                name: Start
-                icon: mdi:clock-start
-              - entity: time.eveus_ev_charger_schedule_2_stop
-                name: Stop
-                icon: mdi:clock-end
-              - entity: number.eveus_ev_charger_schedule_2_current_limit
-                name: Schedule 2 Current limit
-                icon: mdi:current-ac
-              - entity: switch.eveus_ev_charger_schedule_2_current_limit_enabled
-                name: Schedule 2 Current limit enabled
-                icon: mdi:current-ac
-              - entity: number.eveus_ev_charger_schedule_2_energy_limit
-                name: Schedule 2 Energy limit
-                icon: mdi:lightning-bolt
-              - entity: switch.eveus_ev_charger_schedule_2_energy_limit_enabled
-                name: Schedule 2 Energy limit enabled
-                icon: mdi:lightning-bolt
-              - entity: sensor.eveus_ev_charger_schedule_2
-                name: Window
-                icon: mdi:timetable
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_1_enabled
+            name: Enabled
+            icon: mdi:power
+          - type: tile
+            entity: sensor.eveus_ev_charger_schedule_1
+            name: Window
+            icon: mdi:timetable
+          - type: tile
+            entity: time.eveus_ev_charger_schedule_1_start
+            name: Start
+            icon: mdi:clock-start
+          - type: tile
+            entity: time.eveus_ev_charger_schedule_1_stop
+            name: Stop
+            icon: mdi:clock-end
+          - type: tile
+            entity: number.eveus_ev_charger_schedule_1_current_limit
+            name: Current limit
+            icon: mdi:current-ac
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_1_current_limit_enabled
+            name: Current
+            icon: mdi:current-ac
+          - type: tile
+            entity: number.eveus_ev_charger_schedule_1_energy_limit
+            name: Energy limit
+            icon: mdi:lightning-bolt
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_1_energy_limit_enabled
+            name: Energy
+            icon: mdi:lightning-bolt
+      - type: heading
+        heading: Schedule 2
+        heading_style: subtitle
+        icon: mdi:numeric-2-box-outline
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_2_enabled
+            name: Enabled
+            icon: mdi:power
+          - type: tile
+            entity: sensor.eveus_ev_charger_schedule_2
+            name: Window
+            icon: mdi:timetable
+          - type: tile
+            entity: time.eveus_ev_charger_schedule_2_start
+            name: Start
+            icon: mdi:clock-start
+          - type: tile
+            entity: time.eveus_ev_charger_schedule_2_stop
+            name: Stop
+            icon: mdi:clock-end
+          - type: tile
+            entity: number.eveus_ev_charger_schedule_2_current_limit
+            name: Current limit
+            icon: mdi:current-ac
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_2_current_limit_enabled
+            name: Current
+            icon: mdi:current-ac
+          - type: tile
+            entity: number.eveus_ev_charger_schedule_2_energy_limit
+            name: Energy limit
+            icon: mdi:lightning-bolt
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_2_energy_limit_enabled
+            name: Energy
+            icon: mdi:lightning-bolt
   - type: grid
     cards:
       - type: heading
+        heading: Charge limits
+        heading_style: subtitle
+        icon: mdi:gauge
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: tile
+            entity: number.eveus_ev_charger_limit_time
+            name: Time
+            icon: mdi:timer-sand
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_time_enabled
+            name: Time
+            icon: mdi:timer-sand
+          - type: tile
+            entity: number.eveus_ev_charger_limit_energy
+            name: Energy
+            icon: mdi:lightning-bolt
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_energy_enabled
+            name: Energy
+            icon: mdi:lightning-bolt
+          - type: tile
+            entity: number.eveus_ev_charger_limit_cost
+            name: Cost
+            icon: mdi:cash
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_cost_enabled
+            name: Cost
+            icon: mdi:cash
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_disable_all
+            name: Disable all
+            icon: mdi:cancel
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_soc_enabled
+            name: SOC limit
+            icon: mdi:battery-charging-high
+      - type: tile
+        entity: select.eveus_ev_charger_minimum_voltage
+        name: Minimum voltage
+        icon: mdi:sine-wave
+      - type: heading
         heading: Diagnostics
         icon: mdi:stethoscope
-      - type: entities
-        show_header_toggle: false
-        entities:
-          - entity: sensor.eveus_ev_charger_connection_quality
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: tile
+            entity: sensor.eveus_ev_charger_connection_quality
             name: Connection Quality
             icon: mdi:wifi
-          - entity: sensor.eveus_ev_charger_wifi_signal
+          - type: tile
+            entity: sensor.eveus_ev_charger_wifi_signal
             name: WiFi Signal
             icon: mdi:wifi-strength-2
-          - type: divider
-          - entity: sensor.eveus_ev_charger_box_temperature
+          - type: tile
+            entity: sensor.eveus_ev_charger_box_temperature
             name: Box Temp
             icon: mdi:thermometer
-          - entity: sensor.eveus_ev_charger_plug_temperature
+          - type: tile
+            entity: sensor.eveus_ev_charger_plug_temperature
             name: Plug Temp
             icon: mdi:thermometer-lines
-          - type: divider
-          - entity: sensor.eveus_ev_charger_ground
+          - type: tile
+            entity: sensor.eveus_ev_charger_ground
             name: Ground
             icon: mdi:earth
-          - entity: sensor.eveus_ev_charger_leakage_current
+          - type: tile
+            entity: sensor.eveus_ev_charger_leakage_current
             name: Leakage
             icon: mdi:flash-alert
-          - entity: sensor.eveus_ev_charger_leakage_current_peak
+          - type: tile
+            entity: sensor.eveus_ev_charger_leakage_current_peak
             name: Leakage Peak
             icon: mdi:flash-alert-outline
-          - entity: sensor.eveus_ev_charger_battery_voltage
+          - type: tile
+            entity: sensor.eveus_ev_charger_battery_voltage
             name: Internal Battery
             icon: mdi:car-battery
 cards: []
