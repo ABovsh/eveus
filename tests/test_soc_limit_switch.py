@@ -34,22 +34,42 @@ def test_unique_id_slug():
     assert sw.unique_id == "eveus_limit_soc_enabled"
 
 
-def test_switch_state_is_independent_of_master_disable():
-    # The SOC switch is an honest, independent toggle (like the global limit
-    # switches): "Disable limits" must NOT change its displayed state. You can
-    # turn it on while suspended (the limit is ignored by the controller), and
-    # releasing "Disable limits" leaves it exactly where you left it — no
-    # auto-enable.
+def test_enabling_master_switches_soc_off():
+    # Row #3: turning "Disable limits" on flips the SOC limit off too.
     sw, controller = _make()
-    sw._updater.data = {"suspendLimits": 1}     # master "Disable limits" on
+    sw._updater.data = {"suspendLimits": 0}
     asyncio.run(sw.async_turn_on())
-    assert sw.is_on is True                      # still freely enabled while suspended
+    controller.set_enabled.reset_mock()
+    sw.async_write_ha_state.reset_mock()
 
-    sw._updater.data = {"suspendLimits": 0}      # master released
-    sw._handle_coordinator_update()
-    assert sw.is_on is True                      # unchanged — not auto-toggled
-
-    asyncio.run(sw.async_turn_off())
     sw._updater.data = {"suspendLimits": 1}
     sw._handle_coordinator_update()
-    assert sw.is_on is False                      # off stays off under the master too
+
+    assert sw.is_on is False
+    controller.set_enabled.assert_called_with(False)
+    sw.async_write_ha_state.assert_called()
+
+
+def test_can_reenable_while_suspended_and_master_off_never_changes_it():
+    # Row #4: re-enable while suspended (real toggle, stays on across polls).
+    # Rows #5/#6: turning the master off never changes the switch by itself.
+    sw, controller = _make()
+    sw._updater.data = {"suspendLimits": 1}
+    sw._handle_coordinator_update()              # suspended baseline
+    asyncio.run(sw.async_turn_on())             # re-enable during suspend
+    sw._updater.data = {"suspendLimits": 1}
+    sw._handle_coordinator_update()             # still suspended -> not re-flipped
+    assert sw.is_on is True
+    sw._updater.data = {"suspendLimits": 0}
+    sw._handle_coordinator_update()             # master off -> unchanged
+    assert sw.is_on is True
+
+
+def test_master_off_does_not_auto_enable_an_off_switch():
+    # Row #6: SOC off while suspended, master off -> stays off (no auto-enable).
+    sw, controller = _make()
+    sw._updater.data = {"suspendLimits": 1}
+    sw._handle_coordinator_update()
+    sw._updater.data = {"suspendLimits": 0}
+    sw._handle_coordinator_update()
+    assert sw.is_on is False

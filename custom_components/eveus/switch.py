@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -340,6 +340,7 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
         super().__init__(updater, device_number)
         self._controller = controller
         self._attr_is_on = False
+        self._was_suspended = False
 
     @property
     def available(self) -> bool:
@@ -348,12 +349,25 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        # Honest, independent on/off — like the charger's own limit-enable
-        # switches. It is freely toggleable even while "Disable limits" is on; the
-        # master only causes the limit to be IGNORED (handled in the controller),
-        # it does not change this switch's state. So releasing "Disable limits"
-        # leaves it exactly where the user left it — no auto-enable.
         return self._attr_is_on
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        # Turning the master "Disable limits" on switches the SOC limit off too,
+        # alongside the charger's own limits. Only on the off->on transition: you
+        # can still flip it back on while suspended (the controller ignores the
+        # limit meanwhile), and turning the master back off never changes this
+        # switch by itself — it stays where you left it (no auto-enable).
+        data = self._updater.data
+        suspended = (
+            isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) == 1
+        )
+        if suspended and not self._was_suspended and self._attr_is_on:
+            self._attr_is_on = False
+            self._controller.set_enabled(False)
+            self.async_write_ha_state()
+        self._was_suspended = suspended
+        super()._handle_coordinator_update()
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
