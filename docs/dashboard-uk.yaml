@@ -219,38 +219,59 @@ sections:
           - entity: button.eveus_ev_charger_force_refresh
             name: Примусове оновлення
             icon: mdi:refresh
-      - type: entities
-        title: Ліміти заряду
-        show_header_toggle: false
-        state_color: true
-        entities:
-          - entity: number.eveus_ev_charger_limit_time
-            name: "Ліміт: Час"
+      - type: heading
+        heading: Ліміти заряду
+        heading_style: subtitle
+        icon: mdi:gauge
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: tile
+            entity: number.eveus_ev_charger_limit_time
+            name: Час
             icon: mdi:timer-sand
-          - entity: switch.eveus_ev_charger_limit_time_enabled
-            name: "Ліміт: Час увімкнено"
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_time_enabled
+            name: Час
             icon: mdi:timer-sand
-          - entity: number.eveus_ev_charger_limit_energy
-            name: "Ліміт: Енергія"
+          - type: tile
+            entity: number.eveus_ev_charger_limit_energy
+            name: Енергія
             icon: mdi:lightning-bolt
-          - entity: switch.eveus_ev_charger_limit_energy_enabled
-            name: "Ліміт: Енергія увімкнено"
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_energy_enabled
+            name: Енергія
             icon: mdi:lightning-bolt
-          - entity: number.eveus_ev_charger_limit_cost
-            name: "Ліміт: Вартість"
+          - type: tile
+            entity: number.eveus_ev_charger_limit_cost
+            name: Вартість
             icon: mdi:cash
-          - entity: switch.eveus_ev_charger_limit_cost_enabled
-            name: "Ліміт: Вартість увімкнено"
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_cost_enabled
+            name: Вартість
             icon: mdi:cash
-          - entity: switch.eveus_ev_charger_limit_disable_all
-            name: "Ліміт: вимкнути всі"
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_disable_all
+            name: Вимкнути всі
             icon: mdi:cancel
-          - entity: switch.eveus_ev_charger_limit_soc_enabled
-            name: "Ліміт: SOC увімкнено"
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_soc_enabled
+            name: Ліміт SOC
             icon: mdi:battery-charging-high
-          - entity: select.eveus_ev_charger_minimum_voltage
-            name: Мінімальна напруга
-            icon: mdi:sine-wave
+      - type: tile
+        entity: select.eveus_ev_charger_minimum_voltage
+        name: Мінімальна напруга
+        icon: mdi:sine-wave
   - type: grid
     cards:
       - type: heading
@@ -288,100 +309,137 @@ sections:
         heading: Розклади
         heading_style: title
         icon: mdi:clipboard-clock-outline
-      - square: false
-        type: grid
-        columns: 1
+      - type: heading
+        heading: Розклад 1
+        heading_style: subtitle
+        icon: mdi:numeric-1-box-outline
+      - type: grid
+        columns: 2
+        square: false
         cards:
-          - type: entities
-            show_header_toggle: false
-            state_color: true
-            entities:
-              - entity: switch.eveus_ev_charger_schedule_1_enabled
-                name: Увімкнено
-                icon: mdi:power
-              - entity: time.eveus_ev_charger_schedule_1_start
-                name: Початок
-                icon: mdi:clock-start
-              - entity: time.eveus_ev_charger_schedule_1_stop
-                name: Завершення
-                icon: mdi:clock-end
-              - entity: number.eveus_ev_charger_schedule_1_current_limit
-                name: "Розклад 1: ліміт струму"
-                icon: mdi:current-ac
-              - entity: switch.eveus_ev_charger_schedule_1_current_limit_enabled
-                name: "Розклад 1: ліміт струму увімкнено"
-                icon: mdi:current-ac
-              - entity: number.eveus_ev_charger_schedule_1_energy_limit
-                name: "Розклад 1: ліміт енергії"
-                icon: mdi:lightning-bolt
-              - entity: switch.eveus_ev_charger_schedule_1_energy_limit_enabled
-                name: "Розклад 1: ліміт енергії увімкнено"
-                icon: mdi:lightning-bolt
-              - entity: sensor.eveus_ev_charger_schedule_1
-                name: Вікно
-                icon: mdi:timetable
-            title: Розклад 1
-          - type: entities
-            title: Розклад 2
-            show_header_toggle: false
-            state_color: true
-            entities:
-              - entity: switch.eveus_ev_charger_schedule_2_enabled
-                name: Увімкнено
-                icon: mdi:power
-              - entity: time.eveus_ev_charger_schedule_2_start
-                name: Початок
-                icon: mdi:clock-start
-              - entity: time.eveus_ev_charger_schedule_2_stop
-                name: Завершення
-                icon: mdi:clock-end
-              - entity: number.eveus_ev_charger_schedule_2_current_limit
-                name: "Розклад 2: ліміт струму"
-                icon: mdi:current-ac
-              - entity: switch.eveus_ev_charger_schedule_2_current_limit_enabled
-                name: "Розклад 2: ліміт струму увімкнено"
-                icon: mdi:current-ac
-              - entity: number.eveus_ev_charger_schedule_2_energy_limit
-                name: "Розклад 2: ліміт енергії"
-                icon: mdi:lightning-bolt
-              - entity: switch.eveus_ev_charger_schedule_2_energy_limit_enabled
-                name: "Розклад 2: ліміт енергії увімкнено"
-                icon: mdi:lightning-bolt
-              - entity: sensor.eveus_ev_charger_schedule_2
-                name: Вікно
-                icon: mdi:timetable
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_1_enabled
+            name: Увімкнено
+            icon: mdi:power
+          - type: tile
+            entity: sensor.eveus_ev_charger_schedule_1
+            name: Вікно
+            icon: mdi:timetable
+          - type: tile
+            entity: time.eveus_ev_charger_schedule_1_start
+            name: Початок
+            icon: mdi:clock-start
+          - type: tile
+            entity: time.eveus_ev_charger_schedule_1_stop
+            name: Завершення
+            icon: mdi:clock-end
+          - type: tile
+            entity: number.eveus_ev_charger_schedule_1_current_limit
+            name: Ліміт струму
+            icon: mdi:current-ac
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_1_current_limit_enabled
+            name: Струм
+            icon: mdi:current-ac
+          - type: tile
+            entity: number.eveus_ev_charger_schedule_1_energy_limit
+            name: Ліміт енергії
+            icon: mdi:lightning-bolt
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_1_energy_limit_enabled
+            name: Енергія
+            icon: mdi:lightning-bolt
+      - type: heading
+        heading: Розклад 2
+        heading_style: subtitle
+        icon: mdi:numeric-2-box-outline
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_2_enabled
+            name: Увімкнено
+            icon: mdi:power
+          - type: tile
+            entity: sensor.eveus_ev_charger_schedule_2
+            name: Вікно
+            icon: mdi:timetable
+          - type: tile
+            entity: time.eveus_ev_charger_schedule_2_start
+            name: Початок
+            icon: mdi:clock-start
+          - type: tile
+            entity: time.eveus_ev_charger_schedule_2_stop
+            name: Завершення
+            icon: mdi:clock-end
+          - type: tile
+            entity: number.eveus_ev_charger_schedule_2_current_limit
+            name: Ліміт струму
+            icon: mdi:current-ac
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_2_current_limit_enabled
+            name: Струм
+            icon: mdi:current-ac
+          - type: tile
+            entity: number.eveus_ev_charger_schedule_2_energy_limit
+            name: Ліміт енергії
+            icon: mdi:lightning-bolt
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_schedule_2_energy_limit_enabled
+            name: Енергія
+            icon: mdi:lightning-bolt
   - type: grid
     cards:
       - type: heading
         heading: Діагностика
         icon: mdi:stethoscope
-      - type: entities
-        show_header_toggle: false
-        entities:
-          - entity: sensor.eveus_ev_charger_connection_quality
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: tile
+            entity: sensor.eveus_ev_charger_connection_quality
             name: Якість з'єднання
             icon: mdi:wifi
-          - entity: sensor.eveus_ev_charger_wifi_signal
+          - type: tile
+            entity: sensor.eveus_ev_charger_wifi_signal
             name: Сигнал WiFi
             icon: mdi:wifi-strength-2
-          - type: divider
-          - entity: sensor.eveus_ev_charger_box_temperature
+          - type: tile
+            entity: sensor.eveus_ev_charger_box_temperature
             name: Температура корпусу
             icon: mdi:thermometer
-          - entity: sensor.eveus_ev_charger_plug_temperature
+          - type: tile
+            entity: sensor.eveus_ev_charger_plug_temperature
             name: Температура конектора
             icon: mdi:thermometer-lines
-          - type: divider
-          - entity: sensor.eveus_ev_charger_ground
+          - type: tile
+            entity: sensor.eveus_ev_charger_ground
             name: Заземлення
             icon: mdi:earth
-          - entity: sensor.eveus_ev_charger_leakage_current
+          - type: tile
+            entity: sensor.eveus_ev_charger_leakage_current
             name: Струм витоку
             icon: mdi:flash-alert
-          - entity: sensor.eveus_ev_charger_leakage_current_peak
+          - type: tile
+            entity: sensor.eveus_ev_charger_leakage_current_peak
             name: Піковий струм витоку
             icon: mdi:flash-alert-outline
-          - entity: sensor.eveus_ev_charger_battery_voltage
+          - type: tile
+            entity: sensor.eveus_ev_charger_battery_voltage
             name: Внутрішня батарея
             icon: mdi:car-battery
 cards: []
