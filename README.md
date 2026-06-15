@@ -17,7 +17,10 @@
 - Discussion: [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 - Issues: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues)
 
-<img width="1063" height="763" alt="image" src="https://github.com/user-attachments/assets/4c9ece28-8977-47d0-8fbc-78a69b95dac9" />
+<img width="1188" height="477" alt="image" src="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039" />
+<img width="1189" height="386" alt="image" src="https://github.com/user-attachments/assets/48412a75-3368-4215-aa83-43b835b0180f" />
+<img width="1178" height="620" alt="image" src="https://github.com/user-attachments/assets/b96a52db-7d3d-4a43-be09-09324b84f681" />
+
 
 The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
 
@@ -308,8 +311,9 @@ Each schedule has its own current and energy caps with separate enable switches.
 
 A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.1**). 
 **Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the two graph cards). Every other card is built-in.
-<img width="1059" height="761" alt="image" src="https://github.com/user-attachments/assets/cc349dc9-612f-4919-897d-53d8bf53772a" />
-<img width="1085" height="449" alt="image" src="https://github.com/user-attachments/assets/90ce8edf-f5c1-4229-9b6c-0504165cacb2" />
+<img width="1188" height="477" alt="image" src="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039" />
+<img width="1189" height="386" alt="image" src="https://github.com/user-attachments/assets/48412a75-3368-4215-aa83-43b835b0180f" />
+<img width="1178" height="620" alt="image" src="https://github.com/user-attachments/assets/b96a52db-7d3d-4a43-be09-09324b84f681" />
 **Language:** the view ships in two interchangeable files — [`docs/dashboard.yaml`](docs/dashboard.yaml) (English) and [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) (Ukrainian, identical layout). Home Assistant does not translate dashboard labels automatically, so each file carries its own labels; the entity IDs are identical, so you can switch files anytime without touching history or automations.
 
 
