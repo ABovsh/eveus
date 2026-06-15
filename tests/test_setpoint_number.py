@@ -78,15 +78,28 @@ def test_unique_id_and_translation_key_from_name():
     assert ent._attr_translation_key == "limit_energy"
 
 
+def _make_threshold(data):
+    updater = MagicMock()
+    updater.available = True
+    updater.data = data
+    updater.send_command = AsyncMock(return_value=True)
+    updater.config_entry = MagicMock()
+    ent = number_mod.EveusUndervoltageThresholdNumber(
+        updater, number_mod.UNDERVOLTAGE_THRESHOLD_NUMBER, device_number=1
+    )
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    return ent, updater
+
+
 def test_undervoltage_threshold_reads_and_writes_ai_voltage():
     description = getattr(number_mod, "UNDERVOLTAGE_THRESHOLD_NUMBER", None)
     assert description is not None
 
-    ent, updater = _make(description)
-    updater.data = {"aiVoltage": 215}
+    ent, updater = _make_threshold({"aiVoltage": 215, "minVoltage": 200})
 
     assert ent._read_device_value() == 215.0
-    assert ent.native_min_value == 210
+    assert ent.native_min_value == 210  # minVoltage 200 + 10
     assert ent.native_max_value == 220
     assert ent.native_step == 1
     assert ent.mode == NumberMode.SLIDER
@@ -94,3 +107,30 @@ def test_undervoltage_threshold_reads_and_writes_ai_voltage():
     asyncio.run(ent.async_set_native_value(218))
 
     updater.send_command.assert_awaited_once_with("aiVoltage", 218)
+
+
+def test_undervoltage_threshold_min_tracks_minvoltage():
+    # Lower Minimum voltage -> the threshold floor follows minVoltage + 10.
+    ent, updater = _make_threshold({"aiVoltage": 195, "minVoltage": 180})
+    assert ent.native_min_value == 190
+    assert ent._read_device_value() == 195.0  # 195 is valid once floor drops to 190
+
+    # A live change to minVoltage updates the bound on the next poll AND pushes
+    # the new bound to HA even though the value is unchanged.
+    ent.async_write_ha_state.reset_mock()
+    updater.data = {"aiVoltage": 195, "minVoltage": 150}
+    ent._handle_coordinator_update()
+    assert ent.native_min_value == 160
+    ent.async_write_ha_state.assert_called()
+
+
+def test_undervoltage_threshold_falls_back_to_static_floor():
+    # No minVoltage reported yet -> stay at the description's 210 floor.
+    ent, _ = _make_threshold({"aiVoltage": 215})
+    assert ent.native_min_value == 210
+
+
+def test_undervoltage_threshold_min_never_crosses_max():
+    # A nonsense high minVoltage must not invert the slider range.
+    ent, _ = _make_threshold({"aiVoltage": 215, "minVoltage": 300})
+    assert ent.native_min_value == 220  # capped at native_max_value

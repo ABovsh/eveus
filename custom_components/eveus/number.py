@@ -458,6 +458,50 @@ class EveusSetpointNumber(EveusNumberEntity):
             _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)
 
 
+class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
+    """Voltage-mode threshold whose lower bound tracks Minimum voltage.
+
+    The charger constrains this setpoint to ``minVoltage + 10`` .. 220 (its web UI
+    derives the slider's lower bound the same way). Recompute the lower bound from
+    the live ``minVoltage`` on every poll so the picker mirrors the charger; fall
+    back to the static description minimum when ``minVoltage`` is unavailable.
+    """
+
+    _MIN_VOLTAGE_KEY = "minVoltage"
+    _MIN_OFFSET = 10.0
+
+    def __init__(self, updater, description, device_number: int = 1) -> None:
+        super().__init__(updater, description, device_number)
+        # Static floor used whenever the charger hasn't reported minVoltage yet.
+        self._floor_min_value = self._attr_native_min_value
+        self._refresh_min_bound()
+        # Re-resolve now that the bound may have widened below the static floor,
+        # so a device value under 210 isn't rejected on the very first read.
+        self._attr_native_value = self._resolve_value()
+
+    def _refresh_min_bound(self) -> None:
+        """Set the lower bound to ``minVoltage + 10`` when the charger reports it."""
+        dynamic: float | None = None
+        if self._updater.available and self._updater.data:
+            raw = get_safe_value(self._updater.data, self._MIN_VOLTAGE_KEY, float)
+            if raw is not None:
+                dynamic = raw + self._MIN_OFFSET
+        new_min = dynamic if dynamic is not None else self._floor_min_value
+        # Never cross the upper bound — a nonsense minVoltage must not invert the
+        # slider range.
+        self._attr_native_min_value = min(new_min, self._attr_native_max_value)
+
+    def _handle_coordinator_update(self) -> None:
+        previous_min = self._attr_native_min_value
+        self._refresh_min_bound()
+        super()._handle_coordinator_update()
+        # The base handler only writes HA state when value/availability/attributes
+        # change; a shift in the lower bound alone (value unchanged) would leave the
+        # frontend showing a stale slider minimum, so push it explicitly.
+        if self._attr_native_min_value != previous_min:
+            self.async_write_ha_state()
+
+
 class EveusSocConfigNumber(
     WriteOnChangeMixin,
     BaseEveusEntity,
@@ -613,7 +657,9 @@ async def async_setup_entry(
 
     model = entry.data.get(CONF_MODEL)
     entities = [
-        EveusSetpointNumber(updater, UNDERVOLTAGE_THRESHOLD_NUMBER, device_number)
+        EveusUndervoltageThresholdNumber(
+            updater, UNDERVOLTAGE_THRESHOLD_NUMBER, device_number
+        )
     ]
     if model:
         entities.append(EveusCurrentNumber(updater, model, device_number))
