@@ -78,6 +78,47 @@ def test_unique_id_and_translation_key_from_name():
     assert ent._attr_translation_key == "limit_energy"
 
 
+def test_energy_read_rounds_to_three_decimals():
+    # Charger reports float noise (56.00899...); HA should show 3 decimals.
+    ent, updater = _make(
+        EveusSetpointNumberDescription(
+            key="limit_energy",
+            name="Limit Energy",
+            command="energyLimit",
+            state_key="energyLimit",
+            device_to_ha=1.0,
+            ha_to_device=1000.0,
+            native_min_value=0.0,
+            native_max_value=100.0,
+            native_step=1.0,
+            native_unit_of_measurement="kWh",
+            display_precision=3,
+        )
+    )
+    updater.data = {"energyLimit": 56.008999}
+    assert ent._read_device_value() == 56.009
+
+
+def test_time_read_rounds_to_whole_minutes():
+    ent, updater = _make(
+        EveusSetpointNumberDescription(
+            key="limit_time",
+            name="Limit Time",
+            command="timeLimit",
+            state_key="timeLimit",
+            device_to_ha=1 / 60,
+            ha_to_device=60.0,
+            native_min_value=0.0,
+            native_max_value=1440.0,
+            native_step=5.0,
+            native_unit_of_measurement="min",
+            display_precision=0,
+        )
+    )
+    updater.data = {"timeLimit": 29198}      # 486.633... min
+    assert ent._read_device_value() == 487.0
+
+
 def _make_threshold(data):
     updater = MagicMock()
     updater.available = True

@@ -14,7 +14,9 @@ def _calc(target=80, initial=20, cap=50, corr=0):
     return c
 
 
-def _updater(state=4, session_energy=30.0, ok=True, stop_ok=True, ev=1):
+def _updater(state=4, session_energy=30.0, ok=True, stop_ok=True, ev=0):
+    # evseEnabled polarity matches the firmware: 0 = charging (go), 1 = stopped.
+    # An active charge therefore defaults to evseEnabled=0.
     u = MagicMock()
     u.available = ok
     u.last_update_success = ok
@@ -41,27 +43,27 @@ def _make(calc, updater):
 
 
 def _confirm(updater, state=4):
-    """Simulate the charger acknowledging our Stop: evseEnabled drops to 0."""
-    updater.data = {**updater.data, "state": state, "evseEnabled": 0}
+    """Simulate the charger acknowledging our Stop: evseEnabled rises to 1."""
+    updater.data = {**updater.data, "state": state, "evseEnabled": 1}
 
 
 def test_fires_stop_once_at_target():
     # initial 20% + 30 kWh on a 50 kWh pack ≈ 80% -> reaches target 80
     calc = _calc(target=80, initial=20, cap=50, corr=0)
-    updater = _updater(state=4, session_energy=30.0, ev=1)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
     ctrl, scheduled, events = _make(calc, updater)
     ctrl.set_enabled(True)
-    ctrl.process()              # sends Stop; charger still evseEnabled=1
-    _confirm(updater)           # charger reports evseEnabled=0
+    ctrl.process()              # sends Stop; charger still evseEnabled=0
+    _confirm(updater)           # charger reports evseEnabled=1
     ctrl.process()              # confirms; no second Stop
     assert len(scheduled) == 1
-    updater.send_command.assert_awaited_once_with("evseEnabled", 0)
+    updater.send_command.assert_awaited_once_with("evseEnabled", 1)
 
 
 def test_fires_ha_event_only_after_evse_disabled_confirmed():
-    # The event means the charge ACTUALLY stopped (charger reports evseEnabled=0),
+    # The event means the charge ACTUALLY stopped (charger reports evseEnabled=1),
     # not merely that the Stop POST returned 2xx.
-    updater = _updater(state=4, session_energy=30.0, ev=1)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
@@ -79,8 +81,8 @@ def test_fires_ha_event_only_after_evse_disabled_confirmed():
 
 def test_no_event_and_keeps_enforcing_while_charging_continues():
     # F1: a Stop the charger accepted (2xx) but did NOT honour — evseEnabled stays
-    # 1 — must never emit a false "reached" event and must keep re-sending Stop.
-    updater = _updater(state=4, session_energy=30.0, ev=1)  # stays enabled
+    # 0 — must never emit a false "reached" event and must keep re-sending Stop.
+    updater = _updater(state=4, session_energy=30.0, ev=0)  # stays charging
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
@@ -93,39 +95,40 @@ def test_no_event_and_keeps_enforcing_while_charging_continues():
 
 
 def test_unrelated_unplug_does_not_emit():
-    # F3: the session ending with evseEnabled still 1 (an unplug/error, NOT our
+    # F3: the session ending with evseEnabled still 0 (an unplug/error, NOT our
     # Stop) must not be misattributed as a confirmed SOC-limit stop.
-    updater = _updater(state=4, session_energy=30.0, ev=1)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
     ctrl.set_enabled(True)
-    ctrl.process()                       # Stop sent; awaiting evseEnabled=0
-    # Session ends but the charger is still ENABLED -> not our doing.
-    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1}
+    ctrl.process()                       # Stop sent; awaiting evseEnabled=1
+    # Session ends but the charger never reported our stop -> not our doing.
+    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0}
     ctrl.process()
     assert events == []
 
 
 def test_confirmation_held_across_retry_then_session_end():
     # F3: the confirmation token must survive a retry and a same-poll session end
-    # (with evseEnabled=0) — it must NOT be lost.
-    updater = _updater(state=4, session_energy=30.0, ev=1)
+    # (with evseEnabled=1) — it must NOT be lost.
+    updater = _updater(state=4, session_energy=30.0, ev=0)
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
     ctrl.set_enabled(True)
     ctrl.process()                       # Stop sent
-    ctrl.process()                       # still enabled -> retry, token held
-    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0}  # ended + disabled
+    ctrl.process()                       # still charging -> retry, token held
+    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1}  # ended + stopped
     ctrl.process()                       # confirms here, not lost
     assert len(events) == 1
 
 
 def test_does_not_issue_or_emit_when_already_disabled_at_target():
-    # F5: an at-target payload already reporting evseEnabled=0 must NOT issue a
-    # Stop nor be misread as confirmed — there is no 1->0 transition we caused.
-    updater = _updater(state=4, session_energy=30.0, ev=0)
+    # F5: an at-target payload already reporting evseEnabled=1 (already stopped)
+    # must NOT issue a Stop nor be misread as confirmed — there is no 0->1
+    # transition we caused.
+    updater = _updater(state=4, session_energy=30.0, ev=1)
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
@@ -138,16 +141,16 @@ def test_does_not_issue_or_emit_when_already_disabled_at_target():
 def test_missing_evse_at_active_poll_is_skipped_then_confirms():
     # An active poll missing evseEnabled is skipped (no boundary, nothing lost);
     # the pending token stays armed and a later complete poll confirms.
-    updater = _updater(state=4, session_energy=30.0, ev=1)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
     ctrl.set_enabled(True)
-    ctrl.process()                                          # Stop sent (evse was 1)
+    ctrl.process()                                          # Stop sent (evse was 0)
     updater.data = {"state": 4, "sessionEnergy": 30.0}      # active, no evseEnabled
     ctrl.process()
     assert events == []                                     # skipped, token held
-    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0}
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 1}
     ctrl.process()                                          # now confirmed
     assert len(events) == 1
 
@@ -157,19 +160,19 @@ def test_missing_evse_at_session_end_discards_token_no_cross_session_emit():
     # (safety: an unconfirmable attempt is discarded, never emitted). The token
     # must NOT bleed into the next session where an unrelated disable would
     # falsely confirm the previous session's Stop.
-    updater = _updater(state=4, session_energy=30.0, ev=1)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
     ctrl.set_enabled(True)
-    ctrl.process()                                          # Stop sent (evse was 1)
+    ctrl.process()                                          # Stop sent (evse was 0)
     updater.data = {"state": 1, "sessionEnergy": 0.0}       # session end, no evseEnabled
     ctrl.process()                                          # boundary -> discard token
     assert events == []
-    # New session well below target; an unrelated disable must emit nothing.
-    updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 1}
-    ctrl.process()
+    # New session well below target; an unrelated stop must emit nothing.
     updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 0}
+    ctrl.process()
+    updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 1}
     ctrl.process()
     assert events == []
 
@@ -179,7 +182,7 @@ def test_hidden_boundary_via_failed_polls_does_not_bleed():
     # pending token must be bound to the session: when a later active poll shows
     # sessionEnergy reset (new session), discard it so an unrelated disable in the
     # new session cannot falsely confirm the old session's Stop.
-    updater = _updater(state=4, session_energy=30.0, ev=1)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
@@ -187,10 +190,10 @@ def test_hidden_boundary_via_failed_polls_does_not_bleed():
     ctrl.process()                       # session A: Stop sent at 30 kWh
     # Boundary (A ending, B starting) hidden by failed polls -> next observed poll
     # is B, active, with a RESET energy counter and below target.
-    updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 1}
-    ctrl.process()                       # energy dropped -> token discarded
     updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 0}
-    ctrl.process()                       # unrelated disable in B
+    ctrl.process()                       # energy dropped -> token discarded
+    updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 1}
+    ctrl.process()                       # unrelated stop in B
     assert events == []                  # A's event must NOT fire in B
 
 
@@ -211,7 +214,7 @@ def test_no_event_and_retries_when_stop_fails():
 def test_redundant_enable_does_not_refire():
     # RC-004: re-asserting the switch on while already enabled must not re-arm.
     calc = _calc(target=80, initial=20, cap=50, corr=0)
-    updater = _updater(state=4, session_energy=30.0, ev=1)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
     ctrl, scheduled, events = _make(calc, updater)
     ctrl.set_enabled(True)
     ctrl.process()                       # Stop sent
@@ -250,19 +253,19 @@ def test_rearms_after_session_ends():
     ctrl, scheduled, events = _make(calc, updater)
     ctrl.set_enabled(True)
     ctrl.process()                       # session 1: Stop sent
-    _confirm(updater)                    # evseEnabled=0 -> confirm (1)
+    _confirm(updater)                    # evseEnabled=1 -> confirm (1)
     ctrl.process()
-    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0}  # session ends
+    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1}  # session ends
     ctrl.process()                       # re-arm
-    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 1}  # new session
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0}  # new session
     ctrl.process()                       # session 2: Stop sent
-    _confirm(updater)                    # evseEnabled=0 -> confirm (2)
+    _confirm(updater)                    # evseEnabled=1 -> confirm (2)
     ctrl.process()
     assert len(scheduled) == 2 and len(events) == 2
 
 
 def test_confirmation_during_inflight_stop_is_not_lost():
-    # F9: a poll observing evseEnabled==0 while the Stop POST is still in flight
+    # F9: a poll observing evseEnabled==1 while the Stop POST is still in flight
     # must still confirm — the attempt is recorded before the await, so the
     # boundary re-arm cannot cancel it and lose the event.
     async def scenario():
@@ -278,7 +281,7 @@ def test_confirmation_during_inflight_stop_is_not_lost():
         updater.available = True
         updater.last_update_success = True
         updater.device_number = 1
-        updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 1}
+        updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0}
         updater.send_command = slow_send
 
         hass = MagicMock()
@@ -290,7 +293,7 @@ def test_confirmation_during_inflight_stop_is_not_lost():
         ctrl.process()              # spawns Stop; blocks on gate after recording token
         await asyncio.sleep(0)      # let _stop record _pending then block on send
         # The stop took effect at the charger before its HTTP response returned:
-        updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0}
+        updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1}
         ctrl.process()              # confirms via the in-flight token
         gate.set()
         await asyncio.sleep(0.02)

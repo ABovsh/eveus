@@ -2,7 +2,7 @@
 
 A coordinator listener. The charger has no knowledge of the car's SOC, so this
 is the one limit Home Assistant must enforce itself. It performs the stop by
-reusing the existing Stop Charging command (``evseEnabled=0``); it adds no new
+reusing the existing Stop Charging command (``evseEnabled=1``); it adds no new
 stop mechanism. On firing it also emits the ``eveus_soc_limit_reached`` event so
 the user can route a notification (Telegram, mobile) with their own automation —
 the integration deliberately does not send notifications itself. Fires once per
@@ -40,14 +40,15 @@ class SocLimitController:
         self._calc = soc_calculator
         self._enabled = False
         # ``_fired`` latches once the stop is CONFIRMED — the charger itself
-        # reports ``evseEnabled == 0`` — not merely once the command POST
-        # returned 2xx.
+        # reports ``evseEnabled == 1`` — not merely once the command POST
+        # returned 2xx. (Firmware polarity: ``evseEnabled`` 0 = charging, 1 =
+        # stopped; the Stop command sends 1, matching the Stop Charging switch.)
         self._fired = False
         # Set (soc, target) once a Stop POST is accepted; the attempt then awaits
-        # the charger reporting ``evseEnabled == 0``. Confirmation is attributable
-        # to our command (an unrelated unplug leaves ``evseEnabled == 1``), and is
+        # the charger reporting ``evseEnabled == 1``. Confirmation is attributable
+        # to our command (an unrelated unplug leaves ``evseEnabled == 0``), and is
         # held across retries so an end-of-session poll can't lose it. While it is
-        # set and the charger is still enabled, each active poll re-sends the Stop.
+        # set and the charger is still charging, each active poll re-sends the Stop.
         self._pending: tuple[int, int] | None = None
         # ``sessionEnergy`` observed when the pending Stop was issued. It only
         # grows within a session and resets at a new one, so a later poll showing
@@ -117,22 +118,22 @@ class SocLimitController:
         ):
             self._rearm()
         # Attributable, causal confirmation: we issue Stop only while the charger
-        # reports ``evseEnabled == 1`` (below), so a later 0 IS the 1->0 transition
-        # our command caused — not a pre-existing/stale 0 and not an unplug (which
-        # leaves it 1). Checked before the session-over return so a stop that ends
+        # reports ``evseEnabled == 0`` (below), so a later 1 IS the 0->1 transition
+        # our command caused — not a pre-existing/stale 1 and not an unplug (which
+        # leaves it 0). Checked before the session-over return so a stop that ends
         # the session in the same poll is still confirmed.
-        if self._pending is not None and not self._fired and evse_enabled == 0:
+        if self._pending is not None and not self._fired and evse_enabled == 1:
             self._emit_reached(*self._pending)
         if state not in SESSION_ACTIVE_STATES:
             # Session boundary — derived from ``state`` alone, so a payload missing
             # the optional ``evseEnabled`` still re-arms here. Confirmation above
-            # only fires on a present 0; an unconfirmable attempt is DISCARDED at
+            # only fires on a present 1; an unconfirmable attempt is DISCARDED at
             # the boundary rather than carried into the next session (which would
-            # let a later unrelated 0 falsely confirm it).
+            # let a later unrelated 1 falsely confirm it).
             if self._fired or self._pending is not None or self._stop_task is not None:
                 self._rearm()
             return
-        # Active session from here. SOC enforcement needs a known enable state.
+        # Active session from here. SOC enforcement needs a known charge state.
         if evse_enabled is None:
             # No boundary to handle in an active poll, so skipping loses nothing;
             # ``_pending`` (if any) stays armed for a later complete poll.
@@ -142,14 +143,14 @@ class SocLimitController:
         if self._stop_task is not None and not self._stop_task.done():
             # A Stop is mid-flight; wait for it before deciding anything.
             return
-        if evse_enabled != 1:
-            # Charging is already disabled — nothing to stop, and issuing now would
-            # let a 0 we did NOT cause be misread as our confirmation. Wait until we
-            # observe it enabled.
+        if evse_enabled != 0:
+            # Charging is already stopped — nothing to stop, and issuing now would
+            # let a 1 we did NOT cause be misread as our confirmation. Wait until we
+            # observe it charging.
             return
         # ``_pending`` is intentionally NOT cleared here: it is the confirmation
         # token and is held across retries. While it is set and the charger is
-        # still enabled (no evseEnabled==0 yet), we fall through and re-send Stop.
+        # still charging (no evseEnabled==1 yet), we fall through and re-send Stop.
         target = self._calc.target_soc
         if target is None:
             return
@@ -189,18 +190,20 @@ class SocLimitController:
         nothing. A successful POST only proves the charger ACCEPTED the request,
         not that charging stopped, so it marks the attempt ``_pending`` rather than
         emitting the event; ``process()`` confirms via the charger reporting
-        ``evseEnabled == 0`` (and re-sends each poll until it does). A failed POST
+        ``evseEnabled == 1`` (and re-sends each poll until it does). A failed POST
         leaves no pending mark so the next poll simply retries.
         """
         # Record the attempt BEFORE awaiting the command: a poll that completes
-        # while the POST is in flight can observe ``evseEnabled == 0`` (the stop
+        # while the POST is in flight can observe ``evseEnabled == 1`` (the stop
         # already took effect at the charger) and must be able to confirm it —
         # otherwise the boundary re-arm would cancel this task and lose the event.
         # Bound to this session's energy so a missed boundary can't carry it over.
         self._pending = (soc, target)
         self._pending_energy = energy
         try:
-            stopped = await self._updater.send_command("evseEnabled", 0)
+            # evseEnabled=1 is the Stop command (0 = keep charging); this matches
+            # the Stop Charging switch, not the field's misleading name.
+            stopped = await self._updater.send_command("evseEnabled", 1)
         except asyncio.CancelledError:
             raise
         except Exception as err:  # noqa: BLE001 - retry on any command failure
@@ -211,7 +214,7 @@ class SocLimitController:
             return
         if not stopped:
             # POST rejected: withdraw the provisional token (unless a poll already
-            # confirmed it while the command was in flight) so a later unrelated 0
+            # confirmed it while the command was in flight) so a later unrelated 1
             # can't confirm a stop that never happened; the next poll retries.
             if not self._fired:
                 self._pending = None

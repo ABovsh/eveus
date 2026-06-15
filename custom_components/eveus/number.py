@@ -77,6 +77,10 @@ class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=T
     # differ for the global energy limit (reads kWh 1:1, writes Wh-thousandths).
     device_to_ha: float = 1.0
     ha_to_device: float = 1.0
+    # Decimals to round the displayed value to (None = no rounding). The charger
+    # reports float noise (e.g. ``energyLimit`` 56.00899); this trims the tail so
+    # HA shows what the charger's own web UI shows.
+    display_precision: int | None = None
 
 
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
@@ -105,6 +109,7 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         native_step=5,
         native_unit_of_measurement="min",
         mode=NumberMode.BOX,
+        display_precision=0,
     ),
     EveusSetpointNumberDescription(
         key="limit_energy",
@@ -120,6 +125,7 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         native_step=1,
         native_unit_of_measurement="kWh",
         mode=NumberMode.BOX,
+        display_precision=3,
     ),
     EveusSetpointNumberDescription(
         key="limit_cost",
@@ -365,6 +371,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         self._state_key_value = description.state_key
         self._device_to_ha = description.device_to_ha
         self._ha_to_device = description.ha_to_device
+        self._display_precision = description.display_precision
         self._attr_native_min_value = (
             description.native_min_value if min_value is None else min_value
         )
@@ -391,6 +398,8 @@ class EveusSetpointNumber(EveusNumberEntity):
         if raw is None:
             return None
         value = raw * self._device_to_ha
+        if self._display_precision is not None:
+            value = round(value, self._display_precision)
         if self._attr_native_min_value <= value <= self._attr_native_max_value:
             return float(value)
         return None
