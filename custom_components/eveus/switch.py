@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -340,11 +340,30 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
         super().__init__(updater, device_number)
         self._controller = controller
         self._attr_is_on = False
+        self._was_suspended = False
 
     @property
     def available(self) -> bool:
         """Always available — it is a local setting, not charger-backed."""
         return True
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        # When the master "Disable limits" switch is turned on the charger drops
+        # its own Time/Energy/Cost enable flags; mirror that here so the SOC
+        # limit visibly switches off on the same press (the controller already
+        # stands down while suspended). Only on the off->on transition, so it can
+        # still be flipped back on during a suspend like the global limits.
+        data = self._updater.data
+        suspended = (
+            isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) == 1
+        )
+        if suspended and not self._was_suspended and self._attr_is_on:
+            self._attr_is_on = False
+            self._controller.set_enabled(False)
+            self.async_write_ha_state()
+        self._was_suspended = suspended
+        super()._handle_coordinator_update()
 
     @property
     def is_on(self) -> bool:
