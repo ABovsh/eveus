@@ -48,8 +48,8 @@ Pick **Basic** if you only want charging control. Switch modes anytime via **Con
 ### 🤖 Adaptive charging & schedules
 The charger can protect weak house wiring by lowering the charging current when mains voltage sags. The integration exposes this fully:
 
-- **Adaptive Mode switch** — turn the feature on or off from HA
-- **Adaptive Charging sensor** — see when throttling is actually active
+- **Adaptive Mode selector** — pick Off / Voltage / Auto / Power to match the charger's own modes
+- **Adaptive Charging sensor** — see which adaptive mode is active
 - **Adaptive Current Limit / Voltage Threshold** — the cap and the trigger voltage the charger chose
 - **Two on-device schedule slots** — enable switches, native HH:MM time pickers, and summary sensors; charging windows live on the charger, so they survive HA restarts
 
@@ -175,7 +175,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | `number.eveus_ev_charger_limit_time` | Number | **Limit: Time** session limit (min) |
 | `number.eveus_ev_charger_limit_energy` | Number | **Limit: Energy** session limit (kWh) |
 | `number.eveus_ev_charger_limit_cost` | Number | **Limit: Cost** session limit (UAH) |
-| `number.eveus_ev_charger_minimum_voltage` | Number | **Minimum voltage** allowed by the charger (V) |
+| `select.eveus_ev_charger_minimum_voltage` | Select | **Minimum voltage** undervoltage threshold (150–200 V) |
 | `switch.eveus_ev_charger_stop_charging` | Switch | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Switch | Enable one-charge mode |
 | `switch.eveus_ev_charger_ground_protection` | Switch | Enable or disable the charger's missing-ground shutdown protection. Turning it off lets charging continue without a detected ground |
@@ -260,8 +260,8 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 
 | Entity ID | Type | What it gives you |
 | --- | --- | --- |
-| `switch.eveus_ev_charger_adaptive_mode` | Switch | Toggle the charger adaptive throttle |
-| `sensor.eveus_ev_charger_adaptive_charging` | Sensor | Whether adaptive throttling is active |
+| `select.eveus_ev_charger_adaptive_mode` | Select | Adaptive mode: Off / Voltage / Auto / Power |
+| `sensor.eveus_ev_charger_adaptive_charging` | Sensor | Active adaptive mode (Off / Voltage / Auto / Power) |
 | `sensor.eveus_ev_charger_adaptive_current_limit` | A | Current cap selected by adaptive mode |
 | `sensor.eveus_ev_charger_adaptive_voltage_threshold` | V | Voltage floor for adaptive throttling |
 | `switch.eveus_ev_charger_schedule_1_enabled` | Switch | Enable or disable schedule slot 1 |

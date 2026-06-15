@@ -263,7 +263,6 @@ def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
         "Limit Time",
         "Limit Energy",
         "Limit Cost",
-        "Minimum voltage",
         "Schedule 1 Current limit",
         "Schedule 1 Energy limit",
         "Schedule 2 Current limit",
@@ -278,7 +277,6 @@ def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
         "eveus2_limit_time",
         "eveus2_limit_energy",
         "eveus2_limit_cost",
-        "eveus2_minimum_voltage",
         "eveus2_schedule_1_current_limit",
         "eveus2_schedule_1_energy_limit",
         "eveus2_schedule_2_current_limit",
@@ -288,8 +286,8 @@ def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
         "eveus2_battery_capacity",
         "eveus2_soc_correction",
     ]
-    # SOC numbers follow Charging Current, global limits, voltage, and schedule limits.
-    assert [entity.native_value for entity in added[9:]] == [25, 85, 70, 5]
+    # SOC numbers follow Charging Current, global limits, and schedule limits.
+    assert [entity.native_value for entity in added[8:]] == [25, 85, 70, 5]
 
 
 def test_seed_is_normalized_on_construction() -> None:

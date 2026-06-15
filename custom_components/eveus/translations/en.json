@@ -116,9 +116,6 @@
       "limit_cost": {
         "name": "Limit: Cost"
       },
-      "minimum_voltage": {
-        "name": "Minimum voltage"
-      },
       "schedule_1_current_limit": {
         "name": "Schedule 1 Current limit"
       },
@@ -284,9 +281,6 @@
       "one_charge": {
         "name": "One Charge"
       },
-      "adaptive_mode": {
-        "name": "Adaptive Mode"
-      },
       "schedule_1_enabled": {
         "name": "Schedule 1 Enabled"
       },
@@ -342,6 +336,12 @@
       }
     },
     "select": {
+      "adaptive_mode": {
+        "name": "Adaptive Mode"
+      },
+      "minimum_voltage": {
+        "name": "Minimum voltage"
+      },
       "time_zone": {
         "name": "Time Zone"
       }

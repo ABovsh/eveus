@@ -1,4 +1,4 @@
-from custom_components.eveus.number import GLOBAL_LIMIT_NUMBERS, UNDERVOLTAGE_NUMBER
+from custom_components.eveus.number import GLOBAL_LIMIT_NUMBERS
 
 
 def _by_key(descs):
@@ -21,9 +21,3 @@ def test_cost_limit_is_one_to_one():
     d = _by_key(GLOBAL_LIMIT_NUMBERS)["limit_cost"]
     assert d.command == "moneyLimit"
     assert d.device_to_ha == 1.0 and d.ha_to_device == 1.0
-
-
-def test_undervoltage_targets_minvoltage():
-    assert UNDERVOLTAGE_NUMBER.command == "minVoltage"
-    assert UNDERVOLTAGE_NUMBER.native_min_value == 180
-    assert UNDERVOLTAGE_NUMBER.native_max_value == 245

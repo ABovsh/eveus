@@ -59,14 +59,6 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         state_key="oneCharge",
     ),
     EveusSwitchEntityDescription(
-        key="adaptive_mode",
-        name="Adaptive Mode",
-        icon="mdi:auto-mode",
-        entity_category=EntityCategory.CONFIG,
-        command="aiStatus",
-        state_key="aiStatus",
-    ),
-    EveusSwitchEntityDescription(
         key="schedule_1_enabled",
         name="Schedule 1 Enabled",
         icon="mdi:calendar-clock",

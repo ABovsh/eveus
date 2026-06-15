@@ -521,7 +521,9 @@ get_session_cost = _make_value_getter(
 # Adaptive charging (AI mode) and scheduled slots
 # =============================================================================
 
-get_adaptive_charging_state = _make_enum_getter("aiStatus", {1: "Active", 0: "Idle"})
+get_adaptive_charging_state = _make_enum_getter(
+    "aiStatus", {0: "Off", 1: "Voltage", 2: "Auto", 3: "Power"}
+)
 
 
 get_adaptive_voltage = _make_value_getter(

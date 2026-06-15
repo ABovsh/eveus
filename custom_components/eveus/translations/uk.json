@@ -116,9 +116,6 @@
       "limit_cost": {
         "name": "Ліміт: Вартість"
       },
-      "minimum_voltage": {
-        "name": "Мінімальна напруга"
-      },
       "schedule_1_current_limit": {
         "name": "Розклад 1: ліміт струму"
       },
@@ -284,9 +281,6 @@
       "one_charge": {
         "name": "Одноразове заряджання"
       },
-      "adaptive_mode": {
-        "name": "Адаптивний режим"
-      },
       "schedule_1_enabled": {
         "name": "Розклад 1 увімкнено"
       },
@@ -342,6 +336,12 @@
       }
     },
     "select": {
+      "adaptive_mode": {
+        "name": "Адаптивний режим"
+      },
+      "minimum_voltage": {
+        "name": "Мінімальна напруга"
+      },
       "time_zone": {
         "name": "Часовий пояс"
       }

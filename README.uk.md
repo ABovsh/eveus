@@ -67,8 +67,8 @@
 просідає, станція зменшує струм заряджання. Інтеграція надає повне керування
 цією функцією:
 
-- перемикач **Адаптивний режим**;
-- сенсор **Адаптивне заряджання**, який показує фактичне обмеження струму;
+- селектор **Адаптивний режим** із режимами Off / Voltage / Auto / Power;
+- сенсор **Адаптивне заряджання**, який показує активний адаптивний режим;
 - **Ліміт адаптивного струму** та **Поріг адаптивної напруги**;
 - два розклади з окремими перемикачами, часом початку й завершення.
 
@@ -226,7 +226,7 @@ Home Assistant може додати суфікс. Унікальні ідент
 | `number.eveus_ev_charger_limit_time` | Число | **Ліміт: Час** (min) |
 | `number.eveus_ev_charger_limit_energy` | Число | **Ліміт: Енергія** (kWh) |
 | `number.eveus_ev_charger_limit_cost` | Число | **Ліміт: Вартість** (UAH) |
-| `number.eveus_ev_charger_minimum_voltage` | Число | **Мінімальна напруга** (V) |
+| `select.eveus_ev_charger_minimum_voltage` | Вибір | **Мінімальна напруга** (V) |
 | `switch.eveus_ev_charger_stop_charging` | Перемикач | **Зупинити заряджання** |
 | `switch.eveus_ev_charger_one_charge` | Перемикач | **Одноразове заряджання** |
 | `switch.eveus_ev_charger_ground_protection` | Перемикач | **Захист заземлення** |
@@ -319,7 +319,7 @@ automation:
 
 | Ідентифікатор | Тип | Назва в українському інтерфейсі |
 | --- | --- | --- |
-| `switch.eveus_ev_charger_adaptive_mode` | Перемикач | **Адаптивний режим** |
+| `select.eveus_ev_charger_adaptive_mode` | Вибір | **Адаптивний режим** |
 | `sensor.eveus_ev_charger_adaptive_charging` | Сенсор | **Адаптивне заряджання** |
 | `sensor.eveus_ev_charger_adaptive_current_limit` | А | **Ліміт адаптивного струму** |
 | `sensor.eveus_ev_charger_adaptive_voltage_threshold` | В | **Поріг адаптивної напруги** |

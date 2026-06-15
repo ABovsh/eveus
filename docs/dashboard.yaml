@@ -85,7 +85,7 @@ sections:
         show_header_toggle: false
         state_color: true
         entities:
-          - entity: switch.eveus_ev_charger_adaptive_mode
+          - entity: select.eveus_ev_charger_adaptive_mode
             name: Adaptive Mode
             icon: mdi:shield-flash-outline
           - entity: sensor.eveus_ev_charger_adaptive_charging
@@ -244,7 +244,7 @@ sections:
           - entity: switch.eveus_ev_charger_limit_soc_enabled
             name: "Limit: SOC enabled (Advanced mode only)"
             icon: mdi:battery-charging-high
-          - entity: number.eveus_ev_charger_minimum_voltage
+          - entity: select.eveus_ev_charger_minimum_voltage
             name: Minimum voltage
             icon: mdi:sine-wave
   - type: grid

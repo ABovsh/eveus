@@ -622,7 +622,6 @@ def test_switch_setup_creates_control_entities() -> None:
     assert [entity.name for entity in added] == [
         "Stop Charging",
         "One Charge",
-        "Adaptive Mode",
         "Schedule 1 Enabled",
         "Schedule 2 Enabled",
         "Ground Protection",
@@ -640,7 +639,6 @@ def test_switch_setup_creates_control_entities() -> None:
     assert {entity.unique_id for entity in added} == {
         "eveus2_stop_charging",
         "eveus2_one_charge",
-        "eveus2_adaptive_mode",
         "eveus2_schedule_1_enabled",
         "eveus2_schedule_2_enabled",
         "eveus2_ground_protection",
@@ -687,7 +685,7 @@ def test_button_setup_creates_refresh_and_reset_buttons() -> None:
     }
 
 
-def test_select_setup_creates_time_zone_entity() -> None:
+def test_select_setup_creates_control_entities() -> None:
     from custom_components.eveus.select import async_setup_entry as async_setup_select_entry
 
     added: list[object] = []
@@ -705,8 +703,39 @@ def test_select_setup_creates_time_zone_entity() -> None:
         )
     )
 
-    assert [entity.name for entity in added] == ["Time Zone"]
-    assert {entity.unique_id for entity in added} == {"eveus2_time_zone"}
+    assert [entity.name for entity in added] == [
+        "Time Zone",
+        "Adaptive Mode",
+        "Minimum voltage",
+    ]
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_time_zone",
+        "eveus2_adaptive_mode",
+        "eveus2_minimum_voltage",
+    }
+
+
+def test_select_setup_model_gates_minimum_voltage_only() -> None:
+    from custom_components.eveus.select import async_setup_entry as async_setup_select_entry
+
+    added: list[object] = []
+    data = _data()
+    data.pop(CONF_MODEL)
+    entry = _Entry(data)
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
+        device_number=2,
+    )
+
+    asyncio.run(
+        async_setup_select_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert [entity.name for entity in added] == ["Time Zone", "Adaptive Mode"]
 
 
 def test_number_setup_creates_current_entity() -> None:
@@ -725,15 +754,14 @@ def test_number_setup_creates_current_entity() -> None:
         )
     )
 
-    # Charging Current + global limits + Minimum voltage + schedule limits.
-    assert len(added) == 9
+    # Charging Current + global limits + schedule limits.
+    assert len(added) == 8
     names = [e.name for e in added]
     assert "Charging Current" in names
     assert {
         "Limit Time",
         "Limit Energy",
         "Limit Cost",
-        "Minimum voltage",
         "Schedule 1 Current limit",
         "Schedule 1 Energy limit",
         "Schedule 2 Current limit",

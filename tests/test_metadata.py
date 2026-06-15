@@ -146,9 +146,8 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
     from custom_components.eveus.number import (
         GLOBAL_LIMIT_NUMBERS,
         SCHEDULE_LIMIT_NUMBERS,
-        UNDERVOLTAGE_NUMBER,
     )
-    for desc in (*GLOBAL_LIMIT_NUMBERS, UNDERVOLTAGE_NUMBER, *SCHEDULE_LIMIT_NUMBERS):
+    for desc in (*GLOBAL_LIMIT_NUMBERS, *SCHEDULE_LIMIT_NUMBERS):
         expected["number"].add(_slug(desc.name))
     for desc in SWITCH_DESCRIPTIONS:
         expected["switch"].add(slugify(desc.name))
@@ -157,7 +156,8 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
         expected["time"].add(_slug(desc.name))
     for name in ("Force Refresh", "Reset Counter A", "Reset Counter B", "Sync Time"):
         expected["button"].add(_slug(name))
-    expected["select"].add(_slug("Time Zone"))
+    for name in ("Time Zone", "Minimum voltage", "Adaptive Mode"):
+        expected["select"].add(_slug(name))
     for name in ("Car Connected", "Session Active", "OCPP Connected"):
         expected["binary_sensor"].add(_slug(name))
     return expected

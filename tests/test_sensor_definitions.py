@@ -250,9 +250,10 @@ def test_session_time_and_active_rate_attributes_handle_edge_cases() -> None:
 
 
 def test_adaptive_and_schedule_helpers_cover_invalid_and_cap_paths() -> None:
-    assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "1"}), None) == "Active"
-    assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "0"}), None) == "Idle"
-    assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "2"}), None) is None
+    assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "0"}), None) == "Off"
+    assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "1"}), None) == "Voltage"
+    assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "2"}), None) == "Auto"
+    assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "3"}), None) == "Power"
 
     schedule = sensors._make_schedule_getter(1)
     attrs = sensors._make_schedule_attrs(1)

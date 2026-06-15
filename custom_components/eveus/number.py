@@ -136,21 +136,6 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
     ),
 )
 
-UNDERVOLTAGE_NUMBER = EveusSetpointNumberDescription(
-    key="minimum_voltage",
-    name="Minimum voltage",
-    icon="mdi:sine-wave",
-    entity_category=EntityCategory.CONFIG,
-    command="minVoltage",
-    state_key="minVoltage",
-    native_min_value=180,
-    native_max_value=245,
-    native_step=1,
-    native_unit_of_measurement="V",
-    mode=NumberMode.BOX,
-)
-
-
 def _schedule_current(n: int) -> EveusSetpointNumberDescription:
     return EveusSetpointNumberDescription(
         key=f"schedule_{n}_current_limit",
@@ -619,7 +604,6 @@ async def async_setup_entry(
             EveusSetpointNumber(updater, desc, device_number)
             for desc in GLOBAL_LIMIT_NUMBERS
         ]
-        entities.append(EveusSetpointNumber(updater, UNDERVOLTAGE_NUMBER, device_number))
         model_max = float(MODEL_MAX_CURRENT[model])
         for desc in SCHEDULE_LIMIT_NUMBERS:
             max_override = model_max if desc.native_unit_of_measurement == "A" else None
