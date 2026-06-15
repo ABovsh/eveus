@@ -11,6 +11,7 @@ polls so stale data can't trip it.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -35,6 +36,12 @@ class SocLimitController:
         self._calc = soc_calculator
         self._enabled = False
         self._fired = False
+        # A monotonically increasing "attempt epoch". Each re-arm bumps it so an
+        # in-flight _stop() spawned in an older epoch (the switch was toggled or
+        # the session changed while its Stop command was awaiting) can neither
+        # touch the latch nor emit a duplicate event.
+        self._generation = 0
+        self._stop_task: asyncio.Task | None = None
 
     def set_enabled(self, enabled: bool) -> None:
         """Enable/disable enforcement; re-arm only on an actual change.
@@ -46,7 +53,15 @@ class SocLimitController:
         if enabled == self._enabled:
             return
         self._enabled = enabled
+        self._rearm()
+
+    def _rearm(self) -> None:
+        """Reset the latch and invalidate (and cancel) any in-flight stop."""
         self._fired = False
+        self._generation += 1
+        if self._stop_task is not None and not self._stop_task.done():
+            self._stop_task.cancel()
+        self._stop_task = None
 
     @property
     def enabled(self) -> bool:
@@ -64,9 +79,9 @@ class SocLimitController:
         data = self._updater.data
         state = get_safe_value(data, "state", int)
         if state not in SESSION_ACTIVE_STATES:
-            # Not in an active session: the current session is over, so re-arm
-            # for the next one.
-            self._fired = False
+            # Session over: re-arm for the next one (and drop any stale attempt).
+            if self._fired or self._stop_task is not None:
+                self._rearm()
             return
         if self._fired:
             return
@@ -81,23 +96,33 @@ class SocLimitController:
             return
         # At/above target: hand off to _stop(). Latch _fired now so the next
         # poll can't spawn a duplicate stop while this one is in flight; _stop
-        # clears the latch again if the command did not actually succeed.
+        # clears the latch again only if it still owns the current epoch and the
+        # command did not actually succeed.
         self._fired = True
-        self._hass.async_create_task(self._stop(round(current), round(target)))
+        generation = self._generation
+        self._stop_task = self._hass.async_create_task(
+            self._stop(generation, round(current), round(target))
+        )
 
-    async def _stop(self, soc: int, target: int) -> None:
+    async def _stop(self, generation: int, soc: int, target: int) -> None:
         """Send the existing Stop Charging command; notify only on success.
 
-        On a failed Stop (charger offline mid-poll, transient error) the latch
-        is released so the next poll retries this session, and no
-        ``eveus_soc_limit_reached`` event is emitted — the event means the
-        charge was actually stopped, not merely that the target was computed.
+        Generation-guarded: if the limit was toggled or the session changed
+        while the command was awaiting, this attempt has been superseded — it
+        leaves the latch and fires no event. On a genuine failure within the
+        current epoch the latch is released so the next poll retries; the
+        ``eveus_soc_limit_reached`` event means the charge was actually stopped,
+        not merely that the target was computed.
         """
         try:
             stopped = await self._updater.send_command("evseEnabled", 0)
+        except asyncio.CancelledError:
+            raise
         except Exception as err:  # noqa: BLE001 - retry on any command failure
-            self._fired = False
-            _LOGGER.debug("SOC-limit Stop failed (%s); will retry", type(err).__name__)
+            stopped = False
+            _LOGGER.debug("SOC-limit Stop failed (%s)", type(err).__name__)
+        if generation != self._generation:
+            # Superseded by a re-arm; do not disturb the current epoch.
             return
         if not stopped:
             self._fired = False
