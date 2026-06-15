@@ -34,34 +34,22 @@ def test_unique_id_slug():
     assert sw.unique_id == "eveus_limit_soc_enabled"
 
 
-def test_master_disable_shows_soc_off_then_resumes():
-    # "Disable limits" (suspendLimits=1) suppresses the SOC limit display the
-    # same way it suppresses the charger's own limits; releasing it restores the
-    # user's choice (it must NOT stay off).
+def test_switch_state_is_independent_of_master_disable():
+    # The SOC switch is an honest, independent toggle (like the global limit
+    # switches): "Disable limits" must NOT change its displayed state. You can
+    # turn it on while suspended (the limit is ignored by the controller), and
+    # releasing "Disable limits" leaves it exactly where you left it — no
+    # auto-enable.
     sw, controller = _make()
-    sw._updater.data = {"suspendLimits": 0}
+    sw._updater.data = {"suspendLimits": 1}     # master "Disable limits" on
     asyncio.run(sw.async_turn_on())
-    assert sw.is_on is True
-    sw.async_write_ha_state.reset_mock()
+    assert sw.is_on is True                      # still freely enabled while suspended
 
+    sw._updater.data = {"suspendLimits": 0}      # master released
+    sw._handle_coordinator_update()
+    assert sw.is_on is True                      # unchanged — not auto-toggled
+
+    asyncio.run(sw.async_turn_off())
     sw._updater.data = {"suspendLimits": 1}
     sw._handle_coordinator_update()
-    assert sw.is_on is False                    # suppressed while master is on
-    sw.async_write_ha_state.assert_called()
-
-    sw._updater.data = {"suspendLimits": 0}
-    sw._handle_coordinator_update()
-    assert sw.is_on is True                     # returns to the user's choice
-
-
-def test_enable_intent_during_suspend_applies_after_release():
-    # Flipping it on while suspended records the intent but stays visibly off
-    # until the master is released, then takes effect.
-    sw, controller = _make()
-    sw._updater.data = {"suspendLimits": 1}
-    sw._handle_coordinator_update()
-    asyncio.run(sw.async_turn_on())
-    assert sw.is_on is False
-    sw._updater.data = {"suspendLimits": 0}
-    sw._handle_coordinator_update()
-    assert sw.is_on is True
+    assert sw.is_on is False                      # off stays off under the master too

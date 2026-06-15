@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -339,48 +339,36 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
     def __init__(self, updater, controller, device_number: int = 1) -> None:
         super().__init__(updater, device_number)
         self._controller = controller
-        self._enabled_intent = False
-        self._suspended = False
+        self._attr_is_on = False
 
     @property
     def available(self) -> bool:
         """Always available — it is a local setting, not charger-backed."""
         return True
 
-    def _read_suspended(self) -> bool:
-        data = self._updater.data
-        return isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) == 1
-
     @property
     def is_on(self) -> bool:
-        # Shown off while the master "Disable limits" is on — the same way that
-        # switch suppresses the charger's own Time/Energy/Cost limits. The user's
-        # choice is preserved and returns once the master is switched back off.
-        return self._enabled_intent and not self._suspended
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        suspended = self._read_suspended()
-        if suspended != self._suspended:
-            self._suspended = suspended
-            self.async_write_ha_state()
-        super()._handle_coordinator_update()
+        # Honest, independent on/off — like the charger's own limit-enable
+        # switches. It is freely toggleable even while "Disable limits" is on; the
+        # master only causes the limit to be IGNORED (handled in the controller),
+        # it does not change this switch's state. So releasing "Disable limits"
+        # leaves it exactly where the user left it — no auto-enable.
+        return self._attr_is_on
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
         if last is not None and last.state == "on":
-            self._enabled_intent = True
-        self._suspended = self._read_suspended()
-        self._controller.set_enabled(self._enabled_intent)
+            self._attr_is_on = True
+        self._controller.set_enabled(self._attr_is_on)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        self._enabled_intent = True
+        self._attr_is_on = True
         self._controller.set_enabled(True)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        self._enabled_intent = False
+        self._attr_is_on = False
         self._controller.set_enabled(False)
         self.async_write_ha_state()
 
