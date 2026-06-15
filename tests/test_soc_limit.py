@@ -233,6 +233,23 @@ def test_does_not_fire_when_disabled():
     assert scheduled == [] and events == []
 
 
+def test_disable_all_limits_stands_down_then_resumes():
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    updater.data["suspendLimits"] = 1
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert scheduled == [] and events == []
+
+    updater.data["suspendLimits"] = 0
+    ctrl.process()
+    _confirm(updater)
+    ctrl.process()
+    assert len(scheduled) == 1 and len(events) == 1
+
+
 def test_does_not_fire_below_target():
     ctrl, scheduled, events = _make(_calc(target=90), _updater(session_energy=30.0))
     ctrl.set_enabled(True)

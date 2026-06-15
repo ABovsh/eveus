@@ -99,6 +99,10 @@ class SocLimitController:
         ):
             return
         data = self._updater.data
+        # The charger's master switch overrides every limit, including this
+        # HA-enforced one; stand down before confirming or issuing a Stop.
+        if get_safe_value(data, "suspendLimits", int) == 1:
+            return
         state = get_safe_value(data, "state", int)
         evse_enabled = get_safe_value(data, "evseEnabled", int)
         energy = get_safe_value(data, "sessionEnergy", float)
