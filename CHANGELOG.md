@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.15.0 - 2026-06-15
 
 ### ⚠️ Breaking
 - **Adaptive Mode is now a selector, not a switch.** `switch.eveus_ev_charger_adaptive_mode` → `select.eveus_ev_charger_adaptive_mode` with **Off / Voltage / Auto / Power**; the old switch could only force Voltage and couldn't show the active mode. Removed automatically — update automations/cards.
