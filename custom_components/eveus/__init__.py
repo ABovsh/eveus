@@ -422,6 +422,9 @@ _ADVANCED_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
 # don't keep an orphaned "unavailable" row after updating.
 _REMOVED_ENTITIES: tuple[tuple[str, str], ...] = (
     ("sensor", "system_time"),  # replaced by time_drift
+    ("switch", "adaptive_mode"),
+    ("number", "minimum_voltage"),
+    ("sensor", "adaptive_voltage_threshold"),
 )
 _THREE_PHASE_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
     ("sensor", "current_phase_2"),

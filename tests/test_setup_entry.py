@@ -754,8 +754,8 @@ def test_number_setup_creates_current_entity() -> None:
         )
     )
 
-    # Charging Current + global limits + schedule limits.
-    assert len(added) == 8
+    # Charging Current + global limits + schedule limits + undervoltage threshold.
+    assert len(added) == 9
     names = [e.name for e in added]
     assert "Charging Current" in names
     assert {
@@ -766,10 +766,33 @@ def test_number_setup_creates_current_entity() -> None:
         "Schedule 1 Energy limit",
         "Schedule 2 Current limit",
         "Schedule 2 Energy limit",
+        "Undervoltage threshold",
     } <= set(names)
     assert "Money Limit" not in names
     current = next(e for e in added if e.name == "Charging Current")
     assert current.unique_id == "eveus3_charging_current"
+
+
+def test_number_setup_always_creates_undervoltage_threshold() -> None:
+    added: list[object] = []
+    data = _data(soc_mode="basic")
+    data.pop(CONF_MODEL)
+    entry = _Entry(data)
+    entry.runtime_data = SimpleNamespace(
+        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
+        device_number=2,
+    )
+
+    asyncio.run(
+        async_setup_number_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert [entity.name for entity in added] == ["Undervoltage threshold"]
+    assert added[0].unique_id == "eveus2_undervoltage_threshold"
 
 
 class _FakeEntityRegistry:

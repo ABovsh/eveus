@@ -136,6 +136,21 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
     ),
 )
 
+UNDERVOLTAGE_THRESHOLD_NUMBER = EveusSetpointNumberDescription(
+    key="undervoltage_threshold",
+    name="Undervoltage threshold",
+    icon="mdi:flash-alert",
+    entity_category=EntityCategory.CONFIG,
+    command="aiVoltage",
+    state_key="aiVoltage",
+    native_min_value=210,
+    native_max_value=220,
+    native_step=1,
+    native_unit_of_measurement="V",
+    mode=NumberMode.SLIDER,
+)
+
+
 def _schedule_current(n: int) -> EveusSetpointNumberDescription:
     return EveusSetpointNumberDescription(
         key=f"schedule_{n}_current_limit",
@@ -597,7 +612,9 @@ async def async_setup_entry(
     device_number = runtime_data.device_number
 
     model = entry.data.get(CONF_MODEL)
-    entities = []
+    entities = [
+        EveusSetpointNumber(updater, UNDERVOLTAGE_THRESHOLD_NUMBER, device_number)
+    ]
     if model:
         entities.append(EveusCurrentNumber(updater, model, device_number))
         entities += [

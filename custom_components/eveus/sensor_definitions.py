@@ -526,11 +526,6 @@ get_adaptive_charging_state = _make_enum_getter(
 )
 
 
-get_adaptive_voltage = _make_value_getter(
-    "aiVoltage", precision=0, minimum=0, maximum=_MAX_VOLTAGE
-)
-
-
 def _format_minutes(value: Optional[int]) -> Optional[str]:
     """Convert minutes-since-midnight to HH:MM."""
     if value is None or not 0 <= value < 1440:
@@ -904,15 +899,6 @@ def create_sensor_specifications(
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
             unit=UnitOfElectricCurrent.AMPERE, precision=0,
-            category=EntityCategory.DIAGNOSTIC,
-        ),
-        SensorSpec(
-            key="adaptive_voltage_threshold", name="Adaptive Voltage Threshold",
-            value_fn=get_adaptive_voltage,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:flash-alert",
-            device_class=SensorDeviceClass.VOLTAGE,
-            state_class=SensorStateClass.MEASUREMENT,
-            unit=UnitOfElectricPotential.VOLT, precision=0,
             category=EntityCategory.DIAGNOSTIC,
         ),
         SensorSpec(

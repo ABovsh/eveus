@@ -259,6 +259,7 @@ def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
     asyncio.run(number_module.async_setup_entry(None, entry, lambda entities: added.extend(entities)))
 
     assert [entity.name for entity in added] == [
+        "Undervoltage threshold",
         "Charging Current",
         "Limit Time",
         "Limit Energy",
@@ -273,6 +274,7 @@ def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
         "SOC Correction",
     ]
     assert [entity.unique_id for entity in added] == [
+        "eveus2_undervoltage_threshold",
         "eveus2_charging_current",
         "eveus2_limit_time",
         "eveus2_limit_energy",
@@ -286,8 +288,8 @@ def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
         "eveus2_battery_capacity",
         "eveus2_soc_correction",
     ]
-    # SOC numbers follow Charging Current, global limits, and schedule limits.
-    assert [entity.native_value for entity in added[8:]] == [25, 85, 70, 5]
+    # SOC numbers follow the charger-backed number controls.
+    assert [entity.native_value for entity in added[9:]] == [25, 85, 70, 5]
 
 
 def test_seed_is_normalized_on_construction() -> None:

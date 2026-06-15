@@ -127,6 +127,9 @@
       },
       "schedule_2_energy_limit": {
         "name": "Schedule 2 Energy limit"
+      },
+      "undervoltage_threshold": {
+        "name": "Undervoltage threshold"
       }
     },
     "sensor": {
@@ -231,9 +234,6 @@
       },
       "adaptive_current_limit": {
         "name": "Adaptive Current Limit"
-      },
-      "adaptive_voltage_threshold": {
-        "name": "Adaptive Voltage Threshold"
       },
       "schedule_1": {
         "name": "Schedule 1"

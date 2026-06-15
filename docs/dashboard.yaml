@@ -94,7 +94,7 @@ sections:
           - entity: sensor.eveus_ev_charger_adaptive_current_limit
             name: Current Limit
             icon: mdi:current-ac
-          - entity: sensor.eveus_ev_charger_adaptive_voltage_threshold
+          - entity: number.eveus_ev_charger_undervoltage_threshold
             name: Voltage Threshold
             icon: mdi:sine-wave
           - type: divider

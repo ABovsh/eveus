@@ -2,6 +2,9 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from homeassistant.components.number import NumberMode
+
+from custom_components.eveus import number as number_mod
 from custom_components.eveus.number import (
     EveusSetpointNumber,
     EveusSetpointNumberDescription,
@@ -73,3 +76,21 @@ def test_unique_id_and_translation_key_from_name():
     ent, _ = _make(ENERGY)
     assert ent.unique_id == "eveus_limit_energy"
     assert ent._attr_translation_key == "limit_energy"
+
+
+def test_undervoltage_threshold_reads_and_writes_ai_voltage():
+    description = getattr(number_mod, "UNDERVOLTAGE_THRESHOLD_NUMBER", None)
+    assert description is not None
+
+    ent, updater = _make(description)
+    updater.data = {"aiVoltage": 215}
+
+    assert ent._read_device_value() == 215.0
+    assert ent.native_min_value == 210
+    assert ent.native_max_value == 220
+    assert ent.native_step == 1
+    assert ent.mode == NumberMode.SLIDER
+
+    asyncio.run(ent.async_set_native_value(218))
+
+    updater.send_command.assert_awaited_once_with("aiVoltage", 218)

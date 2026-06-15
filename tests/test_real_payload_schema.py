@@ -56,7 +56,6 @@ GETTERS = [
     (sd.get_battery_voltage, "vBat", float),
     (sd.get_session_cost, "sessionMoney", float),
     (spec_value_fn("adaptive_current_limit"), "aiModecurrent", int),
-    (sd.get_adaptive_voltage, "aiVoltage", int),
 ]
 
 

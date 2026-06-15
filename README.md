@@ -50,7 +50,8 @@ The charger can protect weak house wiring by lowering the charging current when 
 
 - **Adaptive Mode selector** — pick Off / Voltage / Auto / Power to match the charger's own modes
 - **Adaptive Charging sensor** — see which adaptive mode is active
-- **Adaptive Current Limit / Voltage Threshold** — the cap and the trigger voltage the charger chose
+- **Adaptive Current Limit sensor** — the cap the charger chose
+- **Undervoltage threshold** — set the Voltage-mode trigger voltage (210–220 V) from HA
 - **Two on-device schedule slots** — enable switches, native HH:MM time pickers, and summary sensors; charging windows live on the charger, so they survive HA restarts
 
 ### 🧩 Automation-ready entities
@@ -263,7 +264,7 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 | `select.eveus_ev_charger_adaptive_mode` | Select | Adaptive mode: Off / Voltage / Auto / Power |
 | `sensor.eveus_ev_charger_adaptive_charging` | Sensor | Active adaptive mode (Off / Voltage / Auto / Power) |
 | `sensor.eveus_ev_charger_adaptive_current_limit` | A | Current cap selected by adaptive mode |
-| `sensor.eveus_ev_charger_adaptive_voltage_threshold` | V | Voltage floor for adaptive throttling |
+| `number.eveus_ev_charger_undervoltage_threshold` | V | **Undervoltage threshold** — Voltage-mode trigger (210–220 V) |
 | `switch.eveus_ev_charger_schedule_1_enabled` | Switch | Enable or disable schedule slot 1 |
 | `time.eveus_ev_charger_schedule_1_start` | Time | Schedule 1 start time |
 | `time.eveus_ev_charger_schedule_1_stop` | Time | Schedule 1 stop time |

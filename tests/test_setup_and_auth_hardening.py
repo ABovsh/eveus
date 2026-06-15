@@ -17,7 +17,6 @@ from custom_components.eveus.config_flow import (
     validate_device_response,
 )
 from custom_components.eveus.sensor_definitions import (
-    get_adaptive_voltage,
     get_counter_a_cost,
     get_counter_b_cost,
     get_primary_rate_cost,
@@ -76,7 +75,6 @@ def test_tariff_rate_rejects_negative():
 # F07 — adaptive current/voltage negative rejected
 def test_adaptive_metrics_reject_negative():
     assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": -1}), None) is None
-    assert get_adaptive_voltage(EveusTestUpdater({"aiVoltage": -5}), None) is None
     assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": 10}), None) == 10
 
 

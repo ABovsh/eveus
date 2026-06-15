@@ -141,7 +141,14 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
     for name in ("SOC Energy", "SOC Percent", "Time to Target SOC", "Charging Finish Time",
                  "Energy to Target SOC", "Cost to Target SOC"):
         expected["sensor"].add(_slug(name))
-    for name in ("Charging Current", "Initial SOC", "Target SOC", "Battery Capacity", "SOC Correction"):
+    for name in (
+        "Charging Current",
+        "Initial SOC",
+        "Target SOC",
+        "Battery Capacity",
+        "SOC Correction",
+        "Undervoltage threshold",
+    ):
         expected["number"].add(_slug(name))
     from custom_components.eveus.number import (
         GLOBAL_LIMIT_NUMBERS,

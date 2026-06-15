@@ -69,7 +69,8 @@
 
 - селектор **Адаптивний режим** із режимами Off / Voltage / Auto / Power;
 - сенсор **Адаптивне заряджання**, який показує активний адаптивний режим;
-- **Ліміт адаптивного струму** та **Поріг адаптивної напруги**;
+- сенсор **Ліміт адаптивного струму**;
+- **Поріг зниження напруги** — задавання порога для режиму Voltage (210–220 В) із HA;
 - два розклади з окремими перемикачами, часом початку й завершення.
 
 Розклади зберігаються на самій зарядній станції, тому продовжують працювати
@@ -322,7 +323,7 @@ automation:
 | `select.eveus_ev_charger_adaptive_mode` | Вибір | **Адаптивний режим** |
 | `sensor.eveus_ev_charger_adaptive_charging` | Сенсор | **Адаптивне заряджання** |
 | `sensor.eveus_ev_charger_adaptive_current_limit` | А | **Ліміт адаптивного струму** |
-| `sensor.eveus_ev_charger_adaptive_voltage_threshold` | В | **Поріг адаптивної напруги** |
+| `number.eveus_ev_charger_undervoltage_threshold` | В | **Поріг зниження напруги** (210–220 В) |
 | `switch.eveus_ev_charger_schedule_1_enabled` | Перемикач | **Розклад 1 увімкнено** |
 | `time.eveus_ev_charger_schedule_1_start` | Час | **Початок розкладу 1** |
 | `time.eveus_ev_charger_schedule_1_stop` | Час | **Завершення розкладу 1** |

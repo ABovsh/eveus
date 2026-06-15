@@ -127,6 +127,9 @@
       },
       "schedule_2_energy_limit": {
         "name": "Розклад 2: ліміт енергії"
+      },
+      "undervoltage_threshold": {
+        "name": "Поріг зниження напруги"
       }
     },
     "sensor": {
@@ -231,9 +234,6 @@
       },
       "adaptive_current_limit": {
         "name": "Ліміт адаптивного струму"
-      },
-      "adaptive_voltage_threshold": {
-        "name": "Поріг адаптивної напруги"
       },
       "schedule_1": {
         "name": "Розклад 1"

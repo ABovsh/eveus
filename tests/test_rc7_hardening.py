@@ -164,7 +164,6 @@ def test_current_set_getter_rejects_above_model_max() -> None:
 
 def test_adaptive_telemetry_rejects_outliers() -> None:
     assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": 999}), None) is None
-    assert sd.get_adaptive_voltage(EveusTestUpdater({"aiVoltage": 99999}), None) is None
 
 
 # ---------------------------------------------------------------------------
