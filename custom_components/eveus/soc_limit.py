@@ -37,7 +37,14 @@ class SocLimitController:
         self._fired = False
 
     def set_enabled(self, enabled: bool) -> None:
-        """Enable/disable enforcement; re-arm on every toggle."""
+        """Enable/disable enforcement; re-arm only on an actual change.
+
+        Idempotent: a redundant enable (e.g. an automation re-asserting the
+        switch on every tick) must not re-arm and re-stop a session already
+        limited.
+        """
+        if enabled == self._enabled:
+            return
         self._enabled = enabled
         self._fired = False
 
@@ -72,16 +79,36 @@ class SocLimitController:
         current = self._calc.get_soc_percent(energy)
         if current is None or current < target:
             return
-        # At/above target: fire the existing Stop Charging command once, then
-        # emit an event the user can turn into a notification.
+        # At/above target: hand off to _stop(). Latch _fired now so the next
+        # poll can't spawn a duplicate stop while this one is in flight; _stop
+        # clears the latch again if the command did not actually succeed.
         self._fired = True
-        self._hass.async_create_task(self._updater.send_command("evseEnabled", 0))
+        self._hass.async_create_task(self._stop(round(current), round(target)))
+
+    async def _stop(self, soc: int, target: int) -> None:
+        """Send the existing Stop Charging command; notify only on success.
+
+        On a failed Stop (charger offline mid-poll, transient error) the latch
+        is released so the next poll retries this session, and no
+        ``eveus_soc_limit_reached`` event is emitted — the event means the
+        charge was actually stopped, not merely that the target was computed.
+        """
+        try:
+            stopped = await self._updater.send_command("evseEnabled", 0)
+        except Exception as err:  # noqa: BLE001 - retry on any command failure
+            self._fired = False
+            _LOGGER.debug("SOC-limit Stop failed (%s); will retry", type(err).__name__)
+            return
+        if not stopped:
+            self._fired = False
+            _LOGGER.debug("SOC-limit Stop not accepted; will retry")
+            return
         self._hass.bus.async_fire(
             EVENT_SOC_LIMIT_REACHED,
             {
                 "device_number": getattr(self._updater, "device_number", 1),
-                "soc": round(current),
-                "target_soc": round(target),
+                "soc": soc,
+                "target_soc": target,
             },
         )
-        _LOGGER.debug("SOC limit reached (%.0f%% >= %.0f%%): sent Stop", current, target)
+        _LOGGER.debug("SOC limit reached (%s%% >= %s%%): sent Stop", soc, target)
