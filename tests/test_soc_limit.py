@@ -135,21 +135,43 @@ def test_does_not_issue_or_emit_when_already_disabled_at_target():
     assert scheduled == [] and events == []
 
 
-def test_missing_evse_enabled_does_not_lose_confirmation():
-    # F6: a poll lacking evseEnabled (it is optional in the payload) must be
-    # skipped without clearing the pending token; a later complete poll confirms.
+def test_missing_evse_at_active_poll_is_skipped_then_confirms():
+    # An active poll missing evseEnabled is skipped (no boundary, nothing lost);
+    # the pending token stays armed and a later complete poll confirms.
     updater = _updater(state=4, session_energy=30.0, ev=1)
     ctrl, scheduled, events = _make(
         _calc(target=80, initial=20, cap=50, corr=0), updater
     )
     ctrl.set_enabled(True)
-    ctrl.process()                                      # Stop sent (evse was 1)
-    updater.data = {"state": 1, "sessionEnergy": 0.0}   # session end, no evseEnabled
+    ctrl.process()                                          # Stop sent (evse was 1)
+    updater.data = {"state": 4, "sessionEnergy": 30.0}      # active, no evseEnabled
     ctrl.process()
-    assert events == []                                 # held, not lost
-    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0}
-    ctrl.process()                                      # now confirmed
+    assert events == []                                     # skipped, token held
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0}
+    ctrl.process()                                          # now confirmed
     assert len(events) == 1
+
+
+def test_missing_evse_at_session_end_discards_token_no_cross_session_emit():
+    # F6/F7: a session-end poll omitting evseEnabled re-arms from `state` alone
+    # (safety: an unconfirmable attempt is discarded, never emitted). The token
+    # must NOT bleed into the next session where an unrelated disable would
+    # falsely confirm the previous session's Stop.
+    updater = _updater(state=4, session_energy=30.0, ev=1)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()                                          # Stop sent (evse was 1)
+    updater.data = {"state": 1, "sessionEnergy": 0.0}       # session end, no evseEnabled
+    ctrl.process()                                          # boundary -> discard token
+    assert events == []
+    # New session well below target; an unrelated disable must emit nothing.
+    updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 1}
+    ctrl.process()
+    updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 0}
+    ctrl.process()
+    assert events == []
 
 
 def test_no_event_and_retries_when_stop_fails():

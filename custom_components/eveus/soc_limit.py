@@ -87,26 +87,28 @@ class SocLimitController:
         ):
             return
         data = self._updater.data
-        evse_enabled = get_safe_value(data, "evseEnabled", int)
-        if evse_enabled is None:
-            # ``evseEnabled`` is optional in the payload, but SOC enforcement is
-            # built entirely on it (issue only while enabled, confirm on 0). A
-            # poll without it is unusable: skip WITHOUT clearing the pending token
-            # or consuming the session boundary, so confirmation is never lost to
-            # an incomplete payload.
-            return
         state = get_safe_value(data, "state", int)
+        evse_enabled = get_safe_value(data, "evseEnabled", int)
         # Attributable, causal confirmation: we issue Stop only while the charger
         # reports ``evseEnabled == 1`` (below), so a later 0 IS the 1->0 transition
         # our command caused — not a pre-existing/stale 0 and not an unplug (which
         # leaves it 1). Checked before the session-over return so a stop that ends
-        # the session in the same poll is never lost.
+        # the session in the same poll is still confirmed.
         if self._pending is not None and not self._fired and evse_enabled == 0:
             self._emit_reached(*self._pending)
         if state not in SESSION_ACTIVE_STATES:
-            # Session over: re-arm for the next one (and drop any stale attempt).
+            # Session boundary — derived from ``state`` alone, so a payload missing
+            # the optional ``evseEnabled`` still re-arms here. Confirmation above
+            # only fires on a present 0; an unconfirmable attempt is DISCARDED at
+            # the boundary rather than carried into the next session (which would
+            # let a later unrelated 0 falsely confirm it).
             if self._fired or self._pending is not None or self._stop_task is not None:
                 self._rearm()
+            return
+        # Active session from here. SOC enforcement needs a known enable state.
+        if evse_enabled is None:
+            # No boundary to handle in an active poll, so skipping loses nothing;
+            # ``_pending`` (if any) stays armed for a later complete poll.
             return
         if self._fired:
             return
