@@ -1,7 +1,3 @@
-# Eveus Dashboard v1.1 (UA)
-# Готовий до вставки Lovelace-вигляд «Розділи» з усіма сутностями Eveus.
-# Вставте під `views:` у режимі редагування YAML (див. README → Dashboard).
-# English variant: docs/dashboard.yaml
 title: Eveus
 path: eveus
 icon: mdi:ev-station
@@ -219,59 +215,6 @@ sections:
           - entity: button.eveus_ev_charger_force_refresh
             name: Примусове оновлення
             icon: mdi:refresh
-      - type: heading
-        heading: Ліміти заряду
-        heading_style: subtitle
-        icon: mdi:gauge
-      - type: grid
-        columns: 2
-        square: false
-        cards:
-          - type: tile
-            entity: number.eveus_ev_charger_limit_time
-            name: Час
-            icon: mdi:timer-sand
-            features:
-              - type: numeric-input
-                style: buttons
-          - type: tile
-            entity: switch.eveus_ev_charger_limit_time_enabled
-            name: Час
-            icon: mdi:timer-sand
-          - type: tile
-            entity: number.eveus_ev_charger_limit_energy
-            name: Енергія
-            icon: mdi:lightning-bolt
-            features:
-              - type: numeric-input
-                style: buttons
-          - type: tile
-            entity: switch.eveus_ev_charger_limit_energy_enabled
-            name: Енергія
-            icon: mdi:lightning-bolt
-          - type: tile
-            entity: number.eveus_ev_charger_limit_cost
-            name: Вартість
-            icon: mdi:cash
-            features:
-              - type: numeric-input
-                style: buttons
-          - type: tile
-            entity: switch.eveus_ev_charger_limit_cost_enabled
-            name: Вартість
-            icon: mdi:cash
-          - type: tile
-            entity: switch.eveus_ev_charger_limit_disable_all
-            name: Вимкнути всі
-            icon: mdi:cancel
-          - type: tile
-            entity: switch.eveus_ev_charger_limit_soc_enabled
-            name: Ліміт SOC
-            icon: mdi:battery-charging-high
-      - type: tile
-        entity: select.eveus_ev_charger_minimum_voltage
-        name: Мінімальна напруга
-        icon: mdi:sine-wave
   - type: grid
     cards:
       - type: heading
@@ -404,6 +347,59 @@ sections:
   - type: grid
     cards:
       - type: heading
+        heading: Ліміти заряду
+        heading_style: subtitle
+        icon: mdi:gauge
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: tile
+            entity: number.eveus_ev_charger_limit_time
+            name: Час
+            icon: mdi:timer-sand
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_time_enabled
+            name: Час
+            icon: mdi:timer-sand
+          - type: tile
+            entity: number.eveus_ev_charger_limit_energy
+            name: Енергія
+            icon: mdi:lightning-bolt
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_energy_enabled
+            name: Енергія
+            icon: mdi:lightning-bolt
+          - type: tile
+            entity: number.eveus_ev_charger_limit_cost
+            name: Вартість
+            icon: mdi:cash
+            features:
+              - type: numeric-input
+                style: buttons
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_cost_enabled
+            name: Вартість
+            icon: mdi:cash
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_disable_all
+            name: Вимкнути всі
+            icon: mdi:cancel
+          - type: tile
+            entity: switch.eveus_ev_charger_limit_soc_enabled
+            name: Ліміт SOC
+            icon: mdi:battery-charging-high
+      - type: tile
+        entity: select.eveus_ev_charger_minimum_voltage
+        name: Мінімальна напруга
+        icon: mdi:sine-wave
+      - type: heading
         heading: Діагностика
         icon: mdi:stethoscope
       - type: grid
@@ -442,4 +438,6 @@ sections:
             entity: sensor.eveus_ev_charger_battery_voltage
             name: Внутрішня батарея
             icon: mdi:car-battery
+  - type: grid
+    cards: []
 cards: []
