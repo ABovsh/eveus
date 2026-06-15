@@ -339,50 +339,48 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
     def __init__(self, updater, controller, device_number: int = 1) -> None:
         super().__init__(updater, device_number)
         self._controller = controller
-        self._attr_is_on = False
-        self._was_suspended = False
+        self._enabled_intent = False
+        self._suspended = False
 
     @property
     def available(self) -> bool:
         """Always available — it is a local setting, not charger-backed."""
         return True
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        # When the master "Disable limits" switch is turned on the charger drops
-        # its own Time/Energy/Cost enable flags; mirror that here so the SOC
-        # limit visibly switches off on the same press (the controller already
-        # stands down while suspended). Only on the off->on transition, so it can
-        # still be flipped back on during a suspend like the global limits.
+    def _read_suspended(self) -> bool:
         data = self._updater.data
-        suspended = (
-            isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) == 1
-        )
-        if suspended and not self._was_suspended and self._attr_is_on:
-            self._attr_is_on = False
-            self._controller.set_enabled(False)
-            self.async_write_ha_state()
-        self._was_suspended = suspended
-        super()._handle_coordinator_update()
+        return isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) == 1
 
     @property
     def is_on(self) -> bool:
-        return self._attr_is_on
+        # Shown off while the master "Disable limits" is on — the same way that
+        # switch suppresses the charger's own Time/Energy/Cost limits. The user's
+        # choice is preserved and returns once the master is switched back off.
+        return self._enabled_intent and not self._suspended
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        suspended = self._read_suspended()
+        if suspended != self._suspended:
+            self._suspended = suspended
+            self.async_write_ha_state()
+        super()._handle_coordinator_update()
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
         if last is not None and last.state == "on":
-            self._attr_is_on = True
-        self._controller.set_enabled(self._attr_is_on)
+            self._enabled_intent = True
+        self._suspended = self._read_suspended()
+        self._controller.set_enabled(self._enabled_intent)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        self._attr_is_on = True
+        self._enabled_intent = True
         self._controller.set_enabled(True)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        self._attr_is_on = False
+        self._enabled_intent = False
         self._controller.set_enabled(False)
         self.async_write_ha_state()
 

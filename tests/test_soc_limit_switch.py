@@ -34,30 +34,34 @@ def test_unique_id_slug():
     assert sw.unique_id == "eveus_limit_soc_enabled"
 
 
-def test_master_disable_switches_soc_off():
-    # Pressing "Disable limits" (suspendLimits=1) must switch the SOC limit off
-    # too, the same way the charger drops its own Time/Energy/Cost enable flags.
+def test_master_disable_shows_soc_off_then_resumes():
+    # "Disable limits" (suspendLimits=1) suppresses the SOC limit display the
+    # same way it suppresses the charger's own limits; releasing it restores the
+    # user's choice (it must NOT stay off).
     sw, controller = _make()
     sw._updater.data = {"suspendLimits": 0}
     asyncio.run(sw.async_turn_on())
-    controller.set_enabled.reset_mock()
+    assert sw.is_on is True
     sw.async_write_ha_state.reset_mock()
 
     sw._updater.data = {"suspendLimits": 1}
     sw._handle_coordinator_update()
-
-    assert sw.is_on is False
-    controller.set_enabled.assert_called_with(False)
+    assert sw.is_on is False                    # suppressed while master is on
     sw.async_write_ha_state.assert_called()
 
+    sw._updater.data = {"suspendLimits": 0}
+    sw._handle_coordinator_update()
+    assert sw.is_on is True                     # returns to the user's choice
 
-def test_can_re_enable_during_suspend_without_being_reforced_off():
-    # While suspended you may flip it back on (the controller still stands down);
-    # the switch must not be force-reset on every subsequent poll.
+
+def test_enable_intent_during_suspend_applies_after_release():
+    # Flipping it on while suspended records the intent but stays visibly off
+    # until the master is released, then takes effect.
     sw, controller = _make()
     sw._updater.data = {"suspendLimits": 1}
-    sw._handle_coordinator_update()            # suspend observed; switch stays off
-    asyncio.run(sw.async_turn_on())            # user re-enables during suspend
-    sw._updater.data = {"suspendLimits": 1}
-    sw._handle_coordinator_update()            # still suspended, no new transition
+    sw._handle_coordinator_update()
+    asyncio.run(sw.async_turn_on())
+    assert sw.is_on is False
+    sw._updater.data = {"suspendLimits": 0}
+    sw._handle_coordinator_update()
     assert sw.is_on is True
