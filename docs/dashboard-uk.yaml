@@ -1,3 +1,7 @@
+# Eveus Dashboard v1.1 (UA)
+# Готовий до вставки Lovelace-вигляд «Розділи» з усіма сутностями Eveus.
+# Вставте під `views:` у режимі редагування YAML (див. README → Dashboard).
+# English variant: docs/dashboard.yaml
 title: Eveus
 path: eveus
 icon: mdi:ev-station
@@ -438,6 +442,4 @@ sections:
             entity: sensor.eveus_ev_charger_battery_voltage
             name: Внутрішня батарея
             icon: mdi:car-battery
-  - type: grid
-    cards: []
 cards: []
