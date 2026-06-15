@@ -172,11 +172,36 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | `binary_sensor.eveus_ev_charger_session_active` | Binary sensor | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | Reported OCPP connection state (diagnostic) |
 | `number.eveus_ev_charger_charging_current` | Number | Current limit slider with model-aware bounds |
+| `number.eveus_ev_charger_limit_time` | Number | **Limit: Time** session limit (min) |
+| `number.eveus_ev_charger_limit_energy` | Number | **Limit: Energy** session limit (kWh) |
+| `number.eveus_ev_charger_limit_cost` | Number | **Limit: Cost** session limit (UAH) |
+| `number.eveus_ev_charger_minimum_voltage` | Number | **Minimum voltage** allowed by the charger (V) |
 | `switch.eveus_ev_charger_stop_charging` | Switch | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Switch | Enable one-charge mode |
 | `switch.eveus_ev_charger_ground_protection` | Switch | Enable or disable the charger's missing-ground shutdown protection. Turning it off lets charging continue without a detected ground |
 | `switch.eveus_ev_charger_connect_to_ocpp` | Switch | Connect the charger to the OCPP backend (used by the Grizzl-E Connect mobile app). While on, a Repairs warning explains that Charging Current, limits, and schedule may be overridden by the backend, and how to turn OCPP back off |
+| `switch.eveus_ev_charger_limit_time_enabled` | Switch | **Limit: Time enabled** |
+| `switch.eveus_ev_charger_limit_energy_enabled` | Switch | **Limit: Energy enabled** |
+| `switch.eveus_ev_charger_limit_cost_enabled` | Switch | **Limit: Cost enabled** |
+| `switch.eveus_ev_charger_limit_disable_all` | Switch | **Limit: disable all** |
+| `switch.eveus_ev_charger_limit_soc_enabled` | Switch | **Limit: SOC enabled** (Advanced mode only) |
 | `button.eveus_ev_charger_force_refresh` | Button | Poll the charger immediately |
+
+The charger natively enforces the Time, Energy, and Cost session limits: set a value, then turn on its enabled switch. **Limit: disable all** is the master switch that suspends all of them. **Limit: SOC enabled** is enforced by the integration in Advanced mode: when the car reaches **Target SOC**, the integration issues the normal **Stop Charging** command and fires the `eveus_soc_limit_reached` event with `device_number`, `soc`, and `target_soc` in its payload.
+
+You can route that event to your own notification automation:
+
+```yaml
+automation:
+  - alias: Eveus SOC limit reached
+    triggers:
+      - trigger: event
+        event_type: eveus_soc_limit_reached
+    actions:
+      - action: notify.notify
+        data:
+          message: "Eveus reached target SOC: {{ trigger.event.data.soc }}%"
+```
 
 ### Live Electrical Data
 
@@ -242,11 +267,21 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 | `switch.eveus_ev_charger_schedule_1_enabled` | Switch | Enable or disable schedule slot 1 |
 | `time.eveus_ev_charger_schedule_1_start` | Time | Schedule 1 start time |
 | `time.eveus_ev_charger_schedule_1_stop` | Time | Schedule 1 stop time |
+| `number.eveus_ev_charger_schedule_1_current_limit` | A | **Schedule 1 Current limit** |
+| `switch.eveus_ev_charger_schedule_1_current_limit_enabled` | Switch | **Schedule 1 Current limit enabled** |
+| `number.eveus_ev_charger_schedule_1_energy_limit` | kWh | **Schedule 1 Energy limit** |
+| `switch.eveus_ev_charger_schedule_1_energy_limit_enabled` | Switch | **Schedule 1 Energy limit enabled** |
 | `sensor.eveus_ev_charger_schedule_1` | Sensor | Schedule 1 summary and attributes |
 | `switch.eveus_ev_charger_schedule_2_enabled` | Switch | Enable or disable schedule slot 2 |
 | `time.eveus_ev_charger_schedule_2_start` | Time | Schedule 2 start time |
 | `time.eveus_ev_charger_schedule_2_stop` | Time | Schedule 2 stop time |
+| `number.eveus_ev_charger_schedule_2_current_limit` | A | **Schedule 2 Current limit** |
+| `switch.eveus_ev_charger_schedule_2_current_limit_enabled` | Switch | **Schedule 2 Current limit enabled** |
+| `number.eveus_ev_charger_schedule_2_energy_limit` | kWh | **Schedule 2 Energy limit** |
+| `switch.eveus_ev_charger_schedule_2_energy_limit_enabled` | Switch | **Schedule 2 Energy limit enabled** |
 | `sensor.eveus_ev_charger_schedule_2` | Sensor | Schedule 2 summary and attributes |
+
+Each schedule has its own current and energy caps with separate enable switches.
 
 ### Diagnostics And Maintenance
 

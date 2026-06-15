@@ -215,6 +215,38 @@ sections:
           - entity: button.eveus_ev_charger_force_refresh
             name: Force Refresh
             icon: mdi:refresh
+      - type: entities
+        title: Charge limits
+        show_header_toggle: false
+        state_color: true
+        entities:
+          - entity: number.eveus_ev_charger_limit_time
+            name: "Limit: Time"
+            icon: mdi:timer-sand
+          - entity: switch.eveus_ev_charger_limit_time_enabled
+            name: "Limit: Time enabled"
+            icon: mdi:timer-sand
+          - entity: number.eveus_ev_charger_limit_energy
+            name: "Limit: Energy"
+            icon: mdi:lightning-bolt
+          - entity: switch.eveus_ev_charger_limit_energy_enabled
+            name: "Limit: Energy enabled"
+            icon: mdi:lightning-bolt
+          - entity: number.eveus_ev_charger_limit_cost
+            name: "Limit: Cost"
+            icon: mdi:cash
+          - entity: switch.eveus_ev_charger_limit_cost_enabled
+            name: "Limit: Cost enabled"
+            icon: mdi:cash
+          - entity: switch.eveus_ev_charger_limit_disable_all
+            name: "Limit: disable all"
+            icon: mdi:cancel
+          - entity: switch.eveus_ev_charger_limit_soc_enabled
+            name: "Limit: SOC enabled (Advanced mode only)"
+            icon: mdi:battery-charging-high
+          - entity: number.eveus_ev_charger_minimum_voltage
+            name: Minimum voltage
+            icon: mdi:sine-wave
   - type: grid
     cards:
       - type: heading
@@ -269,6 +301,18 @@ sections:
               - entity: time.eveus_ev_charger_schedule_1_stop
                 name: Stop
                 icon: mdi:clock-end
+              - entity: number.eveus_ev_charger_schedule_1_current_limit
+                name: Schedule 1 Current limit
+                icon: mdi:current-ac
+              - entity: switch.eveus_ev_charger_schedule_1_current_limit_enabled
+                name: Schedule 1 Current limit enabled
+                icon: mdi:current-ac
+              - entity: number.eveus_ev_charger_schedule_1_energy_limit
+                name: Schedule 1 Energy limit
+                icon: mdi:lightning-bolt
+              - entity: switch.eveus_ev_charger_schedule_1_energy_limit_enabled
+                name: Schedule 1 Energy limit enabled
+                icon: mdi:lightning-bolt
               - entity: sensor.eveus_ev_charger_schedule_1
                 name: Window
                 icon: mdi:timetable
@@ -287,6 +331,18 @@ sections:
               - entity: time.eveus_ev_charger_schedule_2_stop
                 name: Stop
                 icon: mdi:clock-end
+              - entity: number.eveus_ev_charger_schedule_2_current_limit
+                name: Schedule 2 Current limit
+                icon: mdi:current-ac
+              - entity: switch.eveus_ev_charger_schedule_2_current_limit_enabled
+                name: Schedule 2 Current limit enabled
+                icon: mdi:current-ac
+              - entity: number.eveus_ev_charger_schedule_2_energy_limit
+                name: Schedule 2 Energy limit
+                icon: mdi:lightning-bolt
+              - entity: switch.eveus_ev_charger_schedule_2_energy_limit_enabled
+                name: Schedule 2 Energy limit enabled
+                icon: mdi:lightning-bolt
               - entity: sensor.eveus_ev_charger_schedule_2
                 name: Window
                 icon: mdi:timetable
