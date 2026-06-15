@@ -174,6 +174,26 @@ def test_missing_evse_at_session_end_discards_token_no_cross_session_emit():
     assert events == []
 
 
+def test_hidden_boundary_via_failed_polls_does_not_bleed():
+    # F8: failed/unavailable polls can hide the inactive boundary entirely. The
+    # pending token must be bound to the session: when a later active poll shows
+    # sessionEnergy reset (new session), discard it so an unrelated disable in the
+    # new session cannot falsely confirm the old session's Stop.
+    updater = _updater(state=4, session_energy=30.0, ev=1)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()                       # session A: Stop sent at 30 kWh
+    # Boundary (A ending, B starting) hidden by failed polls -> next observed poll
+    # is B, active, with a RESET energy counter and below target.
+    updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 1}
+    ctrl.process()                       # energy dropped -> token discarded
+    updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 0}
+    ctrl.process()                       # unrelated disable in B
+    assert events == []                  # A's event must NOT fire in B
+
+
 def test_no_event_and_retries_when_stop_fails():
     # RC-001: a failed Stop must not emit the "reached" event and must retry
     # this same session.

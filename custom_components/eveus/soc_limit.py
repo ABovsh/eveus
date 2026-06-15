@@ -26,6 +26,10 @@ _LOGGER = logging.getLogger(__name__)
 # decides how (or whether) to notify.
 EVENT_SOC_LIMIT_REACHED = "eveus_soc_limit_reached"
 
+# A drop in ``sessionEnergy`` larger than this (kWh) means the session counter
+# reset — i.e. a new charging session — rather than in-session jitter.
+_SESSION_RESET_EPS_KWH = 0.5
+
 
 class SocLimitController:
     """Stop charging at Target SOC by reusing the Stop Charging command."""
@@ -45,6 +49,12 @@ class SocLimitController:
         # held across retries so an end-of-session poll can't lose it. While it is
         # set and the charger is still enabled, each active poll re-sends the Stop.
         self._pending: tuple[int, int] | None = None
+        # ``sessionEnergy`` observed when the pending Stop was issued. It only
+        # grows within a session and resets at a new one, so a later poll showing
+        # a smaller value means the boundary was missed (e.g. hidden by failed
+        # polls) — the token belongs to the old session and must be discarded
+        # before it can be falsely confirmed in the new one.
+        self._pending_energy: float | None = None
         # A monotonically increasing "attempt epoch". Each re-arm bumps it so an
         # in-flight _stop() spawned in an older epoch (the switch was toggled or
         # the session changed while its Stop command was awaiting) can neither
@@ -68,6 +78,7 @@ class SocLimitController:
         """Reset the latch and invalidate (and cancel) any in-flight stop."""
         self._fired = False
         self._pending = None
+        self._pending_energy = None
         self._generation += 1
         if self._stop_task is not None and not self._stop_task.done():
             self._stop_task.cancel()
@@ -89,6 +100,22 @@ class SocLimitController:
         data = self._updater.data
         state = get_safe_value(data, "state", int)
         evse_enabled = get_safe_value(data, "evseEnabled", int)
+        energy = get_safe_value(data, "sessionEnergy", float)
+        # Session-identity guard (handles a boundary HIDDEN by failed polls): a
+        # pending token belongs to the session whose ``sessionEnergy`` we recorded.
+        # That counter only grows within a session and resets at a new one, so a
+        # later ACTIVE poll reporting a smaller value proves a NEW session is
+        # running — discard the stale token before an unrelated 0 there confirms
+        # it. Gated on an active state so the current session's own end (where
+        # energy also drops to ~0) still confirms normally below.
+        if (
+            state in SESSION_ACTIVE_STATES
+            and self._pending is not None
+            and self._pending_energy is not None
+            and energy is not None
+            and energy < self._pending_energy - _SESSION_RESET_EPS_KWH
+        ):
+            self._rearm()
         # Attributable, causal confirmation: we issue Stop only while the charger
         # reports ``evseEnabled == 1`` (below), so a later 0 IS the 1->0 transition
         # our command caused — not a pre-existing/stale 0 and not an unplug (which
@@ -126,16 +153,16 @@ class SocLimitController:
         target = self._calc.target_soc
         if target is None:
             return
-        energy = get_safe_value(data, "sessionEnergy", float)
         if energy is None or not 0 <= energy <= MAX_ENERGY_KWH:
             return
         current = self._calc.get_soc_percent(energy)
         if current is None or current < target:
             return
-        # At/above target and charging enabled: hand off to _stop().
+        # At/above target and charging enabled: hand off to _stop(). Record the
+        # session's energy so the token can be bound to this session.
         generation = self._generation
         self._stop_task = self._hass.async_create_task(
-            self._stop(generation, round(current), round(target))
+            self._stop(generation, round(current), round(target), energy)
         )
 
     def _emit_reached(self, soc: int, target: int) -> None:
@@ -152,7 +179,9 @@ class SocLimitController:
         )
         _LOGGER.debug("SOC limit confirmed stopped (%s%% >= %s%%)", soc, target)
 
-    async def _stop(self, generation: int, soc: int, target: int) -> None:
+    async def _stop(
+        self, generation: int, soc: int, target: int, energy: float
+    ) -> None:
         """Send the existing Stop Charging command; confirm before notifying.
 
         Generation-guarded: if the limit was toggled or the session changed while
@@ -176,6 +205,9 @@ class SocLimitController:
         if not stopped:
             _LOGGER.debug("SOC-limit Stop not accepted; will retry")
             return
-        # POST accepted — await session-end confirmation before emitting.
+        # POST accepted — await evseEnabled==0 confirmation before emitting, and
+        # bind the token to this session's energy so a missed boundary can't carry
+        # it into the next session.
         self._pending = (soc, target)
+        self._pending_energy = energy
         _LOGGER.debug("SOC-limit Stop sent (%s%% >= %s%%); awaiting confirm", soc, target)
