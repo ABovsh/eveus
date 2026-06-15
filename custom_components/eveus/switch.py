@@ -10,14 +10,21 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import EveusConfigEntry
 from .common_base import (
+    BaseEveusEntity,
     ControlEntityMixin,
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
-from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
+from .const import (
+    CONTROL_GRACE_PERIOD,
+    OPTIMISTIC_CONTROL_TTL,
+    SOC_MODE_ADVANCED,
+    get_soc_mode,
+)
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -324,6 +331,51 @@ class BaseSwitchEntity(
             self._last_successful_read = time.time()
             self._attr_is_on = self._last_device_value
 
+
+class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
+    """Local switch: when on, stop charging at Target SOC (Advanced mode).
+
+    Holds its own state (the charger has no SOC field) and pushes it to the
+    SocLimitController, which performs the stop via the existing Stop Charging
+    command. Persists across restarts.
+    """
+
+    ENTITY_NAME = "Limit: SOC enabled"
+    _attr_icon = "mdi:battery-charging-high"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, updater, controller, device_number: int = 1) -> None:
+        super().__init__(updater, device_number)
+        self._controller = controller
+        self._attr_is_on = False
+
+    @property
+    def available(self) -> bool:
+        """Always available — it is a local setting, not charger-backed."""
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        return self._attr_is_on
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state == "on":
+            self._attr_is_on = True
+        self._controller.set_enabled(self._attr_is_on)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self._attr_is_on = True
+        self._controller.set_enabled(True)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self._attr_is_on = False
+        self._controller.set_enabled(False)
+        self.async_write_ha_state()
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -334,7 +386,12 @@ async def async_setup_entry(
     updater = runtime_data.updater
     device_number = runtime_data.device_number
 
-    async_add_entities(
+    entities = [
         BaseSwitchEntity(updater, description, device_number)
         for description in SWITCH_DESCRIPTIONS
-    )
+    ]
+    if get_soc_mode(entry) == SOC_MODE_ADVANCED:
+        entities.append(
+            EveusSocLimitSwitch(updater, runtime_data.soc_limit, device_number)
+        )
+    async_add_entities(entities)

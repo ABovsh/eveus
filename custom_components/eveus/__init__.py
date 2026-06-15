@@ -65,6 +65,7 @@ from .utils import (
 
 if TYPE_CHECKING:
     from .ev_sensors import CachedSOCCalculator
+    from .soc_limit import SocLimitController
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class EveusRuntimeData:
     device_number: int
     title: str
     soc_calculator: CachedSOCCalculator
+    soc_limit: SocLimitController
     phases: int = DEFAULT_PHASES
 
 
@@ -414,6 +416,7 @@ _ADVANCED_ONLY_ENTITIES: tuple[tuple[str, str], ...] = (
     ("number", "target_soc"),
     ("number", "battery_capacity"),
     ("number", "soc_correction"),
+    ("switch", "limit_soc_enabled"),
 )
 # Entities retired from the integration entirely; always pruned so users
 # don't keep an orphaned "unavailable" row after updating.
@@ -701,6 +704,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             device_number=device_number,
         )
         from .ev_sensors import CachedSOCCalculator
+        from .soc_limit import SocLimitController
+
+        soc_calculator = CachedSOCCalculator()
+        soc_limit = SocLimitController(hass, updater, soc_calculator)
 
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
         phases, phases_were_invalid = _resolve_phases(raw_phases)
@@ -721,7 +728,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             updater=updater,
             device_number=device_number,
             title=entry.title,
-            soc_calculator=CachedSOCCalculator(),
+            soc_calculator=soc_calculator,
+            soc_limit=soc_limit,
             phases=phases,
         )
 
@@ -772,6 +780,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         safety_manager = EveusSafetyManager(hass, entry, updater)
         entry.async_on_unload(updater.async_add_listener(safety_manager.process))
         safety_manager.process()
+
+        entry.async_on_unload(updater.async_add_listener(soc_limit.process))
+        soc_limit.process()
 
         # DataUpdateCoordinator constructed with config_entry already registers
         # async_shutdown on the entry unload lifecycle — no manual registration.

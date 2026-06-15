@@ -311,6 +311,9 @@
       "limit_cost_enabled": {
         "name": "Limit: Cost enabled"
       },
+      "limit_soc_enabled": {
+        "name": "Limit: SOC enabled"
+      },
       "schedule_1_current_limit_enabled": {
         "name": "Schedule 1 Current limit enabled"
       },

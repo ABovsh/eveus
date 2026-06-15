@@ -147,6 +147,12 @@ def test_async_setup_returns_true() -> None:
     assert asyncio.run(eveus.async_setup(object(), {})) is True
 
 
+def test_soc_limit_switch_is_advanced_only_prunable():
+    from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
+
+    assert ("switch", "limit_soc_enabled") in _ADVANCED_ONLY_ENTITIES
+
+
 @pytest.fixture(autouse=True)
 def _patch_issue_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eveus.ir, "async_create_issue", lambda *args, **kwargs: None)
@@ -602,6 +608,7 @@ def test_switch_setup_creates_control_entities() -> None:
     entry.runtime_data = SimpleNamespace(
         updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
         device_number=2,
+        soc_limit=object(),
     )
 
     asyncio.run(
@@ -628,6 +635,7 @@ def test_switch_setup_creates_control_entities() -> None:
         "Schedule 1 Energy limit enabled",
         "Schedule 2 Current limit enabled",
         "Schedule 2 Energy limit enabled",
+        "Limit: SOC enabled",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_stop_charging",
@@ -645,6 +653,7 @@ def test_switch_setup_creates_control_entities() -> None:
         "eveus2_schedule_1_energy_limit_enabled",
         "eveus2_schedule_2_current_limit_enabled",
         "eveus2_schedule_2_energy_limit_enabled",
+        "eveus2_limit_soc_enabled",
     }
 
 

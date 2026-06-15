@@ -116,7 +116,7 @@ def test_entity_key_matches_slugify_for_all_entity_names():
 
 
 def _slug(name: str) -> str:
-    return name.lower().replace(" ", "_")
+    return slugify(name)
 
 
 def _expected_entity_translation_keys() -> dict[str, set[str]]:
@@ -152,6 +152,7 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
         expected["number"].add(_slug(desc.name))
     for desc in SWITCH_DESCRIPTIONS:
         expected["switch"].add(slugify(desc.name))
+    expected["switch"].add(_slug("Limit: SOC enabled"))
     for desc in TIME_DESCRIPTIONS:
         expected["time"].add(_slug(desc.name))
     for name in ("Force Refresh", "Reset Counter A", "Reset Counter B", "Sync Time"):

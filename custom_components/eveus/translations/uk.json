@@ -311,6 +311,9 @@
       "limit_cost_enabled": {
         "name": "Ліміт: Вартість увімкнено"
       },
+      "limit_soc_enabled": {
+        "name": "Ліміт: SOC увімкнено"
+      },
       "schedule_1_current_limit_enabled": {
         "name": "Розклад 1: ліміт струму увімкнено"
       },

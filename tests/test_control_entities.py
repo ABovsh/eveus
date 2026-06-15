@@ -18,6 +18,7 @@ from custom_components.eveus.button import (
 )
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
+    EveusSocLimitSwitch,
     SWITCH_DESCRIPTIONS,
     async_setup_entry as async_setup_switch_entry,
 )
@@ -497,19 +498,21 @@ def test_switch_setup_entry_adds_all_switches() -> None:
         "Entry",
         (),
         {
+            "data": {"soc_mode": "advanced"},
             "runtime_data": type(
                 "RuntimeData",
                 (),
-                {"updater": _Updater({}), "device_number": 3},
+                {"updater": _Updater({}), "device_number": 3, "soc_limit": object()},
             )()
         },
     )()
 
     asyncio.run(async_setup_switch_entry(None, entry, lambda entities: added.extend(entities)))
 
-    assert [entity.entity_description.key for entity in added] == [
+    assert [entity.entity_description.key for entity in added[:-1]] == [
         description.key for description in SWITCH_DESCRIPTIONS
     ]
+    assert isinstance(added[-1], EveusSocLimitSwitch)
     assert all(entity.unique_id.startswith("eveus3_") for entity in added)
 
 
