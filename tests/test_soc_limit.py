@@ -122,6 +122,36 @@ def test_confirmation_held_across_retry_then_session_end():
     assert len(events) == 1
 
 
+def test_does_not_issue_or_emit_when_already_disabled_at_target():
+    # F5: an at-target payload already reporting evseEnabled=0 must NOT issue a
+    # Stop nor be misread as confirmed — there is no 1->0 transition we caused.
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    ctrl.process()
+    assert scheduled == [] and events == []
+
+
+def test_missing_evse_enabled_does_not_lose_confirmation():
+    # F6: a poll lacking evseEnabled (it is optional in the payload) must be
+    # skipped without clearing the pending token; a later complete poll confirms.
+    updater = _updater(state=4, session_energy=30.0, ev=1)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()                                      # Stop sent (evse was 1)
+    updater.data = {"state": 1, "sessionEnergy": 0.0}   # session end, no evseEnabled
+    ctrl.process()
+    assert events == []                                 # held, not lost
+    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0}
+    ctrl.process()                                      # now confirmed
+    assert len(events) == 1
+
+
 def test_no_event_and_retries_when_stop_fails():
     # RC-001: a failed Stop must not emit the "reached" event and must retry
     # this same session.

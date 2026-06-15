@@ -87,13 +87,20 @@ class SocLimitController:
         ):
             return
         data = self._updater.data
-        state = get_safe_value(data, "state", int)
         evse_enabled = get_safe_value(data, "evseEnabled", int)
-        # Attributable confirmation: our Stop set ``evseEnabled = 0``. Seeing the
-        # charger report 0 (whether still in an active state for one more poll, or
-        # already transitioned out) proves OUR command took — an unrelated unplug
-        # leaves ``evseEnabled == 1``. Checked before the session-over return so a
-        # stop that ends the session in the same poll is never lost.
+        if evse_enabled is None:
+            # ``evseEnabled`` is optional in the payload, but SOC enforcement is
+            # built entirely on it (issue only while enabled, confirm on 0). A
+            # poll without it is unusable: skip WITHOUT clearing the pending token
+            # or consuming the session boundary, so confirmation is never lost to
+            # an incomplete payload.
+            return
+        state = get_safe_value(data, "state", int)
+        # Attributable, causal confirmation: we issue Stop only while the charger
+        # reports ``evseEnabled == 1`` (below), so a later 0 IS the 1->0 transition
+        # our command caused — not a pre-existing/stale 0 and not an unplug (which
+        # leaves it 1). Checked before the session-over return so a stop that ends
+        # the session in the same poll is never lost.
         if self._pending is not None and not self._fired and evse_enabled == 0:
             self._emit_reached(*self._pending)
         if state not in SESSION_ACTIVE_STATES:
@@ -105,6 +112,11 @@ class SocLimitController:
             return
         if self._stop_task is not None and not self._stop_task.done():
             # A Stop is mid-flight; wait for it before deciding anything.
+            return
+        if evse_enabled != 1:
+            # Charging is already disabled — nothing to stop, and issuing now would
+            # let a 0 we did NOT cause be misread as our confirmation. Wait until we
+            # observe it enabled.
             return
         # ``_pending`` is intentionally NOT cleared here: it is the confirmation
         # token and is held across retries. While it is set and the charger is
@@ -118,7 +130,7 @@ class SocLimitController:
         current = self._calc.get_soc_percent(energy)
         if current is None or current < target:
             return
-        # At/above target: hand off to _stop().
+        # At/above target and charging enabled: hand off to _stop().
         generation = self._generation
         self._stop_task = self._hass.async_create_task(
             self._stop(generation, round(current), round(target))
