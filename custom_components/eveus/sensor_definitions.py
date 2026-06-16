@@ -44,6 +44,7 @@ from .const import (
     MAX_VALID_LEAKAGE_CURRENT_MA,
     TIME_DRIFT_TOLERANCE_SECONDS,
     TIME_DRIFT_QUANTUM_SECONDS,
+    BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
 )
 from .utils import (
     RateLog,
@@ -281,6 +282,7 @@ def _make_value_getter(
     transform: Callable = None,
     minimum: Optional[float] = None,
     maximum: Optional[float] = None,
+    exclusive_min: bool = False,
 ):
     """Factory for simple data getter functions."""
     def getter(updater, hass):
@@ -295,7 +297,7 @@ def _make_value_getter(
             return None
         if not math.isfinite(value):
             return None
-        if minimum is not None and value < minimum:
+        if minimum is not None and (value <= minimum if exclusive_min else value < minimum):
             return None
         if maximum is not None and value > maximum:
             return None
@@ -369,7 +371,16 @@ get_plug_temperature = _make_value_getter(
 )
 
 # Other diagnostic getters
-get_battery_voltage = _make_value_getter("vBat", precision=2, minimum=0, maximum=_MAX_VOLTAGE)
+# The CR2032 coin cell reads ~3 V; reject non-positive and physically impossible
+# values (matching the low-battery Repairs tracker's plausible window) so a
+# firmware glitch can't push junk into Battery Voltage history.
+get_battery_voltage = _make_value_getter(
+    "vBat",
+    precision=2,
+    minimum=0,
+    maximum=BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
+    exclusive_min=True,
+)
 get_leak_current = _make_value_getter(
     "leakValue", precision=0, minimum=0, maximum=MAX_VALID_LEAKAGE_CURRENT_MA
 )
@@ -410,6 +421,12 @@ def get_charger_substate(updater, hass) -> Optional[str]:
     if state not in CHARGING_STATES:
         return None
     if state == 7:
+        # In the Error state, subState 0 is not a real "No Error" code — it means
+        # the firmware reported no/zero fault code alongside an error state, which
+        # is contradictory. Surface unknown (matching the safety path) instead of
+        # the misleading "No Error" label.
+        if substate == 0:
+            return None
         return get_error_state(substate)
     return get_normal_substate(substate)
 
@@ -460,17 +477,26 @@ def get_time_drift(updater, hass) -> Optional[int]:
         if charger_wall is None:
             return None
         drift = charger_wall - get_local_wall_clock_seconds()
-        last = getattr(updater, "_time_drift_last_report", None)
-        if last is not None and abs(drift - last) <= TIME_DRIFT_QUANTUM_SECONDS:
-            return last
+        # Compute the quantized candidate FIRST, with the in-sync tolerance band
+        # resolving to exactly 0. Hysteresis (keep the last report when the raw
+        # drift only jitters within one grid step) is then applied only to a
+        # non-zero candidate — so the zero/tolerance band always clears a stale
+        # non-zero drift once the clock is synchronized (e.g. 30 s -> 0 s).
         if abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS:
-            value = 0
+            candidate = 0
         else:
-            value = (
+            candidate = (
                 round(drift / TIME_DRIFT_QUANTUM_SECONDS) * TIME_DRIFT_QUANTUM_SECONDS
             )
-        updater._time_drift_last_report = value
-        return value
+        last = getattr(updater, "_time_drift_last_report", None)
+        if (
+            candidate != 0
+            and last is not None
+            and abs(drift - last) <= TIME_DRIFT_QUANTUM_SECONDS
+        ):
+            candidate = last
+        updater._time_drift_last_report = candidate
+        return candidate
     except Exception as err:
         if _should_log_error("get_time_drift"):
             _LOGGER.debug("Error getting time drift: %s", err, exc_info=True)

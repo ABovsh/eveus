@@ -405,6 +405,12 @@ _REMAINING_TARGET_REACHED = "target_reached"
 _REMAINING_NOT_CHARGING = "not_charging"
 _REMAINING_UNAVAILABLE = "unavailable"
 
+# Ceiling on a computed ETA. A finite-but-tiny corrupt powerMeas (e.g. 1e-250)
+# divides to an astronomically large-but-finite duration, which would render a
+# state string far beyond Home Assistant's 255-character limit. No real EV charge
+# approaches 30 days, so anything past it is corrupt telemetry -> "unavailable".
+_MAX_REMAINING_SECONDS = 30 * 24 * 3600
+
 
 def _remaining_seconds_or_state(
     current_soc, target_soc, power_meas, battery_capacity, correction,
@@ -446,7 +452,7 @@ def _remaining_seconds_or_state(
         # that as "unavailable" rather than returning inf (which int() would
         # later reject) or freezing a stale ETA.
         seconds = remaining_kwh / power_kw * 3600
-        if not math.isfinite(seconds):
+        if not math.isfinite(seconds) or seconds > _MAX_REMAINING_SECONDS:
             return _REMAINING_UNAVAILABLE
         return seconds
 

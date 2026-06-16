@@ -101,7 +101,11 @@ class SocLimitController:
         data = self._updater.data
         # The charger's master switch overrides every limit, including this
         # HA-enforced one; stand down before confirming or issuing a Stop.
-        if get_safe_value(data, "suspendLimits", int) == 1:
+        # Require a clean 0 to enforce: a missing/malformed/out-of-domain
+        # suspendLimits means the master state is unknown, and the conservative
+        # safety contract is to stand down rather than risk stopping while the
+        # master "Disable limits" may actually be active.
+        if get_safe_value(data, "suspendLimits", int) != 0:
             return
         state = get_safe_value(data, "state", int)
         evse_enabled = get_safe_value(data, "evseEnabled", int)
@@ -160,7 +164,10 @@ class SocLimitController:
             return
         if energy is None or not 0 <= energy <= MAX_ENERGY_KWH:
             return
-        current = self._calc.get_soc_percent(energy)
+        # Use the EXACT SOC percent for the target comparison, not the rounded
+        # display percent: on a large battery a rounded-up percent reaches the
+        # target up to ~0.5% before the battery actually does, stopping early.
+        current = self._calc.get_soc_percent_exact(energy)
         if current is None or current < target:
             return
         # At/above target and charging enabled: hand off to _stop(). Record the

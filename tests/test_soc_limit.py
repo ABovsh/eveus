@@ -21,7 +21,15 @@ def _updater(state=4, session_energy=30.0, ok=True, stop_ok=True, ev=0):
     u.available = ok
     u.last_update_success = ok
     u.device_number = 1
-    u.data = {"state": state, "sessionEnergy": session_energy, "evseEnabled": ev}
+    # suspendLimits=0 is the normal "master Disable-limits OFF" state; the
+    # controller only enforces when it reads a clean 0 (a missing/garbled value
+    # means the master state is unknown and it stands down — see V-03).
+    u.data = {
+        "state": state,
+        "sessionEnergy": session_energy,
+        "evseEnabled": ev,
+        "suspendLimits": 0,
+    }
     u.send_command = AsyncMock(return_value=stop_ok)
     return u
 
@@ -104,7 +112,7 @@ def test_unrelated_unplug_does_not_emit():
     ctrl.set_enabled(True)
     ctrl.process()                       # Stop sent; awaiting evseEnabled=1
     # Session ends but the charger never reported our stop -> not our doing.
-    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0}
+    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 0, "suspendLimits": 0}
     ctrl.process()
     assert events == []
 
@@ -119,7 +127,7 @@ def test_confirmation_held_across_retry_then_session_end():
     ctrl.set_enabled(True)
     ctrl.process()                       # Stop sent
     ctrl.process()                       # still charging -> retry, token held
-    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1}  # ended + stopped
+    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1, "suspendLimits": 0}  # ended + stopped
     ctrl.process()                       # confirms here, not lost
     assert len(events) == 1
 
@@ -147,10 +155,10 @@ def test_missing_evse_at_active_poll_is_skipped_then_confirms():
     )
     ctrl.set_enabled(True)
     ctrl.process()                                          # Stop sent (evse was 0)
-    updater.data = {"state": 4, "sessionEnergy": 30.0}      # active, no evseEnabled
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "suspendLimits": 0}      # active, no evseEnabled
     ctrl.process()
     assert events == []                                     # skipped, token held
-    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 1}
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 1, "suspendLimits": 0}
     ctrl.process()                                          # now confirmed
     assert len(events) == 1
 
@@ -166,13 +174,13 @@ def test_missing_evse_at_session_end_discards_token_no_cross_session_emit():
     )
     ctrl.set_enabled(True)
     ctrl.process()                                          # Stop sent (evse was 0)
-    updater.data = {"state": 1, "sessionEnergy": 0.0}       # session end, no evseEnabled
+    updater.data = {"state": 1, "sessionEnergy": 0.0, "suspendLimits": 0}       # session end, no evseEnabled
     ctrl.process()                                          # boundary -> discard token
     assert events == []
     # New session well below target; an unrelated stop must emit nothing.
-    updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 0}
+    updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 0, "suspendLimits": 0}
     ctrl.process()
-    updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 1}
+    updater.data = {"state": 4, "sessionEnergy": 5.0, "evseEnabled": 1, "suspendLimits": 0}
     ctrl.process()
     assert events == []
 
@@ -190,9 +198,9 @@ def test_hidden_boundary_via_failed_polls_does_not_bleed():
     ctrl.process()                       # session A: Stop sent at 30 kWh
     # Boundary (A ending, B starting) hidden by failed polls -> next observed poll
     # is B, active, with a RESET energy counter and below target.
-    updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 0}
+    updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 0, "suspendLimits": 0}
     ctrl.process()                       # energy dropped -> token discarded
-    updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 1}
+    updater.data = {"state": 4, "sessionEnergy": 2.0, "evseEnabled": 1, "suspendLimits": 0}
     ctrl.process()                       # unrelated stop in B
     assert events == []                  # A's event must NOT fire in B
 
@@ -272,9 +280,9 @@ def test_rearms_after_session_ends():
     ctrl.process()                       # session 1: Stop sent
     _confirm(updater)                    # evseEnabled=1 -> confirm (1)
     ctrl.process()
-    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1}  # session ends
+    updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1, "suspendLimits": 0}  # session ends
     ctrl.process()                       # re-arm
-    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0}  # new session
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}  # new session
     ctrl.process()                       # session 2: Stop sent
     _confirm(updater)                    # evseEnabled=1 -> confirm (2)
     ctrl.process()
@@ -298,7 +306,7 @@ def test_confirmation_during_inflight_stop_is_not_lost():
         updater.available = True
         updater.last_update_success = True
         updater.device_number = 1
-        updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0}
+        updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
         updater.send_command = slow_send
 
         hass = MagicMock()
@@ -310,7 +318,7 @@ def test_confirmation_during_inflight_stop_is_not_lost():
         ctrl.process()              # spawns Stop; blocks on gate after recording token
         await asyncio.sleep(0)      # let _stop record _pending then block on send
         # The stop took effect at the charger before its HTTP response returned:
-        updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1}
+        updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1, "suspendLimits": 0}
         ctrl.process()              # confirms via the in-flight token
         gate.set()
         await asyncio.sleep(0.02)
@@ -336,7 +344,7 @@ def test_inflight_stop_superseded_by_toggle_fires_nothing():
         updater.available = True
         updater.last_update_success = True
         updater.device_number = 1
-        updater.data = {"state": 4, "sessionEnergy": 30.0}
+        updater.data = {"state": 4, "sessionEnergy": 30.0, "suspendLimits": 0}
         updater.send_command = slow_send
 
         hass = MagicMock()

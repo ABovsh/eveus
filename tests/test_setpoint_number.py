@@ -171,10 +171,11 @@ def test_undervoltage_threshold_falls_back_to_static_floor():
     assert ent.native_min_value == 210
 
 
-def test_undervoltage_threshold_min_never_crosses_max():
-    # A nonsense high minVoltage must not invert the slider range.
+def test_undervoltage_threshold_offlist_minvoltage_keeps_static_floor():
+    # A nonsense/off-list minVoltage is not trusted to derive the floor; it
+    # falls back to the safe static 210 V minimum rather than being capped.
     ent, _ = _make_threshold({"aiVoltage": 215, "minVoltage": 300})
-    assert ent.native_min_value == 220  # capped at native_max_value
+    assert ent.native_min_value == 210
 
 
 def test_threshold_write_reclamps_against_min_raised_while_queued():
