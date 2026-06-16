@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### ✨ New
+- **40A charger model.** Setup now offers a **40A** option alongside 16A/32A/48A, for EVEUS Pro units whose hardware maximum is 40 A — so the current slider matches the charger instead of forcing a 48A profile.
+
 ### 🐛 Fixed
 - **Target-SOC timing is now exact.** Time to Target SOC, Charging Finish Time, and the SOC stop limit use the precise charge level instead of the rounded percent, so they no longer report "reached" — or stop charging — up to ~0.5% early on large batteries.
 - **Time Drift clears after a clock sync** instead of continuing to show the old drift.

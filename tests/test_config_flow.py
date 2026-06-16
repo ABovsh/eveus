@@ -1208,3 +1208,40 @@ def test_v20_reauth_commits_after_host_stabilizes(monkeypatch: pytest.MonkeyPatc
     )
     assert result["reason"] == "reauth_successful"
     assert captured["data"][CONF_HOST] == TEST_HOST_ALT
+
+
+def test_40a_model_is_supported() -> None:
+    """EVEUS Pro units report curDesign=40; a 40A model must be selectable."""
+    from custom_components.eveus.const import MODEL_40A, MODELS, MODEL_MAX_CURRENT
+
+    assert MODEL_40A == "40A"
+    assert MODEL_40A in MODELS
+    assert MODEL_MAX_CURRENT[MODEL_40A] == 40
+
+
+def test_40a_model_validates_setpoint_within_40() -> None:
+    """A 40A charger with a 34A setpoint validates as 40A; above 40A is rejected."""
+    from custom_components.eveus.const import MODEL_40A
+
+    info = validate_device_response({"state": 2, "currentSet": "34"}, MODEL_40A)
+    assert info["current_set"] == 34.0
+    with pytest.raises(InvalidDevice):
+        validate_device_response({"state": 2, "currentSet": "41"}, MODEL_40A)
+
+
+def test_40a_model_selectable_in_user_schema() -> None:
+    from custom_components.eveus.const import MODEL_40A
+
+    schema = build_user_data_schema({})
+    # vol.In(MODELS) accepts 40A for the model field.
+    validated = schema(
+        {
+            CONF_HOST: "1.2.3.4",
+            CONF_USERNAME: "eveus",
+            CONF_PASSWORD: "secret",
+            "model": MODEL_40A,
+            "phases": 1,
+            "soc_mode": "advanced",
+        }
+    )
+    assert validated["model"] == MODEL_40A

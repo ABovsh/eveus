@@ -8,7 +8,7 @@
           "host": "IP Address",
           "username": "Username",
           "password": "Password",
-          "model": "Charger Model (16A, 32A or 48A)",
+          "model": "Charger Model (16A, 32A, 40A or 48A)",
           "phases": "Phases (1 = single-phase, 3 = three-phase)",
           "soc_mode": "Integration mode"
         }
@@ -28,7 +28,7 @@
           "host": "IP Address",
           "username": "Username",
           "password": "Password",
-          "model": "Charger Model (16A, 32A or 48A)",
+          "model": "Charger Model (16A, 32A, 40A or 48A)",
           "phases": "Phases (1 = single-phase, 3 = three-phase)",
           "soc_mode": "Integration mode"
         }
@@ -373,7 +373,7 @@
               "host": "IP Address",
               "username": "Username",
               "password": "Password",
-              "model": "Charger Model (16A, 32A or 48A)",
+              "model": "Charger Model (16A, 32A, 40A or 48A)",
               "phases": "Phases (1 = single-phase, 3 = three-phase)",
               "soc_mode": "Integration mode"
             }

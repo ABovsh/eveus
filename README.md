@@ -106,7 +106,7 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
 | Requirement | Details |
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
-| Charger | Eveus 16A, 32A, or 48A charger reachable from Home Assistant |
+| Charger | Eveus 16A, 32A, 40A, or 48A charger reachable from Home Assistant |
 | Network | Local LAN access to the charger HTTP API |
 | Setup details | Charger IP/hostname or URL, username, password, model |
 
@@ -135,7 +135,7 @@ Or manually:
 1. Go to **Settings → Devices & Services → Add Integration** and search for **Eveus EV Charger**.
 2. Enter the charger address — IP, hostname, or full URL (custom port, `http://`, and `https://` all work).
 3. Enter the username and password.
-4. Pick the charger model: **16A**, **32A**, or **48A**.
+4. Pick the charger model: **16A**, **32A**, **40A**, or **48A**.
 5. Pick the integration mode:
    - **Basic** — charging control and monitoring only.
    - **Advanced** — adds the SOC inputs and SOC/ETA sensors.
