@@ -15,6 +15,7 @@ import asyncio
 import logging
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import MAX_ENERGY_KWH, SESSION_ACTIVE_STATES
 from .utils import get_safe_value
@@ -56,6 +57,12 @@ class SocLimitController:
         # polls) — the token belongs to the old session and must be discarded
         # before it can be falsely confirmed in the new one.
         self._pending_energy: float | None = None
+        # ``sessionTime`` observed when the pending Stop was issued. Like
+        # ``sessionEnergy`` it only grows within a session and resets at a new
+        # one, but it is independent of how much energy was delivered — so a new
+        # session that happens to drop ``sessionEnergy`` by less than the reset
+        # epsilon (e.g. 0.4 -> 0.1 kWh) is still caught by its clock resetting.
+        self._pending_session_time: float | None = None
         # A monotonically increasing "attempt epoch". Each re-arm bumps it so an
         # in-flight _stop() spawned in an older epoch (the switch was toggled or
         # the session changed while its Stop command was awaiting) can neither
@@ -80,6 +87,7 @@ class SocLimitController:
         self._fired = False
         self._pending = None
         self._pending_energy = None
+        self._pending_session_time = None
         self._generation += 1
         if self._stop_task is not None and not self._stop_task.done():
             self._stop_task.cancel()
@@ -110,21 +118,28 @@ class SocLimitController:
         state = get_safe_value(data, "state", int)
         evse_enabled = get_safe_value(data, "evseEnabled", int)
         energy = get_safe_value(data, "sessionEnergy", float)
+        session_time = get_safe_value(data, "sessionTime", int)
         # Session-identity guard (handles a boundary HIDDEN by failed polls): a
-        # pending token belongs to the session whose ``sessionEnergy`` we recorded.
-        # That counter only grows within a session and resets at a new one, so a
-        # later ACTIVE poll reporting a smaller value proves a NEW session is
-        # running — discard the stale token before an unrelated 0 there confirms
-        # it. Gated on an active state so the current session's own end (where
-        # energy also drops to ~0) still confirms normally below.
-        if (
-            state in SESSION_ACTIVE_STATES
-            and self._pending is not None
-            and self._pending_energy is not None
-            and energy is not None
-            and energy < self._pending_energy - _SESSION_RESET_EPS_KWH
-        ):
-            self._rearm()
+        # pending token belongs to the session whose counters we recorded. Both
+        # ``sessionEnergy`` and ``sessionTime`` only grow within a session and
+        # reset at a new one, so a later ACTIVE poll reporting a smaller value for
+        # EITHER proves a NEW session is running — discard the stale token before
+        # an unrelated 0 there confirms it. The clock check catches a new session
+        # whose energy dropped by less than the kWh epsilon. Gated on an active
+        # state so the current session's own end still confirms normally below.
+        if state in SESSION_ACTIVE_STATES and self._pending is not None:
+            energy_reset = (
+                self._pending_energy is not None
+                and energy is not None
+                and energy < self._pending_energy - _SESSION_RESET_EPS_KWH
+            )
+            time_reset = (
+                self._pending_session_time is not None
+                and session_time is not None
+                and session_time < self._pending_session_time
+            )
+            if energy_reset or time_reset:
+                self._rearm()
         # Attributable, causal confirmation: we issue Stop only while the charger
         # reports ``evseEnabled == 0`` (below), so a later 1 IS the 0->1 transition
         # our command caused — not a pre-existing/stale 1 and not an unplug (which
@@ -174,7 +189,7 @@ class SocLimitController:
         # session's energy so the token can be bound to this session.
         generation = self._generation
         self._stop_task = self._hass.async_create_task(
-            self._stop(generation, round(current), round(target), energy)
+            self._stop(generation, round(current), round(target), energy, session_time)
         )
 
     def _emit_reached(self, soc: int, target: int) -> None:
@@ -192,7 +207,12 @@ class SocLimitController:
         _LOGGER.debug("SOC limit confirmed stopped (%s%% >= %s%%)", soc, target)
 
     async def _stop(
-        self, generation: int, soc: int, target: int, energy: float
+        self,
+        generation: int,
+        soc: int,
+        target: int,
+        energy: float,
+        session_time: float | None = None,
     ) -> None:
         """Send the existing Stop Charging command; confirm before notifying.
 
@@ -211,12 +231,28 @@ class SocLimitController:
         # Bound to this session's energy so a missed boundary can't carry it over.
         self._pending = (soc, target)
         self._pending_energy = energy
+        self._pending_session_time = session_time
         try:
             # evseEnabled=1 is the Stop command (0 = keep charging); this matches
             # the Stop Charging switch, not the field's misleading name.
             stopped = await self._updater.send_command("evseEnabled", 1)
         except asyncio.CancelledError:
             raise
+        except ConfigEntryAuthFailed:
+            # The charger rejected our credentials. Unlike an entity service call,
+            # this background task can't propagate the 401 to Home Assistant, so
+            # the reauth flow would never start and charging could continue past
+            # target until a later poll also 401s. Withdraw the provisional token
+            # and start reauth explicitly through the config entry.
+            if not self._fired and generation == self._generation:
+                self._pending = None
+                self._pending_energy = None
+                self._pending_session_time = None
+            entry = getattr(self._updater, "config_entry", None)
+            if entry is not None:
+                entry.async_start_reauth(self._hass)
+            _LOGGER.debug("SOC-limit Stop hit auth failure; started reauth")
+            return
         except Exception as err:  # noqa: BLE001 - retry on any command failure
             stopped = False
             _LOGGER.debug("SOC-limit Stop failed (%s)", type(err).__name__)
@@ -230,6 +266,7 @@ class SocLimitController:
             if not self._fired:
                 self._pending = None
                 self._pending_energy = None
+                self._pending_session_time = None
             _LOGGER.debug("SOC-limit Stop not accepted; will retry")
             return
         _LOGGER.debug("SOC-limit Stop sent (%s%% >= %s%%); awaiting confirm", soc, target)

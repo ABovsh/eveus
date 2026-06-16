@@ -134,6 +134,12 @@ class CommandManager:
         """Issue a single HTTP request to the charger and return success."""
         session = self._updater.get_session()
 
+        # A callable value is resolved here, inside the command-manager critical
+        # section immediately before the POST (and freshly on each retry), so a
+        # time-sensitive value (e.g. the Sync Time timestamp) reflects send time
+        # rather than the moment the command was queued behind the lock.
+        if callable(value):
+            value = value()
         fields = {"pageevent": command, command: value}
         if extra:
             fields.update(extra)

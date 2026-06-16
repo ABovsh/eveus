@@ -71,7 +71,7 @@ def _soc_updater(**data):
     u.available = True
     u.last_update_success = True
     u.device_number = 1
-    base = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0}
+    base = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
     base.update(data)
     u.data = base
     u.send_command = AsyncMock(return_value=True)
@@ -87,8 +87,11 @@ def _soc_ctrl(calc, updater):
 
 @pytest.mark.parametrize("suspend", [None, "bad", 2, -1])
 def test_v03_does_not_enforce_when_suspendlimits_unknown(suspend):
-    data = {} if suspend is None else {"suspendLimits": suspend}
-    updater = _soc_updater(**data)
+    updater = _soc_updater()
+    if suspend is None:
+        del updater.data["suspendLimits"]   # field entirely absent
+    else:
+        updater.data["suspendLimits"] = suspend
     ctrl = _soc_ctrl(_calc(), updater)
     ctrl.set_enabled(True)
     ctrl.process()
@@ -214,3 +217,128 @@ def test_v21_schedule_energy_has_display_precision():
     for desc in number_mod.SCHEDULE_LIMIT_NUMBERS:
         if desc.key.endswith("energy_limit"):
             assert desc.display_precision == 3
+
+
+# =============================================================================
+# V-15 — a hidden small session reset must not let an old pending token confirm
+# =============================================================================
+
+def test_v15_pending_token_does_not_cross_hidden_session_reset():
+    # Stop issued early (sessionEnergy 0.4, sessionTime 500). A new session whose
+    # energy dropped by less than the old 0.5 kWh epsilon (0.4 -> 0.1) but whose
+    # sessionTime reset (500 -> 10) must discard the stale token, not confirm it.
+    calc = _calc(target=80, initial=80, cap=50, corr=0)  # already at target
+    updater = _soc_updater(sessionEnergy=0.4, sessionTime=500, evseEnabled=0)
+    ctrl = _soc_ctrl(calc, updater)
+    ctrl.set_enabled(True)
+    ctrl.process()  # issues Stop; charger stays evseEnabled=0 -> pending held
+    assert ctrl._pending is not None
+    # New session: tiny energy, RESET sessionTime, charger reports stopped.
+    updater.data = {
+        "state": 4, "sessionEnergy": 0.1, "sessionTime": 10,
+        "evseEnabled": 1, "suspendLimits": 0,
+    }
+    ctrl.process()
+    updater.send_command.reset_mock()
+    assert ctrl._hass.bus.async_fire.call_count == 0
+
+
+# =============================================================================
+# V-16 — automatic SOC stop must surface auth failure and start reauth
+# =============================================================================
+
+def test_v16_soc_stop_auth_failure_starts_reauth_and_withdraws_token():
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    calc = _calc(target=80, initial=20, cap=50, corr=0)
+    updater = _soc_updater(sessionEnergy=30.0, evseEnabled=0)
+    updater.send_command = AsyncMock(side_effect=ConfigEntryAuthFailed("401"))
+    ctrl = _soc_ctrl(calc, updater)
+    ctrl.set_enabled(True)
+    ctrl.process()
+    updater.config_entry.async_start_reauth.assert_called_once()
+    assert ctrl._pending is None
+
+
+# =============================================================================
+# V-17 — a malformed suspendLimits sample must not corrupt the switch's memory
+# =============================================================================
+
+def test_v17_malformed_suspendlimits_does_not_retrigger_switch_off():
+    from custom_components.eveus.switch import EveusSocLimitSwitch
+
+    controller = MagicMock()
+    updater = MagicMock()
+    updater.config_entry = MagicMock()
+    sw = EveusSocLimitSwitch(updater, controller, device_number=1)
+    sw.hass = MagicMock()
+    sw.async_write_ha_state = MagicMock()
+
+    sw._updater.data = {"suspendLimits": 1}
+    sw._handle_coordinator_update()              # baseline: master suspended
+    asyncio.run(sw.async_turn_on())             # re-enable while suspended
+    assert sw.is_on is True
+
+    sw._updater.data = {}                         # malformed poll: no suspendLimits
+    sw._handle_coordinator_update()
+    sw._updater.data = {"suspendLimits": 1}       # unchanged master, valid again
+    sw._handle_coordinator_update()
+    assert sw.is_on is True                       # NOT flipped off a second time
+
+
+# =============================================================================
+# V-18 — a deferred command value is evaluated at POST time, not capture time
+# =============================================================================
+
+def test_v18_command_manager_resolves_callable_value_at_post_time():
+    import aiohttp
+    from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+    from custom_components.eveus.common_command import CommandManager
+
+    class _Resp:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        def raise_for_status(self):
+            return None
+
+    class _Sess:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, **kw):
+            self.calls.append(kw)
+            return _Resp()
+
+    class _Upd:
+        host = TEST_HOST
+
+        def __init__(self, sess):
+            self._sess = sess
+            self._basic_auth = aiohttp.BasicAuth(TEST_USERNAME, TEST_PASSWORD)
+
+        @property
+        def basic_auth(self):
+            return self._basic_auth
+
+        def get_session(self):
+            return self._sess
+
+        def url_for(self, path):
+            return f"http://{self.host}{path}"
+
+    sess = _Sess()
+    mgr = CommandManager(_Upd(sess))
+    calls_seen = []
+
+    def _value():
+        calls_seen.append(1)
+        return 99999
+
+    ok = asyncio.run(mgr.send_command("systemTime", _value))
+    assert ok is True
+    assert calls_seen == [1]  # evaluated once, inside the command path
+    assert sess.calls[0]["data"] == "pageevent=systemTime&systemTime=99999"
