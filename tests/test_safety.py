@@ -533,3 +533,62 @@ def test_issue_creation_metadata_and_no_active_poll_churn(
     assert kwargs["is_persistent"] is True
     assert kwargs["severity"] is expected_severity
     assert kwargs["translation_key"] == f"safety_{key}"
+
+
+def test_v05_persisted_recovery_lets_dismissed_issue_realert_after_reload() -> None:
+    """A serious fault that recovered, was dismissed, then recurs across a reload
+    must re-alert — the recovery memory survives manager recreation."""
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(entry_id="entry")
+    updater = SimpleNamespace(
+        data={"state": 2, "temperature1": 80}, available=True, last_update_success=True
+    )
+    m1 = EveusSafetyManager(hass, entry, updater)
+    for _ in range(TEMPERATURE_TRIGGER_POLLS):
+        m1.process()
+    assert _issue(hass, entry, "box_overheat") is not None
+
+    # Recover (latched issue stays, but recovery is remembered).
+    updater.data = {"state": 2, "temperature1": 70}
+    for _ in range(TEMPERATURE_RECOVERY_POLLS):
+        m1.process()
+    assert m1._states["box_overheat"].recovered_since_raised is True
+    snapshot = m1._persisted_snapshot()
+
+    # User dismisses the lingering notice.
+    ir.async_ignore_issue(hass, DOMAIN, safety_issue_id(entry, "box_overheat"), True)
+
+    # Reload: a fresh manager restores the persisted recovery memory.
+    m2 = EveusSafetyManager(hass, entry, updater)
+    m2._apply_persisted(snapshot)
+
+    # The fault recurs -> the stale dismissed notice is replaced by a fresh one.
+    updater.data = {"state": 2, "temperature1": 80}
+    for _ in range(TEMPERATURE_TRIGGER_POLLS):
+        m2.process()
+    issue = _issue(hass, entry, "box_overheat")
+    assert issue is not None
+    assert issue.dismissed_version is None
+
+
+def test_v05_without_persisted_recovery_dismissed_issue_stays_hidden() -> None:
+    """Control: with no recovery memory restored, a recurrence stays dismissed
+    (the pre-fix behavior) — confirming the persistence is what re-alerts."""
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(entry_id="entry")
+    updater = SimpleNamespace(
+        data={"state": 2, "temperature1": 80}, available=True, last_update_success=True
+    )
+    ir.async_create_issue(
+        hass, DOMAIN, safety_issue_id(entry, "box_overheat"),
+        is_fixable=False, is_persistent=True,
+        severity=ir.IssueSeverity.ERROR, translation_key="safety_box_overheat",
+    )
+    ir.async_ignore_issue(hass, DOMAIN, safety_issue_id(entry, "box_overheat"), True)
+
+    m = EveusSafetyManager(hass, entry, updater)  # no persisted memory restored
+    for _ in range(TEMPERATURE_TRIGGER_POLLS):
+        m.process()
+    issue = _issue(hass, entry, "box_overheat")
+    assert issue is not None
+    assert issue.dismissed_version is not None  # stays hidden

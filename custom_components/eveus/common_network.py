@@ -227,6 +227,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         extra: dict[str, Any] | None = None,
     ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
+        if self._shutting_down:
+            # Reject new/queued commands once unload has begun so a control or
+            # background task can't mutate the charger after teardown.
+            return False
         try:
             success = await self._command_manager.send_command(
                 command, value, retry=retry, extra=extra

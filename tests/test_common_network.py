@@ -746,3 +746,14 @@ def test_runtime_poll_accepts_current_within_configured_model(
     )
     data = asyncio.run(updater._async_update_data())
     assert data["currentSet"] == 16
+
+
+def test_send_command_rejected_during_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """V-01: once shutdown has begun, no new command may reach the charger."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._shutting_down = True
+    sent = Mock()
+    updater._command_manager.send_command = sent
+    result = asyncio.run(updater.send_command("currentSet", 16))
+    assert result is False
+    sent.assert_not_called()

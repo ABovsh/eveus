@@ -82,6 +82,20 @@ class SocLimitController:
         self._enabled = enabled
         self._rearm()
 
+    async def async_shutdown(self) -> None:
+        """Stop enforcing and cancel any in-flight Stop before the entry unloads.
+
+        Registered via ``entry.async_on_unload`` so a Stop command queued/awaiting
+        when the config entry reloads or is removed cannot still POST to the
+        charger after this integration instance is gone (``hass.async_create_task``
+        is not bound to the entry lifecycle by Home Assistant).
+        """
+        self._enabled = False
+        task = self._stop_task
+        self._rearm()  # bumps the generation and cancels the in-flight task
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+
     def _rearm(self) -> None:
         """Reset the latch and invalidate (and cancel) any in-flight stop."""
         self._fired = False

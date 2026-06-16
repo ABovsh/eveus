@@ -363,3 +363,22 @@ def test_inflight_stop_superseded_by_toggle_fires_nothing():
         assert ctrl._fired is False  # new epoch's latch is clean
 
     asyncio.run(scenario())
+
+
+def test_async_shutdown_disables_and_cancels_inflight_stop():
+    """V-01: unload-time shutdown stops enforcement and cancels the stop task so
+    no Stop command can reach the charger after the entry is gone."""
+    async def scenario():
+        ctrl = SocLimitController(MagicMock(), MagicMock(), _calc())
+        ctrl._enabled = True
+
+        async def _never():
+            await asyncio.sleep(100)
+
+        task = asyncio.ensure_future(_never())
+        ctrl._stop_task = task
+        await ctrl.async_shutdown()
+        assert ctrl.enabled is False
+        assert task.cancelled()
+
+    asyncio.run(scenario())

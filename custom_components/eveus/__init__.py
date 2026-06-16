@@ -728,6 +728,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
                 phases,
             )
 
+        # First refresh BEFORE publishing runtime_data: if it raises (auth,
+        # transient, or payload failure) setup fails and the entry must carry no
+        # runtime objects — otherwise diagnostics would report a failed setup as
+        # ready and stale listeners could survive.
+        await updater.async_config_entry_first_refresh()
+
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
             device_number=device_number,
@@ -737,78 +743,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             phases=phases,
         )
 
-        await updater.async_config_entry_first_refresh()
-
-        # Keep the OCPP-enabled warning in sync with every poll, so it reflects
-        # toggles made from the charger UI or mobile app, not just from HA.
-        @callback
-        def _refresh_ocpp_issue() -> None:
-            _update_ocpp_issue(hass, entry, updater)
-
-        entry.async_on_unload(updater.async_add_listener(_refresh_ocpp_issue))
-        _refresh_ocpp_issue()
-
-        # Track the CR2032 coin cell (vBat) across polls and warn when it is
-        # depleted, with debounce/hysteresis held in the tracker.
-        battery_tracker = _BatteryLowTracker()
-
-        @callback
-        def _refresh_battery_issue() -> None:
-            _update_battery_low_issue(hass, entry, updater, battery_tracker)
-
-        entry.async_on_unload(updater.async_add_listener(_refresh_battery_issue))
-        _refresh_battery_issue()
-
-        # Warn when the charger clock has drifted from Home Assistant by more
-        # than 10 minutes (schedules/tariffs would mistime). Report-only: the
-        # notice walks the user to the Time Zone select + Sync Time button.
-        clock_tracker = _ClockDriftTracker()
-
-        @callback
-        def _refresh_clock_drift_issue() -> None:
-            _update_clock_drift_issue(hass, entry, updater, clock_tracker)
-
-        entry.async_on_unload(updater.async_add_listener(_refresh_clock_drift_issue))
-        _refresh_clock_drift_issue()
-
-        # Surface dangerous charger conditions (missing ground, leakage,
-        # overheat, and firmware safety faults) as Home Assistant Repairs
-        # notices. The manager owns its own debounce/hysteresis/latching. Its
-        # listener is removed on unload (below), and its in-memory streaks reset
-        # on reload — but the safety issues themselves are persistent and are
-        # deliberately never deleted on unload, so incidents and ignored state
-        # survive reloads, restarts, and temporary charger outages; the manager
-        # reconciles recovery against the surviving issue after the next poll.
-        from .safety import EveusSafetyManager
-
-        safety_manager = EveusSafetyManager(hass, entry, updater)
-        entry.async_on_unload(updater.async_add_listener(safety_manager.process))
-        safety_manager.process()
-
-        entry.async_on_unload(updater.async_add_listener(soc_limit.process))
-        soc_limit.process()
-
-        # DataUpdateCoordinator constructed with config_entry already registers
-        # async_shutdown on the entry unload lifecycle — no manual registration.
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        entry.async_on_unload(entry.add_update_listener(update_listener))
-
-        # Drop registry rows for SOC/phase entities that this config no longer
-        # builds (Advanced -> Basic, or 3 -> 1 phase). Deferred until the entry
-        # is fully committed (first refresh + platforms up) so a transient
-        # setup failure that HA will retry cannot permanently delete entities —
-        # along with their area, disabled state, and custom entity_id — for a
-        # reduced scope that never actually finished loading.
-        _prune_unused_entities(
-            hass,
-            device_number,
-            get_soc_mode(entry),
-            # An invalid stored phase count fell back to 1; don't let that
-            # fallback prune the 3-phase registry rows.
-            3 if phases_were_invalid else phases,
-        )
-
-        return True
+        # From here, any failure must clear runtime_data so a half-built entry is
+        # never left behind (diagnostics stays in the not-ready branch).
+        try:
+            return await _finish_setup(
+                hass,
+                entry,
+                updater,
+                soc_limit,
+                device_number,
+                phases,
+                phases_were_invalid,
+            )
+        except Exception:
+            entry.runtime_data = None
+            raise
 
     except (ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady):
         raise
@@ -818,6 +767,95 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # poll and config-flow error paths.
         _LOGGER.exception("Unexpected error setting up Eveus integration")
         raise ConfigEntryNotReady(f"Unexpected error: {type(ex).__name__}") from ex
+
+
+async def _finish_setup(
+    hass: HomeAssistant,
+    entry: "EveusConfigEntry",
+    updater: "EveusUpdater",
+    soc_limit: "SocLimitController",
+    device_number: int,
+    phases: int,
+    phases_were_invalid: bool,
+) -> bool:
+    """Wire listeners, forward platforms, and prune, after runtime_data is set."""
+    # Keep the OCPP-enabled warning in sync with every poll, so it reflects
+    # toggles made from the charger UI or mobile app, not just from HA.
+    @callback
+    def _refresh_ocpp_issue() -> None:
+        _update_ocpp_issue(hass, entry, updater)
+
+    entry.async_on_unload(updater.async_add_listener(_refresh_ocpp_issue))
+    _refresh_ocpp_issue()
+
+    # Track the CR2032 coin cell (vBat) across polls and warn when it is
+    # depleted, with debounce/hysteresis held in the tracker.
+    battery_tracker = _BatteryLowTracker()
+
+    @callback
+    def _refresh_battery_issue() -> None:
+        _update_battery_low_issue(hass, entry, updater, battery_tracker)
+
+    entry.async_on_unload(updater.async_add_listener(_refresh_battery_issue))
+    _refresh_battery_issue()
+
+    # Warn when the charger clock has drifted from Home Assistant by more
+    # than 10 minutes (schedules/tariffs would mistime). Report-only: the
+    # notice walks the user to the Time Zone select + Sync Time button.
+    clock_tracker = _ClockDriftTracker()
+
+    @callback
+    def _refresh_clock_drift_issue() -> None:
+        _update_clock_drift_issue(hass, entry, updater, clock_tracker)
+
+    entry.async_on_unload(updater.async_add_listener(_refresh_clock_drift_issue))
+    _refresh_clock_drift_issue()
+
+    # Surface dangerous charger conditions (missing ground, leakage,
+    # overheat, and firmware safety faults) as Home Assistant Repairs
+    # notices. The manager owns its own debounce/hysteresis/latching. Its
+    # listener is removed on unload (below), and its in-memory streaks reset
+    # on reload — but the safety issues themselves are persistent and are
+    # deliberately never deleted on unload, so incidents and ignored state
+    # survive reloads, restarts, and temporary charger outages; the manager
+    # reconciles recovery against the surviving issue after the next poll.
+    from .safety import EveusSafetyManager
+
+    safety_manager = EveusSafetyManager(hass, entry, updater)
+    # Restore persisted recovery memory before the first reconciliation so a
+    # dismissed-but-recovered safety issue can re-alert on a fresh fault.
+    await safety_manager.async_load()
+    entry.async_on_unload(updater.async_add_listener(safety_manager.process))
+    safety_manager.process()
+
+    entry.async_on_unload(updater.async_add_listener(soc_limit.process))
+    # Cancel any in-flight SOC Stop on unload so it can't POST after teardown
+    # (its task is created via hass.async_create_task, which HA does not bind to
+    # this entry's lifecycle).
+    entry.async_on_unload(soc_limit.async_shutdown)
+    soc_limit.process()
+
+    # DataUpdateCoordinator constructed with config_entry already registers
+    # async_shutdown on the entry unload lifecycle — no manual registration.
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(update_listener))
+
+    # Drop registry rows for SOC/phase entities that this config no longer
+    # builds (Advanced -> Basic, or 3 -> 1 phase). Deferred until the entry
+    # is fully committed (first refresh + platforms up) so a transient
+    # setup failure that HA will retry cannot permanently delete entities —
+    # along with their area, disabled state, and custom entity_id — for a
+    # reduced scope that never actually finished loading.
+    _prune_unused_entities(
+        hass,
+        device_number,
+        get_soc_mode(entry),
+        # An invalid stored phase count fell back to 1; don't let that
+        # fallback prune the 3-phase registry rows.
+        3 if phases_were_invalid else phases,
+    )
+
+    return True
 
 
 async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
@@ -833,7 +871,13 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     unload — but once the entry itself is gone they would sit in Repairs
     forever, referencing a charger that no longer exists.
     """
-    from .safety import POLICIES, safety_issue_id
+    from .safety import (
+        POLICIES,
+        _SAFETY_STORE_VERSION,
+        safety_issue_id,
+        safety_store_key,
+    )
+    from homeassistant.helpers.storage import Store
 
     ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
@@ -842,6 +886,13 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     ir.async_delete_issue(hass, DOMAIN, f"soc_dashboard_update_{entry.entry_id}")
     for policy in POLICIES:
         ir.async_delete_issue(hass, DOMAIN, safety_issue_id(entry, policy.key))
+
+    # Remove the persisted safety recovery-memory store for this entry. Best
+    # effort: a storage hiccup must not block entry removal.
+    try:
+        await Store(hass, _SAFETY_STORE_VERSION, safety_store_key(entry)).async_remove()
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not remove safety store for removed entry")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:

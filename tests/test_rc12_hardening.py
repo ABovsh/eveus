@@ -165,8 +165,11 @@ def test_command_after_shutdown_skips_refresh_scheduling(monkeypatch) -> None:
         updater, "_schedule_post_command_refresh", lambda: scheduled.append(1)
     )
 
+    # Once shutdown has begun, a new/queued command is REJECTED outright (V-01)
+    # so it cannot POST to the charger after teardown — and therefore schedules
+    # no refresh either.
     updater._shutting_down = True
-    assert asyncio.run(updater.send_command("evseEnabled", 1)) is True
+    assert asyncio.run(updater.send_command("evseEnabled", 1)) is False
     assert scheduled == []
 
     # Sanity: while live, a successful command still schedules refreshes.

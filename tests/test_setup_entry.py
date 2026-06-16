@@ -122,7 +122,11 @@ class _SafetyManager:
         self.entry = entry
         self.updater = updater
         self.process_calls = 0
+        self.load_calls = 0
         self.instances.append(self)
+
+    async def async_load(self) -> None:
+        self.load_calls += 1
 
     def process(self) -> None:
         self.process_calls += 1
@@ -1044,3 +1048,30 @@ def test_async_setup_entry_clears_stale_soc_dashboard_issue(
 
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
     assert ("eveus", "soc_dashboard_update_entry-id") in deleted
+
+
+def test_v04_runtime_data_unset_after_auth_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A first-refresh auth failure must leave no runtime objects on the entry."""
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _AuthFailingUpdater)
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert getattr(entry, "runtime_data", None) is None
+
+
+def test_v04_runtime_data_unset_after_unexpected_refresh_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _UnexpectedFailingUpdater)
+
+    with pytest.raises(ConfigEntryNotReady):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert getattr(entry, "runtime_data", None) is None
