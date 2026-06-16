@@ -670,9 +670,12 @@ def create_sensor_specifications(
     """
 
     # Bound Current Set to this charger's model maximum rather than the global
-    # ceiling shared by all models.
+    # ceiling shared by all models. The lower bound is 0, NOT MIN_CURRENT: the
+    # firmware legitimately reports a setpoint below 7 A when one is configured
+    # directly on the charger, and that real value must be shown rather than
+    # hidden as `unknown` (HA writes are still floored at 7 A by the number).
     current_set_getter = _make_value_getter(
-        "currentSet", precision=0, minimum=MIN_CURRENT, maximum=max_current
+        "currentSet", precision=0, minimum=0, maximum=max_current
     )
 
     # Bound the adaptive throttle's reported limit to this model too — like

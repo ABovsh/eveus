@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import ipaddress
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -228,6 +229,12 @@ def _split_host_and_scheme(
     if port is not None and not 1 <= port <= 65535:
         raise vol.Invalid("Invalid port")
 
+    # Drop an explicit scheme-default port (http:80 / https:443): "host" and
+    # "host:80" address the same endpoint and must collapse to one unique ID, or
+    # the same charger can be added twice as two devices.
+    if port == (80 if scheme == "http" else 443):
+        port = None
+
     if not _host_is_valid(hostname):
         raise vol.Invalid(_INVALID_HOST_MSG)
 
@@ -238,8 +245,15 @@ def _split_host_and_scheme(
         hostname = hostname.lower()
 
     is_ipv6 = ":" in hostname
-    if is_ipv6 and not hostname.startswith("["):
-        hostname = f"[{hostname}]"
+    if is_ipv6:
+        # Canonicalize the IPv6 literal so equivalent spellings (e.g. "::1" vs
+        # "0:0:0:0:0:0:0:1") collapse to one identity instead of two devices.
+        try:
+            hostname = ipaddress.ip_address(hostname).compressed
+        except ValueError:
+            pass
+        if not hostname.startswith("["):
+            hostname = f"[{hostname}]"
 
     if port is not None:
         return f"{hostname}:{port}", scheme

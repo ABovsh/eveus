@@ -42,10 +42,13 @@ def test_negative_power_returns_none():
     assert get_power(EveusTestUpdater({"powerMeas": -10}), None) is None
 
 
-def test_current_set_below_minimum_returns_none():
-    assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": 5}), None) is None
+def test_current_set_displays_sub_minimum_but_rejects_negative_and_over_max():
+    # A sub-7 A setpoint set directly on the charger is a legitimate reported
+    # value and must be displayed; only negative / above-model values are corrupt.
+    assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": 5}), None) == 5
     assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": 7}), None) == 7
     assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": 16}), None) == 16
+    assert spec_value_fn("current_set")(EveusTestUpdater({"currentSet": -1}), None) is None
 
 
 def test_leak_current_negative_returns_none():

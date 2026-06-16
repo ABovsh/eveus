@@ -339,3 +339,58 @@ def test_v18_command_manager_resolves_callable_value_at_post_time():
     assert ok is True
     assert calls_seen == [1]  # evaluated once, inside the command path
     assert sess.calls[0]["data"] == "pageevent=systemTime&systemTime=99999"
+
+
+# =============================================================================
+# V-19 — equivalent addresses must canonicalize to one identity
+# =============================================================================
+
+import custom_components.eveus.config_flow as config_flow  # noqa: E402
+
+
+def test_v19_default_http_port_is_dropped():
+    h1, _ = config_flow._split_host_and_scheme("host")
+    h2, _ = config_flow._split_host_and_scheme("host:80")
+    h3, _ = config_flow._split_host_and_scheme("http://host")
+    assert h1 == h2 == h3 == "host"
+
+
+def test_v19_default_https_port_is_dropped():
+    h, scheme = config_flow._split_host_and_scheme("https://host:443")
+    assert h == "host" and scheme == "https"
+
+
+def test_v19_nondefault_port_is_kept():
+    h, _ = config_flow._split_host_and_scheme("host:8080")
+    assert h == "host:8080"
+
+
+def test_v19_ipv6_literals_canonicalize_to_same_host():
+    h1, _ = config_flow._split_host_and_scheme("[::1]")
+    h2, _ = config_flow._split_host_and_scheme("[0:0:0:0:0:0:0:1]")
+    assert h1 == h2 == "[::1]"
+
+
+# =============================================================================
+# V-07 — a legitimate sub-7 A currentSet must still be displayed (read != write)
+# =============================================================================
+
+def test_v07_current_set_sensor_displays_sub_7():
+    specs = {s.name: s for s in sd.create_sensor_specifications(phases=1, max_current=16)}
+    getter = specs["Current Set"].value_fn
+    upd = SimpleNamespace(available=True, data={"currentSet": 6})
+    assert getter(upd, None) == 6
+
+
+def test_v07_current_number_displays_sub7_but_writes_floor():
+    upd = MagicMock()
+    upd.available = True
+    upd.data = {"currentSet": 6, "state": 4}
+    upd.config_entry = MagicMock()
+    upd.send_command = AsyncMock(return_value=True)
+    num = number_mod.EveusCurrentNumber(upd, "16A")
+    num.hass = MagicMock()
+    num.async_write_ha_state = MagicMock()
+    assert num.native_value == 6
+    asyncio.run(num.async_set_native_value(3))
+    upd.send_command.assert_awaited_with("currentSet", 7)

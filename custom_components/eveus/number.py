@@ -239,6 +239,10 @@ class EveusCurrentNumber(EveusNumberEntity):
 
     ENTITY_NAME = _CHARGING_CURRENT_NAME
     _command = "currentSet"
+    # Reads accept any non-negative device-reported setpoint up to the model max;
+    # the firmware legitimately reports 1..6 A when configured directly on the
+    # charger. HA WRITES are still clamped to native_min_value (MIN_CURRENT, 7 A).
+    _READ_MIN = 0.0
 
     def __init__(self, updater, model: str, device_number: int = 1) -> None:
         """Initialize the current control."""
@@ -267,7 +271,7 @@ class EveusCurrentNumber(EveusNumberEntity):
             return None
         device_value = get_safe_value(self._updater.data, self._command, float)
         if device_value is not None and (
-            self._attr_native_min_value <= device_value <= self._attr_native_max_value
+            self._READ_MIN <= device_value <= self._attr_native_max_value
         ):
             return float(device_value)
         return None
@@ -298,7 +302,7 @@ class EveusCurrentNumber(EveusNumberEntity):
         if self._updater.available and self._updater.data and self._command in self._updater.data:
             device_value = get_safe_value(self._updater.data, self._command, float)
             if device_value is not None and (
-                self._attr_native_min_value <= device_value <= self._attr_native_max_value
+                self._READ_MIN <= device_value <= self._attr_native_max_value
             ):
                 return float(device_value)
 
@@ -355,7 +359,7 @@ class EveusCurrentNumber(EveusNumberEntity):
         try:
             if state and state.state not in (None, "unknown", "unavailable"):
                 restored_value = float(state.state)
-                if self._attr_native_min_value <= restored_value <= self._attr_native_max_value:
+                if self._READ_MIN <= restored_value <= self._attr_native_max_value:
                     self._last_device_value = restored_value
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored_value

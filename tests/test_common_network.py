@@ -700,3 +700,28 @@ def test_backward_clock_does_not_strand_offline_backoff(
 
     assert data["currentSet"] == 16
     assert len(session.calls) == 1
+
+
+def test_runtime_poll_rejects_current_above_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V-06: a currentSet above THIS model's max fails the poll (wrong device)."""
+    session = _Session(_Response(payload={"state": 4, "currentSet": 20}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+
+def test_runtime_poll_accepts_current_within_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"state": 4, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+    data = asyncio.run(updater._async_update_data())
+    assert data["currentSet"] == 16
