@@ -461,3 +461,21 @@ def test_v22_capped_reader_parses_small_body():
 
     data = asyncio.run(read_json_capped(_Resp()))
     assert data == {"state": 4, "currentSet": 16}
+
+
+# =============================================================================
+# O-03 — duration-only log/command timing uses monotonic time (clock-jump safe)
+# =============================================================================
+
+def test_o03_ratelog_uses_monotonic_clock(monkeypatch):
+    import custom_components.eveus.utils as u
+    from custom_components.eveus.utils import RateLog
+
+    clock = {"m": 1000.0}
+    monkeypatch.setattr(u.time, "monotonic", lambda: clock["m"])
+    rl = RateLog()
+    assert rl.should_log(10) is True       # first emission
+    clock["m"] = 1005.0
+    assert rl.should_log(10) is False      # within interval
+    clock["m"] = 1011.0
+    assert rl.should_log(10) is True       # interval elapsed (monotonic)

@@ -58,7 +58,10 @@ class RateLog:
 
     def should_log(self, interval: float, key: Hashable | None = None) -> bool:
         """Return whether a message should be logged for the interval."""
-        current_time = time.time()
+        # Monotonic clock: a backward wall-clock step (NTP, VM resume) would
+        # otherwise make the elapsed time negative and suppress all logging until
+        # wall time caught back up.
+        current_time = time.monotonic()
         if key is None:
             if current_time - self._last_log > interval:
                 self._last_log = current_time

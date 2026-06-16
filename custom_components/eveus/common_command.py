@@ -65,11 +65,12 @@ class CommandManager:
         together as one "save" form, not as a bare single-field write.
         """
         async with self._lock:
-            # Rate limit: minimum 1 second between commands. Clamp the wait to
-            # [0, 1]: a backward wall-clock step (NTP correction, manual set, VM
-            # resume) would otherwise make `time_since_last` strongly negative and
-            # stall every command for minutes while holding the command lock.
-            time_since_last = time.time() - self._last_command_time
+            # Rate limit: minimum 1 second between commands. Monotonic clock so a
+            # backward wall-clock step (NTP correction, manual set, VM resume)
+            # can't make `time_since_last` negative and stall every command for
+            # minutes while holding the command lock. The [0, 1] clamp stays as a
+            # cheap guard against any residual edge.
+            time_since_last = time.monotonic() - self._last_command_time
             if time_since_last < 1:
                 await asyncio.sleep(max(0.0, min(1.0, 1 - time_since_last)))
 
@@ -126,7 +127,7 @@ class CommandManager:
                     )
                 return False
             finally:
-                self._last_command_time = time.time()
+                self._last_command_time = time.monotonic()
 
     async def _post_command(
         self, command: str, value: Any, extra: dict[str, Any] | None = None
