@@ -1,15 +1,22 @@
-"""Every config-flow step schema must be JSON-serializable for the frontend.
+"""Config-flow step schemas must survive the full round-trip with the frontend.
 
 Home Assistant serializes a flow's ``data_schema`` with ``voluptuous_serialize``
-before sending it to the UI. A bare validator function in the schema makes that
-conversion raise, so the config dialog fails to load with a 500 error (issue #8).
-These tests reproduce that serialization the exact way HA does.
+to render the dialog, then validates whatever the user submits back through that
+same schema. Two failure modes have hit users:
 
-The :func:`test_every_flow_step_schema_is_serializable` driver is intentionally
-self-maintaining: it discovers every ``async_step_*`` handler on both flow
-classes, drives each to the point where it shows a form, and serializes whatever
-schema that form carries. A new step (or a new schema builder reached from one)
-is therefore guarded automatically, with no per-step test to remember to add.
+* **Render direction (issue #8):** a bare validator function makes serialization
+  raise, so the dialog fails to load with a 500 error.
+* **Submit direction (issue #5):** the frontend returns select/number values as
+  *strings* (``"1"``/``"3"``), so a schema that doesn't coerce rejects every
+  choice with ``value must be one of [1, 3]``.
+
+These tests reproduce both directions the exact way HA does.
+
+The drivers are intentionally self-maintaining: they discover every
+``async_step_*`` handler on both flow classes, drive each to the point where it
+shows a form, and exercise whatever schema that form carries. A new step (or a
+new schema builder reached from one) is therefore guarded automatically, with no
+per-step test to remember to add.
 """
 from __future__ import annotations
 
@@ -17,6 +24,7 @@ import asyncio
 import inspect
 
 import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 import voluptuous_serialize
 
 from custom_components.eveus import config_flow as cf
@@ -172,3 +180,43 @@ def test_every_flow_step_schema_is_serializable() -> None:
     for name, schema in schemas.items():
         assert schema is not None, f"{name} showed a form with no data_schema"
         _assert_serializable(schema)
+
+
+def _frontend_submission(schema) -> dict:
+    """Build the values the HA frontend would submit for a schema.
+
+    The dialog renders from the serialized schema and returns the chosen values
+    — crucially, select options and numbers come back as *strings*. We derive
+    the submission from that same serialized contract and stringify it,
+    reproducing exactly what the frontend sends.
+    """
+    serialized = voluptuous_serialize.convert(schema, custom_serializer=cv.custom_serializer)
+    submission = {}
+    for field in serialized:
+        options = field.get("options")
+        if options:
+            first = options[0]
+            value = first[0] if isinstance(first, (list, tuple)) else first
+        elif field.get("default") not in (None, vol.UNDEFINED):
+            value = field["default"]
+        else:
+            value = "x"  # field with no default (e.g. password)
+        submission[field["name"]] = str(value)  # frontend submits scalars as strings
+    return submission
+
+
+def test_every_flow_step_accepts_frontend_string_input() -> None:
+    """The frontend submits every field as a string; the schema must accept it.
+
+    Mirror of the serialization guard for the opposite direction: the regression
+    net for issue #5 ("value must be one of [1, 3]") and the same class of
+    select/number coercion bug in any current or future step.
+    """
+    for name, schema in _collect_flow_schemas().items():
+        submission = _frontend_submission(schema)
+        try:
+            schema(submission)
+        except vol.Invalid as err:
+            raise AssertionError(
+                f"{name}: frontend submission {submission!r} rejected: {err}"
+            ) from err
