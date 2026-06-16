@@ -219,8 +219,14 @@ def get_local_wall_clock_seconds() -> int:
     return int(time.time()) + get_local_utc_offset_seconds()
 
 
-def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
-    """Coerce a /main field to a trimmed string or a fallback."""
+def _safe_str(
+    value: Any, fallback: str = "Unknown", min_len: int = 2, max_len: int = 128
+) -> str:
+    """Coerce a /main field to a trimmed string or a fallback.
+
+    ``max_len`` caps the result so a huge firmware/model/serial string can't be
+    written verbatim into the device registry (oversized registry/UI payloads).
+    """
     # bool is an int subclass; reject it and other non-scalar containers so a
     # malformed firmware field (e.g. verFWMain=true) can't render as "True" and
     # get permanently finalized into device_info.
@@ -231,7 +237,9 @@ def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
     if isinstance(value, float) and not math.isfinite(value):
         return fallback
     text = str(value).strip()
-    return text if len(text) >= min_len else fallback
+    if len(text) < min_len:
+        return fallback
+    return text[:max_len]
 
 
 # Strings some firmware builds put in a version field to mean "no value". They

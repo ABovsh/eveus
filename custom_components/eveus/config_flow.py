@@ -52,13 +52,17 @@ from .const import (
     SOC_INPUT_LIMITS,
     get_soc_mode,
 )
-from ._payload import PayloadError, validate_main_payload
+from ._payload import PayloadError, read_json_capped, validate_main_payload
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
 _INVALID_HOST_MSG = "Invalid IP address or hostname"
+# Bound on reauth re-validations when a concurrent reconfigure keeps changing the
+# host/scheme mid-flight; past this the flow refuses rather than committing
+# credentials validated against a stale address.
+_REAUTH_MAX_REVALIDATIONS = 3
 
 # Keys outside the user-editable form that must survive reconfigure/reauth/repair.
 _PRESERVED_ENTRY_KEYS: tuple[str, ...] = (
@@ -434,7 +438,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             response.raise_for_status()
 
             try:
-                result = await response.json(content_type=None)
+                result = await read_json_capped(response)
             except ValueError:
                 raise CannotConnect("Invalid response format")
 
@@ -628,29 +632,36 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                merged_data = dict(entry.data)
-                merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
-                merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
-                # The reauth form only exposes credentials, so a corrupt stored
-                # soc_mode would otherwise fail validation with no way to fix it.
-                # Normalize it to a valid mode before re-validating.
-                merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
-
-                info = await validate_input(self.hass, merged_data)
-
-                # A concurrent reconfigure may have changed the connection
-                # details while validation was in flight; the credentials were
-                # then only proven against the OLD address. Re-validate once
-                # against the live details before committing.
-                live = dict(entry.data)
-                if live.get(CONF_HOST) != merged_data.get(CONF_HOST) or live.get(
-                    CONF_SCHEME
-                ) != merged_data.get(CONF_SCHEME):
-                    merged_data = live
+                # A concurrent reconfigure may change the connection details while
+                # a validation is in flight, leaving credentials proven against an
+                # OLD address. Snapshot host/scheme, validate, and re-validate
+                # until the live details are unchanged across a full validation —
+                # bounded, so even repeated mid-flight changes can't rebase
+                # credentials onto an address that was never validated.
+                info = None
+                for _ in range(_REAUTH_MAX_REVALIDATIONS):
+                    merged_data = dict(entry.data)
                     merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
                     merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                    # The reauth form only exposes credentials, so a corrupt
+                    # stored soc_mode would otherwise fail validation with no way
+                    # to fix it. Normalize it to a valid mode before validating.
                     merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
+                    snapshot_host = merged_data.get(CONF_HOST)
+                    snapshot_scheme = merged_data.get(CONF_SCHEME)
+
                     info = await validate_input(self.hass, merged_data)
+
+                    live = dict(entry.data)
+                    if (
+                        live.get(CONF_HOST) == snapshot_host
+                        and live.get(CONF_SCHEME) == snapshot_scheme
+                    ):
+                        break
+                else:
+                    # Host/scheme never settled; refuse rather than commit
+                    # unvalidated credentials. cannot_connect lets the user retry.
+                    raise CannotConnect
 
                 # Rebase on LIVE entry data and replace only the credentials:
                 # validate_input ran against a pre-await snapshot, so adopting

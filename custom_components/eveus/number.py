@@ -233,6 +233,18 @@ class EveusNumberEntity(
         self._init_optimistic_control()
         self._init_write_on_change()
 
+    async def async_added_to_hass(self) -> None:
+        """Restore the previous HA value, then prefer fresh coordinator data.
+
+        ``RestoreEntity`` seeds the previous HA state, but the setup first-refresh
+        has usually already populated a fresh ``/main`` value. Re-resolving here
+        means a charger-backed number shows current device data immediately
+        instead of the restored value until the next poll. (Switches/time/sensors
+        already do this; charger-backed numbers used not to.)
+        """
+        await super().async_added_to_hass()
+        self._set_display_value(self._resolve_display_value())
+
 
 class EveusCurrentNumber(EveusNumberEntity):
     """Representation of Eveus current control with responsive UI."""

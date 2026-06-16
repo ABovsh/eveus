@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import aiohttp
@@ -98,6 +99,32 @@ class _Response:
         if isinstance(self.payload, Exception):
             raise self.payload
         return self.payload
+
+    def _body_bytes(self) -> bytes:
+        if isinstance(self.payload, Exception):
+            return b"<<invalid json>>"
+        if isinstance(self.payload, str):
+            return self.payload.encode()
+        return json.dumps(self.payload).encode()
+
+    @property
+    def content_length(self) -> int:
+        return len(self._body_bytes())
+
+    @property
+    def content(self) -> "_StreamReader":
+        return _StreamReader(self._body_bytes())
+
+
+class _StreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw: bytes) -> None:
+        self._raw = raw
+
+    async def iter_chunked(self, size: int):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]
 
 
 class _Session:
@@ -302,7 +329,6 @@ def test_validate_input_posts_to_normalized_host() -> None:
     assert result["device_info"]["current_set"] == 12
     assert len(session.calls) >= 1
     assert session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
-    assert response.json_kwargs == {"content_type": None}
 
 
 def test_validate_input_preserves_https_scheme_and_port() -> None:
@@ -1110,3 +1136,75 @@ def test_soc_step_schema_prefills_from_stored_entry_values() -> None:
     }
     assert defaults[CONF_SOC_CORRECTION] == 4.5
     assert defaults[CONF_BATTERY_CAPACITY] == config_flow.DEFAULT_BATTERY_CAPACITY
+
+
+def test_v20_reauth_aborts_when_host_keeps_changing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A SECOND mid-flight host change must not let credentials be committed
+    against an address that was never validated; the flow refuses instead."""
+    entry = type(
+        "Entry", (), {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST}
+    )()
+    moving = iter(["10.0.0.91", "10.0.0.92", "10.0.0.93", "10.0.0.94", "10.0.0.95"])
+
+    async def fake_validate_input(hass, data):
+        # A concurrent reconfigure changes the live host during EVERY validation.
+        new_host = next(moving)
+        entry.data = {**entry.data, CONF_HOST: new_host}
+        entry.unique_id = new_host
+        return {
+            "title": f"Eveus Charger ({data[CONF_HOST]})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
+        )
+    )
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+def test_v20_reauth_commits_after_host_stabilizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One mid-flight host change then stability: credentials commit against the
+    final, validated host."""
+    entry = type(
+        "Entry", (), {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST}
+    )()
+    calls = {"n": 0}
+
+    async def fake_validate_input(hass, data):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            entry.data = {**entry.data, CONF_HOST: TEST_HOST_ALT}
+            entry.unique_id = TEST_HOST_ALT
+        return {
+            "title": f"Eveus Charger ({data[CONF_HOST]})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    captured = {}
+    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
+        "type": "abort",
+        "reason": "reauth_successful",
+    }
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
+        )
+    )
+    assert result["reason"] == "reauth_successful"
+    assert captured["data"][CONF_HOST] == TEST_HOST_ALT

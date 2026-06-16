@@ -52,6 +52,27 @@ class _Response:
             return json.loads(self.payload)
         return self.payload
 
+    @property
+    def content_length(self) -> int | None:
+        body = self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
+        return len(body.encode())
+
+    @property
+    def content(self) -> "_StreamReader":
+        body = self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
+        return _StreamReader(body.encode())
+
+
+class _StreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw: bytes) -> None:
+        self._raw = raw
+
+    async def iter_chunked(self, size: int):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]
+
 
 class _Session:
     def __init__(self, response: _Response) -> None:

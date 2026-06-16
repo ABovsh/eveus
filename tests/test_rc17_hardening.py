@@ -394,3 +394,70 @@ def test_v07_current_number_displays_sub7_but_writes_floor():
     assert num.native_value == 6
     asyncio.run(num.async_set_native_value(3))
     upd.send_command.assert_awaited_with("currentSet", 7)
+
+
+# =============================================================================
+# V-14 — a charger-backed number must prefer fresh device data over restore
+# =============================================================================
+
+def test_v14_charger_number_prefers_fresh_device_over_restored(monkeypatch):
+    upd = MagicMock()
+    upd.available = True
+    upd.data = {"currentSet": 14, "state": 4}
+    upd.config_entry = MagicMock()
+    num = number_mod.EveusCurrentNumber(upd, "16A")
+    num.hass = MagicMock()
+    num.async_write_ha_state = MagicMock()
+    # Simulate a prior HA-state restore having seeded the stale value.
+    num._last_device_value = 10.0
+    num._last_successful_read = time.time()
+    num._attr_native_value = 10.0
+    monkeypatch.setattr(
+        "custom_components.eveus.common_base.BaseEveusEntity.async_added_to_hass",
+        AsyncMock(),
+    )
+    asyncio.run(num.async_added_to_hass())
+    assert num.native_value == 14
+
+
+# =============================================================================
+# V-22 — oversized response bodies and metadata strings must be rejected/capped
+# =============================================================================
+
+def test_v22_metadata_strings_are_length_capped():
+    from custom_components.eveus.utils import _safe_str
+
+    huge = "x" * 100_000
+    assert len(_safe_str(huge)) == 128
+
+
+def test_v22_capped_reader_rejects_oversized_chunked_body():
+    from custom_components.eveus._payload import PayloadError, read_json_capped
+
+    class _Content:
+        async def iter_chunked(self, n):
+            # Stream more than the cap with no Content-Length set.
+            for _ in range(5):
+                yield b"x" * 300_000
+
+    class _Resp:
+        content_length = None
+        content = _Content()
+
+    with pytest.raises(PayloadError):
+        asyncio.run(read_json_capped(_Resp(), limit=1_000_000))
+
+
+def test_v22_capped_reader_parses_small_body():
+    from custom_components.eveus._payload import read_json_capped
+
+    class _Content:
+        async def iter_chunked(self, n):
+            yield b'{"state": 4, "currentSet": 16}'
+
+    class _Resp:
+        content_length = 30
+        content = _Content()
+
+    data = asyncio.run(read_json_capped(_Resp()))
+    assert data == {"state": 4, "currentSet": 16}

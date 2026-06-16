@@ -39,6 +39,18 @@ class _Response:
             return json.loads(self.payload)
         return self.payload
 
+    @property
+    def content_length(self):
+        import json as _json
+        body = self.payload if isinstance(self.payload, str) else _json.dumps(self.payload)
+        return len(body.encode())
+
+    @property
+    def content(self):
+        import json as _json
+        body = self.payload if isinstance(self.payload, str) else _json.dumps(self.payload)
+        return _CappedStreamReader(body.encode())
+
 
 class _Session:
     def __init__(self, response: _Response) -> None:
@@ -182,3 +194,14 @@ def test_schedule_energy_limit_keeps_reasonable_value() -> None:
     attrs_fn = sd._make_schedule_attrs(1)
     updater = EveusTestUpdater({"sh1EnergyEnable": 1, "sh1EnergyValue": 50})
     assert attrs_fn(updater, None)["energy_limit_kwh"] == 50
+
+
+class _CappedStreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    async def iter_chunked(self, size):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]

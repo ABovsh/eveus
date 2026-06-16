@@ -27,7 +27,7 @@ from .const import (
     SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
-from ._payload import PayloadError, validate_main_payload
+from ._payload import PayloadError, read_json_capped, validate_main_payload
 from .utils import RateLog
 
 _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
@@ -476,7 +476,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 
-                new_data = await response.json(content_type=None)
+                new_data = await read_json_capped(response)
                 # Shared validator retains the historical common-network guards:
                 # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
                 # Passing the configured model bounds currentSet to this charger's

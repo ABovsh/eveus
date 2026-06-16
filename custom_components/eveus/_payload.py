@@ -1,12 +1,37 @@
 """Shared validation for Eveus /main payloads."""
 from __future__ import annotations
 
+import json
 import math
 from typing import Any, Literal
 
 from .const import CHARGING_STATES, MODEL_MAX_CURRENT
 
 MessageStyle = Literal["network", "config_flow"]
+
+# A real /main response is a few KB. Cap the body well above that so a charger,
+# proxy, captive portal, or wrong endpoint returning a huge (or unbounded
+# chunked) body cannot exhaust memory or stall the event loop.
+MAX_RESPONSE_BODY_BYTES = 1_000_000
+
+
+async def read_json_capped(response: Any, *, limit: int = MAX_RESPONSE_BODY_BYTES) -> Any:
+    """Read a response body up to ``limit`` bytes, then JSON-decode it.
+
+    Rejects an over-limit body — including a chunked response with no
+    ``Content-Length`` — by streaming and aborting once the cap is passed, before
+    the whole body is buffered. Raises ``ValueError`` (``PayloadError``) on an
+    oversized or malformed body, matching the existing JSON-decode failure path.
+    """
+    content_length = getattr(response, "content_length", None)
+    if content_length is not None and content_length > limit:
+        raise PayloadError("body_too_large", "Eveus response body too large")
+    raw = bytearray()
+    async for chunk in response.content.iter_chunked(65536):
+        raw += chunk
+        if len(raw) > limit:
+            raise PayloadError("body_too_large", "Eveus response body too large")
+    return json.loads(raw)
 
 
 class PayloadError(ValueError):

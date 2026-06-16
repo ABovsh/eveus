@@ -180,6 +180,29 @@ class _Resp:
     async def json(self, **kw):
         return self._payload
 
+    @property
+    def content_length(self):
+        import json as _json
+        body = self._payload if isinstance(self._payload, str) else _json.dumps(self._payload)
+        return len(body.encode())
+
+    @property
+    def content(self):
+        import json as _json
+        body = self._payload if isinstance(self._payload, str) else _json.dumps(self._payload)
+        return _CappedStreamReader(body.encode())
+
+
+class _CappedStreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    async def iter_chunked(self, size):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]
+
 
 class _Session:
     def __init__(self, payload):

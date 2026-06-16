@@ -266,6 +266,18 @@ class _PollResponse:
     async def json(self, **kwargs: object) -> dict:
         return self.payload
 
+    @property
+    def content_length(self):
+        import json as _json
+        body = self.payload if isinstance(self.payload, str) else _json.dumps(self.payload)
+        return len(body.encode())
+
+    @property
+    def content(self):
+        import json as _json
+        body = self.payload if isinstance(self.payload, str) else _json.dumps(self.payload)
+        return _CappedStreamReader(body.encode())
+
 
 class _PollSession:
     def __init__(self, payload: dict) -> None:
@@ -359,3 +371,14 @@ def test_timezone_select_restores_last_option_within_grace() -> None:
     disable_state_writes(select)
     asyncio.run(select._async_restore_state(SimpleNamespace(state="+3")))
     assert select.current_option == "+3"
+
+
+class _CappedStreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    async def iter_chunked(self, size):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]
