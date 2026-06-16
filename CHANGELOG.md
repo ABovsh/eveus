@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.15.1 - 2026-06-16
+
+### 🐛 Fixed
+- **Setup and configuration dialogs load again on recent Home Assistant.** Adding the integration, reconfiguring it, or opening the advanced SOC step could fail with "Config flow could not be loaded: 500 Internal Server Error" on newer Home Assistant builds. The forms now render correctly.
+  Fixes [#8](https://github.com/ABovsh/eveus/issues/8).
+
 ## 4.15.0 - 2026-06-15
 
 ### ⚠️ Breaking

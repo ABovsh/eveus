@@ -246,14 +246,25 @@ def test_control_fallback_rejects_future_read_timestamp() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_soc_schema_rejects_boolean() -> None:
+def test_soc_schema_is_serializable_and_validates_range() -> None:
+    # The SOC step schema must JSON-serialize for the frontend (issue #8) while
+    # still rejecting out-of-range values.
+    import homeassistant.helpers.config_validation as cv
     import voluptuous as vol
+    import voluptuous_serialize
 
-    from custom_components.eveus.config_flow import _reject_bool
+    from custom_components.eveus import config_flow as cf
 
+    class _Hass:
+        states = type("S", (), {"get": staticmethod(lambda eid: None)})()
+
+    schema = cf.build_soc_step_schema(_Hass(), defaults={})
+    voluptuous_serialize.convert(schema, custom_serializer=cv.custom_serializer)
+
+    cap_lo, cap_hi = cf.SOC_INPUT_LIMITS["battery_capacity"]
+    schema({"battery_capacity": cap_lo, "soc_correction": 0})  # valid submission
     with pytest.raises(vol.Invalid):
-        _reject_bool(True)
-    assert _reject_bool(42.0) == 42.0
+        schema({"battery_capacity": cap_hi + 1000, "soc_correction": 0})
 
 
 # ---------------------------------------------------------------------------
