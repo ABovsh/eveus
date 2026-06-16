@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### 🐛 Fixed
+- **Target-SOC timing is now exact.** Time to Target SOC, Charging Finish Time, and the SOC stop limit use the precise charge level instead of the rounded percent, so they no longer report "reached" — or stop charging — up to ~0.5% early on large batteries.
+- **Time Drift clears after a clock sync** instead of continuing to show the old drift.
+- **Schedule energy limits show a clean value** (e.g. `76.371`, not `76.3710021972656`).
+- **Battery Voltage ignores impossible readings**, and an error state with no fault code now reads unknown instead of a contradictory "No Error".
+- **A current setpoint below 7 A set on the charger is now displayed** instead of reading unknown (Home Assistant writes still floor at 7 A).
+- **Sync Time uses the moment it sends**, even when queued behind another command.
+
+### 🔧 Changed
+- **A dismissed safety notice reappears if the fault recurs after a restart.** Acknowledged overheat/leakage/ground/relay/pilot/voltage notices no longer stay hidden across a reload when the condition returns.
+- **The SOC stop limit is more conservative** around the master **Limit: disable all** switch, unknown charger states, and new charging sessions.
+- **Hardened setup, reauthentication, and firmware-data handling** against failed first connections, duplicate-device addresses, oversized responses, and corrupt readings.
+
 ## 4.15.0 - 2026-06-15
 
 ### ⚠️ Breaking
