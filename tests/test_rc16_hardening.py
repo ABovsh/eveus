@@ -230,15 +230,24 @@ def test_normalize_user_input_rejects_fractional_phases() -> None:
     assert normalize_user_input({**base, "phases": 3.0})["phases"] == 3
 
 
-def test_reject_fractional_validator() -> None:
+def test_phases_whole_number_and_bool_rejected_by_normalize() -> None:
+    # Phase-count hardening now lives in normalize_user_input (the schema must
+    # stay serializable for the frontend — issue #8). A whole 3 is accepted; a
+    # fractional or boolean phase count is rejected.
     import voluptuous as vol
 
-    from custom_components.eveus.config_flow import _reject_fractional
+    from custom_components.eveus.config_flow import normalize_user_input
 
-    assert _reject_fractional(3.0) == 3.0
-    assert _reject_fractional("3") == "3"
-    with pytest.raises(vol.Invalid):
-        _reject_fractional(3.9)
+    base = {
+        "host": "1.2.3.4",
+        "username": "eveus",
+        "password": "secret",
+        "model": "16A",
+    }
+    assert normalize_user_input({**base, "phases": 3})["phases"] == 3
+    for bad in (3.9, True):
+        with pytest.raises(vol.Invalid):
+            normalize_user_input({**base, "phases": bad})
 
 
 # ---------------------------------------------------------------------------

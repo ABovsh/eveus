@@ -94,20 +94,6 @@ def _prefill_from_helper(hass, entity_id: str, key: str, fallback: float) -> flo
     return normalize_soc_input(key, state.state, fallback)
 
 
-def _reject_bool(value):
-    """Refuse booleans before float coercion (True would store as 1.0)."""
-    if isinstance(value, bool):
-        raise vol.Invalid("Boolean values are not accepted for numeric fields")
-    return value
-
-
-def _reject_fractional(value):
-    """Refuse fractional numbers where a whole count is required (3.9 != 3)."""
-    if isinstance(value, float) and not value.is_integer():
-        raise vol.Invalid("Value must be a whole number")
-    return value
-
-
 def build_soc_step_schema(hass, defaults: Mapping[str, Any] | None = None) -> vol.Schema:
     """Build the advanced-mode SOC value step, prefilled from any ev_* helpers.
 
@@ -136,10 +122,10 @@ def build_soc_step_schema(hass, defaults: Mapping[str, Any] | None = None) -> vo
         {
             vol.Required(
                 CONF_BATTERY_CAPACITY, default=cap_default
-            ): vol.All(_reject_bool, vol.Coerce(float), vol.Range(min=cap_lo, max=cap_hi)),
+            ): vol.All(vol.Coerce(float), vol.Range(min=cap_lo, max=cap_hi)),
             vol.Required(
                 CONF_SOC_CORRECTION, default=cor_default
-            ): vol.All(_reject_bool, vol.Coerce(float), vol.Range(min=cor_lo, max=cor_hi)),
+            ): vol.All(vol.Coerce(float), vol.Range(min=cor_lo, max=cor_hi)),
         }
     )
 
@@ -384,7 +370,7 @@ def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
             # Coerce first: the frontend (mobile app in particular) submits the
             # selected option as a string ("1"/"3"), which bare vol.In rejects
             # with "value must be one of [1, 3]" for every choice (issue #4).
-            ): vol.All(_reject_bool, _reject_fractional, vol.Coerce(int), vol.In(PHASE_OPTIONS)),
+            ): vol.All(vol.Coerce(int), vol.In(PHASE_OPTIONS)),
             vol.Required(
                 CONF_SOC_MODE,
                 default=defaults.get(CONF_SOC_MODE, SOC_MODE_ADVANCED),
