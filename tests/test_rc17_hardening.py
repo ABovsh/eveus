@@ -479,3 +479,15 @@ def test_o03_ratelog_uses_monotonic_clock(monkeypatch):
     assert rl.should_log(10) is False      # within interval
     clock["m"] = 1011.0
     assert rl.should_log(10) is True       # interval elapsed (monotonic)
+
+
+def test_o03_ratelog_first_log_emits_even_with_small_monotonic(monkeypatch):
+    # Regression for the CI env gap: right after boot monotonic() is small, so a
+    # 0.0 sentinel would suppress the first log when interval > uptime.
+    import custom_components.eveus.utils as u
+    from custom_components.eveus.utils import RateLog
+
+    monkeypatch.setattr(u.time, "monotonic", lambda: 0.5)  # tiny uptime
+    rl = RateLog()
+    assert rl.should_log(300) is True            # first call must still log
+    assert rl.should_log(300, key="x") is True   # first keyed call too

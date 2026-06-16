@@ -52,7 +52,10 @@ class RateLog:
 
     def __init__(self, max_keys: int = 64) -> None:
         """Initialize an optional per-key rate limiter."""
-        self._last_log = 0.0
+        # None = "never logged yet". A numeric 0.0 sentinel would misbehave on the
+        # monotonic clock, whose value is small right after boot: the first log
+        # could be suppressed because `monotonic() - 0` is below the interval.
+        self._last_log: float | None = None
         self._last_logs: dict[Hashable, float] = {}
         self._max_keys = max_keys
 
@@ -63,13 +66,13 @@ class RateLog:
         # wall time caught back up.
         current_time = time.monotonic()
         if key is None:
-            if current_time - self._last_log > interval:
+            if self._last_log is None or current_time - self._last_log > interval:
                 self._last_log = current_time
                 return True
             return False
 
-        last_log = self._last_logs.get(key, 0.0)
-        if current_time - last_log <= interval:
+        last_log = self._last_logs.get(key)
+        if last_log is not None and current_time - last_log <= interval:
             return False
 
         if key not in self._last_logs and len(self._last_logs) >= self._max_keys:
