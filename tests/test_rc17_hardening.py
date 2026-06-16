@@ -13,10 +13,7 @@ from homeassistant.util import dt as dt_util
 import custom_components.eveus.number as number_mod
 import custom_components.eveus.sensor_definitions as sd
 from custom_components.eveus.ev_sensors import CachedSOCCalculator
-from custom_components.eveus.soc_limit import (
-    EVENT_SOC_LIMIT_REACHED,
-    SocLimitController,
-)
+from custom_components.eveus.soc_limit import SocLimitController
 from custom_components.eveus.utils import calculate_remaining_seconds
 
 
