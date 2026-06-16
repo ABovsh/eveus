@@ -12,9 +12,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from conftest import EveusTestUpdater, TEST_HOST, spec_value_fn
 from custom_components.eveus.common_command import CommandManager
 from custom_components.eveus.config_flow import (
-    InvalidDevice,
     _split_host_and_scheme,
-    validate_device_response,
 )
 from custom_components.eveus.sensor_definitions import (
     get_counter_a_cost,
@@ -49,12 +47,14 @@ def test_split_host_rejects_port_zero():
         _split_host_and_scheme("host:0")
 
 
-# F04 — NaN currentSet rejected
-def test_validate_device_response_rejects_nan():
-    with pytest.raises(InvalidDevice, match="invalid current value"):
-        validate_device_response({"state": 2, "currentSet": float("nan")}, "16A")
-    with pytest.raises(InvalidDevice, match="invalid current value"):
-        validate_device_response({"state": 2, "currentSet": float("inf")}, "16A")
+# F04 — NaN/inf currentSet rejected by the live poll (setup is lenient now)
+def test_runtime_validation_rejects_nan_current():
+    from custom_components.eveus._payload import validate_main_payload
+
+    with pytest.raises(ValueError):
+        validate_main_payload({"state": 2, "currentSet": float("nan")}, "16A")
+    with pytest.raises(ValueError):
+        validate_main_payload({"state": 2, "currentSet": float("inf")}, "16A")
 
 
 # F05 — counter cost negative rejected

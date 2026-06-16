@@ -12,8 +12,10 @@
 - **Battery Voltage ignores impossible readings**, and an error state with no fault code now reads unknown instead of a contradictory "No Error".
 - **A current setpoint below 7 A set on the charger is now displayed** instead of reading unknown (Home Assistant writes still floor at 7 A).
 - **Sync Time uses the moment it sends**, even when queued behind another command.
+- **Setup tells you what actually went wrong.** When a charger is reachable but doesn't return a valid Eveus response (older firmware can do this), the dialog now shows a specific "invalid response" message — with details in the Home Assistant log — instead of a generic "Failed to connect".
 
 ### 🔧 Changed
+- **Older charger firmware now adds without setup errors.** Setup accepts any responding Eveus charger instead of rejecting units whose older firmware reports fewer fields; the live values are still validated during normal operation.
 - **A dismissed safety notice reappears if the fault recurs after a restart.** Acknowledged overheat/leakage/ground/relay/pilot/voltage notices no longer stay hidden across a reload when the condition returns.
 - **The SOC stop limit is more conservative** around the master **Limit: disable all** switch, unknown charger states, and new charging sessions.
 - **Hardened setup, reauthentication, and firmware-data handling** against failed first connections, duplicate-device addresses, oversized responses, and corrupt readings.

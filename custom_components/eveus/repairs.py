@@ -16,6 +16,7 @@ from .config_flow import (
     InvalidAuth,
     InvalidDevice,
     InvalidInput,
+    InvalidResponse,
     _merge_entry_data,
     build_user_data_schema,
     validate_input,
@@ -115,6 +116,8 @@ class InvalidConfigRepairFlow(RepairsFlow):
                 errors["base"] = "invalid_input"
             except InvalidDevice:
                 errors["base"] = "invalid_device"
+            except InvalidResponse:
+                errors["base"] = "invalid_response"
             except Exception as err:
                 _LOGGER.debug("Unexpected Eveus repair flow error: %s", err, exc_info=True)
                 errors["base"] = "unknown"

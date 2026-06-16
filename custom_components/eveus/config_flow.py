@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import ipaddress
+import json
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -52,7 +53,7 @@ from .const import (
     SOC_INPUT_LIMITS,
     get_soc_mode,
 )
-from ._payload import PayloadError, read_json_capped, validate_main_payload
+from ._payload import PayloadError, read_body_capped
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
@@ -276,26 +277,38 @@ def validate_credentials(username: str, password: str) -> tuple[str, str]:
     return username, password
 
 
+# Keys that identify a /main response as coming from an Eveus charger. Setup
+# only needs to confirm "this really is an Eveus charger", so any one of these is
+# enough — older firmware that omits some control fields still adds cleanly.
+_EVEUS_SIGNATURE_KEYS: frozenset[str] = frozenset(
+    {"state", "currentSet", "verFWMain", "verFWWifi", "curDesign", "evseType"}
+)
+
+
 def validate_device_response(
     result: Any,
     model: str,
 ) -> dict[str, Any]:
-    """Validate that /main returned an Eveus-compatible payload."""
-    try:
-        payload = validate_main_payload(result, model, message_style="config_flow")
-    except PayloadError as err:
-        if err.code == "not_dict":
-            raise CannotConnect(str(err)) from err
-        raise InvalidDevice(str(err)) from err
+    """Confirm /main returned a recognizable Eveus payload (lenient at setup).
 
-    # NOTE: the selected model is deliberately NOT validated against the
-    # charger's reported curDesign. The charger enforces its own hardware
-    # current protection internally, so a higher-rated profile cannot make a
-    # 16A unit deliver more than 16A — rejecting the combination would only
-    # block setups over an informational field.
+    The live poll keeps the strict field validation. Setup is deliberately
+    lenient: older firmware reports fewer fields than current firmware (which
+    adds, e.g., OCPP control fields), so requiring the full schema here blocks
+    perfectly usable chargers. We only check that the response is an Eveus-shaped
+    JSON object; the selected model is NOT validated against the reported
+    curDesign (the charger enforces its own current limit internally).
+    """
+    if not isinstance(result, dict) or not (_EVEUS_SIGNATURE_KEYS & result.keys()):
+        raise InvalidResponse("Response is not a recognizable Eveus payload")
+
+    current_raw = result.get("currentSet")
+    try:
+        current_set = float(current_raw) if current_raw is not None else None
+    except (TypeError, ValueError):
+        current_set = None
     return {
-        "current_set": float(payload["currentSet"]),
-        "firmware": payload.get("verFWMain", "Unknown"),
+        "current_set": current_set,
+        "firmware": result.get("verFWMain", "Unknown"),
     }
 
 
@@ -419,19 +432,49 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             ),
             timeout=timeout,
         ) as response:
+            host = normalized_data[CONF_HOST]
             if response.status == 401:
                 raise InvalidAuth("Invalid credentials")
             response.raise_for_status()
 
+            # Read the raw body ourselves (instead of response.json) so a
+            # misbehaving charger's reply can be logged before we try to decode
+            # it. Older firmware that answers /main with an HTML login page or a
+            # malformed body lands here, and the log makes the cause visible
+            # rather than collapsing into a bare "Failed to connect".
             try:
-                result = await read_json_capped(response)
-            except ValueError:
-                raise CannotConnect("Invalid response format")
+                raw_body = await read_body_capped(response)
+            except PayloadError as err:
+                _LOGGER.debug(
+                    "Eveus %s returned an oversized /main body (HTTP %s, %s)",
+                    host, response.status, response.headers.get("Content-Type"),
+                )
+                raise InvalidResponse("Response body too large") from err
 
-            device_info = validate_device_response(result, normalized_data[CONF_MODEL])
+            try:
+                result = json.loads(raw_body)
+            except ValueError as err:
+                _LOGGER.debug(
+                    "Eveus %s did not return JSON from /main "
+                    "(HTTP %s, Content-Type %s, first 200 bytes: %r)",
+                    host, response.status,
+                    response.headers.get("Content-Type"), raw_body[:200],
+                )
+                raise InvalidResponse("Response is not valid JSON") from err
+
+            try:
+                device_info = validate_device_response(result, normalized_data[CONF_MODEL])
+            except InvalidResponse:
+                _LOGGER.debug(
+                    "Eveus %s returned JSON that is not an Eveus /main payload "
+                    "(keys: %s)",
+                    host,
+                    sorted(result)[:20] if isinstance(result, dict) else type(result).__name__,
+                )
+                raise
 
             return {
-                "title": f"Eveus Charger ({normalized_data[CONF_HOST]})",
+                "title": f"Eveus Charger ({host})",
                 "data": normalized_data,
                 "device_info": device_info,
             }
@@ -439,10 +482,17 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except aiohttp.ClientResponseError as err:
         if err.status == 401:
             raise InvalidAuth from err
-        raise CannotConnect(f"Connection error: {type(err).__name__}") from err
+        _LOGGER.debug(
+            "Eveus %s returned HTTP %s for /main", normalized_data[CONF_HOST], err.status
+        )
+        raise CannotConnect(f"HTTP {err.status}") from err
     except (asyncio.TimeoutError, aiohttp.ClientError) as err:
+        _LOGGER.debug(
+            "Eveus %s is unreachable (%s)",
+            normalized_data[CONF_HOST], type(err).__name__,
+        )
         raise CannotConnect(f"Connection error: {type(err).__name__}") from err
-    except (InvalidAuth, InvalidDevice, InvalidInput, CannotConnect):
+    except (InvalidAuth, InvalidDevice, InvalidResponse, InvalidInput, CannotConnect):
         raise
     except Exception as err:
         _LOGGER.exception("Unexpected Eveus setup error")
@@ -493,6 +543,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
                 _LOGGER.debug("Invalid device: %s", str(err))
+            except InvalidResponse as err:
+                errors["base"] = "invalid_response"
+                _LOGGER.debug("Invalid response: %s", str(err))
             except AbortFlow:
                 # `_abort_if_unique_id_configured()` raises AbortFlow, which is an
                 # Exception subclass. Let it propagate so the duplicate charger
@@ -588,6 +641,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
                 _LOGGER.debug("Invalid reconfigure device: %s", str(err))
+            except InvalidResponse as err:
+                errors["base"] = "invalid_response"
+                _LOGGER.debug("Invalid reconfigure response: %s", str(err))
             except AbortFlow:
                 # Duplicate-host abort must reach the user as "already_configured"
                 # rather than being swallowed into a generic "unknown" error.
@@ -681,6 +737,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidDevice as err:
                 errors["base"] = "invalid_device"
                 _LOGGER.debug("Invalid reauth device: %s", str(err))
+            except InvalidResponse as err:
+                errors["base"] = "invalid_response"
+                _LOGGER.debug("Invalid reauth response: %s", str(err))
             except Exception:
                 _LOGGER.exception("Unexpected reauth exception")
                 errors["base"] = "unknown"
@@ -706,6 +765,10 @@ class InvalidInput(HomeAssistantError):
 
 class InvalidDevice(HomeAssistantError):
     """Error to indicate invalid device response or capabilities."""
+
+
+class InvalidResponse(HomeAssistantError):
+    """Reached the device, but it did not return a valid Eveus /main payload."""
 
 
 class EveusOptionsFlow(OptionsFlow):

@@ -10,7 +10,7 @@ import pytest
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME, spec_value_fn
-from custom_components.eveus import common_command, common_network, config_flow
+from custom_components.eveus import common_command, common_network
 from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus import utils
 from custom_components.eveus.common_network import EveusUpdater
@@ -94,19 +94,24 @@ def test_coordinator_rejects_fractional_state(monkeypatch: pytest.MonkeyPatch) -
         _run_update({"state": 4.9, "currentSet": 16}, monkeypatch)
 
 
-def test_config_flow_rejects_fractional_state() -> None:
-    with pytest.raises(config_flow.InvalidDevice):
-        config_flow.validate_device_response({"state": 2.9, "currentSet": 16}, "16A")
+def test_runtime_validation_rejects_fractional_state() -> None:
+    # Setup is lenient now; the strict state guard lives on the live poll.
+    from custom_components.eveus._payload import validate_main_payload
+
+    with pytest.raises(ValueError):
+        validate_main_payload({"state": 2.9, "currentSet": 16}, "16A")
 
 
 # ---------------------------------------------------------------------------
-# F03 — config flow rejects boolean state (int(True) == 1 would sneak through)
+# F03 — the live poll rejects boolean state (int(True) == 1 would sneak through)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("bad", [True, False])
-def test_config_flow_rejects_boolean_state(bad: bool) -> None:
-    with pytest.raises(config_flow.InvalidDevice):
-        config_flow.validate_device_response({"state": bad, "currentSet": 16}, "16A")
+def test_runtime_validation_rejects_boolean_state(bad: bool) -> None:
+    from custom_components.eveus._payload import validate_main_payload
+
+    with pytest.raises(ValueError):
+        validate_main_payload({"state": bad, "currentSet": 16}, "16A")
 
 
 # ---------------------------------------------------------------------------

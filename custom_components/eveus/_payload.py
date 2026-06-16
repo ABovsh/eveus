@@ -15,13 +15,15 @@ MessageStyle = Literal["network", "config_flow"]
 MAX_RESPONSE_BODY_BYTES = 1_000_000
 
 
-async def read_json_capped(response: Any, *, limit: int = MAX_RESPONSE_BODY_BYTES) -> Any:
-    """Read a response body up to ``limit`` bytes, then JSON-decode it.
+async def read_body_capped(
+    response: Any, *, limit: int = MAX_RESPONSE_BODY_BYTES
+) -> bytes:
+    """Read a response body up to ``limit`` bytes and return the raw bytes.
 
     Rejects an over-limit body — including a chunked response with no
     ``Content-Length`` — by streaming and aborting once the cap is passed, before
-    the whole body is buffered. Raises ``ValueError`` (``PayloadError``) on an
-    oversized or malformed body, matching the existing JSON-decode failure path.
+    the whole body is buffered. Returning the raw bytes lets a caller log what a
+    misbehaving charger actually sent before attempting to decode it.
     """
     content_length = getattr(response, "content_length", None)
     if content_length is not None and content_length > limit:
@@ -31,7 +33,16 @@ async def read_json_capped(response: Any, *, limit: int = MAX_RESPONSE_BODY_BYTE
         raw += chunk
         if len(raw) > limit:
             raise PayloadError("body_too_large", "Eveus response body too large")
-    return json.loads(raw)
+    return bytes(raw)
+
+
+async def read_json_capped(response: Any, *, limit: int = MAX_RESPONSE_BODY_BYTES) -> Any:
+    """Read a capped response body, then JSON-decode it.
+
+    Raises ``ValueError`` (``PayloadError``) on an oversized or malformed body,
+    matching the existing JSON-decode failure path.
+    """
+    return json.loads(await read_body_capped(response, limit=limit))
 
 
 class PayloadError(ValueError):

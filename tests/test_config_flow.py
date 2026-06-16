@@ -24,6 +24,7 @@ from custom_components.eveus.config_flow import (
     InvalidAuth,
     InvalidDevice,
     InvalidInput,
+    InvalidResponse,
     build_user_data_schema,
     build_reauth_data_schema,
     normalize_user_input,
@@ -82,6 +83,9 @@ class _Response:
         self.payload = payload if payload is not None else {"currentSet": "16"}
         self.raise_status = raise_status
         self.json_kwargs: dict[str, object] = {}
+        # Real aiohttp responses always expose headers; the diagnostic logging in
+        # validate_input reads Content-Type, so the fake must provide them too.
+        self.headers: dict[str, str] = {"Content-Type": "application/json"}
 
     async def __aenter__(self) -> "_Response":
         return self
@@ -301,7 +305,9 @@ def test_config_flow_version_matches_migration_target() -> None:
 
 
 def test_validate_device_response_rejects_non_eveus_json() -> None:
-    with pytest.raises(InvalidDevice, match="missing state"):
+    # A reachable device whose JSON has no Eveus signature keys is not an Eveus
+    # charger; setup reports invalid_response rather than a bare cannot_connect.
+    with pytest.raises(InvalidResponse, match="not a recognizable Eveus payload"):
         validate_device_response({"name": "Not Eveus"}, MODEL_16A)
 
 
@@ -375,7 +381,7 @@ def test_validate_input_maps_http_errors_to_cannot_connect() -> None:
     )
     hass = _Hass(_Session(_Response(raise_status=error)))
 
-    with pytest.raises(CannotConnect, match="Connection error: ClientResponseError"):
+    with pytest.raises(CannotConnect, match="HTTP 500"):
         asyncio.run(validate_input(hass, _input()))
 
 
@@ -400,33 +406,70 @@ def test_validate_input_maps_timeout_and_unexpected_errors() -> None:
     ],
 )
 def test_validate_input_rejects_malformed_device_response(payload: object) -> None:
+    # Non-JSON body, or JSON that isn't an object: reachable but not a valid
+    # Eveus response -> invalid_response (distinct from cannot_connect).
     hass = _Hass(_Session(_Response(payload=payload)))
 
-    with pytest.raises(CannotConnect) as exc_info:
+    with pytest.raises(InvalidResponse):
         asyncio.run(validate_input(hass, _input()))
-    assert str(exc_info.value) in {
-        "Invalid response format",
-        "Invalid response format: Invalid response format",
-    }
 
 
 @pytest.mark.parametrize(
     "payload",
     [
         {},
+        {"name": "some other device"},
+    ],
+)
+def test_validate_input_rejects_unrecognizable_payload(
+    payload: dict[str, str]
+) -> None:
+    # Reachable, valid JSON object, but not an Eveus charger.
+    hass = _Hass(_Session(_Response(payload=payload)))
+
+    with pytest.raises(InvalidResponse):
+        asyncio.run(validate_input(hass, _input()))
+    assert hass.session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
         {"state": 2, "currentSet": "-1"},
         {"state": 2, "currentSet": "not-a-number"},
         {"state": 2, "currentSet": "32"},
     ],
 )
-def test_validate_input_rejects_device_values_outside_model_limits(
+def test_validate_input_accepts_recognizable_payload_leniently(
     payload: dict[str, str]
 ) -> None:
+    # Setup is intentionally lenient: a recognizable Eveus payload is accepted
+    # even when a control field looks odd (older firmware reports fewer/older
+    # fields). The live poll keeps the strict per-field validation.
     hass = _Hass(_Session(_Response(payload=payload)))
 
-    with pytest.raises(InvalidDevice):
-        asyncio.run(validate_input(hass, _input()))
+    result = asyncio.run(validate_input(hass, _input()))
+    assert result["data"][CONF_HOST] == TEST_HOST
     assert hass.session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
+
+
+def test_validate_input_accepts_old_firmware_slim_payload() -> None:
+    # Older firmware reports fewer fields; a response carrying any Eveus
+    # signature key (here only verFWMain, no state/currentSet) still adds.
+    hass = _Hass(_Session(_Response(payload={"verFWMain": "GRM070A-R3.01.8"})))
+
+    result = asyncio.run(validate_input(hass, _input()))
+    assert result["data"][CONF_HOST] == TEST_HOST
+    assert result["device_info"]["firmware"] == "GRM070A-R3.01.8"
+
+
+def test_validate_input_html_login_page_is_invalid_response() -> None:
+    # Old firmware that answers /main with an HTML login page is reachable but
+    # not a valid Eveus payload -> invalid_response, not a bare cannot_connect.
+    hass = _Hass(_Session(_Response(payload="<html><body>Login</body></html>")))
+
+    with pytest.raises(InvalidResponse):
+        asyncio.run(validate_input(hass, _input()))
 
 
 def test_validate_input_wraps_local_validation_errors() -> None:
@@ -1219,14 +1262,12 @@ def test_40a_model_is_supported() -> None:
     assert MODEL_MAX_CURRENT[MODEL_40A] == 40
 
 
-def test_40a_model_validates_setpoint_within_40() -> None:
-    """A 40A charger with a 34A setpoint validates as 40A; above 40A is rejected."""
+def test_40a_model_setpoint_accepted_at_setup() -> None:
+    """A 40A charger's reported setpoint is accepted at setup (lenient)."""
     from custom_components.eveus.const import MODEL_40A
 
     info = validate_device_response({"state": 2, "currentSet": "34"}, MODEL_40A)
     assert info["current_set"] == 34.0
-    with pytest.raises(InvalidDevice):
-        validate_device_response({"state": 2, "currentSet": "41"}, MODEL_40A)
 
 
 def test_40a_model_selectable_in_user_schema() -> None:

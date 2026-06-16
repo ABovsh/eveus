@@ -47,6 +47,7 @@
       "invalid_auth": "Invalid username or password",
       "invalid_input": "Invalid input provided, please check your entries",
       "invalid_device": "Device validation failed, please check the charger model",
+      "invalid_response": "Connected, but the charger did not return a valid Eveus response. Check the IP and the Home Assistant log; older firmware may need updating",
       "unknown": "Unexpected error occurred"
     },
     "abort": {
@@ -384,6 +385,7 @@
           "invalid_auth": "Invalid username or password",
           "invalid_input": "Invalid input provided, please check your entries",
           "invalid_device": "Device validation failed, please check the charger model",
+          "invalid_response": "Connected, but the charger did not return a valid Eveus response. Check the IP and the Home Assistant log; older firmware may need updating",
           "unknown": "Unexpected error occurred",
           "already_configured": "Device is already configured"
         },
