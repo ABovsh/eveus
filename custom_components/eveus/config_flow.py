@@ -454,6 +454,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             try:
                 result = json.loads(raw_body)
             except ValueError as err:
+                # Debug-only, and only the already-capped first 200 bytes: enough
+                # to tell an HTML login page from malformed JSON without dumping a
+                # whole body. The /main body carries device telemetry, not the
+                # Basic-Auth credentials, but it is still device-returned content,
+                # so it stays behind the debug flag.
                 _LOGGER.debug(
                     "Eveus %s did not return JSON from /main "
                     "(HTTP %s, Content-Type %s, first 200 bytes: %r)",
@@ -764,7 +769,13 @@ class InvalidInput(HomeAssistantError):
 
 
 class InvalidDevice(HomeAssistantError):
-    """Error to indicate invalid device response or capabilities."""
+    """Error to indicate invalid device response or capabilities.
+
+    Retained as part of the setup error taxonomy: ``validate_input`` no longer
+    raises it now that setup validation is lenient, but the flow steps and the
+    repair flow still map it to the ``invalid_device`` message (covered by
+    tests) so any future strict device check has a wired error path.
+    """
 
 
 class InvalidResponse(HomeAssistantError):

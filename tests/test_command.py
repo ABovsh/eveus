@@ -117,6 +117,31 @@ def test_command_manager_records_success_and_failure_counts(
     assert len(failure_session.calls) == 3
 
 
+def test_command_manager_first_command_no_spacing_sleep_small_monotonic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression for the monotonic-clock switch: right after boot monotonic() is
+    # small, so a 0 sentinel made `time_since_last` < 1 and slept up to a second
+    # before the very first command. The first command must fire immediately.
+    monkeypatch.setattr(
+        "custom_components.eveus.common_command.time.monotonic", lambda: 0.5
+    )
+    sleeps: list[float] = []
+
+    async def _spy_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(
+        "custom_components.eveus.common_command.asyncio.sleep", _spy_sleep
+    )
+
+    session = _Session(_Response())
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("currentSet", 16)) is True
+    assert sleeps == []  # no rate-limit sleep on the first command
+
+
 def test_command_manager_applies_rate_limit_after_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

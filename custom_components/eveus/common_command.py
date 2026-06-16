@@ -32,7 +32,10 @@ class CommandManager:
         """Initialize command manager."""
         self._updater = updater
         self._lock = asyncio.Lock()
-        self._last_command_time = 0
+        # None = no command sent yet. A 0 sentinel was unsafe once timing moved
+        # to the monotonic clock: right after boot monotonic() can be < 1, making
+        # the first command sleep up to a second for no reason.
+        self._last_command_time: float | None = None
         self._consecutive_failures = 0
         self._error_log = RateLog()
 
@@ -69,10 +72,12 @@ class CommandManager:
             # backward wall-clock step (NTP correction, manual set, VM resume)
             # can't make `time_since_last` negative and stall every command for
             # minutes while holding the command lock. The [0, 1] clamp stays as a
-            # cheap guard against any residual edge.
-            time_since_last = time.monotonic() - self._last_command_time
-            if time_since_last < 1:
-                await asyncio.sleep(max(0.0, min(1.0, 1 - time_since_last)))
+            # cheap guard against any residual edge. The first command (no prior
+            # timestamp) is never spaced.
+            if self._last_command_time is not None:
+                time_since_last = time.monotonic() - self._last_command_time
+                if time_since_last < 1:
+                    await asyncio.sleep(max(0.0, min(1.0, 1 - time_since_last)))
 
             try:
                 last_error: Exception | None = None
