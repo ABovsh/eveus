@@ -8,7 +8,7 @@
 > сутності для автоматизацій — без допоміжних шаблонних сенсорів.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Версія](https://img.shields.io/badge/version-4.15.1-blue?style=for-the-badge)
+![Версія](https://img.shields.io/badge/version-4.16.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 - Документація: <https://abovsh.github.io/eveus/uk/>
