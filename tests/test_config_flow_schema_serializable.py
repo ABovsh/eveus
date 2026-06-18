@@ -17,6 +17,7 @@ import asyncio
 import inspect
 
 import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 import voluptuous_serialize
 
 from custom_components.eveus import config_flow as cf
@@ -172,7 +173,6 @@ def test_every_flow_step_schema_is_serializable() -> None:
     for name, schema in schemas.items():
         assert schema is not None, f"{name} showed a form with no data_schema"
         _assert_serializable(schema)
-<<<<<<< HEAD
 
 
 def _frontend_submission(schema) -> dict:
@@ -213,5 +213,3 @@ def test_every_flow_step_accepts_frontend_string_input() -> None:
             raise AssertionError(
                 f"{name}: frontend submission {submission!r} rejected: {err}"
             ) from err
-=======
->>>>>>> rc
