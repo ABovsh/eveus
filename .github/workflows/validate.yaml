@@ -35,7 +35,7 @@ jobs:
           # Ceiling: latest HA + deps on a current Python. This is the leg that
           # would have caught issue #8 — a stricter voluptuous_serialize that
           # rejected the old config-flow schema.
-          - python-version: "3.13"
+          - python-version: "3.14.2"
             ha-pin: ""
             ha-label: "latest"
     steps:

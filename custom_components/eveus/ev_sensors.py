@@ -142,9 +142,14 @@ class BaseEVHelperSensor(EveusSensorBase):
     def _on_soc_input_changed(self) -> None:
         """Recompute immediately when a SOC input value is pushed."""
         previous_available = self.available
+        availability_changed = self._update_availability_state()
+        if not self._updater.available or not self._updater.last_update_success:
+            if availability_changed or previous_available != self.available:
+                self.async_write_ha_state()
+            return
         value_changed = self._update_native_value()
         attributes_changed = self._update_extra_state_attributes()
-        if value_changed or attributes_changed or previous_available != self.available:
+        if availability_changed or value_changed or attributes_changed or previous_available != self.available:
             self.async_write_ha_state()
 
     @property
@@ -455,4 +460,3 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
                 exc_info=True,
             )
             return None
-

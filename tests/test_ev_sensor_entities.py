@@ -374,6 +374,26 @@ def test_helper_sensor_soc_input_change_writes_for_changed_value() -> None:
     assert writes == 1
 
 
+def test_helper_sensor_soc_input_change_skips_stale_failed_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = ev_sensors.datetime(2026, 6, 18, 10, 0, 0)
+    monkeypatch.setattr(ev_sensors.dt_util, "utcnow", lambda: fixed_now)
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    updater = EveusTestUpdater(
+        {"state": 4, "sessionEnergy": "1", "powerMeas": "7000"},
+        available=False,
+    )
+    updater.last_update_success = False
+    sensor = ChargingFinishTimeSensor(updater, 1, calculator)
+    sensor.async_write_ha_state = lambda: None
+    sensor._attr_native_value = ev_sensors.datetime(2026, 6, 18, 10, 30)
+
+    sensor._on_soc_input_changed()
+
+    assert sensor.native_value == ev_sensors.datetime(2026, 6, 18, 10, 30)
+
+
 def test_helper_sensor_resolve_remaining_inputs_edge_cases() -> None:
     sensor = TimeToTargetSocSensor(EveusTestUpdater({"powerMeas": "bad", "sessionEnergy": "1"}))
     sensor.hass = HelperHass(EV_HELPERS)

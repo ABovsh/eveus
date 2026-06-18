@@ -1,6 +1,7 @@
 """The Eveus integration."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import logging
 # NOT `import time`: this package has a `time.py` platform module, and the
@@ -755,6 +756,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
                 phases,
                 phases_were_invalid,
             )
+        except asyncio.CancelledError:
+            entry.runtime_data = None
+            raise
         except Exception:
             entry.runtime_data = None
             raise

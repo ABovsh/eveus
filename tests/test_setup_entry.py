@@ -68,6 +68,12 @@ class _ConfigEntries:
         self.reloaded.append(entry_id)
 
 
+class _CancellingConfigEntries(_ConfigEntries):
+    async def async_forward_entry_setups(self, entry: object, platforms: object) -> None:
+        self.forwarded.append((entry, platforms))
+        raise asyncio.CancelledError
+
+
 class _Entry:
     def __init__(self, data: dict[str, object]) -> None:
         self.data = data
@@ -134,6 +140,10 @@ class _SafetyManager:
 
 def _hass() -> SimpleNamespace:
     return SimpleNamespace(config_entries=_ConfigEntries())
+
+
+def _hass_with_config_entries(config_entries: object) -> SimpleNamespace:
+    return SimpleNamespace(config_entries=config_entries)
 
 
 def _data(**overrides: object) -> dict[str, object]:
@@ -1072,6 +1082,23 @@ def test_v04_runtime_data_unset_after_unexpected_refresh_failure(
     monkeypatch.setattr(eveus, "EveusUpdater", _UnexpectedFailingUpdater)
 
     with pytest.raises(ConfigEntryNotReady):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert getattr(entry, "runtime_data", None) is None
+
+
+def test_runtime_data_unset_after_setup_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.eveus import safety
+
+    _SafetyManager.instances.clear()
+    hass = _hass_with_config_entries(_CancellingConfigEntries())
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(safety, "EveusSafetyManager", _SafetyManager)
+
+    with pytest.raises(asyncio.CancelledError):
         asyncio.run(eveus.async_setup_entry(hass, entry))
 
     assert getattr(entry, "runtime_data", None) is None
