@@ -161,6 +161,12 @@ def test_async_setup_returns_true() -> None:
     assert asyncio.run(eveus.async_setup(object(), {})) is True
 
 
+def test_config_schema_is_config_entry_only() -> None:
+    result = eveus.CONFIG_SCHEMA({"eveus": {}})
+
+    assert result == {"eveus": {}}
+
+
 def test_soc_limit_switch_is_advanced_only_prunable():
     from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
 
