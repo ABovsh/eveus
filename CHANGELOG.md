@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.16.0 - 2026-06-18
 
 ### ✨ New
 - **40A charger model.** Setup now offers a **40A** option alongside 16A/32A/48A, for EVEUS Pro units whose hardware maximum is 40 A — so the current slider matches the charger instead of forcing a 48A profile.
