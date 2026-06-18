@@ -8,11 +8,13 @@ it only reports conditions through the issue registry.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Mapping
 
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.storage import Store
 
 from .const import (
     CHARGING_STATES,
@@ -64,9 +66,25 @@ class SafetyPolicy:
     recovery_polls: int = FAULT_RECOVERY_POLLS
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 def safety_issue_id(entry, key: str) -> str:
     """Return an entry-scoped safety issue ID."""
     return f"safety_{key}_{entry.entry_id}"
+
+
+# Persisted recovery-memory store (one small file per config entry).
+_SAFETY_STORE_VERSION = 1
+
+
+def safety_store_key(entry) -> str:
+    """Return the entry-scoped storage key for safety recovery memory."""
+    return f"eveus_safety_{entry.entry_id}"
+
+
+# Backwards-compatible private alias used internally.
+_safety_store_key = safety_store_key
 
 
 def _policy(
@@ -361,6 +379,52 @@ class EveusSafetyManager:
         self._entry = entry
         self._updater = updater
         self._states = {policy.key: SafetyPolicyState() for policy in POLICIES}
+        self._store: Store | None = None
+
+    async def async_load(self) -> None:
+        """Restore the per-policy recovery memory persisted across reloads.
+
+        ``recovered_since_raised`` is otherwise in-memory only, so a serious
+        fault that recovered and was dismissed before a reload/restart would
+        stay hidden under the old acknowledgement when it recurs. Persisting and
+        restoring this bit lets a fresh occurrence re-alert.
+        """
+        try:
+            self._store = Store(
+                self._hass, _SAFETY_STORE_VERSION, _safety_store_key(self._entry)
+            )
+            data = await self._store.async_load()
+        except Exception as err:  # noqa: BLE001
+            # Storage trouble must not block setup; degrade to in-memory only
+            # (the cross-reload memory is the only thing lost).
+            self._store = None
+            _LOGGER.debug(
+                "Could not load safety recovery memory: %s", type(err).__name__
+            )
+            return
+        if isinstance(data, dict):
+            self._apply_persisted(data)
+
+    def _apply_persisted(self, data: Mapping[str, Any]) -> None:
+        """Seed recovery memory from a persisted snapshot."""
+        for key, state in self._states.items():
+            entry = data.get(key)
+            if isinstance(entry, Mapping):
+                state.recovered_since_raised = bool(
+                    entry.get("recovered_since_raised", False)
+                )
+
+    def _persisted_snapshot(self) -> dict[str, dict[str, bool]]:
+        """The recovery memory to persist (kept tiny and forward-compatible)."""
+        return {
+            key: {"recovered_since_raised": state.recovered_since_raised}
+            for key, state in self._states.items()
+        }
+
+    def _persist(self) -> None:
+        """Schedule a debounced write of the recovery memory (no-op pre-load)."""
+        if self._store is not None:
+            self._store.async_delay_save(self._persisted_snapshot)
 
     def process(self) -> None:
         """Reconcile every policy against the latest successful payload.
@@ -415,7 +479,9 @@ class EveusSafetyManager:
                     issue = None
                 if issue is None:
                     _create_issue(self._hass, self._entry, policy)
-                    state.recovered_since_raised = False
+                    if state.recovered_since_raised:
+                        state.recovered_since_raised = False
+                        self._persist()
             return
 
         # trigger is False -> condition absent; None -> unknown, leave streak.
@@ -442,8 +508,11 @@ class EveusSafetyManager:
 
         # Confirmed recovery of the live issue: remember it (sticky) so a later
         # re-trigger can re-alert even if the user dismisses the stale notice
-        # before the next recovered poll deletes it.
-        state.recovered_since_raised = True
+        # before the next recovered poll deletes it. Persist on the rising edge so
+        # the memory survives a reload/restart.
+        if not state.recovered_since_raised:
+            state.recovered_since_raised = True
+            self._persist()
 
         # Auto-clear issues delete on confirmed recovery. Latched issues persist
         # until the user has also pressed Ignore (dismissed_version set);

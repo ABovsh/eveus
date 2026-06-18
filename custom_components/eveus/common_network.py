@@ -27,7 +27,7 @@ from .const import (
     SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
-from ._payload import PayloadError, validate_main_payload
+from ._payload import PayloadError, read_json_capped, validate_main_payload
 from .utils import RateLog
 
 _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
@@ -81,6 +81,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         scheme: str = DEFAULT_SCHEME,
         config_entry: ConfigEntry | None = None,
         device_number: int | None = None,
+        model: str | None = None,
     ) -> None:
         """Initialize updater."""
         # HA logs the coordinator name at ERROR/INFO level on poll failures, so
@@ -100,6 +101,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.host = host
         self.scheme = scheme
+        # Configured charger model, so runtime polls reject a currentSet above
+        # THIS model's maximum (a wrong-host/corrupt payload) instead of only the
+        # largest supported model's maximum.
+        self._model = model
         self._basic_auth = aiohttp.BasicAuth(username, password)
         self._command_manager = CommandManager(self)
 
@@ -222,6 +227,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         extra: dict[str, Any] | None = None,
     ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
+        if self._shutting_down:
+            # Reject new/queued commands once unload has begun so a control or
+            # background task can't mutate the charger after teardown.
+            return False
         try:
             success = await self._command_manager.send_command(
                 command, value, retry=retry, extra=extra
@@ -471,10 +480,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 
-                new_data = await response.json(content_type=None)
+                new_data = await read_json_capped(response)
                 # Shared validator retains the historical common-network guards:
                 # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
-                new_data = validate_main_payload(new_data)
+                # Passing the configured model bounds currentSet to this charger's
+                # maximum, so a wrong-device or corrupt payload fails the poll
+                # rather than being published as healthy.
+                new_data = validate_main_payload(new_data, self._model)
 
                 self._record_success(time.monotonic() - start_monotonic, new_data)
                 return new_data

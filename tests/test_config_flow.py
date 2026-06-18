@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import aiohttp
@@ -23,6 +24,7 @@ from custom_components.eveus.config_flow import (
     InvalidAuth,
     InvalidDevice,
     InvalidInput,
+    InvalidResponse,
     build_user_data_schema,
     build_reauth_data_schema,
     normalize_user_input,
@@ -81,6 +83,9 @@ class _Response:
         self.payload = payload if payload is not None else {"currentSet": "16"}
         self.raise_status = raise_status
         self.json_kwargs: dict[str, object] = {}
+        # Real aiohttp responses always expose headers; the diagnostic logging in
+        # validate_input reads Content-Type, so the fake must provide them too.
+        self.headers: dict[str, str] = {"Content-Type": "application/json"}
 
     async def __aenter__(self) -> "_Response":
         return self
@@ -98,6 +103,32 @@ class _Response:
         if isinstance(self.payload, Exception):
             raise self.payload
         return self.payload
+
+    def _body_bytes(self) -> bytes:
+        if isinstance(self.payload, Exception):
+            return b"<<invalid json>>"
+        if isinstance(self.payload, str):
+            return self.payload.encode()
+        return json.dumps(self.payload).encode()
+
+    @property
+    def content_length(self) -> int:
+        return len(self._body_bytes())
+
+    @property
+    def content(self) -> "_StreamReader":
+        return _StreamReader(self._body_bytes())
+
+
+class _StreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw: bytes) -> None:
+        self._raw = raw
+
+    async def iter_chunked(self, size: int):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]
 
 
 class _Session:
@@ -274,7 +305,9 @@ def test_config_flow_version_matches_migration_target() -> None:
 
 
 def test_validate_device_response_rejects_non_eveus_json() -> None:
-    with pytest.raises(InvalidDevice, match="missing state"):
+    # A reachable device whose JSON has no Eveus signature keys is not an Eveus
+    # charger; setup reports invalid_response rather than a bare cannot_connect.
+    with pytest.raises(InvalidResponse, match="not a recognizable Eveus payload"):
         validate_device_response({"name": "Not Eveus"}, MODEL_16A)
 
 
@@ -302,7 +335,6 @@ def test_validate_input_posts_to_normalized_host() -> None:
     assert result["device_info"]["current_set"] == 12
     assert len(session.calls) >= 1
     assert session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
-    assert response.json_kwargs == {"content_type": None}
 
 
 def test_validate_input_preserves_https_scheme_and_port() -> None:
@@ -349,7 +381,7 @@ def test_validate_input_maps_http_errors_to_cannot_connect() -> None:
     )
     hass = _Hass(_Session(_Response(raise_status=error)))
 
-    with pytest.raises(CannotConnect, match="Connection error: ClientResponseError"):
+    with pytest.raises(CannotConnect, match="HTTP 500"):
         asyncio.run(validate_input(hass, _input()))
 
 
@@ -374,33 +406,70 @@ def test_validate_input_maps_timeout_and_unexpected_errors() -> None:
     ],
 )
 def test_validate_input_rejects_malformed_device_response(payload: object) -> None:
+    # Non-JSON body, or JSON that isn't an object: reachable but not a valid
+    # Eveus response -> invalid_response (distinct from cannot_connect).
     hass = _Hass(_Session(_Response(payload=payload)))
 
-    with pytest.raises(CannotConnect) as exc_info:
+    with pytest.raises(InvalidResponse):
         asyncio.run(validate_input(hass, _input()))
-    assert str(exc_info.value) in {
-        "Invalid response format",
-        "Invalid response format: Invalid response format",
-    }
 
 
 @pytest.mark.parametrize(
     "payload",
     [
         {},
+        {"name": "some other device"},
+    ],
+)
+def test_validate_input_rejects_unrecognizable_payload(
+    payload: dict[str, str]
+) -> None:
+    # Reachable, valid JSON object, but not an Eveus charger.
+    hass = _Hass(_Session(_Response(payload=payload)))
+
+    with pytest.raises(InvalidResponse):
+        asyncio.run(validate_input(hass, _input()))
+    assert hass.session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
         {"state": 2, "currentSet": "-1"},
         {"state": 2, "currentSet": "not-a-number"},
         {"state": 2, "currentSet": "32"},
     ],
 )
-def test_validate_input_rejects_device_values_outside_model_limits(
+def test_validate_input_accepts_recognizable_payload_leniently(
     payload: dict[str, str]
 ) -> None:
+    # Setup is intentionally lenient: a recognizable Eveus payload is accepted
+    # even when a control field looks odd (older firmware reports fewer/older
+    # fields). The live poll keeps the strict per-field validation.
     hass = _Hass(_Session(_Response(payload=payload)))
 
-    with pytest.raises(InvalidDevice):
-        asyncio.run(validate_input(hass, _input()))
+    result = asyncio.run(validate_input(hass, _input()))
+    assert result["data"][CONF_HOST] == TEST_HOST
     assert hass.session.calls[0]["url"] == f"{TEST_BASE_URL}/main"
+
+
+def test_validate_input_accepts_old_firmware_slim_payload() -> None:
+    # Older firmware reports fewer fields; a response carrying any Eveus
+    # signature key (here only verFWMain, no state/currentSet) still adds.
+    hass = _Hass(_Session(_Response(payload={"verFWMain": "GRM070A-R3.01.8"})))
+
+    result = asyncio.run(validate_input(hass, _input()))
+    assert result["data"][CONF_HOST] == TEST_HOST
+    assert result["device_info"]["firmware"] == "GRM070A-R3.01.8"
+
+
+def test_validate_input_html_login_page_is_invalid_response() -> None:
+    # Old firmware that answers /main with an HTML login page is reachable but
+    # not a valid Eveus payload -> invalid_response, not a bare cannot_connect.
+    hass = _Hass(_Session(_Response(payload="<html><body>Login</body></html>")))
+
+    with pytest.raises(InvalidResponse):
+        asyncio.run(validate_input(hass, _input()))
 
 
 def test_validate_input_wraps_local_validation_errors() -> None:
@@ -1110,3 +1179,110 @@ def test_soc_step_schema_prefills_from_stored_entry_values() -> None:
     }
     assert defaults[CONF_SOC_CORRECTION] == 4.5
     assert defaults[CONF_BATTERY_CAPACITY] == config_flow.DEFAULT_BATTERY_CAPACITY
+
+
+def test_v20_reauth_aborts_when_host_keeps_changing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A SECOND mid-flight host change must not let credentials be committed
+    against an address that was never validated; the flow refuses instead."""
+    entry = type(
+        "Entry", (), {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST}
+    )()
+    moving = iter(["10.0.0.91", "10.0.0.92", "10.0.0.93", "10.0.0.94", "10.0.0.95"])
+
+    async def fake_validate_input(hass, data):
+        # A concurrent reconfigure changes the live host during EVERY validation.
+        new_host = next(moving)
+        entry.data = {**entry.data, CONF_HOST: new_host}
+        entry.unique_id = new_host
+        return {
+            "title": f"Eveus Charger ({data[CONF_HOST]})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
+        )
+    )
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+def test_v20_reauth_commits_after_host_stabilizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One mid-flight host change then stability: credentials commit against the
+    final, validated host."""
+    entry = type(
+        "Entry", (), {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST}
+    )()
+    calls = {"n": 0}
+
+    async def fake_validate_input(hass, data):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            entry.data = {**entry.data, CONF_HOST: TEST_HOST_ALT}
+            entry.unique_id = TEST_HOST_ALT
+        return {
+            "title": f"Eveus Charger ({data[CONF_HOST]})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    captured = {}
+    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
+        "type": "abort",
+        "reason": "reauth_successful",
+    }
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
+        )
+    )
+    assert result["reason"] == "reauth_successful"
+    assert captured["data"][CONF_HOST] == TEST_HOST_ALT
+
+
+def test_40a_model_is_supported() -> None:
+    """EVEUS Pro units report curDesign=40; a 40A model must be selectable."""
+    from custom_components.eveus.const import MODEL_40A, MODELS, MODEL_MAX_CURRENT
+
+    assert MODEL_40A == "40A"
+    assert MODEL_40A in MODELS
+    assert MODEL_MAX_CURRENT[MODEL_40A] == 40
+
+
+def test_40a_model_setpoint_accepted_at_setup() -> None:
+    """A 40A charger's reported setpoint is accepted at setup (lenient)."""
+    from custom_components.eveus.const import MODEL_40A
+
+    info = validate_device_response({"state": 2, "currentSet": "34"}, MODEL_40A)
+    assert info["current_set"] == 34.0
+
+
+def test_40a_model_selectable_in_user_schema() -> None:
+    from custom_components.eveus.const import MODEL_40A
+
+    schema = build_user_data_schema({})
+    # vol.In(MODELS) accepts 40A for the model field.
+    validated = schema(
+        {
+            CONF_HOST: "1.2.3.4",
+            CONF_USERNAME: "eveus",
+            CONF_PASSWORD: "secret",
+            "model": MODEL_40A,
+            "phases": 1,
+            "soc_mode": "advanced",
+        }
+    )
+    assert validated["model"] == MODEL_40A

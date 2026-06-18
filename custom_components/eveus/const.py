@@ -110,12 +110,14 @@ TIME_DRIFT_QUANTUM_SECONDS: Final[int] = 30
 MIN_CURRENT: Final[int] = 7
 MODEL_16A: Final[str] = "16A"
 MODEL_32A: Final[str] = "32A"
+MODEL_40A: Final[str] = "40A"
 MODEL_48A: Final[str] = "48A"
-MODELS: Final[List[str]] = [MODEL_16A, MODEL_32A, MODEL_48A]
+MODELS: Final[List[str]] = [MODEL_16A, MODEL_32A, MODEL_40A, MODEL_48A]
 
 MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
     MODEL_16A: 16,
     MODEL_32A: 32,
+    MODEL_40A: 40,
     MODEL_48A: 48,
 }
 

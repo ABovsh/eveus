@@ -52,21 +52,27 @@ class RateLog:
 
     def __init__(self, max_keys: int = 64) -> None:
         """Initialize an optional per-key rate limiter."""
-        self._last_log = 0.0
+        # None = "never logged yet". A numeric 0.0 sentinel would misbehave on the
+        # monotonic clock, whose value is small right after boot: the first log
+        # could be suppressed because `monotonic() - 0` is below the interval.
+        self._last_log: float | None = None
         self._last_logs: dict[Hashable, float] = {}
         self._max_keys = max_keys
 
     def should_log(self, interval: float, key: Hashable | None = None) -> bool:
         """Return whether a message should be logged for the interval."""
-        current_time = time.time()
+        # Monotonic clock: a backward wall-clock step (NTP, VM resume) would
+        # otherwise make the elapsed time negative and suppress all logging until
+        # wall time caught back up.
+        current_time = time.monotonic()
         if key is None:
-            if current_time - self._last_log > interval:
+            if self._last_log is None or current_time - self._last_log > interval:
                 self._last_log = current_time
                 return True
             return False
 
-        last_log = self._last_logs.get(key, 0.0)
-        if current_time - last_log <= interval:
+        last_log = self._last_logs.get(key)
+        if last_log is not None and current_time - last_log <= interval:
             return False
 
         if key not in self._last_logs and len(self._last_logs) >= self._max_keys:
@@ -219,8 +225,14 @@ def get_local_wall_clock_seconds() -> int:
     return int(time.time()) + get_local_utc_offset_seconds()
 
 
-def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
-    """Coerce a /main field to a trimmed string or a fallback."""
+def _safe_str(
+    value: Any, fallback: str = "Unknown", min_len: int = 2, max_len: int = 128
+) -> str:
+    """Coerce a /main field to a trimmed string or a fallback.
+
+    ``max_len`` caps the result so a huge firmware/model/serial string can't be
+    written verbatim into the device registry (oversized registry/UI payloads).
+    """
     # bool is an int subclass; reject it and other non-scalar containers so a
     # malformed firmware field (e.g. verFWMain=true) can't render as "True" and
     # get permanently finalized into device_info.
@@ -231,7 +243,9 @@ def _safe_str(value: Any, fallback: str = "Unknown", min_len: int = 2) -> str:
     if isinstance(value, float) and not math.isfinite(value):
         return fallback
     text = str(value).strip()
-    return text if len(text) >= min_len else fallback
+    if len(text) < min_len:
+        return fallback
+    return text[:max_len]
 
 
 # Strings some firmware builds put in a version field to mean "no value". They
@@ -405,6 +419,12 @@ _REMAINING_TARGET_REACHED = "target_reached"
 _REMAINING_NOT_CHARGING = "not_charging"
 _REMAINING_UNAVAILABLE = "unavailable"
 
+# Ceiling on a computed ETA. A finite-but-tiny corrupt powerMeas (e.g. 1e-250)
+# divides to an astronomically large-but-finite duration, which would render a
+# state string far beyond Home Assistant's 255-character limit. No real EV charge
+# approaches 30 days, so anything past it is corrupt telemetry -> "unavailable".
+_MAX_REMAINING_SECONDS = 30 * 24 * 3600
+
 
 def _remaining_seconds_or_state(
     current_soc, target_soc, power_meas, battery_capacity, correction,
@@ -446,7 +466,7 @@ def _remaining_seconds_or_state(
         # that as "unavailable" rather than returning inf (which int() would
         # later reject) or freezing a stale ETA.
         seconds = remaining_kwh / power_kw * 3600
-        if not math.isfinite(seconds):
+        if not math.isfinite(seconds) or seconds > _MAX_REMAINING_SECONDS:
             return _REMAINING_UNAVAILABLE
         return seconds
 

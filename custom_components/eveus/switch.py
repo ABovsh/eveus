@@ -361,9 +361,19 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
         # limit meanwhile), and turning the master back off never changes this
         # switch by itself — it stays where you left it (no auto-enable).
         data = self._updater.data
-        suspended = (
-            isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) == 1
+        raw = (
+            get_safe_value(data, "suspendLimits", int)
+            if isinstance(data, dict)
+            else None
         )
+        if raw not in (0, 1):
+            # Unknown/malformed master state — leave the transition memory
+            # untouched (tri-state). Collapsing it to False here would make the
+            # next valid 1 look like a fresh off->on edge and flip the switch off
+            # a second time on an unchanged master.
+            super()._handle_coordinator_update()
+            return
+        suspended = raw == 1
         if suspended and not self._was_suspended and self._attr_is_on:
             self._attr_is_on = False
             self._controller.set_enabled(False)

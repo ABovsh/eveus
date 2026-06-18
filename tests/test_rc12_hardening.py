@@ -65,7 +65,7 @@ def test_balanced_ipv6_still_accepted() -> None:
     [
         (sd.get_box_temperature, "temperature1", 42, 42),
         (sd.get_plug_temperature, "temperature2", 55, 55),
-        (sd.get_battery_voltage, "vBat", 12.5, 12.5),
+        (sd.get_battery_voltage, "vBat", 3.0, 3.0),
         (sd.get_leak_current, "leakValue", 5, 5),
         (sd.get_leak_current_peak, "leakValueH", 9, 9),
         (sd.get_primary_rate_cost, "tarif", 450, 4.5),
@@ -165,8 +165,11 @@ def test_command_after_shutdown_skips_refresh_scheduling(monkeypatch) -> None:
         updater, "_schedule_post_command_refresh", lambda: scheduled.append(1)
     )
 
+    # Once shutdown has begun, a new/queued command is REJECTED outright (V-01)
+    # so it cannot POST to the charger after teardown — and therefore schedules
+    # no refresh either.
     updater._shutting_down = True
-    assert asyncio.run(updater.send_command("evseEnabled", 1)) is True
+    assert asyncio.run(updater.send_command("evseEnabled", 1)) is False
     assert scheduled == []
 
     # Sanity: while live, a successful command still schedules refreshes.

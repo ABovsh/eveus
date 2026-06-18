@@ -68,6 +68,12 @@ class _ConfigEntries:
         self.reloaded.append(entry_id)
 
 
+class _CancellingConfigEntries(_ConfigEntries):
+    async def async_forward_entry_setups(self, entry: object, platforms: object) -> None:
+        self.forwarded.append((entry, platforms))
+        raise asyncio.CancelledError
+
+
 class _Entry:
     def __init__(self, data: dict[str, object]) -> None:
         self.data = data
@@ -122,7 +128,11 @@ class _SafetyManager:
         self.entry = entry
         self.updater = updater
         self.process_calls = 0
+        self.load_calls = 0
         self.instances.append(self)
+
+    async def async_load(self) -> None:
+        self.load_calls += 1
 
     def process(self) -> None:
         self.process_calls += 1
@@ -130,6 +140,10 @@ class _SafetyManager:
 
 def _hass() -> SimpleNamespace:
     return SimpleNamespace(config_entries=_ConfigEntries())
+
+
+def _hass_with_config_entries(config_entries: object) -> SimpleNamespace:
+    return SimpleNamespace(config_entries=config_entries)
 
 
 def _data(**overrides: object) -> dict[str, object]:
@@ -145,6 +159,12 @@ def _data(**overrides: object) -> dict[str, object]:
 
 def test_async_setup_returns_true() -> None:
     assert asyncio.run(eveus.async_setup(object(), {})) is True
+
+
+def test_config_schema_is_config_entry_only() -> None:
+    result = eveus.CONFIG_SCHEMA({"eveus": {}})
+
+    assert result == {"eveus": {}}
 
 
 def test_soc_limit_switch_is_advanced_only_prunable():
@@ -1044,3 +1064,47 @@ def test_async_setup_entry_clears_stale_soc_dashboard_issue(
 
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
     assert ("eveus", "soc_dashboard_update_entry-id") in deleted
+
+
+def test_v04_runtime_data_unset_after_auth_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A first-refresh auth failure must leave no runtime objects on the entry."""
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _AuthFailingUpdater)
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert getattr(entry, "runtime_data", None) is None
+
+
+def test_v04_runtime_data_unset_after_unexpected_refresh_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _UnexpectedFailingUpdater)
+
+    with pytest.raises(ConfigEntryNotReady):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert getattr(entry, "runtime_data", None) is None
+
+
+def test_runtime_data_unset_after_setup_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.eveus import safety
+
+    _SafetyManager.instances.clear()
+    hass = _hass_with_config_entries(_CancellingConfigEntries())
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(safety, "EveusSafetyManager", _SafetyManager)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert getattr(entry, "runtime_data", None) is None

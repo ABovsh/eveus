@@ -32,7 +32,10 @@ class CommandManager:
         """Initialize command manager."""
         self._updater = updater
         self._lock = asyncio.Lock()
-        self._last_command_time = 0
+        # None = no command sent yet. A 0 sentinel was unsafe once timing moved
+        # to the monotonic clock: right after boot monotonic() can be < 1, making
+        # the first command sleep up to a second for no reason.
+        self._last_command_time: float | None = None
         self._consecutive_failures = 0
         self._error_log = RateLog()
 
@@ -65,13 +68,16 @@ class CommandManager:
         together as one "save" form, not as a bare single-field write.
         """
         async with self._lock:
-            # Rate limit: minimum 1 second between commands. Clamp the wait to
-            # [0, 1]: a backward wall-clock step (NTP correction, manual set, VM
-            # resume) would otherwise make `time_since_last` strongly negative and
-            # stall every command for minutes while holding the command lock.
-            time_since_last = time.time() - self._last_command_time
-            if time_since_last < 1:
-                await asyncio.sleep(max(0.0, min(1.0, 1 - time_since_last)))
+            # Rate limit: minimum 1 second between commands. Monotonic clock so a
+            # backward wall-clock step (NTP correction, manual set, VM resume)
+            # can't make `time_since_last` negative and stall every command for
+            # minutes while holding the command lock. The [0, 1] clamp stays as a
+            # cheap guard against any residual edge. The first command (no prior
+            # timestamp) is never spaced.
+            if self._last_command_time is not None:
+                time_since_last = time.monotonic() - self._last_command_time
+                if time_since_last < 1:
+                    await asyncio.sleep(max(0.0, min(1.0, 1 - time_since_last)))
 
             try:
                 last_error: Exception | None = None
@@ -126,7 +132,7 @@ class CommandManager:
                     )
                 return False
             finally:
-                self._last_command_time = time.time()
+                self._last_command_time = time.monotonic()
 
     async def _post_command(
         self, command: str, value: Any, extra: dict[str, Any] | None = None
@@ -134,6 +140,12 @@ class CommandManager:
         """Issue a single HTTP request to the charger and return success."""
         session = self._updater.get_session()
 
+        # A callable value is resolved here, inside the command-manager critical
+        # section immediately before the POST (and freshly on each retry), so a
+        # time-sensitive value (e.g. the Sync Time timestamp) reflects send time
+        # rather than the moment the command was queued behind the lock.
+        if callable(value):
+            value = value()
         fields = {"pageevent": command, command: value}
         if extra:
             fields.update(extra)

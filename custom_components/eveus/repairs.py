@@ -16,6 +16,7 @@ from .config_flow import (
     InvalidAuth,
     InvalidDevice,
     InvalidInput,
+    InvalidResponse,
     _merge_entry_data,
     build_user_data_schema,
     validate_input,
@@ -95,10 +96,15 @@ class InvalidConfigRepairFlow(RepairsFlow):
                 )
                 # Reload BEFORE clearing the issue: if the reload fails the repair
                 # notice must survive so the user can retry, rather than vanishing
-                # behind a generic "unknown" error.
-                await self.hass.config_entries.async_reload(entry.entry_id)
-                ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
-                return self.async_create_entry(title="", data={})
+                # behind a generic "unknown" error. async_reload can also return
+                # False WITHOUT raising (unload/setup returned false), so check the
+                # boolean result too — not just exceptions.
+                reload_ok = await self.hass.config_entries.async_reload(entry.entry_id)
+                if reload_ok is False:
+                    errors["base"] = "unknown"
+                else:
+                    ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
+                    return self.async_create_entry(title="", data={})
 
             except _AlreadyConfigured:
                 pass
@@ -110,6 +116,8 @@ class InvalidConfigRepairFlow(RepairsFlow):
                 errors["base"] = "invalid_input"
             except InvalidDevice:
                 errors["base"] = "invalid_device"
+            except InvalidResponse:
+                errors["base"] = "invalid_response"
             except Exception as err:
                 _LOGGER.debug("Unexpected Eveus repair flow error: %s", err, exc_info=True)
                 errors["base"] = "unknown"

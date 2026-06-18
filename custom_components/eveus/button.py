@@ -100,14 +100,21 @@ class EveusSyncTimeButton(BaseEveusEntity, ButtonEntity):
     _attr_entity_category = EntityCategory.CONFIG
 
     async def async_press(self) -> None:
-        """Send the current UTC seconds as `systemTime`."""
-        utc_now = int(time.time())
-        success = await self._updater.send_command("systemTime", utc_now)
+        """Send the current UTC seconds as `systemTime`.
+
+        The timestamp is passed as a callable so it is evaluated inside the
+        command-manager critical section right before the POST — if another
+        command holds the lock and this one waits/retries, the charger clock is
+        still set to (near) send time, not the moment the button was pressed.
+        """
+        success = await self._updater.send_command(
+            "systemTime", lambda: int(time.time())
+        )
         if not success:
             raise HomeAssistantError(
                 "Eveus charger did not accept the time-sync command"
             )
-        _LOGGER.debug("Time sync sent: systemTime=%d", utc_now)
+        _LOGGER.debug("Time sync sent: systemTime command issued")
 
 
 async def async_setup_entry(

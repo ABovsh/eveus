@@ -142,6 +142,14 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
     ),
 )
 
+# Firmware-supported Minimum voltage options (gridRange=0 / 230 V), mirroring
+# select.py MIN_VOLTAGE_OPTIONS. The undervoltage floor (minVoltage + 10) is only
+# derived from one of these; a malformed or off-list minVoltage (e.g. -1000) must
+# not be trusted to widen the writable threshold below the safe static floor.
+_VALID_MIN_VOLTAGES = frozenset(
+    float(v) for v in (150, 155, 160, 165, 170, 175, 180, 200)
+)
+
 UNDERVOLTAGE_THRESHOLD_NUMBER = EveusSetpointNumberDescription(
     key="undervoltage_threshold",
     name="Undervoltage threshold",
@@ -188,6 +196,7 @@ def _schedule_energy(n: int) -> EveusSetpointNumberDescription:
         native_step=1,
         native_unit_of_measurement="kWh",
         mode=NumberMode.BOX,
+        display_precision=3,  # trim firmware float noise (e.g. 76.371002 -> 76.371)
     )
 
 
@@ -224,12 +233,28 @@ class EveusNumberEntity(
         self._init_optimistic_control()
         self._init_write_on_change()
 
+    async def async_added_to_hass(self) -> None:
+        """Restore the previous HA value, then prefer fresh coordinator data.
+
+        ``RestoreEntity`` seeds the previous HA state, but the setup first-refresh
+        has usually already populated a fresh ``/main`` value. Re-resolving here
+        means a charger-backed number shows current device data immediately
+        instead of the restored value until the next poll. (Switches/time/sensors
+        already do this; charger-backed numbers used not to.)
+        """
+        await super().async_added_to_hass()
+        self._set_display_value(self._resolve_display_value())
+
 
 class EveusCurrentNumber(EveusNumberEntity):
     """Representation of Eveus current control with responsive UI."""
 
     ENTITY_NAME = _CHARGING_CURRENT_NAME
     _command = "currentSet"
+    # Reads accept any non-negative device-reported setpoint up to the model max;
+    # the firmware legitimately reports 1..6 A when configured directly on the
+    # charger. HA WRITES are still clamped to native_min_value (MIN_CURRENT, 7 A).
+    _READ_MIN = 0.0
 
     def __init__(self, updater, model: str, device_number: int = 1) -> None:
         """Initialize the current control."""
@@ -258,7 +283,7 @@ class EveusCurrentNumber(EveusNumberEntity):
             return None
         device_value = get_safe_value(self._updater.data, self._command, float)
         if device_value is not None and (
-            self._attr_native_min_value <= device_value <= self._attr_native_max_value
+            self._READ_MIN <= device_value <= self._attr_native_max_value
         ):
             return float(device_value)
         return None
@@ -289,7 +314,7 @@ class EveusCurrentNumber(EveusNumberEntity):
         if self._updater.available and self._updater.data and self._command in self._updater.data:
             device_value = get_safe_value(self._updater.data, self._command, float)
             if device_value is not None and (
-                self._attr_native_min_value <= device_value <= self._attr_native_max_value
+                self._READ_MIN <= device_value <= self._attr_native_max_value
             ):
                 return float(device_value)
 
@@ -346,7 +371,7 @@ class EveusCurrentNumber(EveusNumberEntity):
         try:
             if state and state.state not in (None, "unknown", "unavailable"):
                 restored_value = float(state.state)
-                if self._attr_native_min_value <= restored_value <= self._attr_native_max_value:
+                if self._READ_MIN <= restored_value <= self._attr_native_max_value:
                     self._last_device_value = restored_value
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored_value
@@ -542,7 +567,10 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
         dynamic: float | None = None
         if self._updater.available and self._updater.data:
             raw = get_safe_value(self._updater.data, self._MIN_VOLTAGE_KEY, float)
-            if raw is not None:
+            # Only trust a firmware-supported minVoltage. A malformed or off-list
+            # value (negative, or outside the curated option set) must not derive
+            # a writable floor below the safe static minimum.
+            if raw is not None and raw in _VALID_MIN_VOLTAGES:
                 dynamic = raw + self._MIN_OFFSET
         new_min = dynamic if dynamic is not None else self._floor_min_value
         # Never cross the upper bound — a nonsense minVoltage must not invert the

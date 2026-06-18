@@ -52,6 +52,27 @@ class _Response:
             return json.loads(self.payload)
         return self.payload
 
+    @property
+    def content_length(self) -> int | None:
+        body = self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
+        return len(body.encode())
+
+    @property
+    def content(self) -> "_StreamReader":
+        body = self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
+        return _StreamReader(body.encode())
+
+
+class _StreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw: bytes) -> None:
+        self._raw = raw
+
+    async def iter_chunked(self, size: int):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]
+
 
 class _Session:
     def __init__(self, response: _Response) -> None:
@@ -700,3 +721,39 @@ def test_backward_clock_does_not_strand_offline_backoff(
 
     assert data["currentSet"] == 16
     assert len(session.calls) == 1
+
+
+def test_runtime_poll_rejects_current_above_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V-06: a currentSet above THIS model's max fails the poll (wrong device)."""
+    session = _Session(_Response(payload={"state": 4, "currentSet": 20}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+
+def test_runtime_poll_accepts_current_within_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"state": 4, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+    data = asyncio.run(updater._async_update_data())
+    assert data["currentSet"] == 16
+
+
+def test_send_command_rejected_during_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """V-01: once shutdown has begun, no new command may reach the charger."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._shutting_down = True
+    sent = Mock()
+    updater._command_manager.send_command = sent
+    result = asyncio.run(updater.send_command("currentSet", 16))
+    assert result is False
+    sent.assert_not_called()

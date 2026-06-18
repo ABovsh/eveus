@@ -10,7 +10,7 @@ import pytest
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME, spec_value_fn
-from custom_components.eveus import common_command, common_network, config_flow
+from custom_components.eveus import common_command, common_network
 from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus import utils
 from custom_components.eveus.common_network import EveusUpdater
@@ -38,6 +38,18 @@ class _Response:
         if isinstance(self.payload, str):
             return json.loads(self.payload)
         return self.payload
+
+    @property
+    def content_length(self):
+        import json as _json
+        body = self.payload if isinstance(self.payload, str) else _json.dumps(self.payload)
+        return len(body.encode())
+
+    @property
+    def content(self):
+        import json as _json
+        body = self.payload if isinstance(self.payload, str) else _json.dumps(self.payload)
+        return _CappedStreamReader(body.encode())
 
 
 class _Session:
@@ -82,19 +94,24 @@ def test_coordinator_rejects_fractional_state(monkeypatch: pytest.MonkeyPatch) -
         _run_update({"state": 4.9, "currentSet": 16}, monkeypatch)
 
 
-def test_config_flow_rejects_fractional_state() -> None:
-    with pytest.raises(config_flow.InvalidDevice):
-        config_flow.validate_device_response({"state": 2.9, "currentSet": 16}, "16A")
+def test_runtime_validation_rejects_fractional_state() -> None:
+    # Setup is lenient now; the strict state guard lives on the live poll.
+    from custom_components.eveus._payload import validate_main_payload
+
+    with pytest.raises(ValueError):
+        validate_main_payload({"state": 2.9, "currentSet": 16}, "16A")
 
 
 # ---------------------------------------------------------------------------
-# F03 — config flow rejects boolean state (int(True) == 1 would sneak through)
+# F03 — the live poll rejects boolean state (int(True) == 1 would sneak through)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("bad", [True, False])
-def test_config_flow_rejects_boolean_state(bad: bool) -> None:
-    with pytest.raises(config_flow.InvalidDevice):
-        config_flow.validate_device_response({"state": bad, "currentSet": 16}, "16A")
+def test_runtime_validation_rejects_boolean_state(bad: bool) -> None:
+    from custom_components.eveus._payload import validate_main_payload
+
+    with pytest.raises(ValueError):
+        validate_main_payload({"state": bad, "currentSet": 16}, "16A")
 
 
 # ---------------------------------------------------------------------------
@@ -182,3 +199,14 @@ def test_schedule_energy_limit_keeps_reasonable_value() -> None:
     attrs_fn = sd._make_schedule_attrs(1)
     updater = EveusTestUpdater({"sh1EnergyEnable": 1, "sh1EnergyValue": 50})
     assert attrs_fn(updater, None)["energy_limit_kwh"] == 50
+
+
+class _CappedStreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    async def iter_chunked(self, size):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]

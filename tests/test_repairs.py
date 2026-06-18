@@ -279,3 +279,37 @@ def test_repair_keeps_issue_when_reload_fails(
     assert result["errors"] == {"base": "unknown"}
     # The notice must still be present.
     assert deleted == []
+
+
+def test_repair_keeps_issue_when_reload_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V-13: async_reload can return False without raising; the issue must stay."""
+
+    async def fake_validate_input(hass, data):
+        return {
+            "title": f"Eveus Charger ({TEST_HOST})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    class _ReloadFalseConfigEntries(_ConfigEntries):
+        async def async_reload(self, entry_id: str) -> bool:
+            return False
+
+    deleted: list[tuple[str, str]] = []
+    entry = SimpleNamespace(entry_id="entry-id", unique_id=TEST_HOST, data=_data())
+    hass = SimpleNamespace(config_entries=_ReloadFalseConfigEntries(entry))
+    monkeypatch.setattr(repairs, "validate_input", fake_validate_input)
+    monkeypatch.setattr(
+        repairs.ir,
+        "async_delete_issue",
+        lambda hass, domain, issue_id: deleted.append((domain, issue_id)),
+    )
+
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
+    result = asyncio.run(flow.async_step_confirm(_data(**{CONF_PASSWORD: "new"})))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "unknown"}
+    assert deleted == []

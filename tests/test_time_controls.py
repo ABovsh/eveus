@@ -40,6 +40,10 @@ class _Updater:
         return lambda: None
 
     async def send_command(self, command: str, value: object, *, retry: bool = True) -> bool:
+        # Mirror CommandManager: a deferred (callable) value is resolved at
+        # send time, so the recorded value is the int the charger receives.
+        if callable(value):
+            value = value()
         self.commands.append((command, value))
         self.last_retry = retry
         return self.command_result

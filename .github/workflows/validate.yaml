@@ -35,7 +35,7 @@ jobs:
           # Ceiling: latest HA + deps on a current Python. This is the leg that
           # would have caught issue #8 — a stricter voluptuous_serialize that
           # rejected the old config-flow schema.
-          - python-version: "3.13"
+          - python-version: "3.14.2"
             ha-pin: ""
             ha-label: "latest"
     steps:
@@ -68,10 +68,13 @@ jobs:
         run: "python -m compileall custom_components/eveus"
 
       - name: Lint
-        run: "python -m ruff check custom_components/eveus tests"
+        run: "python -m ruff check custom_components/eveus tests tests_ha"
 
       - name: Run tests
         run: "python -m pytest -q --cov --cov-report=xml --cov-fail-under=90"
+
+      - name: Run Home Assistant smoke tests
+        run: "python -m pytest -q -o addopts='' tests_ha"
 
       - name: Upload coverage report
         # One leg only: the floor leg feeds SonarCloud, so two matrix legs can't

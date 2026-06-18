@@ -87,12 +87,25 @@ class CachedSOCCalculator:
             return None
 
     def get_soc_percent(self, energy_charged: float) -> Optional[float]:
-        """Battery SOC percent, or None when SOC inputs are missing."""
+        """Battery SOC percent (rounded for display), or None when inputs missing."""
         if not self.are_helpers_available() or not self.battery_capacity:
             return None
         return calculate_soc_percent(
             self.initial_soc, self.battery_capacity, energy_charged, self._effective_correction()
         )
+
+    def get_soc_percent_exact(self, energy_charged: float) -> Optional[float]:
+        """Unrounded SOC percent for target/ETA logic, or None when inputs missing.
+
+        The display percent (``get_soc_percent``) rounds to a whole number, which
+        on a large battery can reach the target up to ~0.5% before the battery
+        actually does — stopping a charge or reporting "target reached" early.
+        Target comparisons and ETAs must use this exact value instead.
+        """
+        kwh = self.get_soc_kwh(energy_charged)
+        if kwh is None or not self.battery_capacity:
+            return None
+        return max(0.0, min(100.0, kwh / self.battery_capacity * 100))
 
 
 # =============================================================================
@@ -129,9 +142,14 @@ class BaseEVHelperSensor(EveusSensorBase):
     def _on_soc_input_changed(self) -> None:
         """Recompute immediately when a SOC input value is pushed."""
         previous_available = self.available
+        availability_changed = self._update_availability_state()
+        if not self._updater.available or not self._updater.last_update_success:
+            if availability_changed or previous_available != self.available:
+                self.async_write_ha_state()
+            return
         value_changed = self._update_native_value()
         attributes_changed = self._update_extra_state_attributes()
-        if value_changed or attributes_changed or previous_available != self.available:
+        if availability_changed or value_changed or attributes_changed or previous_available != self.available:
             self.async_write_ha_state()
 
     @property
@@ -191,7 +209,9 @@ class BaseEVHelperSensor(EveusSensorBase):
         battery_capacity = self._soc_calculator.battery_capacity
         target_soc = self._soc_calculator.target_soc
         soc_correction = self._soc_calculator.soc_correction
-        current_soc = self._soc_calculator.get_soc_percent(energy_charged)
+        # Exact (unrounded) percent so Time-to-Target / Finish-Time agree with the
+        # exact-kWh Energy-to-Target sensor instead of reporting "reached" early.
+        current_soc = self._soc_calculator.get_soc_percent_exact(energy_charged)
         if None in (battery_capacity, target_soc, current_soc):
             return None
         return (current_soc, target_soc, power_meas, battery_capacity, soc_correction)
@@ -440,4 +460,3 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
                 exc_info=True,
             )
             return None
-
