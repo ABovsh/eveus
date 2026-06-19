@@ -313,3 +313,172 @@ def test_repair_keeps_issue_when_reload_returns_false(
     assert result["type"] == "form"
     assert result["errors"] == {"base": "unknown"}
     assert deleted == []
+
+
+# ---------------------------------------------------------------------------
+# From test_rc15_hardening.py — F03 unload deletes issues only on success
+# ---------------------------------------------------------------------------
+
+import asyncio as _asyncio
+from custom_components.eveus import async_unload_entry
+
+
+def _unload_hass_obj(unload_result: bool):
+    async def _unload_platforms(_entry, _platforms) -> bool:
+        return unload_result
+
+    return SimpleNamespace(
+        config_entries=SimpleNamespace(async_unload_platforms=_unload_platforms)
+    )
+
+
+class _UnloadIssueRecorder:
+    def __init__(self) -> None:
+        self.created: list[str] = []
+        self.deleted: list[str] = []
+
+    def async_create_issue(self, _hass, _domain, issue_id, **_kwargs) -> None:
+        self.created.append(issue_id)
+
+    def async_delete_issue(self, _hass, _domain, issue_id) -> None:
+        self.deleted.append(issue_id)
+
+
+import pytest
+
+
+@pytest.mark.parametrize("unload_result", [True, False])
+def test_unload_deletes_issues_only_on_success(monkeypatch, unload_result) -> None:
+    from custom_components.eveus import ir
+
+    recorder = _UnloadIssueRecorder()
+    monkeypatch.setattr(ir, "async_delete_issue", recorder.async_delete_issue)
+
+    entry = SimpleNamespace(entry_id="e1")
+    result = _asyncio.run(async_unload_entry(_unload_hass_obj(unload_result), entry))
+
+    assert result is unload_result
+    assert bool(recorder.deleted) is unload_result
+
+
+# ---------------------------------------------------------------------------
+# From test_hardening_4_14_0.py — C-F05 repair flow migrates device identifiers
+# ---------------------------------------------------------------------------
+
+def test_repair_flow_migrates_device_identifiers(monkeypatch) -> None:
+    from custom_components.eveus import repairs, config_flow
+
+    async def fake_validate_input(hass, data):
+        return {
+            "title": "Eveus Charger (newhost.local)",
+            "data": config_flow.normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    migrated: list[tuple[str, str]] = []
+    monkeypatch.setattr(repairs, "validate_input", fake_validate_input)
+    monkeypatch.setattr(
+        repairs,
+        "migrate_device_identifiers",
+        lambda hass, entry, old, new: migrated.append((old, new)),
+    )
+    monkeypatch.setattr(
+        repairs.ir, "async_delete_issue", lambda *a, **k: None
+    )
+
+    class _Entries:
+        updated: list = []
+
+        def async_get_entry(self, entry_id):
+            return entry
+
+        def async_update_entry(self, entry, **kw):
+            self.updated.append(kw)
+
+        async def async_reload(self, entry_id):
+            return None
+
+        def async_entries(self, domain):
+            return [entry]
+
+    entry = SimpleNamespace(entry_id="e1", unique_id=TEST_HOST, data={
+        "host": TEST_HOST,
+        "username": TEST_USERNAME,
+        "password": TEST_PASSWORD,
+        "model": MODEL_16A,
+    })
+    hass = SimpleNamespace(config_entries=_Entries())
+
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_e1", "e1")
+    _asyncio.run(
+        flow.async_step_confirm(
+            {
+                "host": "newhost.local",
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
+                "model": MODEL_16A,
+            }
+        )
+    )
+    assert migrated == [(TEST_HOST, "newhost.local")]
+
+
+# ---------------------------------------------------------------------------
+# From test_rc15_hardening.py — C61 repair fix-flow has already_configured error
+# ---------------------------------------------------------------------------
+
+import json
+from pathlib import Path as _Path
+
+_ROOT = _Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "custom_components/eveus/strings.json",
+        "custom_components/eveus/translations/en.json",
+        "custom_components/eveus/translations/uk.json",
+    ],
+)
+def test_repair_fix_flow_has_already_configured_error(path: str) -> None:
+    data = json.loads((_ROOT / path).read_text())
+    errors = data["issues"]["invalid_config"]["fix_flow"]["error"]
+    assert "already_configured" in errors
+
+
+# ---------------------------------------------------------------------------
+# From test_setup_and_auth_hardening.py — F22 repair flow blocks unique_id collision
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_repair_flow_blocks_unique_id_collision():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from custom_components.eveus.repairs import InvalidConfigRepairFlow
+
+    other = MagicMock(entry_id="other", unique_id=TEST_HOST)
+    target = MagicMock(entry_id="target", unique_id="192.168.1.10", data={
+        "host": "192.168.1.10",
+    })
+
+    hass = MagicMock()
+    hass.config_entries.async_entries.return_value = [other, target]
+    hass.config_entries.async_update_entry = MagicMock()
+    hass.config_entries.async_reload = AsyncMock()
+
+    flow = InvalidConfigRepairFlow(hass, "invalid_config_target", "target")
+    flow._get_entry = MagicMock(return_value=target)
+
+    info = {
+        "title": f"Eveus Charger ({TEST_HOST})",
+        "data": {"host": TEST_HOST},
+    }
+    with patch(
+        "custom_components.eveus.repairs.validate_input",
+        AsyncMock(return_value=info),
+    ):
+        result = await flow.async_step_confirm({"host": TEST_HOST})
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "already_configured"}
+    hass.config_entries.async_update_entry.assert_not_called()
