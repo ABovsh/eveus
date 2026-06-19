@@ -1,4 +1,4 @@
-"""Regression: phases dropdown value submitted as string (issue #4)."""
+"""Regression: phases dropdown value submitted as string (issue #5)."""
 from __future__ import annotations
 
 import conftest  # noqa: F401

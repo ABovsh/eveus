@@ -1,12 +1,16 @@
 """Shared test helpers and lightweight dependency shims."""
 from __future__ import annotations
 
+import copy
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
+
+import pytest
 
 TEST_HOST = "192.168.1.50"  # NOSONAR(python:S1313) - RFC 1918 LAN address, test fixture only
 TEST_HOST_ALT = "192.168.1.55"  # NOSONAR(python:S1313) - RFC 1918 LAN address, test fixture only
@@ -540,3 +544,70 @@ def spec_value_fn(key: str, *, phases: int = 1, max_current: int | None = None):
         for spec in create_sensor_specifications(**kwargs)
         if spec.key == key
     )
+
+
+# =============================================================================
+# Real-payload fixtures (single source of truth for /main shape)
+#
+# Synthetic dicts scattered across the suite drift from real firmware. These
+# fixtures derive every payload from a verbatim live capture so a firmware-shape
+# change is updated in ONE place. See test_real_payload_schema.py for the drift
+# guard on the base snapshot.
+# =============================================================================
+
+_REAL_MAIN_FIXTURE = Path(__file__).parent / "fixtures" / "real_main_response.json"
+
+
+def _load_real_main() -> dict[str, Any]:
+    return json.loads(_REAL_MAIN_FIXTURE.read_text())
+
+
+# Only the fields that define a charger lifecycle state. Overlaid on the real
+# 102-field capture so each variant keeps the real schema while exercising
+# state-gated logic (ETA, substate mapping, residual-power guards).
+#
+# state domain (const.CHARGING_STATES): 0 startup, 1 system test, 2 standby,
+# 3 connected, 4 charging, 5 charge complete, 6 charging (paused/limit), 7 error.
+# SESSION_ACTIVE_STATES = {4, 6}.
+STATE_VARIANTS: dict[str, dict[str, Any]] = {
+    "idle": {"state": 2, "subState": 0, "evseEnabled": 0, "curMeas1": 0, "powerMeas": 0},
+    "connected": {"state": 3, "subState": 0, "evseEnabled": 0, "curMeas1": 0, "powerMeas": 0},
+    "charging": {
+        "state": 4, "subState": 0, "evseEnabled": 0,
+        "curMeas1": 14.0, "powerMeas": 3200.0,
+    },
+    "complete": {"state": 5, "subState": 0, "evseEnabled": 0, "curMeas1": 0, "powerMeas": 0},
+    "error": {"state": 7, "subState": 1, "evseEnabled": 1, "curMeas1": 0, "powerMeas": 0},
+}
+
+
+@pytest.fixture(scope="session")
+def real_main() -> dict[str, Any]:
+    """Verbatim live /main capture. Treat as read-only (copy before mutating)."""
+    return _load_real_main()
+
+
+@pytest.fixture
+def main_payload() -> Callable[..., dict[str, Any]]:
+    """Factory: real-shaped /main dict with field overrides.
+
+    Usage: ``main_payload(state=4, currentSet=10)`` returns a deep copy of the
+    real capture with those keys replaced. Keeps the full real field inventory so
+    tests exercise production getters against an authentic schema.
+    """
+    base = _load_real_main()
+
+    def _make(**overrides: Any) -> dict[str, Any]:
+        payload = copy.deepcopy(base)
+        payload.update(overrides)
+        return payload
+
+    return _make
+
+
+@pytest.fixture(params=list(STATE_VARIANTS), ids=list(STATE_VARIANTS))
+def main_state_variant(request: pytest.FixtureRequest) -> dict[str, Any]:
+    """Parametrized real-shaped payload for each charger lifecycle state."""
+    payload = copy.deepcopy(_load_real_main())
+    payload.update(STATE_VARIANTS[request.param])
+    return payload
