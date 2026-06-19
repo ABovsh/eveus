@@ -1,0 +1,52 @@
+name: Mutation Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hostile-firmware-layer:
+    name: Hostile firmware mutation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements_test.txt
+          python -m pip install "homeassistant==2025.1.0" "mutmut>=3.0.0"
+
+      - name: Run mutation tests
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: >-
+          python -m mutmut run
+          --paths-to-mutate
+          "custom_components/eveus/utils.py,custom_components/eveus/_payload.py,custom_components/eveus/common_network.py,custom_components/eveus/soc_limit.py"
+          --tests-dir tests
+          --runner "python -m pytest -q
+          tests/test_property_invariants.py
+          tests/test_firmware_parsing.py
+          tests/test_common_network.py
+          tests/test_soc_limit.py"
+          --simple-output
+          --no-progress
+
+      - name: Show surviving mutants
+        if: failure()
+        run: "python -m mutmut results || true"

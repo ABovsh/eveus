@@ -18,7 +18,20 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from custom_components.eveus._payload import PayloadError, validate_main_payload
-from custom_components.eveus.const import CHARGING_STATES, MODEL_16A, MODEL_MAX_CURRENT
+from conftest import EveusTestUpdater, disable_state_writes
+from custom_components.eveus.const import (
+    CHARGING_STATES,
+    MODEL_16A,
+    MODEL_MAX_CURRENT,
+    MODELS,
+    PHASE_OPTIONS,
+)
+from custom_components.eveus.binary_sensor import (
+    EveusCarConnectedBinarySensor,
+    EveusOcppConnectedBinarySensor,
+    EveusSessionActiveBinarySensor,
+)
+from custom_components.eveus.sensor_definitions import create_sensor_specifications
 from custom_components.eveus.utils import (
     calculate_remaining_seconds,
     calculate_soc_kwh,
@@ -123,6 +136,20 @@ def test_over_model_max_setpoint_is_always_rejected(over) -> None:
 
 
 @given(
+    model=st.sampled_from(MODELS),
+    current_set=st.integers(min_value=0, max_value=max(MODEL_MAX_CURRENT.values()) + 5),
+    state=st.sampled_from(sorted(CHARGING_STATES)),
+)
+def test_setpoint_payload_bounds_follow_selected_model(model, current_set, state) -> None:
+    payload = {"state": state, "currentSet": current_set}
+    if current_set <= MODEL_MAX_CURRENT[model]:
+        assert validate_main_payload(payload, model) is payload
+    else:
+        with pytest.raises(PayloadError):
+            validate_main_payload(payload, model)
+
+
+@given(
     frac=st.floats(min_value=0.01, max_value=_MAX_16A - 0.01).filter(
         lambda x: not float(x).is_integer()
     )
@@ -180,3 +207,64 @@ def test_remaining_seconds_is_none_or_finite_non_negative(
     assert out is None or (
         isinstance(out, float) and math.isfinite(out) and out >= 0
     )
+
+
+# --- Entity factories: generated entities preserve model/phase contracts ---
+
+@given(
+    phases=st.sampled_from(PHASE_OPTIONS),
+    model=st.sampled_from(MODELS),
+    current_set=st.integers(min_value=0, max_value=max(MODEL_MAX_CURRENT.values()) + 5),
+)
+def test_current_set_sensor_factory_uses_model_bound(phases, model, current_set) -> None:
+    specs = create_sensor_specifications(
+        phases=phases,
+        max_current=MODEL_MAX_CURRENT[model],
+    )
+    spec = next(item for item in specs if item.key == "current_set")
+    sensor = spec.create_sensor(EveusTestUpdater({"currentSet": current_set}), 1)
+    disable_state_writes(sensor)
+
+    expected = current_set if current_set <= MODEL_MAX_CURRENT[model] else None
+    assert sensor._get_sensor_value() == expected
+
+
+@given(
+    phases=st.sampled_from(PHASE_OPTIONS),
+    model=st.sampled_from(MODELS),
+)
+def test_sensor_factory_unique_ids_are_stable_and_unique(phases, model) -> None:
+    specs = create_sensor_specifications(
+        phases=phases,
+        max_current=MODEL_MAX_CURRENT[model],
+    )
+    sensors = [
+        spec.create_sensor(EveusTestUpdater({}), device_number=2)
+        for spec in specs
+    ]
+    unique_ids = [sensor.unique_id for sensor in sensors]
+
+    assert len(unique_ids) == len(set(unique_ids))
+    assert all(unique_id.startswith("eveus2_") for unique_id in unique_ids)
+
+
+@given(
+    state=st.integers(min_value=-2, max_value=10),
+    ocpp_connected=HOSTILE,
+)
+def test_binary_sensor_factories_never_coerce_unknown_state_to_false(
+    state, ocpp_connected
+) -> None:
+    updater = EveusTestUpdater({"state": state, "ocppconnected": ocpp_connected})
+    entities = (
+        EveusCarConnectedBinarySensor(updater),
+        EveusSessionActiveBinarySensor(updater),
+        EveusOcppConnectedBinarySensor(updater),
+    )
+
+    for entity in entities:
+        disable_state_writes(entity)
+        assert entity.is_on in (True, False, None)
+    if state not in CHARGING_STATES or state == 7:
+        assert entities[0].is_on is None
+        assert entities[1].is_on is None

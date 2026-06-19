@@ -74,7 +74,11 @@ jobs:
         run: "python -m pytest -q --cov --cov-report=xml --cov-fail-under=90"
 
       - name: Run Home Assistant smoke tests
-        run: "python -m pytest -q -o addopts='' tests_ha"
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: >-
+          timeout --kill-after=30s 5m
+          python -X faulthandler -m pytest -vv -o addopts='' tests_ha
 
       - name: Upload coverage report
         # One leg only: the floor leg feeds SonarCloud, so two matrix legs can't

@@ -149,10 +149,6 @@ def test_update_does_not_fire_on_missing_field(monkeypatch: pytest.MonkeyPatch) 
     assert not deleted
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F01/F02 battery tracker debounce + corrupt vBat
-# ---------------------------------------------------------------------------
-
 from types import SimpleNamespace
 
 
@@ -206,10 +202,6 @@ def test_corrupt_high_vbat_does_not_clear_active_warning() -> None:
     assert tracker._active is True
 
 
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-09 battery voltage plausibility
-# ---------------------------------------------------------------------------
-
 import pytest
 
 
@@ -225,10 +217,6 @@ def test_v09_battery_voltage_accepts_plausible():
     from custom_components.eveus import sensor_definitions as sd
     assert sd.get_battery_voltage(upd, None) == 3.0
 
-
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py / test_hardening_4_10_0.py — battery voltage
-# ---------------------------------------------------------------------------
 
 def test_battery_voltage_rejects_negative() -> None:
     from custom_components.eveus import sensor_definitions as sd

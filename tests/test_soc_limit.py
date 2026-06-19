@@ -384,10 +384,6 @@ def test_async_shutdown_disables_and_cancels_inflight_stop():
     asyncio.run(scenario())
 
 
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-02 minVoltage static floor, V-03 suspendLimits gating, V-17
-# ---------------------------------------------------------------------------
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 

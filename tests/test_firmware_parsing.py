@@ -22,10 +22,6 @@ from custom_components.eveus.sensor_definitions import (
 from custom_components.eveus import ev_sensors
 
 
-# ---------------------------------------------------------------------------
-# From test_numeric_payload_hardening.py
-# ---------------------------------------------------------------------------
-
 def test_get_safe_value_rejects_bool_for_numeric():
     assert get_safe_value({"x": True}, "x", float, default=None) is None
     assert get_safe_value({"x": False}, "x", int, default=None) is None
@@ -109,10 +105,6 @@ def test_ev_energy_charged_rejects_negative():
     assert ev_sensors.BaseEVHelperSensor._get_energy_charged(obj2) == 3.5
 
 
-# ---------------------------------------------------------------------------
-# From test_rc6_hardening.py — get_safe_value, non-finite, fractional
-# ---------------------------------------------------------------------------
-
 from custom_components.eveus import utils
 
 
@@ -126,18 +118,6 @@ def test_get_safe_value_rejects_non_finite(bad: float) -> None:
     assert utils.get_safe_value({"x": bad}, "x", int) is None
     assert utils.get_safe_value({"x": bad}, "x", float) is None
 
-
-def test_state_bool_and_finite_guard_present_in_source() -> None:
-    import inspect
-    src = inspect.getsource(__import__("custom_components.eveus.common_network",
-                                       fromlist=["x"]))
-    assert "'state' field is boolean" in src
-    assert "'state' field is not finite" in src
-
-
-# ---------------------------------------------------------------------------
-# From test_rc7_hardening.py — get_safe_value int/fractional, outlier rejection
-# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("bad", [4.9, 0.9, 1.2, -0.5])
 def test_get_safe_value_int_rejects_fractional_float(bad: float) -> None:
@@ -194,10 +174,6 @@ def test_adaptive_telemetry_rejects_outliers() -> None:
     assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": 999}), None) is None
 
 
-# ---------------------------------------------------------------------------
-# From test_rc12_hardening.py — measurement sensor outlier rejection
-# ---------------------------------------------------------------------------
-
 @pytest.mark.parametrize(
     "getter,key,good,expected",
     [
@@ -228,10 +204,6 @@ def test_active_rate_cost_rejects_finite_outlier() -> None:
     good = EveusTestUpdater(data={"activeTarif": 0, "tarif": 450})
     assert sd.get_active_rate_cost(good, None) == pytest.approx(4.5)
 
-
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — _safe_str, device_info from firmware
-# ---------------------------------------------------------------------------
 
 from custom_components.eveus.utils import (
     _safe_str,
@@ -276,10 +248,6 @@ def test_payload_accepts_integral_current_set() -> None:
     assert validate_main_payload({"state": 4, "currentSet": 16})["currentSet"] == 16
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py (B-F06, F21) — safe_str, device metadata
-# ---------------------------------------------------------------------------
-
 def test_safe_str_rejects_non_finite_floats() -> None:
     assert _safe_str(float("nan")) == "Unknown"
     assert _safe_str(float("inf")) == "Unknown"
@@ -306,10 +274,6 @@ def test_valid_serial_is_kept() -> None:
     assert info["serial_number"] == "SN123"
 
 
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — device firmware metadata
-# ---------------------------------------------------------------------------
-
 def test_device_info_omits_hw_version():
     info = utils.get_device_info(
         TEST_HOST,
@@ -325,10 +289,6 @@ def test_device_info_omits_hw_version_even_with_legacy_hardware_key():
     info = utils.get_device_info(TEST_HOST, {"verFWMain": "x1", "hardware": "h1"})
     assert "hw_version" not in info
 
-
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-22 metadata strings, capped reader
-# ---------------------------------------------------------------------------
 
 def test_v22_metadata_strings_are_length_capped():
     huge = "x" * 100_000
@@ -369,10 +329,6 @@ def test_v22_capped_reader_parses_small_body():
     assert data == {"state": 4, "currentSet": 16}
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — B-F06, B-F07, payload sub-minimum current
-# ---------------------------------------------------------------------------
-
 def test_payload_rejects_current_above_global_ceiling_without_model() -> None:
     from custom_components.eveus import _payload
     with pytest.raises(_payload.PayloadError):
@@ -400,10 +356,6 @@ def test_payload_still_rejects_negative_current() -> None:
         _payload.validate_main_payload({"state": 4, "currentSet": -1})
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_10_0.py — F08/F09 normalize_soc_input, A01 huge-int
-# ---------------------------------------------------------------------------
-
 from custom_components.eveus.utils import normalize_soc_input
 
 
@@ -421,10 +373,6 @@ def test_normalize_soc_input_still_clamps_real_values() -> None:
     assert normalize_soc_input("initial_soc", 150, 20.0) == 100.0
     assert normalize_soc_input("initial_soc", "42", 20.0) == 42.0
 
-
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — coordinator rejects overflowing currentSet
-# ---------------------------------------------------------------------------
 
 class _RespOF:
     def __init__(self, payload):
@@ -494,10 +442,6 @@ def test_coordinator_rejects_overflowing_current_set(monkeypatch) -> None:
         asyncio.run(updater._async_update_data())
     assert updater.available is False
 
-
-# ---------------------------------------------------------------------------
-# From test_rc7_hardening.py — payload validation, fractional state, boolean state
-# ---------------------------------------------------------------------------
 
 class _RespRC7:
     def __init__(self, *, status: int = 200, payload: object = None) -> None:
@@ -599,10 +543,6 @@ def test_runtime_validation_rejects_boolean_state(bad: bool) -> None:
         validate_main_payload({"state": bad, "currentSet": 16}, "16A")
 
 
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py / test_rc7_hardening.py — validate_finite_number
-# ---------------------------------------------------------------------------
-
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), True, False])
 def test_validate_finite_number_rejects_bad_input(bad) -> None:
     from homeassistant.exceptions import HomeAssistantError
@@ -618,10 +558,6 @@ def test_validate_finite_number_accepts_normal_input(good) -> None:
 
     assert number_mod._validate_finite_number(good, "Limit") == float(good)
 
-
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F20 device info refreshes on firmware drift
-# ---------------------------------------------------------------------------
 
 def _fw_diag_sensor(updater):
     from custom_components.eveus.sensor_definitions import (
@@ -653,10 +589,6 @@ def test_device_info_refreshes_on_firmware_drift() -> None:
     sensor._maybe_finalize_device_info()
     assert sensor._attr_device_info["sw_version"] == "2.0"
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_hardening.py — A07 legacy hw_version cleared when info final
-# ---------------------------------------------------------------------------
 
 def test_registry_hw_version_cleared_when_info_already_final(monkeypatch) -> None:
     from types import SimpleNamespace
@@ -694,10 +626,6 @@ def test_registry_hw_version_cleared_when_info_already_final(monkeypatch) -> Non
     assert updated == {}
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — A-F05 finalized metadata survives fallback fields
-# ---------------------------------------------------------------------------
-
 def test_finalized_metadata_survives_fallback_fields() -> None:
     from custom_components.eveus.common_base import _preserve_finalized_metadata
 
@@ -719,29 +647,65 @@ def test_finalized_metadata_survives_fallback_fields() -> None:
     assert merged["serial_number"] == "SN123"
 
 
-# ---------------------------------------------------------------------------
-# From test_rc7_hardening.py — F06 command failure log and F21 permanent 4xx
-# ---------------------------------------------------------------------------
-
 def test_command_failure_log_uses_error_type_not_repr() -> None:
-    import inspect
+    import asyncio
+    import logging
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    import aiohttp
     from custom_components.eveus import common_command
 
-    src = inspect.getsource(common_command.CommandManager.send_command)
-    assert "type(last_error).__name__" in src
+    manager = common_command.CommandManager(SimpleNamespace())
+    manager._post_command = AsyncMock(
+        side_effect=aiohttp.ClientResponseError(
+            request_info=MagicMock(real_url="http://192.168.1.50/pageEvent"),
+            history=(),
+            status=400,
+            message="Bad Request",
+        )
+    )
+
+    logger = logging.getLogger(common_command.__name__)
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Capture()
+    old_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    try:
+        asyncio.run(manager.send_command("currentSet", 7))
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+
+    messages = [record.getMessage() for record in records]
+    assert any("ClientResponseError" in message for message in messages)
+    assert all("192.168.1.50" not in message for message in messages)
 
 
 def test_command_retry_skips_permanent_4xx_source_check() -> None:
-    import inspect
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    import aiohttp
     from custom_components.eveus import common_command
 
-    src = inspect.getsource(common_command)
-    assert "(408, 425, 429, 500, 502, 503, 504)" in src
+    manager = common_command.CommandManager(SimpleNamespace())
+    response_error = aiohttp.ClientResponseError(
+        request_info=MagicMock(),
+        history=(),
+        status=400,
+        message="Bad Request",
+    )
+    manager._post_command = AsyncMock(side_effect=response_error)
 
+    assert asyncio.run(manager.send_command("currentSet", 7)) is False
+    manager._post_command.assert_awaited_once()
 
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — force_refresh_bypass_counter_untouched
-# ---------------------------------------------------------------------------
 
 def test_force_refresh_bypass_counter_untouched():
     import time as _t

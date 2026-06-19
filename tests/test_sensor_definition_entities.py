@@ -161,10 +161,6 @@ def test_connection_helpers_handle_errors() -> None:
     assert get_connection_attrs(updater, None) == {"status": "Error"}
 
 
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — substate returns None for unknown state
-# ---------------------------------------------------------------------------
-
 def test_substate_returns_none_for_unknown_state() -> None:
     from conftest import EveusTestUpdater
     from custom_components.eveus import sensor_definitions as sd
@@ -172,10 +168,6 @@ def test_substate_returns_none_for_unknown_state() -> None:
     updater = EveusTestUpdater({"state": 99, "subState": 1})
     assert sd.get_charger_substate(updater, None) is None
 
-
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — D0 all sensor specs have valid device/state class pairs
-# ---------------------------------------------------------------------------
 
 def test_all_sensor_specs_have_valid_device_and_state_class_pairs() -> None:
     from homeassistant.components.sensor.const import DEVICE_CLASS_STATE_CLASSES
@@ -206,10 +198,6 @@ def test_soc_energy_uses_energy_storage_device_class() -> None:
     allowed = DEVICE_CLASS_STATE_CLASSES.get(SensorDeviceClass.ENERGY_STORAGE)
     assert entity.state_class in allowed
 
-
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — D1 monetary cost sensors track resets via last_reset
-# ---------------------------------------------------------------------------
 
 from datetime import datetime, timedelta as _td, timezone as _tz
 
@@ -305,10 +293,6 @@ def test_cost_sensor_does_not_treat_offline_gap_as_reset(monkeypatch) -> None:
     assert entity.last_reset == first_reset
 
 
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — D3 connection quality
-# ---------------------------------------------------------------------------
-
 def test_connection_quality_not_healthy_before_first_success() -> None:
     from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
     from custom_components.eveus.common_network import EveusUpdater
@@ -332,10 +316,6 @@ def test_connection_quality_healthy_after_success() -> None:
     assert updater.connection_quality["is_healthy"] is True
 
 
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — I3 updater exposes basic_auth accessor
-# ---------------------------------------------------------------------------
-
 def test_updater_exposes_basic_auth_accessor() -> None:
     from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
     from custom_components.eveus.common_network import EveusUpdater
@@ -346,10 +326,6 @@ def test_updater_exposes_basic_auth_accessor() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     assert updater.basic_auth is updater._basic_auth
 
-
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — RSSI accepts typical range
-# ---------------------------------------------------------------------------
 
 def test_wifi_rssi_accepts_typical_range() -> None:
     from conftest import EveusTestUpdater
@@ -365,10 +341,6 @@ def test_wifi_rssi_rejects_positive_values(bad: int) -> None:
 
     assert sd.get_wifi_rssi(EveusTestUpdater({"RSSI": bad}), None) is None
 
-
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — cost sensors monetary ISO unit
-# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("key", ["counter_a_cost", "counter_b_cost", "session_cost"])
 def test_cost_sensors_are_monetary_iso(key: str) -> None:
@@ -391,10 +363,6 @@ def test_session_cost_is_monetary_total() -> None:
     assert by_key["session_cost"].device_class == SensorDeviceClass.MONETARY
 
 
-# ---------------------------------------------------------------------------
-# From test_rc11_hardening.py — B-F01/B-F02 session time negative/valid
-# ---------------------------------------------------------------------------
-
 def test_negative_session_time_reads_unknown() -> None:
     from conftest import EveusTestUpdater
 
@@ -410,10 +378,6 @@ def test_valid_session_time_still_renders() -> None:
     assert get_session_time(updater, None) == "1h 01m"
     assert get_session_time_attrs(updater, None) == {"duration_seconds": 3661}
 
-
-# ---------------------------------------------------------------------------
-# From test_rc11_hardening.py — B-F03..B-F06/B-F12 energy/cost getters reject outliers
-# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
     "getter,key",
@@ -435,10 +399,6 @@ def test_energy_cost_getters_reject_finite_outliers(getter, key: str) -> None:
     assert fn(EveusTestUpdater(data={key: 1e100}), None) is None
     assert fn(EveusTestUpdater(data={key: 42.5}), None) is not None
 
-
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — schedule and adaptive bounds
-# ---------------------------------------------------------------------------
 
 def test_schedule_current_limit_dropped_when_above_model_max() -> None:
     from conftest import EveusTestUpdater
@@ -500,10 +460,6 @@ def test_schedule_current_limit_bounded_to_model_max() -> None:
     assert ok["current_limit_a"] == 12
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — C31 session time attrs reject absurd
-# ---------------------------------------------------------------------------
-
 def test_session_time_attrs_reject_absurd_duration() -> None:
     from conftest import EveusTestUpdater
     from custom_components.eveus.const import MAX_SESSION_TIME_SECONDS
@@ -515,10 +471,6 @@ def test_session_time_attrs_reject_absurd_duration() -> None:
     updater = EveusTestUpdater({"sessionTime": 3600})
     assert get_session_time_attrs(updater, None) == {"duration_seconds": 3600}
 
-
-# ---------------------------------------------------------------------------
-# From test_rc6_hardening.py — schedule current limit via different route
-# ---------------------------------------------------------------------------
 
 def test_active_rate_cost_rejects_negative_tariff() -> None:
     from conftest import EveusTestUpdater
@@ -535,10 +487,6 @@ def test_active_rate_cost_returns_value_when_positive() -> None:
     updater = EveusTestUpdater({"activeTarif": 1, "tarifAValue": 250})
     assert sd.get_active_rate_cost(updater, None) == 2.5
 
-
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-12 substate in error state / V-21 schedule precision
-# ---------------------------------------------------------------------------
 
 def test_v12_error_state_zero_substate_is_unknown() -> None:
     upd = SimpleNamespace(available=True, data={"state": 7, "subState": 0})
@@ -562,10 +510,6 @@ def test_v21_schedule_energy_has_display_precision() -> None:
         if desc.key.endswith("energy_limit"):
             assert desc.display_precision == 3
 
-
-# ---------------------------------------------------------------------------
-# From test_rc10_hardening.py — F07/F08 cost-sensor restore path
-# ---------------------------------------------------------------------------
 
 import asyncio as _asyncio
 
@@ -630,10 +574,6 @@ def test_restore_accepts_datetime_last_reset() -> None:
     assert entity._attr_last_reset == reset
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — B-F05 session active unknown in error state
-# ---------------------------------------------------------------------------
-
 def test_session_active_unknown_in_error_state() -> None:
     from custom_components.eveus.binary_sensor import _session_active_is_on
 
@@ -641,10 +581,6 @@ def test_session_active_unknown_in_error_state() -> None:
     assert _session_active_is_on({"state": 4}) is True
     assert _session_active_is_on({"state": 2}) is False
 
-
-# ---------------------------------------------------------------------------
-# From test_rc6_hardening.py / test_rc5_hardening.py — switch rejects out-of-domain
-# ---------------------------------------------------------------------------
 
 def test_switch_rejects_out_of_domain_state_value() -> None:
     from conftest import EveusTestUpdater
@@ -655,10 +591,6 @@ def test_switch_rejects_out_of_domain_state_value() -> None:
     sw = BaseSwitchEntity(updater, description, 1)
     assert sw._resolve_state() is None
 
-
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — soc_number_survives_corrupt_restore
-# ---------------------------------------------------------------------------
 
 def test_soc_number_survives_corrupt_restore_value(monkeypatch) -> None:
     from conftest import EveusTestUpdater, HelperHass, disable_state_writes
@@ -685,10 +617,6 @@ def test_soc_number_survives_corrupt_restore_value(monkeypatch) -> None:
     assert entity.native_value == 50
 
 
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — missing_or_corrupt_fields_leave_state_unchanged
-# ---------------------------------------------------------------------------
-
 def test_missing_or_corrupt_fields_leave_state_unchanged() -> None:
     from custom_components.eveus import _ClockDriftTracker
     import time
@@ -706,20 +634,6 @@ def test_missing_or_corrupt_fields_leave_state_unchanged() -> None:
     assert tracker.evaluate(_p(900)) is True
 
 
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — reauth_emits_plaintext_warning, is_device_number_taken
-# ---------------------------------------------------------------------------
-
-def test_reauth_emits_plaintext_warning_in_source() -> None:
-    import inspect
-    from custom_components.eveus import config_flow
-
-    assert "_warn_if_plaintext" in inspect.getsource(config_flow.validate_input)
-    assert "validate_input" in inspect.getsource(
-        config_flow.ConfigFlow.async_step_reauth_confirm
-    )
-
-
 def test_warn_if_plaintext_emits_for_http(caplog) -> None:
     from custom_components.eveus import config_flow
     import logging
@@ -735,10 +649,6 @@ def test_is_device_number_taken_helper_exists() -> None:
 
     assert callable(utils.is_device_number_taken)
 
-
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — ETA division overflow
-# ---------------------------------------------------------------------------
 
 def test_eta_seconds_is_none_when_division_overflows() -> None:
     from custom_components.eveus.utils import calculate_remaining_seconds
@@ -762,10 +672,6 @@ def test_eta_seconds_still_finite_for_normal_power() -> None:
     assert result is not None and math.isfinite(result) and result > 0
 
 
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-08 tiny power
-# ---------------------------------------------------------------------------
-
 def test_v08_tiny_power_returns_no_eta() -> None:
     from custom_components.eveus.utils import calculate_remaining_seconds
 
@@ -787,10 +693,6 @@ def test_v08_normal_power_still_returns_eta() -> None:
     )
     assert secs is not None and secs > 0
 
-
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-07 current set sensor displays sub-7
-# ---------------------------------------------------------------------------
 
 def test_v07_current_set_sensor_displays_sub_7() -> None:
     from custom_components.eveus import sensor_definitions as sd
@@ -819,10 +721,6 @@ def test_v07_current_number_displays_sub7_but_writes_floor() -> None:
     upd.send_command.assert_awaited_with("currentSet", 7)
 
 
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-14 charger number prefers fresh device over restored
-# ---------------------------------------------------------------------------
-
 def test_v14_charger_number_prefers_fresh_device_over_restored(monkeypatch) -> None:
     import asyncio as _asyncio3
     import time as _t
@@ -846,10 +744,6 @@ def test_v14_charger_number_prefers_fresh_device_over_restored(monkeypatch) -> N
     _asyncio3.run(num.async_added_to_hass())
     assert num.native_value == 14
 
-
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-16 SOC stop auth failure
-# ---------------------------------------------------------------------------
 
 def test_v16_soc_stop_auth_failure_starts_reauth_and_withdraws_token() -> None:
     import asyncio as _asyncio4
@@ -886,10 +780,6 @@ def test_v16_soc_stop_auth_failure_starts_reauth_and_withdraws_token() -> None:
     assert ctrl._pending is None
 
 
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-21 schedule energy display precision
-# ---------------------------------------------------------------------------
-
 def test_v21_schedule_energy_has_display_precision_alias() -> None:
     import custom_components.eveus.number as number_mod
 
@@ -897,10 +787,6 @@ def test_v21_schedule_energy_has_display_precision_alias() -> None:
         if desc.key.endswith("energy_limit"):
             assert desc.display_precision == 3
 
-
-# ---------------------------------------------------------------------------
-# From test_rc10_hardening.py — V-10 drift clears after sync
-# ---------------------------------------------------------------------------
 
 def test_v10_drift_clears_after_sync() -> None:
     import time
@@ -922,10 +808,6 @@ def test_v10_drift_clears_after_sync() -> None:
         dt_util.set_default_time_zone(original)
 
 
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — schedule attrs drop invalid current AND energy
-# ---------------------------------------------------------------------------
-
 def test_schedule_attrs_drop_invalid_current_and_energy() -> None:
     from conftest import EveusTestUpdater
     from custom_components.eveus import sensor_definitions as sd
@@ -945,10 +827,6 @@ def test_schedule_attrs_drop_invalid_current_and_energy() -> None:
     assert "energy_limit_kwh" not in attrs
 
 
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — charging current hides out-of-range device value
-# ---------------------------------------------------------------------------
-
 def test_charging_current_hides_out_of_range_device_value() -> None:
     from conftest import EveusTestUpdater
     from custom_components.eveus import number as number_mod
@@ -957,10 +835,6 @@ def test_charging_current_hides_out_of_range_device_value() -> None:
     num = number_mod.EveusCurrentNumber(updater, "16A", 1)
     assert num._resolve_value() is None
 
-
-# ---------------------------------------------------------------------------
-# From test_rc6_hardening.py — F19 time drift rejects negative/far future clock
-# ---------------------------------------------------------------------------
 
 def test_time_drift_rejects_negative_clock() -> None:
     from conftest import EveusTestUpdater
@@ -980,10 +854,6 @@ def test_time_drift_rejects_far_future_clock() -> None:
     ) is None
 
 
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — B06 session time rejects absurd duration
-# ---------------------------------------------------------------------------
-
 def test_session_time_rejects_absurd_duration() -> None:
     from conftest import EveusTestUpdater
     from custom_components.eveus.sensor_definitions import get_session_time
@@ -991,10 +861,6 @@ def test_session_time_rejects_absurd_duration() -> None:
     assert get_session_time(EveusTestUpdater(data={"sessionTime": 10**12}), None) is None
     assert get_session_time(EveusTestUpdater(data={"sessionTime": 3600}), None) == "1h 00m"
 
-
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — D2 current set sensor bounded by model max
-# ---------------------------------------------------------------------------
 
 def test_current_set_sensor_rejects_value_above_model_maximum() -> None:
     from conftest import EveusTestUpdater, disable_state_writes
@@ -1021,10 +887,6 @@ def test_current_set_sensor_accepts_value_within_model_maximum() -> None:
 
     assert entity._get_sensor_value() == 14
 
-
-# ---------------------------------------------------------------------------
-# From test_privacy_and_soc_hardening.py — cost sensors use monetary ISO unit
-# ---------------------------------------------------------------------------
 
 def test_cost_sensors_use_monetary_iso_unit() -> None:
     from homeassistant.components.sensor import SensorDeviceClass

@@ -14,10 +14,6 @@ import pytest
 from conftest import EveusTestUpdater, disable_state_writes
 
 
-# ---------------------------------------------------------------------------
-# From test_rc11_hardening.py — A-F06 command rate-limit clamped on backward clock
-# ---------------------------------------------------------------------------
-
 def test_command_rate_limit_wait_is_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
     from custom_components.eveus import common_command
@@ -44,10 +40,6 @@ def test_command_rate_limit_wait_is_clamped(monkeypatch: pytest.MonkeyPatch) -> 
     assert all(delay <= 1.0 for delay in sleeps)
 
 
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — A05 optimistic TTL expiry on backward clock
-# ---------------------------------------------------------------------------
-
 def test_optimistic_value_expires_when_clock_steps_backward() -> None:
     from custom_components.eveus.common_base import OptimisticControlMixin
 
@@ -70,10 +62,6 @@ def test_optimistic_value_valid_within_ttl() -> None:
     stamp = ctrl._optimistic_value_time
     assert ctrl._optimistic_value_is_valid(stamp + 5, 120) is True
 
-
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F05/F06/F07, F10, F11 clock/availability
-# ---------------------------------------------------------------------------
 
 def _real_updater():
     from custom_components.eveus.common_network import EveusUpdater
@@ -166,10 +154,6 @@ def test_control_fallback_rejects_future_read_timestamp() -> None:
     assert entity._resolve_value() is None
 
 
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — O-03 RateLog monotonic
-# ---------------------------------------------------------------------------
-
 def test_o03_ratelog_uses_monotonic_clock(monkeypatch):
     import custom_components.eveus.utils as u
     from custom_components.eveus.utils import RateLog
@@ -196,10 +180,6 @@ def test_o03_ratelog_first_log_emits_even_with_small_monotonic(monkeypatch):
     assert rl.should_log(300, key="x") is True   # first keyed call too
 
 
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — polling cadence for invalid/known state
-# ---------------------------------------------------------------------------
-
 def test_invalid_state_keeps_offline_cadence() -> None:
     from datetime import timedelta
     from custom_components.eveus import common_network
@@ -221,10 +201,6 @@ def test_known_state_picks_idle_cadence() -> None:
     updater._tune_update_interval({"state": 3})  # Connected
     assert updater.update_interval == timedelta(seconds=common_network.IDLE_UPDATE_INTERVAL)
 
-
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — state transition burst, unchanged, first poll
-# ---------------------------------------------------------------------------
 
 def test_state_transition_triggers_burst(monkeypatch) -> None:
     from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
@@ -285,10 +261,6 @@ def test_invalid_state_neither_bursts_nor_clears_memory(monkeypatch) -> None:
     updater._record_success(0.1, {"state": 2})
     assert calls == []
 
-
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py / rc16_features.py — offline poll, backoff, recovery
-# ---------------------------------------------------------------------------
 
 def test_offline_poll_cycle_is_at_most_sixty_seconds():
     from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
@@ -361,10 +333,6 @@ def test_recovery_needs_two_successes_before_fast_cadence():
     assert updater.update_interval.total_seconds() == CHARGING_UPDATE_INTERVAL
 
 
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — clock drift fires after three polls above threshold
-# ---------------------------------------------------------------------------
-
 def test_fires_after_three_polls_above_ten_minutes() -> None:
     from custom_components.eveus import _ClockDriftTracker
 
@@ -376,10 +344,6 @@ def test_fires_after_three_polls_above_ten_minutes() -> None:
     assert tracker.evaluate(_p(900)) is None
     assert tracker.evaluate(_p(900)) is True
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_hardening.py — A09 failure during probation resets counter
-# ---------------------------------------------------------------------------
 
 def test_failure_during_probation_resets_counter() -> None:
     from types import SimpleNamespace
@@ -402,10 +366,6 @@ def test_failure_during_probation_resets_counter() -> None:
     updater._record_failure(ValueError("boom"))
     assert updater._offline_probation == 2
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_hardening.py — A11/A12 clock drift clear and hover
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def _ha_local_clock_utc_plus_3_avail():
@@ -451,10 +411,6 @@ def test_clock_drift_hover_then_resync_needs_consecutive_in_sync_polls(_ha_local
     assert tracker.evaluate(_payload(10)) is False
 
 
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — flapping state debounced, single blip
-# ---------------------------------------------------------------------------
-
 def test_flapping_state_is_debounced(monkeypatch) -> None:
     from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
     from custom_components.eveus.common_network import EveusUpdater
@@ -486,10 +442,6 @@ def test_single_blip_does_not_enter_probation():
     updater._record_success(0.1, {"state": 4})
     assert updater.update_interval.total_seconds() == CHARGING_UPDATE_INTERVAL
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — clock drift additional tests
-# ---------------------------------------------------------------------------
 
 def test_negative_drift_also_fires(_ha_local_clock_utc_plus_3_avail) -> None:
     from custom_components.eveus import _ClockDriftTracker

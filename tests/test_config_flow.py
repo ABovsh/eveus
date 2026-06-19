@@ -733,6 +733,60 @@ def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result["data"][CONF_HOST] == TEST_HOST
 
 
+def test_reauth_validates_live_http_entry_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict] = []
+
+    async def fake_validate_input(hass, data):
+        seen.append(dict(data))
+        return {
+            "title": f"Eveus Charger ({TEST_HOST})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(
+                **{
+                    CONF_HOST: TEST_HOST,
+                    CONF_SCHEME: "http",
+                    CONF_USERNAME: "old",
+                    CONF_PASSWORD: "old",
+                }
+            ),
+            "unique_id": TEST_HOST,
+        },
+    )()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
+        "type": "abort",
+        "reason": "reauth_successful",
+        **kwargs,
+    }
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
+        )
+    )
+
+    assert result["reason"] == "reauth_successful"
+    assert len(seen) == 1
+    for key, value in entry.data.items():
+        if key in (CONF_USERNAME, CONF_PASSWORD):
+            continue
+        assert seen[0][key] == value
+    assert seen[0][CONF_USERNAME] == TEST_USERNAME
+    assert seen[0][CONF_PASSWORD] == TEST_PASSWORD
+    assert seen[0][CONF_SCHEME] == "http"
+
+
 def test_reauth_step_delegates_to_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
     flow = config_flow.ConfigFlow()
 
@@ -1288,10 +1342,6 @@ def test_40a_model_selectable_in_user_schema() -> None:
     assert validated["model"] == MODEL_40A
 
 
-# ---------------------------------------------------------------------------
-# From test_privacy_and_soc_hardening.py — F01 host validation
-# ---------------------------------------------------------------------------
-
 import pytest
 import voluptuous as vol
 
@@ -1325,10 +1375,6 @@ def test_split_host_preserves_ipv4_case_irrelevant():
     assert host == "192.168.1.10"
 
 
-# ---------------------------------------------------------------------------
-# From test_setup_and_auth_hardening.py — host/credential validation
-# ---------------------------------------------------------------------------
-
 @pytest.mark.parametrize("raw", [
     "https://host/main?x=1",
     "host#frag",
@@ -1352,10 +1398,6 @@ def test_split_host_rejects_port_zero():
         _split_host_and_scheme("host:0")
 
 
-# ---------------------------------------------------------------------------
-# From test_rc6_hardening.py — F13 host path/credentials rejection
-# ---------------------------------------------------------------------------
-
 def test_split_host_rejects_path_and_credentials() -> None:
     from custom_components.eveus.config_flow import _split_host_and_scheme
     with pytest.raises(vol.Invalid):
@@ -1363,10 +1405,6 @@ def test_split_host_rejects_path_and_credentials() -> None:
     with pytest.raises(vol.Invalid):
         _split_host_and_scheme("http://1.2.3.4/main")
 
-
-# ---------------------------------------------------------------------------
-# From test_rc10_hardening.py — F01 non-string credentials, F02 infinite phases
-# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
     "username,password",
@@ -1391,10 +1429,6 @@ def test_safe_phases_default_handles_infinite_value() -> None:
     # Building the reconfigure schema with corrupt stored phases must not raise.
     config_flow.build_user_data_schema({"phases": float("inf")})
 
-
-# ---------------------------------------------------------------------------
-# From test_rc11_hardening.py — C-F01 control chars, C-F02/C-F03 duplicate host, C-F07 corrupt soc_mode
-# ---------------------------------------------------------------------------
 
 import asyncio as _asyncio
 from types import SimpleNamespace
@@ -1528,10 +1562,6 @@ def test_reauth_normalizes_corrupt_stored_soc_mode(
     assert captured[CONF_SOC_MODE] in SOC_MODE_OPTIONS
 
 
-# ---------------------------------------------------------------------------
-# From test_rc12_hardening.py — V1 unbalanced IPv6 bracket
-# ---------------------------------------------------------------------------
-
 @pytest.mark.parametrize("raw", ["[::1", "http://[::1", "[fe80::", "https://[2001:db8::1"])
 def test_unbalanced_ipv6_bracket_raises_invalid(raw: str) -> None:
     from custom_components.eveus import config_flow as cf
@@ -1545,10 +1575,6 @@ def test_balanced_ipv6_still_accepted() -> None:
     assert host == "[::1]"
     assert scheme == "http"
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_10_0.py — F06 bool phases, F19 bare IPv6
-# ---------------------------------------------------------------------------
 
 def test_normalize_user_input_rejects_bool_phases() -> None:
     from custom_components.eveus.config_flow import normalize_user_input
@@ -1580,10 +1606,6 @@ def test_split_host_accepts_bare_ipv6(raw, expected_host) -> None:
     assert scheme in ("http", "https")
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F12 SOC schema serializable, F17 latin1 creds
-# ---------------------------------------------------------------------------
-
 def test_soc_schema_is_serializable_and_validates_range() -> None:
     import homeassistant.helpers.config_validation as cv
     import voluptuous_serialize
@@ -1610,10 +1632,6 @@ def test_credentials_must_be_latin1_encodable() -> None:
         TEST_PASSWORD,
     )
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_hardening.py — A13 fractional phases
-# ---------------------------------------------------------------------------
 
 def test_normalize_user_input_rejects_fractional_phases() -> None:
     from custom_components.eveus.config_flow import normalize_user_input
@@ -1643,10 +1661,6 @@ def test_phases_whole_number_and_bool_rejected_by_normalize() -> None:
             normalize_user_input({**base, "phases": bad})
 
 
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — phases submitted as string, SOC prune list
-# ---------------------------------------------------------------------------
-
 def test_user_schema_accepts_phase_count_submitted_as_string():
     # The mobile-app frontend submits select values as strings; the schema
     # must coerce "1"/"3" instead of failing "value must be one of [1, 3]".
@@ -1666,10 +1680,6 @@ def test_user_schema_accepts_phase_count_submitted_as_string():
     )
     assert result[CONF_PHASES] == 3
 
-
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-19 equivalent addresses canonicalize
-# ---------------------------------------------------------------------------
 
 def test_v19_default_http_port_is_dropped():
     from custom_components.eveus import config_flow as cf
@@ -1697,10 +1707,6 @@ def test_v19_ipv6_literals_canonicalize_to_same_host():
     h2, _ = cf._split_host_and_scheme("[0:0:0:0:0:0:0:1]")
     assert h1 == h2 == "[::1]"
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — C-F03 reauth rebases, R-F01 bool phases
-# ---------------------------------------------------------------------------
 
 def test_reauth_rebases_on_live_entry_data(monkeypatch) -> None:
     from custom_components.eveus import config_flow as cf
@@ -1808,10 +1814,6 @@ def test_reauth_revalidates_when_host_changes_mid_flight(monkeypatch) -> None:
     assert captured["data"]["username"] == TEST_USERNAME
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F16 reconfigure migrates device identifiers
-# ---------------------------------------------------------------------------
-
 def test_reconfigure_migrates_device_identifiers(monkeypatch) -> None:
     from custom_components.eveus import config_flow as cf
     from custom_components.eveus.const import DOMAIN
@@ -1844,10 +1846,6 @@ def test_reconfigure_migrates_device_identifiers(monkeypatch) -> None:
     assert identifiers == {(DOMAIN, "10.0.0.9"), (DOMAIN, "10.0.0.9_2"), ("other", "x")}
 
 
-# ---------------------------------------------------------------------------
-# From test_setup_and_auth_hardening.py — coordinator does not store plaintext
-# ---------------------------------------------------------------------------
-
 def test_coordinator_does_not_store_plaintext_credentials():
     import aiohttp
     from unittest.mock import MagicMock, patch
@@ -1861,10 +1859,6 @@ def test_coordinator_does_not_store_plaintext_credentials():
     assert not hasattr(u, "password")
     assert u._basic_auth == aiohttp.BasicAuth("user", "pw")
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_10_0.py — prefill from helper sanitizes
-# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
     "state,expected",
@@ -1886,10 +1880,6 @@ def test_prefill_from_helper_sanitizes(state, expected) -> None:
     assert out == expected
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_10_0.py — invalid stored soc_mode resolves to advanced
-# ---------------------------------------------------------------------------
-
 @pytest.mark.parametrize(
     "stored,expected",
     [
@@ -1910,10 +1900,6 @@ def test_get_soc_mode_defaults_invalid_to_advanced(stored, expected) -> None:
     data = {} if stored is None else {CONF_SOC_MODE: stored}
     assert get_soc_mode(SimpleNamespace(data=data)) == expected
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — C-F03 reauth rebases on live entry data
-# ---------------------------------------------------------------------------
 
 def test_reauth_rebases_on_live_entry_data(monkeypatch) -> None:
     import asyncio
@@ -1963,10 +1949,6 @@ def test_reauth_rebases_on_live_entry_data(monkeypatch) -> None:
     assert captured["data"]["username"] == TEST_USERNAME
     assert captured["data"]["password"] == TEST_PASSWORD
 
-
-# ---------------------------------------------------------------------------
-# From test_rc10_hardening.py — F03 infinite device_number on other entry does not crash
-# ---------------------------------------------------------------------------
 
 def test_infinite_device_number_on_other_entry_does_not_crash() -> None:
     from custom_components.eveus import utils
