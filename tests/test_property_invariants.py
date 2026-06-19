@@ -80,6 +80,20 @@ def test_get_safe_value_never_returns_bool_for_numeric_converter(value) -> None:
     assert not isinstance(get_safe_value({"k": value}, "k", float), bool)
 
 
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+def test_get_safe_value_str_converter_rejects_non_finite_float(nonfinite) -> None:
+    """A non-finite float read as a string must fall back to the default.
+
+    The pre-conversion non-finite guard is what stops ``str(nan)`` -> ``"nan"``
+    leaking out for a firmware field read with the ``str`` converter (e.g. a
+    version string). Found via a mutation spot-check: removing that guard
+    otherwise goes uncaught because the post-conversion guard only covers floats.
+    """
+    assert get_safe_value({"k": nonfinite}, "k", str) is None
+    # A genuine string is still returned unchanged.
+    assert get_safe_value({"k": "GRM070A"}, "k", str) == "GRM070A"
+
+
 # --- validate_main_payload: the device-availability contract ---
 
 @given(
