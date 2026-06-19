@@ -382,3 +382,109 @@ def test_async_shutdown_disables_and_cancels_inflight_stop():
         assert task.cancelled()
 
     asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# From test_rc17_hardening.py — V-02 minVoltage static floor, V-03 suspendLimits gating, V-17
+# ---------------------------------------------------------------------------
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+
+def _threshold_entity(data):
+    import custom_components.eveus.number as number_mod
+    updater = MagicMock()
+    updater.available = True
+    updater.data = data
+    updater.send_command = AsyncMock(return_value=True)
+    updater.config_entry = MagicMock()
+    ent = number_mod.EveusUndervoltageThresholdNumber(
+        updater, number_mod.UNDERVOLTAGE_THRESHOLD_NUMBER, device_number=1
+    )
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    return ent
+
+
+def test_v02_negative_minvoltage_keeps_static_floor():
+    ent = _threshold_entity({"aiVoltage": 215, "minVoltage": -1000})
+    assert ent.native_min_value == 210
+
+
+def test_v02_offlist_minvoltage_keeps_static_floor():
+    ent = _threshold_entity({"aiVoltage": 215, "minVoltage": 190})
+    assert ent.native_min_value == 210
+
+
+def test_v02_supported_minvoltage_still_tracks():
+    ent = _threshold_entity({"aiVoltage": 215, "minVoltage": 180})
+    assert ent.native_min_value == 190
+
+
+@pytest.mark.parametrize("suspend", [None, "bad", 2, -1])
+def test_v03_does_not_enforce_when_suspendlimits_unknown(suspend):
+    updater = MagicMock()
+    updater.available = True
+    updater.last_update_success = True
+    updater.device_number = 1
+    base = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
+    if suspend is None:
+        del base["suspendLimits"]
+    else:
+        base["suspendLimits"] = suspend
+    updater.data = base
+    updater.send_command = AsyncMock(return_value=True)
+
+    hass = MagicMock()
+    hass.async_create_task = lambda coro: asyncio.run(coro)
+    hass.bus.async_fire = MagicMock()
+
+    calc = _calc(target=80, initial=20, cap=50, corr=0)
+    ctrl = SocLimitController(hass, updater, calc)
+    ctrl.set_enabled(True)
+    ctrl.process()
+    updater.send_command.assert_not_called()
+
+
+def test_v03_enforces_only_when_suspendlimits_zero():
+    updater = MagicMock()
+    updater.available = True
+    updater.last_update_success = True
+    updater.device_number = 1
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
+    updater.send_command = AsyncMock(return_value=True)
+
+    hass = MagicMock()
+    hass.async_create_task = lambda coro: asyncio.run(coro)
+    hass.bus.async_fire = MagicMock()
+
+    calc = _calc(target=80, initial=20, cap=50, corr=0)
+    ctrl = SocLimitController(hass, updater, calc)
+    ctrl.set_enabled(True)
+    ctrl.process()
+    updater.send_command.assert_awaited_once_with("evseEnabled", 1)
+
+
+def test_v17_malformed_suspendlimits_does_not_retrigger_switch_off():
+    from custom_components.eveus.switch import EveusSocLimitSwitch
+
+    controller = MagicMock()
+    updater = MagicMock()
+    updater.config_entry = MagicMock()
+    sw = EveusSocLimitSwitch(updater, controller, device_number=1)
+    sw.hass = MagicMock()
+    sw.async_write_ha_state = MagicMock()
+
+    sw._updater.data = {"suspendLimits": 1}
+    sw._handle_coordinator_update()              # baseline: master suspended
+    asyncio.run(sw.async_turn_on())             # re-enable while suspended
+    assert sw.is_on is True
+
+    sw._updater.data = {}                         # malformed poll: no suspendLimits
+    sw._handle_coordinator_update()
+    sw._updater.data = {"suspendLimits": 1}       # unchanged master, valid again
+    sw._handle_coordinator_update()
+    assert sw.is_on is True                       # NOT flipped off a second time

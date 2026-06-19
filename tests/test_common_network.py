@@ -757,3 +757,102 @@ def test_send_command_rejected_during_shutdown(monkeypatch: pytest.MonkeyPatch) 
     result = asyncio.run(updater.send_command("currentSet", 16))
     assert result is False
     sent.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# From test_rc7_hardening.py — _CappedStreamReader helper class (local)
+# ---------------------------------------------------------------------------
+
+class _CappedStreamReader:
+    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    async def iter_chunked(self, size):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]
+
+
+# ---------------------------------------------------------------------------
+# From test_hardening_4_14_0.py — B-F01 connection quality readable while failing
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace as _SimpleNamespace
+
+
+def test_connection_quality_reports_during_failures() -> None:
+    import custom_components.eveus.sensor_definitions as sd
+
+    specs = {s.key: s for s in sd.get_sensor_specifications()}
+    spec = specs["connection_quality"]
+    assert spec.available_when_offline is True
+
+    updater = _SimpleNamespace(
+        host=TEST_HOST,
+        available=False,
+        last_update_success=False,
+        data={},
+        connection_quality={"success_rate": 40, "latency_avg": 1.2},
+        async_add_listener=lambda *a, **k: (lambda: None),
+    )
+    entity = spec.create_sensor(updater)
+    assert entity.available is True
+    assert entity._get_sensor_value() == 40
+
+
+# ---------------------------------------------------------------------------
+# From test_hardening_4_14_0.py — B-F02 derived SOC sensors skip on failed poll
+# ---------------------------------------------------------------------------
+
+from conftest import EveusTestUpdater as _EveusTestUpdater, disable_state_writes as _dsw
+
+
+def test_ev_sensor_skips_value_recompute_on_failed_poll() -> None:
+    from custom_components.eveus.ev_sensors import EVSocKwhSensor, CachedSOCCalculator
+
+    updater = _EveusTestUpdater({"IEM1": "5"})
+    calc = CachedSOCCalculator()
+    sensor = EVSocKwhSensor(updater, calc)
+    _dsw(sensor)
+
+    calls = []
+    sensor._update_native_value = lambda: calls.append("value") or False
+
+    updater.available = False
+    updater.last_update_success = False
+    sensor._handle_coordinator_update()
+    assert calls == []
+
+    updater.available = True
+    updater.last_update_success = True
+    sensor._handle_coordinator_update()
+    assert calls == ["value"]
+
+
+# ---------------------------------------------------------------------------
+# From test_hardening_4_14_0.py — F12 connection attrs stay visible offline
+# ---------------------------------------------------------------------------
+
+def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:
+    from types import SimpleNamespace
+    from custom_components.eveus import sensor_definitions as sd
+
+    offline = SimpleNamespace(
+        available=False,
+        connection_quality={"success_rate": 42, "latency_avg": 1.0},
+        data={"RSSI": -50},
+    )
+    attrs = sd.get_connection_attrs(offline, None)
+    assert attrs["connection_quality"] == 42
+    assert attrs["status"] == "Poor"
+    assert "wifi_rssi" not in attrs  # stale payload value suppressed offline
+
+    online = SimpleNamespace(
+        available=True,
+        connection_quality={"success_rate": 99, "latency_avg": 0.2},
+        data={"RSSI": -50},
+    )
+    online_attrs = sd.get_connection_attrs(online, None)
+    assert online_attrs["status"] == "Excellent"
+    assert online_attrs["wifi_rssi"] == -50

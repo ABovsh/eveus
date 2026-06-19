@@ -295,3 +295,375 @@ def test_migrate_entry_clamps_out_of_range_seed(
 
     data = config_entries.calls[0]["data"]
     assert data[CONF_BATTERY_CAPACITY] == 10  # clamped from 0 to min
+
+
+# ---------------------------------------------------------------------------
+# From test_rc12_hardening.py — V4/V5 entity pruning on reconfigure
+# ---------------------------------------------------------------------------
+
+class _FakeRegistry:
+    """Records which entities were removed; pretends every entity exists."""
+
+    def __init__(self) -> None:
+        self.removed: list[str] = []
+
+    def async_get_entity_id(self, platform: str, domain: str, unique_id: str) -> str:
+        return f"{platform}.{unique_id}"
+
+    def async_remove(self, entity_id: str) -> None:
+        self.removed.append(entity_id)
+
+
+def _prune(monkeypatch, device_number, soc_mode, phases) -> list[str]:
+    from custom_components import eveus
+
+    reg = _FakeRegistry()
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: reg)
+    eveus._prune_unused_entities(object(), device_number, soc_mode, phases)
+    return reg.removed
+
+
+def test_prune_removes_soc_and_phase_orphans_when_reduced(monkeypatch) -> None:
+    from custom_components import eveus
+
+    removed = _prune(monkeypatch, 1, eveus.SOC_MODE_BASIC, 1)
+    assert "number.eveus_initial_soc" in removed
+    assert "sensor.eveus_soc_energy" in removed
+    assert "sensor.eveus_charging_finish_time" in removed
+    assert "sensor.eveus_current_phase_2" in removed
+    assert "sensor.eveus_voltage_phase_3" in removed
+
+
+def test_prune_keeps_everything_in_advanced_three_phase(monkeypatch) -> None:
+    from custom_components import eveus
+
+    # Only retired entities go — no mode/phase-scoped entity is pruned.
+    assert _prune(monkeypatch, 1, eveus.SOC_MODE_ADVANCED, 3) == [
+        "sensor.eveus_system_time",
+        "switch.eveus_adaptive_mode",
+        "number.eveus_minimum_voltage",
+        "sensor.eveus_adaptive_voltage_threshold",
+    ]
+
+
+def test_prune_respects_device_suffix_and_keeps_phases_when_three(monkeypatch) -> None:
+    from custom_components import eveus
+
+    removed = _prune(monkeypatch, 2, eveus.SOC_MODE_BASIC, 3)
+    assert "number.eveus2_initial_soc" in removed
+    # phases == 3 keeps the per-phase sensors.
+    assert all("phase" not in entity_id for entity_id in removed)
+
+
+# ---------------------------------------------------------------------------
+# From test_rc13_hardening.py — R2-3 migration strips /main for uppercase scheme
+# ---------------------------------------------------------------------------
+
+class _ConfigEntriesRecorder:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def async_entries(self, _domain=None):
+        return []
+
+    def async_update_entry(self, entry: object, **kwargs: object) -> None:
+        self.calls.append(kwargs)
+
+
+class _EmptyRegistryMigration:
+    def async_get(self, entity_id: str) -> object | None:
+        return None
+
+
+def test_migration_strips_main_path_for_uppercase_scheme(monkeypatch) -> None:
+    from custom_components import eveus
+    from custom_components.eveus.const import CONF_SCHEME
+
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: _EmptyRegistryMigration())
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda *a, **k: None,
+    )
+
+    config_entries = _ConfigEntriesRecorder()
+    hass = SimpleNamespace(config_entries=config_entries)
+    legacy = f"HTTP://{TEST_HOST}/main"
+    entry = SimpleNamespace(
+        data={CONF_HOST: legacy},
+        unique_id=legacy,
+        title=f"Eveus Charger ({legacy})",
+        version=1,
+    )
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    data = config_entries.calls[0]["data"]
+    assert data[CONF_HOST] == TEST_HOST
+    assert data[CONF_SCHEME] == "http"
+    assert config_entries.calls[0]["version"] == CONFIG_ENTRY_VERSION
+
+
+# ---------------------------------------------------------------------------
+# From test_rc14_hardening.py — A01 migration scrubs URL credentials
+# ---------------------------------------------------------------------------
+
+def test_migration_scrubs_url_credentials(monkeypatch) -> None:
+    from custom_components import eveus
+    from custom_components.eveus.const import CONF_SCHEME
+
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: _EmptyRegistryMigration())
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda *a, **k: None,
+    )
+
+    config_entries = _ConfigEntriesRecorder()
+    hass = SimpleNamespace(config_entries=config_entries)
+    legacy = f"http://user:secret@{TEST_HOST}/main"  # NOSONAR(python:S5332,python:S2068)
+    entry = SimpleNamespace(
+        data={CONF_HOST: legacy},
+        unique_id=legacy,
+        title=f"Eveus ({legacy})",
+        version=1,
+    )
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    kwargs = config_entries.calls[0]
+    assert kwargs["data"][CONF_HOST] == TEST_HOST
+    assert kwargs["data"][CONF_SCHEME] == "http"
+    assert "secret" not in kwargs["title"]
+    assert "user" not in kwargs["title"]
+
+
+# ---------------------------------------------------------------------------
+# From test_rc15_hardening.py — F14/F15 migration canonicalize/collision
+# ---------------------------------------------------------------------------
+
+class _MigrationEntries:
+    def __init__(self, others=None) -> None:
+        self.updates: list[dict] = []
+        self._others = others or []
+
+    def async_entries(self, _domain=None):
+        return self._others
+
+    def async_update_entry(self, _entry, **kwargs) -> None:
+        self.updates.append(kwargs)
+
+
+def _migration_hass(entries):
+    return SimpleNamespace(
+        config_entries=entries,
+        states=SimpleNamespace(get=lambda _eid: None),
+    )
+
+
+def test_migration_canonicalizes_bare_uppercase_host(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda *a, **k: None,
+    )
+    entries = _MigrationEntries()
+    entry = SimpleNamespace(
+        entry_id="e1",
+        data={"host": "MYCHARGER.LOCAL.", "soc_mode": "basic"},
+        unique_id="MYCHARGER.LOCAL.",
+        title="Eveus Charger (MYCHARGER.LOCAL.)",
+        version=1,
+    )
+    assert asyncio.run(async_migrate_entry(_migration_hass(entries), entry))
+
+    (update,) = entries.updates
+    assert update["data"]["host"] == "mycharger.local"
+    assert update["unique_id"] == "mycharger.local"
+    assert "mycharger.local" in update["title"]
+
+
+def test_migration_skips_unique_id_rewrite_on_collision() -> None:
+    other = SimpleNamespace(entry_id="e2", unique_id="mycharger.local")
+    entries = _MigrationEntries([other])
+    entry = SimpleNamespace(
+        entry_id="e1",
+        data={"host": "MYCHARGER.LOCAL", "soc_mode": "basic"},
+        unique_id="MYCHARGER.LOCAL",
+        title="Eveus Charger",
+        version=1,
+    )
+    assert asyncio.run(async_migrate_entry(_migration_hass(entries), entry))
+
+    (update,) = entries.updates
+    assert update["data"]["host"] == "mycharger.local"
+    assert "unique_id" not in update
+
+
+# ---------------------------------------------------------------------------
+# From test_hardening_4_10_0.py — F04 migration with missing host/unique_id
+# ---------------------------------------------------------------------------
+
+def test_migration_survives_missing_host_and_unique_id() -> None:
+    from custom_components.eveus.const import CONF_SOC_MODE, SOC_MODE_ADVANCED
+
+    updated: dict = {}
+
+    class _Entries:
+        def async_update_entry(self, entry, **kwargs):
+            updated.update(kwargs)
+
+    hass = SimpleNamespace(config_entries=_Entries())
+    entry = SimpleNamespace(
+        data={CONF_SOC_MODE: SOC_MODE_ADVANCED},
+        unique_id=None,
+        title="Eveus",
+        version=1,
+    )
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+    assert "unique_id" not in updated
+
+
+# ---------------------------------------------------------------------------
+# From test_hardening_4_14_0.py — A-F01 resolve_phases, A-F03 remove entry
+# ---------------------------------------------------------------------------
+
+def test_resolve_phases_flags_invalid_values() -> None:
+    from custom_components.eveus import _resolve_phases
+
+    assert _resolve_phases(3) == (3, False)
+    assert _resolve_phases("3") == (3, False)
+    assert _resolve_phases(1) == (1, False)
+    assert _resolve_phases("garbage") == (1, True)
+    assert _resolve_phases(2) == (1, True)
+    assert _resolve_phases(None) == (1, True)
+
+
+def test_async_remove_entry_deletes_all_per_entry_issues(monkeypatch) -> None:
+    from custom_components import eveus
+
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        eveus.ir,
+        "async_delete_issue",
+        lambda hass, domain, issue_id: deleted.append(issue_id),
+    )
+    entry = SimpleNamespace(entry_id="e1")
+    asyncio.run(eveus.async_remove_entry(object(), entry))
+
+    for expected in (
+        "invalid_config_e1",
+        "ocpp_enabled_e1",
+        "battery_low_e1",
+        "clock_drift_e1",
+        "soc_dashboard_update_e1",
+    ):
+        assert expected in deleted, expected
+    from custom_components.eveus.safety import POLICIES
+    for policy in POLICIES:
+        assert f"safety_{policy.key}_e1" in deleted, policy.key
+
+
+# ---------------------------------------------------------------------------
+# From test_rc16_features.py — prune list covers target SOC forecast sensors
+# ---------------------------------------------------------------------------
+
+def test_advanced_only_prune_list_covers_target_soc_forecast_sensors() -> None:
+    from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
+
+    assert ("sensor", "energy_to_target_soc") in _ADVANCED_ONLY_ENTITIES
+    assert ("sensor", "cost_to_target_soc") in _ADVANCED_ONLY_ENTITIES
+
+
+# ---------------------------------------------------------------------------
+# From test_rc5_hardening.py — removed entities
+# ---------------------------------------------------------------------------
+
+def test_session_limit_number_removed() -> None:
+    from custom_components.eveus import number as number_mod
+
+    assert not hasattr(number_mod, "SESSION_LIMIT_DESCRIPTIONS")
+    assert not hasattr(number_mod, "EveusSessionLimitNumber")
+
+
+def test_limit_reached_binary_sensors_removed() -> None:
+    from custom_components.eveus import binary_sensor as bs
+
+    assert not hasattr(bs, "_LIMIT_REACHED_SPECS")
+    assert not hasattr(bs, "EveusLimitReachedBinarySensor")
+
+
+def test_control_pilot_removed_from_sensor_specs() -> None:
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    specs = create_sensor_specifications()
+    names = {s.name for s in specs}
+    assert "Control Pilot" not in names
+
+
+# ---------------------------------------------------------------------------
+# From test_setup_and_auth_hardening.py — runtime_validation_rejects_nan_current
+# ---------------------------------------------------------------------------
+
+def test_runtime_validation_rejects_nan_current() -> None:
+    import pytest
+    from custom_components.eveus._payload import validate_main_payload
+
+    with pytest.raises(ValueError):
+        validate_main_payload({"state": 2, "currentSet": float("nan")}, "16A")
+    with pytest.raises(ValueError):
+        validate_main_payload({"state": 2, "currentSet": float("inf")}, "16A")
+
+
+# ---------------------------------------------------------------------------
+# From test_setup_and_auth_hardening.py — tariff/cost validation
+# ---------------------------------------------------------------------------
+
+def test_counter_cost_rejects_negative() -> None:
+    from conftest import EveusTestUpdater
+    from custom_components.eveus.sensor_definitions import (
+        get_counter_a_cost,
+        get_counter_b_cost,
+    )
+
+    assert get_counter_a_cost(EveusTestUpdater({"IEM1_money": -1.0}), None) is None
+    assert get_counter_b_cost(EveusTestUpdater({"IEM2_money": -0.01}), None) is None
+    assert get_counter_a_cost(EveusTestUpdater({"IEM1_money": 12.5}), None) == 12.5
+
+
+def test_tariff_rate_rejects_negative() -> None:
+    from conftest import EveusTestUpdater
+    from custom_components.eveus.sensor_definitions import (
+        get_primary_rate_cost,
+        get_rate2_cost,
+        get_rate3_cost,
+    )
+
+    assert get_primary_rate_cost(EveusTestUpdater({"tarif": -100}), None) is None
+    assert get_rate2_cost(EveusTestUpdater({"tarifAValue": -50}), None) is None
+    assert get_rate3_cost(EveusTestUpdater({"tarifBValue": -10}), None) is None
+    assert get_primary_rate_cost(EveusTestUpdater({"tarif": 450}), None) == 4.5
+
+
+def test_adaptive_metrics_reject_negative() -> None:
+    from conftest import EveusTestUpdater, spec_value_fn
+
+    assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": -1}), None) is None
+    assert spec_value_fn("adaptive_current_limit")(EveusTestUpdater({"aiModecurrent": 10}), None) == 10
+
+
+def test_session_cost_spec_is_monetary_uah() -> None:
+    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+    from custom_components.eveus.sensor_definitions import get_sensor_specifications
+
+    by_key = {s.key: s for s in get_sensor_specifications(1)}
+    spec = by_key["session_cost"]
+    assert spec.device_class == SensorDeviceClass.MONETARY
+    assert spec.unit == "UAH"
+    assert spec.state_class == SensorStateClass.TOTAL
+
+
+def test_session_cost_rejects_negative() -> None:
+    from conftest import EveusTestUpdater
+    from custom_components.eveus.sensor_definitions import get_session_cost
+
+    assert get_session_cost(EveusTestUpdater({"sessionMoney": -0.5}), None) is None
+    assert get_session_cost(EveusTestUpdater({"sessionMoney": 7.2}), None) == 7.2

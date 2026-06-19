@@ -147,3 +147,90 @@ def test_update_does_not_fire_on_missing_field(monkeypatch: pytest.MonkeyPatch) 
         _update_battery_low_issue(object(), entry, _Updater(payload), tracker)
     assert not created
     assert not deleted
+
+
+# ---------------------------------------------------------------------------
+# From test_rc15_hardening.py — F01/F02 battery tracker debounce + corrupt vBat
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+
+class _IssueRegistryRecorder:
+    def __init__(self) -> None:
+        self.created: list[str] = []
+        self.deleted: list[str] = []
+
+    def async_create_issue(self, _hass, _domain, issue_id, **_kwargs) -> None:
+        self.created.append(issue_id)
+
+    def async_delete_issue(self, _hass, _domain, issue_id) -> None:
+        self.deleted.append(issue_id)
+
+
+def test_failed_poll_does_not_advance_battery_debounce(monkeypatch) -> None:
+    from custom_components.eveus import ir
+
+    recorder = _IssueRegistryRecorder()
+    monkeypatch.setattr(ir, "async_create_issue", recorder.async_create_issue)
+    monkeypatch.setattr(ir, "async_delete_issue", recorder.async_delete_issue)
+
+    tracker = _BatteryLowTracker()
+    entry = SimpleNamespace(entry_id="e1")
+    low = BATTERY_LOW_THRESHOLD_VOLTS - 0.5
+
+    # One genuine low reading.
+    updater = _Updater({"vBat": low})
+    _update_battery_low_issue(None, entry, updater, tracker)
+
+    # The charger drops offline; the coordinator keeps notifying listeners
+    # with the stale payload. The debounce must not advance.
+    updater.available = False
+    updater.last_update_success = False
+    for _ in range(10):
+        _update_battery_low_issue(None, entry, updater, tracker)
+
+    assert recorder.created == []
+    assert tracker._low_streak == 1
+
+
+def test_corrupt_high_vbat_does_not_clear_active_warning() -> None:
+    tracker = _BatteryLowTracker()
+    low = BATTERY_LOW_THRESHOLD_VOLTS - 0.5
+    decisions = [tracker.evaluate(low) for _ in range(3)]
+    assert decisions[-1] is True  # warning raised
+
+    # An implausible finite spike must neither clear nor restart anything.
+    from custom_components.eveus.const import BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS
+    assert tracker.evaluate(BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS + 100.0) is None
+    assert tracker._active is True
+
+
+# ---------------------------------------------------------------------------
+# From test_rc17_hardening.py — V-09 battery voltage plausibility
+# ---------------------------------------------------------------------------
+
+import pytest
+
+
+@pytest.mark.parametrize("bad", [0, 5.01, 12.5, 100, 500])
+def test_v09_battery_voltage_rejects_implausible(bad):
+    upd = SimpleNamespace(available=True, data={"vBat": bad})
+    from custom_components.eveus import sensor_definitions as sd
+    assert sd.get_battery_voltage(upd, None) is None
+
+
+def test_v09_battery_voltage_accepts_plausible():
+    upd = SimpleNamespace(available=True, data={"vBat": 3.0})
+    from custom_components.eveus import sensor_definitions as sd
+    assert sd.get_battery_voltage(upd, None) == 3.0
+
+
+# ---------------------------------------------------------------------------
+# From test_rc5_hardening.py / test_hardening_4_10_0.py — battery voltage
+# ---------------------------------------------------------------------------
+
+def test_battery_voltage_rejects_negative() -> None:
+    from custom_components.eveus import sensor_definitions as sd
+
+    assert sd.get_battery_voltage(_Updater({"vBat": -2.5}), None) is None
