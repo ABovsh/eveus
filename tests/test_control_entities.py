@@ -536,10 +536,6 @@ def test_number_setup_entry_keeps_model_independent_entity_when_model_is_missing
     assert [entity.name for entity in added] == ["Undervoltage threshold"]
 
 
-# ---------------------------------------------------------------------------
-# From test_rc6_hardening.py — F11 switch missing key, F08/F09/F10 restore seeds
-# ---------------------------------------------------------------------------
-
 def test_switch_missing_key_resolves_unknown() -> None:
     from custom_components.eveus import switch as switch_mod
     description = switch_mod.SWITCH_DESCRIPTIONS[1]  # One Charge / oneCharge
@@ -576,10 +572,6 @@ def test_number_restore_seeds_successful_read() -> None:
     assert num._last_successful_read >= before
     assert num._last_device_value == 12.0
 
-
-# ---------------------------------------------------------------------------
-# From test_rc12_hardening.py — V7 shutdown skips refresh, V8 command lock
-# ---------------------------------------------------------------------------
 
 def test_command_after_shutdown_skips_refresh_scheduling(monkeypatch) -> None:
     import asyncio
@@ -681,10 +673,6 @@ def test_current_number_serializes_concurrent_commands() -> None:
         assert depth <= 1
     assert len(timeline) == 4
 
-
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — A02 availability while pending, A04 force-refresh
-# ---------------------------------------------------------------------------
 
 def test_control_pushes_availability_change_while_command_pending() -> None:
     import time
@@ -800,10 +788,6 @@ def test_force_refresh_bypass_survives_interleaved_poll(monkeypatch) -> None:
     assert len(session.calls) == 2
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F04 auth failure from current control
-# ---------------------------------------------------------------------------
-
 def test_set_current_propagates_auth_failure() -> None:
     import asyncio
     from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -818,10 +802,6 @@ def test_set_current_propagates_auth_failure() -> None:
     with pytest.raises(ConfigEntryAuthFailed):
         asyncio.run(entity.async_set_native_value(12))
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_hardening.py — A01 control mixin recheck, A02 cancel self
-# ---------------------------------------------------------------------------
 
 def test_control_mixin_availability_accepts_recheck_kwargs() -> None:
     from custom_components.eveus.common_base import BaseEveusEntity, ControlEntityMixin
@@ -870,10 +850,6 @@ def test_cancel_pending_refreshes_skips_current_task() -> None:
 
     assert asyncio.run(_scenario()) is False
 
-
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-18 callable value at POST time
-# ---------------------------------------------------------------------------
 
 def test_v18_command_manager_resolves_callable_value_at_post_time():
     import asyncio, aiohttp
@@ -929,10 +905,6 @@ def test_v18_command_manager_resolves_callable_value_at_post_time():
     assert sess.calls[0]["data"] == "pageevent=systemTime&systemTime=99999"
 
 
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-15 pending token across session reset
-# ---------------------------------------------------------------------------
-
 def test_v15_pending_token_does_not_cross_hidden_session_reset():
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
@@ -982,10 +954,6 @@ def test_v15_pending_token_does_not_cross_hidden_session_reset():
     updater.send_command.reset_mock()
     assert ctrl._hass.bus.async_fire.call_count == 0
 
-
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — car_connected, session_active, ocpp_connected binary sensors
-# ---------------------------------------------------------------------------
 
 def test_car_connected_unknown_state_returns_none() -> None:
     from conftest import EveusTestUpdater
@@ -1118,10 +1086,6 @@ def test_car_connected_error_state_is_unknown() -> None:
     assert 7 not in _CONNECTED_STATES
 
 
-# ---------------------------------------------------------------------------
-# From test_rc13_hardening.py — R2-2 timezone select suppresses reconcile while pending
-# ---------------------------------------------------------------------------
-
 def test_timezone_select_suppresses_reconcile_while_pending() -> None:
     import time as _t
     from conftest import EveusTestUpdater, disable_state_writes
@@ -1146,10 +1110,6 @@ def test_timezone_select_suppresses_reconcile_while_pending() -> None:
     select._handle_coordinator_update()
     assert select.current_option == "0"
 
-
-# ---------------------------------------------------------------------------
-# From test_setup_and_auth_hardening.py — command 401 raises auth failed no retry
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_command_401_raises_auth_failed_no_retry():
@@ -1178,10 +1138,6 @@ async def test_command_401_raises_auth_failed_no_retry():
     assert post.call_count == 1  # no retry on 401
 
 
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — C01 timezone select offline/online
-# ---------------------------------------------------------------------------
-
 def test_timezone_select_ignores_device_value_when_offline() -> None:
     from conftest import EveusTestUpdater
     from custom_components.eveus.select import EveusTimeZoneSelect
@@ -1197,10 +1153,6 @@ def test_timezone_select_uses_device_value_when_online() -> None:
     select = EveusTimeZoneSelect(EveusTestUpdater(data={"timeZone": 3}, available=True))
     assert select._device_option() == "+3"
 
-
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — C02 timezone select restores last option
-# ---------------------------------------------------------------------------
 
 def test_timezone_select_restores_last_option_within_grace() -> None:
     import asyncio

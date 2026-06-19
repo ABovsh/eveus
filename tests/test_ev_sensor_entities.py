@@ -474,10 +474,6 @@ def test_soc_percent_available_without_target() -> None:
     assert sensor._get_sensor_value() is not None
 
 
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — F17 time_to_target resets cache
-# ---------------------------------------------------------------------------
-
 def test_time_to_target_resets_cache_when_helpers_missing() -> None:
     from custom_components.eveus.ev_sensors import (
         CachedSOCCalculator,
@@ -495,10 +491,6 @@ def test_time_to_target_resets_cache_when_helpers_missing() -> None:
     assert sensor._get_sensor_value() is None
     assert sensor._cached_value is None
 
-
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — I2 time-to-target unknown, O1 soc_percent derivation
-# ---------------------------------------------------------------------------
 
 from custom_components.eveus.utils import calculate_soc_kwh, calculate_soc_percent
 from conftest import EV_HELPERS, HelperHass, disable_state_writes
@@ -543,10 +535,6 @@ def test_soc_percent_matches_kwh_derivation(initial, capacity, energy, loss) -> 
     assert calculate_soc_percent(initial, capacity, energy, loss) == expected
 
 
-# ---------------------------------------------------------------------------
-# From test_rc13_hardening.py — R2-1 SOC/ETA reject finite outliers
-# ---------------------------------------------------------------------------
-
 def _soc_calc() -> CachedSOCCalculator:
     calc = CachedSOCCalculator()
     calc.set_value("initial_soc", 20)
@@ -574,10 +562,6 @@ def test_eta_rejects_power_outlier() -> None:
     assert isinstance(good._get_sensor_value(), str)
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_10_0.py — F11 SOC ETA unknown when telemetry missing
-# ---------------------------------------------------------------------------
-
 def test_time_to_target_unknown_when_telemetry_missing() -> None:
     calc = CachedSOCCalculator()
     calc.set_value("initial_soc", 20)
@@ -591,10 +575,6 @@ def test_time_to_target_unknown_when_telemetry_missing() -> None:
 
     assert sensor._get_sensor_value() is None
 
-
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F22 no ETA outside active session
-# ---------------------------------------------------------------------------
 
 def test_eta_not_charging_when_state_inactive() -> None:
     calc = CachedSOCCalculator()
@@ -614,10 +594,6 @@ def test_eta_not_charging_when_state_inactive() -> None:
     )
     assert sensor._get_sensor_value() == "Not charging"
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_hardening.py — A06 energy computed in kWh not percent, A11/A12 cost
-# ---------------------------------------------------------------------------
 
 import pytest as _pytest
 
@@ -670,10 +646,6 @@ def test_cost_to_target_monetary_metadata() -> None:
     assert sensor._attr_native_unit_of_measurement == "UAH"
 
 
-# ---------------------------------------------------------------------------
-# From test_rc17_hardening.py — V-11 exact SOC percent
-# ---------------------------------------------------------------------------
-
 def test_v11_soc_limit_does_not_stop_before_exact_target():
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
@@ -714,10 +686,6 @@ def test_v11_calculator_exposes_exact_percent():
     assert calc.get_soc_percent(29.8) == 80
 
 
-# ---------------------------------------------------------------------------
-# From test_rc6_hardening.py — F02 SOC correction preserved/defaulted
-# ---------------------------------------------------------------------------
-
 def test_zero_soc_correction_is_preserved() -> None:
     from custom_components.eveus import ev_sensors
 
@@ -735,10 +703,6 @@ def test_missing_soc_correction_falls_back_to_default() -> None:
     assert calc._effective_correction() == ev_sensors.DEFAULT_SOC_CORRECTION
 
 
-# ---------------------------------------------------------------------------
-# From test_rc6_hardening.py — F03 session energy present vs absent
-# ---------------------------------------------------------------------------
-
 def test_session_energy_invalid_when_present_and_negative() -> None:
     from custom_components.eveus import ev_sensors
 
@@ -752,10 +716,6 @@ def test_session_energy_not_invalid_when_absent() -> None:
     sensor = ev_sensors.EVSocKwhSensor(EveusTestUpdater({}))
     assert sensor._session_energy_is_invalid() is False
 
-
-# ---------------------------------------------------------------------------
-# From test_privacy_and_soc_hardening.py — SOC input validation
-# ---------------------------------------------------------------------------
 
 def test_soc_inputs_reject_out_of_range_soc() -> None:
     from custom_components.eveus.utils import _validate_soc_inputs
@@ -789,10 +749,6 @@ def test_soc_inputs_accept_valid() -> None:
 
     assert _validate_soc_inputs(50, 60, 5, 8) == (50.0, 60.0, 5.0, 8.0)
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_hardening.py — energy-to-target sensor
-# ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=False)
 def _ha_clock_plus3_ev():
@@ -848,10 +804,6 @@ def test_energy_to_target_has_no_storage_device_class(_ha_clock_plus3_ev) -> Non
     assert sensor.device_class is None
     assert sensor._attr_native_unit_of_measurement == "kWh"
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — energy-to-target and cost-to-target
-# ---------------------------------------------------------------------------
 
 def test_reports_grid_energy_needed_to_reach_target(_ha_clock_plus3_ev):
     import pytest
@@ -935,10 +887,6 @@ def test_zero_cost_when_target_reached(_ha_clock_plus3_ev):
     )
     assert sensor._get_sensor_value() == 0.0
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — cost to target without tariff / rate2
-# ---------------------------------------------------------------------------
 
 def test_unknown_without_tariff(_ha_clock_plus3_ev):
     from custom_components.eveus.ev_sensors import (

@@ -108,10 +108,6 @@ def test_diagnostics_does_not_leak_host_via_title() -> None:
     assert TEST_HOST not in payload["entry"]["title"]
 
 
-# ---------------------------------------------------------------------------
-# From test_rc9_hardening.py — I1 diagnostics redact unknown sensitive fields
-# ---------------------------------------------------------------------------
-
 from custom_components.eveus import diagnostics as diag
 
 
@@ -136,10 +132,6 @@ def test_sensitive_keys_flags_identifying_fields_only() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_10_0.py — F18 nested diagnostics redaction
-# ---------------------------------------------------------------------------
-
 def test_sensitive_keys_walks_nested_structures() -> None:
     data = {
         "powerMeas": 7200,
@@ -151,19 +143,11 @@ def test_sensitive_keys_walks_nested_structures() -> None:
     assert "powerMeas" not in keys
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F19 diagnostics heuristic on entry keys
-# ---------------------------------------------------------------------------
-
 def test_diagnostics_redacts_heuristic_entry_keys() -> None:
     keys = diag._sensitive_keys({"host": "h", "api_token": "x", "model": "16A"})
     assert "api_token" in keys
     assert "model" not in keys
 
-
-# ---------------------------------------------------------------------------
-# From test_rc16_hardening.py — R2-A16 credential-ish keys nested
-# ---------------------------------------------------------------------------
 
 def test_diagnostics_heuristic_redacts_credential_like_keys() -> None:
     data = {
@@ -180,10 +164,6 @@ def test_diagnostics_heuristic_redacts_credential_like_keys() -> None:
     assert "battery_capacity" not in keys
     assert "phases" not in keys
 
-
-# ---------------------------------------------------------------------------
-# From test_privacy_and_soc_hardening.py — privacy/logging
-# ---------------------------------------------------------------------------
 
 def test_update_failed_messages_do_not_contain_host():
     from custom_components.eveus import common_network
@@ -226,10 +206,6 @@ def test_config_flow_exception_does_not_stringify_aiohttp_error():
     assert 'CannotConnect(f"Unexpected error: {err}")' not in text
 
 
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py / test_hardening_4_14_0.py — translations
-# ---------------------------------------------------------------------------
-
 def test_translations_cover_clock_drift_in_en_and_uk():
     import json
     from pathlib import Path
@@ -252,10 +228,6 @@ def test_fractional_timezone_message_exists_in_all_locales():
         assert "clock_drift_fractional_timezone" in issues, name
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — C-F06 SOC notice does not hardcode first charger prefix
-# ---------------------------------------------------------------------------
-
 def test_soc_notice_does_not_hardcode_first_charger_prefix() -> None:
     import json
     from pathlib import Path
@@ -267,10 +239,6 @@ def test_soc_notice_does_not_hardcode_first_charger_prefix() -> None:
         ]
         assert "number.eveus_ev_charger_" not in desc, name
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — D-F04 Force Refresh button raises on failed poll
-# ---------------------------------------------------------------------------
 
 def test_force_refresh_button_raises_on_failed_poll() -> None:
     import asyncio
@@ -293,10 +261,6 @@ def test_force_refresh_button_raises_on_failed_poll() -> None:
     updater.last_update_success = True
     asyncio.run(button.async_press())  # no raise
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — A-F04 clock drift issue re-keys when kind changes
-# ---------------------------------------------------------------------------
 
 def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
     import time
@@ -339,10 +303,6 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
         dt_util.set_default_time_zone(original)
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — fractional timezone raises unsupported message
-# ---------------------------------------------------------------------------
-
 def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
     import time
     from datetime import timedelta, timezone as _tz
@@ -375,10 +335,6 @@ def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
     assert created, "fractional-offset drift must still raise a notice"
     assert created[-1]["translation_key"] == "clock_drift_fractional_timezone"
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — clock drift rekey requires stable classification
-# ---------------------------------------------------------------------------
 
 def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
     import time

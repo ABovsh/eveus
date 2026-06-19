@@ -315,10 +315,6 @@ def test_repair_keeps_issue_when_reload_returns_false(
     assert deleted == []
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F03 unload deletes issues only on success
-# ---------------------------------------------------------------------------
-
 import asyncio as _asyncio
 from custom_components.eveus import async_unload_entry
 
@@ -360,10 +356,6 @@ def test_unload_deletes_issues_only_on_success(monkeypatch, unload_result) -> No
     assert result is unload_result
     assert bool(recorder.deleted) is unload_result
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — C-F05 repair flow migrates device identifiers
-# ---------------------------------------------------------------------------
 
 def test_repair_flow_migrates_device_identifiers(monkeypatch) -> None:
     from custom_components.eveus import repairs, config_flow
@@ -423,10 +415,6 @@ def test_repair_flow_migrates_device_identifiers(monkeypatch) -> None:
     assert migrated == [(TEST_HOST, "newhost.local")]
 
 
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — C61 repair fix-flow has already_configured error
-# ---------------------------------------------------------------------------
-
 import json
 from pathlib import Path as _Path
 
@@ -446,10 +434,6 @@ def test_repair_fix_flow_has_already_configured_error(path: str) -> None:
     errors = data["issues"]["invalid_config"]["fix_flow"]["error"]
     assert "already_configured" in errors
 
-
-# ---------------------------------------------------------------------------
-# From test_setup_and_auth_hardening.py — F22 repair flow blocks unique_id collision
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_repair_flow_blocks_unique_id_collision():

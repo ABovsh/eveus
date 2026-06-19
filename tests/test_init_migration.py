@@ -297,10 +297,6 @@ def test_migrate_entry_clamps_out_of_range_seed(
     assert data[CONF_BATTERY_CAPACITY] == 10  # clamped from 0 to min
 
 
-# ---------------------------------------------------------------------------
-# From test_rc12_hardening.py — V4/V5 entity pruning on reconfigure
-# ---------------------------------------------------------------------------
-
 class _FakeRegistry:
     """Records which entities were removed; pretends every entity exists."""
 
@@ -355,10 +351,6 @@ def test_prune_respects_device_suffix_and_keeps_phases_when_three(monkeypatch) -
     assert all("phase" not in entity_id for entity_id in removed)
 
 
-# ---------------------------------------------------------------------------
-# From test_rc13_hardening.py — R2-3 migration strips /main for uppercase scheme
-# ---------------------------------------------------------------------------
-
 class _ConfigEntriesRecorder:
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -403,10 +395,6 @@ def test_migration_strips_main_path_for_uppercase_scheme(monkeypatch) -> None:
     assert config_entries.calls[0]["version"] == CONFIG_ENTRY_VERSION
 
 
-# ---------------------------------------------------------------------------
-# From test_rc14_hardening.py — A01 migration scrubs URL credentials
-# ---------------------------------------------------------------------------
-
 def test_migration_scrubs_url_credentials(monkeypatch) -> None:
     from custom_components import eveus
     from custom_components.eveus.const import CONF_SCHEME
@@ -435,10 +423,6 @@ def test_migration_scrubs_url_credentials(monkeypatch) -> None:
     assert "secret" not in kwargs["title"]
     assert "user" not in kwargs["title"]
 
-
-# ---------------------------------------------------------------------------
-# From test_rc15_hardening.py — F14/F15 migration canonicalize/collision
-# ---------------------------------------------------------------------------
 
 class _MigrationEntries:
     def __init__(self, others=None) -> None:
@@ -497,10 +481,6 @@ def test_migration_skips_unique_id_rewrite_on_collision() -> None:
     assert "unique_id" not in update
 
 
-# ---------------------------------------------------------------------------
-# From test_hardening_4_10_0.py — F04 migration with missing host/unique_id
-# ---------------------------------------------------------------------------
-
 def test_migration_survives_missing_host_and_unique_id() -> None:
     from custom_components.eveus.const import CONF_SOC_MODE, SOC_MODE_ADVANCED
 
@@ -521,10 +501,6 @@ def test_migration_survives_missing_host_and_unique_id() -> None:
     assert asyncio.run(async_migrate_entry(hass, entry)) is True
     assert "unique_id" not in updated
 
-
-# ---------------------------------------------------------------------------
-# From test_hardening_4_14_0.py — A-F01 resolve_phases, A-F03 remove entry
-# ---------------------------------------------------------------------------
 
 def test_resolve_phases_flags_invalid_values() -> None:
     from custom_components.eveus import _resolve_phases
@@ -562,20 +538,12 @@ def test_async_remove_entry_deletes_all_per_entry_issues(monkeypatch) -> None:
         assert f"safety_{policy.key}_e1" in deleted, policy.key
 
 
-# ---------------------------------------------------------------------------
-# From test_rc16_features.py — prune list covers target SOC forecast sensors
-# ---------------------------------------------------------------------------
-
 def test_advanced_only_prune_list_covers_target_soc_forecast_sensors() -> None:
     from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
 
     assert ("sensor", "energy_to_target_soc") in _ADVANCED_ONLY_ENTITIES
     assert ("sensor", "cost_to_target_soc") in _ADVANCED_ONLY_ENTITIES
 
-
-# ---------------------------------------------------------------------------
-# From test_rc5_hardening.py — removed entities
-# ---------------------------------------------------------------------------
 
 def test_session_limit_number_removed() -> None:
     from custom_components.eveus import number as number_mod
@@ -599,10 +567,6 @@ def test_control_pilot_removed_from_sensor_specs() -> None:
     assert "Control Pilot" not in names
 
 
-# ---------------------------------------------------------------------------
-# From test_setup_and_auth_hardening.py — runtime_validation_rejects_nan_current
-# ---------------------------------------------------------------------------
-
 def test_runtime_validation_rejects_nan_current() -> None:
     import pytest
     from custom_components.eveus._payload import validate_main_payload
@@ -612,10 +576,6 @@ def test_runtime_validation_rejects_nan_current() -> None:
     with pytest.raises(ValueError):
         validate_main_payload({"state": 2, "currentSet": float("inf")}, "16A")
 
-
-# ---------------------------------------------------------------------------
-# From test_setup_and_auth_hardening.py — tariff/cost validation
-# ---------------------------------------------------------------------------
 
 def test_counter_cost_rejects_negative() -> None:
     from conftest import EveusTestUpdater
