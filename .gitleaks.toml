@@ -1,0 +1,16 @@
+# Gitleaks configuration — extends the default ruleset with project allowlists.
+[extend]
+useDefault = true
+
+# Documentation and user-facing notes hold no real secrets — credentials for
+# this integration always flow through Home Assistant's config entry, never the
+# source tree. Allowlist markdown so doc IDs / example tokens don't false-trip.
+[allowlist]
+description = "Documentation is not a secret store"
+paths = [
+  '''docs/.*\.md''',
+  '''.*README\.md''',
+  '''CHANGELOG\.md''',
+  '''CLAUDE\.md''',
+  '''info\.md''',
+]

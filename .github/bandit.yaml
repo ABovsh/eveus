@@ -1,0 +1,11 @@
+# Bandit config for the pre-commit security pass (custom_components/eveus only).
+# B110 (try/except/pass): best-effort cleanup blocks that intentionally swallow
+# errors are a normal resilience pattern here.
+# B104 (hardcoded_bind_all_interfaces): the literals "0.0.0.0"/"::" appear only
+# in placeholder/unspecified-address comparisons, never as a socket bind.
+# B311 (pseudo-random): random.uniform is used only for retry-backoff jitter
+# (common_command.py), never for anything security/cryptographic.
+skips:
+  - B110
+  - B104
+  - B311
