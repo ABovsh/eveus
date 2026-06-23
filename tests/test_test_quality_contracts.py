@@ -53,11 +53,10 @@ def test_mutation_workflow_targets_hostile_firmware_layer() -> None:
     ).read_text(encoding="utf-8")
     assert "schedule:" in workflow
     assert "mutmut" in workflow
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     for module in (
         "custom_components/eveus/utils.py",
         "custom_components/eveus/_payload.py",
         "custom_components/eveus/common_network.py",
         "custom_components/eveus/soc_limit.py",
     ):
-        assert module in pyproject
+        assert module in workflow
