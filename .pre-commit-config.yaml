@@ -1,0 +1,42 @@
+# Local pre-commit gate for the eveus integration.
+#
+# Catches secrets, real lint errors, and security smells before a commit lands.
+# Activate once per clone with: `pre-commit install`.
+#
+# Scoped to this repo's rules:
+# * `no-commit-to-branch main` IS enabled — day-to-day work happens on the `rc`
+#   branch and main is only updated at an explicit, Sonar-gated promotion, so a
+#   direct commit to main is almost always a mistake.
+# * NO `ruff-format` — CI runs `ruff check` only (no format gate), so we avoid a
+#   wholesale reformat; `ruff check --fix` uses the minimal lint set in pyproject.toml.
+# * ruff scope matches CI exactly: custom_components/eveus, tests, tests_ha.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(custom_components/eveus|tests|tests_ha)/
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: [-c, .github/bandit.yaml]
+        files: ^custom_components/eveus/
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: no-commit-to-branch
+        args: [--branch, main]
