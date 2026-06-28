@@ -360,36 +360,47 @@ def _safe_phases_default(raw: Any) -> int:
     return value if value in PHASE_OPTIONS else DEFAULT_PHASES
 
 
-def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
-    """Build config-flow schema with optional defaults."""
+def build_user_data_schema(
+    defaults: dict[str, Any] | None = None, *, include_soc_mode: bool = True
+) -> vol.Schema:
+    """Build config-flow schema with optional defaults.
+
+    ``include_soc_mode`` is False for the reconfigure and repair flows: those
+    edit connection details only and must NOT offer the SOC-mode chooser, because
+    switching to Advanced there would commit without collecting the set-once
+    battery values (the SOC-step follow-up lives only in the setup and options
+    flows). SOC mode is changed through Configure (the options flow).
+    """
     defaults = defaults or {}
     host_default = defaults.get(CONF_HOST)
     if host_default and defaults.get(CONF_SCHEME) == "https":
         host_default = f"https://{host_default}"
-    return vol.Schema(
-        {
-            vol.Required(CONF_HOST, default=host_default): str,
-            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD): TextSelector(
-                TextSelectorConfig(type=TextSelectorType.PASSWORD)
-            ),
-            vol.Required(
-                CONF_MODEL,
-                default=defaults.get(CONF_MODEL, MODEL_16A),
-            ): vol.In(MODELS),
-            vol.Required(
-                CONF_PHASES,
-                default=_safe_phases_default(defaults.get(CONF_PHASES)),
-            # Coerce first: the frontend (mobile app in particular) submits the
-            # selected option as a string ("1"/"3"), which bare vol.In rejects
-            # with "value must be one of [1, 3]" for every choice (issue #4).
-            ): vol.All(vol.Coerce(int), vol.In(PHASE_OPTIONS)),
+    schema: dict[Any, Any] = {
+        vol.Required(CONF_HOST, default=host_default): str,
+        vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
+        vol.Required(CONF_PASSWORD): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.PASSWORD)
+        ),
+        vol.Required(
+            CONF_MODEL,
+            default=defaults.get(CONF_MODEL, MODEL_16A),
+        ): vol.In(MODELS),
+        vol.Required(
+            CONF_PHASES,
+            default=_safe_phases_default(defaults.get(CONF_PHASES)),
+        # Coerce first: the frontend (mobile app in particular) submits the
+        # selected option as a string ("1"/"3"), which bare vol.In rejects
+        # with "value must be one of [1, 3]" for every choice (issue #4).
+        ): vol.All(vol.Coerce(int), vol.In(PHASE_OPTIONS)),
+    }
+    if include_soc_mode:
+        schema[
             vol.Required(
                 CONF_SOC_MODE,
                 default=defaults.get(CONF_SOC_MODE, SOC_MODE_ADVANCED),
-            ): _SOC_MODE_SELECTOR,
-        }
-    )
+            )
+        ] = _SOC_MODE_SELECTOR
+    return vol.Schema(schema)
 
 
 STEP_USER_DATA_SCHEMA = build_user_data_schema()
@@ -614,6 +625,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 info = await validate_input(self.hass, user_input)
                 entry_data = _merge_entry_data(entry.data, info["data"])
+                # Reconfigure edits connection details only; never change SOC mode
+                # here (its form omits the chooser). normalize_user_input defaults
+                # an absent soc_mode to advanced, so re-assert the stored mode.
+                entry_data[CONF_SOC_MODE] = get_soc_mode(entry)
 
                 await self.async_set_unique_id(entry_data[CONF_HOST])
                 if entry.unique_id != entry_data[CONF_HOST]:
@@ -629,6 +644,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # an orphaned device behind.
                     self._migrate_device_identifiers(entry, old_host, new_host)
 
+                # This helper updates the entry and schedules exactly one reload.
+                # The integration no longer registers a reloading update listener,
+                # so there is no second reload on top of it (the HA 2026.6
+                # deprecated double-reload).
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=entry_data[CONF_HOST],
@@ -659,7 +678,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=build_user_data_schema(entry.data),
+            data_schema=build_user_data_schema(entry.data, include_soc_mode=False),
             errors=errors,
         )
 
@@ -725,6 +744,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # No device-identifier migration here: the reauth form only
                 # exposes credentials, and any host mismatch aborted above as
                 # wrong_device, so the host cannot change on this path.
+                # One reload via the helper; no reloading update listener exists
+                # to double it (the HA 2026.6 deprecated double-reload).
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=entry_data[CONF_HOST],
@@ -804,7 +825,7 @@ class EveusOptionsFlow(OptionsFlow):
                 # same as the setup flow's soc step — otherwise the SOC inputs
                 # would silently start from generic defaults.
                 return await self.async_step_soc()
-            return self._apply(new_data)
+            return await self._apply(new_data)
         schema = vol.Schema(
             {
                 vol.Required(
@@ -828,15 +849,20 @@ class EveusOptionsFlow(OptionsFlow):
             new_data[CONF_SOC_CORRECTION] = user_input[CONF_SOC_CORRECTION]
             new_data.setdefault(CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC)
             new_data.setdefault(CONF_TARGET_SOC, DEFAULT_TARGET_SOC)
-            return self._apply(new_data)
+            return await self._apply(new_data)
         return self.async_show_form(
             step_id="soc",
             data_schema=build_soc_step_schema(self.hass, defaults=self._entry.data),
         )
 
-    def _apply(self, new_data: dict[str, Any]) -> FlowResult:
-        """Persist the updated entry data and finish the flow."""
+    async def _apply(self, new_data: dict[str, Any]) -> FlowResult:
+        """Persist the updated entry data, reload the entry, and finish.
+
+        The integration registers no reloading update listener, so the options
+        flow reloads the entry itself for the new SOC mode to take effect.
+        """
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+        await self.hass.config_entries.async_reload(self._entry.entry_id)
         return self.async_create_entry(title="", data={})
 
 

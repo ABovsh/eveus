@@ -1051,6 +1051,7 @@ def test_options_flow_toggles_mode() -> None:
         {
             "data": _input(**{CONF_HOST: TEST_HOST, CONF_SOC_MODE: SOC_MODE_ADVANCED}),
             "unique_id": TEST_HOST,
+            "entry_id": "opt-entry",
         },
     )()
 
@@ -1060,6 +1061,9 @@ def test_options_flow_toggles_mode() -> None:
         def async_update_entry(self, entry, *, data):
             entry.data = data
             updated["data"] = data
+
+        async def async_reload(self, entry_id):
+            updated["reloaded"] = entry_id
 
     class _Hass:
         def __init__(self) -> None:
@@ -1115,11 +1119,16 @@ def _options_flow_for(entry):
         def async_update_entry(self, entry, *, data):
             entry.data = data
 
+        async def async_reload(self, entry_id):
+            return None
+
     class _Hass:
         def __init__(self) -> None:
             self.config_entries = _ConfigEntries()
             self.states = type("S", (), {"get": staticmethod(lambda eid: None)})()
 
+    if not hasattr(entry, "entry_id"):
+        entry.entry_id = "opt-entry"
     flow = config_flow.EveusOptionsFlow(entry)
     flow.hass = _Hass()
     flow.async_show_form = lambda *, step_id, data_schema=None: {

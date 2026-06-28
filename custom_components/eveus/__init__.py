@@ -845,7 +845,11 @@ async def _finish_setup(
     # DataUpdateCoordinator constructed with config_entry already registers
     # async_shutdown on the entry unload lifecycle — no manual registration.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(update_listener))
+    # No reloading update listener is registered: the reconfigure/reauth flows
+    # reload via async_update_reload_and_abort, the repair flow reloads
+    # explicitly, and the options flow reloads itself. Registering a listener
+    # that also reloads would double the unload/setup cycle on every entry
+    # update (deprecated in HA 2026.6).
 
     # Drop registry rows for SOC/phase entities that this config no longer
     # builds (Advanced -> Basic, or 3 -> 1 phase). Deferred until the entry
@@ -863,11 +867,6 @@ async def _finish_setup(
     )
 
     return True
-
-
-async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
-    """Handle options update."""
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

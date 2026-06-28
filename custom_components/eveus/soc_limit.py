@@ -133,15 +133,22 @@ class SocLimitController:
         evse_enabled = get_safe_value(data, "evseEnabled", int)
         energy = get_safe_value(data, "sessionEnergy", float)
         session_time = get_safe_value(data, "sessionTime", int)
-        # Session-identity guard (handles a boundary HIDDEN by failed polls): a
-        # pending token belongs to the session whose counters we recorded. Both
+        # Session-identity guard (handles a boundary HIDDEN by failed polls): the
+        # recorded counters belong to the session we last acted on. Both
         # ``sessionEnergy`` and ``sessionTime`` only grow within a session and
         # reset at a new one, so a later ACTIVE poll reporting a smaller value for
         # EITHER proves a NEW session is running — discard the stale token before
         # an unrelated 0 there confirms it. The clock check catches a new session
-        # whose energy dropped by less than the kWh epsilon. Gated on an active
-        # state so the current session's own end still confirms normally below.
-        if state in SESSION_ACTIVE_STATES and self._pending is not None:
+        # whose energy dropped by less than the kWh epsilon. Evaluated whenever an
+        # attempt is pending OR a stop has already fired: ``_emit_reached`` keeps
+        # the confirmed session's counters, so a Session B that begins entirely
+        # between polls (fast unplug/replug or an external start) is detected here
+        # and re-arms, instead of staying latched off for the whole next session.
+        # Gated on an active state so the current session's own end still confirms
+        # normally below.
+        if state in SESSION_ACTIVE_STATES and (
+            self._pending is not None or self._fired
+        ):
             energy_reset = (
                 self._pending_energy is not None
                 and energy is not None

@@ -138,6 +138,13 @@ class CommandManager:
         self, command: str, value: Any, extra: dict[str, Any] | None = None
     ) -> bool:
         """Issue a single HTTP request to the charger and return success."""
+        # Re-check shutdown INSIDE the command lock, immediately before the POST.
+        # The network layer's pre-lock check can pass while this command waits its
+        # turn behind another (rate-limit spacing + retry backoff); shutdown can
+        # begin in that window. Without this recheck a queued/retrying command
+        # would still mutate the charger after the entry has torn down.
+        if getattr(self._updater, "_shutting_down", False):
+            return False
         session = self._updater.get_session()
 
         # A callable value is resolved here, inside the command-manager critical

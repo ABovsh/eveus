@@ -42,7 +42,15 @@ async def read_json_capped(response: Any, *, limit: int = MAX_RESPONSE_BODY_BYTE
     Raises ``ValueError`` (``PayloadError``) on an oversized or malformed body,
     matching the existing JSON-decode failure path.
     """
-    return json.loads(await read_body_capped(response, limit=limit))
+    raw = await read_body_capped(response, limit=limit)
+    try:
+        return json.loads(raw)
+    except RecursionError as err:
+        # A deeply nested (but size-compliant) JSON document makes json.loads
+        # raise RecursionError, which is NOT a ValueError — it would escape the
+        # coordinator's ValueError handler and skip failure accounting/backoff.
+        # Normalize it to PayloadError so the poll is recorded as failed.
+        raise PayloadError("malformed", "Eveus response JSON nesting too deep") from err
 
 
 class PayloadError(ValueError):

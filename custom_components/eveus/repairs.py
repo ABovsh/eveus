@@ -21,7 +21,7 @@ from .config_flow import (
     build_user_data_schema,
     validate_input,
 )
-from .const import DOMAIN
+from .const import CONF_SOC_MODE, DOMAIN, get_soc_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,6 +72,10 @@ class InvalidConfigRepairFlow(RepairsFlow):
             try:
                 info = await validate_input(self.hass, user_input)
                 entry_data = _merge_entry_data(entry.data, info["data"])
+                # Repair edits connection details only; its form omits the SOC
+                # chooser, so re-assert the stored mode (normalize defaults an
+                # absent soc_mode to advanced) rather than half-enabling Advanced.
+                entry_data[CONF_SOC_MODE] = get_soc_mode(entry)
 
                 new_unique_id = entry_data[CONF_HOST]
                 if getattr(entry, "unique_id", None) != new_unique_id:
@@ -124,7 +128,7 @@ class InvalidConfigRepairFlow(RepairsFlow):
 
         return self.async_show_form(
             step_id="confirm",
-            data_schema=build_user_data_schema(entry.data),
+            data_schema=build_user_data_schema(entry.data, include_soc_mode=False),
             errors=errors,
         )
 

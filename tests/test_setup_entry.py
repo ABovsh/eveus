@@ -495,12 +495,9 @@ def test_async_setup_entry_normalizes_stored_device_number(
     assert hass.config_entries.updated == [{"data": {**_data(), "device_number": 2}}]
 
 
-def test_update_listener_and_unload_entry() -> None:
+def test_unload_entry() -> None:
     hass = _hass()
     entry = _Entry(_data())
-
-    asyncio.run(eveus.update_listener(hass, entry))
-    assert hass.config_entries.reloaded == ["entry-id"]
 
     assert asyncio.run(eveus.async_unload_entry(hass, entry)) is True
     assert hass.config_entries.unloaded
