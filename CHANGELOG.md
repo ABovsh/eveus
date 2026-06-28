@@ -3,7 +3,6 @@
 ## Unreleased
 
 ### 🐛 Fixed
-- **The Target SOC stop works on the very next session too.** If one charge ended and another began between updates, the stop-at-target limit could stay inactive for that whole next session; it now re-arms and stops at Target SOC as expected.
 - **A re-enabled SOC limit survives a restart.** If you turn **Limit: SOC enabled** back on while **Limit: disable all** is active, it no longer silently switches itself off after a restart.
 - **Reconfiguring or re-authenticating reloads the integration once**, not twice — less downtime and no duplicate reload.
 - **A malformed charger response is counted as a failed poll** instead of being silently ignored, so Connection Quality and offline detection stay accurate.

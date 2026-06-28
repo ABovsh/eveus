@@ -157,7 +157,10 @@ def test_reconfigure_preserves_stored_soc_mode(monkeypatch: pytest.MonkeyPatch) 
     assert captured["data"][CONF_SOC_MODE] == SOC_MODE_BASIC
 
 
-# --- EVA-AUD-2026-06-28-01: re-arm for a session begun entirely between polls ---
+# --- SOC limit: latched after a confirmed stop; re-arms only on an OBSERVED
+# session boundary (fires every session while the switch is on, like the
+# charger's own limits). A session hidden entirely between polls is skipped, not
+# re-fired. ---
 
 def _calc(target=80, initial=20, cap=50, corr=0):
     c = CachedSOCCalculator()
@@ -192,7 +195,7 @@ def _controller(calc, updater):
     return SocLimitController(hass, updater, calc), events
 
 
-def test_soc_limit_rearms_for_session_begun_between_polls() -> None:
+def test_soc_limit_latched_through_session_begun_between_polls() -> None:
     calc = _calc()
     updater = _updater(session_energy=30.0, session_time=3600)
     ctrl, events = _controller(calc, updater)
@@ -204,8 +207,9 @@ def test_soc_limit_rearms_for_session_begun_between_polls() -> None:
     assert len(events) == 1
     assert updater.send_command.call_count == 1
 
-    # Session B begins entirely between polls: active, counters reset, charging,
-    # already back at target. The reset sessionTime proves the new session.
+    # Session B begins entirely between polls (no inactive poll observed):
+    # active, counters reset, charging, already back at target. The limit stays
+    # latched and must NOT re-fire off a boundary it never saw.
     updater.data = {
         "state": 4,
         "sessionEnergy": 30.0,
@@ -213,9 +217,36 @@ def test_soc_limit_rearms_for_session_begun_between_polls() -> None:
         "evseEnabled": 0,
         "suspendLimits": 0,
     }
-    ctrl.process()  # must re-arm and issue a second Stop
-    assert updater.send_command.call_count == 2
+    ctrl.process()
+    assert updater.send_command.call_count == 1  # no second Stop
+    assert len(events) == 1
 
+
+def test_soc_limit_refires_after_an_observed_session_boundary() -> None:
+    calc = _calc()
+    updater = _updater(session_energy=30.0, session_time=3600)
+    ctrl, events = _controller(calc, updater)
+    ctrl.set_enabled(True)
+
+    ctrl.process()
     updater.data = {**updater.data, "evseEnabled": 1}
-    ctrl.process()  # second confirmation -> exactly one more event
+    ctrl.process()  # fired once
+    assert len(events) == 1
+
+    # Session actually ends (inactive state observed) -> re-arm.
+    updater.data = {**updater.data, "state": 1, "evseEnabled": 1}
+    ctrl.process()
+
+    # New session, at target again -> stops again (every session while enabled).
+    updater.data = {
+        "state": 4,
+        "sessionEnergy": 30.0,
+        "sessionTime": 5,
+        "evseEnabled": 0,
+        "suspendLimits": 0,
+    }
+    ctrl.process()
+    assert updater.send_command.call_count == 2
+    updater.data = {**updater.data, "evseEnabled": 1}
+    ctrl.process()
     assert len(events) == 2
