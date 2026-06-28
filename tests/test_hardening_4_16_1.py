@@ -49,13 +49,17 @@ def test_command_not_sent_once_shutdown_has_begun() -> None:
 # --- R2-02: deeply nested JSON -> PayloadError (ValueError) so the poll fails ---
 
 def test_deeply_nested_json_is_recorded_as_failed_poll() -> None:
-    deep = b"[" * 20000 + b"]" * 20000
-
+    # A deeply nested JSON document makes json.loads raise RecursionError. The
+    # exact depth that triggers it is interpreter-dependent, so assert the
+    # conversion branch directly: a RecursionError from decoding must surface as
+    # PayloadError (a ValueError) so the coordinator records the poll as failed.
     async def fake_read(response, *, limit=_payload.MAX_RESPONSE_BODY_BYTES):
-        return deep
+        return b"[1]"
 
     assert issubclass(_payload.PayloadError, ValueError)
-    with patch.object(_payload, "read_body_capped", fake_read):
+    with patch.object(_payload, "read_body_capped", fake_read), patch.object(
+        _payload.json, "loads", side_effect=RecursionError
+    ):
         with pytest.raises(_payload.PayloadError):
             asyncio.run(_payload.read_json_capped(MagicMock()))
 
