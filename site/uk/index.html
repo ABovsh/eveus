@@ -14,6 +14,11 @@
   <meta property="og:title" content="Eveus EV Charger для Home Assistant">
   <meta property="og:description" content="Інтеграція з HACS для локального керування та моніторингу зарядних станцій Eveus у Home Assistant.">
   <meta property="og:url" content="https://abovsh.github.io/eveus/uk/">
+  <meta property="og:image" content="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Eveus EV Charger для Home Assistant">
+  <meta name="twitter:description" content="Інтеграція з HACS для локального керування та моніторингу зарядних станцій Eveus у Home Assistant.">
+  <meta name="twitter:image" content="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -23,10 +28,52 @@
     "operatingSystem": "Home Assistant",
     "description": "Інтеграція Home Assistant, яка обмінюється даними із зарядними станціями Eveus через локальну мережу та встановлюється через HACS.",
     "softwareVersion": "4.17.0",
+    "inLanguage": ["uk", "en"],
+    "screenshot": "https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039",
     "url": "https://abovsh.github.io/eveus/uk/",
     "downloadUrl": "https://github.com/ABovsh/eveus/releases/latest",
     "codeRepository": "https://github.com/ABovsh/eveus",
     "license": "https://github.com/ABovsh/eveus/blob/main/LICENSE"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Чи працює зарядна станція Eveus з Home Assistant?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Так. Інтеграція Eveus EV Charger з'єднує Home Assistant зі станціями Eveus 16A, 32A, 40A та 48A через локальну мережу і встановлюється через HACS."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Чи потрібен обліковий запис у хмарі?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Ні. Інтеграція обмінюється даними зі станцією лише через вашу локальну мережу — без хмарного облікового запису й телеметрії. Власне OCPP-підключення станції — окрема функція, яка може використовувати віддалений сервер."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Чи може Home Assistant оцінювати рівень заряду батареї електромобіля?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Так. У розширеному режимі інтеграція оцінює SOC батареї, час до цільового рівня та очікуваний час завершення на основі даних станції та параметрів батареї, які ви вказуєте (початковий SOC, ємність батареї, коефіцієнт корекції)."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Чому налаштування не вдається, хоча вебсторінка станції працює?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Станції зі старішою прошивкою (є повідомлення про R3.01.x) можуть нормально відкривати власну вебсторінку, але відповідати на API-запит інтеграції так, що налаштування не може використати відповідь. Оновіть прошивку через застосунок Eveus, якщо оновлення доступне; діалог налаштування показує конкретну причину помилки, а посібник з усунення несправностей пояснює, що повідомити, якщо прошивку оновити неможливо."
+        }
+      }
+    ]
   }
   </script>
 </head>
@@ -90,12 +137,26 @@
           <li>Відкрийте <strong>Налаштування → Пристрої та служби → Додати інтеграцію</strong> та знайдіть <strong>Eveus EV Charger</strong>.</li>
           <li>Введіть адресу й облікові дані станції, потім виберіть модель, кількість фаз і режим інтеграції.</li>
         </ol>
-        <p class="note">Потрібна станція Eveus 16A, 32A або 48A, локальний HTTP API якої доступний для Home Assistant, а також ім’я користувача й пароль станції.</p>
+        <p class="note">Потрібна станція Eveus 16A, 32A, 40A або 48A, локальний HTTP API якої доступний для Home Assistant, а також ім’я користувача й пароль станції.</p>
         <div class="actions">
           <a class="button primary" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&amp;repository=eveus&amp;category=integration">Відкрити репозиторій у HACS</a>
           <a class="button" href="https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628">Обговорення</a>
           <a class="button" href="https://github.com/ABovsh/eveus/issues">Підтримка та помилки</a>
         </div>
+      </div>
+    </section>
+
+    <section class="wrap" id="faq">
+      <h2>Поширені запитання</h2>
+      <div class="install">
+        <h3>Чи працює зарядна станція Eveus з Home Assistant?</h3>
+        <p>Так. Інтеграція Eveus EV Charger з'єднує Home Assistant зі станціями Eveus 16A, 32A, 40A та 48A через локальну мережу і встановлюється через HACS.</p>
+        <h3>Чи потрібен обліковий запис у хмарі?</h3>
+        <p>Ні. Інтеграція обмінюється даними зі станцією лише через вашу локальну мережу — без хмарного облікового запису й телеметрії. Власне OCPP-підключення станції — окрема функція, яка може використовувати віддалений сервер.</p>
+        <h3>Чи може Home Assistant оцінювати рівень заряду батареї електромобіля?</h3>
+        <p>Так. У розширеному режимі інтеграція оцінює SOC батареї, час до цільового рівня та очікуваний час завершення на основі даних станції та параметрів батареї, які ви вказуєте (початковий SOC, ємність батареї, коефіцієнт корекції).</p>
+        <h3>Чому налаштування не вдається, хоча вебсторінка станції працює?</h3>
+        <p>Станції зі старішою прошивкою (є повідомлення про R3.01.x) можуть нормально відкривати власну вебсторінку, але відповідати на API-запит інтеграції так, що налаштування не може використати відповідь. Оновіть прошивку через застосунок Eveus, якщо оновлення доступне; діалог налаштування показує конкретну причину помилки, а <a href="https://github.com/ABovsh/eveus/blob/main/README.uk.md#старіша-прошивка-станції">посібник з усунення несправностей</a> пояснює, що повідомити, якщо прошивку оновити неможливо.</p>
       </div>
     </section>
   </main>
