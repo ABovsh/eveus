@@ -51,6 +51,7 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
     SOC_INPUT_LIMITS,
+    UPDATE_TIMEOUT,
     get_soc_mode,
 )
 from ._payload import PayloadError, read_body_capped
@@ -360,36 +361,56 @@ def _safe_phases_default(raw: Any) -> int:
     return value if value in PHASE_OPTIONS else DEFAULT_PHASES
 
 
-def build_user_data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
-    """Build config-flow schema with optional defaults."""
+def _safe_model_default(raw: Any) -> str:
+    """Coerce stored model data to a valid option, falling back on MODEL_16A.
+
+    A corrupt/foreign stored value would otherwise seed vol.In(MODELS) with a
+    default outside its own allowed set on the reconfigure/repair form.
+    """
+    return raw if raw in MODELS else MODEL_16A
+
+
+def build_user_data_schema(
+    defaults: dict[str, Any] | None = None, *, include_soc_mode: bool = True
+) -> vol.Schema:
+    """Build config-flow schema with optional defaults.
+
+    ``include_soc_mode`` is False for the reconfigure and repair flows: those
+    edit connection details only and must NOT offer the SOC-mode chooser, because
+    switching to Advanced there would commit without collecting the set-once
+    battery values (the SOC-step follow-up lives only in the setup and options
+    flows). SOC mode is changed through Configure (the options flow).
+    """
     defaults = defaults or {}
     host_default = defaults.get(CONF_HOST)
     if host_default and defaults.get(CONF_SCHEME) == "https":
         host_default = f"https://{host_default}"
-    return vol.Schema(
-        {
-            vol.Required(CONF_HOST, default=host_default): str,
-            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-            vol.Required(CONF_PASSWORD): TextSelector(
-                TextSelectorConfig(type=TextSelectorType.PASSWORD)
-            ),
-            vol.Required(
-                CONF_MODEL,
-                default=defaults.get(CONF_MODEL, MODEL_16A),
-            ): vol.In(MODELS),
-            vol.Required(
-                CONF_PHASES,
-                default=_safe_phases_default(defaults.get(CONF_PHASES)),
-            # Coerce first: the frontend (mobile app in particular) submits the
-            # selected option as a string ("1"/"3"), which bare vol.In rejects
-            # with "value must be one of [1, 3]" for every choice (issue #4).
-            ): vol.All(vol.Coerce(int), vol.In(PHASE_OPTIONS)),
+    schema: dict[Any, Any] = {
+        vol.Required(CONF_HOST, default=host_default): str,
+        vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
+        vol.Required(CONF_PASSWORD): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.PASSWORD)
+        ),
+        vol.Required(
+            CONF_MODEL,
+            default=_safe_model_default(defaults.get(CONF_MODEL)),
+        ): vol.In(MODELS),
+        vol.Required(
+            CONF_PHASES,
+            default=_safe_phases_default(defaults.get(CONF_PHASES)),
+        # Coerce first: the frontend (mobile app in particular) submits the
+        # selected option as a string ("1"/"3"), which bare vol.In rejects
+        # with "value must be one of [1, 3]" for every choice (issue #4).
+        ): vol.All(vol.Coerce(int), vol.In(PHASE_OPTIONS)),
+    }
+    if include_soc_mode:
+        schema[
             vol.Required(
                 CONF_SOC_MODE,
                 default=defaults.get(CONF_SOC_MODE, SOC_MODE_ADVANCED),
-            ): _SOC_MODE_SELECTOR,
-        }
-    )
+            )
+        ] = _SOC_MODE_SELECTOR
+    return vol.Schema(schema)
 
 
 STEP_USER_DATA_SCHEMA = build_user_data_schema()
@@ -422,7 +443,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     try:
         session = aiohttp_client.async_get_clientsession(hass)
-        timeout = aiohttp.ClientTimeout(total=10)
+        # Same budget as the coordinator's regular poll (UPDATE_TIMEOUT): setup
+        # is the one moment a struggling charger most needs patience, so it
+        # must not be stricter than steady-state polling ever is.
+        timeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
 
         async with session.post(
             f"{normalized_data[CONF_SCHEME]}://{normalized_data[CONF_HOST]}/main",
@@ -445,7 +469,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             try:
                 raw_body = await read_body_capped(response)
             except PayloadError as err:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     "Eveus %s returned an oversized /main body (HTTP %s, %s)",
                     host, response.status, response.headers.get("Content-Type"),
                 )
@@ -454,12 +478,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             try:
                 result = json.loads(raw_body)
             except ValueError as err:
-                # Debug-only, and only the already-capped first 200 bytes: enough
-                # to tell an HTML login page from malformed JSON without dumping a
-                # whole body. The /main body carries device telemetry, not the
-                # Basic-Auth credentials, but it is still device-returned content,
-                # so it stays behind the debug flag.
-                _LOGGER.debug(
+                # Warning-level on purpose: setup is user-initiated, and this
+                # line is the only evidence of WHAT an incompatible (old-
+                # firmware) charger actually sent — behind the debug flag it
+                # costs a log-config round-trip on every support report. Only
+                # the already-capped first 200 bytes: enough to tell an HTML
+                # login page from malformed JSON without dumping a whole body,
+                # and the /main body carries device telemetry, not credentials.
+                _LOGGER.warning(
                     "Eveus %s did not return JSON from /main "
                     "(HTTP %s, Content-Type %s, first 200 bytes: %r)",
                     host, response.status,
@@ -470,7 +496,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             try:
                 device_info = validate_device_response(result, normalized_data[CONF_MODEL])
             except InvalidResponse:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     "Eveus %s returned JSON that is not an Eveus /main payload "
                     "(keys: %s)",
                     host,
@@ -504,6 +530,17 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         raise CannotConnect(f"Unexpected error: {type(err).__name__}") from err
 
 
+def _cannot_connect_placeholders(err: Exception) -> dict[str, str]:
+    """Build the error_detail placeholder for the cannot_connect message.
+
+    CannotConnect carries the concrete failure ("HTTP 404", "Connection error:
+    TimeoutError"); surfacing it in the dialog is what makes a "Failed to
+    connect" report diagnosable without log access. Never empty: the
+    translation string renders the placeholder verbatim if it's missing.
+    """
+    return {"error_detail": str(err) or "connection failed"}
+
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Eveus."""
 
@@ -519,6 +556,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle the initial step."""
         errors = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
             try:
@@ -538,8 +576,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_soc()
                 return self._finish_entry()
 
-            except CannotConnect:
+            except CannotConnect as err:
                 errors["base"] = "cannot_connect"
+                placeholders = _cannot_connect_placeholders(err)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
@@ -560,10 +599,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
 
+        # Re-show with the submitted values as defaults so a validation error
+        # (wrong password, unreachable host, ...) doesn't wipe the whole form —
+        # only the password field is left blank, matching build_user_data_schema's
+        # password widget (which never carries a default).
+        schema = STEP_USER_DATA_SCHEMA if user_input is None else build_user_data_schema(
+            user_input
+        )
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=schema,
             errors=errors,
+            description_placeholders=placeholders or None,
         )
 
     def _finish_entry(self) -> FlowResult:
@@ -609,11 +656,28 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Allow users to reconfigure connection details."""
         entry = self._get_reconfigure_entry()
         errors = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
             try:
-                info = await validate_input(self.hass, user_input)
+                # The reconfigure form never collects CONF_SCHEME directly (it's
+                # inferred from an "http://"/"https://" prefix typed into the host
+                # field). If the user edits the host without retyping that
+                # prefix, normalize_user_input's fallback would silently revert
+                # to DEFAULT_SCHEME ("http") — downgrading an https entry to
+                # plaintext. Seed the fallback with the entry's current scheme
+                # instead, so an untouched prefix keeps whatever scheme was
+                # already stored (still "http" for the common bare-IP case).
+                reconfigure_input = {
+                    CONF_SCHEME: entry.data.get(CONF_SCHEME, DEFAULT_SCHEME),
+                    **user_input,
+                }
+                info = await validate_input(self.hass, reconfigure_input)
                 entry_data = _merge_entry_data(entry.data, info["data"])
+                # Reconfigure edits connection details only; never change SOC mode
+                # here (its form omits the chooser). normalize_user_input defaults
+                # an absent soc_mode to advanced, so re-assert the stored mode.
+                entry_data[CONF_SOC_MODE] = get_soc_mode(entry)
 
                 await self.async_set_unique_id(entry_data[CONF_HOST])
                 if entry.unique_id != entry_data[CONF_HOST]:
@@ -629,6 +693,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # an orphaned device behind.
                     self._migrate_device_identifiers(entry, old_host, new_host)
 
+                # This helper updates the entry and schedules exactly one reload.
+                # The integration no longer registers a reloading update listener,
+                # so there is no second reload on top of it (the HA 2026.6
+                # deprecated double-reload).
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=entry_data[CONF_HOST],
@@ -636,8 +704,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=entry_data,
                 )
 
-            except CannotConnect:
+            except CannotConnect as err:
                 errors["base"] = "cannot_connect"
+                placeholders = _cannot_connect_placeholders(err)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
@@ -659,8 +728,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=build_user_data_schema(entry.data),
+            data_schema=build_user_data_schema(entry.data, include_soc_mode=False),
             errors=errors,
+            description_placeholders=placeholders or None,
         )
 
     async def async_step_reauth(
@@ -676,6 +746,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Update credentials for an existing Eveus charger."""
         entry = self._get_reauth_entry()
         errors = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
             try:
@@ -725,6 +796,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # No device-identifier migration here: the reauth form only
                 # exposes credentials, and any host mismatch aborted above as
                 # wrong_device, so the host cannot change on this path.
+                # One reload via the helper; no reloading update listener exists
+                # to double it (the HA 2026.6 deprecated double-reload).
                 return self.async_update_reload_and_abort(
                     entry,
                     unique_id=entry_data[CONF_HOST],
@@ -732,8 +805,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=entry_data,
                 )
 
-            except CannotConnect:
+            except CannotConnect as err:
                 errors["base"] = "cannot_connect"
+                placeholders = _cannot_connect_placeholders(err)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
@@ -753,6 +827,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=build_reauth_data_schema(entry.data),
             errors=errors,
+            description_placeholders=placeholders or None,
         )
 
 
@@ -804,7 +879,7 @@ class EveusOptionsFlow(OptionsFlow):
                 # same as the setup flow's soc step — otherwise the SOC inputs
                 # would silently start from generic defaults.
                 return await self.async_step_soc()
-            return self._apply(new_data)
+            return await self._apply(new_data)
         schema = vol.Schema(
             {
                 vol.Required(
@@ -828,15 +903,20 @@ class EveusOptionsFlow(OptionsFlow):
             new_data[CONF_SOC_CORRECTION] = user_input[CONF_SOC_CORRECTION]
             new_data.setdefault(CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC)
             new_data.setdefault(CONF_TARGET_SOC, DEFAULT_TARGET_SOC)
-            return self._apply(new_data)
+            return await self._apply(new_data)
         return self.async_show_form(
             step_id="soc",
             data_schema=build_soc_step_schema(self.hass, defaults=self._entry.data),
         )
 
-    def _apply(self, new_data: dict[str, Any]) -> FlowResult:
-        """Persist the updated entry data and finish the flow."""
+    async def _apply(self, new_data: dict[str, Any]) -> FlowResult:
+        """Persist the updated entry data, reload the entry, and finish.
+
+        The integration registers no reloading update listener, so the options
+        flow reloads the entry itself for the new SOC mode to take effect.
+        """
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+        await self.hass.config_entries.async_reload(self._entry.entry_id)
         return self.async_create_entry(title="", data={})
 
 

@@ -121,26 +121,44 @@ class SocLimitController:
         ):
             return
         data = self._updater.data
-        # The charger's master switch overrides every limit, including this
-        # HA-enforced one; stand down before confirming or issuing a Stop.
+        # The charger's master switch ("Disable limits", ``suspendLimits``)
+        # overrides every limit, including this HA-enforced one; stand down before
+        # confirming or issuing a Stop. This mirrors how the charger treats its
+        # own Time/Energy/Cost limits, verified live on R3.05.2:
+        #   suspendLimits 0->1  -> the charger clears each native enable flag
+        #                          (timeLimitS/energyLimitS/moneyLimitS -> 0), and
+        #                          the SOC switch follows to off on the same edge.
+        #   while suspended     -> a limit (incl. this SOC switch) CAN be enabled
+        #                          again but has no effect on the session.
+        #   suspendLimits 1->0  -> whatever limits are enabled become active again;
+        #                          no auto-enable of a limit you left off.
         # Require a clean 0 to enforce: a missing/malformed/out-of-domain
         # suspendLimits means the master state is unknown, and the conservative
         # safety contract is to stand down rather than risk stopping while the
-        # master "Disable limits" may actually be active.
+        # master may actually be active.
         if get_safe_value(data, "suspendLimits", int) != 0:
             return
         state = get_safe_value(data, "state", int)
         evse_enabled = get_safe_value(data, "evseEnabled", int)
         energy = get_safe_value(data, "sessionEnergy", float)
         session_time = get_safe_value(data, "sessionTime", int)
-        # Session-identity guard (handles a boundary HIDDEN by failed polls): a
-        # pending token belongs to the session whose counters we recorded. Both
-        # ``sessionEnergy`` and ``sessionTime`` only grow within a session and
-        # reset at a new one, so a later ACTIVE poll reporting a smaller value for
-        # EITHER proves a NEW session is running — discard the stale token before
-        # an unrelated 0 there confirms it. The clock check catches a new session
-        # whose energy dropped by less than the kWh epsilon. Gated on an active
-        # state so the current session's own end still confirms normally below.
+        # Session-identity guard for an UNCONFIRMED attempt whose boundary was
+        # HIDDEN by failed polls: a pending token belongs to the session whose
+        # counters we recorded. Both ``sessionEnergy`` and ``sessionTime`` only
+        # grow within a session and reset at a new one, so a later ACTIVE poll
+        # reporting a smaller value for EITHER proves a NEW session is running —
+        # discard the stale token before an unrelated 0 there confirms it. The
+        # clock check catches a new session whose energy dropped by less than the
+        # kWh epsilon. Gated on an active state so the current session's own end
+        # still confirms normally below.
+        #
+        # Deliberately NOT extended to a CONFIRMED stop (``_fired``): once the
+        # limit has fired, it stays latched until a session boundary is actually
+        # OBSERVED (an inactive poll re-arms it below) — matching how the charger
+        # treats its own limits and how Anton uses this rare backup (his car
+        # already self-limits SOC). A session that begins entirely between polls
+        # is intentionally skipped rather than stopped, so the limit never
+        # re-fires off a boundary it never saw.
         if state in SESSION_ACTIVE_STATES and self._pending is not None:
             energy_reset = (
                 self._pending_energy is not None
@@ -189,7 +207,10 @@ class SocLimitController:
         # token and is held across retries. While it is set and the charger is
         # still charging (no evseEnabled==1 yet), we fall through and re-send Stop.
         target = self._calc.target_soc
-        if target is None:
+        # A 0% target has no useful meaning as a stop point (every real SOC
+        # reading is already "at or above" it) — treat it the same as unset
+        # rather than stopping the charge the instant the session starts.
+        if target is None or target <= 0:
             return
         if energy is None or not 0 <= energy <= MAX_ENERGY_KWH:
             return
@@ -246,6 +267,19 @@ class SocLimitController:
         self._pending = (soc, target)
         self._pending_energy = energy
         self._pending_session_time = session_time
+        # process() only checked suspendLimits when it scheduled this task; a
+        # poll that toggled "Disable limits" on while this task was queued
+        # would otherwise never be re-consulted, and the command below would
+        # violate the same stand-down contract process() enforces on every
+        # other poll. Re-read the latest data right before POSTing.
+        data = self._updater.data
+        if isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) != 0:
+            if not self._fired:
+                self._pending = None
+                self._pending_energy = None
+                self._pending_session_time = None
+            _LOGGER.debug("SOC-limit Stop aborted: suspendLimits enabled mid-flight")
+            return
         try:
             # evseEnabled=1 is the Stop command (0 = keep charging); this matches
             # the Stop Charging switch, not the field's misleading name.

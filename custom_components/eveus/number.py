@@ -632,11 +632,17 @@ class EveusSocConfigNumber(
         last = await self.async_get_last_number_data()
         if last is not None and last.native_value is not None:
             # HA restores native_value without type coercion, so a corrupt
-            # stored state must not raise during entity setup.
-            try:
-                restored = float(last.native_value)
-            except (TypeError, ValueError, OverflowError):
+            # stored state must not raise during entity setup. bool is an int
+            # subclass (float(False) == 0.0 with no exception raised), so it
+            # must be rejected explicitly before it silently passes as a real
+            # in-range value — enforced everywhere else this pattern is used.
+            if isinstance(last.native_value, bool):
                 restored = None
+            else:
+                try:
+                    restored = float(last.native_value)
+                except (TypeError, ValueError, OverflowError):
+                    restored = None
             lo, hi = SOC_INPUT_LIMITS[self._soc_key]
             if restored is not None and lo <= restored <= hi:
                 self._attr_native_value = restored

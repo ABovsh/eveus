@@ -383,6 +383,19 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        # Seed the suspend-edge memory from the fresh payload that setup polled
+        # before adding platforms. Without this it defaults to False, so the
+        # first post-reload poll that still reports suspendLimits==1 looks like a
+        # fresh off->on edge and silently flips a restored "on" back off — losing
+        # a SOC limit the user deliberately re-enabled while limits were disabled.
+        data = self._updater.data
+        raw = (
+            get_safe_value(data, "suspendLimits", int)
+            if isinstance(data, dict)
+            else None
+        )
+        if raw in (0, 1):
+            self._was_suspended = raw == 1
         last = await self.async_get_last_state()
         if last is not None and last.state == "on":
             self._attr_is_on = True

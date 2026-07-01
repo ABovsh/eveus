@@ -719,15 +719,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
         phases, phases_were_invalid = _resolve_phases(raw_phases)
-        if raw_phases != phases:
-            # Persist the normalized value so an invalid stored phase count is
-            # not silently re-evaluated (and hiding phase 2/3 entities) on every
-            # reload.
-            normalized = dict(entry.data)
-            normalized[CONF_PHASES] = phases
-            hass.config_entries.async_update_entry(entry, data=normalized)
+        if phases_were_invalid:
+            # Do NOT persist the fallback value: writing it into entry.data would
+            # make raw_phases valid on the very next reload, losing the
+            # phases_were_invalid signal that protects the phase 2/3 registry
+            # rows from _prune_unused_entities below (see its 3-phase fallback).
             _LOGGER.warning(
-                "Eveus phase count %r was invalid; normalized to %d phase(s)",
+                "Eveus phase count %r was invalid; using %d phase(s) for this session",
                 raw_phases,
                 phases,
             )
@@ -845,7 +843,11 @@ async def _finish_setup(
     # DataUpdateCoordinator constructed with config_entry already registers
     # async_shutdown on the entry unload lifecycle — no manual registration.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(update_listener))
+    # No reloading update listener is registered: the reconfigure/reauth flows
+    # reload via async_update_reload_and_abort, the repair flow reloads
+    # explicitly, and the options flow reloads itself. Registering a listener
+    # that also reloads would double the unload/setup cycle on every entry
+    # update (deprecated in HA 2026.6).
 
     # Drop registry rows for SOC/phase entities that this config no longer
     # builds (Advanced -> Basic, or 3 -> 1 phase). Deferred until the entry
@@ -863,11 +865,6 @@ async def _finish_setup(
     )
 
     return True
-
-
-async def update_listener(hass: HomeAssistant, entry: EveusConfigEntry) -> None:
-    """Handle options update."""
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -126,20 +126,35 @@ def _diag_sensor(updater):
     return sensor
 
 
-def test_negative_grace_age_reanchors_instead_of_lasting_forever() -> None:
+def test_availability_grace_uses_monotonic_not_wall_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for A04-adjacent A03 finding: the grace window is timed
+    with time.monotonic(), so a wall-clock jump (NTP correction, DST, manual
+    change) in either direction cannot move the outage boundary or reopen /
+    prematurely expire the grace window.
+    """
+    from custom_components.eveus import common_base
+
     updater = EveusTestUpdater({}, available=False)
     sensor = _diag_sensor(updater)
 
-    # Outage began "in the future" (wall clock stepped backward since).
-    sensor._unavailable_since = time.time() + 10_000
-    sensor._update_availability_state()
+    fake_monotonic = 1_000_000.0
+    monkeypatch.setattr(common_base.time, "monotonic", lambda: fake_monotonic)
+    # Wall clock jumps wildly forward; must have zero effect on grace timing.
+    monkeypatch.setattr(common_base.time, "time", lambda: 4_102_444_800.0)
 
-    # Re-anchored to now: still inside the grace window, not pinned forever.
-    assert sensor._unavailable_since <= time.time() + 1
+    sensor._update_availability_state()
+    assert sensor._unavailable_since == fake_monotonic
     assert sensor.available is True
 
-    # And a properly expired grace still flips to unavailable.
-    sensor._unavailable_since = time.time() - 10_000
+    # Still within the grace period per monotonic time.
+    fake_monotonic += 1
+    sensor._update_availability_state()
+    assert sensor.available is True
+
+    # Grace period genuinely expires once enough monotonic time has passed.
+    fake_monotonic += 10_000
     sensor._update_availability_state()
     assert sensor.available is False
 
