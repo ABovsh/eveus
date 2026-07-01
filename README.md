@@ -373,12 +373,19 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 
 ### Older charger firmware
 
-Some chargers on older firmware (R3.01.x has been reported) answer their own web page normally but reply to the integration's API request in a way setup can't use, so adding the integration fails even though the browser works. What to do:
+Some chargers on older firmware (R3.01.x has been reported) answer their own web page normally but reply to the integration's API request in a way setup can't use — so the charger can't be added even though the browser works. There are two ways forward:
 
-1. **Update the charger firmware** — this has resolved the problem of adding the charger for other users. To get the update, message **@energy_star** on Telegram — he will add you to the charger support channel with the firmware files and instructions. From there you can either link the **Grizzl-E app** to your charger and push the update from the app, or download the firmware file for your charger and flash it from the charger's web interface.
-2. **Read the reason in the setup dialog.** The error message includes the concrete failure, e.g. `Failed to connect to charger (HTTP 404)`.
-3. **Check the Home Assistant log** (Settings → System → Logs). When the charger replies with something setup can't understand, the integration logs a warning with the HTTP status, content type, and the first bytes of the reply — no debug logging needed.
-4. **If the firmware can't be updated**, open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version (shown in the Eveus app), the exact dialog error text, and that warning line from the log — this is exactly the information needed to add support for your firmware.
+**Option 1 — update the firmware (recommended).** This has resolved the problem for other users.
+
+1. Message **@energy_star** on Telegram — he will add you to the charger support channel with the firmware files and instructions.
+2. Update the charger: either link the **Grizzl-E app** to your charger and push the update from the app, or download the firmware file for your charger and flash it from the charger's web interface.
+3. Add the charger to the integration again.
+
+**Option 2 — report your firmware so support for it can be added.**
+
+1. Note the error in the setup dialog — it includes the concrete failure, e.g. `Failed to connect to charger (HTTP 404)`.
+2. Find the integration's warning in the Home Assistant log (Settings → System → Logs) — it contains the HTTP status, content type, and the first bytes of the charger's reply; no debug logging needed.
+3. Open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version, the dialog error text, and that warning line. Hide anything sensitive first (your IP addresses, serial numbers).
 
 ## Privacy And Diagnostics
 
