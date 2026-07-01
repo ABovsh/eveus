@@ -43,7 +43,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to charger, please verify the IP address",
+      "cannot_connect": "Failed to connect to charger ({error_detail}), please verify the IP address",
       "invalid_auth": "Invalid username or password",
       "invalid_input": "Invalid input provided, please check your entries",
       "invalid_device": "Device validation failed, please check the charger model",

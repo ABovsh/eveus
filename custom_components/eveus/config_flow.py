@@ -469,7 +469,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             try:
                 raw_body = await read_body_capped(response)
             except PayloadError as err:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     "Eveus %s returned an oversized /main body (HTTP %s, %s)",
                     host, response.status, response.headers.get("Content-Type"),
                 )
@@ -478,12 +478,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             try:
                 result = json.loads(raw_body)
             except ValueError as err:
-                # Debug-only, and only the already-capped first 200 bytes: enough
-                # to tell an HTML login page from malformed JSON without dumping a
-                # whole body. The /main body carries device telemetry, not the
-                # Basic-Auth credentials, but it is still device-returned content,
-                # so it stays behind the debug flag.
-                _LOGGER.debug(
+                # Warning-level on purpose: setup is user-initiated, and this
+                # line is the only evidence of WHAT an incompatible (old-
+                # firmware) charger actually sent — behind the debug flag it
+                # costs a log-config round-trip on every support report. Only
+                # the already-capped first 200 bytes: enough to tell an HTML
+                # login page from malformed JSON without dumping a whole body,
+                # and the /main body carries device telemetry, not credentials.
+                _LOGGER.warning(
                     "Eveus %s did not return JSON from /main "
                     "(HTTP %s, Content-Type %s, first 200 bytes: %r)",
                     host, response.status,
@@ -494,7 +496,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             try:
                 device_info = validate_device_response(result, normalized_data[CONF_MODEL])
             except InvalidResponse:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     "Eveus %s returned JSON that is not an Eveus /main payload "
                     "(keys: %s)",
                     host,
@@ -528,6 +530,17 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         raise CannotConnect(f"Unexpected error: {type(err).__name__}") from err
 
 
+def _cannot_connect_placeholders(err: Exception) -> dict[str, str]:
+    """Build the error_detail placeholder for the cannot_connect message.
+
+    CannotConnect carries the concrete failure ("HTTP 404", "Connection error:
+    TimeoutError"); surfacing it in the dialog is what makes a "Failed to
+    connect" report diagnosable without log access. Never empty: the
+    translation string renders the placeholder verbatim if it's missing.
+    """
+    return {"error_detail": str(err) or "connection failed"}
+
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Eveus."""
 
@@ -543,6 +556,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle the initial step."""
         errors = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
             try:
@@ -562,8 +576,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_soc()
                 return self._finish_entry()
 
-            except CannotConnect:
+            except CannotConnect as err:
                 errors["base"] = "cannot_connect"
+                placeholders = _cannot_connect_placeholders(err)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
@@ -595,6 +610,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=schema,
             errors=errors,
+            description_placeholders=placeholders or None,
         )
 
     def _finish_entry(self) -> FlowResult:
@@ -640,6 +656,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Allow users to reconfigure connection details."""
         entry = self._get_reconfigure_entry()
         errors = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
             try:
@@ -687,8 +704,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=entry_data,
                 )
 
-            except CannotConnect:
+            except CannotConnect as err:
                 errors["base"] = "cannot_connect"
+                placeholders = _cannot_connect_placeholders(err)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
@@ -712,6 +730,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reconfigure",
             data_schema=build_user_data_schema(entry.data, include_soc_mode=False),
             errors=errors,
+            description_placeholders=placeholders or None,
         )
 
     async def async_step_reauth(
@@ -727,6 +746,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Update credentials for an existing Eveus charger."""
         entry = self._get_reauth_entry()
         errors = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
             try:
@@ -785,8 +805,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=entry_data,
                 )
 
-            except CannotConnect:
+            except CannotConnect as err:
                 errors["base"] = "cannot_connect"
+                placeholders = _cannot_connect_placeholders(err)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except InvalidInput as err:
@@ -806,6 +827,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=build_reauth_data_schema(entry.data),
             errors=errors,
+            description_placeholders=placeholders or None,
         )
 
 

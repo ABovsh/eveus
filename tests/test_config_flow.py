@@ -2002,3 +2002,122 @@ def test_infinite_device_number_on_other_entry_does_not_crash() -> None:
     assert utils.get_next_device_number(hass) == 2
     assert utils.is_device_number_taken(hass, 1) is True
     assert utils.is_device_number_taken(hass, 5) is False
+
+
+def test_user_flow_cannot_connect_shows_error_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The dialog must surface WHY the connection failed (HTTP status / error
+    # type), not just the generic message -- old-firmware reports hinge on it.
+    async def fake_validate_input(hass, data):
+        raise CannotConnect("HTTP 404")
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(flow.async_step_user(_input()))
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert result["description_placeholders"] == {"error_detail": "HTTP 404"}
+
+
+def test_user_flow_cannot_connect_detail_never_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A bare CannotConnect (no message) must not render an empty placeholder.
+    async def fake_validate_input(hass, data):
+        raise CannotConnect
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(flow.async_step_user(_input()))
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert result["description_placeholders"]["error_detail"]
+
+
+def test_reconfigure_flow_cannot_connect_shows_error_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_validate_input(hass, data):
+        raise CannotConnect("Connection error: TimeoutError")
+
+    entry = type(
+        "Entry",
+        (),
+        {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST},
+    )()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reconfigure_entry = lambda: entry
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(flow.async_step_reconfigure(_input()))
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert result["description_placeholders"] == {
+        "error_detail": "Connection error: TimeoutError"
+    }
+
+
+def test_reauth_flow_cannot_connect_shows_error_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_validate_input(hass, data):
+        raise CannotConnect("HTTP 500")
+
+    entry = type(
+        "Entry",
+        (),
+        {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST},
+    )()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
+        )
+    )
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert result["description_placeholders"] == {"error_detail": "HTTP 500"}
+
+
+def test_validate_input_logs_non_json_body_at_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Setup is user-initiated: the diagnostic body log must be visible without
+    # enabling debug logging, or every old-firmware report needs a log-config
+    # round-trip before diagnosis can start.
+    hass = _Hass(_Session(_Response(payload="<html><body>Login</body></html>")))
+
+    with caplog.at_level(logging.WARNING, logger="custom_components.eveus.config_flow"):
+        with pytest.raises(InvalidResponse):
+            asyncio.run(validate_input(hass, _input()))
+
+    assert any(
+        record.levelno == logging.WARNING and "did not return JSON" in record.message
+        for record in caplog.records
+    )
+
+
+def test_validate_input_logs_unrecognizable_payload_at_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    hass = _Hass(_Session(_Response(payload={"name": "not eveus"})))
+
+    with caplog.at_level(logging.WARNING, logger="custom_components.eveus.config_flow"):
+        with pytest.raises(InvalidResponse):
+            asyncio.run(validate_input(hass, _input()))
+
+    assert any(
+        record.levelno == logging.WARNING
+        and "not an Eveus /main payload" in record.message
+        for record in caplog.records
+    )

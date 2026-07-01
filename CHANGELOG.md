@@ -20,6 +20,8 @@
 
 ### 🔧 Changed
 - **Reconfigure and Repair edit connection details only.** Switching between Basic and Advanced is done from **Configure**; this keeps Reconfigure/Repair from enabling Advanced without first collecting your battery capacity and SOC correction.
+- **The setup dialog now says why a connection failed** — "Failed to connect to charger (HTTP 404)" or "(Connection error: TimeoutError)" instead of only the generic message, so an incompatible or unreachable charger can be diagnosed from the dialog alone.
+- **A charger reply that setup can't understand is logged without debug logging** — the HTTP status, content type, and the first bytes of the response now land in the log as a warning during setup, so older-firmware compatibility reports no longer require enabling debug logs first.
 
 ## 4.16.0 - 2026-06-18
 
