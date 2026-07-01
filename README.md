@@ -107,6 +107,7 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A, or 48A charger reachable from Home Assistant |
+| Charger firmware | Verified on R3.05.x. Older firmware (R3.01.x has been reported) can fail setup even when the charger's web page opens fine — see [Older charger firmware](#older-charger-firmware) |
 | Network | Local LAN access to the charger HTTP API |
 | Setup details | Charger IP/hostname or URL, username, password, model |
 
@@ -362,12 +363,21 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 
 | Problem | What to check |
 | --- | --- |
-| Setup cannot connect | Charger is powered on, HA can reach the charger IP/hostname, credentials are correct, selected model matches the charger |
+| Setup cannot connect | The setup dialog shows the reason in parentheses — e.g. `Failed to connect to charger (HTTP 404)` or `(Connection error: TimeoutError)`. Check the charger is powered on, HA can reach the charger IP/hostname, credentials are correct, and the selected model matches the charger. If the charger's web page works but setup still fails, see [Older charger firmware](#older-charger-firmware) |
 | Controls do not respond | Connection Quality, charger online state, credentials via Reconfigure, then wait one coordinator refresh |
 | SOC sensors are missing | Set the integration mode to Advanced under Configure, then restart/reload the integration if just changed |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
 | A Repairs notice appeared | See [Safety notices](#-safety-notices) for what each one means and what to do |
+
+### Older charger firmware
+
+Some chargers on older firmware (R3.01.x has been reported) answer their own web page normally but reply to the integration's API request in a way setup can't use, so adding the integration fails even though the browser works. What to do:
+
+1. **Update the charger firmware** through the Eveus mobile app if an update is offered — this has resolved setup failures for other users.
+2. **Read the reason in the setup dialog.** The error message includes the concrete failure, e.g. `Failed to connect to charger (HTTP 404)`.
+3. **Check the Home Assistant log** (Settings → System → Logs). When the charger replies with something setup can't understand, the integration logs a warning with the HTTP status, content type, and the first bytes of the reply — no debug logging needed.
+4. **If the firmware can't be updated**, open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version (shown in the Eveus app), the exact dialog error text, and that warning line from the log — this is exactly the information needed to add support for your firmware.
 
 ## Privacy And Diagnostics
 
