@@ -121,3 +121,6 @@ def test_mutation_survivors_are_always_reported() -> None:
     assert len(report_steps) == 1
     assert report_steps[0].get("if") == "always()"
     assert "GITHUB_STEP_SUMMARY" in report_steps[0]["run"]
+    # The summary pane is not retrievable through the REST API; the same
+    # results must also go to stdout so the job log carries them.
+    assert "tee" in report_steps[0]["run"]

@@ -99,24 +99,28 @@ jobs:
 
       - name: Report results
         # Survivor diffs are this workflow's entire product; publish them to the
-        # run summary whether the run step passed, failed, or timed out.
+        # run summary AND to stdout whether the run step passed, failed, or
+        # timed out. The summary pane is not retrievable through the REST API,
+        # so the job log (which is) must carry the same information.
         if: always()
         run: |
+          python -m mutmut results 2>&1 | tee mutmut-results.txt || true
           {
             echo "## Mutation results — ${{ matrix.name }}"
             echo '```'
-            python -m mutmut results 2>&1 || true
+            cat mutmut-results.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           ids=$(python -m mutmut result-ids survived 2>/dev/null || true)
           if [ -n "$ids" ]; then
+            for id in $(echo "$ids" | tr ' ' '\n' | head -20); do
+              python -m mutmut show "$id" 2>&1 || true
+            done | tee mutmut-survivors.txt
             {
               echo "<details><summary>Surviving mutant diffs (first 20)</summary>"
               echo ""
               echo '```diff'
-              for id in $(echo "$ids" | tr ' ' '\n' | head -20); do
-                python -m mutmut show "$id" 2>&1 || true
-              done
+              cat mutmut-survivors.txt
               echo '```'
               echo "</details>"
             } >> "$GITHUB_STEP_SUMMARY"
