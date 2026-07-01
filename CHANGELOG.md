@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.17.0 - 2026-07-02
 
 ### 🐛 Fixed
 - **A re-enabled SOC limit survives a restart.** If you turn **Limit: SOC enabled** back on while **Limit: disable all** is active, it no longer silently switches itself off after a restart.
