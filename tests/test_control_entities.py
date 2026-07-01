@@ -686,7 +686,7 @@ def test_control_pushes_availability_change_while_command_pending() -> None:
 
     number._pending_value = 10.0  # a command is in flight
     updater.available = False  # charger drops offline, past the grace period
-    number._unavailable_since = time.time() - (CONTROL_GRACE_PERIOD + 5)
+    number._unavailable_since = time.monotonic() - (CONTROL_GRACE_PERIOD + 5)
 
     number._handle_coordinator_update()
 

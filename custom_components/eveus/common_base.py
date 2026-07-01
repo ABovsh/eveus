@@ -114,7 +114,10 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         Returns True when the visible availability changed.
         """
         previous_available = self._entity_available
-        current_time = time.time()
+        # Monotonic, not wall-clock: _unavailable_since only measures elapsed
+        # grace-period duration, never a real timestamp, so an NTP correction or
+        # DST change must not be able to jump the duration forward (or backward).
+        current_time = time.monotonic()
 
         if self._updater.available:
             self._cancel_grace_recheck()
@@ -137,12 +140,9 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             )
             return previous_available != self._entity_available
 
+        # time.monotonic() is guaranteed non-decreasing within a process, so
+        # unlike time.time() it can't produce a negative duration here.
         unavailable_duration = current_time - self._unavailable_since
-        if unavailable_duration < 0:
-            # Wall clock stepped backward since the outage began; re-anchor so a
-            # negative age can't keep the grace window open indefinitely.
-            self._unavailable_since = current_time
-            unavailable_duration = 0.0
         if unavailable_duration < grace_period:
             self._entity_available = True
             self._schedule_grace_recheck(

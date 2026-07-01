@@ -273,9 +273,10 @@ class EVSocKwhSensor(BaseEVHelperSensor):
         if self._session_energy_is_invalid():
             return None
         energy_charged = self._get_energy_charged() or 0.0
+        # None means the SOC helper inputs are missing (or a calc error), not a
+        # transient poll blip — go unknown instead of freezing on a stale value.
         result = self._soc_calculator.get_soc_kwh(energy_charged)
-        if result is not None:
-            self._cached_value = result
+        self._cached_value = result
         return self._cached_value
 
 
@@ -295,9 +296,10 @@ class EVSocPercentSensor(BaseEVHelperSensor):
         if self._session_energy_is_invalid():
             return None
         energy_charged = self._get_energy_charged() or 0.0
+        # None means the SOC helper inputs are missing, not a transient poll
+        # blip — go unknown instead of freezing on a stale value.
         result = self._soc_calculator.get_soc_percent(energy_charged)
-        if result is not None:
-            self._cached_value = result
+        self._cached_value = result
         return self._cached_value
 
 
@@ -329,7 +331,11 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
                 err,
                 exc_info=True,
             )
-            return self._cached_value
+            # Matches the docstring: drop any stale value on failure instead of
+            # freezing it (this class's own inputs-missing branch above does
+            # the same via _cached_value = None).
+            self._cached_value = None
+            return None
 
 
 class EnergyToTargetSocSensor(BaseEVHelperSensor):

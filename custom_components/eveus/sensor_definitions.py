@@ -293,7 +293,7 @@ def _make_value_getter(
             return None
         try:
             value = float(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
         if not math.isfinite(value):
             return None
@@ -643,7 +643,19 @@ def get_connection_attrs(updater, hass) -> dict:
             "status": status,
         }
         if updater.available:
-            rssi = get_wifi_rssi(updater, hass)
+            # Isolated from the attrs already computed above: a failure here
+            # must only drop the optional wifi_rssi field, not replace the
+            # whole (already-valid) connection_quality/latency_avg/status dict.
+            try:
+                rssi = get_wifi_rssi(updater, hass)
+            except Exception as err:
+                if _should_log_error("get_connection_attrs_rssi"):
+                    _LOGGER.debug(
+                        "Error getting wifi_rssi for connection attrs: %s",
+                        err,
+                        exc_info=True,
+                    )
+                rssi = None
             if rssi is not None:
                 attrs["wifi_rssi"] = rssi
         return attrs

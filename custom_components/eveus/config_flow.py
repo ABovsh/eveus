@@ -360,6 +360,15 @@ def _safe_phases_default(raw: Any) -> int:
     return value if value in PHASE_OPTIONS else DEFAULT_PHASES
 
 
+def _safe_model_default(raw: Any) -> str:
+    """Coerce stored model data to a valid option, falling back on MODEL_16A.
+
+    A corrupt/foreign stored value would otherwise seed vol.In(MODELS) with a
+    default outside its own allowed set on the reconfigure/repair form.
+    """
+    return raw if raw in MODELS else MODEL_16A
+
+
 def build_user_data_schema(
     defaults: dict[str, Any] | None = None, *, include_soc_mode: bool = True
 ) -> vol.Schema:
@@ -383,7 +392,7 @@ def build_user_data_schema(
         ),
         vol.Required(
             CONF_MODEL,
-            default=defaults.get(CONF_MODEL, MODEL_16A),
+            default=_safe_model_default(defaults.get(CONF_MODEL)),
         ): vol.In(MODELS),
         vol.Required(
             CONF_PHASES,
@@ -571,9 +580,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
 
+        # Re-show with the submitted values as defaults so a validation error
+        # (wrong password, unreachable host, ...) doesn't wipe the whole form —
+        # only the password field is left blank, matching build_user_data_schema's
+        # password widget (which never carries a default).
+        schema = STEP_USER_DATA_SCHEMA if user_input is None else build_user_data_schema(
+            user_input
+        )
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=schema,
             errors=errors,
         )
 
@@ -623,7 +639,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                info = await validate_input(self.hass, user_input)
+                # The reconfigure form never collects CONF_SCHEME directly (it's
+                # inferred from an "http://"/"https://" prefix typed into the host
+                # field). If the user edits the host without retyping that
+                # prefix, normalize_user_input's fallback would silently revert
+                # to DEFAULT_SCHEME ("http") — downgrading an https entry to
+                # plaintext. Seed the fallback with the entry's current scheme
+                # instead, so an untouched prefix keeps whatever scheme was
+                # already stored (still "http" for the common bare-IP case).
+                reconfigure_input = {
+                    CONF_SCHEME: entry.data.get(CONF_SCHEME, DEFAULT_SCHEME),
+                    **user_input,
+                }
+                info = await validate_input(self.hass, reconfigure_input)
                 entry_data = _merge_entry_data(entry.data, info["data"])
                 # Reconfigure edits connection details only; never change SOC mode
                 # here (its form omits the chooser). normalize_user_input defaults

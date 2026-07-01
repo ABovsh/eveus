@@ -7,6 +7,15 @@
 - **Reconfiguring or re-authenticating reloads the integration once**, not twice — less downtime and no duplicate reload.
 - **A malformed charger response is counted as a failed poll** instead of being silently ignored, so Connection Quality and offline detection stay accurate.
 - **Commands can no longer reach the charger after the integration is removed or reloaded** — a control or background action already in flight is dropped during teardown.
+- **An invalid saved phase count no longer removes your Phase 2/3 entities on the following reload.** It's used safely for the current session without being written back, so the protection against losing those entities holds every time, not just the first reload.
+- **Reconfiguring no longer downgrades an HTTPS connection to plaintext HTTP** if you edit the address without retyping `https://`. (Most setups use a bare IP address over plain HTTP, which is unaffected — this only protects the ones that had opted into HTTPS.)
+- **Setting Target SOC to 0% no longer stops charging the instant a session starts.** A restored 0% now also can't happen from a corrupted saved value.
+- **A queued SOC-limit stop command now stands down if you turn on "Limit: disable all" while it's in flight**, instead of still sending it.
+- **Setup/reconfigure/repair no longer offer an invalid charger model as the pre-selected default** if the saved value was corrupted.
+- **A failed connection attempt during setup no longer clears the rest of the form** — host, model, and phase count you already entered are kept so you don't have to retype them.
+- **The availability grace window no longer misbehaves around a clock change** (DST, NTP correction) — it's timed independently of the wall clock.
+- Two sensors (Connection Quality's Wi-Fi signal attribute, and a numeric coercion path) are hardened against edge-case values that could previously slip past validation.
+- **Time to Target SOC, SOC %, and SOC Energy now go unknown instead of freezing on a stale value** when the SOC calculation can't run (a calculation error, or the SOC helper inputs disappearing).
 
 ### 🔧 Changed
 - **Reconfigure and Repair edit connection details only.** Switching between Basic and Advanced is done from **Configure**; this keeps Reconfigure/Repair from enabling Advanced without first collecting your battery capacity and SOC correction.

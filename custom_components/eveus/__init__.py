@@ -719,15 +719,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
 
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
         phases, phases_were_invalid = _resolve_phases(raw_phases)
-        if raw_phases != phases:
-            # Persist the normalized value so an invalid stored phase count is
-            # not silently re-evaluated (and hiding phase 2/3 entities) on every
-            # reload.
-            normalized = dict(entry.data)
-            normalized[CONF_PHASES] = phases
-            hass.config_entries.async_update_entry(entry, data=normalized)
+        if phases_were_invalid:
+            # Do NOT persist the fallback value: writing it into entry.data would
+            # make raw_phases valid on the very next reload, losing the
+            # phases_were_invalid signal that protects the phase 2/3 registry
+            # rows from _prune_unused_entities below (see its 3-phase fallback).
             _LOGGER.warning(
-                "Eveus phase count %r was invalid; normalized to %d phase(s)",
+                "Eveus phase count %r was invalid; using %d phase(s) for this session",
                 raw_phases,
                 phases,
             )

@@ -429,9 +429,11 @@ def test_async_setup_entry_normalizes_invalid_phase_count(
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
 
     assert entry.runtime_data.phases == DEFAULT_PHASES
-    assert hass.config_entries.updated == [
-        {"data": {**_data(device_number=1, **{CONF_PHASES: DEFAULT_PHASES})}}
-    ]
+    # The invalid value must NOT be persisted: writing it back would make
+    # raw_phases valid on the next reload, losing the phases_were_invalid
+    # signal that protects the phase 2/3 registry rows from the destructive
+    # prune (regression test for A04).
+    assert hass.config_entries.updated == []
 
 
 def test_async_setup_entry_normalizes_unsupported_phase_count(
@@ -444,9 +446,7 @@ def test_async_setup_entry_normalizes_unsupported_phase_count(
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
 
     assert entry.runtime_data.phases == DEFAULT_PHASES
-    assert hass.config_entries.updated == [
-        {"data": {**_data(device_number=1, **{CONF_PHASES: DEFAULT_PHASES})}}
-    ]
+    assert hass.config_entries.updated == []
 
 
 def test_async_setup_entry_raises_ocpp_issue_on_first_refresh(

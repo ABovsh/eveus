@@ -194,7 +194,7 @@ def test_base_entity_availability_stays_available_during_grace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = 100.0
-    monkeypatch.setattr("custom_components.eveus.common_base.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.common_base.time.monotonic", lambda: now)
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,

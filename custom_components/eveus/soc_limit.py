@@ -207,7 +207,10 @@ class SocLimitController:
         # token and is held across retries. While it is set and the charger is
         # still charging (no evseEnabled==1 yet), we fall through and re-send Stop.
         target = self._calc.target_soc
-        if target is None:
+        # A 0% target has no useful meaning as a stop point (every real SOC
+        # reading is already "at or above" it) — treat it the same as unset
+        # rather than stopping the charge the instant the session starts.
+        if target is None or target <= 0:
             return
         if energy is None or not 0 <= energy <= MAX_ENERGY_KWH:
             return
@@ -264,6 +267,19 @@ class SocLimitController:
         self._pending = (soc, target)
         self._pending_energy = energy
         self._pending_session_time = session_time
+        # process() only checked suspendLimits when it scheduled this task; a
+        # poll that toggled "Disable limits" on while this task was queued
+        # would otherwise never be re-consulted, and the command below would
+        # violate the same stand-down contract process() enforces on every
+        # other poll. Re-read the latest data right before POSTing.
+        data = self._updater.data
+        if isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) != 0:
+            if not self._fired:
+                self._pending = None
+                self._pending_energy = None
+                self._pending_session_time = None
+            _LOGGER.debug("SOC-limit Stop aborted: suspendLimits enabled mid-flight")
+            return
         try:
             # evseEnabled=1 is the Stop command (0 = keep charging); this matches
             # the Stop Charging switch, not the field's misleading name.

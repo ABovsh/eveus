@@ -121,7 +121,11 @@ def test_soc_sensors_return_unknown_for_invalid_session_energy() -> None:
     assert percent._get_sensor_value() is None
 
 
-def test_soc_sensors_keep_cached_value_when_inputs_temporarily_missing() -> None:
+def test_soc_sensors_go_unknown_when_helper_inputs_disappear() -> None:
+    """Regression test for B04: get_soc_kwh/get_soc_percent return None once a
+    SOC helper input is gone (not a transient poll blip) — the sensor must go
+    unknown instead of freezing on the last computed value.
+    """
     calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
     updater = EveusTestUpdater({"sessionEnergy": "16"})
     kwh = EVSocKwhSensor(updater, 1, calculator)
@@ -131,8 +135,8 @@ def test_soc_sensors_keep_cached_value_when_inputs_temporarily_missing() -> None
     assert percent._get_sensor_value() == 38
     calculator.set_value("battery_capacity", None)
 
-    assert kwh._get_sensor_value() == pytest.approx(30.4)
-    assert percent._get_sensor_value() == 38
+    assert kwh._get_sensor_value() is None
+    assert percent._get_sensor_value() is None
 
 
 def test_soc_energy_uses_real_zero_value_instead_of_stale_cache() -> None:
@@ -409,7 +413,13 @@ def test_helper_sensor_resolve_remaining_inputs_edge_cases() -> None:
     assert sensor._resolve_remaining_inputs() is None
 
 
-def test_time_to_target_contains_calculation_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_time_to_target_drops_stale_value_on_calculation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for B03: the docstring promises unknown (None) on
+    failure, "instead of freezing it" — the except branch must not return
+    the stale cached value.
+    """
     calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
     sensor = TimeToTargetSocSensor(
         EveusTestUpdater({"sessionEnergy": "1", "powerMeas": "7000"}), 1, calculator
@@ -422,7 +432,8 @@ def test_time_to_target_contains_calculation_errors(monkeypatch: pytest.MonkeyPa
         lambda *args: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
-    assert sensor._get_sensor_value() == "previous"
+    assert sensor._get_sensor_value() is None
+    assert sensor._cached_value is None
 
 
 def test_charging_finish_time_rounds_to_next_minute(monkeypatch: pytest.MonkeyPatch) -> None:
