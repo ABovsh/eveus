@@ -47,6 +47,7 @@ from custom_components.eveus.const import (
     MODEL_16A,
     SOC_MODE_ADVANCED,
     SOC_MODE_BASIC,
+    UPDATE_TIMEOUT,
 )
 
 
@@ -352,6 +353,22 @@ def test_validate_input_preserves_https_scheme_and_port() -> None:
     assert result["data"][CONF_SCHEME] == "https"
     assert len(session.calls) >= 1
     assert session.calls[0]["url"] == "https://eveus.local:8443/main"
+
+
+def test_validate_input_uses_same_timeout_budget_as_the_runtime_poll() -> None:
+    # Setup previously hardcoded a 10s budget while the coordinator's regular
+    # poll uses UPDATE_TIMEOUT (20s) -- a charger slow enough to answer the
+    # live poll every cycle could still never be added. Setup must give the
+    # charger at least as much time as normal operation does.
+    response = _Response(payload={"state": 2, "currentSet": "12", "verFWMain": "3.0.3"})
+    session = _Session(response)
+    hass = _Hass(session)
+
+    asyncio.run(validate_input(hass, _input()))
+
+    assert len(session.calls) >= 1
+    timeout = session.calls[0]["timeout"]
+    assert timeout.total == UPDATE_TIMEOUT
 
 
 def test_validate_input_rejects_unauthorized_response() -> None:

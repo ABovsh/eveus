@@ -51,6 +51,7 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
     SOC_INPUT_LIMITS,
+    UPDATE_TIMEOUT,
     get_soc_mode,
 )
 from ._payload import PayloadError, read_body_capped
@@ -442,7 +443,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     try:
         session = aiohttp_client.async_get_clientsession(hass)
-        timeout = aiohttp.ClientTimeout(total=10)
+        # Same budget as the coordinator's regular poll (UPDATE_TIMEOUT): setup
+        # is the one moment a struggling charger most needs patience, so it
+        # must not be stricter than steady-state polling ever is.
+        timeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
 
         async with session.post(
             f"{normalized_data[CONF_SCHEME]}://{normalized_data[CONF_HOST]}/main",

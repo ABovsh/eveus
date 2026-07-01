@@ -13,6 +13,7 @@
 - **A queued SOC-limit stop command now stands down if you turn on "Limit: disable all" while it's in flight**, instead of still sending it.
 - **Setup/reconfigure/repair no longer offer an invalid charger model as the pre-selected default** if the saved value was corrupted.
 - **A failed connection attempt during setup no longer clears the rest of the form** — host, model, and phase count you already entered are kept so you don't have to retype them.
+- **Setup now gives the charger as much time to respond as normal polling does.** The connection check while adding the integration previously had a shorter timeout than regular polling, so a charger slow enough to poll fine afterward could still fail to be added in the first place.
 - **The availability grace window no longer misbehaves around a clock change** (DST, NTP correction) — it's timed independently of the wall clock.
 - Two sensors (Connection Quality's Wi-Fi signal attribute, and a numeric coercion path) are hardened against edge-case values that could previously slip past validation.
 - **Time to Target SOC, SOC %, and SOC Energy now go unknown instead of freezing on a stale value** when the SOC calculation can't run (a calculation error, or the SOC helper inputs disappearing).
