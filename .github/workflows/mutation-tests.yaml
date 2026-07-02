@@ -40,6 +40,7 @@ jobs:
               tests/test_config_flow.py
               tests/test_config_flow_phase_string.py
               tests/test_config_flow_schema_serializable.py
+              tests/test_config_flow_host_properties.py
               tests/test_translation_contract.py
               tests/test_repairs.py
               tests/test_issue_regressions.py
