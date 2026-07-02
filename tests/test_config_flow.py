@@ -217,6 +217,26 @@ def test_validate_host_normalizes_case_and_ipv6_port() -> None:
     assert validate_host("http://[::1]:8080") == "[::1]:8080"
 
 
+@pytest.mark.parametrize("raw", [f"http://char\ngerlocal", f"http://charger\x7flocal"])
+def test_validate_host_rejects_control_characters(raw: str) -> None:
+    with pytest.raises(vol.Invalid, match="Host contains invalid control characters"):
+        validate_host(raw)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_port"),
+    [(f"http://{TEST_HOST}:1", ":1"), (f"http://{TEST_HOST}:65535", ":65535")],
+)
+def test_validate_host_accepts_boundary_ports(raw: str, expected_port: str) -> None:
+    assert validate_host(raw).endswith(expected_port)
+
+
+@pytest.mark.parametrize("raw", [f"http://{TEST_HOST}:0", f"http://{TEST_HOST}:65536"])
+def test_validate_host_rejects_out_of_range_ports(raw: str) -> None:
+    with pytest.raises(vol.Invalid, match="Invalid port"):
+        validate_host(raw)
+
+
 def test_validate_credentials_strips_username_but_preserves_password() -> None:
     assert validate_credentials(f" {TEST_USERNAME} ", f" {TEST_PASSWORD} ") == (TEST_USERNAME, f" {TEST_PASSWORD} ")
 
