@@ -103,6 +103,13 @@ def updater() -> EveusUpdater:
     return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 
 
+def test_new_updater_starts_on_charging_cadence() -> None:
+    """The coordinator must start at CHARGING_UPDATE_INTERVAL before any poll,
+    not at whatever timedelta the module constant happens to be built as."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    assert updater.update_interval == timedelta(seconds=CHARGING_UPDATE_INTERVAL)
+
+
 def test_update_data_fetches_payload_and_uses_stable_interval(
     coordinator: tuple[EveusUpdater, _Session],
 ) -> None:
@@ -627,9 +634,19 @@ def test_update_uses_module_level_timeout_object(
     coordinator: tuple[EveusUpdater, _Session],
 ) -> None:
     """Poll timeout comes from the module constant, not rebuilt per poll."""
+    import aiohttp
+
+    from custom_components.eveus.const import UPDATE_TIMEOUT
+
     updater, session = coordinator
     asyncio.run(updater._async_update_data())
-    assert session.calls[0]["timeout"] is common_network._UPDATE_TIMEOUT_OBJ
+    timeout = session.calls[0]["timeout"]
+    # Assert against the real UPDATE_TIMEOUT constant and the object identity
+    # together — comparing only `is _UPDATE_TIMEOUT_OBJ` is a no-op mutation-wise
+    # since the same (possibly mutated) module attribute is used on both sides.
+    assert isinstance(timeout, aiohttp.ClientTimeout)
+    assert timeout.total == UPDATE_TIMEOUT
+    assert timeout is common_network._UPDATE_TIMEOUT_OBJ
 
 
 def test_force_refresh_resets_flag_after_refresh_failure() -> None:
