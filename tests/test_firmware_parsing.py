@@ -329,6 +329,43 @@ def test_v22_capped_reader_parses_small_body():
     assert data == {"state": 4, "currentSet": 16}
 
 
+def test_capped_reader_tolerates_invalid_utf8_in_string_fields() -> None:
+    """R3.01.8 units with an unset serial return raw non-UTF-8 bytes in serialNum.
+
+    json.loads(bytes) does a strict UTF-8 decode first, so the whole poll/setup
+    failed with UnicodeDecodeError even though the payload is otherwise valid.
+    """
+    from custom_components.eveus._payload import read_json_capped
+    import asyncio
+
+    body = b'{"serialNum": "' + b"\xff" * 17 + b'", "state": 2, "currentSet": 20}'
+
+    class _Content:
+        async def iter_chunked(self, n):
+            yield body
+
+    class _Resp:
+        content_length = len(body)
+        content = _Content()
+
+    data = asyncio.run(read_json_capped(_Resp()))
+    assert data["state"] == 2
+    assert data["currentSet"] == 20
+    assert data["serialNum"] == "�" * 17
+
+
+def test_garbage_serial_of_replacement_chars_is_dropped() -> None:
+    info = get_device_info(TEST_HOST, {"serialNum": "�" * 17}, 1)
+    assert "serial_number" not in info
+
+
+def test_garbage_serial_falls_back_to_station_id() -> None:
+    info = get_device_info(
+        TEST_HOST, {"serialNum": "�" * 17, "stationId": "ST42"}, 1
+    )
+    assert info["serial_number"] == "ST42"
+
+
 def test_payload_rejects_current_above_global_ceiling_without_model() -> None:
     from custom_components.eveus import _payload
     with pytest.raises(_payload.PayloadError):

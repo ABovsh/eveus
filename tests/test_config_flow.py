@@ -108,6 +108,8 @@ class _Response:
     def _body_bytes(self) -> bytes:
         if isinstance(self.payload, Exception):
             return b"<<invalid json>>"
+        if isinstance(self.payload, bytes):
+            return self.payload
         if isinstance(self.payload, str):
             return self.payload.encode()
         return json.dumps(self.payload).encode()
@@ -348,6 +350,18 @@ def test_validate_device_response_accepts_model_limit_boundary() -> None:
         "current_set": 16.0,
         "firmware": "Unknown",
     }
+
+
+def test_validate_input_accepts_invalid_utf8_serial_bytes() -> None:
+    # R3.01.8 units with an unset serial return raw non-UTF-8 bytes in
+    # serialNum; setup must decode leniently instead of failing the whole flow
+    # with "Response is not valid JSON" (UnicodeDecodeError is a ValueError).
+    body = b'{"serialNum": "' + b"\xff" * 17 + b'", "state": 2, "currentSet": 20}'
+    hass = _Hass(_Session(_Response(payload=body)))
+
+    result = asyncio.run(validate_input(hass, _input()))
+
+    assert result["title"] == f"Eveus Charger ({TEST_HOST})"
 
 
 def test_validate_input_posts_to_normalized_host() -> None:

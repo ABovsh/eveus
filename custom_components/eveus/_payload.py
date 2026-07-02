@@ -44,13 +44,27 @@ async def read_json_capped(response: Any, *, limit: int = MAX_RESPONSE_BODY_BYTE
     """
     raw = await read_body_capped(response, limit=limit)
     try:
-        return json.loads(raw)
+        return json.loads(decode_body_lenient(raw))
     except RecursionError as err:
         # A deeply nested (but size-compliant) JSON document makes json.loads
         # raise RecursionError, which is NOT a ValueError — it would escape the
         # coordinator's ValueError handler and skip failure accounting/backoff.
         # Normalize it to PayloadError so the poll is recorded as failed.
         raise PayloadError("malformed", "Eveus response JSON nesting too deep") from err
+
+
+def decode_body_lenient(raw: bytes) -> str:
+    """Decode a /main body as UTF-8, replacing invalid byte sequences.
+
+    Some firmware builds (seen on GRM070A-R3.01.8) return raw uninitialized
+    bytes in string fields — ``serialNum`` is a manually entered value, and
+    units where it was never set emit non-UTF-8 garbage there. A strict decode
+    (what ``json.loads(bytes)`` does) then fails the entire poll/setup with
+    ``UnicodeDecodeError`` even though the payload is otherwise valid. JSON's
+    structural characters are ASCII, so replacement only ever affects the
+    inside of string values.
+    """
+    return raw.decode("utf-8", errors="replace")
 
 
 class PayloadError(ValueError):
