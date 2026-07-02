@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.17.1 - 2026-07-02
 
 ### 🐛 Fixed
 - **Chargers with an unset serial number can now be added.** Some firmware builds (seen on GRM070A-R3.01.8) return raw garbage bytes in the `serialNum` field when no serial was ever entered on the charger, which failed both setup ("Response is not valid JSON") and every poll. The charger's reply is now decoded tolerantly, and a garbage-only serial is left off the device page instead of showing as `�` characters.
