@@ -82,7 +82,9 @@ def test_fires_ha_event_only_after_evse_disabled_confirmed():
     ctrl.process()
     assert len(events) == 1
     etype, data = events[0]
-    assert etype == EVENT_SOC_LIMIT_REACHED
+    # Pin the literal event type: the constant is not a public HA contract on
+    # its own, but the string is — automations key off it by name.
+    assert etype == "eveus_soc_limit_reached" == EVENT_SOC_LIMIT_REACHED
     assert data["device_number"] == 1
     assert data["target_soc"] == 80
 
@@ -363,6 +365,18 @@ def test_inflight_stop_superseded_by_toggle_fires_nothing():
         assert ctrl._fired is False  # new epoch's latch is clean
 
     asyncio.run(scenario())
+
+
+def test_new_controller_starts_disabled_and_does_not_enforce():
+    """A freshly constructed controller must not enforce until set_enabled(True)
+    is called explicitly — process() must be a no-op on a bare instance."""
+    updater = _updater(ev=0)
+    ctrl, _scheduled, events = _make(_calc(), updater)
+
+    assert ctrl.enabled is False
+    ctrl.process()
+    assert events == []
+    updater.send_command.assert_not_called()
 
 
 def test_async_shutdown_disables_and_cancels_inflight_stop():

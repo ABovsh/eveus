@@ -9,8 +9,9 @@ from custom_components.eveus import utils
 
 
 class _Entry:
-    def __init__(self, device_number: int | str | None) -> None:
+    def __init__(self, device_number: int | str | None, entry_id: str = "") -> None:
         self.data = {}
+        self.entry_id = entry_id
         if device_number is not None:
             self.data["device_number"] = device_number
 
@@ -33,6 +34,22 @@ def test_get_next_device_number_fills_first_available_gap() -> None:
     hass = _Hass([_Entry(1), _Entry("3"), _Entry("bad"), _Entry(None)])
 
     assert utils.get_next_device_number(hass) == 2
+
+
+def test_get_next_device_number_ignores_only_the_excluded_entry() -> None:
+    hass = _Hass([_Entry(1, entry_id="self"), _Entry(2, entry_id="other")])
+
+    # Excluding "self" must free up 1, while "other"'s 2 still blocks that slot.
+    assert utils.get_next_device_number(hass, exclude_entry_id="self") == 1
+    assert utils.is_device_number_taken(hass, 1, exclude_entry_id="self") is False
+    assert utils.is_device_number_taken(hass, 2, exclude_entry_id="self") is True
+
+
+def test_is_device_number_taken_true_only_for_used_numbers() -> None:
+    hass = _Hass([_Entry(1, entry_id="a")])
+
+    assert utils.is_device_number_taken(hass, 1) is True
+    assert utils.is_device_number_taken(hass, 2) is False
 
 
 def test_get_safe_value_reads_state_dict_and_raw_values() -> None:
