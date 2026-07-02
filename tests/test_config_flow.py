@@ -316,6 +316,17 @@ def test_warn_if_plaintext_does_not_warn_for_https(
     assert caplog.records == []
 
 
+def test_warn_if_plaintext_warns_for_http(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """HTTP setups must get the cleartext-credentials warning."""
+    with caplog.at_level(logging.WARNING, logger="custom_components.eveus.config_flow"):
+        config_flow._warn_if_plaintext("http")
+
+    assert len(caplog.records) == 1
+    assert "cleartext" in caplog.records[0].getMessage()
+
+
 def test_normalize_user_input_rejects_invalid_model() -> None:
     with pytest.raises(vol.Invalid, match="Invalid charger model"):
         normalize_user_input(_input(**{CONF_MODEL: "bad"}))
@@ -944,10 +955,20 @@ def test_reauth_flow_maps_unexpected_errors_to_unknown(
 # --- rc.2 hardening tests -----------------------------------------------------
 
 
-def test_validate_host_rejects_userinfo_credentials() -> None:
+@pytest.mark.parametrize(
+    "raw",
+    [
+        f"http://user:pass@{TEST_HOST}",
+        # username-only and password-only userinfo must be rejected too — the
+        # check is an OR, and either half alone still smuggles credentials.
+        f"http://user@{TEST_HOST}",
+        f"http://:pass@{TEST_HOST}",
+    ],
+)
+def test_validate_host_rejects_userinfo_credentials(raw: str) -> None:
     """Reject URLs that embed credentials, since aiohttp BasicAuth would not pick them up."""
     with pytest.raises(vol.Invalid, match="Credentials in URL"):
-        validate_host(f"http://user:pass@{TEST_HOST}")
+        validate_host(raw)
 
 
 def test_validate_host_keeps_brackets_for_ipv6_without_port() -> None:

@@ -634,16 +634,6 @@ def test_missing_or_corrupt_fields_leave_state_unchanged() -> None:
     assert tracker.evaluate(_p(900)) is True
 
 
-def test_warn_if_plaintext_emits_for_http(caplog) -> None:
-    from custom_components.eveus import config_flow
-    import logging
-
-    with caplog.at_level(logging.WARNING):
-        config_flow._warn_if_plaintext("http")
-    assert any("plaintext" in r.getMessage().lower() or "http" in r.getMessage().lower()
-               for r in caplog.records)
-
-
 def test_is_device_number_taken_helper_exists() -> None:
     from custom_components.eveus import utils
 
