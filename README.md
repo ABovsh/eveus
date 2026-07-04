@@ -443,7 +443,7 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 
 ### Older charger firmware
 
-Older firmware (R3.01.x has been reported) now sets up and works normally — setup accepts any responding charger, and chargers with an unset serial number that return garbage bytes are handled tolerantly. Updating is still recommended: message **@energy_star** on Telegram for the firmware files, then flash the update from the charger's web interface (the Grizzl-E app requires newer firmware, so it cannot be used for this update).
+Older firmware (R3.01.x has been reported) now sets up and works normally — setup accepts any responding charger, and chargers with an unset serial number that return garbage bytes are handled tolerantly. Updating is still recommended: message **@energy_star** on Telegram for the firmware files, then flash the update from the charger's web interface.
 
 If a charger still fails to set up, note the error shown in the setup dialog, find the integration's warning in the Home Assistant log (Settings → System → Logs — it contains the HTTP status, content type, and the first bytes of the charger's reply; no debug logging needed), and open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version, the dialog error text, and that warning line. Hide anything sensitive first (your IP addresses, serial numbers).
 
