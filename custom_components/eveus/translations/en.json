@@ -486,6 +486,10 @@
     "clock_drift_fractional_timezone": {
       "title": "Eveus: your time zone cannot be matched by the charger",
       "description": "Your Home Assistant time zone uses an offset with a fraction of an hour (for example +5:30), but the charger's **Time Zone** select only supports whole hours. The closest possible setting leaves the charger's clock off by that fraction — see the **Time Drift** sensor for the exact offset.\n\nNeither the **Sync Time** button nor the **Time Zone** select can remove this difference; it is a limitation of the charger firmware.\n\nWhat to do:\n\n- Keep the **Time Zone** select on the closest whole-hour offset.\n- If you use the charger's built-in charging schedules or tariff windows, shift their times by the remaining fraction so they fire when you expect.\n\nThis notice stays as a reminder while the mismatch exists."
+    },
+    "safety_unknown_error": {
+      "title": "Eveus: charger error with unknown cause",
+      "description": "The charger reports an error state, but the fault code is missing or not recognized by this integration.\n\nWhat to do:\n\n- Check the fault shown on the charger's own display or app.\n- Power-cycle the charger if the error persists.\n- Update the charger firmware; if the error keeps returning, contact the manufacturer's support.\n\nThis warning remains until the fault clears and you press Ignore."
     }
   },
   "device_automation": {

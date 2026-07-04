@@ -84,6 +84,9 @@ GROUND_TRIGGER_POLLS: Final[int] = 3
 GROUND_CLEAR_POLLS: Final[int] = 2
 GROUND_CONTROL_TRIGGER_POLLS: Final[int] = 3
 GROUND_CONTROL_CLEAR_POLLS: Final[int] = 2
+# Error state with an unrecognized/zero fault code: debounce harder than the
+# per-code policies since the cause is by definition unverified.
+UNKNOWN_ERROR_TRIGGER_POLLS: Final[int] = 3
 
 TEMPERATURE_HIGH_C: Final[float] = 80.0
 TEMPERATURE_RECOVERED_C: Final[float] = 75.0

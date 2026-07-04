@@ -25,7 +25,7 @@
 
 The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
 
-**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Dashboard](#dashboard) · [Troubleshooting](#troubleshooting)
+**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Troubleshooting](#troubleshooting)
 
 ## ✨ Highlights
 
@@ -110,7 +110,7 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A, or 48A charger reachable from Home Assistant |
-| Charger firmware | Verified on R3.05.x. Older firmware (R3.01.x has been reported) can fail setup even when the charger's web page opens fine — see [Older charger firmware](#older-charger-firmware) |
+| Charger firmware | Verified on R3.05.x; older firmware (R3.01.x) is supported — updating to the latest firmware is still recommended, see [Older charger firmware](#older-charger-firmware) |
 | Network | Local LAN access to the charger HTTP API |
 | Setup details | Charger IP/hostname or URL, username, password, model |
 
@@ -163,6 +163,7 @@ Dangerous and configuration conditions surface through Home Assistant **Settings
 | Box or plug overheating | The charger reports an overheat fault, or a sustained temperature at/above **80 °C** (early warning before the charger stops at **85 °C**) | Stop using the charger, let it cool, and contact the charger manufacturer's support if it repeats |
 | Current leakage (GFCI) | The charger reports a leakage fault or sustained leakage above its **30 mA** threshold | Stop using the charger and contact the charger manufacturer's support |
 | Charger protection fault | Relay, pilot, diode, overcurrent, low/high voltage, GFCI self-test, interface-timeout, or software fault reported by the charger | Stop or avoid charging and contact the charger manufacturer's support |
+| Charger error with unknown cause | The charger is in the Error state but the fault code is missing or not recognized, for several consecutive polls | Check the fault on the charger's own display or app, power-cycle the charger, and update its firmware if the error keeps recurring; clears once the fault ends and you press **Ignore** |
 | Charger backup battery is low | The charger's internal CR2032 coin-cell reads low for several polls | Replace it with a fresh, good-quality CR2032 cell |
 
 ### Configuration notices
@@ -350,8 +351,8 @@ Each schedule has its own current and energy caps with separate enable switches.
 | `button.eveus_ev_charger_sync_time` | Button | Push Home Assistant time to the charger |
 | `button.eveus_ev_charger_reset_counter_a` | Button | Reset counter A |
 | `button.eveus_ev_charger_reset_counter_b` | Button | Reset counter B |
-| `update.eveus_ev_charger_update` | Update | HACS update entity |
-| `switch.eveus_ev_charger_pre_release` | Switch | HACS pre-release toggle |
+| `update.eveus_ev_charger_update` | Update | Provided by HACS when installed through it: notifies about new integration releases |
+| `switch.eveus_ev_charger_pre_release` | Switch | Provided by HACS: opt into pre-release versions |
 
 </details>
 
@@ -435,7 +436,7 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 
 | Problem | What to check |
 | --- | --- |
-| Setup cannot connect | The setup dialog shows the reason in parentheses — e.g. `Failed to connect to charger (HTTP 404)` or `(Connection error: TimeoutError)`. Check the charger is powered on, HA can reach the charger IP/hostname, credentials are correct, and the selected model matches the charger. If the charger's web page works but setup still fails, see [Older charger firmware](#older-charger-firmware) |
+| Setup cannot connect | The setup dialog shows the reason in parentheses — e.g. `Failed to connect to charger (HTTP 404)` or `(Connection error: TimeoutError)`. Check the charger is powered on, HA can reach the charger IP/hostname, credentials are correct, and the selected model matches the charger |
 | Controls do not respond | Connection Quality, charger online state, credentials via Reconfigure, then wait one coordinator refresh |
 | SOC sensors are missing | Set the integration mode to Advanced under Configure, then restart/reload the integration if just changed |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
@@ -444,19 +445,9 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 
 ### Older charger firmware
 
-Some chargers on older firmware (R3.01.x has been reported) answer their own web page normally but reply to the integration's API request in a way setup can't use — so the charger can't be added even though the browser works. There are two ways forward:
+Older firmware (R3.01.x has been reported) now sets up and works normally — setup accepts any responding charger, and chargers with an unset serial number that return garbage bytes are handled tolerantly. Updating is still recommended: message **@energy_star** on Telegram for the firmware files, then update via the **Grizzl-E app** or the charger's web interface.
 
-**Option 1 — update the firmware (recommended).** This has resolved the problem for other users.
-
-1. Message **@energy_star** on Telegram — he will add you to the charger support channel with the firmware files and instructions.
-2. Update the charger: either link the **Grizzl-E app** to your charger and push the update from the app, or download the firmware file for your charger and flash it from the charger's web interface.
-3. Add the charger to the integration again.
-
-**Option 2 — report your firmware so support for it can be added.**
-
-1. Note the error in the setup dialog — it includes the concrete failure, e.g. `Failed to connect to charger (HTTP 404)`.
-2. Find the integration's warning in the Home Assistant log (Settings → System → Logs) — it contains the HTTP status, content type, and the first bytes of the charger's reply; no debug logging needed.
-3. Open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version, the dialog error text, and that warning line. Hide anything sensitive first (your IP addresses, serial numbers).
+If a charger still fails to set up, note the error shown in the setup dialog, find the integration's warning in the Home Assistant log (Settings → System → Logs — it contains the HTTP status, content type, and the first bytes of the charger's reply; no debug logging needed), and open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version, the dialog error text, and that warning line. Hide anything sensitive first (your IP addresses, serial numbers).
 
 ## Privacy And Diagnostics
 
