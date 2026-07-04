@@ -25,6 +25,30 @@ DEVICE_STATE_ERROR: Final[int] = 7
 # the car is plugged in but no session is running, and Charge Complete (5).
 SESSION_ACTIVE_STATES: Final[frozenset[int]] = frozenset({4, 6})
 
+# Device states in which a car is physically plugged in (mirrors the Car
+# Connected binary sensor). Error (7) is indeterminate — the firmware cannot
+# tell whether the plug is still seated.
+CONNECTED_STATES: Final[frozenset[int]] = frozenset({3, 4, 5, 6})
+PLUG_UNKNOWN_STATES: Final[frozenset[int]] = frozenset({DEVICE_STATE_ERROR})
+
+# Bus events fired by the coordinator on observed device-state transitions.
+# Transitions across an offline gap are deliberately silent: after any failed
+# poll the transition memory resets, so a state change that happened while the
+# charger was unreachable never fabricates an event.
+EVENT_CHARGING_STARTED: Final[str] = "eveus_charging_started"
+EVENT_CHARGING_FINISHED: Final[str] = "eveus_charging_finished"
+EVENT_ERROR: Final[str] = "eveus_error"
+EVENT_CAR_CONNECTED: Final[str] = "eveus_car_connected"
+EVENT_CAR_DISCONNECTED: Final[str] = "eveus_car_disconnected"
+
+# Why a charging session ended, keyed by the state it transitioned into.
+FINISHED_REASONS: Final[Dict[int, str]] = {
+    2: "unplugged",
+    3: "stopped",
+    5: "complete",
+    6: "paused",
+}
+
 # Default SOC efficiency correction (%) when the user has not provided the helper.
 DEFAULT_SOC_CORRECTION: Final[float] = 7.5
 

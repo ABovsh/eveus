@@ -17,6 +17,7 @@ from .ev_sensors import (
     EVSocPercentSensor,
     TimeToTargetSocSensor,
 )
+from .session_history import create_last_session_sensors
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +50,14 @@ async def async_setup_entry(
             CostToTargetSocSensor(updater, device_number, soc_calculator),
         ]
 
-    sensors = standard_sensors + ev_sensors
+    # Final SOC only makes sense when the SOC helpers are configured.
+    last_session_sensors = create_last_session_sensors(
+        updater,
+        device_number,
+        soc_calculator if get_soc_mode(entry) == SOC_MODE_ADVANCED else None,
+    )
+
+    sensors = standard_sensors + ev_sensors + last_session_sensors
     async_add_entities(sensors, update_before_add=False)
 
     _LOGGER.debug(

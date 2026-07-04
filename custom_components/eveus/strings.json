@@ -262,6 +262,18 @@
       },
       "cost_to_target_soc": {
         "name": "Cost to Target SOC"
+      },
+      "last_session_energy": {
+        "name": "Last Session Energy"
+      },
+      "last_session_cost": {
+        "name": "Last Session Cost"
+      },
+      "last_session_duration": {
+        "name": "Last Session Duration"
+      },
+      "last_session_final_soc": {
+        "name": "Last Session Final SOC"
       }
     },
     "binary_sensor": {
@@ -474,6 +486,15 @@
     "clock_drift_fractional_timezone": {
       "title": "Eveus: your time zone cannot be matched by the charger",
       "description": "Your Home Assistant time zone uses an offset with a fraction of an hour (for example +5:30), but the charger's **Time Zone** select only supports whole hours. The closest possible setting leaves the charger's clock off by that fraction — see the **Time Drift** sensor for the exact offset.\n\nNeither the **Sync Time** button nor the **Time Zone** select can remove this difference; it is a limitation of the charger firmware.\n\nWhat to do:\n\n- Keep the **Time Zone** select on the closest whole-hour offset.\n- If you use the charger's built-in charging schedules or tariff windows, shift their times by the remaining fraction so they fire when you expect.\n\nThis notice stays as a reminder while the mismatch exists."
+    }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "charging_started": "Charging started",
+      "charging_finished": "Charging finished",
+      "error_occurred": "Error occurred",
+      "car_connected": "Car connected",
+      "car_disconnected": "Car disconnected"
     }
   }
 }

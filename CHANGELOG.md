@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### ✨ Added
+- **Bus events on charger state transitions** — `eveus_charging_started`, `eveus_charging_finished`, `eveus_error`, `eveus_car_connected`, `eveus_car_disconnected`, all with `device_number` in the payload. `eveus_charging_finished` also carries `reason`, `session_energy_kwh`, `session_cost`, and `session_duration_s`. Transitions that happen while the charger or Home Assistant is unreachable are not reported after reconnect/restart.
+- **Device triggers** for the events above — "Charging started", "Charging finished", "Error occurred", "Car connected", "Car disconnected" are now selectable directly from the automation UI.
+- **Last Session sensors** — `sensor.eveus_ev_charger_last_session_energy`, `..._last_session_cost`, `..._last_session_duration`, and (Advanced mode) `..._last_session_soc`, populated when a session finishes and carrying `reason`/`finished_at` attributes. Values persist across restarts and while the charger is offline.
+
+### 🔧 Changed
+- **`sensor.eveus_ev_charger_state` and `..._substate` now use the `enum` device class**, so automation state triggers offer a dropdown of all possible values. State values themselves are unchanged.
+
 ## 4.17.1 - 2026-07-02
 
 ### 🐛 Fixed

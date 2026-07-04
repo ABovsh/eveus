@@ -141,6 +141,14 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
     for name in ("SOC Energy", "SOC Percent", "Time to Target SOC", "Charging Finish Time",
                  "Energy to Target SOC", "Cost to Target SOC"):
         expected["sensor"].add(_slug(name))
+    from custom_components.eveus import session_history
+    for sensor_cls in (
+        session_history.LastSessionEnergySensor,
+        session_history.LastSessionCostSensor,
+        session_history.LastSessionDurationSensor,
+        session_history.LastSessionFinalSocSensor,
+    ):
+        expected["sensor"].add(_slug(sensor_cls.ENTITY_NAME))
     for name in (
         "Charging Current",
         "Initial SOC",

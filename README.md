@@ -72,6 +72,8 @@ The signals automations actually need, as first-class entities:
 - `Car Connected` and `Session Active` binary sensors for triggers
 - `Charging Finish Time` as a real `timestamp` — works with countdown cards and time-based automations
 - `Session Cost`, schedule controls, `Connection Quality` — no template sensors to maintain
+- **Device triggers** for charging started/finished, error, and car connected/disconnected — pick them straight from the automation UI, no YAML needed
+- **Bus events** (`eveus_charging_started`, `eveus_charging_finished`, `eveus_error`, `eveus_car_connected`, `eveus_car_disconnected`) for automations that need the full event payload — see [Events & Device Triggers](#events--device-triggers)
 
 ### ☁️ OCPP backend control
 A single switch connects the charger to its OCPP backend (used by the **Grizzl-E Connect** mobile app), and a binary sensor shows the live connection state. While OCPP is on, a Repairs notice reminds you that the backend may override Charging Current, limits, and schedules — and how to switch back to full local control.
@@ -178,10 +180,13 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 
 ### Charging State And Controls
 
+<details>
+<summary>Show entities</summary>
+
 | Entity ID | Type | What it gives you |
 | --- | --- | --- |
-| `sensor.eveus_ev_charger_state` | Sensor | Main charger state, such as standby, charging, complete, or error |
-| `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label |
+| `sensor.eveus_ev_charger_state` | Sensor | Main charger state, such as standby, charging, complete, or error. `enum` device class — automation state triggers offer a dropdown of all possible values |
+| `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label. `enum` device class — same dropdown behavior |
 | `binary_sensor.eveus_ev_charger_car_connected` | Binary sensor | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Binary sensor | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | Reported OCPP connection state (diagnostic) |
@@ -217,7 +222,12 @@ automation:
           message: "Eveus reached target SOC: {{ trigger.event.data.soc }}%"
 ```
 
+</details>
+
 ### Live Electrical Data
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Unit | What it gives you |
 | --- | --- | --- |
@@ -230,7 +240,12 @@ automation:
 | `sensor.eveus_ev_charger_voltage_phase_2` | V | Phase 2 voltage when `Phases = 3` |
 | `sensor.eveus_ev_charger_voltage_phase_3` | V | Phase 3 voltage when `Phases = 3` |
 
+</details>
+
 ### Energy, Cost, And Tariffs
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Unit | What it gives you |
 | --- | --- | --- |
@@ -248,10 +263,21 @@ automation:
 | `sensor.eveus_ev_charger_rate_3_cost` | UAH/kWh | Rate 3 price |
 | `sensor.eveus_ev_charger_rate_2_status` | Sensor | Whether Rate 2 schedule is enabled |
 | `sensor.eveus_ev_charger_rate_3_status` | Sensor | Whether Rate 3 schedule is enabled |
+| `sensor.eveus_ev_charger_last_session_energy` | kWh | Energy delivered by the most recently finished session; keeps its value across restarts and while the charger is offline |
+| `sensor.eveus_ev_charger_last_session_cost` | UAH | Cost of the most recently finished session |
+| `sensor.eveus_ev_charger_last_session_duration` | Sensor | Duration of the most recently finished session |
+| `sensor.eveus_ev_charger_last_session_final_soc` | % | Final SOC of the most recently finished session (Advanced mode only) |
+
+Each Last Session sensor is populated when a session finishes and carries `reason` and `finished_at` attributes.
+
+</details>
 
 ### SOC And ETA, Advanced Mode
 
 Advanced mode creates four native input numbers. Older `input_number.ev_*` helpers are no longer read.
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Unit | Range | Default | What it gives you |
 | --- | --- | --- | --- | --- |
@@ -270,7 +296,12 @@ Migration from old helpers is intentionally simple: replace the prefix `input_nu
 
 SOC uses the charger's native `sessionEnergy` value. The charger resets this value on every new plug-in, so continuous charging sessions survive Home Assistant restarts without a synthetic baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
 
+</details>
+
 ### Adaptive Charging And Schedules
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Type | What it gives you |
 | --- | --- | --- |
@@ -297,7 +328,12 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 
 Each schedule has its own current and energy caps with separate enable switches.
 
+</details>
+
 ### Diagnostics And Maintenance
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Unit | What it gives you |
 | --- | --- | --- |
@@ -317,9 +353,44 @@ Each schedule has its own current and energy caps with separate enable switches.
 | `update.eveus_ev_charger_update` | Update | HACS update entity |
 | `switch.eveus_ev_charger_pre_release` | Switch | HACS pre-release toggle |
 
+</details>
+
+### Events & Device Triggers
+
+The integration fires events on the Home Assistant event bus for charger state transitions. Every payload includes `device_number`:
+
+| Event | Fires when | Extra payload fields |
+| --- | --- | --- |
+| `eveus_charging_started` | A charging session begins | — |
+| `eveus_charging_finished` | A charging session ends | `reason` (`complete`, `unplugged`, `stopped`, or `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
+| `eveus_error` | The charger enters the error state | `error_code`, `error_text` |
+| `eveus_car_connected` | The car is electrically connected | — |
+| `eveus_car_disconnected` | The car is disconnected | — |
+
+`eveus_charging_finished`'s energy/cost/duration fields are a snapshot taken from the last poll while the session was still alive, so the values survive the charger resetting its own counters at session end — they can lag the true final value by up to one poll interval. Transitions that happen while the charger is unreachable, or while Home Assistant is down, are deliberately silent — you won't see a false event after reconnecting or restarting.
+
+Each event also has a matching **device trigger**: in the automation UI, choosing the Eveus device offers "Charging started", "Charging finished", "Error occurred", "Car connected", and "Car disconnected" as ready-made triggers — no YAML needed.
+
+For automations that need the event payload, trigger on the event directly:
+
+```yaml
+automation:
+  - alias: Eveus session summary
+    triggers:
+      - trigger: event
+        event_type: eveus_charging_finished
+    actions:
+      - action: notify.notify
+        data:
+          message: >-
+            Session finished ({{ trigger.event.data.reason }}):
+            {{ trigger.event.data.session_energy_kwh }} kWh,
+            {{ trigger.event.data.session_cost }} UAH
+```
+
 ## Dashboard
 
-A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.1**).
+A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.2**).
 **Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the two graph cards). Every other card is built-in.
 <img width="1188" height="477" alt="image" src="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039" />
 <img width="1189" height="386" alt="image" src="https://github.com/user-attachments/assets/48412a75-3368-4215-aa83-43b835b0180f" />
