@@ -8,7 +8,7 @@
 > сутності для автоматизацій — без допоміжних шаблонних сенсорів.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Версія](https://img.shields.io/badge/version-4.17.1rc1-blue?style=for-the-badge)
+![Версія](https://img.shields.io/badge/version-4.17.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 - Документація: <https://abovsh.github.io/eveus/uk/>
@@ -415,8 +415,6 @@ automation:
 | `button.eveus_ev_charger_sync_time` | Кнопка | **Синхронізувати час** |
 | `button.eveus_ev_charger_reset_counter_a` | Кнопка | **Скинути лічильник A** |
 | `button.eveus_ev_charger_reset_counter_b` | Кнопка | **Скинути лічильник B** |
-| `update.eveus_ev_charger_update` | Оновлення | Створюється HACS при встановленні через нього: сповіщає про нові релізи інтеграції |
-| `switch.eveus_ev_charger_pre_release` | Перемикач | Створюється HACS: підписка на пре-релізні версії |
 
 </details>
 

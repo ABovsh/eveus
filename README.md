@@ -5,7 +5,7 @@
 > Full local control and monitoring for Eveus EV chargers: charging controls, current electrical measurements, charging costs, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.17.1rc1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.17.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -351,8 +351,6 @@ Each schedule has its own current and energy caps with separate enable switches.
 | `button.eveus_ev_charger_sync_time` | Button | Push Home Assistant time to the charger |
 | `button.eveus_ev_charger_reset_counter_a` | Button | Reset counter A |
 | `button.eveus_ev_charger_reset_counter_b` | Button | Reset counter B |
-| `update.eveus_ev_charger_update` | Update | Provided by HACS when installed through it: notifies about new integration releases |
-| `switch.eveus_ev_charger_pre_release` | Switch | Provided by HACS: opt into pre-release versions |
 
 </details>
 
