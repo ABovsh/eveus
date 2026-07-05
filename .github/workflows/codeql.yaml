@@ -1,0 +1,31 @@
+# GitHub-native security analysis (taint tracking, injection, unsafe deserialization).
+# Complements SonarCloud/bandit: CodeQL does interprocedural dataflow they don't.
+# Free for public repos; findings land in the Security tab, not as PR noise.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 5 * * 3"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: "actions/checkout@v6"
+      - uses: "github/codeql-action/init@v4"
+        with:
+          languages: python
+      - uses: "github/codeql-action/analyze@v4"
+        with:
+          category: "/language:python"
