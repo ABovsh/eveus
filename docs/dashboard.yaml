@@ -187,6 +187,25 @@ sections:
             name: Rate 3
           - entity: sensor.eveus_ev_charger_rate_3_cost
             name: Rate 3 Cost
+      - type: heading
+        heading: Last Session
+        heading_style: subtitle
+        icon: mdi:history
+      - type: entities
+        show_header_toggle: false
+        entities:
+          - entity: sensor.eveus_ev_charger_last_session_energy
+            name: Energy
+            icon: mdi:battery-charging
+          - entity: sensor.eveus_ev_charger_last_session_cost
+            name: Cost
+            icon: mdi:cash
+          - entity: sensor.eveus_ev_charger_last_session_duration
+            name: Duration
+            icon: mdi:timer-sand
+          - entity: sensor.eveus_ev_charger_last_session_final_soc
+            name: Final SOC
+            icon: mdi:battery-check
   - type: grid
     cards:
       - type: heading

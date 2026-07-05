@@ -54,7 +54,7 @@ from .const import (
     UPDATE_TIMEOUT,
     get_soc_mode,
 )
-from ._payload import PayloadError, read_body_capped
+from ._payload import PayloadError, decode_body_lenient, read_body_capped
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
@@ -476,7 +476,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                 raise InvalidResponse("Response body too large") from err
 
             try:
-                result = json.loads(raw_body)
+                # Lenient decode: old firmware puts raw non-UTF-8 bytes in an
+                # unset serialNum; a strict decode would fail the whole setup.
+                result = json.loads(decode_body_lenient(raw_body))
             except ValueError as err:
                 # Warning-level on purpose: setup is user-initiated, and this
                 # line is the only evidence of WHAT an incompatible (old-

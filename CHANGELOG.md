@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.18.0 - 2026-07-05
+
+### ✨ Added
+- **Charging events for automations** — the integration now fires `eveus_charging_started`, `eveus_charging_finished`, `eveus_error`, `eveus_car_connected`, and `eveus_car_disconnected` on real charger transitions, so automations can react to the moment charging starts or ends instead of polling sensor states. `eveus_charging_finished` includes the session summary (`reason`, `session_energy_kwh`, `session_cost`, `session_duration_s`); every event carries `device_number` for multi-charger setups. Transitions that happen while the charger or Home Assistant is offline are not replayed afterwards.
+- **Device triggers** — the events above appear in the automation UI as ready-made triggers ("Charging started", "Charging finished", "Error occurred", "Car connected", "Car disconnected"), so no manual event YAML is needed.
+- **Last Session sensors** — the charger firmware resets its session counters the moment charging ends, so the final numbers used to vanish before you could read them. Three new sensors capture them at that moment and keep them: `sensor.eveus_ev_charger_last_session_energy`, `..._cost`, `..._duration` (with `reason` and `finished_at` attributes). Values survive restarts and charger downtime.
+
+### 🔧 Changed
+- **State and Substate are now enum sensors** — automation state triggers for `sensor.eveus_ev_charger_state`/`..._substate` offer a dropdown of all possible values instead of a free-text field, eliminating typos like "Сharging" with a Cyrillic С. The values themselves are unchanged; existing automations keep working.
+
+### 🐛 Fixed
+- **Chargers with an unset serial number can now be added.** Firmware that never had a serial entered (seen on GRM070A-R3.01.8) returns garbage bytes in `serialNum`, which broke setup ("Response is not valid JSON") and every poll. The reply is now decoded tolerantly and a garbage-only serial is simply omitted from the device page.
+
 ## 4.17.0 - 2026-07-02
 
 ### 🐛 Fixed

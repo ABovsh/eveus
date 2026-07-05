@@ -37,6 +37,7 @@ from .const import (
     TEMPERATURE_RECOVERED_C,
     TEMPERATURE_RECOVERY_POLLS,
     TEMPERATURE_TRIGGER_POLLS,
+    UNKNOWN_ERROR_TRIGGER_POLLS,
 )
 from .utils import get_safe_value
 
@@ -192,7 +193,38 @@ def _below(key: str, threshold: float, *, minimum: float, maximum: float) -> Sig
 _GROUND_DOMAIN = frozenset({0, 1})
 
 
+def _unknown_error_trigger(data: Mapping[str, Any]) -> bool | None:
+    """Error state with a fault code no per-code policy recognizes.
+
+    Covers subState 0 (firmware reports an error but no cause) and future codes
+    outside ERROR_STATES. A missing subState is corrupt data, not an unknown
+    code — tri-state None so no streak moves.
+    """
+    state = get_safe_value(data, "state", int)
+    if state not in CHARGING_STATES:
+        return None
+    if state != DEVICE_STATE_ERROR:
+        return False
+    substate = get_safe_value(data, "subState", int)
+    if substate is None:
+        return None
+    return substate == 0 or substate not in ERROR_STATES
+
+
+def _unknown_error_recovered(data: Mapping[str, Any]) -> bool | None:
+    trigger = _unknown_error_trigger(data)
+    if trigger is None:
+        return None
+    return not trigger
+
+
 POLICIES: tuple[SafetyPolicy, ...] = (
+    _policy(
+        "unknown_error",
+        raw_trigger=_unknown_error_trigger,
+        raw_recovered=_unknown_error_recovered,
+        trigger_polls=UNKNOWN_ERROR_TRIGGER_POLLS,
+    ),
     _policy(
         "ground_missing",
         1,

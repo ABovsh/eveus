@@ -263,6 +263,19 @@ def _real_firmware(*values: Any) -> str:
     return ""
 
 
+def _sanitized_serial(value: Any) -> str:
+    """Sanitize a serial-number candidate, treating decode garbage as absent.
+
+    The serial is a manually entered field on the charger; units where it was
+    never set return raw uninitialized bytes, which the lenient body decode
+    turns into U+FFFD replacement characters. Strip those so a garbage-only
+    serial is dropped (and a valid stationId can take over) instead of being
+    registered verbatim.
+    """
+    text = _safe_str(value, fallback="").replace("�", "").strip()
+    return text if len(text) >= 2 else ""
+
+
 def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
     """Get standardized device information with multi-device support.
 
@@ -289,8 +302,8 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
     # _safe_str rejects bools/containers so a malformed firmware field can't
     # become the literal device serial in the registry; aliases are sanitized
     # independently so a corrupt primary doesn't hide a valid stationId.
-    serial_str = _safe_str(data.get("serialNum"), fallback="") or _safe_str(
-        data.get("stationId"), fallback=""
+    serial_str = _sanitized_serial(data.get("serialNum")) or _sanitized_serial(
+        data.get("stationId")
     )
 
     device_suffix = get_device_display_suffix(device_number)

@@ -5,7 +5,7 @@
 > Full local control and monitoring for Eveus EV chargers: charging controls, current electrical measurements, charging costs, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.17.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.18.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -25,7 +25,7 @@
 
 The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
 
-**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Dashboard](#dashboard) · [Troubleshooting](#troubleshooting)
+**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Troubleshooting](#troubleshooting)
 
 ## ✨ Highlights
 
@@ -72,6 +72,8 @@ The signals automations actually need, as first-class entities:
 - `Car Connected` and `Session Active` binary sensors for triggers
 - `Charging Finish Time` as a real `timestamp` — works with countdown cards and time-based automations
 - `Session Cost`, schedule controls, `Connection Quality` — no template sensors to maintain
+- **Device triggers** for charging started/finished, error, and car connected/disconnected — pick them straight from the automation UI, no YAML needed
+- **Bus events** (`eveus_charging_started`, `eveus_charging_finished`, `eveus_error`, `eveus_car_connected`, `eveus_car_disconnected`) for automations that need the full event payload — see [Events & Device Triggers](#events--device-triggers)
 
 ### ☁️ OCPP backend control
 A single switch connects the charger to its OCPP backend (used by the **Grizzl-E Connect** mobile app), and a binary sensor shows the live connection state. While OCPP is on, a Repairs notice reminds you that the backend may override Charging Current, limits, and schedules — and how to switch back to full local control.
@@ -108,7 +110,7 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A, or 48A charger reachable from Home Assistant |
-| Charger firmware | Verified on R3.05.x. Older firmware (R3.01.x has been reported) can fail setup even when the charger's web page opens fine — see [Older charger firmware](#older-charger-firmware) |
+| Charger firmware | Verified on R3.05.x; older firmware (R3.01.x) is supported — updating to the latest firmware is still recommended, see [Older charger firmware](#older-charger-firmware) |
 | Network | Local LAN access to the charger HTTP API |
 | Setup details | Charger IP/hostname or URL, username, password, model |
 
@@ -161,6 +163,7 @@ Dangerous and configuration conditions surface through Home Assistant **Settings
 | Box or plug overheating | The charger reports an overheat fault, or a sustained temperature at/above **80 °C** (early warning before the charger stops at **85 °C**) | Stop using the charger, let it cool, and contact the charger manufacturer's support if it repeats |
 | Current leakage (GFCI) | The charger reports a leakage fault or sustained leakage above its **30 mA** threshold | Stop using the charger and contact the charger manufacturer's support |
 | Charger protection fault | Relay, pilot, diode, overcurrent, low/high voltage, GFCI self-test, interface-timeout, or software fault reported by the charger | Stop or avoid charging and contact the charger manufacturer's support |
+| Charger error with unknown cause | The charger is in the Error state but the fault code is missing or not recognized, for several consecutive polls | Check the fault on the charger's own display or app, power-cycle the charger, and update its firmware if the error keeps recurring; clears once the fault ends and you press **Ignore** |
 | Charger backup battery is low | The charger's internal CR2032 coin-cell reads low for several polls | Replace it with a fresh, good-quality CR2032 cell |
 
 ### Configuration notices
@@ -178,10 +181,13 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 
 ### Charging State And Controls
 
+<details>
+<summary>Show entities</summary>
+
 | Entity ID | Type | What it gives you |
 | --- | --- | --- |
-| `sensor.eveus_ev_charger_state` | Sensor | Main charger state, such as standby, charging, complete, or error |
-| `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label |
+| `sensor.eveus_ev_charger_state` | Sensor | Main charger state, such as standby, charging, complete, or error. `enum` device class — automation state triggers offer a dropdown of all possible values |
+| `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label. `enum` device class — same dropdown behavior |
 | `binary_sensor.eveus_ev_charger_car_connected` | Binary sensor | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Binary sensor | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | Reported OCPP connection state (diagnostic) |
@@ -217,7 +223,12 @@ automation:
           message: "Eveus reached target SOC: {{ trigger.event.data.soc }}%"
 ```
 
+</details>
+
 ### Live Electrical Data
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Unit | What it gives you |
 | --- | --- | --- |
@@ -230,7 +241,12 @@ automation:
 | `sensor.eveus_ev_charger_voltage_phase_2` | V | Phase 2 voltage when `Phases = 3` |
 | `sensor.eveus_ev_charger_voltage_phase_3` | V | Phase 3 voltage when `Phases = 3` |
 
+</details>
+
 ### Energy, Cost, And Tariffs
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Unit | What it gives you |
 | --- | --- | --- |
@@ -248,10 +264,20 @@ automation:
 | `sensor.eveus_ev_charger_rate_3_cost` | UAH/kWh | Rate 3 price |
 | `sensor.eveus_ev_charger_rate_2_status` | Sensor | Whether Rate 2 schedule is enabled |
 | `sensor.eveus_ev_charger_rate_3_status` | Sensor | Whether Rate 3 schedule is enabled |
+| `sensor.eveus_ev_charger_last_session_energy` | kWh | Energy delivered by the most recently finished session; keeps its value across restarts and while the charger is offline |
+| `sensor.eveus_ev_charger_last_session_cost` | UAH | Cost of the most recently finished session |
+| `sensor.eveus_ev_charger_last_session_duration` | Sensor | Duration of the most recently finished session |
+
+Each Last Session sensor is populated when a session finishes and carries `reason` and `finished_at` attributes.
+
+</details>
 
 ### SOC And ETA, Advanced Mode
 
 Advanced mode creates four native input numbers. Older `input_number.ev_*` helpers are no longer read.
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Unit | Range | Default | What it gives you |
 | --- | --- | --- | --- | --- |
@@ -270,7 +296,12 @@ Migration from old helpers is intentionally simple: replace the prefix `input_nu
 
 SOC uses the charger's native `sessionEnergy` value. The charger resets this value on every new plug-in, so continuous charging sessions survive Home Assistant restarts without a synthetic baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
 
+</details>
+
 ### Adaptive Charging And Schedules
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Type | What it gives you |
 | --- | --- | --- |
@@ -297,7 +328,12 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 
 Each schedule has its own current and energy caps with separate enable switches.
 
+</details>
+
 ### Diagnostics And Maintenance
+
+<details>
+<summary>Show entities</summary>
 
 | Entity ID | Unit | What it gives you |
 | --- | --- | --- |
@@ -314,12 +350,45 @@ Each schedule has its own current and energy caps with separate enable switches.
 | `button.eveus_ev_charger_sync_time` | Button | Push Home Assistant time to the charger |
 | `button.eveus_ev_charger_reset_counter_a` | Button | Reset counter A |
 | `button.eveus_ev_charger_reset_counter_b` | Button | Reset counter B |
-| `update.eveus_ev_charger_update` | Update | HACS update entity |
-| `switch.eveus_ev_charger_pre_release` | Switch | HACS pre-release toggle |
+
+</details>
+
+### Events & Device Triggers
+
+The integration fires events on the Home Assistant event bus for charger state transitions. Every payload includes `device_number`:
+
+| Event | Fires when | Extra payload fields |
+| --- | --- | --- |
+| `eveus_charging_started` | A charging session begins | — |
+| `eveus_charging_finished` | A charging session ends | `reason` (`complete`, `unplugged`, `stopped`, or `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
+| `eveus_error` | The charger enters the error state | `error_code`, `error_text` |
+| `eveus_car_connected` | The car is electrically connected | — |
+| `eveus_car_disconnected` | The car is disconnected | — |
+
+`eveus_charging_finished`'s energy/cost/duration fields are a snapshot taken from the last poll while the session was still alive, so the values survive the charger resetting its own counters at session end — they can lag the true final value by up to one poll interval. Transitions that happen while the charger is unreachable, or while Home Assistant is down, are deliberately silent — you won't see a false event after reconnecting or restarting.
+
+Each event also has a matching **device trigger**: in the automation UI, choosing the Eveus device offers "Charging started", "Charging finished", "Error occurred", "Car connected", and "Car disconnected" as ready-made triggers — no YAML needed.
+
+For automations that need the event payload, trigger on the event directly:
+
+```yaml
+automation:
+  - alias: Eveus session summary
+    triggers:
+      - trigger: event
+        event_type: eveus_charging_finished
+    actions:
+      - action: notify.notify
+        data:
+          message: >-
+            Session finished ({{ trigger.event.data.reason }}):
+            {{ trigger.event.data.session_energy_kwh }} kWh,
+            {{ trigger.event.data.session_cost }} UAH
+```
 
 ## Dashboard
 
-A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.1**).
+A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.2**).
 **Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the two graph cards). Every other card is built-in.
 <img width="1188" height="477" alt="image" src="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039" />
 <img width="1189" height="386" alt="image" src="https://github.com/user-attachments/assets/48412a75-3368-4215-aa83-43b835b0180f" />
@@ -364,7 +433,7 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 
 | Problem | What to check |
 | --- | --- |
-| Setup cannot connect | The setup dialog shows the reason in parentheses — e.g. `Failed to connect to charger (HTTP 404)` or `(Connection error: TimeoutError)`. Check the charger is powered on, HA can reach the charger IP/hostname, credentials are correct, and the selected model matches the charger. If the charger's web page works but setup still fails, see [Older charger firmware](#older-charger-firmware) |
+| Setup cannot connect | The setup dialog shows the reason in parentheses — e.g. `Failed to connect to charger (HTTP 404)` or `(Connection error: TimeoutError)`. Check the charger is powered on, HA can reach the charger IP/hostname, credentials are correct, and the selected model matches the charger |
 | Controls do not respond | Connection Quality, charger online state, credentials via Reconfigure, then wait one coordinator refresh |
 | SOC sensors are missing | Set the integration mode to Advanced under Configure, then restart/reload the integration if just changed |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
@@ -373,19 +442,9 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 
 ### Older charger firmware
 
-Some chargers on older firmware (R3.01.x has been reported) answer their own web page normally but reply to the integration's API request in a way setup can't use — so the charger can't be added even though the browser works. There are two ways forward:
+Older firmware (R3.01.x has been reported) now sets up and works normally — setup accepts any responding charger, and chargers with an unset serial number that return garbage bytes are handled tolerantly. Updating is still recommended: message **@energy_star** on Telegram for the firmware files, then flash the update from the charger's web interface.
 
-**Option 1 — update the firmware (recommended).** This has resolved the problem for other users.
-
-1. Message **@energy_star** on Telegram — he will add you to the charger support channel with the firmware files and instructions.
-2. Update the charger: either link the **Grizzl-E app** to your charger and push the update from the app, or download the firmware file for your charger and flash it from the charger's web interface.
-3. Add the charger to the integration again.
-
-**Option 2 — report your firmware so support for it can be added.**
-
-1. Note the error in the setup dialog — it includes the concrete failure, e.g. `Failed to connect to charger (HTTP 404)`.
-2. Find the integration's warning in the Home Assistant log (Settings → System → Logs) — it contains the HTTP status, content type, and the first bytes of the charger's reply; no debug logging needed.
-3. Open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version, the dialog error text, and that warning line. Hide anything sensitive first (your IP addresses, serial numbers).
+If a charger still fails to set up, note the error shown in the setup dialog, find the integration's warning in the Home Assistant log (Settings → System → Logs — it contains the HTTP status, content type, and the first bytes of the charger's reply; no debug logging needed), and open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version, the dialog error text, and that warning line. Hide anything sensitive first (your IP addresses, serial numbers).
 
 ## Privacy And Diagnostics
 

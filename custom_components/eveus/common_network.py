@@ -20,15 +20,26 @@ from .common_command import CommandManager
 from .const import (
     CHARGING_STATES,
     CHARGING_UPDATE_INTERVAL,
+    CONNECTED_STATES,
     DEFAULT_SCHEME,
+    DEVICE_STATE_CHARGING,
+    DEVICE_STATE_ERROR,
     ERROR_LOG_RATE_LIMIT,
+    EVENT_CAR_CONNECTED,
+    EVENT_CAR_DISCONNECTED,
+    EVENT_CHARGING_FINISHED,
+    EVENT_CHARGING_STARTED,
+    EVENT_ERROR,
+    FINISHED_REASONS,
+    get_error_state,
     IDLE_UPDATE_INTERVAL,
     OFFLINE_UPDATE_INTERVAL,
+    PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
 from ._payload import PayloadError, read_json_capped, validate_main_payload
-from .utils import RateLog
+from .utils import RateLog, get_safe_value
 
 _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
 
@@ -101,6 +112,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.host = host
         self.scheme = scheme
+        self.device_number = device_number
         # Configured charger model, so runtime polls reject a currentSet above
         # THIS model's maximum (a wrong-host/corrupt payload) instead of only the
         # largest supported model's maximum.
@@ -132,6 +144,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._offline_probation = 0
         self._last_observed_state: int | None = None
         self._last_burst_monotonic: float | None = None
+        # Transition-event memory, separate from the burst tracker above:
+        # unlike it, this resets on every failed poll so transitions that
+        # happened across an offline gap stay silent.
+        self._event_prev_state: int | None = None
+        self._event_prev_payload: dict[str, Any] | None = None
         self._force_refresh_requests = 0
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
@@ -357,6 +374,68 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             preserve_offline=was_likely_offline or self._offline_probation > 0,
         )
         self._maybe_burst_on_transition(new_data)
+        self._emit_transition_events(new_data)
+
+    def _emit_transition_events(self, new_data: dict[str, Any]) -> None:
+        """Fire bus events for device-state transitions between valid polls.
+
+        Only consecutive successful polls count: `_record_failure` clears the
+        memory, so a change that happened while the charger was unreachable
+        (or while HA was down) never produces an event.
+        """
+        try:
+            state = int(new_data.get("state")) if new_data.get("state") is not None else None
+        except (TypeError, ValueError):
+            state = None
+        if state is None or state not in CHARGING_STATES:
+            return
+        previous, prev_payload = self._event_prev_state, self._event_prev_payload
+        self._event_prev_state, self._event_prev_payload = state, new_data
+        if previous is None or previous == state or self._shutting_down:
+            return
+        bus = getattr(self.hass, "bus", None)
+        if bus is None:
+            return
+        base = {"device_number": self.device_number or 1}
+
+        if state == DEVICE_STATE_CHARGING:
+            bus.async_fire(EVENT_CHARGING_STARTED, dict(base))
+        elif previous == DEVICE_STATE_CHARGING and state != DEVICE_STATE_ERROR:
+            # Session counters reset once charging ends, so the snapshot comes
+            # from the last poll where the session was still alive.
+            snapshot = prev_payload or {}
+            bus.async_fire(
+                EVENT_CHARGING_FINISHED,
+                {
+                    **base,
+                    "reason": FINISHED_REASONS.get(state, "stopped"),
+                    "session_energy_kwh": get_safe_value(snapshot, "sessionEnergy", float),
+                    "session_cost": get_safe_value(snapshot, "sessionMoney", float),
+                    "session_duration_s": get_safe_value(snapshot, "sessionTime", int),
+                },
+            )
+
+        if state == DEVICE_STATE_ERROR:
+            code = get_safe_value(new_data, "subState", int)
+            bus.async_fire(
+                EVENT_ERROR,
+                {
+                    **base,
+                    "error_code": code,
+                    "error_text": get_error_state(code) if code is not None else None,
+                },
+            )
+
+        # Plugged-in status is indeterminate in the Error state; only fire when
+        # both sides of the transition are definite.
+        if previous not in PLUG_UNKNOWN_STATES and state not in PLUG_UNKNOWN_STATES:
+            was_connected = previous in CONNECTED_STATES
+            is_connected = state in CONNECTED_STATES
+            if was_connected != is_connected:
+                bus.async_fire(
+                    EVENT_CAR_CONNECTED if is_connected else EVENT_CAR_DISCONNECTED,
+                    dict(base),
+                )
 
     def _maybe_burst_on_transition(self, data: dict[str, Any]) -> None:
         """Briefly poll fast after an observed device state transition.
@@ -387,6 +466,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
         self._connection_quality_cache = None
+        # Transitions across an offline gap must stay silent (see
+        # _emit_transition_events); forget the last observed state.
+        self._event_prev_state = None
+        self._event_prev_payload = None
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False

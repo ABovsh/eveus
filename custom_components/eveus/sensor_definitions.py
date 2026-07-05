@@ -32,6 +32,8 @@ from .const import (
     get_error_state,
     get_normal_substate,
     CHARGING_STATES,
+    ERROR_STATES,
+    NORMAL_SUBSTATES,
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
     MIN_CURRENT,
@@ -118,6 +120,9 @@ class SensorSpec:
     category: Optional[EntityCategory] = None
     attributes_fn: Optional[Callable] = None
     tracks_reset: bool = False
+    # ENUM sensors: the full closed set of states the value_fn can return, so
+    # the automation UI offers a dropdown instead of free text.
+    options: Optional[tuple] = None
     # Sensors whose value DESCRIBES connectivity must stay readable while the
     # poll is failing — that is exactly when their data matters.
     available_when_offline: bool = False
@@ -151,6 +156,8 @@ class OptimizedEveusSensor(EveusSensorBase):
             self._attr_suggested_display_precision = spec.precision
         if spec.category:
             self._attr_entity_category = spec.category
+        if spec.options:
+            self._attr_options = list(spec.options)
         self._attr_extra_state_attributes = {}
 
     @property
@@ -761,11 +768,17 @@ def create_sensor_specifications(
             key="state", name="State", value_fn=get_charger_state,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:state-machine",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=tuple(CHARGING_STATES.values()) + ("Unknown",),
         ),
         SensorSpec(
             key="substate", name="Substate", value_fn=get_charger_substate,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:information-variant",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=tuple(NORMAL_SUBSTATES.values())
+            + tuple(v for v in ERROR_STATES.values() if v != "No Error")
+            + ("Unknown State", "Unknown Error"),
         ),
         SensorSpec(
             key="ground", name="Ground", value_fn=get_ground_status,

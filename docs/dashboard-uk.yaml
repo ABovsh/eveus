@@ -191,6 +191,25 @@ sections:
             name: Тариф 3
           - entity: sensor.eveus_ev_charger_rate_3_cost
             name: Вартість тарифу 3
+      - type: heading
+        heading: Остання сесія
+        heading_style: subtitle
+        icon: mdi:history
+      - type: entities
+        show_header_toggle: false
+        entities:
+          - entity: sensor.eveus_ev_charger_last_session_energy
+            name: Енергія
+            icon: mdi:battery-charging
+          - entity: sensor.eveus_ev_charger_last_session_cost
+            name: Вартість
+            icon: mdi:cash
+          - entity: sensor.eveus_ev_charger_last_session_duration
+            name: Тривалість
+            icon: mdi:timer-sand
+          - entity: sensor.eveus_ev_charger_last_session_final_soc
+            name: Фінальний SOC
+            icon: mdi:battery-check
   - type: grid
     cards:
       - type: heading
