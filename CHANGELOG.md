@@ -11,7 +11,7 @@
 - **State and Substate are now enum sensors** — automation state triggers for `sensor.eveus_ev_charger_state`/`..._substate` offer a dropdown of all possible values instead of a free-text field, eliminating typos like "Сharging" with a Cyrillic С. The values themselves are unchanged; existing automations keep working.
 
 ### 🐛 Fixed
-- **Chargers with an unset serial number can now be added.** Firmware that never had a serial entered (seen on GRM070A-R3.01.8) returns garbage bytes in `serialNum`, which broke setup ("Response is not valid JSON") and every poll. The reply is now decoded tolerantly and a garbage-only serial is simply omitted from the device page.
+- **Better compatibility with older firmware: chargers with an unset serial number can now be added.** Older firmware builds that never had a serial entered (seen on GRM070A-R3.01.8) return garbage bytes in `serialNum`, which broke setup ("Response is not valid JSON") and every poll. The reply is now decoded tolerantly and a garbage-only serial is simply omitted from the device page, so these units work without a firmware update.
 
 ## 4.17.0 - 2026-07-02
 
