@@ -106,8 +106,12 @@
           <p>The integration sends charging-current, stop, schedule, adaptive-mode, and ground-protection commands directly to the charger. It also lets you manage the charger's optional OCPP connection.</p>
         </article>
         <article class="card">
+          <h3>Events and device triggers</h3>
+          <p>The integration fires events on real charger transitions — charging started or finished, car connected or disconnected, error — and offers them as ready-made device triggers in the automation editor. The finished event carries the session's energy, cost, and duration. State and Substate are enum sensors, so state triggers offer a dropdown of valid values.</p>
+        </article>
+        <article class="card">
           <h3>Energy and cost</h3>
-          <p>The integration exposes the charger's current voltage, current, and power measurements, along with session energy, total energy, resettable counters, tariffs, and charging costs.</p>
+          <p>The integration exposes the charger's current voltage, current, and power measurements, along with session energy, total energy, resettable counters, tariffs, and charging costs. Last Session sensors keep each finished session's energy, cost, and duration until the next session completes — and past sessions stay in their history.</p>
         </article>
         <article class="card">
           <h3>SOC and ETA</h3>
