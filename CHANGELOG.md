@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.18.0 - 2026-07-05
 
 ### ✨ Added
 - **Charging events for automations** — the integration now fires `eveus_charging_started`, `eveus_charging_finished`, `eveus_error`, `eveus_car_connected`, and `eveus_car_disconnected` on real charger transitions, so automations can react to the moment charging starts or ends instead of polling sensor states. `eveus_charging_finished` includes the session summary (`reason`, `session_energy_kwh`, `session_cost`, `session_duration_s`); every event carries `device_number` for multi-charger setups. Transitions that happen while the charger or Home Assistant is offline are not replayed afterwards.
