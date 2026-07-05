@@ -146,7 +146,6 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
         session_history.LastSessionEnergySensor,
         session_history.LastSessionCostSensor,
         session_history.LastSessionDurationSensor,
-        session_history.LastSessionFinalSocSensor,
     ):
         expected["sensor"].add(_slug(sensor_cls.ENTITY_NAME))
     for name in (

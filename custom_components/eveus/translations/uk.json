@@ -271,9 +271,6 @@
       },
       "last_session_duration": {
         "name": "Тривалість останньої сесії"
-      },
-      "last_session_final_soc": {
-        "name": "Фінальний SOC останньої сесії"
       }
     },
     "binary_sensor": {

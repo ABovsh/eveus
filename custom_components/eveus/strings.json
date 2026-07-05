@@ -271,9 +271,6 @@
       },
       "last_session_duration": {
         "name": "Last Session Duration"
-      },
-      "last_session_final_soc": {
-        "name": "Last Session Final SOC"
       }
     },
     "binary_sensor": {

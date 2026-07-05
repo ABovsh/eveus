@@ -17,7 +17,7 @@ from homeassistant.util import dt as dt_util
 from .common_base import EveusSensorBase
 from .const import EVENT_CHARGING_FINISHED
 from .sensor_definitions import ICON_CURRENCY_UAH, UNIT_UAH
-from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfTime
+from homeassistant.const import UnitOfEnergy, UnitOfTime
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,32 +107,12 @@ class LastSessionDurationSensor(_LastSessionSensorBase):
     _attr_icon = "mdi:timer-outline"
 
 
-class LastSessionFinalSocSensor(_LastSessionSensorBase):
-    ENTITY_NAME = "Last Session Final SOC"
-    _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_suggested_display_precision = 0
-    _attr_icon = "mdi:battery-high"
-
-    def __init__(self, updater, device_number: int, soc_calculator) -> None:
-        super().__init__(updater, device_number)
-        self._soc_calculator = soc_calculator
-
-    def _value_from_event(self, data: dict[str, Any]) -> Optional[float]:
-        energy = data.get("session_energy_kwh")
-        if energy is None:
-            return None
-        return self._soc_calculator.get_soc_percent(energy)
-
-
 def create_last_session_sensors(
-    updater, device_number: int, soc_calculator
+    updater, device_number: int
 ) -> list[_LastSessionSensorBase]:
-    """Build the Last Session sensor set; Final SOC needs the SOC calculator."""
-    sensors: list[_LastSessionSensorBase] = [
+    """Build the Last Session sensor set."""
+    return [
         LastSessionEnergySensor(updater, device_number),
         LastSessionCostSensor(updater, device_number),
         LastSessionDurationSensor(updater, device_number),
     ]
-    if soc_calculator is not None:
-        sensors.append(LastSessionFinalSocSensor(updater, device_number, soc_calculator))
-    return sensors

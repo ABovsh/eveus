@@ -267,7 +267,6 @@ automation:
 | `sensor.eveus_ev_charger_last_session_energy` | kWh | Energy delivered by the most recently finished session; keeps its value across restarts and while the charger is offline |
 | `sensor.eveus_ev_charger_last_session_cost` | UAH | Cost of the most recently finished session |
 | `sensor.eveus_ev_charger_last_session_duration` | Sensor | Duration of the most recently finished session |
-| `sensor.eveus_ev_charger_last_session_final_soc` | % | Final SOC of the most recently finished session (Advanced mode only) |
 
 Each Last Session sensor is populated when a session finishes and carries `reason` and `finished_at` attributes.
 

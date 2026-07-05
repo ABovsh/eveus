@@ -325,7 +325,6 @@ automation:
 | `sensor.eveus_ev_charger_last_session_energy` | кВт·год | **Енергія останньої сесії** — зберігається після перезапуску та поки станція офлайн |
 | `sensor.eveus_ev_charger_last_session_cost` | грн | **Вартість останньої сесії** |
 | `sensor.eveus_ev_charger_last_session_duration` | — | **Тривалість останньої сесії** |
-| `sensor.eveus_ev_charger_last_session_final_soc` | % | **Фінальний SOC останньої сесії** (лише Розширений режим) |
 
 Кожен сенсор останньої сесії має атрибути `reason` та `finished_at`.
 

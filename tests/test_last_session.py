@@ -2,15 +2,15 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock
 
 import pytest
 
+import custom_components.eveus.session_history as session_history
 from custom_components.eveus.session_history import (
     LastSessionCostSensor,
     LastSessionDurationSensor,
     LastSessionEnergySensor,
-    LastSessionFinalSocSensor,
     create_last_session_sensors,
 )
 
@@ -33,15 +33,18 @@ def _event(**data) -> SimpleNamespace:
     return SimpleNamespace(data=payload)
 
 
-def test_factory_creates_three_sensors_without_soc_calculator() -> None:
-    sensors = create_last_session_sensors(_updater(), 1, None)
+def test_factory_creates_exactly_three_sensors() -> None:
+    sensors = create_last_session_sensors(_updater(), 1)
     assert len(sensors) == 3
-    assert not any(isinstance(s, LastSessionFinalSocSensor) for s in sensors)
+    assert {type(s) for s in sensors} == {
+        LastSessionEnergySensor,
+        LastSessionCostSensor,
+        LastSessionDurationSensor,
+    }
 
 
-def test_factory_adds_final_soc_with_calculator() -> None:
-    sensors = create_last_session_sensors(_updater(), 1, Mock())
-    assert len(sensors) == 4
+def test_final_soc_sensor_is_gone() -> None:
+    assert not hasattr(session_history, "LastSessionFinalSocSensor")
 
 
 def test_sensors_capture_event_values() -> None:
@@ -62,15 +65,6 @@ def test_other_device_event_is_ignored() -> None:
     sensor = LastSessionEnergySensor(_updater(), 1)
     sensor._handle_finished_event(_event(device_number=2))
     assert sensor.native_value is None
-
-
-def test_final_soc_uses_calculator_with_session_energy() -> None:
-    calc = Mock()
-    calc.get_soc_percent.return_value = 79.6
-    sensor = LastSessionFinalSocSensor(_updater(), 1, calc)
-    sensor._handle_finished_event(_event())
-    calc.get_soc_percent.assert_called_once_with(18.46)
-    assert sensor.native_value == pytest.approx(79.6)
 
 
 def test_missing_snapshot_values_leave_sensor_unknown() -> None:
