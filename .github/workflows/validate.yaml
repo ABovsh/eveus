@@ -118,7 +118,7 @@ jobs:
     steps:
       - uses: "actions/checkout@v6"
       - name: HACS validation
-        uses: "hacs/action@main"
+        uses: "hacs/action@d556e736723344f83838d08488c983a15381059a" # 22.5.0
         with:
           category: "integration"
 
@@ -127,4 +127,4 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - uses: "actions/checkout@v6"
-      - uses: home-assistant/actions/hassfest@master
+      - uses: home-assistant/actions/hassfest@f4ca6f671bd429efb108c0f2fa0ae8af0215986c # master 2026-07
