@@ -39,7 +39,7 @@ jobs:
             ha-pin: ""
             ha-label: "latest"
     steps:
-      - uses: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" # v6
+      - uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
         with:
           persist-credentials: false
 
@@ -86,7 +86,7 @@ jobs:
         # One leg only: the floor leg feeds SonarCloud, so two matrix legs can't
         # race to upload the same artifact name.
         if: github.event_name == 'push' && matrix.ha-label == 'min'
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" # v4
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
         with:
           name: coverage-xml
           path: coverage.xml
@@ -98,18 +98,18 @@ jobs:
     if: github.event_name == 'push'
     runs-on: "ubuntu-latest"
     steps:
-      - uses: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" # v6
+      - uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
         with:
           # Full history so SonarCloud can attribute new code and blame lines.
           fetch-depth: 0
 
       - name: Download coverage report
-        uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" # v4
+        uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
         with:
           name: coverage-xml
 
       - name: SonarCloud scan
-        uses: "SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602" # v6
+        uses: "SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e" # v8.2.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: "https://sonarcloud.io"
@@ -118,7 +118,7 @@ jobs:
     name: HACS
     runs-on: "ubuntu-latest"
     steps:
-      - uses: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" # v6
+      - uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
         with:
           persist-credentials: false
       - name: HACS validation
@@ -130,7 +130,7 @@ jobs:
     name: Hassfest
     runs-on: "ubuntu-latest"
     steps:
-      - uses: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10" # v6
+      - uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
         with:
           persist-credentials: false
       - uses: home-assistant/actions/hassfest@f4ca6f671bd429efb108c0f2fa0ae8af0215986c # master 2026-07
