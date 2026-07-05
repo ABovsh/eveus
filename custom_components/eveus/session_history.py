@@ -1,9 +1,10 @@
 """Sensors that keep the summary of the most recent finished charging session.
 
-Values are captured from the coordinator's charging-finished bus event — the
-firmware resets its own session counters as soon as charging ends, so this is
-the only place the final numbers survive. RestoreEntity keeps them across HA
-restarts.
+Values are captured from the coordinator's charging-finished bus event. The
+firmware keeps its session counters until the NEXT session starts (reset happens
+at session start, not at charge end), but that still means the numbers are gone
+the moment a new session begins — capturing them at the finished event keeps
+them permanently. RestoreEntity keeps them across HA restarts.
 """
 from __future__ import annotations
 

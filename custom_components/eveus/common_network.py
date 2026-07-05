@@ -401,8 +401,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if state == DEVICE_STATE_CHARGING:
             bus.async_fire(EVENT_CHARGING_STARTED, dict(base))
         elif previous == DEVICE_STATE_CHARGING and state != DEVICE_STATE_ERROR:
-            # Session counters reset once charging ends, so the snapshot comes
-            # from the last poll where the session was still alive.
+            # Firmware resets session counters at the START of the next session,
+            # not at charge end; snapshotting the last charging poll keeps the
+            # numbers stable regardless of when the next session begins.
             snapshot = prev_payload or {}
             bus.async_fire(
                 EVENT_CHARGING_FINISHED,
