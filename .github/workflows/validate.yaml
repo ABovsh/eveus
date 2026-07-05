@@ -102,6 +102,7 @@ jobs:
         with:
           # Full history so SonarCloud can attribute new code and blame lines.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Download coverage report
         uses: "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" # v4

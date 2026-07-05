@@ -4,6 +4,9 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    # Wait out fresh releases before adopting them (supply-chain cooldown; zizmor dependabot-cooldown).
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns:
