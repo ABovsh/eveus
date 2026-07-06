@@ -202,7 +202,15 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
                 label=label,
                 clear_optimistic_state=clear_optimistic_state,
             ):
-                self.async_write_ha_state()
+                # Route through WriteOnChangeMixin bookkeeping when present: a
+                # raw async_write_ha_state() here leaves _last_written_available
+                # stale, so the recovery write on the next successful poll gets
+                # suppressed as "unchanged" and the entity sticks at unavailable.
+                write_availability = getattr(self, "_write_availability_only", None)
+                if callable(write_availability):
+                    write_availability()
+                else:
+                    self.async_write_ha_state()
 
         self._grace_recheck_unsub = async_call_later(self.hass, delay + 0.5, _recheck)
 

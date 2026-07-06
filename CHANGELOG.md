@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### 🐛 Fixed
+- **Binary sensors stuck "unavailable" after a brief connection blip** — when the charger dropped offline just long enough for the availability grace period to expire between polls, `binary_sensor.eveus_ev_charger_car_connected`, `..._session_active`, and `..._ocpp_connected` stayed unavailable after the connection recovered (until the plug state actually changed or Home Assistant restarted). The recovery is now always pushed to Home Assistant.
+
 ## 4.18.0 - 2026-07-05
 
 ### ✨ Added
