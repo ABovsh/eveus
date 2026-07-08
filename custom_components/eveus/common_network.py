@@ -169,6 +169,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # that completes mid-unload from scheduling fresh refresh timers, and a
         # just-fired timer from starting a refresh on a torn-down coordinator.
         self._shutting_down = False
+        # Firmware-version /init fallback (GitHub issue #11): fw-1.x omits
+        # verFWMain/firmware from /main entirely. Populated at most once, on
+        # the first successful poll that lacks a firmware field; None means
+        # either "not needed" (modern firmware) or "fetch failed/pending".
+        self._init_fw_fallback: str | None = None
+        self._init_fw_fetch_done = False
 
     @property
     def basic_auth(self) -> aiohttp.BasicAuth:
@@ -555,6 +561,59 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             new_interval = timedelta(seconds=seconds)
         if self.update_interval != new_interval:
             self.update_interval = new_interval
+
+    async def async_maybe_fetch_init_firmware(self) -> None:
+        """Resolve a firmware-version fallback from /init, at most once.
+
+        Firmware 1.x drops verFWMain (and the legacy `firmware` alias) from
+        /main entirely (GitHub issue #11), so device_info's sw_version would
+        stay "Unknown" forever. /init exposes the firmware as an integer --
+        ESP_SW_version, falling back to MCU_SW_version -- e.g. 151, formatted
+        here as "1.51".
+
+        Intended to be awaited once, right after the coordinator's first
+        successful refresh (see ``async_setup_entry``) -- not from the
+        regular poll path, so a slow or hanging /init can never delay or fail
+        the poll cycle every entity depends on. Gated by
+        ``_init_fw_fetch_done`` so a modern charger with a real verFWMain
+        never triggers a fetch at all, and a fw-1.x charger is only ever
+        asked once. Every failure mode (timeout, non-JSON, missing/bad keys,
+        HTTP error) degrades to leaving ``_init_fw_fallback`` unset (still
+        "Unknown" in device_info) -- never raises, never fails setup.
+        """
+        if self._init_fw_fetch_done:
+            return
+        data = self.data if isinstance(self.data, dict) else {}
+        if data.get("verFWMain") or data.get("firmware"):
+            self._init_fw_fetch_done = True
+            return
+        self._init_fw_fetch_done = True
+        try:
+            async with self.get_session().post(
+                self.url_for("/init"),
+                auth=self._basic_auth,
+                timeout=_UPDATE_TIMEOUT_OBJ,
+            ) as response:
+                response.raise_for_status()
+                init_data = await read_json_capped(response)
+        except (
+            aiohttp.ClientResponseError,
+            aiohttp.ClientConnectorError,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            ValueError,
+        ) as err:
+            _LOGGER.debug(
+                "Eveus /init firmware fallback fetch failed: %s", type(err).__name__
+            )
+            return
+
+        if not isinstance(init_data, dict):
+            return
+        raw_version = init_data.get("ESP_SW_version", init_data.get("MCU_SW_version"))
+        if isinstance(raw_version, bool) or not isinstance(raw_version, int):
+            return
+        self._init_fw_fallback = f"{raw_version / 100:.2f}"
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""

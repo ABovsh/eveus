@@ -240,6 +240,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             data or {},
             self._device_number,
             scheme=getattr(self._updater, "scheme", "http"),
+            init_fw_fallback=getattr(self._updater, "_init_fw_fallback", None),
         )
 
     def _device_info_has_firmware(self) -> bool:
