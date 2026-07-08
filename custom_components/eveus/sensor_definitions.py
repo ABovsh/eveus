@@ -409,9 +409,22 @@ get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0, ma
 # =============================================================================
 
 def get_charger_state(updater, hass) -> Optional[str]:
-    """Get charger state."""
+    """Get charger state.
+
+    Firmware 1.x (MCU_SW_version 151, GitHub issue #11) reports state values
+    outside CHARGING_STATES (observed: 20). ``validate_main_payload`` accepts
+    any 0-255 state, so this getter must render one instead of relying on the
+    generic "Unknown" label, which would hide the actual reported value from
+    diagnostics. Logged once per distinct value (RateLog), not once per poll.
+    """
     state_value = _get_data_value(updater, "state", int)
-    return get_charging_state(state_value) if state_value is not None else None
+    if state_value is None:
+        return None
+    if state_value not in CHARGING_STATES:
+        if _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, ("unknown_state", state_value)):
+            _LOGGER.warning("Eveus reported unrecognized device state: %s", state_value)
+        return f"Unknown ({state_value})"
+    return get_charging_state(state_value)
 
 
 def get_charger_substate(updater, hass) -> Optional[str]:

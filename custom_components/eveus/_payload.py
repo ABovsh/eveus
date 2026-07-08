@@ -5,7 +5,7 @@ import json
 import math
 from typing import Any, Literal
 
-from .const import CHARGING_STATES, MODEL_MAX_CURRENT
+from .const import MODEL_MAX_CURRENT
 
 MessageStyle = Literal["network", "config_flow"]
 
@@ -82,7 +82,7 @@ _NETWORK_MESSAGES = {
     "state_not_finite": "Eveus 'state' field is not finite",
     "state_not_integer": "Eveus 'state' field is not an integer",
     "state_not_numeric": "Eveus 'state' field is not numeric",
-    "state_unknown": "Eveus 'state' value {state_value} outside known domain",
+    "state_unknown": "Eveus 'state' value {state_value} outside supported range 0-255",
     "missing_current": "Response missing required Eveus 'currentSet' field",
     "current_bool": "Eveus 'currentSet' field is boolean",
     "current_not_numeric": "Eveus 'currentSet' field is not numeric",
@@ -101,7 +101,7 @@ _CONFIG_FLOW_MESSAGES = {
     "state_not_finite": "Device 'state' field is not an integer",
     "state_not_integer": "Device 'state' field is not an integer",
     "state_not_numeric": "Device 'state' field is not numeric",
-    "state_unknown": "Device reports unknown state {state_value}",
+    "state_unknown": "Device reports out-of-range state {state_value}",
     "missing_current": "Device response is missing currentSet",
     "current_bool": "Device reports invalid current setting",
     "current_not_numeric": "Device reports invalid current format",
@@ -150,7 +150,14 @@ def validate_main_payload(
             "state_not_numeric",
             _message(message_style, "state_not_numeric"),
         ) from err
-    if state_value not in CHARGING_STATES:
+    # Firmware 1.x (MCU_SW_version 151, see GitHub issue #11) reports device
+    # states outside CHARGING_STATES (observed: 20). The charger's state byte
+    # is inherently 0-255; anything else (negative, or a value that could
+    # never fit in a byte) is corrupt and still fails the poll. States 0-7
+    # keep following the exact same downstream code paths as before — only
+    # the acceptance test on this line changed, nothing else about how a
+    # known state is handled.
+    if not 0 <= state_value <= 255:
         _raise(message_style, "state_unknown", state_value=state_value)
 
     if "currentSet" not in payload:

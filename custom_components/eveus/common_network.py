@@ -80,6 +80,19 @@ _UPDATE_INTERVALS = {
 _MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
 
 
+def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
+    """Electrical-measurement fallback for firmware with an unmapped state.
+
+    Only meaningful when ``state`` is outside CHARGING_STATES (e.g. firmware
+    1.x / MCU_SW_version 151, GitHub issue #11) — known states 0-7 always
+    decide charging activity from the state value itself and never reach
+    this helper.
+    """
+    power = get_safe_value(data, "powerMeas", float)
+    current = get_safe_value(data, "curMeas1", float)
+    return (power is not None and power > 0) or (current is not None and current > 0)
+
+
 class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     """Data coordinator for an Eveus charger."""
 
@@ -521,10 +534,18 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._set_update_interval(CHARGING_UPDATE_INTERVAL)
         elif state_value is not None and state_value in CHARGING_STATES:
             self._set_update_interval(IDLE_UPDATE_INTERVAL)
+        elif state_value is not None and _looks_charging_from_measurements(data):
+            # Firmware 1.x (MCU_SW_version 151, GitHub issue #11) reports device
+            # states outside CHARGING_STATES (observed: 20), which the payload
+            # validator now accepts rather than rejecting the whole poll. There
+            # is no state-based signal for those firmwares, so fall back to the
+            # electrical measurements: nonzero power/current means a session is
+            # actually running and deserves the fast cadence. This branch is
+            # unreachable for any state in CHARGING_STATES (0-7).
+            self._set_update_interval(CHARGING_UPDATE_INTERVAL)
         else:
-            # Unknown/invalid state: hold offline cadence rather than snap to
-            # idle polling. The payload validator at /main rejects the response,
-            # so this branch only matters for transient between-tick recovery.
+            # Unknown/invalid state with no sign of an active session: hold
+            # offline cadence rather than snap to idle polling.
             self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
 
     def _set_update_interval(self, seconds: int) -> None:
