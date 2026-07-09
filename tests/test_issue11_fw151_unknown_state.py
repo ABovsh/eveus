@@ -116,18 +116,24 @@ def test_coordinator_poll_with_fw151_payload_succeeds(
 
     data = asyncio.run(updater._async_update_data())
 
-    assert data["state"] == 20
+    # Legacy idle code 20 is translated to the modern Standby (2) right after
+    # validation — see test_issue11_fw151_state_semantics.py for the full
+    # translation contract.
+    assert data["state"] == 2
+    assert data["_legacy_raw_state"] == 20
     assert updater.connection_quality["consecutive_failures"] == 0
 
 
 # ---------------------------------------------------------------------------
-# 3. State sensor reads "Unknown (20)"
+# 3. State sensor reads "Unknown" for untranslated unmapped states (the
+#    sensor is a closed-options ENUM, so the raw code lives in the
+#    `raw_state` attribute instead of the state string)
 # ---------------------------------------------------------------------------
 
 
-def test_state_sensor_reports_unknown_with_value_for_unmapped_state() -> None:
+def test_state_sensor_reports_unknown_for_unmapped_state() -> None:
     updater = EveusTestUpdater(FW151_MAIN)
-    assert sd.get_charger_state(updater, None) == "Unknown (20)"
+    assert sd.get_charger_state(updater, None) == "Unknown"
 
 
 @pytest.mark.parametrize("state", [0, 4, 7])
@@ -173,9 +179,12 @@ def test_tune_update_interval_known_states_ignore_power_fallback(state: int) -> 
     assert updater.update_interval == timedelta(seconds=expected)
 
 
-def test_coordinator_poll_fw151_with_zero_power_uses_offline_cadence(
+def test_coordinator_poll_fw151_idle_uses_idle_cadence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Idle legacy code 20 normalizes to Standby, which gets the idle cadence."""
+    from custom_components.eveus.const import IDLE_UPDATE_INTERVAL
+
     payload = dict(FW151_MAIN)
     payload["powerMeas"] = 0
     payload["curMeas1"] = 0
@@ -185,4 +194,4 @@ def test_coordinator_poll_fw151_with_zero_power_uses_offline_cadence(
 
     asyncio.run(updater._async_update_data())
 
-    assert updater.update_interval == timedelta(seconds=OFFLINE_UPDATE_INTERVAL)
+    assert updater.update_interval == timedelta(seconds=IDLE_UPDATE_INTERVAL)

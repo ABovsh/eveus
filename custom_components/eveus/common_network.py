@@ -23,6 +23,8 @@ from .const import (
     CONNECTED_STATES,
     DEFAULT_SCHEME,
     DEVICE_STATE_CHARGING,
+    DEVICE_STATE_STANDBY,
+    LEGACY_RAW_STATE_KEY,
     DEVICE_STATE_ERROR,
     ERROR_LOG_RATE_LIMIT,
     EVENT_CAR_CONNECTED,
@@ -81,16 +83,59 @@ _MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
 
 
 def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
-    """Electrical-measurement fallback for firmware with an unmapped state.
+    """Electrical-measurement signal that a session is actually delivering power.
 
-    Only meaningful when ``state`` is outside CHARGING_STATES (e.g. firmware
-    1.x / MCU_SW_version 151, GitHub issue #11) — known states 0-7 always
-    decide charging activity from the state value itself and never reach
-    this helper.
+    Used for firmware whose state codes can't answer the question themselves
+    (firmware 1.x / MCU_SW_version 151, GitHub issue #11): unmapped states in
+    the adaptive-interval fallback, and the legacy code 3 in
+    ``normalize_legacy_device_state`` (1.x reports 3 both plugged-idle and
+    actively charging). Modern known states 0-7 always decide charging
+    activity from the state value itself and never reach this helper.
     """
     power = get_safe_value(data, "powerMeas", float)
     current = get_safe_value(data, "curMeas1", float)
     return (power is not None and power > 0) or (current is not None and current > 0)
+
+
+# Firmware-1.x device-state codes with a different meaning than the modern
+# 0-7 map (GitHub issue #11): 20 is that firmware's idle/standby code, and 3
+# is reported during active charging (modern firmware: 3 = connected-idle,
+# 4 = charging). Verified against live captures from MCU_SW_version 151.
+_LEGACY_IDLE_STATE = 20
+_LEGACY_CHARGING_CANDIDATE_STATE = 3
+
+
+def normalize_legacy_device_state(data: dict[str, Any]) -> dict[str, Any]:
+    """Translate firmware-1.x state codes to their modern equivalents.
+
+    Firmware 1.x payloads are recognizable by the complete absence of the
+    ``verFWMain``/``firmware`` fields (modern firmware always sends
+    ``verFWMain``), so modern payloads pass through untouched — the gate, not
+    the code values, is what guarantees no behavior change for current
+    hardware. Translating once, right after validation, lets every consumer
+    (state sensor, session-active logic, adaptive polling, transition events)
+    work on the canonical 0-7 domain with no per-call-site special cases.
+
+    Only the two observed codes are translated: 20 -> Standby, and 3 ->
+    Charging when the electrical measurements confirm power is flowing
+    (without power, 3 keeps its modern "Connected" reading, which matches a
+    plugged-idle car on either firmware generation). The original code is
+    preserved under LEGACY_RAW_STATE_KEY for the State sensor's `raw_state`
+    diagnostic attribute. Codes this firmware may use that we have not seen
+    yet stay untranslated and render as "Unknown".
+    """
+    if data.get("verFWMain") or data.get("firmware"):
+        return data
+    state = get_safe_value(data, "state", int)
+    if state == _LEGACY_IDLE_STATE:
+        data[LEGACY_RAW_STATE_KEY] = state
+        data["state"] = DEVICE_STATE_STANDBY
+    elif state == _LEGACY_CHARGING_CANDIDATE_STATE and _looks_charging_from_measurements(
+        data
+    ):
+        data[LEGACY_RAW_STATE_KEY] = state
+        data["state"] = DEVICE_STATE_CHARGING
+    return data
 
 
 class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
@@ -651,6 +696,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # maximum, so a wrong-device or corrupt payload fails the poll
                 # rather than being published as healthy.
                 new_data = validate_main_payload(new_data, self._model)
+                new_data = normalize_legacy_device_state(new_data)
 
                 self._record_success(time.monotonic() - start_monotonic, new_data)
                 return new_data
