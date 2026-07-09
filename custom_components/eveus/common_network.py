@@ -103,39 +103,13 @@ def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
 # 4 = charging). Verified against live captures from MCU_SW_version 151.
 _LEGACY_IDLE_STATE = 20
 _LEGACY_CHARGING_CANDIDATE_STATE = 3
-
-
-def normalize_legacy_device_state(data: dict[str, Any]) -> dict[str, Any]:
-    """Translate firmware-1.x state codes to their modern equivalents.
-
-    Firmware 1.x payloads are recognizable by the complete absence of the
-    ``verFWMain``/``firmware`` fields (modern firmware always sends
-    ``verFWMain``), so modern payloads pass through untouched — the gate, not
-    the code values, is what guarantees no behavior change for current
-    hardware. Translating once, right after validation, lets every consumer
-    (state sensor, session-active logic, adaptive polling, transition events)
-    work on the canonical 0-7 domain with no per-call-site special cases.
-
-    Only the two observed codes are translated: 20 -> Standby, and 3 ->
-    Charging when the electrical measurements confirm power is flowing
-    (without power, 3 keeps its modern "Connected" reading, which matches a
-    plugged-idle car on either firmware generation). The original code is
-    preserved under LEGACY_RAW_STATE_KEY for the State sensor's `raw_state`
-    diagnostic attribute. Codes this firmware may use that we have not seen
-    yet stay untranslated and render as "Unknown".
-    """
-    if data.get("verFWMain") or data.get("firmware"):
-        return data
-    state = get_safe_value(data, "state", int)
-    if state == _LEGACY_IDLE_STATE:
-        data[LEGACY_RAW_STATE_KEY] = state
-        data["state"] = DEVICE_STATE_STANDBY
-    elif state == _LEGACY_CHARGING_CANDIDATE_STATE and _looks_charging_from_measurements(
-        data
-    ):
-        data[LEGACY_RAW_STATE_KEY] = state
-        data["state"] = DEVICE_STATE_CHARGING
-    return data
+# Consecutive zero-power polls tolerated before a translated legacy Charging
+# state reverts to Connected. Firmware 1.x has no distinct "Paused" code — a
+# momentary zero-power sample mid-session (charge-current renegotiation, a
+# balancing tick) would otherwise flip the state for one poll and fire a
+# spurious charging_finished/charging_started event pair, corrupting the Last
+# Session sensors.
+_LEGACY_PAUSE_GRACE_POLLS = 2
 
 
 class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
@@ -220,6 +194,66 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # either "not needed" (modern firmware) or "fetch failed/pending".
         self._init_fw_fallback: str | None = None
         self._init_fw_fetch_done = False
+        # Legacy-firmware charging latch (GitHub issue #11): fw-1.x reports
+        # code 3 both plugged-idle and actively charging, distinguishable
+        # only by the electrical measurements. Once a session is observed,
+        # the translation tolerates _LEGACY_PAUSE_GRACE_POLLS consecutive
+        # zero-power polls before reverting, so a momentary dip can't fire a
+        # spurious charging_finished/started event pair. Cleared on any
+        # failed poll: events across offline gaps are suppressed anyway, and
+        # a stale latch must not resurrect "Charging" after an outage.
+        self._legacy_charging_latched = False
+        self._legacy_zero_power_polls = 0
+
+    def _reset_legacy_charging_latch(self) -> None:
+        self._legacy_charging_latched = False
+        self._legacy_zero_power_polls = 0
+
+    def _normalize_legacy_device_state(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Translate firmware-1.x state codes to their modern equivalents.
+
+        Firmware 1.x payloads are recognizable by the complete absence of the
+        ``verFWMain``/``firmware`` fields (modern firmware always sends
+        ``verFWMain``), so modern payloads pass through untouched — the gate,
+        not the code values, is what guarantees no behavior change for current
+        hardware. Translating once, right after validation, lets every
+        consumer (state sensor, session-active logic, adaptive polling,
+        transition events) work on the canonical 0-7 domain with no
+        per-call-site special cases.
+
+        Only the two observed codes are translated: 20 -> Standby, and 3 ->
+        Charging while the electrical measurements confirm power is flowing
+        (with a short zero-power grace window mid-session — see
+        ``_LEGACY_PAUSE_GRACE_POLLS``). A powerless 3 with no session in
+        progress keeps its modern "Connected" reading, which matches a
+        plugged-idle car on either firmware generation. The original code is
+        preserved under LEGACY_RAW_STATE_KEY for the State sensor's
+        `raw_state` diagnostic attribute. Codes this firmware may use that we
+        have not seen yet stay untranslated and render as "Unknown".
+        """
+        if data.get("verFWMain") or data.get("firmware"):
+            return data
+        state = get_safe_value(data, "state", int)
+        if state == _LEGACY_CHARGING_CANDIDATE_STATE:
+            if _looks_charging_from_measurements(data):
+                self._legacy_charging_latched = True
+                self._legacy_zero_power_polls = 0
+            elif (
+                self._legacy_charging_latched
+                and self._legacy_zero_power_polls < _LEGACY_PAUSE_GRACE_POLLS
+            ):
+                self._legacy_zero_power_polls += 1
+            else:
+                self._reset_legacy_charging_latch()
+                return data
+            data[LEGACY_RAW_STATE_KEY] = state
+            data["state"] = DEVICE_STATE_CHARGING
+            return data
+        self._reset_legacy_charging_latch()
+        if state == _LEGACY_IDLE_STATE:
+            data[LEGACY_RAW_STATE_KEY] = state
+            data["state"] = DEVICE_STATE_STANDBY
+        return data
 
     @property
     def basic_auth(self) -> aiohttp.BasicAuth:
@@ -531,6 +565,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
         self._connection_quality_cache = None
+        self._reset_legacy_charging_latch()
         # Transitions across an offline gap must stay silent (see
         # _emit_transition_events); forget the last observed state.
         self._event_prev_state = None
@@ -696,7 +731,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # maximum, so a wrong-device or corrupt payload fails the poll
                 # rather than being published as healthy.
                 new_data = validate_main_payload(new_data, self._model)
-                new_data = normalize_legacy_device_state(new_data)
+                new_data = self._normalize_legacy_device_state(new_data)
 
                 self._record_success(time.monotonic() - start_monotonic, new_data)
                 return new_data

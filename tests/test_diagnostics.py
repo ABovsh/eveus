@@ -89,6 +89,7 @@ def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:
         "firmware": None,
         "wifi_firmware": None,
         "state": None,
+        "legacy_raw_state": None,
         "substate": None,
         "current_set": None,
         "model": None,
@@ -379,3 +380,50 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
         assert created[-1]["translation_key"] == "clock_drift_timezone"
     finally:
         dt_util.set_default_time_zone(original)
+
+
+def test_diagnostics_reports_init_firmware_fallback_and_legacy_raw_state() -> None:
+    """Firmware 1.x: /main has no verFWMain (version comes from /init), and the
+    coordinator stores the original legacy state code under a synthetic key
+    that must not masquerade as a device-reported field in raw_main."""
+    updater = SimpleNamespace(
+        data={"state": 2, "_legacy_raw_state": 20, "currentSet": 7},
+        _init_fw_fallback="1.51",
+        last_update_success=True,
+        update_interval=timedelta(seconds=60),
+        connection_quality={"success_rate": 100},
+        is_likely_offline=False,
+    )
+    entry = SimpleNamespace(
+        title="Eveus Charger",
+        data={"host": TEST_HOST, "username": TEST_USERNAME, "password": TEST_PASSWORD},
+        runtime_data=SimpleNamespace(updater=updater, device_number=1),
+    )
+
+    diagnostics = asyncio.run(async_get_config_entry_diagnostics(None, entry))
+
+    assert diagnostics["device"]["firmware"] == "1.51"
+    assert diagnostics["device"]["legacy_raw_state"] == 20
+    assert "_legacy_raw_state" not in diagnostics["raw_main"]
+    assert diagnostics["raw_main"]["state"] == 2
+
+
+def test_diagnostics_prefers_main_firmware_over_init_fallback() -> None:
+    updater = SimpleNamespace(
+        data={"verFWMain": "3.0.3", "state": 4},
+        _init_fw_fallback=None,
+        last_update_success=True,
+        update_interval=timedelta(seconds=30),
+        connection_quality={"success_rate": 100},
+        is_likely_offline=False,
+    )
+    entry = SimpleNamespace(
+        title="Eveus Charger",
+        data={"host": TEST_HOST, "username": TEST_USERNAME, "password": TEST_PASSWORD},
+        runtime_data=SimpleNamespace(updater=updater, device_number=1),
+    )
+
+    diagnostics = asyncio.run(async_get_config_entry_diagnostics(None, entry))
+
+    assert diagnostics["device"]["firmware"] == "3.0.3"
+    assert diagnostics["device"]["legacy_raw_state"] is None

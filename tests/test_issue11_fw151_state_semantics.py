@@ -249,3 +249,87 @@ def test_modern_state_map_is_unchanged() -> None:
         6: "Paused",
         7: "Error",
     }
+
+
+# ---------------------------------------------------------------------------
+# 5. A momentary zero-power sample mid-session must NOT flip the translated
+#    Charging state back to Connected — that would fire a spurious
+#    charging_finished/charging_started event pair and corrupt the Last
+#    Session sensors. The translation tolerates a short zero-power streak
+#    and reverts only when the pause persists.
+# ---------------------------------------------------------------------------
+
+
+def _poll_sequence(
+    payloads: list[dict], monkeypatch: pytest.MonkeyPatch
+) -> tuple[EveusUpdater, list[dict]]:
+    responses = [_Response(p) for p in payloads]
+    it = iter(responses)
+
+    class _SeqSession:
+        def post(self, url: str, **kwargs: object) -> _Response:
+            return next(it)
+
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _SeqSession()
+    )
+    # State transitions schedule bracket refreshes via async_call_later, which
+    # needs a running event loop the fake hass doesn't have; the schedule
+    # itself is out of scope here.
+    monkeypatch.setattr(
+        common_network, "async_call_later", lambda hass, delay, action: (lambda: None)
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    return updater, [asyncio.run(updater._async_update_data()) for _ in payloads]
+
+
+def test_legacy_charging_survives_single_zero_power_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    charging = _fw151_payload(state=3, powerMeas=1590, curMeas1=7.3)
+    blip = _fw151_payload(state=3, powerMeas=0, curMeas1=0)
+    _, results = _poll_sequence([charging, blip, charging], monkeypatch)
+    assert [r["state"] for r in results] == [
+        DEVICE_STATE_CHARGING,
+        DEVICE_STATE_CHARGING,
+        DEVICE_STATE_CHARGING,
+    ]
+
+
+def test_legacy_charging_reverts_after_persistent_zero_power(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    charging = _fw151_payload(state=3, powerMeas=1590, curMeas1=7.3)
+    idle3 = _fw151_payload(state=3, powerMeas=0, curMeas1=0)
+    _, results = _poll_sequence([charging, idle3, idle3, idle3], monkeypatch)
+    # Two zero-power polls are tolerated; the third reverts to Connected.
+    assert [r["state"] for r in results] == [
+        DEVICE_STATE_CHARGING,
+        DEVICE_STATE_CHARGING,
+        DEVICE_STATE_CHARGING,
+        3,
+    ]
+
+
+def test_legacy_state3_never_latches_without_observed_charging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    idle3 = _fw151_payload(state=3, powerMeas=0, curMeas1=0)
+    _, results = _poll_sequence([idle3, idle3], monkeypatch)
+    assert [r["state"] for r in results] == [3, 3]
+
+
+def test_legacy_charging_latch_clears_on_other_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    charging = _fw151_payload(state=3, powerMeas=1590, curMeas1=7.3)
+    idle20 = _fw151_payload(state=20, powerMeas=0, curMeas1=0)
+    idle3 = _fw151_payload(state=3, powerMeas=0, curMeas1=0)
+    _, results = _poll_sequence([charging, idle20, idle3], monkeypatch)
+    # Once the charger reported its idle code, a later powerless 3 must not
+    # resurrect Charging from the stale latch.
+    assert [r["state"] for r in results] == [
+        DEVICE_STATE_CHARGING,
+        DEVICE_STATE_STANDBY,
+        3,
+    ]

@@ -9,6 +9,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import EveusConfigEntry
+from .const import LEGACY_RAW_STATE_KEY
 
 # Redacted on every diagnostics download — credentials, host, IDs, and any
 # /main field that exposes the LAN address or hardware serial.
@@ -101,9 +102,15 @@ async def async_get_config_entry_diagnostics(
                 "last_error": quality.get("last_error"),
             },
             "device": {
-                "firmware": data.get("verFWMain"),
+                # Firmware 1.x omits verFWMain from /main; the version is then
+                # resolved once from /init and kept on the updater (issue #11).
+                "firmware": data.get("verFWMain")
+                or getattr(updater, "_init_fw_fallback", None),
                 "wifi_firmware": data.get("verFWWifi"),
                 "state": data.get("state"),
+                # Original firmware-1.x state code when the coordinator
+                # translated it to the modern domain; None on modern firmware.
+                "legacy_raw_state": data.get(LEGACY_RAW_STATE_KEY),
                 "substate": data.get("subState"),
                 "current_set": data.get("currentSet"),
                 "model": data.get("model"),
@@ -113,7 +120,13 @@ async def async_get_config_entry_diagnostics(
             # bug reports — gives the developer the exact field set the device
             # reported without leaking serials or LAN addresses. Unknown but
             # identifying-looking firmware fields are redacted too.
-            "raw_main": async_redact_data(dict(data), _sensitive_keys(data)),
+            # Synthetic coordinator keys are stripped so raw_main stays the
+            # exact field set the device reported (the legacy raw state is
+            # surfaced under "device" above instead).
+            "raw_main": async_redact_data(
+                {k: v for k, v in data.items() if k != LEGACY_RAW_STATE_KEY},
+                _sensitive_keys(data),
+            ),
         }
     )
     return payload
