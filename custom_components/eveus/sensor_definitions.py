@@ -40,6 +40,7 @@ from .const import (
     MIN_CURRENT,
     MODEL_MAX_CURRENT,
     MAX_POWER_W,
+    MAX_COST_VALUE,
     MAX_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
     MIN_VALID_TEMPERATURE_C,
@@ -77,7 +78,7 @@ _MAX_POWER = MAX_POWER_W
 # exist purely to reject corrupt finite outliers (e.g. 1e100) that would
 # otherwise be recorded permanently and poison the statistics history.
 _MAX_ENERGY_KWH = MAX_ENERGY_KWH
-_MAX_COST = 100_000_000
+_MAX_COST = MAX_COST_VALUE
 # Largest plausible per-slot schedule energy cap (kWh).
 _MAX_SCHEDULE_KWH = 200
 # Sanity ceilings for the remaining MEASUREMENT sensors that feed HA long-term

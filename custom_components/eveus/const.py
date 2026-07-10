@@ -165,6 +165,8 @@ MAX_ENERGY_KWH: Final[int] = 1_000_000
 # anywhere near a year; the bound only rejects corrupt outliers that would
 # otherwise render an overlong HA state string.
 MAX_SESSION_TIME_SECONDS: Final[int] = 366 * 24 * 3600
+# Upper sanity cap for monetary values (session/tariff cost counters).
+MAX_COST_VALUE: Final[int] = 100_000_000
 
 # Configuration
 CONF_MODEL: Final[str] = "model"

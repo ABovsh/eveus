@@ -81,6 +81,12 @@ class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=T
     # reports float noise (e.g. ``energyLimit`` 56.00899); this trims the tail so
     # HA shows what the charger's own web UI shows.
     display_precision: int | None = None
+    # Lower bound for ACCEPTING a device-reported/restored value, when it differs
+    # from the writable minimum. The firmware accepts current setpoints below its
+    # advertised minimum verbatim (delivery floors at the IEC 61851 6 A), so a
+    # sub-minimum reading is a legitimate state, not corruption — same contract
+    # as EveusCurrentNumber._READ_MIN. None = use native_min_value.
+    read_min_value: float | None = None
 
 
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
@@ -175,6 +181,9 @@ def _schedule_current(n: int) -> EveusSetpointNumberDescription:
         state_key=f"sh{n}CurrentValue",
         native_min_value=MIN_CURRENT,
         native_max_value=32,  # overridden per-model at setup
+        # Probe-verified 2026-07-10: firmware stores and reports a sub-7 A
+        # schedule setpoint verbatim (sh1CurrentValue=6), like currentSet.
+        read_min_value=0.0,
         native_step=1,
         native_unit_of_measurement="A",
         mode=NumberMode.BOX,
@@ -403,6 +412,11 @@ class EveusSetpointNumber(EveusNumberEntity):
         self._attr_native_max_value = (
             description.native_max_value if max_value is None else max_value
         )
+        self._read_min = (
+            description.read_min_value
+            if description.read_min_value is not None
+            else self._attr_native_min_value
+        )
         self._attr_native_step = description.native_step
         self._attr_native_value = self._resolve_value()
 
@@ -425,7 +439,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         value = raw * self._device_to_ha
         if self._display_precision is not None:
             value = round(value, self._display_precision)
-        if self._attr_native_min_value <= value <= self._attr_native_max_value:
+        if self._read_min <= value <= self._attr_native_max_value:
             return float(value)
         return None
 
@@ -497,7 +511,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         try:
             if state and state.state not in (None, "unknown", "unavailable"):
                 restored = float(state.state)
-                if self._attr_native_min_value <= restored <= self._attr_native_max_value:
+                if self._read_min <= restored <= self._attr_native_max_value:
                     self._last_device_value = restored
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored

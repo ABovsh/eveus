@@ -305,7 +305,9 @@ def validate_device_response(
     current_raw = result.get("currentSet")
     try:
         current_set = float(current_raw) if current_raw is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: float() of a huge JSON integer. Setup tolerates any
+        # unparseable currentSet, so it must not escape to a generic error.
         current_set = None
     return {
         "current_set": current_set,
@@ -918,7 +920,12 @@ class EveusOptionsFlow(OptionsFlow):
         flow reloads the entry itself for the new SOC mode to take effect.
         """
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
-        await self.hass.config_entries.async_reload(self._entry.entry_id)
+        # async_reload can return False WITHOUT raising (unload or setup
+        # returned false) — same contract the repair flow already checks. The
+        # data change is committed either way; only the success claim is gated.
+        reload_ok = await self.hass.config_entries.async_reload(self._entry.entry_id)
+        if reload_ok is False:
+            return self.async_abort(reason="reload_failed")
         return self.async_create_entry(title="", data={})
 
 

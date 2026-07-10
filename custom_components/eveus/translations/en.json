@@ -73,6 +73,9 @@
           "soc_correction": "Charging efficiency loss (%)"
         }
       }
+    },
+    "abort": {
+      "reload_failed": "The new settings were saved, but the integration failed to reload. Check the charger connection and reload the integration from its page."
     }
   },
   "selector": {

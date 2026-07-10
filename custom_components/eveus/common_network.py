@@ -27,6 +27,9 @@ from .const import (
     LEGACY_RAW_STATE_KEY,
     DEVICE_STATE_ERROR,
     ERROR_LOG_RATE_LIMIT,
+    MAX_COST_VALUE,
+    MAX_ENERGY_KWH,
+    MAX_SESSION_TIME_SECONDS,
     EVENT_CAR_CONNECTED,
     EVENT_CAR_DISCONNECTED,
     EVENT_CHARGING_FINISHED,
@@ -80,6 +83,19 @@ _UPDATE_INTERVALS = {
 # deadline far in the future) can't strand the charger as unavailable: a
 # remaining wait beyond this means the clock moved.
 _MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
+
+
+def _bounded(value: float | int | None, maximum: float) -> float | int | None:
+    """Return the value only when it sits in [0, maximum], else None.
+
+    The charging_finished event snapshot feeds the persistent Last Session
+    sensors, so it must apply the same sanity bounds as the live sensors
+    reading these fields — a corrupt finite outlier in the final charging
+    poll would otherwise latch (and survive restarts) until the next session.
+    """
+    if value is None or not 0 <= value <= maximum:
+        return None
+    return value
 
 
 def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
@@ -508,9 +524,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 {
                     **base,
                     "reason": FINISHED_REASONS.get(state, "stopped"),
-                    "session_energy_kwh": get_safe_value(snapshot, "sessionEnergy", float),
-                    "session_cost": get_safe_value(snapshot, "sessionMoney", float),
-                    "session_duration_s": get_safe_value(snapshot, "sessionTime", int),
+                    "session_energy_kwh": _bounded(
+                        get_safe_value(snapshot, "sessionEnergy", float), MAX_ENERGY_KWH
+                    ),
+                    "session_cost": _bounded(
+                        get_safe_value(snapshot, "sessionMoney", float), MAX_COST_VALUE
+                    ),
+                    "session_duration_s": _bounded(
+                        get_safe_value(snapshot, "sessionTime", int),
+                        MAX_SESSION_TIME_SECONDS,
+                    ),
                 },
             )
 
