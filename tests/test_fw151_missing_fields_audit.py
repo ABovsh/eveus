@@ -60,12 +60,9 @@ def _all_sensor_specs():
 )
 def test_sensor_getter_never_raises_on_fw151(fw151_payload, spec) -> None:
     updater = _updater(fw151_payload)
-    try:
-        value = spec.value_fn(updater, None)
-    except Exception as err:  # noqa: BLE001
-        pytest.fail(f"{spec.key} raised {type(err).__name__}: {err}")
-    # Value or None -- either is an acceptable degrade for a missing field.
-    assert value is None or value is not None
+    # The call itself is the assertion: any exception fails the test naturally.
+    # A value or None -- either is an acceptable degrade for a missing field.
+    spec.value_fn(updater, None)
 
 
 def test_all_sensor_getters_actually_ran() -> None:
@@ -82,10 +79,7 @@ def test_all_sensor_getters_actually_ran() -> None:
     "description", binary_sensor_mod.BINARY_SENSORS, ids=lambda d: d.name
 )
 def test_binary_sensor_getter_never_raises_on_fw151(fw151_payload, description) -> None:
-    try:
-        description.is_on_fn(fw151_payload)
-    except Exception as err:  # noqa: BLE001
-        pytest.fail(f"{description.name} raised {type(err).__name__}: {err}")
+    description.is_on_fn(fw151_payload)
 
 
 # ---------------------------------------------------------------------------
@@ -99,10 +93,7 @@ def test_binary_sensor_getter_never_raises_on_fw151(fw151_payload, description) 
 def test_switch_resolve_state_never_raises_on_fw151(fw151_payload, description) -> None:
     updater = _updater(fw151_payload)
     entity = switch_mod.BaseSwitchEntity(updater, description)
-    try:
-        entity._resolve_state()
-    except Exception as err:  # noqa: BLE001
-        pytest.fail(f"switch {description.key} raised {type(err).__name__}: {err}")
+    entity._resolve_state()
 
 
 # ---------------------------------------------------------------------------
@@ -131,11 +122,8 @@ def test_undervoltage_threshold_number_never_raises_on_fw151(fw151_payload) -> N
 )
 def test_setpoint_number_never_raises_on_fw151(fw151_payload, description) -> None:
     updater = _updater(fw151_payload)
-    try:
-        entity = number_mod.EveusSetpointNumber(updater, description)
-        entity.native_value  # noqa: B018
-    except Exception as err:  # noqa: BLE001
-        pytest.fail(f"number {description.key} raised {type(err).__name__}: {err}")
+    entity = number_mod.EveusSetpointNumber(updater, description)
+    entity.native_value  # noqa: B018
 
 
 # ---------------------------------------------------------------------------
@@ -154,11 +142,8 @@ def test_timezone_select_never_raises_on_fw151(fw151_payload) -> None:
 )
 def test_integer_select_never_raises_on_fw151(fw151_payload, cls) -> None:
     updater = _updater(fw151_payload)
-    try:
-        entity = cls(updater)
-        entity.current_option  # noqa: B018
-    except Exception as err:  # noqa: BLE001
-        pytest.fail(f"select {cls.__name__} raised {type(err).__name__}: {err}")
+    entity = cls(updater)
+    entity.current_option  # noqa: B018
 
 
 # ---------------------------------------------------------------------------
