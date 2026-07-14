@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.18.1 - 2026-07-14
+
+### 🐛 Fixed
+- **Firmware 1.x chargers (MCU_SW_version 151) are now supported.** These firmwares use device state codes the integration rejected, so setup failed and every poll was dropped. The known 1.x codes are now translated to their modern equivalents, making the State sensor, charging detection, session tracking, and charging events behave as on current firmware; a still-unrecognized code shows as `Unknown` with the numeric code kept in its `raw_state` attribute. Addresses [#11](https://github.com/ABovsh/eveus/issues/11).
+- **Firmware 1.x chargers show a real firmware version instead of "Unknown".** These builds omit the version from the main status reply, so it is now read once from the charger's `/init` page at setup; out-of-range values are ignored and can no longer break setup.
+- **A schedule current limit set below 7 A on the charger now displays** instead of reading unknown; Home Assistant writes still floor at 7 A.
+- **The Last Session sensors no longer keep a corrupt reading.** A glitched value in the session's final poll now shows unknown for that session instead of being stored and surviving restarts.
+- **Reconfiguring, re-authenticating, or changing the integration mode now tells you if the reload failed** instead of closing as if everything succeeded; the saved settings are kept either way.
+- **Device triggers on multi-charger setups pick the right charger while it is still starting up.** A trigger attached while that charger's integration was still retrying used to listen to charger #1's events instead of its own.
+- **Binary sensors no longer stay "unavailable" after a brief connection blip** — Car Connected, Session Active, and OCPP Connected now recover as soon as the connection does.
+- A charger reply with an impossibly large current setting no longer fails setup with a generic "unexpected error" — it is treated like any other unreadable value and setup proceeds.
+
 ## 4.18.0 - 2026-07-05
 
 ### ✨ Added

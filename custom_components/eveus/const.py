@@ -15,10 +15,18 @@ RETRY_DELAY: Final[int] = 15
 UPDATE_TIMEOUT: Final[int] = 20
 COMMAND_TIMEOUT: Final[int] = 25
 
+# Charger device-state value that means "idle/standby" (CHARGING_STATES[2]).
+DEVICE_STATE_STANDBY: Final[int] = 2
 # Charger device-state value that means "actively charging" (CHARGING_STATES[4]).
 DEVICE_STATE_CHARGING: Final[int] = 4
 # Charger device-state value that means "error" (CHARGING_STATES[7]).
 DEVICE_STATE_ERROR: Final[int] = 7
+
+# Payload key holding the original device-state code when a firmware-1.x
+# state was translated to its modern equivalent (GitHub issue #11). Synthetic
+# (never sent by the charger); surfaced as the State sensor's `raw_state`
+# attribute for diagnostics.
+LEGACY_RAW_STATE_KEY: Final[str] = "_legacy_raw_state"
 
 # Device states that count as "a charging session is in progress": actively
 # Charging (4) or briefly Paused (6) mid-session. Excludes Connected (3) where
@@ -157,6 +165,8 @@ MAX_ENERGY_KWH: Final[int] = 1_000_000
 # anywhere near a year; the bound only rejects corrupt outliers that would
 # otherwise render an overlong HA state string.
 MAX_SESSION_TIME_SECONDS: Final[int] = 366 * 24 * 3600
+# Upper sanity cap for monetary values (session/tariff cost counters).
+MAX_COST_VALUE: Final[int] = 100_000_000
 
 # Configuration
 CONF_MODEL: Final[str] = "model"

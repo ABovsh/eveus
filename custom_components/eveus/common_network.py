@@ -23,8 +23,13 @@ from .const import (
     CONNECTED_STATES,
     DEFAULT_SCHEME,
     DEVICE_STATE_CHARGING,
+    DEVICE_STATE_STANDBY,
+    LEGACY_RAW_STATE_KEY,
     DEVICE_STATE_ERROR,
     ERROR_LOG_RATE_LIMIT,
+    MAX_COST_VALUE,
+    MAX_ENERGY_KWH,
+    MAX_SESSION_TIME_SECONDS,
     EVENT_CAR_CONNECTED,
     EVENT_CAR_DISCONNECTED,
     EVENT_CHARGING_FINISHED,
@@ -78,6 +83,49 @@ _UPDATE_INTERVALS = {
 # deadline far in the future) can't strand the charger as unavailable: a
 # remaining wait beyond this means the clock moved.
 _MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
+
+
+def _bounded(value: float | int | None, maximum: float) -> float | int | None:
+    """Return the value only when it sits in [0, maximum], else None.
+
+    The charging_finished event snapshot feeds the persistent Last Session
+    sensors, so it must apply the same sanity bounds as the live sensors
+    reading these fields — a corrupt finite outlier in the final charging
+    poll would otherwise latch (and survive restarts) until the next session.
+    """
+    if value is None or not 0 <= value <= maximum:
+        return None
+    return value
+
+
+def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
+    """Electrical-measurement signal that a session is actually delivering power.
+
+    Used for firmware whose state codes can't answer the question themselves
+    (firmware 1.x / MCU_SW_version 151, GitHub issue #11): unmapped states in
+    the adaptive-interval fallback, and the legacy code 3 in
+    ``normalize_legacy_device_state`` (1.x reports 3 both plugged-idle and
+    actively charging). Modern known states 0-7 always decide charging
+    activity from the state value itself and never reach this helper.
+    """
+    power = get_safe_value(data, "powerMeas", float)
+    current = get_safe_value(data, "curMeas1", float)
+    return (power is not None and power > 0) or (current is not None and current > 0)
+
+
+# Firmware-1.x device-state codes with a different meaning than the modern
+# 0-7 map (GitHub issue #11): 20 is that firmware's idle/standby code, and 3
+# is reported during active charging (modern firmware: 3 = connected-idle,
+# 4 = charging). Verified against live captures from MCU_SW_version 151.
+_LEGACY_IDLE_STATE = 20
+_LEGACY_CHARGING_CANDIDATE_STATE = 3
+# Consecutive zero-power polls tolerated before a translated legacy Charging
+# state reverts to Connected. Firmware 1.x has no distinct "Paused" code — a
+# momentary zero-power sample mid-session (charge-current renegotiation, a
+# balancing tick) would otherwise flip the state for one poll and fire a
+# spurious charging_finished/charging_started event pair, corrupting the Last
+# Session sensors.
+_LEGACY_PAUSE_GRACE_POLLS = 2
 
 
 class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
@@ -156,6 +204,72 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # that completes mid-unload from scheduling fresh refresh timers, and a
         # just-fired timer from starting a refresh on a torn-down coordinator.
         self._shutting_down = False
+        # Firmware-version /init fallback (GitHub issue #11): fw-1.x omits
+        # verFWMain/firmware from /main entirely. Populated at most once, on
+        # the first successful poll that lacks a firmware field; None means
+        # either "not needed" (modern firmware) or "fetch failed/pending".
+        self._init_fw_fallback: str | None = None
+        self._init_fw_fetch_done = False
+        # Legacy-firmware charging latch (GitHub issue #11): fw-1.x reports
+        # code 3 both plugged-idle and actively charging, distinguishable
+        # only by the electrical measurements. Once a session is observed,
+        # the translation tolerates _LEGACY_PAUSE_GRACE_POLLS consecutive
+        # zero-power polls before reverting, so a momentary dip can't fire a
+        # spurious charging_finished/started event pair. Cleared on any
+        # failed poll: events across offline gaps are suppressed anyway, and
+        # a stale latch must not resurrect "Charging" after an outage.
+        self._legacy_charging_latched = False
+        self._legacy_zero_power_polls = 0
+
+    def _reset_legacy_charging_latch(self) -> None:
+        self._legacy_charging_latched = False
+        self._legacy_zero_power_polls = 0
+
+    def _normalize_legacy_device_state(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Translate firmware-1.x state codes to their modern equivalents.
+
+        Firmware 1.x payloads are recognizable by the complete absence of the
+        ``verFWMain``/``firmware`` fields (modern firmware always sends
+        ``verFWMain``), so modern payloads pass through untouched — the gate,
+        not the code values, is what guarantees no behavior change for current
+        hardware. Translating once, right after validation, lets every
+        consumer (state sensor, session-active logic, adaptive polling,
+        transition events) work on the canonical 0-7 domain with no
+        per-call-site special cases.
+
+        Only the two observed codes are translated: 20 -> Standby, and 3 ->
+        Charging while the electrical measurements confirm power is flowing
+        (with a short zero-power grace window mid-session — see
+        ``_LEGACY_PAUSE_GRACE_POLLS``). A powerless 3 with no session in
+        progress keeps its modern "Connected" reading, which matches a
+        plugged-idle car on either firmware generation. The original code is
+        preserved under LEGACY_RAW_STATE_KEY for the State sensor's
+        `raw_state` diagnostic attribute. Codes this firmware may use that we
+        have not seen yet stay untranslated and render as "Unknown".
+        """
+        if data.get("verFWMain") or data.get("firmware"):
+            return data
+        state = get_safe_value(data, "state", int)
+        if state == _LEGACY_CHARGING_CANDIDATE_STATE:
+            if _looks_charging_from_measurements(data):
+                self._legacy_charging_latched = True
+                self._legacy_zero_power_polls = 0
+            elif (
+                self._legacy_charging_latched
+                and self._legacy_zero_power_polls < _LEGACY_PAUSE_GRACE_POLLS
+            ):
+                self._legacy_zero_power_polls += 1
+            else:
+                self._reset_legacy_charging_latch()
+                return data
+            data[LEGACY_RAW_STATE_KEY] = state
+            data["state"] = DEVICE_STATE_CHARGING
+            return data
+        self._reset_legacy_charging_latch()
+        if state == _LEGACY_IDLE_STATE:
+            data[LEGACY_RAW_STATE_KEY] = state
+            data["state"] = DEVICE_STATE_STANDBY
+        return data
 
     @property
     def basic_auth(self) -> aiohttp.BasicAuth:
@@ -410,9 +524,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 {
                     **base,
                     "reason": FINISHED_REASONS.get(state, "stopped"),
-                    "session_energy_kwh": get_safe_value(snapshot, "sessionEnergy", float),
-                    "session_cost": get_safe_value(snapshot, "sessionMoney", float),
-                    "session_duration_s": get_safe_value(snapshot, "sessionTime", int),
+                    "session_energy_kwh": _bounded(
+                        get_safe_value(snapshot, "sessionEnergy", float), MAX_ENERGY_KWH
+                    ),
+                    "session_cost": _bounded(
+                        get_safe_value(snapshot, "sessionMoney", float), MAX_COST_VALUE
+                    ),
+                    "session_duration_s": _bounded(
+                        get_safe_value(snapshot, "sessionTime", int),
+                        MAX_SESSION_TIME_SECONDS,
+                    ),
                 },
             )
 
@@ -467,6 +588,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
         self._connection_quality_cache = None
+        self._reset_legacy_charging_latch()
         # Transitions across an offline gap must stay silent (see
         # _emit_transition_events); forget the last observed state.
         self._event_prev_state = None
@@ -521,10 +643,18 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._set_update_interval(CHARGING_UPDATE_INTERVAL)
         elif state_value is not None and state_value in CHARGING_STATES:
             self._set_update_interval(IDLE_UPDATE_INTERVAL)
+        elif state_value is not None and _looks_charging_from_measurements(data):
+            # Firmware 1.x (MCU_SW_version 151, GitHub issue #11) reports device
+            # states outside CHARGING_STATES (observed: 20), which the payload
+            # validator now accepts rather than rejecting the whole poll. There
+            # is no state-based signal for those firmwares, so fall back to the
+            # electrical measurements: nonzero power/current means a session is
+            # actually running and deserves the fast cadence. This branch is
+            # unreachable for any state in CHARGING_STATES (0-7).
+            self._set_update_interval(CHARGING_UPDATE_INTERVAL)
         else:
-            # Unknown/invalid state: hold offline cadence rather than snap to
-            # idle polling. The payload validator at /main rejects the response,
-            # so this branch only matters for transient between-tick recovery.
+            # Unknown/invalid state with no sign of an active session: hold
+            # offline cadence rather than snap to idle polling.
             self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
 
     def _set_update_interval(self, seconds: int) -> None:
@@ -534,6 +664,64 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             new_interval = timedelta(seconds=seconds)
         if self.update_interval != new_interval:
             self.update_interval = new_interval
+
+    async def async_maybe_fetch_init_firmware(self) -> None:
+        """Resolve a firmware-version fallback from /init, at most once.
+
+        Firmware 1.x drops verFWMain (and the legacy `firmware` alias) from
+        /main entirely (GitHub issue #11), so device_info's sw_version would
+        stay "Unknown" forever. /init exposes the firmware as an integer --
+        ESP_SW_version, falling back to MCU_SW_version -- e.g. 151, formatted
+        here as "1.51".
+
+        Intended to be awaited once, right after the coordinator's first
+        successful refresh (see ``async_setup_entry``) -- not from the
+        regular poll path, so a slow or hanging /init can never delay or fail
+        the poll cycle every entity depends on. Gated by
+        ``_init_fw_fetch_done`` so a modern charger with a real verFWMain
+        never triggers a fetch at all, and a fw-1.x charger is only ever
+        asked once. Every failure mode (timeout, non-JSON, missing/bad keys,
+        HTTP error) degrades to leaving ``_init_fw_fallback`` unset (still
+        "Unknown" in device_info) -- never raises, never fails setup.
+        """
+        if self._init_fw_fetch_done:
+            return
+        data = self.data if isinstance(self.data, dict) else {}
+        if data.get("verFWMain") or data.get("firmware"):
+            self._init_fw_fetch_done = True
+            return
+        self._init_fw_fetch_done = True
+        try:
+            async with self.get_session().post(
+                self.url_for("/init"),
+                auth=self._basic_auth,
+                timeout=_UPDATE_TIMEOUT_OBJ,
+            ) as response:
+                response.raise_for_status()
+                init_data = await read_json_capped(response)
+        except (
+            aiohttp.ClientResponseError,
+            aiohttp.ClientConnectorError,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            ValueError,
+        ) as err:
+            _LOGGER.debug(
+                "Eveus /init firmware fallback fetch failed: %s", type(err).__name__
+            )
+            return
+
+        if not isinstance(init_data, dict):
+            return
+        raw_version = init_data.get("ESP_SW_version", init_data.get("MCU_SW_version"))
+        if isinstance(raw_version, bool) or not isinstance(raw_version, int):
+            return
+        if not 0 <= raw_version <= 10**6:
+            # JSON ints are unbounded; a negative or absurdly large value would
+            # format nonsense (or overflow float division). Leave the fallback
+            # unset -- device_info keeps showing "Unknown".
+            return
+        self._init_fw_fallback = f"{raw_version / 100:.2f}"
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
@@ -571,6 +759,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # maximum, so a wrong-device or corrupt payload fails the poll
                 # rather than being published as healthy.
                 new_data = validate_main_payload(new_data, self._model)
+                new_data = self._normalize_legacy_device_state(new_data)
 
                 self._record_success(time.monotonic() - start_monotonic, new_data)
                 return new_data

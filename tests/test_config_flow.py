@@ -16,6 +16,7 @@ from conftest import (
     TEST_HOST_ALT,
     TEST_PASSWORD,
     TEST_USERNAME,
+    wire_flow_reload_success,
 )
 from custom_components.eveus import config_flow
 from custom_components.eveus import CONFIG_ENTRY_VERSION
@@ -630,11 +631,8 @@ def test_reconfigure_flow_updates_entry(monkeypatch: pytest.MonkeyPatch) -> None
     flow._get_reconfigure_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
     flow._abort_if_unique_id_configured = lambda: None
-    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
-        "type": "abort",
-        "reason": "reconfigure_successful",
-        **kwargs,
-    }
+    captured: dict = {}
+    wire_flow_reload_success(flow, entry, captured)
     migrated: list[tuple[str, str]] = []
     flow._migrate_device_identifiers = (
         lambda entry, old, new: migrated.append((old, new))
@@ -648,7 +646,8 @@ def test_reconfigure_flow_updates_entry(monkeypatch: pytest.MonkeyPatch) -> None
     assert migrated == [(TEST_HOST, TEST_HOST_ALT)]
 
     assert result["type"] == "abort"
-    assert result["unique_id"] == TEST_HOST_ALT
+    assert result["reason"] == "reconfigure_successful"
+    assert captured["unique_id"] == TEST_HOST_ALT
 
 
 def test_reconfigure_flow_skips_duplicate_check_when_unique_id_is_unchanged(
@@ -676,17 +675,15 @@ def test_reconfigure_flow_skips_duplicate_check_when_unique_id_is_unchanged(
     flow._abort_if_unique_id_configured = (
         lambda: (_ for _ in ()).throw(AssertionError("duplicate check should be skipped"))
     )
-    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
-        "type": "abort",
-        "reason": "reconfigure_successful",
-        **kwargs,
-    }
+    captured: dict = {}
+    wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(flow.async_step_reconfigure(_input()))
 
     assert result["type"] == "abort"
-    assert result["data"]["device_number"] == 2
+    assert result["reason"] == "reconfigure_successful"
+    assert captured["data"]["device_number"] == 2
 
 
 @pytest.mark.parametrize(
@@ -776,11 +773,8 @@ def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> Non
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
     flow._abort_if_unique_id_mismatch = lambda **kwargs: None
-    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
-        "type": "abort",
-        "reason": "reauth_successful",
-        **kwargs,
-    }
+    captured: dict = {}
+    wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(
@@ -790,9 +784,10 @@ def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
     assert result["type"] == "abort"
-    assert result["data"][CONF_USERNAME] == TEST_USERNAME
-    assert result["data"][CONF_PASSWORD] == TEST_PASSWORD
-    assert result["data"][CONF_HOST] == TEST_HOST
+    assert result["reason"] == "reauth_successful"
+    assert captured["data"][CONF_USERNAME] == TEST_USERNAME
+    assert captured["data"][CONF_PASSWORD] == TEST_PASSWORD
+    assert captured["data"][CONF_HOST] == TEST_HOST
 
 
 def test_reauth_validates_live_http_entry_data(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -825,11 +820,7 @@ def test_reauth_validates_live_http_entry_data(monkeypatch: pytest.MonkeyPatch) 
     flow.hass = object()
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
-    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
-        "type": "abort",
-        "reason": "reauth_successful",
-        **kwargs,
-    }
+    wire_flow_reload_success(flow, entry)
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(
@@ -889,10 +880,7 @@ def test_reauth_flow_cannot_change_host(monkeypatch: pytest.MonkeyPatch) -> None
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
     captured = {}
-    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
-        "type": "abort",
-        "reason": "reauth_successful",
-    }
+    wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(
@@ -1373,10 +1361,7 @@ def test_v20_reauth_commits_after_host_stabilizes(monkeypatch: pytest.MonkeyPatc
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
     captured = {}
-    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
-        "type": "abort",
-        "reason": "reauth_successful",
-    }
+    wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     result = asyncio.run(
@@ -1630,7 +1615,7 @@ def test_reauth_normalizes_corrupt_stored_soc_mode(
     flow.hass = object()
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: _asyncio.sleep(0)
-    flow.async_update_reload_and_abort = lambda *a, **k: {"type": "abort"}
+    wire_flow_reload_success(flow, entry)
     monkeypatch.setattr(cf, "validate_input", fake_validate_input)
 
     _asyncio.run(
@@ -1820,10 +1805,7 @@ def test_reauth_rebases_on_live_entry_data(monkeypatch) -> None:
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: _asyncio.sleep(0)
     captured = {}
-    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
-        "type": "abort",
-        "reason": "reauth_successful",
-    }
+    wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(cf, "validate_input", fake_validate_input)
 
     _asyncio.run(
@@ -1878,10 +1860,7 @@ def test_reauth_revalidates_when_host_changes_mid_flight(monkeypatch) -> None:
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: _asyncio.sleep(0)
     captured = {}
-    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
-        "type": "abort",
-        "reason": "reauth_successful",
-    }
+    wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(cf, "validate_input", fake_validate_input)
 
     _asyncio.run(
@@ -2015,10 +1994,7 @@ def test_reauth_rebases_on_live_entry_data(monkeypatch) -> None:
     flow._get_reauth_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
     captured = {}
-    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
-        "type": "abort",
-        "reason": "reauth_successful",
-    }
+    wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(cf, "validate_input", fake_validate_input)
 
     asyncio.run(

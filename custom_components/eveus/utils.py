@@ -276,7 +276,13 @@ def _sanitized_serial(value: Any) -> str:
     return text if len(text) >= 2 else ""
 
 
-def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, scheme: str = "http") -> Dict[str, Any]:
+def get_device_info(
+    host: str,
+    data: Dict[str, Any],
+    device_number: int = 1,
+    scheme: str = "http",
+    init_fw_fallback: str | None = None,
+) -> Dict[str, Any]:
     """Get standardized device information with multi-device support.
 
     The charger exposes its own model, manufacturer, and serial in /main. When
@@ -293,6 +299,11 @@ def get_device_info(host: str, data: Dict[str, Any], device_number: int = 1, sch
     # not suppress the other); the legacy "firmware" key still backs verFWMain.
     fw_app = _real_firmware(data.get("verFWWifi"))
     fw_module = _real_firmware(data.get("verFWMain"), data.get("firmware"))
+    if not fw_module and init_fw_fallback:
+        # Firmware 1.x (GitHub issue #11) drops verFWMain/firmware from /main
+        # entirely; the caller resolves a fallback from /init once (see
+        # EveusUpdater._maybe_fetch_init_firmware) and threads it through here.
+        fw_module = _real_firmware(init_fw_fallback)
     if fw_app and fw_module:
         firmware = f"{fw_app} ({fw_module})"
     else:

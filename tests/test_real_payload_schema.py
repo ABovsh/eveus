@@ -123,7 +123,10 @@ def test_validate_main_payload_accepts_real_payload(real_payload) -> None:
         ({"state": float("inf"), "currentSet": 16}, "Eveus 'state' field is not finite"),
         ({"state": 2.5, "currentSet": 16}, "Eveus 'state' field is not an integer"),
         ({"state": "bad", "currentSet": 16}, "Eveus 'state' field is not numeric"),
-        ({"state": 99, "currentSet": 16}, "Eveus 'state' value 99 outside known domain"),
+        # 256 is outside the 0-255 byte range the state field can hold — unlike
+        # 99, which firmware 1.x can legitimately report (see issue #11) and
+        # validate_main_payload now accepts.
+        ({"state": 256, "currentSet": 16}, "Eveus 'state' value 256 outside supported range"),
         ({"state": 2}, "Response missing required Eveus 'currentSet' field"),
         ({"state": 2, "currentSet": True}, "Eveus 'currentSet' field is boolean"),
         ({"state": 2, "currentSet": "bad"}, "Eveus 'currentSet' field is not numeric"),

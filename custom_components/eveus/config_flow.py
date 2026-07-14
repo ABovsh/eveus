@@ -305,7 +305,9 @@ def validate_device_response(
     current_raw = result.get("currentSet")
     try:
         current_set = float(current_raw) if current_raw is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: float() of a huge JSON integer. Setup tolerates any
+        # unparseable currentSet, so it must not escape to a generic error.
         current_set = None
     return {
         "current_set": current_set,
@@ -695,16 +697,22 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # an orphaned device behind.
                     self._migrate_device_identifiers(entry, old_host, new_host)
 
-                # This helper updates the entry and schedules exactly one reload.
-                # The integration no longer registers a reloading update listener,
-                # so there is no second reload on top of it (the HA 2026.6
-                # deprecated double-reload).
-                return self.async_update_reload_and_abort(
+                # Update the entry, then AWAIT the reload and check its result:
+                # the fire-and-forget helper claims success even when the reload
+                # fails. The integration registers no reloading update listener,
+                # so this is still exactly one reload (the HA 2026.6 deprecated
+                # double-reload). Same contract the options flow and the repair
+                # flow already enforce.
+                self.hass.config_entries.async_update_entry(
                     entry,
                     unique_id=entry_data[CONF_HOST],
                     title=info["title"],
                     data=entry_data,
                 )
+                reload_ok = await self.hass.config_entries.async_reload(entry.entry_id)
+                if reload_ok is False:
+                    return self.async_abort(reason="reload_failed")
+                return self.async_abort(reason="reconfigure_successful")
 
             except CannotConnect as err:
                 errors["base"] = "cannot_connect"
@@ -798,14 +806,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # No device-identifier migration here: the reauth form only
                 # exposes credentials, and any host mismatch aborted above as
                 # wrong_device, so the host cannot change on this path.
-                # One reload via the helper; no reloading update listener exists
-                # to double it (the HA 2026.6 deprecated double-reload).
-                return self.async_update_reload_and_abort(
+                # Update the entry, then AWAIT the reload and check its result:
+                # the fire-and-forget helper claims success even when the reload
+                # fails. Still exactly one reload -- no reloading update listener
+                # exists to double it (the HA 2026.6 deprecated double-reload).
+                self.hass.config_entries.async_update_entry(
                     entry,
                     unique_id=entry_data[CONF_HOST],
                     title=info["title"],
                     data=entry_data,
                 )
+                reload_ok = await self.hass.config_entries.async_reload(entry.entry_id)
+                if reload_ok is False:
+                    return self.async_abort(reason="reload_failed")
+                return self.async_abort(reason="reauth_successful")
 
             except CannotConnect as err:
                 errors["base"] = "cannot_connect"
@@ -918,7 +932,12 @@ class EveusOptionsFlow(OptionsFlow):
         flow reloads the entry itself for the new SOC mode to take effect.
         """
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
-        await self.hass.config_entries.async_reload(self._entry.entry_id)
+        # async_reload can return False WITHOUT raising (unload or setup
+        # returned false) — same contract the repair flow already checks. The
+        # data change is committed either way; only the success claim is gated.
+        reload_ok = await self.hass.config_entries.async_reload(self._entry.entry_id)
+        if reload_ok is False:
+            return self.async_abort(reason="reload_failed")
         return self.async_create_entry(title="", data={})
 
 

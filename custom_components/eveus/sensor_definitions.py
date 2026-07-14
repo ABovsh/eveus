@@ -36,9 +36,11 @@ from .const import (
     NORMAL_SUBSTATES,
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
+    LEGACY_RAW_STATE_KEY,
     MIN_CURRENT,
     MODEL_MAX_CURRENT,
     MAX_POWER_W,
+    MAX_COST_VALUE,
     MAX_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
     MIN_VALID_TEMPERATURE_C,
@@ -76,7 +78,7 @@ _MAX_POWER = MAX_POWER_W
 # exist purely to reject corrupt finite outliers (e.g. 1e100) that would
 # otherwise be recorded permanently and poison the statistics history.
 _MAX_ENERGY_KWH = MAX_ENERGY_KWH
-_MAX_COST = 100_000_000
+_MAX_COST = MAX_COST_VALUE
 # Largest plausible per-slot schedule energy cap (kWh).
 _MAX_SCHEDULE_KWH = 200
 # Sanity ceilings for the remaining MEASUREMENT sensors that feed HA long-term
@@ -409,9 +411,42 @@ get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0, ma
 # =============================================================================
 
 def get_charger_state(updater, hass) -> Optional[str]:
-    """Get charger state."""
+    """Get charger state.
+
+    Firmware 1.x (MCU_SW_version 151, GitHub issue #11) reports state values
+    outside CHARGING_STATES (observed: 20). ``validate_main_payload`` accepts
+    any 0-255 state, but the sensor is a closed-options ENUM — any value not
+    in the options list is rejected by Home Assistant at write time, leaving
+    the sensor stuck at `unknown`. So unmapped values must collapse to the
+    plain "Unknown" option; the actual code is preserved in the `raw_state`
+    attribute (see ``get_charger_state_attributes``) and logged once per
+    distinct value (RateLog), not once per poll.
+    """
     state_value = _get_data_value(updater, "state", int)
-    return get_charging_state(state_value) if state_value is not None else None
+    if state_value is None:
+        return None
+    if state_value not in CHARGING_STATES:
+        if _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, ("unknown_state", state_value)):
+            _LOGGER.warning("Eveus reported unrecognized device state: %s", state_value)
+    return get_charging_state(state_value)
+
+
+def get_charger_state_attributes(updater, hass) -> dict:
+    """Expose the raw device-state code when the visible state hides it.
+
+    Two cases carry a code the enum value can't show: an unmapped state
+    (rendered as plain "Unknown") and a firmware-1.x state translated to its
+    modern equivalent by the coordinator (original kept under
+    LEGACY_RAW_STATE_KEY). A plain mapped state adds no attribute.
+    """
+    data = updater.data or {}
+    raw_legacy = data.get(LEGACY_RAW_STATE_KEY)
+    if raw_legacy is not None:
+        return {"raw_state": raw_legacy}
+    state_value = _get_data_value(updater, "state", int)
+    if state_value is not None and state_value not in CHARGING_STATES:
+        return {"raw_state": state_value}
+    return {}
 
 
 def get_charger_substate(updater, hass) -> Optional[str]:
@@ -766,6 +801,7 @@ def create_sensor_specifications(
     diagnostic_specs = [
         SensorSpec(
             key="state", name="State", value_fn=get_charger_state,
+            attributes_fn=get_charger_state_attributes,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:state-machine",
             category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,

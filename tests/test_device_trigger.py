@@ -63,7 +63,9 @@ async def test_attach_builds_event_trigger_scoped_to_device_number() -> None:
 
 @pytest.mark.asyncio
 async def test_attach_defaults_to_device_number_1_when_unset() -> None:
-    entry = SimpleNamespace(domain=DOMAIN, runtime_data=SimpleNamespace(device_number=None))
+    entry = SimpleNamespace(
+        domain=DOMAIN, runtime_data=SimpleNamespace(device_number=None), data={}
+    )
     device = SimpleNamespace(config_entries={"eid-1"})
     hass = Mock()
     hass.config_entries.async_get_entry = Mock(return_value=entry)

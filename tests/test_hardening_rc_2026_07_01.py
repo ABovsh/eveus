@@ -16,7 +16,13 @@ import pytest
 import voluptuous as vol
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 
-from conftest import TEST_HOST, TEST_HOST_ALT, TEST_PASSWORD, TEST_USERNAME
+from conftest import (
+    TEST_HOST,
+    TEST_HOST_ALT,
+    TEST_PASSWORD,
+    TEST_USERNAME,
+    wire_flow_reload_success,
+)
 
 from custom_components.eveus import config_flow
 from custom_components.eveus.config_flow import (
@@ -99,11 +105,8 @@ def test_reconfigure_preserves_stored_http_scheme_by_default(
     flow._get_reconfigure_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
     flow._abort_if_unique_id_configured = lambda: None
-    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
-        "type": "abort",
-        "reason": "reconfigure_successful",
-        **kwargs,
-    }
+    committed: dict = {}
+    wire_flow_reload_success(flow, entry, committed)
     flow._migrate_device_identifiers = lambda entry, old, new: None
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
@@ -112,7 +115,8 @@ def test_reconfigure_preserves_stored_http_scheme_by_default(
     )
 
     assert captured[CONF_SCHEME] == DEFAULT_SCHEME == "http"
-    assert result["data"][CONF_SCHEME] == "http"
+    assert result["reason"] == "reconfigure_successful"
+    assert committed["data"][CONF_SCHEME] == "http"
 
 
 def test_reconfigure_keeps_https_when_host_edited_without_retyping_prefix(
@@ -146,11 +150,8 @@ def test_reconfigure_keeps_https_when_host_edited_without_retyping_prefix(
     flow._get_reconfigure_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
     flow._abort_if_unique_id_configured = lambda: None
-    flow.async_update_reload_and_abort = lambda entry, **kwargs: {
-        "type": "abort",
-        "reason": "reconfigure_successful",
-        **kwargs,
-    }
+    committed: dict = {}
+    wire_flow_reload_success(flow, entry, committed)
     flow._migrate_device_identifiers = lambda entry, old, new: None
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
@@ -161,7 +162,8 @@ def test_reconfigure_keeps_https_when_host_edited_without_retyping_prefix(
     )
 
     assert captured[CONF_SCHEME] == "https"
-    assert result["data"][CONF_SCHEME] == "https"
+    assert result["reason"] == "reconfigure_successful"
+    assert committed["data"][CONF_SCHEME] == "https"
 
 
 # ---------------------------------------------------------------------------

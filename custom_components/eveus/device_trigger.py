@@ -52,6 +52,19 @@ def _device_number_for(hass: HomeAssistant, device_id: str) -> int:
             number = getattr(runtime, "device_number", None)
             if number:
                 return number
+            # runtime_data is None while the entry is mid-setup-retry; the
+            # stored device number is still available in entry.data, so a
+            # trigger attached for charger #2 must not silently filter on
+            # charger #1's events. Same coercion async_setup_entry applies:
+            # int(), bool excluded, only values >= 1 are valid.
+            raw = entry.data.get("device_number")
+            if not isinstance(raw, bool):
+                try:
+                    stored = int(raw)
+                except (TypeError, ValueError):
+                    stored = None
+                if stored is not None and stored >= 1:
+                    return stored
     return 1
 
 

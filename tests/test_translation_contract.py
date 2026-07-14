@@ -65,13 +65,28 @@ def test_config_flow_error_keys_are_translated(filename: str) -> None:
     assert not missing, f"{filename} lacks config error translations for: {sorted(missing)}"
 
 
+# Abort reasons raised by flows whose translations live outside config.abort:
+# entry_missing is a repairs-flow abort. reload_failed is emitted by BOTH the
+# config flow (reconfigure/reauth) and the options flow, so it must exist in
+# config.abort (checked here) and options.abort (checked below).
+_NON_CONFIG_ABORTS = {"entry_missing"}
+
+
 @pytest.mark.parametrize("filename", sorted(_TRANSLATION_FILES))
 def test_config_flow_abort_reasons_are_translated(filename: str) -> None:
     translated = set(_load(filename)["config"]["abort"])
-    used = _abort_reasons_in_code() - {"entry_missing"}  # repairs-flow abort, not config
+    used = _abort_reasons_in_code() - _NON_CONFIG_ABORTS
     assert used, "source scan found no abort reasons — the regex is broken"
     missing = used - translated
     assert not missing, f"{filename} lacks config abort translations for: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("filename", sorted(_TRANSLATION_FILES))
+def test_options_flow_abort_reasons_are_translated(filename: str) -> None:
+    translated = set(_load(filename)["options"].get("abort", {}))
+    assert "reload_failed" in translated, (
+        f"{filename} lacks the options abort translation for reload_failed"
+    )
 
 
 @pytest.mark.parametrize("filename", sorted(_TRANSLATION_FILES))

@@ -159,9 +159,17 @@ def test_fractional_setpoint_is_always_rejected(frac) -> None:
         validate_main_payload({"state": 2, "currentSet": frac}, MODEL_16A)
 
 
-@given(state=st.integers(min_value=8, max_value=10**6))
-def test_out_of_domain_state_is_always_rejected(state) -> None:
-    # 0..7 is the known domain; anything above is unknown telemetry.
+@given(state=st.integers(min_value=8, max_value=255))
+def test_out_of_domain_state_within_byte_range_is_accepted(state) -> None:
+    # 0..7 is the known CHARGING_STATES domain, but firmware 1.x (issue #11)
+    # legitimately reports values up to 255 (its state field is a byte) --
+    # validate_main_payload must pass those through, not reject them.
+    payload = {"state": state, "currentSet": 10}
+    assert validate_main_payload(payload, MODEL_16A) is payload
+
+
+@given(state=st.integers(min_value=256, max_value=10**6))
+def test_state_beyond_byte_range_is_always_rejected(state) -> None:
     with pytest.raises(PayloadError):
         validate_main_payload({"state": state, "currentSet": 10}, MODEL_16A)
 

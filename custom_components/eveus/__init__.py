@@ -735,6 +735,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # runtime objects — otherwise diagnostics would report a failed setup as
         # ready and stale listeners could survive.
         await updater.async_config_entry_first_refresh()
+        # Firmware 1.x omits verFWMain from /main entirely (GitHub issue #11);
+        # resolve a fallback from /init once, right after the first successful
+        # poll, so device_info never has to show "Unknown" for those chargers.
+        # getattr-guarded: test doubles for EveusUpdater used elsewhere don't
+        # all implement this, and it is not essential to setup succeeding.
+        fetch_init_firmware = getattr(updater, "async_maybe_fetch_init_firmware", None)
+        if callable(fetch_init_firmware):
+            await fetch_init_firmware()
 
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
