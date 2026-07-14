@@ -611,3 +611,37 @@ def main_state_variant(request: pytest.FixtureRequest) -> dict[str, Any]:
     payload = copy.deepcopy(_load_real_main())
     payload.update(STATE_VARIANTS[request.param])
     return payload
+
+
+def wire_flow_reload_success(flow: Any, entry: Any, captured: dict | None = None) -> None:
+    """Wire a bare ConfigFlow with a hass whose entry update is applied and
+    whose awaited ``async_reload`` returns True.
+
+    Matches the reconfigure/reauth contract: the flow updates the entry via
+    ``async_update_entry`` and then awaits ``async_reload``, checking its
+    result, instead of the fire-and-forget update-reload-and-abort helper.
+    Update kwargs are recorded into ``captured`` and applied to the entry.
+    """
+    from unittest.mock import AsyncMock, Mock
+
+    if not hasattr(entry, "entry_id"):
+        entry.entry_id = "test-entry-id"
+
+    def _apply_update(target: Any, **kwargs: Any) -> bool:
+        if captured is not None:
+            captured.update(kwargs)
+        if "data" in kwargs:
+            target.data = dict(kwargs["data"])
+        if "unique_id" in kwargs:
+            target.unique_id = kwargs["unique_id"]
+        if "title" in kwargs:
+            target.title = kwargs["title"]
+        return True
+
+    flow.hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_update_entry=Mock(side_effect=_apply_update),
+            async_reload=AsyncMock(return_value=True),
+        )
+    )
+    flow.async_abort = lambda reason: {"type": "abort", "reason": reason}

@@ -54,7 +54,8 @@
       "already_configured": "Device is already configured",
       "reauth_successful": "Eveus credentials updated",
       "reconfigure_successful": "Eveus charger settings updated",
-      "wrong_device": "The credentials belong to a different charger"
+      "wrong_device": "The credentials belong to a different charger",
+      "reload_failed": "The new settings were saved, but the integration failed to reload. Check the charger connection and reload the integration from its page."
     }
   },
   "options": {

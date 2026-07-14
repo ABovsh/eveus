@@ -136,9 +136,9 @@ def test_reconfigure_preserves_stored_soc_mode(monkeypatch: pytest.MonkeyPatch) 
     flow._get_reconfigure_entry = lambda: entry
     flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
     flow._abort_if_unique_id_configured = lambda: None
-    flow.async_update_reload_and_abort = lambda entry, **kw: captured.update(kw) or {
-        "type": "abort",
-    }
+    from conftest import wire_flow_reload_success
+
+    wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
 
     asyncio.run(

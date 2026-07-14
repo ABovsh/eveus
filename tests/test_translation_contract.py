@@ -66,9 +66,10 @@ def test_config_flow_error_keys_are_translated(filename: str) -> None:
 
 
 # Abort reasons raised by flows whose translations live outside config.abort:
-# entry_missing is a repairs-flow abort; reload_failed is an options-flow abort
-# (checked against options.abort below).
-_NON_CONFIG_ABORTS = {"entry_missing", "reload_failed"}
+# entry_missing is a repairs-flow abort. reload_failed is emitted by BOTH the
+# config flow (reconfigure/reauth) and the options flow, so it must exist in
+# config.abort (checked here) and options.abort (checked below).
+_NON_CONFIG_ABORTS = {"entry_missing"}
 
 
 @pytest.mark.parametrize("filename", sorted(_TRANSLATION_FILES))

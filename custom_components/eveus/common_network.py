@@ -716,6 +716,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         raw_version = init_data.get("ESP_SW_version", init_data.get("MCU_SW_version"))
         if isinstance(raw_version, bool) or not isinstance(raw_version, int):
             return
+        if not 0 <= raw_version <= 10**6:
+            # JSON ints are unbounded; a negative or absurdly large value would
+            # format nonsense (or overflow float division). Leave the fallback
+            # unset -- device_info keeps showing "Unknown".
+            return
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
 
     async def _async_update_data(self) -> dict[str, Any]:
