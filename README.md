@@ -5,7 +5,7 @@
 > Full local control and monitoring for Eveus EV chargers: charging controls, current electrical measurements, charging costs, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Version](https://img.shields.io/badge/version-4.18.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.18.1-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -110,7 +110,7 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A, or 48A charger reachable from Home Assistant |
-| Charger firmware | Verified on R3.05.x; older firmware (R3.01.x) is supported — updating to the latest firmware is still recommended, see [Older charger firmware](#older-charger-firmware) |
+| Charger firmware | Verified on R3.05.x; older firmware (R3.01.x, and firmware 1.x with some fields unavailable) is supported — updating to the latest firmware is still recommended, see [Older charger firmware](#older-charger-firmware) |
 | Network | Local LAN access to the charger HTTP API |
 | Setup details | Charger IP/hostname or URL, username, password, model |
 

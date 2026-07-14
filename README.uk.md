@@ -8,7 +8,7 @@
 > сутності для автоматизацій — без допоміжних шаблонних сенсорів.
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
-![Версія](https://img.shields.io/badge/version-4.18.0-blue?style=for-the-badge)
+![Версія](https://img.shields.io/badge/version-4.18.1-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 - Документація: <https://abovsh.github.io/eveus/uk/>
@@ -158,7 +158,7 @@
 | --- | --- |
 | Home Assistant | Версія 2025.1 або новіша |
 | Зарядна станція | Eveus 16A, 32A, 40A або 48A |
-| Прошивка станції | Перевірено на R3.05.x; старіша прошивка (R3.01.x) підтримується — оновлення до останньої прошивки все одно рекомендоване, див. [Старіша прошивка станції](#старіша-прошивка-станції) |
+| Прошивка станції | Перевірено на R3.05.x; старіша прошивка (R3.01.x, а також 1.x з частиною недоступних полів) підтримується — оновлення до останньої прошивки все одно рекомендоване, див. [Старіша прошивка станції](#старіша-прошивка-станції) |
 | Мережа | Локальний доступ Home Assistant до HTTP API станції |
 | Дані для підключення | IP-адреса, ім'я хоста або URL, ім'я користувача, пароль і модель |
 
