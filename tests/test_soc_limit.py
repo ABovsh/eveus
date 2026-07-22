@@ -86,6 +86,7 @@ def test_fires_ha_event_only_after_evse_disabled_confirmed():
     # its own, but the string is — automations key off it by name.
     assert etype == "eveus_soc_limit_reached" == EVENT_SOC_LIMIT_REACHED
     assert data["device_number"] == 1
+    assert data["soc"] == 80
     assert data["target_soc"] == 80
 
 
@@ -377,6 +378,336 @@ def test_new_controller_starts_disabled_and_does_not_enforce():
     ctrl.process()
     assert events == []
     updater.send_command.assert_not_called()
+
+
+def test_new_controller_initial_state_is_clean():
+    """Construction-time invariant: nothing pending/latched before set_enabled
+    ever runs. Guards against a mis-initialized latch or token being masked by
+    the fact that _rearm() always resets this same state on first enable."""
+    ctrl, _scheduled, _events = _make(_calc(), _updater())
+    assert ctrl._fired is False
+    assert ctrl._pending is None
+    assert ctrl._pending_energy is None
+    assert ctrl._pending_session_time is None
+    assert ctrl._generation == 0
+    assert ctrl._stop_task is None
+
+
+def test_small_energy_drop_within_reset_epsilon_discards_stale_token():
+    # A drop just over the real reset epsilon (well under a much looser one)
+    # must still be treated as a new session and discard the stale pending
+    # token, so an unrelated evseEnabled=1 later doesn't falsely confirm the
+    # old session's Stop.
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()  # Stop sent at 30.0 kWh; pending recorded
+    # 0.7 kWh drop: above the real epsilon, so this must count as a reset.
+    updater.data = {**updater.data, "sessionEnergy": 29.3, "evseEnabled": 0}
+    ctrl.process()
+    updater.data = {**updater.data, "evseEnabled": 1}  # unrelated stop, new "session"
+    ctrl.process()
+    assert events == []
+
+
+def test_energy_drop_exactly_at_epsilon_boundary_is_not_a_reset():
+    # The reset check is a strict less-than: a drop of EXACTLY the epsilon must
+    # NOT be treated as a new session, so the same-session confirm still fires.
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()  # pending recorded at 30.0 kWh
+    updater.data = {**updater.data, "sessionEnergy": 29.5}  # drop of exactly 0.5 kWh
+    ctrl.process()
+    updater.data = {**updater.data, "evseEnabled": 1}
+    ctrl.process()
+    assert len(events) == 1
+
+
+def test_session_time_reset_discards_stale_token_even_when_energy_barely_moves():
+    # A session boundary can also show up as sessionTime resetting even when
+    # sessionEnergy drops by less than its own reset epsilon (so the energy
+    # check alone would not catch it). sessionTime must be tracked and checked
+    # independently of sessionEnergy. The 0.3 kWh nudge here is deliberately
+    # sub-epsilon (< 0.5) so it can't masquerade as an energy-based reset, and
+    # it also drops current SOC just below target so the rearm doesn't
+    # immediately re-arm a fresh (legitimately confirmable) attempt.
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    updater.data["sessionTime"] = 5000
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()  # Stop sent; pending recorded with sessionTime=5000
+    updater.data = {**updater.data, "sessionEnergy": 29.7, "sessionTime": 100}
+    ctrl.process()  # must detect the time reset and discard the stale token
+    updater.data = {**updater.data, "evseEnabled": 1}  # unrelated stop, new session
+    ctrl.process()
+    assert events == []
+
+
+def test_target_of_one_percent_is_a_valid_stop_point():
+    # Only target <= 0 is meaningless; target == 1 is a real, enforceable value.
+    ctrl, scheduled, events = _make(
+        _calc(target=1, initial=20, cap=50, corr=0), _updater(session_energy=30.0)
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert len(scheduled) == 1
+
+
+def test_zero_session_energy_is_a_valid_reading_at_high_initial_soc():
+    # sessionEnergy == 0 is a legitimate reading (start of session), not a
+    # value to be rejected by the sanity bound.
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=90, cap=50, corr=0), _updater(session_energy=0.0)
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert len(scheduled) == 1
+
+
+def test_energy_exactly_at_max_bound_is_still_a_valid_reading():
+    # The upper sanity bound is inclusive: energy == MAX_ENERGY_KWH must still
+    # be accepted, not rejected as out-of-range.
+    from custom_components.eveus.const import MAX_ENERGY_KWH
+
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=0, cap=50, corr=0),
+        _updater(session_energy=float(MAX_ENERGY_KWH)),
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert len(scheduled) == 1
+
+
+def test_missing_session_energy_at_active_poll_does_not_crash_or_stop():
+    updater = _updater(state=4, ev=0)
+    del updater.data["sessionEnergy"]
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()  # must not raise, must not schedule a stop
+    assert scheduled == [] and events == []
+
+
+def test_generation_increments_by_one_per_rearm():
+    ctrl, scheduled, events = _make(_calc(), _updater())
+    ctrl.set_enabled(True)  # rearm #1: 0 -> 1
+    assert ctrl._generation == 1
+    ctrl.set_enabled(False)  # rearm #2: 1 -> 2
+    assert ctrl._generation == 2
+
+
+def test_rearm_clears_pending_energy_and_session_time():
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    updater.data["sessionTime"] = 5000
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()  # records pending_energy=30.0, pending_session_time=5000
+    ctrl.set_enabled(False)  # rearm
+    assert ctrl._pending_energy is None
+    assert ctrl._pending_session_time is None
+
+
+def test_session_end_without_evse_field_clears_pending_even_at_same_energy():
+    # F6/F7 variant: the session-end boundary (state alone, no evseEnabled) must
+    # discard a stale pending token even when the next session happens to start
+    # at the SAME energy reading (so the separate energy-reset guard can't be
+    # relied on to save this case).
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()  # Stop sent; pending recorded at 30.0 kWh
+    updater.data = {"state": 1, "sessionEnergy": 30.0, "suspendLimits": 0}  # session end
+    ctrl.process()  # boundary must discard the token
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 1, "suspendLimits": 0}
+    ctrl.process()  # unrelated confirm in the new session
+    assert events == []
+
+
+def test_inflight_stop_task_not_yet_started_still_counts_at_boundary():
+    # A stop task can be created (self._stop_task set) before its coroutine
+    # body has run even one tick (no evseEnabled/pending recorded yet). A
+    # session-end boundary arriving in that narrow window must still cancel it.
+    async def scenario():
+        calc = _calc(target=80, initial=20, cap=50, corr=0)
+
+        async def slow_send(_cmd, _val):
+            await asyncio.sleep(100)
+            return True
+
+        updater = MagicMock()
+        updater.available = True
+        updater.last_update_success = True
+        updater.device_number = 1
+        updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
+        updater.send_command = slow_send
+
+        hass = MagicMock()
+        hass.async_create_task = lambda coro: asyncio.ensure_future(coro)
+        hass.bus.async_fire = MagicMock()
+
+        ctrl = SocLimitController(hass, updater, calc)
+        ctrl.set_enabled(True)
+        ctrl.process()  # spawns the task; its body has NOT run yet
+        assert ctrl._pending is None
+        assert ctrl._stop_task is not None
+        updater.data = {"state": 1, "sessionEnergy": 0.0, "suspendLimits": 0}
+        ctrl.process()  # boundary: only "stop_task is not None" is true
+        assert ctrl._stop_task is None
+
+    asyncio.run(scenario())
+
+
+def test_second_poll_does_not_spawn_concurrent_stop_while_one_is_inflight():
+    async def scenario():
+        calc = _calc(target=80, initial=20, cap=50, corr=0)
+        gate = asyncio.Event()
+        send_calls = []
+
+        async def slow_send(cmd, val):
+            send_calls.append((cmd, val))
+            await gate.wait()
+            return True
+
+        updater = MagicMock()
+        updater.available = True
+        updater.last_update_success = True
+        updater.device_number = 1
+        updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
+        updater.send_command = slow_send
+
+        hass = MagicMock()
+        hass.async_create_task = lambda coro: asyncio.ensure_future(coro)
+        hass.bus.async_fire = MagicMock()
+
+        ctrl = SocLimitController(hass, updater, calc)
+        ctrl.set_enabled(True)
+        ctrl.process()  # spawns attempt A
+        await asyncio.sleep(0)  # let A reach the send_command gate
+        ctrl.process()  # must see the in-flight task and wait, not spawn B
+        await asyncio.sleep(0)  # let B run to its own gate, if it was (wrongly) spawned
+        assert len(send_calls) == 1
+        gate.set()
+        await asyncio.sleep(0.02)
+
+    asyncio.run(scenario())
+
+
+def test_missing_device_number_defaults_to_one_in_emitted_event():
+    class _NoDeviceNumberUpdater:
+        available = True
+        last_update_success = True
+        data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
+
+        async def send_command(self, cmd, val):
+            return True
+
+    updater = _NoDeviceNumberUpdater()
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    _confirm(updater)
+    ctrl.process()
+    assert len(events) == 1
+    assert events[0][1]["device_number"] == 1
+
+
+def test_failed_stop_pending_is_actually_cleared_not_left_stale():
+    # RC-001 companion: a rejected (non-exception) Stop must clear the pending
+    # token, not merely "not emit yet" — otherwise a later unrelated
+    # evseEnabled=1 would falsely confirm this failed attempt.
+    updater = _updater(state=4, session_energy=30.0, stop_ok=False)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert ctrl._pending is None
+    assert ctrl._pending_energy is None
+    assert ctrl._pending_session_time is None
+
+
+def test_command_exception_clears_pending_so_later_stop_is_not_misattributed():
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    updater.send_command = AsyncMock(side_effect=RuntimeError("boom"))
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()  # send_command raises -> must be treated as a failed stop
+    assert ctrl._pending is None
+    assert events == []
+    updater.data = {**updater.data, "evseEnabled": 1}  # unrelated stop, later
+    ctrl.process()
+    assert events == []
+
+
+def test_auth_failure_clears_pending_and_starts_reauth():
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    updater.send_command = AsyncMock(side_effect=ConfigEntryAuthFailed("bad creds"))
+    updater.config_entry = MagicMock()
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert ctrl._pending is None
+    assert ctrl._pending_energy is None
+    assert ctrl._pending_session_time is None
+    updater.config_entry.async_start_reauth.assert_called_once_with(ctrl._hass)
+    updater.data = {**updater.data, "evseEnabled": 1}
+    ctrl.process()
+    assert events == []
+
+
+def test_suspendlimits_enabled_mid_flight_clears_pending_token():
+    # process() reads suspendLimits=0 and schedules _stop(); by the time _stop()
+    # re-reads the latest data (its own stand-down re-check), suspendLimits has
+    # flipped to 1 — the aborted attempt must not leave a stale pending token.
+    # process() itself reads `.data` twice (the isinstance guard, then the main
+    # fetch) before _stop() re-reads it a third time, so the flip must happen
+    # on the THIRD access, not the second.
+    class _TogglingUpdater:
+        available = True
+        last_update_success = True
+        device_number = 1
+
+        def __init__(self):
+            self._calls = 0
+
+        @property
+        def data(self):
+            self._calls += 1
+            suspend = 0 if self._calls <= 2 else 1
+            return {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": suspend}
+
+        async def send_command(self, cmd, val):
+            return True
+
+    updater = _TogglingUpdater()
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert ctrl._pending is None
+    assert ctrl._pending_energy is None
+    assert ctrl._pending_session_time is None
 
 
 def test_async_shutdown_disables_and_cancels_inflight_stop():

@@ -23,4 +23,5 @@ SONAR_HARDENING_PLAN.md
 # Coverage / test artifacts
 .coverage
 coverage.xml
+.mutmut-cache
 .claude/
