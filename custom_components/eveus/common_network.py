@@ -197,6 +197,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # happened across an offline gap stay silent.
         self._event_prev_state: int | None = None
         self._event_prev_payload: dict[str, Any] | None = None
+        self._event_prev_error_code: int | None = None
         self._force_refresh_requests = 0
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
@@ -505,12 +506,36 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         previous, prev_payload = self._event_prev_state, self._event_prev_payload
         self._event_prev_state, self._event_prev_payload = state, new_data
-        if previous is None or previous == state or self._shutting_down:
+        if previous is None or self._shutting_down:
+            # First poll after start/offline gap: remember the fault code so a
+            # later code change within a persisting Error state still fires.
+            self._event_prev_error_code = (
+                get_safe_value(new_data, "subState", int)
+                if state == DEVICE_STATE_ERROR
+                else None
+            )
             return
         bus = getattr(self.hass, "bus", None)
         if bus is None:
             return
         base = {"device_number": self.device_number or 1}
+
+        if previous == state:
+            # The charger can stay in Error while firmware reports a NEW fault
+            # code; that escalation must reach HA even without a state change.
+            if state == DEVICE_STATE_ERROR:
+                code = get_safe_value(new_data, "subState", int)
+                if code != self._event_prev_error_code:
+                    self._event_prev_error_code = code
+                    bus.async_fire(
+                        EVENT_ERROR,
+                        {
+                            **base,
+                            "error_code": code,
+                            "error_text": get_error_state(code) if code is not None else None,
+                        },
+                    )
+            return
 
         if state == DEVICE_STATE_CHARGING:
             bus.async_fire(EVENT_CHARGING_STARTED, dict(base))
@@ -539,6 +564,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if state == DEVICE_STATE_ERROR:
             code = get_safe_value(new_data, "subState", int)
+            self._event_prev_error_code = code
             bus.async_fire(
                 EVENT_ERROR,
                 {
@@ -593,6 +619,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # _emit_transition_events); forget the last observed state.
         self._event_prev_state = None
         self._event_prev_payload = None
+        self._event_prev_error_code = None
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False

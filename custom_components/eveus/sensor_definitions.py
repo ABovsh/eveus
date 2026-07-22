@@ -37,7 +37,6 @@ from .const import (
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
     LEGACY_RAW_STATE_KEY,
-    MIN_CURRENT,
     MODEL_MAX_CURRENT,
     MAX_POWER_W,
     MAX_COST_VALUE,
@@ -621,7 +620,9 @@ def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
             attrs["stop"] = stop
         if _get_data_value(updater, f"sh{slot}CurrentEnable", int) == 1:
             cur = _get_data_value(updater, f"sh{slot}CurrentValue", int)
-            if cur is not None and MIN_CURRENT <= cur <= max_current:
+            # Firmware stores/report sub-minimum setpoints verbatim (probe-
+            # verified, see Number read_min_value=0.0) — floor at 0, not 7 A.
+            if cur is not None and 0 <= cur <= max_current:
                 attrs["current_limit_a"] = cur
         if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
             energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 🐛 Fixed
+- **A new fault while the charger stays in the Error state now fires `eveus_error` again.** Previously only the first fault that put the charger into Error was reported; a different fault code appearing on a later poll was silently dropped, so automations never saw the escalated error. The same fault code repeating does not re-fire.
+- **The Schedule 1/2 sensor's `current_limit_a` attribute now shows schedule current limits below 7 A** (set on the charger itself), matching the schedule current number entities fixed in 4.18.1.
+
 ## 4.18.1 - 2026-07-14
 
 ### 🐛 Fixed
