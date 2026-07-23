@@ -145,11 +145,15 @@ jobs:
               echo "</details>"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-          # Real failure signal: mutmut must have produced a report containing
-          # at least one of its result categories. An empty/garbled file means
-          # mutmut crashed or never ran (bad install, bad --paths-to-mutate) —
-          # that's the one case this workflow still needs to fail loudly on.
-          if ! grep -qE '^(KILLED|TIMEOUT|SUSPICIOUS|SURVIVED)' mutmut-results.txt; then
+          # Real failure signal: an empty results file, or one containing a
+          # Python traceback / argparse usage error, means mutmut crashed or
+          # never ran at all (bad install, bad --paths-to-mutate) rather than
+          # just finding survivors — that's the one case this workflow still
+          # needs to fail loudly on. `mutmut results` only lists categories
+          # worth attention (Survived/Timed out/Suspicious — not every run has
+          # any of those, and a fully-killed leg prints none of them), so this
+          # checks for crash signatures rather than requiring specific text.
+          if [ ! -s mutmut-results.txt ] || grep -qE 'Traceback \(most recent call last\)|^usage: mutmut' mutmut-results.txt; then
             echo "::error::mutmut produced no usable report for ${{ matrix.name }} — treating as a real CI failure, not a survivor count."
             exit 1
           fi
