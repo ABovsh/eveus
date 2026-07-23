@@ -119,6 +119,7 @@ class LastSessionCostSensor(_LastSessionSensorBase):
     ENTITY_NAME = "Last Session Cost"
     _event_field = "session_cost"
     _max_value = MAX_COST_VALUE
+    _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = UNIT_UAH
     _attr_suggested_display_precision = 2
     _attr_icon = ICON_CURRENCY_UAH

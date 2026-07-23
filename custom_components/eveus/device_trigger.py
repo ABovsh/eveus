@@ -61,7 +61,7 @@ def _device_number_for(hass: HomeAssistant, device_id: str) -> int:
             if not isinstance(raw, bool):
                 try:
                     stored = int(raw)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     stored = None
                 if stored is not None and stored >= 1:
                     return stored

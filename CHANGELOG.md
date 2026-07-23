@@ -5,6 +5,8 @@
 ### 🐛 Fixed
 - **A new fault while the charger stays in the Error state now fires `eveus_error` again.** Previously only the first fault that put the charger into Error was reported; a different fault code appearing on a later poll was silently dropped, so automations never saw the escalated error. The same fault code repeating does not re-fire.
 - **The Schedule 1/2 sensor's `current_limit_a` attribute now shows schedule current limits below 7 A** (set on the charger itself), matching the schedule current number entities fixed in 4.18.1.
+- **A device trigger no longer crashes when the stored device number is corrupted.** A malformed config-entry value could raise an unhandled error while resolving triggers during setup retry; it's now treated as unreadable like any other bad value.
+- **Last Session Cost is now recognized as a monetary sensor**, matching the other cost sensors, so the frontend applies currency formatting/semantics to it.
 
 ## 4.18.1 - 2026-07-14
 
