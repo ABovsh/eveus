@@ -86,6 +86,8 @@ def test_mutation_matrix_legs_are_disjoint_and_complete() -> None:
         "custom_components/eveus/common_network.py",
         "custom_components/eveus/soc_limit.py",
         "custom_components/eveus/safety.py",
+        "custom_components/eveus/common_base.py",
+        "custom_components/eveus/control_base.py",
     ):
         assert required in seen, f"mutation coverage lost for {required}"
 
@@ -172,3 +174,40 @@ def test_mutation_survivor_diff_cap_covers_the_largest_leg() -> None:
     cap_match = re.search(r"head -(\d+)\)", report_steps[0]["run"])
     assert cap_match is not None
     assert int(cap_match.group(1)) >= 300
+
+
+# --- Survivor-count baseline ratchet ---------------------------------------
+#
+# The report-only gate (above) can never fail on survivor count by design, so
+# nothing previously distinguished "expected noise" from "a real regression
+# just landed." A committed baseline + comparison step closes that: an
+# increase is flagged loudly, a decrease is a prompt to tighten the ratchet.
+
+_MUTATION_BASELINE = Path(".github/mutation-baseline.json")
+
+
+def test_mutation_baseline_file_covers_every_leg() -> None:
+    """A leg missing from the baseline can silently regress with no signal."""
+    import json
+
+    baseline = json.loads(_MUTATION_BASELINE.read_text(encoding="utf-8"))
+    leg_names = {leg["name"] for leg in _mutation_matrix_legs()}
+    baseline_keys = {k for k in baseline if not k.startswith("_")}
+    assert leg_names == baseline_keys, (
+        f"baseline/matrix leg mismatch: matrix={leg_names} baseline={baseline_keys}"
+    )
+
+
+def test_mutation_workflow_checks_survivor_baseline() -> None:
+    """Increases must be flagged; the step must read the committed baseline
+    file and compare it against the current run's survivor count."""
+    baseline_steps = [
+        step
+        for step in _mutation_job()["steps"]
+        if "mutation-baseline.json" in str(step.get("run", ""))
+    ]
+    assert len(baseline_steps) == 1, "expected exactly one baseline-check step"
+    run_text = baseline_steps[0]["run"]
+    assert baseline_steps[0].get("if") == "always()"
+    assert "::warning::" in run_text
+    assert "result-ids survived" in run_text

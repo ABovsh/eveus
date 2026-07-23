@@ -8,6 +8,11 @@ name: Mutation Tests
 # fault / leak / overheat threshold and fault-recovery logic) was added
 # 2026-07-23 as the highest-stakes previously-untested layer -- its name says
 # what's at risk if a boundary or and/or mutation there ever went unnoticed.
+# entity-base (common_base.py + control_base.py) was added the same day: the
+# shared availability grace-period state machine and optimistic-control
+# reconcile/expire lifecycle used by every switch/number entity -- the
+# highest blast-radius-per-line gap in the repo (control_base.py had 100%
+# line coverage and zero mutation exposure before this).
 #
 # One matrix leg per target group, and each leg gets its own full time budget —
 # the 2026-06-30 single-job run died at a 45-minute cap before reporting
@@ -86,6 +91,18 @@ jobs:
             tests: >-
               tests/test_safety.py
               tests/test_safety_unknown_error.py
+          - name: entity-base
+            paths: "custom_components/eveus/common_base.py,custom_components/eveus/control_base.py"
+            tests: >-
+              tests/test_availability_clock.py
+              tests/test_grace_recheck_recovery.py
+              tests/test_control_entities.py
+              tests/test_control_select_coverage.py
+              tests/test_entities.py
+              tests/test_sensor_definition_entities.py
+              tests/test_time_controls.py
+              tests/test_firmware_parsing.py
+              tests/test_hardening_4_16_1.py
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -164,4 +181,24 @@ jobs:
           if [ ! -s mutmut-results.txt ] || grep -qE 'Traceback \(most recent call last\)|^usage: mutmut' mutmut-results.txt; then
             echo "::error::mutmut produced no usable report for ${{ matrix.name }} — treating as a real CI failure, not a survivor count."
             exit 1
+          fi
+
+      - name: Check survivor baseline (regression ratchet)
+        # The report-only gate above never fails on survivor count (by
+        # design — see the note at the top of this file). That means an
+        # increase in real survivors from newly-shipped, untested code
+        # looked identical to expected noise. This step diffs against a
+        # committed baseline: an increase is a loud ::warning::, a decrease
+        # is a prompt to tighten .github/mutation-baseline.json.
+        if: always()
+        env:
+          LEG_NAME: ${{ matrix.name }}
+        run: |
+          survived=$(python -m mutmut result-ids survived 2>/dev/null | tr ' ' '\n' | grep -c . || true)
+          baseline=$(python3 -c "import json,os; print(json.load(open('.github/mutation-baseline.json')).get(os.environ['LEG_NAME'], 0))")
+          echo "Leg $LEG_NAME: survivors=$survived baseline=$baseline"
+          if [ "$survived" -gt "$baseline" ]; then
+            echo "::warning::$LEG_NAME: survivors increased ($baseline -> $survived) — likely new code shipped without a killer test."
+          elif [ "$survived" -lt "$baseline" ]; then
+            echo "::notice::$LEG_NAME: survivors decreased ($baseline -> $survived) — update .github/mutation-baseline.json to tighten the ratchet."
           fi

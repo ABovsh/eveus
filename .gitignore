@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+# local py3.12 venv for real mutmut runs (see docs/internal/run_mutation_local.py)
+.venv-mut312/
 .env
 .DS_Store
 
