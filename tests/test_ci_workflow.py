@@ -124,3 +124,50 @@ def test_mutation_survivors_are_always_reported() -> None:
     # The summary pane is not retrievable through the REST API; the same
     # results must also go to stdout so the job log carries them.
     assert "tee" in report_steps[0]["run"]
+
+
+def test_mutation_gate_is_report_only_not_survivor_count() -> None:
+    """All 12 runs before 2026-07-23 failed: every target file uses
+    `from __future__ import annotations`, so some mutations (type-annotation
+    flips) are permanently inert and zero survivors is unreachable. The run
+    step must not let mutmut's survivor/timeout exit code fail the job.
+    """
+    run_steps = [
+        step
+        for step in _mutation_job()["steps"]
+        if "mutmut run" in str(step.get("run", ""))
+    ]
+    assert len(run_steps) == 1
+    assert run_steps[0].get("continue-on-error") is True
+
+
+def test_mutation_crash_check_does_not_regress_to_legend_grep() -> None:
+    """The 2026-07-23 gate fix's first attempt grepped mutmut-results.txt for
+    the all-caps KILLED/TIMEOUT/SUSPICIOUS/SURVIVED legend, which is only ever
+    printed by `mutmut run`'s startup banner (a different step) -- it never
+    appears in `mutmut results`' own output, so that check failed every run
+    regardless of outcome. The real check must key off crash signatures
+    (empty file / traceback / usage error), not specific success text.
+    """
+    report_steps = [
+        step
+        for step in _mutation_job()["steps"]
+        if "mutmut results" in str(step.get("run", ""))
+    ]
+    run_text = report_steps[0]["run"]
+    assert "Traceback" in run_text
+    assert not re.search(r"grep -qE '\^\(KILLED", run_text)
+
+
+def test_mutation_survivor_diff_cap_covers_the_largest_leg() -> None:
+    """coordinator alone has had 240 survivors; `head -20` hid over 90% of
+    the report. The cap must stay well above any leg's realistic count.
+    """
+    report_steps = [
+        step
+        for step in _mutation_job()["steps"]
+        if "mutmut results" in str(step.get("run", ""))
+    ]
+    cap_match = re.search(r"head -(\d+)\)", report_steps[0]["run"])
+    assert cap_match is not None
+    assert int(cap_match.group(1)) >= 300
