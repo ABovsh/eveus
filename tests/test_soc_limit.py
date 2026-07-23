@@ -675,6 +675,35 @@ def test_auth_failure_clears_pending_and_starts_reauth():
     assert events == []
 
 
+def test_auth_failure_after_generation_bump_does_not_clobber_new_generations_pending():
+    # If this attempt's generation was superseded (a re-arm happened) by the
+    # time the auth-failure handler runs, it must not touch _pending/_energy/
+    # _session_time -- those now belong to the newer generation's own attempt.
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    updater.config_entry = MagicMock()
+
+    async def _bump_generation_then_fail(cmd, val):
+        ctrl._generation += 1
+        ctrl._pending = ("new-token", 99)
+        ctrl._pending_energy = 99.0
+        ctrl._pending_session_time = 99.0
+        raise ConfigEntryAuthFailed("bad creds")
+
+    updater.send_command = _bump_generation_then_fail
+    ctrl.set_enabled(True)
+    ctrl.process()
+
+    assert ctrl._pending == ("new-token", 99)
+    assert ctrl._pending_energy == 99.0
+    assert ctrl._pending_session_time == 99.0
+    updater.config_entry.async_start_reauth.assert_called_once_with(ctrl._hass)
+
+
 def test_suspendlimits_enabled_mid_flight_clears_pending_token():
     # process() reads suspendLimits=0 and schedules _stop(); by the time _stop()
     # re-reads the latest data (its own stand-down re-check), suspendLimits has
