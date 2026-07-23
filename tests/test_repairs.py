@@ -16,7 +16,7 @@ from custom_components.eveus.config_flow import (
     InvalidInput,
     normalize_user_input,
 )
-from custom_components.eveus.const import CONF_MODEL, MODEL_16A
+from custom_components.eveus.const import CONF_MODEL, CONF_SOC_MODE, MODEL_16A, SOC_MODE_BASIC
 
 
 class _ConfigEntries:
@@ -115,6 +115,40 @@ def test_invalid_config_repair_flow_preserves_device_number(
     assert config_entries.updated[0]["data"]["device_number"] == 4
 
 
+def test_invalid_config_repair_flow_preserves_stored_soc_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The repair form omits the SOC chooser; it must re-assert the entry's
+    OWN stored mode, not silently fall back to the submitted form's default."""
+
+    async def fake_validate_input(hass, data):
+        return {
+            "title": f"Eveus Charger ({TEST_HOST})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    entry = SimpleNamespace(
+        entry_id="entry-id",
+        data=_data(**{CONF_SOC_MODE: SOC_MODE_BASIC}),
+    )
+    config_entries = _ConfigEntries(entry)
+    hass = SimpleNamespace(config_entries=config_entries)
+    monkeypatch.setattr(repairs, "validate_input", fake_validate_input)
+    monkeypatch.setattr(
+        repairs.ir,
+        "async_delete_issue",
+        lambda hass, domain, issue_id: None,
+    )
+
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
+    # The submitted form has no soc_mode field at all (it's excluded from
+    # build_user_data_schema for the repair step).
+    asyncio.run(flow.async_step_confirm(_data(**{CONF_PASSWORD: "new"})))
+
+    assert config_entries.updated[0]["data"][CONF_SOC_MODE] == SOC_MODE_BASIC
+
+
 def test_invalid_config_repair_flow_returns_form_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -163,6 +197,7 @@ def test_async_create_fix_flow_passes_entry_id() -> None:
     )
 
     assert isinstance(flow, repairs.InvalidConfigRepairFlow)
+    assert flow._entry_id == "entry-id"
 
 
 def test_async_create_fix_flow_handles_missing_entry_id() -> None:
