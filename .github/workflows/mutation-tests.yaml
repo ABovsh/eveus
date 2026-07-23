@@ -4,7 +4,10 @@ name: Mutation Tests
 # the layers users actually report issues against. Every user-facing failure so
 # far has been in the config flow (issues #4, #5, #8, and the old-firmware
 # setup reports), so config_flow.py + repairs.py are first-class targets next
-# to the pure logic layer this workflow originally covered.
+# to the pure logic layer this workflow originally covered. safety.py (ground
+# fault / leak / overheat threshold and fault-recovery logic) was added
+# 2026-07-23 as the highest-stakes previously-untested layer -- its name says
+# what's at risk if a boundary or and/or mutation there ever went unnoticed.
 #
 # One matrix leg per target group, and each leg gets its own full time budget —
 # the 2026-06-30 single-job run died at a 45-minute cap before reporting
@@ -78,6 +81,11 @@ jobs:
               tests/test_soc_limit_switch.py
               tests/test_hardening_rc_2026_07_01.py
               tests/test_hardening_4_16_1.py
+          - name: safety
+            paths: "custom_components/eveus/safety.py"
+            tests: >-
+              tests/test_safety.py
+              tests/test_safety_unknown_error.py
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

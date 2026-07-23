@@ -85,6 +85,7 @@ def test_mutation_matrix_legs_are_disjoint_and_complete() -> None:
         "custom_components/eveus/_payload.py",
         "custom_components/eveus/common_network.py",
         "custom_components/eveus/soc_limit.py",
+        "custom_components/eveus/safety.py",
     ):
         assert required in seen, f"mutation coverage lost for {required}"
 
