@@ -1,3 +1,6 @@
+from homeassistant.components.number import NumberMode
+
+from custom_components.eveus.const import MIN_CURRENT
 from custom_components.eveus.number import SCHEDULE_LIMIT_NUMBERS
 
 K = {d.key: d for d in SCHEDULE_LIMIT_NUMBERS}
@@ -22,3 +25,29 @@ def test_all_four_present():
         "schedule_2_current_limit",
         "schedule_2_energy_limit",
     }
+
+
+def test_schedule_current_description_full_contract():
+    for n in (1, 2):
+        d = K[f"schedule_{n}_current_limit"]
+        assert d.icon == "mdi:current-ac"
+        assert d.state_key == f"sh{n}CurrentValue"
+        assert d.native_min_value == MIN_CURRENT
+        assert d.native_max_value == 32
+        assert d.read_min_value == 0.0
+        assert d.native_step == 1
+        assert d.native_unit_of_measurement == "A"
+        assert d.mode == NumberMode.BOX
+
+
+def test_schedule_energy_description_full_contract():
+    for n in (1, 2):
+        d = K[f"schedule_{n}_energy_limit"]
+        assert d.icon == "mdi:lightning-bolt"
+        assert d.state_key == f"sh{n}EnergyValue"
+        assert d.native_min_value == 0
+        assert d.native_max_value == 100
+        assert d.native_step == 1
+        assert d.native_unit_of_measurement == "kWh"
+        assert d.display_precision == 3
+        assert d.mode == NumberMode.BOX

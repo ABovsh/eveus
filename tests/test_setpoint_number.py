@@ -2,7 +2,9 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from homeassistant.components.number import NumberMode
+from homeassistant.core import State
 
 from custom_components.eveus import number as number_mod
 from custom_components.eveus.number import (
@@ -205,3 +207,296 @@ def test_undervoltage_threshold_accepts_value_below_write_floor():
     assert ent.native_min_value == 210          # write floor follows minVoltage+10
     assert ent._read_device_value() == 190.0    # but the reported value is accepted
     assert ent.native_value == 190.0
+
+
+# ─── EveusSetpointNumber: property, boundaries, pending mid-flight ──────────
+
+
+def test_setpoint_number_init_resolves_native_value_from_device_data():
+    ent, _ = _make(ENERGY)  # updater.data has {"energyLimit": 0} by default
+    assert ent.native_value is not None
+
+
+def test_setpoint_number_state_key_is_a_string_not_a_bound_method():
+    ent, _ = _make(ENERGY)
+    assert ent._state_key == "energyLimit"
+
+
+def test_setpoint_number_read_device_value_requires_available_and_data():
+    ent, updater = _make(ENERGY)
+    updater.available = True
+    updater.data = None
+    assert ent._read_device_value() is None
+
+
+def test_setpoint_number_read_device_value_range_boundaries():
+    ent, updater = _make(ENERGY)  # min=0, max=100
+    updater.data = {"energyLimit": 100.0}
+    assert ent._read_device_value() == 100.0
+    updater.data = {"energyLimit": 100.1}
+    assert ent._read_device_value() is None
+    updater.data = {"energyLimit": 0.0}
+    assert ent._read_device_value() == 0.0
+
+
+@pytest.mark.parametrize(
+    ("native_step", "optimistic", "device", "expected"),
+    [
+        (10, 100.0, 100.0, True),    # diff 0 -> always equal
+        (10, 100.0, 95.0, False),    # diff == step/2 boundary: strictly NOT confirmed
+        (10, 100.0, 90.0, False),    # diff 10: would wrongly pass under a step*2/step widening
+        (10, 100.0, 96.0, True),     # diff 4: would wrongly fail under a step/3 narrowing
+        (0, 100.0, 99.8, True),      # zero-step fallback threshold is 0.5, diff 0.2 confirms
+        (0, 100.0, 99.0, False),     # diff 1.0 must NOT confirm under the 0.5 fallback
+    ],
+)
+def test_setpoint_number_values_equal_matrix(native_step, optimistic, device, expected):
+    ent, _ = _make(ENERGY)
+    ent._attr_native_step = native_step
+    assert ent._values_equal(optimistic, device) is expected
+
+
+def test_setpoint_number_set_display_value_stores_it():
+    ent, _ = _make(ENERGY)
+    ent._set_display_value(42.0)
+    assert ent._attr_native_value == 42.0
+
+
+def test_setpoint_number_resolve_value_grace_period_boundaries():
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+    import time
+
+    ent, updater = _make(ENERGY)
+    updater.available = False
+    updater.data = {}
+    ent._last_device_value = 42.0
+    ent._last_successful_read = time.time()
+    assert ent._resolve_value() == 42.0  # age ~0, within grace
+
+    # Grace expired -> must not return the stale value.
+    ent._last_successful_read = time.time() - CONTROL_GRACE_PERIOD
+    assert ent._resolve_value() is None
+
+
+def test_setpoint_number_resolve_value_grace_boundary_exact(monkeypatch):
+    """Pin the clock so age lands exactly on 0 and exactly on CONTROL_GRACE_PERIOD —
+    wall-clock timing can't reliably hit these exact boundaries."""
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+
+    ent, updater = _make(ENERGY)
+    updater.available = True
+    updater.data = {}  # no energyLimit key -> device read returns None
+    ent._last_device_value = 7.0
+    ent._last_successful_read = 1000.0
+
+    monkeypatch.setattr(number_mod.time, "time", lambda: 1000.0)  # age == 0 exactly
+    assert ent._resolve_value() == 7.0
+
+    monkeypatch.setattr(
+        number_mod.time, "time", lambda: 1000.0 + CONTROL_GRACE_PERIOD
+    )  # age == GRACE exactly -> must NOT be treated as still fresh
+    assert ent._resolve_value() is None
+
+
+def test_setpoint_number_resolve_value_ignores_stale_value_when_grace_expired_but_present():
+    """A present last_device_value outside the grace window must fall through to
+    None, not be returned unconditionally (guards the `and`/`or` and `is None`
+    inversions on the fallback guard)."""
+    import time
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+
+    ent, updater = _make(ENERGY)
+    updater.available = True
+    updater.data = {}  # no energyLimit key -> device read returns None
+    ent._last_device_value = 5.0
+    ent._last_successful_read = time.time() - CONTROL_GRACE_PERIOD - 10
+    assert ent._resolve_value() is None
+
+
+def test_setpoint_number_pending_value_visible_mid_command():
+    ent, updater = _make(ENERGY)
+    seen = {}
+
+    async def _capture(command, value):
+        seen["pending"] = ent._pending_value
+        seen["attr"] = ent._attr_native_value
+        return True
+
+    updater.send_command = _capture
+    asyncio.run(ent.async_set_native_value(40))
+    assert seen["pending"] == 40.0
+    assert seen["attr"] == 40.0
+
+
+def test_setpoint_number_pending_cleared_after_command_completes():
+    ent, _ = _make(ENERGY)
+    asyncio.run(ent.async_set_native_value(40))
+    assert ent._get_pending() is None  # not "" or any other non-None sentinel
+
+
+def test_setpoint_number_native_value_repopulated_after_command():
+    ent, _ = _make(ENERGY)
+    asyncio.run(ent.async_set_native_value(40))
+    assert ent.native_value is not None
+
+
+def test_setpoint_number_restore_ignores_unknown_and_unavailable_silently():
+    import logging
+
+    ent, _ = _make(ENERGY)
+    logger = logging.getLogger("custom_components.eveus.number")
+    records = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        asyncio.run(ent._async_restore_state(State("number.x", "unknown")))
+        asyncio.run(ent._async_restore_state(State("number.x", "unavailable")))
+    finally:
+        logger.removeHandler(handler)
+    assert ent._last_device_value is None
+    assert not any("Could not restore" in r.getMessage() for r in records)
+
+
+def test_setpoint_number_restore_does_not_crash_on_none_state():
+    ent, _ = _make(ENERGY)
+    asyncio.run(ent._async_restore_state(None))
+
+
+def test_setpoint_number_restore_range_boundaries_and_populates_native_value():
+    ent, _ = _make(ENERGY)  # min=0, max=100
+    asyncio.run(ent._async_restore_state(State("number.x", "0")))
+    assert ent._last_device_value == 0.0
+    asyncio.run(ent._async_restore_state(State("number.x", "100")))
+    assert ent._last_device_value == 100.0
+    assert ent.native_value == 100.0
+    ent._last_device_value = None
+    asyncio.run(ent._async_restore_state(State("number.x", "100.1")))
+    assert ent._last_device_value is None
+
+
+def test_setpoint_number_restore_records_a_real_read_timestamp():
+    """A successful restore must stamp `_last_successful_read` with the real
+    clock, not leave it None -- a None here would make the entity look like
+    it has never had a successful read, defeating grace-period bookkeeping."""
+    import time
+
+    ent, _ = _make(ENERGY)
+    ent._last_successful_read = None
+    before = time.time()
+    asyncio.run(ent._async_restore_state(State("number.x", "50")))
+    assert ent._last_successful_read is not None
+    assert ent._last_successful_read >= before
+
+
+# ─── EveusUndervoltageThresholdNumber: boundaries, multiply, restore ────────
+
+
+def test_undervoltage_threshold_read_min_boundary_is_zero_not_one():
+    ent, updater = _make_threshold({"aiVoltage": 0.5, "minVoltage": 200})
+    assert ent._read_device_value() == 0.5  # accepted even far below the write floor
+
+
+def test_undervoltage_threshold_read_min_exact_boundary_is_inclusive():
+    """Exactly at _READ_MIN (0.0) must be accepted (`<=`), not rejected (`<`)."""
+    ent, updater = _make_threshold({"aiVoltage": 0, "minVoltage": 200})
+    assert ent._read_device_value() == 0.0
+
+
+def test_undervoltage_threshold_read_device_value_requires_available_and_data():
+    ent, updater = _make_threshold({"aiVoltage": 215})
+    updater.available = True
+    updater.data = None
+    assert ent._read_device_value() is None
+
+
+def test_undervoltage_threshold_read_device_value_max_boundary():
+    ent, updater = _make_threshold({"aiVoltage": 220})
+    assert ent._read_device_value() == 220.0
+    updater.data = {"aiVoltage": 220.5}
+    assert ent._read_device_value() is None
+
+
+def test_undervoltage_threshold_multiplies_not_divides_by_device_to_ha():
+    from custom_components.eveus.number import EveusSetpointNumberDescription
+
+    description = EveusSetpointNumberDescription(
+        key="undervoltage_threshold",
+        name="Undervoltage threshold",
+        command="aiVoltage",
+        state_key="aiVoltage",
+        device_to_ha=2.0,  # distinguishes * from / (both are no-ops at 1.0)
+        native_min_value=0,
+        native_max_value=1000,
+        native_step=1,
+    )
+    ent, updater = _make_threshold({"aiVoltage": 100, "minVoltage": 200})
+    ent.entity_description = description
+    ent._device_to_ha = description.device_to_ha
+    ent._attr_native_max_value = description.native_max_value
+    assert ent._read_device_value() == 200.0  # 100 * 2.0, not 100 / 2.0 == 50
+
+
+def test_undervoltage_threshold_restore_ignores_unknown_and_unavailable_silently():
+    import logging
+
+    ent, _ = _make_threshold({"aiVoltage": 215})
+    logger = logging.getLogger("custom_components.eveus.number")
+    records = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        asyncio.run(ent._async_restore_state(State("number.x", "unknown")))
+        asyncio.run(ent._async_restore_state(State("number.x", "unavailable")))
+    finally:
+        logger.removeHandler(handler)
+    assert ent._last_device_value is None
+    assert not any("Could not restore" in r.getMessage() for r in records)
+
+
+def test_undervoltage_threshold_restore_does_not_crash_on_none_state():
+    ent, _ = _make_threshold({"aiVoltage": 215})
+    asyncio.run(ent._async_restore_state(None))
+
+
+def test_undervoltage_threshold_restore_range_boundaries_and_populates_native_value():
+    ent, _ = _make_threshold({})  # READ_MIN=0.0, max=220
+    asyncio.run(ent._async_restore_state(State("number.x", "0")))
+    assert ent._last_device_value == 0.0
+    asyncio.run(ent._async_restore_state(State("number.x", "220")))
+    assert ent._last_device_value == 220.0
+    assert ent.native_value == 220.0
+    ent._last_device_value = None
+    asyncio.run(ent._async_restore_state(State("number.x", "220.5")))
+    assert ent._last_device_value is None
+
+
+def test_undervoltage_threshold_restore_records_a_real_read_timestamp():
+    import time
+
+    ent, _ = _make_threshold({})
+    ent._last_successful_read = None
+    before = time.time()
+    asyncio.run(ent._async_restore_state(State("number.x", "150")))
+    assert ent._last_successful_read is not None
+    assert ent._last_successful_read >= before
+
+
+def test_undervoltage_threshold_refresh_min_bound_requires_available_and_data():
+    ent, updater = _make_threshold({"aiVoltage": 215, "minVoltage": 150})
+    assert ent.native_min_value == 160
+    updater.available = False
+    ent._refresh_min_bound()
+    assert ent.native_min_value == ent._floor_min_value  # falls back, ignores stale data
+
+
+def test_undervoltage_threshold_write_state_guard_only_writes_on_real_change():
+    ent, updater = _make_threshold({"aiVoltage": 215, "minVoltage": 200})  # floor 210
+    ent._handle_coordinator_update()  # warm up _last_written_value/_last_written_available
+    ent.async_write_ha_state.reset_mock()
+    updater.data = {"aiVoltage": 215, "minVoltage": 200}  # unchanged
+    ent._handle_coordinator_update()
+    ent.async_write_ha_state.assert_not_called()

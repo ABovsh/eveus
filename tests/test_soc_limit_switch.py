@@ -73,3 +73,65 @@ def test_master_off_does_not_auto_enable_an_off_switch():
     sw._updater.data = {"suspendLimits": 0}
     sw._handle_coordinator_update()
     assert sw.is_on is False
+
+
+def test_class_attrs():
+    sw, _ = _make()
+    assert sw._attr_icon == "mdi:battery-charging-high"
+    from homeassistant.helpers.entity import EntityCategory
+
+    assert sw._attr_entity_category is EntityCategory.CONFIG
+
+
+def test_initial_is_on_is_false_before_any_restore():
+    sw, _ = _make()
+    assert sw.is_on is False
+
+
+def test_available_property_is_always_true():
+    sw, _ = _make()
+    assert sw.available is True
+
+
+def test_handle_coordinator_update_treats_only_exact_1_as_suspended():
+    # raw == 0 is a VALID "not suspended" reading, not a malformed value: it
+    # must be processed (not treated as a malformed/unknown master state).
+    sw, controller = _make()
+    sw._was_suspended = True
+    sw._updater.data = {"suspendLimits": 0}
+    sw._handle_coordinator_update()
+    assert sw._was_suspended is False
+
+
+def test_async_added_to_hass_seeds_was_suspended_from_fresh_payload():
+    sw, _ = _make()
+    sw._was_suspended = False
+    sw._updater.data = {"suspendLimits": 1}
+    asyncio.run(sw.async_added_to_hass())
+    assert sw._was_suspended is True
+
+    sw2, _ = _make()
+    sw2._was_suspended = True
+    sw2._updater.data = {"suspendLimits": 0}
+    asyncio.run(sw2.async_added_to_hass())
+    assert sw2._was_suspended is False
+
+
+def test_async_added_to_hass_restores_on_state_to_is_on_true():
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    sw, controller = _make()
+    sw.async_get_last_state = AsyncMock(return_value=SimpleNamespace(state="on"))
+    asyncio.run(sw.async_added_to_hass())
+    assert sw.is_on is True
+    controller.set_enabled.assert_called_with(True)
+
+
+def test_async_added_to_hass_does_not_crash_with_no_previous_state():
+    from unittest.mock import AsyncMock
+
+    sw, _ = _make()
+    sw.async_get_last_state = AsyncMock(return_value=None)
+    asyncio.run(sw.async_added_to_hass())  # must not raise
+    assert sw.is_on is False

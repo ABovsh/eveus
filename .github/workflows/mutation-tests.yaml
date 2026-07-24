@@ -110,6 +110,19 @@ jobs:
               tests/test_init_firmware_fallback.py
               tests/test_setup_entry.py
               tests/test_transition_events.py
+          - name: control-entities
+            paths: "custom_components/eveus/number.py,custom_components/eveus/switch.py,custom_components/eveus/common_command.py"
+            tests: >-
+              tests/test_limit_numbers.py
+              tests/test_limit_switches.py
+              tests/test_setpoint_number.py
+              tests/test_schedule_limit_numbers.py
+              tests/test_schedule_controls.py
+              tests/test_soc_number_entities.py
+              tests/test_soc_limit_switch.py
+              tests/test_ground_protection.py
+              tests/test_control_entities.py
+              tests/test_command.py
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

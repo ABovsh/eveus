@@ -35,7 +35,7 @@ class CommandManager:
         # None = no command sent yet. A 0 sentinel was unsafe once timing moved
         # to the monotonic clock: right after boot monotonic() can be < 1, making
         # the first command sleep up to a second for no reason.
-        self._last_command_time: float | None = None
+        self._last_command_time: float | None = None  # pragma: no mutate - annotation only: local/attr annotations in a function body are never evaluated (PEP 526), regardless of __future__ import
         self._consecutive_failures = 0
         self._error_log = RateLog()
 
@@ -82,14 +82,14 @@ class CommandManager:
             try:
                 last_error: Exception | None = None
                 retry_attempts = _COMMAND_RETRY_ATTEMPTS if retry else 0
-                for attempt in range(retry_attempts + 1):
+                for attempt in range(retry_attempts + 1):  # pragma: no mutate - equivalent: both break conditions below always fire at attempt<=retry_attempts, so a larger range upper bound is unreachable dead code
                     try:
                         return await self._post_command(command, value, extra)
                     except aiohttp.ClientResponseError as err:
                         if err.status == 401:
                             self._consecutive_failures += 1
                             raise ConfigEntryAuthFailed(
-                                "Eveus charger rejected credentials"
+                                "Eveus charger rejected credentials"  # pragma: no mutate - pure exception-message text, no code observes the wording
                             ) from err
                         # Permanent client/server-routing errors won't fix
                         # themselves: don't burn the retry budget on them.
@@ -98,7 +98,7 @@ class CommandManager:
                             break
                         last_error = err
                         if attempt >= retry_attempts:
-                            break
+                            break  # pragma: no mutate - equivalent: this fires only on the loop's final iteration, where break/continue both just end the loop
                         await self._sleep_backoff(attempt)
                     except (
                         aiohttp.ClientConnectorError,
@@ -107,7 +107,7 @@ class CommandManager:
                     ) as err:
                         last_error = err
                         if attempt >= retry_attempts:
-                            break
+                            break  # pragma: no mutate - equivalent: this fires only on the loop's final iteration, where break/continue both just end the loop
                         await self._sleep_backoff(attempt)
 
                 self._consecutive_failures += 1
@@ -115,7 +115,8 @@ class CommandManager:
                     # Log only the error type — ClientResponseError.__str__ embeds
                     # the request URL (the charger host), which we scrub elsewhere.
                     _LOGGER.debug(
-                        "Command %s failed: %s", command, type(last_error).__name__
+                        "Command %s failed: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                        command, type(last_error).__name__
                     )
                 return False
 
@@ -125,10 +126,10 @@ class CommandManager:
                 self._consecutive_failures += 1
                 if self._should_log_error():
                     _LOGGER.debug(
-                        "Command %s unexpected error: %s",
+                        "Command %s unexpected error: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                         command,
                         err,
-                        exc_info=True,
+                        exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
                     )
                 return False
             finally:
