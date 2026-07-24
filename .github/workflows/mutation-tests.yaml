@@ -103,6 +103,13 @@ jobs:
               tests/test_time_controls.py
               tests/test_firmware_parsing.py
               tests/test_hardening_4_16_1.py
+          - name: init
+            paths: "custom_components/eveus/__init__.py"
+            tests: >-
+              tests/test_init_migration.py
+              tests/test_init_firmware_fallback.py
+              tests/test_setup_entry.py
+              tests/test_transition_events.py
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

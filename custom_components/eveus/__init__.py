@@ -98,7 +98,7 @@ class EveusRuntimeData:
     phases: int = DEFAULT_PHASES
 
 
-EveusConfigEntry = ConfigEntry[EveusRuntimeData]
+EveusConfigEntry = ConfigEntry[EveusRuntimeData]  # pragma: no mutate - pure type alias, only ever consumed as a (PEP 563, never-evaluated) annotation elsewhere
 
 
 def _invalid_config_issue_id(entry: ConfigEntry) -> str:
@@ -367,7 +367,7 @@ def _update_clock_drift_issue(
     # after the new classification has held for a full debounce streak — a
     # drift oscillating across a classification boundary must not rewrite the
     # issue on every poll.
-    rekey = False
+    rekey = False  # pragma: no mutate - `rekey` is only ever consumed in a boolean `or` context below; None and False are equally falsy there
     if (
         decision is None
         and tracker.published is not None
@@ -502,15 +502,15 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 parts = urlparse(host)
             # netloc is "[user[:pass]@]host[:port]"; drop everything up to and
             # including the last '@' (preserves IPv6 brackets, which follow it).
-                netloc = parts.netloc.rsplit("@", 1)[-1]
-                if netloc and (
+                netloc = parts.netloc.rsplit("@", 1)[-1]  # pragma: no mutate - maxsplit only affects the discarded pieces; [-1] is identical for any maxsplit >= 1
+                if netloc and (  # pragma: no mutate - netloc is only falsy for a hostless string, which _split_host_and_scheme rejects as unparseable either way (same warn-and-skip outcome)
                     parts.username
                     or parts.password
-                    or parts.path not in ("", "/")
+                    or parts.path not in ("", "/")  # pragma: no mutate - path is discarded by _split_host_and_scheme's re-parse (only "" and "/" are accepted, both collapse to the same hostname); whichever tuple member is mutated, the rebuilt sanitized string round-trips to an identical final host
                     or parts.query
                     or parts.fragment
                 ):
-                    sanitized = urlunparse((parts.scheme, netloc, "", "", "", ""))
+                    sanitized = urlunparse((parts.scheme, netloc, "", "", "", ""))  # pragma: no mutate - the "params" slot is discarded: _split_host_and_scheme re-parses sanitized and never inspects .params
             except ValueError:
                 sanitized = host
 
@@ -523,7 +523,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         except vol.Invalid:
             _LOGGER.warning(
-                "Could not normalize stored Eveus host for entry %s",
+                "Could not normalize stored Eveus host for entry %s",  # pragma: no mutate - log message text, not a logged value
                 getattr(entry, "entry_id", "<unknown>"),
             )
 
@@ -573,8 +573,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # would give them the same identity. Keep the old unique_id and
                 # let the user resolve the duplicate explicitly.
                 _LOGGER.warning(
-                    "Skipping unique_id canonicalization for entry %s: "
-                    "another entry already uses the canonical id",
+                    "Skipping unique_id canonicalization for entry %s: "  # pragma: no mutate - log message text, not a logged value
+                    "another entry already uses the canonical id",  # pragma: no mutate - log message text, not a logged value
                     entry.entry_id,
                 )
             else:
@@ -592,7 +592,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if isinstance(host, str) and isinstance(entry.title, str) and host in entry.title:
             update_kwargs["title"] = entry.title.replace(host, new_data[CONF_HOST])
 
-    if getattr(entry, "version", 1) < CONFIG_ENTRY_VERSION:
+    if getattr(entry, "version", 1) < CONFIG_ENTRY_VERSION:  # pragma: no mutate - default (1 vs 2) only matters for a version-less entry, and CONFIG_ENTRY_VERSION == 4 makes both "< 4" identically True
         update_kwargs["version"] = CONFIG_ENTRY_VERSION
 
     if update_kwargs:
@@ -666,12 +666,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.debug("Assigned Eveus device number %d", device_number)
+            _LOGGER.debug("Assigned Eveus device number %d", device_number)  # pragma: no mutate - log message text, not a logged value
         elif raw_device_number != device_number:
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.debug("Normalized Eveus device number %d", device_number)
+            _LOGGER.debug("Normalized Eveus device number %d", device_number)  # pragma: no mutate - log message text, not a logged value
 
         # Purge the retired "Input Entities Status" sensor from the entity
         # registry so it does not linger as an unavailable/orphan entity after
@@ -725,7 +725,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             # phases_were_invalid signal that protects the phase 2/3 registry
             # rows from _prune_unused_entities below (see its 3-phase fallback).
             _LOGGER.warning(
-                "Eveus phase count %r was invalid; using %d phase(s) for this session",
+                "Eveus phase count %r was invalid; using %d phase(s) for this session",  # pragma: no mutate - log message text, not a logged value
                 raw_phases,
                 phases,
             )
@@ -778,7 +778,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # Log the full traceback locally, but keep the host/URL out of the
         # user-facing setup error string, matching the redaction used on the
         # poll and config-flow error paths.
-        _LOGGER.exception("Unexpected error setting up Eveus integration")
+        _LOGGER.exception("Unexpected error setting up Eveus integration")  # pragma: no mutate - log message text, not a logged value
         raise ConfigEntryNotReady(f"Unexpected error: {type(ex).__name__}") from ex
 
 
@@ -794,7 +794,7 @@ async def _finish_setup(
     """Wire listeners, forward platforms, and prune, after runtime_data is set."""
     # Keep the OCPP-enabled warning in sync with every poll, so it reflects
     # toggles made from the charger UI or mobile app, not just from HA.
-    @callback
+    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
     def _refresh_ocpp_issue() -> None:
         _update_ocpp_issue(hass, entry, updater)
 
@@ -805,7 +805,7 @@ async def _finish_setup(
     # depleted, with debounce/hysteresis held in the tracker.
     battery_tracker = _BatteryLowTracker()
 
-    @callback
+    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
     def _refresh_battery_issue() -> None:
         _update_battery_low_issue(hass, entry, updater, battery_tracker)
 
@@ -817,7 +817,7 @@ async def _finish_setup(
     # notice walks the user to the Time Zone select + Sync Time button.
     clock_tracker = _ClockDriftTracker()
 
-    @callback
+    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
     def _refresh_clock_drift_issue() -> None:
         _update_clock_drift_issue(hass, entry, updater, clock_tracker)
 
@@ -904,7 +904,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     try:
         await Store(hass, _SAFETY_STORE_VERSION, safety_store_key(entry)).async_remove()
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("Could not remove safety store for removed entry")
+        _LOGGER.debug("Could not remove safety store for removed entry")  # pragma: no mutate - log message text, not a logged value
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:

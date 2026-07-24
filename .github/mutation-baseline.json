@@ -1,9 +1,10 @@
 {
-  "_comment": "Per-leg mutmut survivor-count ratchet. Increases are a real signal (new code shipped without a killer test) and are flagged via ::warning:: in the mutation-tests job. Decreases should be committed here to tighten the ratchet. config-flow/payload-utils/coordinator/soc-limit/safety counts are as of run 30012672399 (2026-07-23, post-triage); entity-base is as of the local verification run on 2026-07-24 (0 survivors after closing 77 real gaps + 22 confirmed-equivalent pragmas).",
+  "_comment": "Per-leg mutmut survivor-count ratchet. Increases are a real signal (new code shipped without a killer test) and are flagged via ::warning:: in the mutation-tests job. Decreases should be committed here to tighten the ratchet. config-flow/payload-utils/coordinator/soc-limit/safety counts are as of run 30012672399 (2026-07-23, post-triage); entity-base is as of the local verification run on 2026-07-24 (0 survivors after closing 77 real gaps + 22 confirmed-equivalent pragmas). init is as of the local verification run on 2026-07-24 (2 residual survivors, both confirmed equivalent -- see docs/internal/mutation-improvement-roadmap-2026-07-23.md).",
   "config-flow": 74,
   "payload-utils": 87,
   "coordinator": 66,
   "soc-limit": 11,
   "safety": 36,
-  "entity-base": 0
+  "entity-base": 0,
+  "init": 2
 }
