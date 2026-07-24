@@ -123,6 +123,15 @@ jobs:
               tests/test_ground_protection.py
               tests/test_control_entities.py
               tests/test_command.py
+          - name: minor-entities
+            paths: "custom_components/eveus/select.py,custom_components/eveus/time.py,custom_components/eveus/binary_sensor.py,custom_components/eveus/button.py,custom_components/eveus/session_history.py"
+            tests: >-
+              tests/test_adaptive_minvoltage_select.py
+              tests/test_control_select_coverage.py
+              tests/test_battery_low.py
+              tests/test_last_session.py
+              tests/test_time_controls.py
+              tests/test_entities.py
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

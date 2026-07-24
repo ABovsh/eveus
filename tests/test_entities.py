@@ -1,11 +1,13 @@
 """Unit tests for entity construction."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import SimpleNamespace
 
 import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from conftest import TEST_BASE_URL, TEST_HOST, EveusTestUpdater
 from custom_components.eveus import common
@@ -18,9 +20,12 @@ from custom_components.eveus.common_base import (
 )
 from custom_components.eveus.number import EveusCurrentNumber
 from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, SensorSpec, SensorType
+from custom_components.eveus import button as button_mod
 from custom_components.eveus.button import (
+    EveusRefreshButton,
     EveusResetCounterAButton,
     EveusResetCounterBButton,
+    EveusSyncTimeButton,
 )
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
@@ -1379,3 +1384,289 @@ def test_expire_optimistic_value_boundary_age_equals_ttl_expires() -> None:
 
     control._expire_optimistic_value(stamp + 10.0, 10.0)
     assert control._optimistic_value is None
+
+
+# ---------------------------------------------------------------------------
+# binary_sensor.py mutation-hardening gaps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "state,expected",
+    [
+        (3, True),
+        (5, True),
+        (6, True),
+    ],
+)
+def test_car_connected_binary_sensor_covers_full_connected_states(
+    state: int,
+    expected: bool,
+) -> None:
+    """Every member of _CONNECTED_STATES (3,4,5,6) must independently make
+    Car Connected report True; the existing truth-table test only exercised
+    state=4, leaving 3/5/6 free for a shrunk-set mutant to survive."""
+    entity = _make_binary_sensor("Car Connected", {"state": state})
+    assert entity.is_on is expected
+
+
+def test_binary_description_is_frozen_and_kw_only() -> None:
+    """EveusBinaryDescription must reject attribute mutation (frozen=True)
+    and positional construction (kw_only=True)."""
+    import dataclasses
+
+    description = next(
+        item for item in binary_sensor_mod.BINARY_SENSORS if item.name == "Car Connected"
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        description.name = "Mutated"
+
+    with pytest.raises(TypeError):
+        binary_sensor_mod.EveusBinaryDescription(
+            "Car Connected",
+            BinarySensorDeviceClass.PLUG,
+            "mdi:ev-plug-type2",
+            lambda data: None,
+        )
+
+
+def test_module_description_constants_point_at_the_right_tuple_slots() -> None:
+    """_CAR_CONNECTED_DESCRIPTION/_SESSION_ACTIVE_DESCRIPTION/
+    _OCPP_CONNECTED_DESCRIPTION must each resolve to their own named
+    BINARY_SENSORS entry - verified through the actual backward-compatible
+    subclasses (EveusCarConnectedBinarySensor etc.), which are the only
+    thing in the codebase that dereferences these module constants."""
+    assert binary_sensor_mod._CAR_CONNECTED_DESCRIPTION.name == "Car Connected"
+    assert binary_sensor_mod._SESSION_ACTIVE_DESCRIPTION.name == "Session Active"
+    assert binary_sensor_mod._OCPP_CONNECTED_DESCRIPTION.name == "OCPP Connected"
+
+
+@pytest.mark.parametrize(
+    "class_name,expected_device_class,expected_icon,expected_category,expected_is_on_data",
+    [
+        (
+            "EveusCarConnectedBinarySensor",
+            BinarySensorDeviceClass.PLUG,
+            "mdi:ev-plug-type2",
+            None,
+            ({"state": 4}, True),
+        ),
+        (
+            "EveusSessionActiveBinarySensor",
+            BinarySensorDeviceClass.RUNNING,
+            "mdi:ev-station",
+            None,
+            ({"state": next(iter(SESSION_ACTIVE_STATES))}, True),
+        ),
+        (
+            "EveusOcppConnectedBinarySensor",
+            BinarySensorDeviceClass.CONNECTIVITY,
+            "mdi:cloud-check",
+            EntityCategory.DIAGNOSTIC,
+            ({"ocppconnected": 1}, True),
+        ),
+    ],
+)
+def test_backward_compatible_binary_sensor_subclasses_wire_correct_description(
+    class_name: str,
+    expected_device_class: BinarySensorDeviceClass,
+    expected_icon: str,
+    expected_category: EntityCategory | None,
+    expected_is_on_data: tuple[dict, bool | None],
+) -> None:
+    """Directly instantiate each backward-compatible subclass (bypassing the
+    description-driven helper) to pin its own class-level metadata AND that
+    it was wired to the correctly-named module-level description constant
+    (a wrong index there would silently swap in another sensor's is_on_fn)."""
+    updater = EveusTestUpdater({})
+    entity = getattr(binary_sensor_mod, class_name)(updater)
+    entity._entity_available = True
+
+    assert entity.device_class == expected_device_class
+    assert entity.icon == expected_icon
+    assert entity.entity_category == expected_category
+
+    data, expected_is_on = expected_is_on_data
+    updater.data = data
+    assert entity.is_on is expected_is_on
+
+
+def test_binary_sensor_base_device_number_default_is_one() -> None:
+    """EveusBinarySensor.__init__'s own device_number default (distinct from
+    BaseEveusEntity's) must be 1, producing an un-suffixed unique_id."""
+    description = next(
+        item for item in binary_sensor_mod.BINARY_SENSORS if item.name == "Car Connected"
+    )
+    entity = binary_sensor_mod.EveusBinarySensor(EveusTestUpdater({}), description)
+    assert entity.unique_id == "eveus_car_connected"
+
+
+@pytest.mark.parametrize(
+    "class_name,expected_unique_id",
+    [
+        ("EveusCarConnectedBinarySensor", "eveus_car_connected"),
+        ("EveusSessionActiveBinarySensor", "eveus_session_active"),
+        ("EveusOcppConnectedBinarySensor", "eveus_ocpp_connected"),
+    ],
+)
+def test_backward_compatible_binary_sensor_subclass_device_number_default_is_one(
+    class_name: str, expected_unique_id: str
+) -> None:
+    entity = getattr(binary_sensor_mod, class_name)(EveusTestUpdater({}))
+    assert entity.unique_id == expected_unique_id
+
+
+def test_binary_sensor_setup_entry_wires_updater_and_device_number() -> None:
+    """async_setup_entry must forward the real updater/device_number from
+    runtime_data - not silently pass None through."""
+    updater = EveusTestUpdater({"state": 4, "ocppconnected": 1})
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(updater=updater, device_number=2)
+    )
+    added: list[object] = []
+
+    asyncio.run(
+        binary_sensor_mod.async_setup_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert len(added) == 3
+    assert {entity.ENTITY_NAME for entity in added} == {
+        "Car Connected",
+        "Session Active",
+        "OCPP Connected",
+    }
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_car_connected",
+        "eveus2_session_active",
+        "eveus2_ocpp_connected",
+    }
+    for entity in added:
+        assert entity._updater is updater
+
+
+# ---------------------------------------------------------------------------
+# button.py mutation-hardening gaps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "entity_factory,name,icon,category",
+    [
+        (lambda u: EveusRefreshButton(u), "Force Refresh", "mdi:refresh", EntityCategory.CONFIG),
+        (
+            lambda u: EveusResetCounterAButton(u),
+            "Reset Counter A",
+            "mdi:refresh-circle",
+            EntityCategory.CONFIG,
+        ),
+        (
+            lambda u: EveusResetCounterBButton(u),
+            "Reset Counter B",
+            "mdi:refresh-circle",
+            EntityCategory.CONFIG,
+        ),
+        (
+            lambda u: EveusSyncTimeButton(u),
+            "Sync Time",
+            "mdi:clock-check-outline",
+            EntityCategory.CONFIG,
+        ),
+    ],
+)
+def test_button_metadata_is_exact(entity_factory, name, icon, category) -> None:
+    entity = entity_factory(EveusTestUpdater({}))
+
+    assert entity.ENTITY_NAME == name
+    assert entity.icon == icon
+    assert entity.entity_category == category
+
+
+def test_reset_counter_button_command_names_are_exact() -> None:
+    assert EveusResetCounterAButton._command == "rstEM1"
+    assert EveusResetCounterBButton._command == "rstEM2"
+
+
+def test_reset_counter_button_uses_a_real_asyncio_lock() -> None:
+    entity = EveusResetCounterAButton(EveusTestUpdater({}))
+    assert isinstance(entity._reset_lock, asyncio.Lock)
+
+
+def test_refresh_button_available_is_always_true_property() -> None:
+    """Pins both that `available` is a real @property (not a plain method
+    object) and that it evaluates to exactly True."""
+    entity = EveusRefreshButton(EveusTestUpdater({}))
+    assert entity.available is True
+
+
+def test_refresh_button_raises_exact_message_on_failed_poll() -> None:
+    """A wrapped-string mutation on the error text would still satisfy a
+    loose substring match, so assert full equality."""
+    updater = EveusTestUpdater({})
+
+    async def fake_force_refresh() -> None:
+        return None
+
+    updater.async_force_refresh = fake_force_refresh
+    updater.last_update_success = False
+    entity = EveusRefreshButton(updater)
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        asyncio.run(entity.async_press())
+
+    assert str(exc_info.value) == "Eveus refresh failed: the charger did not respond"
+
+
+def test_reset_counter_button_sends_exact_command_value_and_no_retry() -> None:
+    """Reset must be a single-shot command: value=0, retry=False -- a retried
+    or non-zero-value reset would resend/misfire the reset differently."""
+    updater = EveusTestUpdater({})
+    entity = EveusResetCounterAButton(updater)
+    entity.async_write_ha_state = lambda: None
+
+    asyncio.run(entity.async_press())
+
+    assert updater.commands == [("rstEM1", 0)]
+    assert updater.last_retry is False
+
+
+def test_reset_counter_button_raises_exact_message_on_command_failure() -> None:
+    updater = EveusTestUpdater({})
+    updater.command_result = False
+    entity = EveusResetCounterAButton(updater)
+    entity.async_write_ha_state = lambda: None
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        asyncio.run(entity.async_press())
+
+    assert str(exc_info.value) == (
+        f"Eveus charger did not accept '{entity.name}' reset command"
+    )
+
+
+def test_button_setup_entry_wires_runtime_data_through() -> None:
+    updater = EveusTestUpdater({})
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(updater=updater, device_number=2)
+    )
+    added: list[object] = []
+
+    asyncio.run(
+        button_mod.async_setup_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_force_refresh",
+        "eveus2_reset_counter_a",
+        "eveus2_reset_counter_b",
+        "eveus2_sync_time",
+    }
+    for entity in added:
+        assert entity._updater is updater
