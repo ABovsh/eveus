@@ -97,6 +97,9 @@ def test_mutation_matrix_legs_are_disjoint_and_complete() -> None:
         "custom_components/eveus/binary_sensor.py",
         "custom_components/eveus/button.py",
         "custom_components/eveus/session_history.py",
+        "custom_components/eveus/sensor_definitions.py",
+        "custom_components/eveus/ev_sensors.py",
+        "custom_components/eveus/const.py",
     ):
         assert required in seen, f"mutation coverage lost for {required}"
 

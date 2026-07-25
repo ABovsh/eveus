@@ -132,6 +132,20 @@ jobs:
               tests/test_last_session.py
               tests/test_time_controls.py
               tests/test_entities.py
+          - name: sensor-values
+            paths: "custom_components/eveus/sensor_definitions.py,custom_components/eveus/ev_sensors.py,custom_components/eveus/const.py"
+            tests: >-
+              tests/test_sensor_definitions.py
+              tests/test_sensor_definition_entities.py
+              tests/test_ev_sensors.py
+              tests/test_ev_sensor_entities.py
+              tests/test_new_sensors.py
+              tests/test_multi_state_payload.py
+              tests/test_soc_calculator_push.py
+              tests/test_phase_support.py
+              tests/test_state_enum.py
+              tests/test_time_drift.py
+              tests/test_const_soc_modes.py
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

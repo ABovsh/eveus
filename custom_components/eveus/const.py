@@ -225,9 +225,9 @@ RATE_STATES: Final[Dict[int, str]] = {
 }
 
 # State Mappings
-DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]
-ErrorState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-SubState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]  # pragma: no mutate - Literal type-hint only, never enforced/compared at runtime
+ErrorState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # pragma: no mutate - Literal type-hint only, never enforced/compared at runtime
+SubState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # pragma: no mutate - Literal type-hint only, never enforced/compared at runtime
 
 CHARGING_STATES: Final[Dict[DeviceState, str]] = {
     0: "Startup",

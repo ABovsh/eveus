@@ -133,6 +133,80 @@ def test_optimized_sensor_error_paths_are_rate_limited() -> None:
     assert entity.native_value is None
 
 
+def test_optimized_sensor_default_device_number_has_no_suffix() -> None:
+    """OptimizedEveusSensor.__init__'s device_number default (1) must map to
+    the un-suffixed device — a default of 2 would collide with a real
+    second-device unique_id the moment a caller omits the argument."""
+    entity = OptimizedEveusSensor(
+        _Updater(),
+        SensorSpec(
+            key="device_default_probe",
+            name="Device Default Probe",
+            value_fn=lambda updater, hass: 1,
+            sensor_type=SensorType.DIAGNOSTIC,
+        ),
+    )
+    assert entity.unique_id == "eveus_device_default_probe"
+
+
+def test_optimized_sensor_available_is_a_property_returning_bool() -> None:
+    """`available` must stay a @property — if it degrades to a plain method,
+    callers checking `entity.available` get a truthy bound method instead of
+    the real online/offline state."""
+    entity = _sensor(lambda updater, hass: 1)
+    assert isinstance(type(entity).available, property)
+    assert isinstance(entity.available, bool)
+
+
+def test_available_when_offline_short_circuits_to_true() -> None:
+    updater = _Updater()
+    updater.available = False
+    entity = OptimizedEveusSensor(
+        updater,
+        SensorSpec(
+            key="offline_ok_probe",
+            name="Offline Ok Probe",
+            value_fn=lambda updater, hass: 1,
+            sensor_type=SensorType.DIAGNOSTIC,
+            available_when_offline=True,
+        ),
+    )
+    assert entity.available is True
+
+
+def test_sensor_value_error_uses_expected_rate_limit_key() -> None:
+    entity = _sensor(lambda updater, hass: (_ for _ in ()).throw(RuntimeError("boom")))
+    entity._get_sensor_value()
+    assert "sensor_test_sensor" in entity._error_log._last_logs
+
+
+def test_attributes_error_uses_expected_rate_limit_key() -> None:
+    entity = _sensor(
+        lambda updater, hass: 1,
+    )
+    entity._spec = SensorSpec(
+        key="test_sensor",
+        name="Test Sensor",
+        value_fn=lambda updater, hass: 1,
+        sensor_type=SensorType.MEASUREMENT,
+        attributes_fn=lambda updater, hass: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    entity._update_extra_state_attributes()
+    assert "attributes_test_sensor" in entity._error_log._last_logs
+
+
+def test_update_extra_state_attributes_false_without_attributes_fn() -> None:
+    entity = _sensor(lambda updater, hass: 1)
+    entity._spec = SensorSpec(
+        key="no_attrs_probe",
+        name="No Attrs Probe",
+        value_fn=lambda updater, hass: 1,
+        sensor_type=SensorType.MEASUREMENT,
+        attributes_fn=None,
+    )
+    assert entity._update_extra_state_attributes() is False
+
+
 def test_session_ground_time_drift_and_connection_helpers() -> None:
     hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kiev"))
     updater = SimpleNamespace(
@@ -273,6 +347,24 @@ def test_cost_sensor_advances_last_reset_when_meter_resets(monkeypatch) -> None:
     assert entity.native_value == 1.10
     assert entity.last_reset is not None
     assert entity.last_reset > first_reset
+
+
+def test_cost_sensor_does_not_restart_when_value_unchanged(monkeypatch) -> None:
+    """A repeated identical reading must never look like a reset: the window
+    restart condition is `value < prev`, not `value <= prev`."""
+    import custom_components.eveus.sensor_definitions as sd
+    from conftest import EveusTestUpdater
+
+    monkeypatch.setattr(sd.dt_util, "utcnow", _Clock().utcnow)
+    updater = EveusTestUpdater(data={"sessionMoney": 4.32})
+    entity = _make_cost_sensor(updater)
+    entity._update_native_value()
+    first_reset = entity.last_reset
+
+    updater.data = {"sessionMoney": 4.32}
+    entity._update_native_value()
+
+    assert entity.last_reset == first_reset
 
 
 def test_cost_sensor_does_not_treat_offline_gap_as_reset(monkeypatch) -> None:
@@ -425,6 +517,20 @@ def test_schedule_energy_limit_drops_outlier() -> None:
         {"sh1EnergyEnable": 1, "sh1EnergyValue": 1_000_000_000}
     )
     assert "energy_limit_kwh" not in attrs_fn(updater, None)
+
+
+def test_schedule_energy_limit_boundary_at_max_schedule_kwh() -> None:
+    """_MAX_SCHEDULE_KWH is 200: exactly 200 must be kept, 201 dropped."""
+    from conftest import EveusTestUpdater
+    from custom_components.eveus import sensor_definitions as sd
+
+    attrs_fn = sd._make_schedule_attrs(1)
+
+    ok = EveusTestUpdater({"sh1EnergyEnable": 1, "sh1EnergyValue": 200})
+    assert attrs_fn(ok, None)["energy_limit_kwh"] == 200
+
+    over = EveusTestUpdater({"sh1EnergyEnable": 1, "sh1EnergyValue": 201})
+    assert "energy_limit_kwh" not in attrs_fn(over, None)
 
 
 def test_schedule_energy_limit_keeps_reasonable_value() -> None:
@@ -886,3 +992,208 @@ def test_cost_sensors_use_monetary_iso_unit() -> None:
     for key in ("counter_a_cost", "counter_b_cost", "session_cost"):
         assert by_key[key].unit == "UAH"
         assert by_key[key].device_class == SensorDeviceClass.MONETARY
+
+
+def test_measurement_spec_names_and_display_precisions() -> None:
+    """The measurement-list entries feed SensorSpec.name (unique_id-adjacent
+    display name) and SensorSpec.precision (suggested_display_precision on
+    the real entity) directly. A name typo silently drops the entity from
+    lookups; a precision drift changes what HA rounds the displayed value
+    to."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    specs = {s.name: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    assert specs["Voltage"].precision == 0
+    assert specs["Current"].precision == 1
+    assert specs["Power"].precision == 1
+    assert specs["Current Set"].precision == 0
+
+
+def test_energy_spec_keys_and_display_precision() -> None:
+    """energy_specs derives `key` from `name.lower().replace(" ", "_")` — a
+    mutated needle/replacement silently breaks the unique_id. precision=2 is
+    the display precision shown on the entity."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    specs = {s.name: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    for name, expected_key in (
+        ("Session Energy", "session_energy"),
+        ("Total Energy", "total_energy"),
+        ("Counter A Energy", "counter_a_energy"),
+        ("Counter B Energy", "counter_b_energy"),
+    ):
+        assert specs[name].key == expected_key
+        assert specs[name].precision == 2
+
+
+def test_diagnostic_spec_keys_and_names() -> None:
+    """key= is the entity's unique_id suffix and name= is the display name
+    for each of these diagnostic sensors — both are real, load-bearing
+    strings, not cosmetic."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    assert by_key["substate"].name == "Substate"
+    assert by_key["ground"].key == "ground"
+    assert by_key["ground"].name == "Ground"
+    assert by_key["box_temperature"].key == "box_temperature"
+    assert by_key["box_temperature"].name == "Box Temperature"
+    assert by_key["plug_temperature"].key == "plug_temperature"
+    assert by_key["plug_temperature"].name == "Plug Temperature"
+    assert by_key["battery_voltage"].key == "battery_voltage"
+    assert by_key["battery_voltage"].name == "Battery Voltage"
+    assert by_key["leak_current"].key == "leak_current"
+
+
+def test_diagnostic_spec_display_precisions() -> None:
+    """Each of these diagnostic SensorSpec entries carries its own display
+    precision, independent of the getter's internal rounding."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    assert by_key["box_temperature"].precision == 0
+    assert by_key["plug_temperature"].precision == 0
+    assert by_key["battery_voltage"].precision == 2
+    assert by_key["leak_current"].precision == 0
+
+
+def test_tail_diagnostic_spec_keys_and_precisions() -> None:
+    """key= drives unique_id/lookups; precision= is the entity's suggested
+    display precision — both load-bearing, not cosmetic."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    assert by_key["leak_current_peak"].key == "leak_current_peak"
+    assert by_key["leak_current_peak"].precision == 0
+    assert by_key["wifi_signal"].key == "wifi_signal"
+    assert by_key["wifi_signal"].precision == 0
+
+
+def test_phase3_extension_spec_keys_and_precisions() -> None:
+    """The `phases == 3` extension sensors: key= for lookup, precision= for
+    display rounding."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=3, max_current=16)}
+    # Membership is the real assertion — a renamed key drops out of the mapping.
+    assert {
+        "current_phase_2",
+        "current_phase_3",
+        "voltage_phase_2",
+        "voltage_phase_3",
+    } <= set(by_key)
+    assert by_key["current_phase_2"].precision == 1
+    assert by_key["current_phase_3"].precision == 1
+    assert by_key["voltage_phase_2"].precision == 0
+    assert by_key["voltage_phase_3"].precision == 0
+
+
+def test_special_spec_keys_and_names() -> None:
+    """key= (unique_id suffix) and name= (display name) for the special
+    sensors block — both real, user/lookup-facing strings."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    assert by_key["session_time"].key == "session_time"
+    assert by_key["session_time"].name == "Session Time"
+    assert by_key["counter_a_cost"].name == "Counter A Cost"
+    assert by_key["counter_b_cost"].name == "Counter B Cost"
+    assert by_key["primary_rate_cost"].key == "primary_rate_cost"
+    assert by_key["primary_rate_cost"].name == "Primary Rate Cost"
+    assert by_key["active_rate_cost"].key == "active_rate_cost"
+    assert by_key["active_rate_cost"].name == "Active Rate Cost"
+    assert by_key["rate_2_cost"].key == "rate_2_cost"
+    assert by_key["rate_2_cost"].name == "Rate 2 Cost"
+    assert by_key["rate_3_cost"].key == "rate_3_cost"
+    assert by_key["rate_3_cost"].name == "Rate 3 Cost"
+    assert by_key["rate_2_status"].key == "rate_2_status"
+    assert by_key["rate_3_status"].key == "rate_3_status"
+    assert by_key["adaptive_charging"].key == "adaptive_charging"
+    assert by_key["adaptive_charging"].name == "Adaptive Charging"
+    assert by_key["adaptive_current_limit"].name == "Adaptive Current Limit"
+    assert by_key["schedule_1"].name == "Schedule 1"
+    assert by_key["schedule_2"].key == "schedule_2"
+    assert by_key["schedule_2"].name == "Schedule 2"
+    assert by_key["connection_quality"].key == "connection_quality"
+
+
+def test_special_spec_precisions() -> None:
+    """Display precision for the special sensors' numeric entries."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    assert by_key["counter_a_cost"].precision == 2
+    assert by_key["counter_b_cost"].precision == 2
+    assert by_key["primary_rate_cost"].precision == 2
+    assert by_key["active_rate_cost"].precision == 2
+    assert by_key["rate_2_cost"].precision == 2
+    assert by_key["rate_3_cost"].precision == 2
+    assert by_key["adaptive_current_limit"].precision == 0
+    assert by_key["connection_quality"].precision == 0
+
+
+def test_counter_cost_specs_track_reset_for_monetary_sensor() -> None:
+    """tracks_reset=True routes SensorSpec.create_sensor() to
+    MonetaryCostSensor (last_reset tracking); False silently downgrades a
+    monotonic-until-reset cost sensor to a plain sensor."""
+    from custom_components.eveus.sensor_definitions import (
+        MonetaryCostSensor,
+        create_sensor_specifications,
+    )
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    updater = _Updater()
+    assert by_key["counter_a_cost"].tracks_reset is True
+    assert isinstance(by_key["counter_a_cost"].create_sensor(updater), MonetaryCostSensor)
+    assert by_key["counter_b_cost"].tracks_reset is True
+    assert isinstance(by_key["counter_b_cost"].create_sensor(updater), MonetaryCostSensor)
+
+
+def test_connection_quality_spec_is_available_when_offline() -> None:
+    """Connection Quality must render even while the charger is offline —
+    that's the whole point of the diagnostic."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    assert by_key["connection_quality"].available_when_offline is True
+
+
+def test_rate_status_getters_read_their_own_tarif_field() -> None:
+    """rate_2_status reads tarifAEnable, rate_3_status reads tarifBEnable —
+    swapped/typo'd field names would silently read the wrong tariff flag."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    updater_a_only = _Updater()
+    updater_a_only.data = {"tarifAEnable": "1", "tarifBEnable": "0"}
+    assert by_key["rate_2_status"].value_fn(updater_a_only, None) == "Enabled"
+    assert by_key["rate_3_status"].value_fn(updater_a_only, None) == "Disabled"
+
+    updater_b_only = _Updater()
+    updater_b_only.data = {"tarifAEnable": "0", "tarifBEnable": "1"}
+    assert by_key["rate_2_status"].value_fn(updater_b_only, None) == "Disabled"
+    assert by_key["rate_3_status"].value_fn(updater_b_only, None) == "Enabled"
+
+
+def test_schedule_specs_bind_to_their_own_slot() -> None:
+    """schedule_1/schedule_2 value_fn and attributes_fn must each read their
+    own `shN*` fields — a slot mix-up would show slot 2's window on the
+    Schedule 1 entity or vice versa."""
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+
+    updater = _Updater()
+    updater.data = {"sh1Enabled": "1", "sh2Enabled": "0"}
+    assert by_key["schedule_1"].value_fn(updater, None) == "Enabled"
+    assert by_key["schedule_2"].value_fn(updater, None) == "Disabled"
+
+    updater2 = _Updater()
+    updater2.data = {"sh1Enabled": "0", "sh2Enabled": "1"}
+    assert by_key["schedule_1"].value_fn(updater2, None) == "Disabled"
+    assert by_key["schedule_2"].value_fn(updater2, None) == "Enabled"
+
+    attrs_updater = _Updater()
+    attrs_updater.data = {"sh2Start": "60", "sh2Stop": "120", "sh3Start": "600"}
+    attrs = by_key["schedule_2"].attributes_fn(attrs_updater, None)
+    assert attrs["window"] == "01:00–02:00"

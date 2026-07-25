@@ -104,6 +104,32 @@ def test_time_drift_handles_data_access_exception_without_raising() -> None:
     assert sd.get_time_drift(BrokenUpdater(), None) is None
 
 
+def test_time_drift_exception_log_includes_traceback(caplog) -> None:
+    """The except-block debug log passes exc_info=True so the traceback is
+    attached to the log record -- not just the bare error text."""
+    import logging
+
+    class BrokenUpdater:
+        available = True
+
+        @property
+        def data(self):
+            raise RuntimeError("boom")
+
+    # The rate limiter is a module-level singleton shared across tests; clear
+    # this key so an earlier test's call doesn't suppress ours.
+    sd._SENSOR_FUNCTION_LOG._last_logs.pop("get_time_drift", None)
+
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.eveus.sensor_definitions"
+    ):
+        caplog.clear()
+        sd.get_time_drift(BrokenUpdater(), None)
+        matching = [r for r in caplog.records if "Error getting time drift" in r.message]
+        assert matching, "expected a debug log for the caught exception"
+        assert matching[0].exc_info  # truthy tuple only when exc_info=True was passed
+
+
 # --- spec wiring: Time Drift replaces System Time ---
 
 
@@ -181,6 +207,20 @@ def test_time_drift_quantization_boundary_does_not_flap() -> None:
     for offset in (45, 44, 45):
         _set_offset(updater, offset)
         assert sd.get_time_drift(updater, None) == first
+
+
+def test_time_drift_hysteresis_boundary_is_inclusive() -> None:
+    """Hysteresis keeps the last report when the raw drift is within exactly
+    TIME_DRIFT_QUANTUM_SECONDS (30 s) of it, not just strictly less -- the
+    boundary check is `<=`, so a jump of exactly 30 s from the last report
+    must still be suppressed."""
+    updater = _updater(60)
+    assert sd.get_time_drift(updater, None) == 60
+    # New raw drift is exactly 30 s away from the last report (60); the
+    # quantized candidate for drift=90 would be 90, but hysteresis must
+    # clamp it back to the last report (60).
+    _set_offset(updater, 90)
+    assert sd.get_time_drift(updater, None) == 60
 
 
 def test_time_drift_still_tracks_real_drift_changes() -> None:
