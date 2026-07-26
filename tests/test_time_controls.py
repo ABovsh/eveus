@@ -462,8 +462,11 @@ def test_time_setup_entry_adds_four_schedule_entities() -> None:
 def test_time_entity_description_is_frozen() -> None:
     import dataclasses
 
+    from custom_components.eveus.time import EveusTimeEntityDescription
+
+    description = EveusTimeEntityDescription(key="probe", name="Probe")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        TIME_DESCRIPTIONS[0].name = "Mutated"
+        description.name = "Mutated"
 
 
 def test_time_entity_description_defaults_are_exact() -> None:

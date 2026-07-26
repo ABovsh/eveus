@@ -606,13 +606,15 @@ def test_active_rate_cost_maps_rate_2_to_tarif_b() -> None:
 
 
 def test_sensor_spec_is_frozen() -> None:
+    import dataclasses
+
     spec = sensors.SensorSpec(
         key="frozen_probe",
         name="Frozen Probe",
         value_fn=lambda updater, hass: 1,
         sensor_type=sensors.SensorType.DIAGNOSTIC,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         spec.name = "Mutated"
 
 
