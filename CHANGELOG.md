@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.19.0 - 2026-07-30
 
 ### 🐛 Fixed
 - **A new fault while the charger stays in the Error state now fires `eveus_error` again.** Previously only the first fault that put the charger into Error was reported; a different fault code appearing on a later poll was silently dropped, so automations never saw the escalated error. The same fault code repeating does not re-fire.
