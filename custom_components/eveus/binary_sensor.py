@@ -119,6 +119,12 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
     def is_on(self) -> bool | None:
         if not self.available:
             return None
+        if not self._updater.available:
+            # Inside the availability grace window the entity is still visible,
+            # but the payload behind it is from before the failed poll. Blank the
+            # value rather than present stale telemetry as current — same rule as
+            # the ordinary sensors.
+            return None
         return self._description.is_on_fn(self._updater.data)
 
     @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests

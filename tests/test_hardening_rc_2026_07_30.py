@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -10,8 +11,8 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
-from custom_components.eveus import common_network, config_flow
+from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from custom_components.eveus import binary_sensor, common_base, common_network, config_flow
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.config_flow import normalize_user_input
 from custom_components.eveus.const import (
@@ -157,3 +158,38 @@ def test_reauth_confirm_propagates_abort_flow(monkeypatch: pytest.MonkeyPatch) -
         )
 
     assert excinfo.value.reason == "already_in_progress"
+
+
+# --- E-F01: binary sensors must blank their value during the grace window -----
+
+
+def _car_connected_sensor(updater):
+    description = next(
+        item for item in binary_sensor.BINARY_SENSORS if item.name == "Car Connected"
+    )
+    sensor = binary_sensor.EveusBinarySensor(updater, description, 1)
+    sensor.hass = SimpleNamespace()
+    sensor.async_write_ha_state = lambda: None
+    return sensor
+
+
+def test_binary_sensor_blanks_value_during_grace_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stale telemetry must not display as current, as for every other sensor."""
+    monkeypatch.setattr(
+        common_base, "async_call_later", lambda *args, **kwargs: (lambda: None)
+    )
+    updater = EveusTestUpdater({"state": DEVICE_STATE_CHARGING}, available=True)
+    sensor = _car_connected_sensor(updater)
+
+    sensor._handle_coordinator_update()
+    assert sensor.is_on is True
+
+    # One failed poll: the entity stays available for the grace window, but the
+    # payload behind it is now stale.
+    updater.available = False
+    sensor._handle_coordinator_update()
+
+    assert sensor.available is True
+    assert sensor.is_on is None
