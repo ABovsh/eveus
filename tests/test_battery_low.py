@@ -95,7 +95,8 @@ def test_update_creates_issue_after_debounce(monkeypatch: pytest.MonkeyPatch) ->
     assert not created
     _update_battery_low_issue(object(), entry, _Updater({"vBat": low}), tracker)
 
-    assert created and created[0]["issue_id"] == _battery_low_issue_id(entry)
+    assert created
+    assert created[0]["issue_id"] == _battery_low_issue_id(entry)
     assert created[0]["translation_key"] == "battery_low"
     assert created[0]["is_fixable"] is False
     assert created[0]["severity"] is eveus_init.ir.IssueSeverity.WARNING

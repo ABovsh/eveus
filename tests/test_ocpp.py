@@ -82,7 +82,8 @@ def test_ocpp_issue_created_when_enabled(monkeypatch: pytest.MonkeyPatch) -> Non
 
     _update_ocpp_issue(object(), entry, updater)
 
-    assert created and created[0]["issue_id"] == _ocpp_issue_id(entry)
+    assert created
+    assert created[0]["issue_id"] == _ocpp_issue_id(entry)
     assert created[0]["translation_key"] == "ocpp_enabled"
     assert created[0]["is_fixable"] is False
     assert not deleted

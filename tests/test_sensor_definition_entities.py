@@ -765,7 +765,9 @@ def test_eta_seconds_still_finite_for_normal_power() -> None:
     from custom_components.eveus.utils import calculate_remaining_seconds
 
     result = calculate_remaining_seconds(20, 80, 3000, 50, 0)
-    assert result is not None and math.isfinite(result) and result > 0
+    assert result is not None
+    assert math.isfinite(result)
+    assert result > 0
 
 
 def test_v08_tiny_power_returns_no_eta() -> None:
@@ -787,7 +789,8 @@ def test_v08_normal_power_still_returns_eta() -> None:
         current_soc=50, target_soc=80, power_meas=7000,
         battery_capacity=50, correction=0,
     )
-    assert secs is not None and secs > 0
+    assert secs is not None
+    assert secs > 0
 
 
 def test_v07_current_set_sensor_displays_sub_7() -> None:

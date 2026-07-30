@@ -1973,7 +1973,8 @@ def test_v19_default_http_port_is_dropped():
 def test_v19_default_https_port_is_dropped():
     from custom_components.eveus import config_flow as cf
     h, scheme = cf._split_host_and_scheme("https://host:443")
-    assert h == "host" and scheme == "https"
+    assert h == "host"
+    assert scheme == "https"
 
 
 def test_v19_nondefault_port_is_kept():

@@ -60,7 +60,8 @@ def test_recovery_after_grace_recheck_is_written_to_ha(
     fake_monotonic += common_base.AVAILABILITY_GRACE_PERIOD + 10
     scheduled[-1](None)
     assert sensor.available is False
-    assert writes and writes[-1] is False
+    assert writes
+    assert writes[-1] is False
 
     # Charger recovers on the next poll: HA MUST receive an available write.
     updater.available = True

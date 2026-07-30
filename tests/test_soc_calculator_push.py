@@ -17,7 +17,8 @@ def test_set_value_makes_soc_available():
     calc.set_value("soc_correction", 7.5)
     assert calc.are_helpers_available() is True
     kwh = calc.get_soc_kwh(5.0)
-    assert kwh is not None and kwh > 10
+    assert kwh is not None
+    assert kwh > 10
 
 
 def test_target_soc_optional_for_availability():
