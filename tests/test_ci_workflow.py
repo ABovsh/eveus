@@ -85,6 +85,21 @@ def test_mutation_matrix_legs_are_disjoint_and_complete() -> None:
         "custom_components/eveus/_payload.py",
         "custom_components/eveus/common_network.py",
         "custom_components/eveus/soc_limit.py",
+        "custom_components/eveus/safety.py",
+        "custom_components/eveus/common_base.py",
+        "custom_components/eveus/control_base.py",
+        "custom_components/eveus/__init__.py",
+        "custom_components/eveus/number.py",
+        "custom_components/eveus/switch.py",
+        "custom_components/eveus/common_command.py",
+        "custom_components/eveus/select.py",
+        "custom_components/eveus/time.py",
+        "custom_components/eveus/binary_sensor.py",
+        "custom_components/eveus/button.py",
+        "custom_components/eveus/session_history.py",
+        "custom_components/eveus/sensor_definitions.py",
+        "custom_components/eveus/ev_sensors.py",
+        "custom_components/eveus/const.py",
     ):
         assert required in seen, f"mutation coverage lost for {required}"
 
@@ -124,3 +139,87 @@ def test_mutation_survivors_are_always_reported() -> None:
     # The summary pane is not retrievable through the REST API; the same
     # results must also go to stdout so the job log carries them.
     assert "tee" in report_steps[0]["run"]
+
+
+def test_mutation_gate_is_report_only_not_survivor_count() -> None:
+    """All 12 runs before 2026-07-23 failed: every target file uses
+    `from __future__ import annotations`, so some mutations (type-annotation
+    flips) are permanently inert and zero survivors is unreachable. The run
+    step must not let mutmut's survivor/timeout exit code fail the job.
+    """
+    run_steps = [
+        step
+        for step in _mutation_job()["steps"]
+        if "mutmut run" in str(step.get("run", ""))
+    ]
+    assert len(run_steps) == 1
+    assert run_steps[0].get("continue-on-error") is True
+
+
+def test_mutation_crash_check_does_not_regress_to_legend_grep() -> None:
+    """The 2026-07-23 gate fix's first attempt grepped mutmut-results.txt for
+    the all-caps KILLED/TIMEOUT/SUSPICIOUS/SURVIVED legend, which is only ever
+    printed by `mutmut run`'s startup banner (a different step) -- it never
+    appears in `mutmut results`' own output, so that check failed every run
+    regardless of outcome. The real check must key off crash signatures
+    (empty file / traceback / usage error), not specific success text.
+    """
+    report_steps = [
+        step
+        for step in _mutation_job()["steps"]
+        if "mutmut results" in str(step.get("run", ""))
+    ]
+    run_text = report_steps[0]["run"]
+    assert "Traceback" in run_text
+    assert not re.search(r"grep -qE '\^\(KILLED", run_text)
+
+
+def test_mutation_survivor_diff_cap_covers_the_largest_leg() -> None:
+    """coordinator alone has had 240 survivors; `head -20` hid over 90% of
+    the report. The cap must stay well above any leg's realistic count.
+    """
+    report_steps = [
+        step
+        for step in _mutation_job()["steps"]
+        if "mutmut results" in str(step.get("run", ""))
+    ]
+    cap_match = re.search(r"head -(\d+)\)", report_steps[0]["run"])
+    assert cap_match is not None
+    assert int(cap_match.group(1)) >= 300
+
+
+# --- Survivor-count baseline ratchet ---------------------------------------
+#
+# The report-only gate (above) can never fail on survivor count by design, so
+# nothing previously distinguished "expected noise" from "a real regression
+# just landed." A committed baseline + comparison step closes that: an
+# increase is flagged loudly, a decrease is a prompt to tighten the ratchet.
+
+_MUTATION_BASELINE = Path(".github/mutation-baseline.json")
+
+
+def test_mutation_baseline_file_covers_every_leg() -> None:
+    """A leg missing from the baseline can silently regress with no signal."""
+    import json
+
+    baseline = json.loads(_MUTATION_BASELINE.read_text(encoding="utf-8"))
+    leg_names = {leg["name"] for leg in _mutation_matrix_legs()}
+    baseline_keys = {k for k in baseline if not k.startswith("_")}
+    assert leg_names == baseline_keys, (
+        f"baseline/matrix leg mismatch: matrix={leg_names} baseline={baseline_keys}"
+    )
+
+
+def test_mutation_workflow_checks_survivor_baseline() -> None:
+    """Increases must be flagged; the step must read the committed baseline
+    file and compare it against the current run's survivor count."""
+    baseline_steps = [
+        step
+        for step in _mutation_job()["steps"]
+        if "mutation-baseline.json" in str(step.get("run", ""))
+    ]
+    assert len(baseline_steps) == 1, "expected exactly one baseline-check step"
+    run_text = baseline_steps[0]["run"]
+    assert baseline_steps[0].get("if") == "always()"
+    assert "::warning::" in run_text
+    assert "result-ids survived" in run_text

@@ -244,6 +244,11 @@ def test_validate_credentials_strips_username_but_preserves_password() -> None:
     assert validate_credentials(f" {TEST_USERNAME} ", f" {TEST_PASSWORD} ") == (TEST_USERNAME, f" {TEST_PASSWORD} ")
 
 
+def test_validate_credentials_accepts_exact_32_char_boundary() -> None:
+    # The limit is "more than 32", not "32 or more" -- exactly 32 must pass.
+    assert validate_credentials("a" * 32, "b" * 32) == ("a" * 32, "b" * 32)
+
+
 @pytest.mark.parametrize(
     ("username", "password"),
     [("", TEST_PASSWORD), (TEST_USERNAME, ""), ("a" * 33, TEST_PASSWORD), (TEST_USERNAME, "b" * 33)],
@@ -351,6 +356,30 @@ def test_validate_device_response_accepts_model_limit_boundary() -> None:
         "current_set": 16.0,
         "firmware": "Unknown",
     }
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("state", 2),
+        ("currentSet", "16"),
+        ("verFWWifi", "1.0"),
+        ("curDesign", 16),
+        ("evseType", 1),
+    ],
+)
+def test_validate_device_response_accepts_each_signature_key_in_isolation(
+    key: str, value: object
+) -> None:
+    # Any ONE signature key is sufficient (older firmware reports fewer
+    # fields); a payload carrying only this key alone must still be accepted.
+    result = validate_device_response({key: value}, MODEL_16A)
+    assert isinstance(result, dict)
+
+
+def test_validate_device_response_current_set_is_none_when_unparseable() -> None:
+    result = validate_device_response({"state": 2, "currentSet": "not-a-number"}, MODEL_16A)
+    assert result["current_set"] is None
 
 
 def test_validate_input_accepts_invalid_utf8_serial_bytes() -> None:
@@ -569,6 +598,35 @@ def test_user_flow_creates_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["data"][CONF_HOST] == TEST_HOST
 
 
+def test_user_flow_sets_unique_id_to_validated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_validate_input(hass, data):
+        return {
+            "title": f"Eveus Charger ({TEST_HOST})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    seen_unique_ids: list[str | None] = []
+
+    async def fake_set_unique_id(unique_id):
+        seen_unique_ids.append(unique_id)
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow.async_set_unique_id = fake_set_unique_id
+    flow._abort_if_unique_id_configured = lambda: None
+    flow.async_create_entry = lambda *, title, data: {
+        "type": "create_entry",
+        "title": title,
+        "data": data,
+    }
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    asyncio.run(flow.async_step_user(_input(**{CONF_SOC_MODE: SOC_MODE_BASIC})))
+
+    assert seen_unique_ids == [TEST_HOST]
+
+
 @pytest.mark.parametrize(
     ("error", "error_key"),
     [
@@ -576,6 +634,7 @@ def test_user_flow_creates_entry(monkeypatch: pytest.MonkeyPatch) -> None:
         (InvalidAuth(), "invalid_auth"),
         (InvalidInput("bad"), "invalid_input"),
         (InvalidDevice("bad"), "invalid_device"),
+        (InvalidResponse("bad"), "invalid_response"),
     ],
 )
 def test_user_flow_maps_validation_errors(
@@ -593,6 +652,7 @@ def test_user_flow_maps_validation_errors(
     result = asyncio.run(flow.async_step_user(_input()))
 
     assert result["errors"] == {"base": error_key}
+    assert result["step_id"] == "user"
 
 
 def test_user_flow_maps_unexpected_errors_to_unknown(
@@ -648,6 +708,7 @@ def test_reconfigure_flow_updates_entry(monkeypatch: pytest.MonkeyPatch) -> None
     assert result["type"] == "abort"
     assert result["reason"] == "reconfigure_successful"
     assert captured["unique_id"] == TEST_HOST_ALT
+    flow.hass.config_entries.async_reload.assert_called_once_with(entry.entry_id)
 
 
 def test_reconfigure_flow_skips_duplicate_check_when_unique_id_is_unchanged(
@@ -693,6 +754,7 @@ def test_reconfigure_flow_skips_duplicate_check_when_unique_id_is_unchanged(
         (InvalidAuth(), "invalid_auth"),
         (InvalidInput("bad"), "invalid_input"),
         (InvalidDevice("bad"), "invalid_device"),
+        (InvalidResponse("bad"), "invalid_response"),
     ],
 )
 def test_reconfigure_flow_maps_validation_errors(
@@ -719,6 +781,10 @@ def test_reconfigure_flow_maps_validation_errors(
     result = asyncio.run(flow.async_step_reconfigure(_input()))
 
     assert result["errors"] == {"base": error_key}
+    assert result["step_id"] == "reconfigure"
+    # The reconfigure form must never re-offer the SOC-mode chooser -- that
+    # is changed only through Configure (the options flow).
+    assert CONF_SOC_MODE not in result["data_schema"].schema
 
 
 def test_reconfigure_flow_maps_unexpected_errors_to_unknown(
@@ -744,6 +810,19 @@ def test_reauth_schema_contains_only_credentials() -> None:
     )
 
     assert set(schema.schema) == {CONF_USERNAME, CONF_PASSWORD}
+
+
+def test_reauth_schema_prefills_username_from_stored_defaults() -> None:
+    # A truthy `defaults` must be kept, not replaced by an empty dict -- the
+    # reauth form would otherwise lose the stored username prefill.
+    schema = build_reauth_data_schema({CONF_USERNAME: TEST_USERNAME})
+    username_key = next(key for key in schema.schema if key.schema == CONF_USERNAME)
+
+    assert username_key.default() == TEST_USERNAME
+
+
+def test_reauth_max_revalidations_constant() -> None:
+    assert config_flow._REAUTH_MAX_REVALIDATIONS == 3
 
 
 def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -788,6 +867,7 @@ def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> Non
     assert captured["data"][CONF_USERNAME] == TEST_USERNAME
     assert captured["data"][CONF_PASSWORD] == TEST_PASSWORD
     assert captured["data"][CONF_HOST] == TEST_HOST
+    flow.hass.config_entries.async_reload.assert_called_once_with(entry.entry_id)
 
 
 def test_reauth_validates_live_http_entry_data(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -854,6 +934,40 @@ def test_reauth_step_delegates_to_confirm(monkeypatch: pytest.MonkeyPatch) -> No
     }
 
 
+def test_reauth_flow_aborts_wrong_device_on_stale_unique_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_validate_input(hass, data):
+        return {
+            "title": f"Eveus Charger ({TEST_HOST})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: TEST_HOST}),
+            "unique_id": "stale-unique-id",
+        },
+    )()
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    flow._get_reauth_entry = lambda: entry
+    flow.async_set_unique_id = lambda unique_id: asyncio.sleep(0)
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    result = asyncio.run(
+        flow.async_step_reauth_confirm(
+            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
+        )
+    )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "wrong_device"
+
+
 def test_reauth_flow_cannot_change_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reauth rebases on live entry data: a validation snapshot reporting a
     different host can neither change the stored host nor brick the flow."""
@@ -901,6 +1015,7 @@ def test_reauth_flow_cannot_change_host(monkeypatch: pytest.MonkeyPatch) -> None
         (InvalidAuth(), "invalid_auth"),
         (InvalidInput("bad"), "invalid_input"),
         (InvalidDevice("bad"), "invalid_device"),
+        (InvalidResponse("bad"), "invalid_response"),
     ],
 )
 def test_reauth_flow_maps_validation_errors(
@@ -931,6 +1046,7 @@ def test_reauth_flow_maps_validation_errors(
     )
 
     assert result["errors"] == {"base": error_key}
+    assert result["step_id"] == "reauth_confirm"
 
 
 def test_reauth_flow_maps_unexpected_errors_to_unknown(
@@ -1154,6 +1270,67 @@ def test_options_flow_toggles_mode() -> None:
     assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
 
 
+def test_options_flow_apply_reloads_the_entry() -> None:
+    from unittest.mock import AsyncMock
+
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: TEST_HOST, CONF_SOC_MODE: SOC_MODE_BASIC}),
+            "unique_id": TEST_HOST,
+            "entry_id": "opt-entry",
+        },
+    )()
+
+    class _ConfigEntries:
+        def async_update_entry(self, entry, *, data):
+            entry.data = data
+
+        async_reload = AsyncMock(return_value=True)
+
+    flow = config_flow.EveusOptionsFlow(entry)
+    flow.hass = type("Hass", (), {"config_entries": _ConfigEntries()})()
+    flow.async_create_entry = lambda *, title, data: {
+        "type": "create_entry",
+        "title": title,
+        "data": data,
+    }
+
+    result = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_BASIC}))
+
+    assert result["type"] == "create_entry"
+    flow.hass.config_entries.async_reload.assert_called_once_with("opt-entry")
+
+
+def test_options_flow_apply_aborts_when_reload_fails() -> None:
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(**{CONF_HOST: TEST_HOST, CONF_SOC_MODE: SOC_MODE_BASIC}),
+            "unique_id": TEST_HOST,
+            "entry_id": "opt-entry",
+        },
+    )()
+
+    class _ConfigEntries:
+        def async_update_entry(self, entry, *, data):
+            entry.data = data
+
+        async def async_reload(self, entry_id):
+            return False
+
+    flow = config_flow.EveusOptionsFlow(entry)
+    flow.hass = type("Hass", (), {"config_entries": _ConfigEntries()})()
+    flow.async_abort = lambda reason: {"type": "abort", "reason": reason}
+
+    result = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_BASIC}))
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "reload_failed"
+
+
 def test_merge_entry_data_preserves_soc_values() -> None:
     """Reconfigure/reauth (incoming lacks SOC keys) must not drop SOC values."""
     existing = {
@@ -1259,6 +1436,44 @@ def test_options_flow_switch_to_advanced_keeps_existing_soc_values() -> None:
     assert entry.data[CONF_SOC_MODE] == SOC_MODE_ADVANCED
     assert entry.data[CONF_BATTERY_CAPACITY] == 70
     assert entry.data[CONF_SOC_CORRECTION] == 5
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {CONF_BATTERY_CAPACITY: 70},
+        {CONF_SOC_CORRECTION: 5},
+    ],
+)
+def test_options_flow_advanced_switch_requires_both_soc_values_present(
+    overrides: dict,
+) -> None:
+    # Only one of the two set-once SOC values stored (a partial/corrupt
+    # state) must still re-prompt for the SOC step -- "either missing" is
+    # the correct condition, not "both missing".
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": _input(
+                **{
+                    CONF_HOST: TEST_HOST,
+                    CONF_SOC_MODE: SOC_MODE_BASIC,
+                }
+            ),
+            "unique_id": TEST_HOST,
+        },
+    )()
+    entry.data.pop(CONF_BATTERY_CAPACITY, None)
+    entry.data.pop(CONF_SOC_CORRECTION, None)
+    entry.data.update(overrides)
+    flow = _options_flow_for(entry)
+
+    form = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_ADVANCED}))
+
+    assert form["type"] == "form"
+    assert form["step_id"] == "soc"
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
 
 
 def test_options_flow_soc_submit_rebases_on_live_entry_data() -> None:
@@ -1904,6 +2119,117 @@ def test_reconfigure_migrates_device_identifiers(monkeypatch) -> None:
     (dev_id, identifiers), = updated
     assert dev_id == "dev1"
     assert identifiers == {(DOMAIN, "10.0.0.9"), (DOMAIN, "10.0.0.9_2"), ("other", "x")}
+
+
+def test_migrate_device_identifiers_skips_device_without_matching_identifiers(
+    monkeypatch,
+) -> None:
+    from custom_components.eveus import config_flow as cf
+    from types import SimpleNamespace
+
+    device = SimpleNamespace(id="dev1", identifiers={("other", "x")})
+    updated: list[tuple[str, set]] = []
+    registry = SimpleNamespace(
+        async_update_device=lambda dev_id, new_identifiers: updated.append(
+            (dev_id, new_identifiers)
+        )
+    )
+    monkeypatch.setattr(cf.dr, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(
+        cf.dr, "async_entries_for_config_entry", lambda _reg, _eid: [device]
+    )
+
+    flow = cf.ConfigFlow()
+    flow.hass = object()
+    entry = SimpleNamespace(entry_id="e1")
+    flow._migrate_device_identifiers(entry, TEST_HOST, "10.0.0.9")
+
+    assert updated == []
+
+
+def test_migrate_device_identifiers_exact_match_alone(monkeypatch) -> None:
+    from custom_components.eveus import config_flow as cf
+    from custom_components.eveus.const import DOMAIN
+    from types import SimpleNamespace
+
+    device = SimpleNamespace(id="dev1", identifiers={(DOMAIN, TEST_HOST)})
+    updated: list[tuple[str, set]] = []
+    registry = SimpleNamespace(
+        async_update_device=lambda dev_id, new_identifiers: updated.append(
+            (dev_id, new_identifiers)
+        )
+    )
+    monkeypatch.setattr(cf.dr, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(
+        cf.dr, "async_entries_for_config_entry", lambda _reg, _eid: [device]
+    )
+
+    flow = cf.ConfigFlow()
+    flow.hass = object()
+    entry = SimpleNamespace(entry_id="e1")
+    flow._migrate_device_identifiers(entry, TEST_HOST, "10.0.0.9")
+
+    (dev_id, identifiers), = updated
+    assert dev_id == "dev1"
+    assert identifiers == {(DOMAIN, "10.0.0.9")}
+
+
+def test_migrate_device_identifiers_suffix_match_alone(monkeypatch) -> None:
+    from custom_components.eveus import config_flow as cf
+    from custom_components.eveus.const import DOMAIN
+    from types import SimpleNamespace
+
+    device = SimpleNamespace(id="dev1", identifiers={(DOMAIN, f"{TEST_HOST}_2")})
+    updated: list[tuple[str, set]] = []
+    registry = SimpleNamespace(
+        async_update_device=lambda dev_id, new_identifiers: updated.append(
+            (dev_id, new_identifiers)
+        )
+    )
+    monkeypatch.setattr(cf.dr, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(
+        cf.dr, "async_entries_for_config_entry", lambda _reg, _eid: [device]
+    )
+
+    flow = cf.ConfigFlow()
+    flow.hass = object()
+    entry = SimpleNamespace(entry_id="e1")
+    flow._migrate_device_identifiers(entry, TEST_HOST, "10.0.0.9")
+
+    (dev_id, identifiers), = updated
+    assert dev_id == "dev1"
+    assert identifiers == {(DOMAIN, "10.0.0.9_2")}
+
+
+def test_migrate_device_identifiers_ignores_wrong_domain_with_matching_suffix(
+    monkeypatch,
+) -> None:
+    # A "domain == DOMAIN or ident.startswith(...)" mutant would incorrectly
+    # rename an identifier that merely happens to start with the old host,
+    # even though it belongs to an unrelated domain/integration.
+    from custom_components.eveus import config_flow as cf
+    from types import SimpleNamespace
+
+    device = SimpleNamespace(
+        id="dev1", identifiers={("other_domain", f"{TEST_HOST}_2")}
+    )
+    updated: list[tuple[str, set]] = []
+    registry = SimpleNamespace(
+        async_update_device=lambda dev_id, new_identifiers: updated.append(
+            (dev_id, new_identifiers)
+        )
+    )
+    monkeypatch.setattr(cf.dr, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(
+        cf.dr, "async_entries_for_config_entry", lambda _reg, _eid: [device]
+    )
+
+    flow = cf.ConfigFlow()
+    flow.hass = object()
+    entry = SimpleNamespace(entry_id="e1")
+    flow._migrate_device_identifiers(entry, TEST_HOST, "10.0.0.9")
+
+    assert updated == []
 
 
 def test_coordinator_does_not_store_plaintext_credentials():

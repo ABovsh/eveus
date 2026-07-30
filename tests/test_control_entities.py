@@ -536,6 +536,37 @@ def test_number_setup_entry_keeps_model_independent_entity_when_model_is_missing
     assert [entity.name for entity in added] == ["Undervoltage threshold"]
 
 
+def test_number_setup_entry_clamps_schedule_current_but_not_energy_to_model_max() -> None:
+    added = []
+    entry = type(
+        "Entry",
+        (),
+        {
+            "data": {"soc_mode": "basic", "model": "16A"},
+            "runtime_data": type(
+                "RuntimeData",
+                (),
+                {"updater": _Updater({"currentSet": "10"}), "device_number": 1},
+            )(),
+        },
+    )()
+
+    asyncio.run(async_setup_number_entry(None, entry, lambda entities: added.extend(entities)))
+
+    from custom_components.eveus.number import EveusSetpointNumber
+
+    by_key = {
+        e.entity_description.key: e for e in added if isinstance(e, EveusSetpointNumber)
+    }
+    # Current-limit schedule entries must be clamped to the model max (16),
+    # not their own generic description default (32).
+    assert by_key["schedule_1_current_limit"].native_max_value == 16.0
+    assert by_key["schedule_2_current_limit"].native_max_value == 16.0
+    # Energy-limit schedule entries must NOT be touched by the current clamp.
+    assert by_key["schedule_1_energy_limit"].native_max_value == 100
+    assert by_key["schedule_2_energy_limit"].native_max_value == 100
+
+
 def test_switch_missing_key_resolves_unknown() -> None:
     from custom_components.eveus import switch as switch_mod
     description = switch_mod.SWITCH_DESCRIPTIONS[1]  # One Charge / oneCharge
@@ -549,6 +580,93 @@ def test_switch_valid_key_resolves_bool() -> None:
     description = switch_mod.SWITCH_DESCRIPTIONS[1]
     sw = switch_mod.BaseSwitchEntity(_Updater({"oneCharge": 1}), description, 1)
     assert sw._resolve_state() is True
+
+
+def test_ocpp_switch_sends_bundled_command_extra() -> None:
+    from custom_components.eveus import switch as switch_mod
+
+    desc = next(d for d in SWITCH_DESCRIPTIONS if d.key == "ocpp")
+    updater = _Updater({"ocppEnabled": 0})
+    ent = switch_mod.BaseSwitchEntity(updater, desc)
+    _disable_state_writes(ent)
+
+    asyncio.run(ent.async_turn_on())
+
+    assert updater.commands[-1] == ("ocppEnabled", 1)
+    assert updater.command_extras[-1] == {"ocppVendor": 1}
+
+
+def test_switch_read_device_value_requires_available_and_data() -> None:
+    from custom_components.eveus import switch as switch_mod
+
+    desc = next(d for d in SWITCH_DESCRIPTIONS if d.key == "ground_protection")
+    updater = _Updater({"groundCtrl": 1})
+    updater.available = False  # data/key are present, but the charger is offline
+    ent = switch_mod.BaseSwitchEntity(updater, desc)
+    assert ent._read_device_value() is None
+
+
+def test_switch_resolve_state_requires_available_for_device_read() -> None:
+    from custom_components.eveus import switch as switch_mod
+
+    desc = next(d for d in SWITCH_DESCRIPTIONS if d.key == "ground_protection")
+    updater = _Updater({"groundCtrl": 1})
+    ent = switch_mod.BaseSwitchEntity(updater, desc)
+    _disable_state_writes(ent)
+    updater.available = False
+    ent._last_device_value = None
+    assert ent._resolve_state() is None  # unavailable must not use fresh device data
+
+
+def test_switch_resolve_state_grace_boundary_exact(monkeypatch) -> None:
+    from custom_components.eveus import switch as switch_mod
+
+    desc = next(d for d in SWITCH_DESCRIPTIONS if d.key == "ground_protection")
+    updater = _Updater({})
+    updater.available = True
+    ent = switch_mod.BaseSwitchEntity(updater, desc)
+    _disable_state_writes(ent)
+    ent._last_device_value = True
+    ent._last_successful_read = 1000.0
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+
+    monkeypatch.setattr(switch_mod.time, "time", lambda: 1000.0)
+    assert ent._resolve_state() is True
+
+    monkeypatch.setattr(switch_mod.time, "time", lambda: 1000.0 + CONTROL_GRACE_PERIOD)
+    assert ent._resolve_state() is None
+
+
+def test_switch_pending_command_visible_mid_command() -> None:
+    from custom_components.eveus import switch as switch_mod
+
+    desc = next(d for d in SWITCH_DESCRIPTIONS if d.key == "ground_protection")
+    updater = _Updater({"groundCtrl": 0})
+    ent = switch_mod.BaseSwitchEntity(updater, desc)
+    _disable_state_writes(ent)
+    seen = {}
+
+    async def _capture(command, value, *, retry=True, extra=None):
+        seen["pending"] = ent._pending_command
+        seen["attr"] = ent._attr_is_on
+        return True
+
+    updater.send_command = _capture
+    asyncio.run(ent.async_turn_on())
+    assert seen["pending"] is True
+    assert seen["attr"] is True
+
+
+def test_switch_restore_sets_attr_is_on() -> None:
+    from custom_components.eveus import switch as switch_mod
+
+    desc = next(d for d in SWITCH_DESCRIPTIONS if d.key == "ground_protection")
+    ent = switch_mod.BaseSwitchEntity(_Updater({}), desc)
+    asyncio.run(ent._async_restore_state(State("switch.x", "on")))
+    assert ent.is_on is True
+    ent2 = switch_mod.BaseSwitchEntity(_Updater({}), desc)
+    asyncio.run(ent2._async_restore_state(State("switch.x", "off")))
+    assert ent2.is_on is False
 
 
 def test_switch_restore_seeds_successful_read() -> None:
@@ -1164,3 +1282,209 @@ def test_timezone_select_restores_last_option_within_grace() -> None:
     disable_state_writes(select)
     asyncio.run(select._async_restore_state(SimpleNamespace(state="+3")))
     assert select.current_option == "+3"
+
+
+# ─── EveusNumberEntity / EveusCurrentNumber base behavior ───────────────────
+
+
+def test_number_entity_base_class_attrs() -> None:
+    from custom_components.eveus.number import (
+        CHARGING_CURRENT_DESCRIPTION,
+        EveusNumberEntity,
+    )
+
+    entity = EveusNumberEntity(_Updater({}), CHARGING_CURRENT_DESCRIPTION)
+    assert entity._attr_has_entity_name is True
+    assert entity._attr_should_poll is False
+
+
+def test_default_device_number_is_one_across_all_control_entity_constructors() -> None:
+    """Every default `device_number=1` parameter, exercised without passing it."""
+    from custom_components.eveus.number import (
+        CHARGING_CURRENT_DESCRIPTION,
+        EveusCurrentNumber,
+        EveusNumberEntity,
+        EveusSetpointNumber,
+        EveusUndervoltageThresholdNumber,
+        UNDERVOLTAGE_THRESHOLD_NUMBER,
+        build_soc_numbers,
+        EveusInitialSocNumber,
+    )
+    from custom_components.eveus.switch import BaseSwitchEntity, EveusSocLimitSwitch
+
+    updater = _Updater({"currentSet": "16", "aiVoltage": 215, "minVoltage": 200})
+
+    entities = [
+        EveusNumberEntity(updater, CHARGING_CURRENT_DESCRIPTION),
+        EveusCurrentNumber(updater, "16A"),
+        EveusSetpointNumber(updater, UNDERVOLTAGE_THRESHOLD_NUMBER),
+        EveusUndervoltageThresholdNumber(updater, UNDERVOLTAGE_THRESHOLD_NUMBER),
+        EveusInitialSocNumber(updater, object(), None),
+        BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[0]),
+        EveusSocLimitSwitch(updater, object()),
+    ]
+    for entity in entities:
+        assert entity._device_number == 1, entity
+
+    soc_entities = build_soc_numbers(updater, object(), {})
+    for entity in soc_entities:
+        assert entity._device_number == 1
+
+
+def test_current_number_state_key_is_a_string_not_a_bound_method() -> None:
+    entity = EveusCurrentNumber(_Updater({"currentSet": "16"}), "16A")
+    assert entity._state_key == "currentSet"
+
+
+def test_current_number_read_min_accepts_zero_but_not_below() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "32A")
+    entity._updater.data = {"currentSet": 0.0}
+    assert entity._read_device_value() == 0.0  # 0.0 is a legitimate reported value
+
+
+def test_current_number_read_device_value_requires_available_and_data() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "32A")
+    entity._updater.available = True
+    entity._updater.data = None
+    assert entity._read_device_value() is None
+
+
+def test_current_number_read_device_value_max_boundary_inclusive() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "16A")  # max = 16
+    entity._updater.data = {"currentSet": 16.0}
+    assert entity._read_device_value() == 16.0
+    entity._updater.data = {"currentSet": 16.5}
+    assert entity._read_device_value() is None
+
+
+def test_current_number_values_equal_boundary() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "16A")
+    assert entity._values_equal(10.0, 10.5) is False  # diff == 0.5 boundary: strictly NOT confirmed
+    assert entity._values_equal(10.0, 10.4) is True
+    assert entity._values_equal(10.0, 11.4) is False  # would wrongly pass under a widened (1.5) threshold
+
+
+def test_current_number_resolve_value_requires_available_for_device_read() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "32A")
+    _disable_state_writes(entity)
+    entity._updater.available = False
+    entity._updater.data = {"currentSet": 15}
+    entity._last_device_value = None
+    assert entity._resolve_value() is None  # unavailable must not use stale/fresh device data
+
+
+def test_current_number_resolve_value_max_boundary_and_grace_edges() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "16A")  # max = 16
+    entity._updater.data = {"currentSet": 16.0}
+    assert entity._resolve_value() == 16.0
+    entity._updater.data = {"currentSet": 16.5}
+    assert entity._resolve_value() is None
+
+    # Grace-period fallback: age == 0 is inside the window; age == GRACE is not.
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+
+    entity._updater.available = False
+    entity._updater.data = {}
+    entity._last_device_value = 9.0
+    entity._last_successful_read = time.time()
+    assert entity._resolve_value() == 9.0  # age ~0
+
+    entity._last_successful_read = time.time() - CONTROL_GRACE_PERIOD
+    assert entity._resolve_value() is None  # age >= grace period, expired
+
+
+def test_current_number_resolve_value_read_min_boundary() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "16A")
+    entity._updater.available = True
+    entity._updater.data = {"currentSet": 0.0}  # _READ_MIN == 0.0 exactly
+    assert entity._resolve_value() == 0.0
+
+
+def test_current_number_resolve_value_grace_boundary_exact(monkeypatch) -> None:
+    """Pin the clock so age lands exactly on 0 and exactly on CONTROL_GRACE_PERIOD."""
+    from custom_components.eveus import number as number_mod
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+
+    entity = EveusCurrentNumber(_Updater({}), "16A")
+    entity._updater.available = True
+    entity._updater.data = {}  # no currentSet key -> device read returns None
+    entity._last_device_value = 5.0
+    entity._last_successful_read = 1000.0
+
+    monkeypatch.setattr(number_mod.time, "time", lambda: 1000.0)  # age == 0 exactly
+    assert entity._resolve_value() == 5.0
+
+    monkeypatch.setattr(
+        number_mod.time, "time", lambda: 1000.0 + CONTROL_GRACE_PERIOD
+    )  # age == GRACE exactly -> expired
+    assert entity._resolve_value() is None
+
+
+def test_current_number_pending_value_is_visible_mid_command() -> None:
+    updater = _Updater({"currentSet": "10"})
+    entity = EveusCurrentNumber(updater, "32A")
+    _disable_state_writes(entity)
+    seen = {}
+
+    async def _capture(command, value):
+        seen["pending"] = entity._pending_value
+        seen["attr"] = entity._attr_native_value
+        return True
+
+    updater.send_command = _capture
+    asyncio.run(entity.async_set_native_value(20))
+    assert seen["pending"] == 20.0
+    assert seen["attr"] == 20.0
+
+
+def test_current_number_native_value_repopulated_after_successful_command() -> None:
+    updater = _Updater({"currentSet": "10"})
+    entity = EveusCurrentNumber(updater, "32A")
+    _disable_state_writes(entity)
+    asyncio.run(entity.async_set_native_value(20))
+    assert entity.native_value is not None
+
+
+def test_current_number_restore_ignores_unknown_and_unavailable_silently() -> None:
+    import logging
+
+    entity = EveusCurrentNumber(_Updater({}), "16A")
+    _disable_state_writes(entity)
+    entity._last_device_value = None
+
+    logger = logging.getLogger("custom_components.eveus.number")
+    records = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        asyncio.run(entity._async_restore_state(State("number.x", "unknown")))
+        asyncio.run(entity._async_restore_state(State("number.x", "unavailable")))
+    finally:
+        logger.removeHandler(handler)
+
+    assert entity._last_device_value is None
+    assert not any("Could not restore" in r.getMessage() for r in records)
+
+
+def test_current_number_restore_does_not_crash_on_none_state() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "16A")
+    asyncio.run(entity._async_restore_state(None))  # must not raise
+
+
+def test_current_number_restore_boundary_values() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "16A")  # max = 16, READ_MIN = 0.0
+    asyncio.run(entity._async_restore_state(State("number.x", "0")))
+    assert entity._last_device_value == 0.0
+    asyncio.run(entity._async_restore_state(State("number.x", "16")))
+    assert entity._last_device_value == 16.0
+    entity._last_device_value = None
+    asyncio.run(entity._async_restore_state(State("number.x", "16.5")))
+    assert entity._last_device_value is None  # above max, rejected
+
+
+def test_current_number_restore_populates_native_value() -> None:
+    entity = EveusCurrentNumber(_Updater({}), "16A")
+    asyncio.run(entity._async_restore_state(State("number.x", "12")))
+    assert entity.native_value == 12.0

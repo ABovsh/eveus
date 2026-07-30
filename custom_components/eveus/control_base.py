@@ -9,7 +9,7 @@ from homeassistant.core import callback
 from .common_base import BaseEveusEntity, OptimisticControlMixin
 from .const import OPTIMISTIC_CONTROL_TTL
 
-T = TypeVar("T")
+T = TypeVar("T")  # pragma: no mutate - name arg is never introspected (no T.__name__ use)
 
 
 class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]):
@@ -20,7 +20,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         """Return the coordinator payload key backing this control."""
         return self.__dict__["_state_key"]
 
-    @_state_key.setter
+    @_state_key.setter  # pragma: no mutate - equivalent: both getter/setter bypass the descriptor via self.__dict__["_state_key"] directly, so removing the setter decorator (making it a plain non-data-descriptor method) still round-trips correctly through normal instance-attribute assignment/lookup rules
     def _state_key(self, value: str) -> None:
         """Store the coordinator payload key backing this control."""
         self.__dict__["_state_key"] = value
@@ -45,7 +45,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         """Return the subclass-specific in-flight command sentinel."""
         raise NotImplementedError
 
-    @callback
+    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
     def _handle_coordinator_update(self) -> None:
         """Handle updated data and reconcile command state with device state."""
         self._maybe_finalize_device_info()

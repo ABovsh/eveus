@@ -197,6 +197,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # happened across an offline gap stay silent.
         self._event_prev_state: int | None = None
         self._event_prev_payload: dict[str, Any] | None = None
+        self._event_prev_error_code: int | None = None
         self._force_refresh_requests = 0
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
@@ -224,6 +225,20 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _reset_legacy_charging_latch(self) -> None:
         self._legacy_charging_latched = False
         self._legacy_zero_power_polls = 0
+
+    def _forget_poll_gap_state(self) -> None:
+        """Drop the state that is only meaningful between consecutive good polls.
+
+        Transitions observed across a gap must stay silent (see
+        ``_emit_transition_events``) and a stale legacy latch must not resurrect
+        "Charging" afterwards. Every interrupted poll clears this — including an
+        auth rejection, which deliberately skips the connectivity accounting but
+        is just as much a gap in the event stream.
+        """
+        self._reset_legacy_charging_latch()
+        self._event_prev_state = None
+        self._event_prev_payload = None
+        self._event_prev_error_code = None
 
     def _normalize_legacy_device_state(self, data: dict[str, Any]) -> dict[str, Any]:
         """Translate firmware-1.x state codes to their modern equivalents.
@@ -505,12 +520,36 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         previous, prev_payload = self._event_prev_state, self._event_prev_payload
         self._event_prev_state, self._event_prev_payload = state, new_data
-        if previous is None or previous == state or self._shutting_down:
+        if previous is None or self._shutting_down:
+            # First poll after start/offline gap: remember the fault code so a
+            # later code change within a persisting Error state still fires.
+            self._event_prev_error_code = (
+                get_safe_value(new_data, "subState", int)
+                if state == DEVICE_STATE_ERROR
+                else None
+            )
             return
         bus = getattr(self.hass, "bus", None)
         if bus is None:
             return
         base = {"device_number": self.device_number or 1}
+
+        if previous == state:
+            # The charger can stay in Error while firmware reports a NEW fault
+            # code; that escalation must reach HA even without a state change.
+            if state == DEVICE_STATE_ERROR:
+                code = get_safe_value(new_data, "subState", int)
+                if code != self._event_prev_error_code:
+                    self._event_prev_error_code = code
+                    bus.async_fire(
+                        EVENT_ERROR,
+                        {
+                            **base,
+                            "error_code": code,
+                            "error_text": get_error_state(code) if code is not None else None,
+                        },
+                    )
+            return
 
         if state == DEVICE_STATE_CHARGING:
             bus.async_fire(EVENT_CHARGING_STARTED, dict(base))
@@ -539,6 +578,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if state == DEVICE_STATE_ERROR:
             code = get_safe_value(new_data, "subState", int)
+            self._event_prev_error_code = code
             bus.async_fire(
                 EVENT_ERROR,
                 {
@@ -588,11 +628,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
         self._connection_quality_cache = None
-        self._reset_legacy_charging_latch()
-        # Transitions across an offline gap must stay silent (see
-        # _emit_transition_events); forget the last observed state.
-        self._event_prev_state = None
-        self._event_prev_payload = None
+        self._forget_poll_gap_state()
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False
@@ -749,6 +785,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     self._connection_quality_cache = None
                     self._device_available = False
                     self._last_error = "ConfigEntryAuthFailed"
+                    # The event stream still has a hole here: polling stops
+                    # until reauth or a manual refresh, so a transition that
+                    # happens meanwhile must not be reconstructed from the
+                    # pre-401 payload once the charger answers again.
+                    self._forget_poll_gap_state()
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 

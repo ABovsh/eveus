@@ -1,11 +1,13 @@
 """Unit tests for entity construction."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import SimpleNamespace
 
 import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from conftest import TEST_BASE_URL, TEST_HOST, EveusTestUpdater
 from custom_components.eveus import common
@@ -18,9 +20,12 @@ from custom_components.eveus.common_base import (
 )
 from custom_components.eveus.number import EveusCurrentNumber
 from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, SensorSpec, SensorType
+from custom_components.eveus import button as button_mod
 from custom_components.eveus.button import (
+    EveusRefreshButton,
     EveusResetCounterAButton,
     EveusResetCounterBButton,
+    EveusSyncTimeButton,
 )
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
@@ -844,3 +849,824 @@ def test_sensor_base_value_errors_are_rate_limited(monkeypatch: pytest.MonkeyPat
     assert entity._last_error_log == 1000.0
     assert entity._update_native_value() is False
     assert entity._last_error_log == 1400.0
+
+
+def test_sensor_base_value_error_boundary_at_exact_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rate-limit gate is a strict '>' (not '>='): at exactly
+    ERROR_LOG_RATE_LIMIT since the last log, the log must NOT re-fire yet."""
+    from custom_components.eveus.const import ERROR_LOG_RATE_LIMIT
+
+    class BrokenSensor(EveusSensorBase):
+        ENTITY_NAME = "BrokenBoundary"
+
+        def _get_sensor_value(self):
+            raise ValueError("boom")
+
+    entity = BrokenSensor(_Updater())
+    times = iter([1000.0, 1000.0 + ERROR_LOG_RATE_LIMIT])
+    monkeypatch.setattr("custom_components.eveus.common_base.time.time", lambda: next(times))
+
+    entity._update_native_value()
+    assert entity._last_error_log == 1000.0
+    # Second call lands exactly on the boundary: strictly-greater must reject it.
+    entity._update_native_value()
+    assert entity._last_error_log == 1000.0, (
+        "exact-boundary elapsed time must not re-trigger the rate-limited log"
+    )
+
+
+def test_base_entity_construction_defaults_are_exact() -> None:
+    """Pins every literal default set in BaseEveusEntity.__init__ so a flipped
+    constant (has_entity_name, should_poll, initial availability bookkeeping,
+    or the device_number default) is caught even though nothing else in the
+    suite happens to construct with these exact defaults."""
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe Entity"
+
+    entity = Probe(_Updater())  # device_number defaults to 1
+
+    assert entity._attr_has_entity_name is True
+    assert entity._attr_should_poll is False
+    assert entity._last_known_available is True
+    # device_number=1 must produce the un-suffixed unique_id.
+    assert entity.unique_id == "eveus_probe_entity"
+
+
+def test_base_entity_requires_entity_name_exact_message() -> None:
+    """Pins the exact NotImplementedError text (not just the exception type),
+    which the plain `pytest.raises(NotImplementedError)` check elsewhere in
+    this file does not verify."""
+
+    class NamelessEntity(BaseEveusEntity):
+        pass
+
+    with pytest.raises(NotImplementedError, match="^ENTITY_NAME must be defined in child class$"):
+        NamelessEntity(_Updater())
+
+
+def test_suggested_object_id_is_a_property_not_a_bound_method() -> None:
+    """suggested_object_id must be a @property: accessed without calling it,
+    it has to already be the resolved string, not a bound method object."""
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe Suggested Id"
+
+    entity = Probe(_Updater())
+
+    assert entity.suggested_object_id == "Probe Suggested Id"
+    assert isinstance(entity.suggested_object_id, str)
+
+
+def test_sensor_base_own_init_device_number_default() -> None:
+    """EveusSensorBase.__init__ has its own device_number=1 default distinct
+    from BaseEveusEntity's."""
+
+    class Probe(EveusSensorBase):
+        ENTITY_NAME = "Probe Sensor Default"
+
+    entity = Probe(_Updater())  # device_number defaults to 1
+    assert entity.unique_id == "eveus_probe_sensor_default"
+    assert entity._last_error_log == 0.0
+
+
+def test_update_extra_state_attributes_base_default_is_false() -> None:
+    """Base EveusSensorBase._update_extra_state_attributes must report 'no
+    change' by default; a stray True would force a spurious HA write on every
+    single coordinator poll for every sensor that doesn't override it."""
+
+    class Probe(EveusSensorBase):
+        ENTITY_NAME = "Probe No Attrs"
+
+    entity = Probe(_Updater())
+    assert entity._update_extra_state_attributes() is False
+
+
+def test_diagnostic_sensor_base_class_defaults() -> None:
+    """EveusDiagnosticSensor's own class-level defaults (kept for backward
+    compatibility) are otherwise never instantiated/asserted anywhere."""
+    from custom_components.eveus.common_base import EveusDiagnosticSensor
+
+    class Probe(EveusDiagnosticSensor):
+        ENTITY_NAME = "Probe Diagnostic"
+
+    entity = Probe(_Updater())
+    assert entity.entity_category == EntityCategory.DIAGNOSTIC
+    assert entity.icon == "mdi:information"
+
+
+def test_update_native_value_when_unavailable_resets_to_none() -> None:
+    """When the entity goes unavailable, the cached native value must reset to
+    None exactly (not an empty string or other falsy stand-in), and the
+    changed/unchanged return value must reflect a real transition."""
+
+    class Probe(EveusSensorBase):
+        ENTITY_NAME = "Probe Unavailable Value"
+
+        def _get_sensor_value(self):
+            return 42
+
+    entity = Probe(_Updater())
+    entity._entity_available = True
+    assert entity._update_native_value() is True
+    assert entity._attr_native_value == 42
+
+    entity._entity_available = False
+    # Transition available -> unavailable: value actually changes (42 -> None).
+    assert entity._update_native_value() is True
+    assert entity._attr_native_value is None
+
+    # Still unavailable on the next poll: value stays None, so nothing changed.
+    assert entity._update_native_value() is False
+    assert entity._attr_native_value is None
+
+
+def test_write_availability_only_truth_table() -> None:
+    """Covers WriteOnChangeMixin._write_availability_only end to end: it must
+    read the real `available` property, skip the write when unchanged, record
+    the new value, and report True only on an actual transition."""
+
+    class Probe(WriteOnChangeMixin):
+        def __init__(self) -> None:
+            self._available = True
+            self.writes = 0
+            self._init_write_on_change()
+
+        @property
+        def available(self):
+            return self._available
+
+        def async_write_ha_state(self) -> None:
+            self.writes += 1
+
+    entity = Probe()
+
+    # First call: _last_written_available starts None, True != None -> writes.
+    assert entity._write_availability_only() is True
+    assert entity._last_written_available is True
+    assert entity.writes == 1
+
+    # Unchanged availability: must not write again.
+    assert entity._write_availability_only() is False
+    assert entity.writes == 1
+
+    # Real transition: must write again and update bookkeeping.
+    entity._available = False
+    assert entity._write_availability_only() is True
+    assert entity._last_written_available is False
+    assert entity.writes == 2
+
+
+def test_write_on_change_mixin_unset_sentinel_is_not_none() -> None:
+    """The change-detection sentinel must be a dedicated object(), not None:
+    a legitimately-None first value has to still be treated as 'changed' on
+    the very first write."""
+
+    class Writable(WriteOnChangeMixin):
+        available = True
+
+        def __init__(self) -> None:
+            self.writes = 0
+            self._init_write_on_change()
+
+        def async_write_ha_state(self) -> None:
+            self.writes += 1
+
+    entity = Writable()
+    # Pre-align availability bookkeeping so only the value sentinel is under
+    # test: otherwise `available_now == self._last_written_available`
+    # (True == None -> False) would force a "changed" result on the first
+    # call regardless of the sentinel, masking the mutation.
+    entity._last_written_available = True
+
+    # A real value of None must still count as a change on the first call.
+    assert entity._write_if_changed(None) is True
+    assert entity.writes == 1
+    # Same (None) value again: no change.
+    assert entity._write_if_changed(None) is False
+    assert entity.writes == 1
+
+
+def test_preserve_finalized_metadata_requires_both_conditions() -> None:
+    """`merged.get(key) == fallback AND old.get(key) not in (None, fallback)`
+    must be a real AND: a custom (non-fallback) value from the new payload
+    must never be overwritten by old data just because old had something."""
+    from custom_components.eveus.common_base import _preserve_finalized_metadata
+
+    old = {"model": "RealOldModel", "manufacturer": "RealOldMaker"}
+    new = {"model": "CustomModel", "manufacturer": "Eveus"}
+    # model: new value is NOT the fallback -> must survive untouched.
+    # manufacturer: new value IS the fallback -> must be replaced by old's.
+    merged = _preserve_finalized_metadata(old, new)
+
+    assert merged["model"] == "CustomModel"
+    assert merged["manufacturer"] == "RealOldMaker"
+
+
+def test_preserve_finalized_metadata_serial_number_key_is_exact() -> None:
+    """When `new` already carries its own serial_number, it must never be
+    clobbered by `old`'s serial - the guard checks the real 'serial_number'
+    key, not a look-alike."""
+    from custom_components.eveus.common_base import _preserve_finalized_metadata
+
+    old = {"serial_number": "OLD456"}
+    new = {"serial_number": "NEW123"}
+
+    merged = _preserve_finalized_metadata(old, new)
+
+    assert merged["serial_number"] == "NEW123"
+
+
+def test_preserve_finalized_metadata_fills_missing_serial_from_old() -> None:
+    """The complementary path: when `new` has no serial at all, `old`'s must
+    still be carried forward."""
+    from custom_components.eveus.common_base import _preserve_finalized_metadata
+
+    old = {"serial_number": "OLD456"}
+    new = {}
+
+    merged = _preserve_finalized_metadata(old, new)
+
+    assert merged["serial_number"] == "OLD456"
+
+
+def test_build_device_info_uses_updater_scheme_and_fw_fallback() -> None:
+    """_build_device_info must read the real `scheme` and `_init_fw_fallback`
+    attributes off the updater (a mistyped getattr key would silently fall
+    back to hardcoded defaults instead)."""
+
+    class _SchemeUpdater:
+        host = TEST_HOST
+        available = True
+        last_update_success = True
+        scheme = "https"
+        _init_fw_fallback = "GRM-FALLBACK-9.9"
+
+        def __init__(self) -> None:
+            # No verFWMain/firmware in the payload: init_fw_fallback must be
+            # the only source for the module firmware string.
+            self.data = {"verFWWifi": "1PGRW-APP-1.0"}
+
+        def async_add_listener(self, *args: object, **kwargs: object):
+            return lambda: None
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe Device Info"
+
+    entity = Probe(_SchemeUpdater())
+    info = entity._build_device_info()
+
+    assert info["configuration_url"] == f"https://{TEST_HOST}"
+    assert "GRM-FALLBACK-9.9" in info["sw_version"]
+
+
+def test_maybe_finalize_device_info_preserves_real_metadata_over_fallback() -> None:
+    """Integration path for `self._attr_device_info or {}` at the finalize
+    call site: once finalized with real vendor metadata, a later poll that
+    degrades to generic fallback strings must not overwrite the real values
+    (a flipped `or` -> `and` there would pass an empty dict as `old`, losing
+    them)."""
+
+    class _MetaUpdater:
+        host = TEST_HOST
+        available = True
+        last_update_success = True
+        scheme = "http"
+
+        def __init__(self, data: dict) -> None:
+            self.data = data
+
+        def async_add_listener(self, *args: object, **kwargs: object):
+            return lambda: None
+
+    updater = _MetaUpdater(
+        {
+            "verFWMain": "R3.05.2",
+            "verFWWifi": "W1.0",
+            "model": "Eveus 32A Real Model",
+            "manufacturer": "Eveus Real Vendor",
+        }
+    )
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe Metadata Preserve"
+
+    entity = Probe(updater)
+    entity.hass = None  # short-circuits the registry-write half of the method
+    assert entity._device_info_finalized is True
+    assert entity._attr_device_info["model"] == "Eveus 32A Real Model"
+
+    # Next poll degrades to fallback strings (device omitted the fields).
+    updater.data = {"verFWMain": "R3.05.3", "verFWWifi": "W1.0"}
+    entity._maybe_finalize_device_info()
+
+    assert entity._attr_device_info["model"] == "Eveus 32A Real Model"
+    assert entity._attr_device_info["manufacturer"] == "Eveus Real Vendor"
+
+
+def test_device_registry_write_guards_use_exact_finalized_key() -> None:
+    """Both `_device_registry_finalized` getattr guards must key off the real
+    attribute name: the early 'already finalized, unchanged' skip, and the
+    'skip the second entity's write for the same shared updater' skip."""
+    from unittest.mock import MagicMock
+
+    class _RegistryUpdater:
+        host = TEST_HOST
+        available = True
+        last_update_success = True
+        scheme = "http"
+        _device_registry_finalized = False
+
+        def __init__(self, data: dict) -> None:
+            self.data = data
+
+        def async_add_listener(self, *args: object, **kwargs: object):
+            return lambda: None
+
+    updater = _RegistryUpdater({})
+
+    class ProbeA(BaseEveusEntity):
+        ENTITY_NAME = "Probe Registry A"
+
+    class ProbeB(BaseEveusEntity):
+        ENTITY_NAME = "Probe Registry B"
+
+    entities = [ProbeA(updater), ProbeB(updater)]
+    for entity in entities:
+        entity.hass = object()
+
+    registry = MagicMock()
+    registry.async_get_device.return_value = SimpleNamespace(id="device-id")
+    import custom_components.eveus.common_base as common_base_mod
+
+    orig_async_get = common_base_mod.dr.async_get
+    common_base_mod.dr.async_get = lambda hass: registry
+    try:
+        updater.data = {
+            "verFWMain": "R3.05.2",
+            "verFWWifi": "W1.0",
+        }
+        for entity in entities:
+            entity._maybe_finalize_device_info()
+    finally:
+        common_base_mod.dr.async_get = orig_async_get
+
+    # Shared updater: only the FIRST entity's finalize should have written the
+    # registry once the guard flips _device_registry_finalized to True.
+    assert registry.async_update_device.call_count == 1
+    assert updater._device_registry_finalized is True
+
+
+def test_device_registry_finalized_reset_on_metadata_drift() -> None:
+    """After finalization, metadata drift (a real change, e.g. firmware OTA)
+    must reset `_device_registry_finalized` to False so the registry gets one
+    more refresh - and it has to be set to exactly False, not None/True."""
+    from unittest.mock import MagicMock
+
+    class _DriftUpdater:
+        host = TEST_HOST
+        available = True
+        last_update_success = True
+        scheme = "http"
+        _device_registry_finalized = True
+
+        def __init__(self, data: dict) -> None:
+            self.data = data
+
+        def async_add_listener(self, *args: object, **kwargs: object):
+            return lambda: None
+
+    updater = _DriftUpdater(
+        {"verFWMain": "R3.05.2", "verFWWifi": "W1.0"}
+    )
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe Drift"
+
+    entity = Probe(updater)
+    entity.hass = object()
+    assert entity._device_info_finalized is True
+
+    registry = MagicMock()
+    registry.async_get_device.return_value = SimpleNamespace(id="device-id")
+    import custom_components.eveus.common_base as common_base_mod
+
+    orig_async_get = common_base_mod.dr.async_get
+    common_base_mod.dr.async_get = lambda hass: registry
+    try:
+        # Firmware OTA: metadata genuinely drifts after finalization.
+        updater.data = {"verFWMain": "R3.05.9", "verFWWifi": "W1.0"}
+        entity._maybe_finalize_device_info()
+    finally:
+        common_base_mod.dr.async_get = orig_async_get
+
+    # If the reset-to-False assignment were skipped or mutated (True/None),
+    # the write guard right after (`not getattr(..., False)`) would see a
+    # truthy value and skip the registry write entirely.
+    assert registry.async_update_device.call_count == 1
+
+
+def test_optimistic_control_init_exact_initial_values() -> None:
+    """Pins every numeric/None default `_init_optimistic_control` sets, since
+    nothing else in the suite asserts these immediately post-init."""
+
+    control = OptimisticControlMixin()
+    control._init_optimistic_control()
+
+    assert control._optimistic_value_time == 0.0
+    assert control._last_device_value is None
+    assert control._last_successful_read == 0.0
+
+
+def test_reconcile_with_device_default_mismatch_ttl_is_exactly_ten() -> None:
+    """`_reconcile_with_device`'s mismatch_ttl default (10.0) is only ever
+    exercised via the default in production call sites; pin the exact
+    boundary here since nothing overrides it in existing tests."""
+
+    control = OptimisticControlMixin()
+    control._init_optimistic_control()
+    control._set_optimistic_value(5)
+    stamp = control._optimistic_value_time
+
+    # age = 10.5s > the true 10.0 default -> must clear even though confirm_fn
+    # says "not confirmed" and the clock never went backward.
+    control._reconcile_with_device(
+        99,
+        stamp + 10.5,
+        lambda optimistic, device: False,
+    )
+    assert control._optimistic_value is None
+
+
+def test_reconcile_with_device_mismatch_ttl_boundary_is_strict_greater() -> None:
+    """age > mismatch_ttl must be a strict '>': exactly at the ttl, an
+    unconfirmed-but-still-within-window optimistic value must survive."""
+
+    control = OptimisticControlMixin()
+    control._init_optimistic_control()
+    control._set_optimistic_value(5)
+    stamp = control._optimistic_value_time
+
+    control._reconcile_with_device(
+        99,
+        stamp + 10.0,  # age == mismatch_ttl exactly
+        lambda optimistic, device: False,
+        mismatch_ttl=10.0,
+    )
+    assert control._optimistic_value == 5
+
+
+def test_reconcile_with_device_backward_clock_boundary_is_strict_less_than() -> None:
+    """age < 0 must be a strict '<': age == 0 exactly (no clock movement) must
+    NOT be treated as a backward-clock invalidation."""
+
+    control = OptimisticControlMixin()
+    control._init_optimistic_control()
+    control._set_optimistic_value(5)
+    stamp = control._optimistic_value_time
+
+    control._reconcile_with_device(
+        99,
+        stamp,  # age == 0 exactly
+        lambda optimistic, device: False,
+        mismatch_ttl=1000.0,
+    )
+    assert control._optimistic_value == 5
+
+
+def test_optimistic_value_valid_boundary_age_zero_is_valid() -> None:
+    """`0 <= age < ttl`: age == 0 exactly must be valid (the left bound is
+    inclusive)."""
+
+    control = OptimisticControlMixin()
+    control._init_optimistic_control()
+    control._set_optimistic_value(5)
+    stamp = control._optimistic_value_time
+
+    assert control._optimistic_value_is_valid(stamp, 10.0) is True
+
+
+def test_optimistic_value_valid_boundary_age_equals_ttl_is_invalid() -> None:
+    """`0 <= age < ttl`: age == ttl exactly must already be expired (the right
+    bound is exclusive)."""
+
+    control = OptimisticControlMixin()
+    control._init_optimistic_control()
+    control._set_optimistic_value(5)
+    stamp = control._optimistic_value_time
+
+    assert control._optimistic_value_is_valid(stamp + 10.0, 10.0) is False
+
+
+def test_expire_optimistic_value_boundary_age_zero_survives() -> None:
+    """The expiry guard mirrors the validity check: age == 0 exactly must NOT
+    be expired."""
+
+    control = OptimisticControlMixin()
+    control._init_optimistic_control()
+    control._set_optimistic_value(5)
+    stamp = control._optimistic_value_time
+
+    control._expire_optimistic_value(stamp, 10.0)
+    assert control._optimistic_value == 5
+
+
+def test_expire_optimistic_value_boundary_age_equals_ttl_expires() -> None:
+    """age == ttl exactly must expire (mirrors the exclusive right bound in
+    the validity check)."""
+
+    control = OptimisticControlMixin()
+    control._init_optimistic_control()
+    control._set_optimistic_value(5)
+    stamp = control._optimistic_value_time
+
+    control._expire_optimistic_value(stamp + 10.0, 10.0)
+    assert control._optimistic_value is None
+
+
+# ---------------------------------------------------------------------------
+# binary_sensor.py mutation-hardening gaps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "state,expected",
+    [
+        (3, True),
+        (5, True),
+        (6, True),
+    ],
+)
+def test_car_connected_binary_sensor_covers_full_connected_states(
+    state: int,
+    expected: bool,
+) -> None:
+    """Every member of _CONNECTED_STATES (3,4,5,6) must independently make
+    Car Connected report True; the existing truth-table test only exercised
+    state=4, leaving 3/5/6 free for a shrunk-set mutant to survive."""
+    entity = _make_binary_sensor("Car Connected", {"state": state})
+    assert entity.is_on is expected
+
+
+def test_binary_description_is_frozen_and_kw_only() -> None:
+    """EveusBinaryDescription must reject attribute mutation (frozen=True)
+    and positional construction (kw_only=True)."""
+    import dataclasses
+
+    description = next(
+        item for item in binary_sensor_mod.BINARY_SENSORS if item.name == "Car Connected"
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        description.name = "Mutated"
+
+    with pytest.raises(TypeError):
+        binary_sensor_mod.EveusBinaryDescription(
+            "Car Connected",
+            BinarySensorDeviceClass.PLUG,
+            "mdi:ev-plug-type2",
+            lambda data: None,
+        )
+
+
+def test_module_description_constants_point_at_the_right_tuple_slots() -> None:
+    """_CAR_CONNECTED_DESCRIPTION/_SESSION_ACTIVE_DESCRIPTION/
+    _OCPP_CONNECTED_DESCRIPTION must each resolve to their own named
+    BINARY_SENSORS entry - verified through the actual backward-compatible
+    subclasses (EveusCarConnectedBinarySensor etc.), which are the only
+    thing in the codebase that dereferences these module constants."""
+    assert binary_sensor_mod._CAR_CONNECTED_DESCRIPTION.name == "Car Connected"
+    assert binary_sensor_mod._SESSION_ACTIVE_DESCRIPTION.name == "Session Active"
+    assert binary_sensor_mod._OCPP_CONNECTED_DESCRIPTION.name == "OCPP Connected"
+
+
+@pytest.mark.parametrize(
+    "class_name,expected_device_class,expected_icon,expected_category,expected_is_on_data",
+    [
+        (
+            "EveusCarConnectedBinarySensor",
+            BinarySensorDeviceClass.PLUG,
+            "mdi:ev-plug-type2",
+            None,
+            ({"state": 4}, True),
+        ),
+        (
+            "EveusSessionActiveBinarySensor",
+            BinarySensorDeviceClass.RUNNING,
+            "mdi:ev-station",
+            None,
+            ({"state": next(iter(SESSION_ACTIVE_STATES))}, True),
+        ),
+        (
+            "EveusOcppConnectedBinarySensor",
+            BinarySensorDeviceClass.CONNECTIVITY,
+            "mdi:cloud-check",
+            EntityCategory.DIAGNOSTIC,
+            ({"ocppconnected": 1}, True),
+        ),
+    ],
+)
+def test_backward_compatible_binary_sensor_subclasses_wire_correct_description(
+    class_name: str,
+    expected_device_class: BinarySensorDeviceClass,
+    expected_icon: str,
+    expected_category: EntityCategory | None,
+    expected_is_on_data: tuple[dict, bool | None],
+) -> None:
+    """Directly instantiate each backward-compatible subclass (bypassing the
+    description-driven helper) to pin its own class-level metadata AND that
+    it was wired to the correctly-named module-level description constant
+    (a wrong index there would silently swap in another sensor's is_on_fn)."""
+    updater = EveusTestUpdater({})
+    entity = getattr(binary_sensor_mod, class_name)(updater)
+    entity._entity_available = True
+
+    assert entity.device_class == expected_device_class
+    assert entity.icon == expected_icon
+    assert entity.entity_category == expected_category
+
+    data, expected_is_on = expected_is_on_data
+    updater.data = data
+    assert entity.is_on is expected_is_on
+
+
+def test_binary_sensor_base_device_number_default_is_one() -> None:
+    """EveusBinarySensor.__init__'s own device_number default (distinct from
+    BaseEveusEntity's) must be 1, producing an un-suffixed unique_id."""
+    description = next(
+        item for item in binary_sensor_mod.BINARY_SENSORS if item.name == "Car Connected"
+    )
+    entity = binary_sensor_mod.EveusBinarySensor(EveusTestUpdater({}), description)
+    assert entity.unique_id == "eveus_car_connected"
+
+
+@pytest.mark.parametrize(
+    "class_name,expected_unique_id",
+    [
+        ("EveusCarConnectedBinarySensor", "eveus_car_connected"),
+        ("EveusSessionActiveBinarySensor", "eveus_session_active"),
+        ("EveusOcppConnectedBinarySensor", "eveus_ocpp_connected"),
+    ],
+)
+def test_backward_compatible_binary_sensor_subclass_device_number_default_is_one(
+    class_name: str, expected_unique_id: str
+) -> None:
+    entity = getattr(binary_sensor_mod, class_name)(EveusTestUpdater({}))
+    assert entity.unique_id == expected_unique_id
+
+
+def test_binary_sensor_setup_entry_wires_updater_and_device_number() -> None:
+    """async_setup_entry must forward the real updater/device_number from
+    runtime_data - not silently pass None through."""
+    updater = EveusTestUpdater({"state": 4, "ocppconnected": 1})
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(updater=updater, device_number=2)
+    )
+    added: list[object] = []
+
+    asyncio.run(
+        binary_sensor_mod.async_setup_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert len(added) == 3
+    assert {entity.ENTITY_NAME for entity in added} == {
+        "Car Connected",
+        "Session Active",
+        "OCPP Connected",
+    }
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_car_connected",
+        "eveus2_session_active",
+        "eveus2_ocpp_connected",
+    }
+    for entity in added:
+        assert entity._updater is updater
+
+
+# ---------------------------------------------------------------------------
+# button.py mutation-hardening gaps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "entity_factory,name,icon,category",
+    [
+        (lambda u: EveusRefreshButton(u), "Force Refresh", "mdi:refresh", EntityCategory.CONFIG),
+        (
+            lambda u: EveusResetCounterAButton(u),
+            "Reset Counter A",
+            "mdi:refresh-circle",
+            EntityCategory.CONFIG,
+        ),
+        (
+            lambda u: EveusResetCounterBButton(u),
+            "Reset Counter B",
+            "mdi:refresh-circle",
+            EntityCategory.CONFIG,
+        ),
+        (
+            lambda u: EveusSyncTimeButton(u),
+            "Sync Time",
+            "mdi:clock-check-outline",
+            EntityCategory.CONFIG,
+        ),
+    ],
+)
+def test_button_metadata_is_exact(entity_factory, name, icon, category) -> None:
+    entity = entity_factory(EveusTestUpdater({}))
+
+    assert entity.ENTITY_NAME == name
+    assert entity.icon == icon
+    assert entity.entity_category == category
+
+
+def test_reset_counter_button_command_names_are_exact() -> None:
+    assert EveusResetCounterAButton._command == "rstEM1"
+    assert EveusResetCounterBButton._command == "rstEM2"
+
+
+def test_reset_counter_button_uses_a_real_asyncio_lock() -> None:
+    entity = EveusResetCounterAButton(EveusTestUpdater({}))
+    assert isinstance(entity._reset_lock, asyncio.Lock)
+
+
+def test_refresh_button_available_is_always_true_property() -> None:
+    """Pins both that `available` is a real @property (not a plain method
+    object) and that it evaluates to exactly True."""
+    entity = EveusRefreshButton(EveusTestUpdater({}))
+    assert entity.available is True
+
+
+def test_refresh_button_raises_exact_message_on_failed_poll() -> None:
+    """A wrapped-string mutation on the error text would still satisfy a
+    loose substring match, so assert full equality."""
+    updater = EveusTestUpdater({})
+
+    async def fake_force_refresh() -> None:
+        return None
+
+    updater.async_force_refresh = fake_force_refresh
+    updater.last_update_success = False
+    entity = EveusRefreshButton(updater)
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        asyncio.run(entity.async_press())
+
+    assert str(exc_info.value) == "Eveus refresh failed: the charger did not respond"
+
+
+def test_reset_counter_button_sends_exact_command_value_and_no_retry() -> None:
+    """Reset must be a single-shot command: value=0, retry=False -- a retried
+    or non-zero-value reset would resend/misfire the reset differently."""
+    updater = EveusTestUpdater({})
+    entity = EveusResetCounterAButton(updater)
+    entity.async_write_ha_state = lambda: None
+
+    asyncio.run(entity.async_press())
+
+    assert updater.commands == [("rstEM1", 0)]
+    assert updater.last_retry is False
+
+
+def test_reset_counter_button_raises_exact_message_on_command_failure() -> None:
+    updater = EveusTestUpdater({})
+    updater.command_result = False
+    entity = EveusResetCounterAButton(updater)
+    entity.async_write_ha_state = lambda: None
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        asyncio.run(entity.async_press())
+
+    assert str(exc_info.value) == (
+        f"Eveus charger did not accept '{entity.name}' reset command"
+    )
+
+
+def test_button_setup_entry_wires_runtime_data_through() -> None:
+    updater = EveusTestUpdater({})
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(updater=updater, device_number=2)
+    )
+    added: list[object] = []
+
+    asyncio.run(
+        button_mod.async_setup_entry(
+            object(),
+            entry,
+            lambda entities: added.extend(entities),
+        )
+    )
+
+    assert {entity.unique_id for entity in added} == {
+        "eveus2_force_refresh",
+        "eveus2_reset_counter_a",
+        "eveus2_reset_counter_b",
+        "eveus2_sync_time",
+    }
+    for entity in added:
+        assert entity._updater is updater

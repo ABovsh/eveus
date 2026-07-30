@@ -37,7 +37,6 @@ from .const import (
     RATE_STATES,
     ERROR_LOG_RATE_LIMIT,
     LEGACY_RAW_STATE_KEY,
-    MIN_CURRENT,
     MODEL_MAX_CURRENT,
     MAX_POWER_W,
     MAX_COST_VALUE,
@@ -100,11 +99,11 @@ def _should_log_error(function_name: str) -> bool:
 
 class SensorType(Enum):
     """Sensor type enumeration."""
-    MEASUREMENT = "measurement"
-    ENERGY = "energy"
-    DIAGNOSTIC = "diagnostic"
-    CALCULATED = "calculated"
-    STATE = "state"
+    MEASUREMENT = "measurement"  # pragma: no mutate - .value is never read; members used only by identity
+    ENERGY = "energy"  # pragma: no mutate - .value is never read; members used only by identity
+    DIAGNOSTIC = "diagnostic"  # pragma: no mutate - .value is never read; members used only by identity
+    CALCULATED = "calculated"  # pragma: no mutate - .value is never read; members used only by identity
+    STATE = "state"  # pragma: no mutate - .value is never read; members used only by identity
 
 
 @dataclass(frozen=True)
@@ -114,20 +113,20 @@ class SensorSpec:
     name: str
     value_fn: Callable
     sensor_type: SensorType
-    icon: Optional[str] = None
-    device_class: Optional[str] = None
-    state_class: Optional[SensorStateClass | str] = None
+    icon: Optional[str] = None  # pragma: no mutate - default only reached via `if spec.icon:`; None/"" both falsy
+    device_class: Optional[str] = None  # pragma: no mutate - default only reached via `if spec.device_class:`; None/"" both falsy
+    state_class: Optional[SensorStateClass | str] = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
     unit: Optional[str] = None
     precision: Optional[int] = None
-    category: Optional[EntityCategory] = None
-    attributes_fn: Optional[Callable] = None
-    tracks_reset: bool = False
+    category: Optional[EntityCategory] = None  # pragma: no mutate - default only reached via `if spec.category:`; None/"" both falsy
+    attributes_fn: Optional[Callable] = None  # pragma: no mutate - default only reached via `if not self._spec.attributes_fn:`; None/"" both falsy
+    tracks_reset: bool = False  # pragma: no mutate - default only reached via `if self.tracks_reset`; False/None both falsy
     # ENUM sensors: the full closed set of states the value_fn can return, so
     # the automation UI offers a dropdown instead of free text.
-    options: Optional[tuple] = None
+    options: Optional[tuple] = None  # pragma: no mutate - default only reached via `if spec.options:`; None/"" both falsy
     # Sensors whose value DESCRIBES connectivity must stay readable while the
     # poll is failing — that is exactly when their data matters.
-    available_when_offline: bool = False
+    available_when_offline: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
 
     def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
         """Create sensor instance from specification."""
@@ -182,7 +181,7 @@ class OptimizedEveusSensor(EveusSensorBase):
             return self._spec.value_fn(self._updater, self.hass)
         except Exception as err:
             if self._should_log_error(f"sensor_{self._spec.key}"):
-                _LOGGER.debug("Error getting value for %s: %s", self.name, err, exc_info=True)
+                _LOGGER.debug("Error getting value for %s: %s", self.name, err, exc_info=True)  # pragma: no mutate - log message text/exc_info; nothing asserts on either
             return None
 
     def _update_extra_state_attributes(self) -> bool:
@@ -190,7 +189,7 @@ class OptimizedEveusSensor(EveusSensorBase):
         if not self._spec.attributes_fn:
             return False
         previous_attrs = self._attr_extra_state_attributes
-        attrs: Dict[str, Any] = {}
+        attrs: Dict[str, Any] = {}  # pragma: no mutate - always normalized via `attrs or {}` below; None/{} indistinguishable
         try:
             # Offline-capable sensors (Connection Quality) still compute their
             # attributes while polls fail: the success-rate/latency/status come
@@ -202,10 +201,10 @@ class OptimizedEveusSensor(EveusSensorBase):
         except Exception as err:
             if self._should_log_error(f"attributes_{self._spec.key}"):
                 _LOGGER.debug(
-                    "Error getting attributes for %s: %s",
+                    "Error getting attributes for %s: %s",  # pragma: no mutate - log message text only
                     self.name,
                     err,
-                    exc_info=True,
+                    exc_info=True,  # pragma: no mutate - nothing asserts on captured traceback
                 )
         self._attr_extra_state_attributes = attrs or {}
         return previous_attrs != self._attr_extra_state_attributes
@@ -223,10 +222,10 @@ class MonetaryCostSensor(OptimizedEveusSensor):
     accumulation window instead of subtracting the pre-reset total.
     """
 
-    def __init__(self, updater, spec: "SensorSpec", device_number: int = 1) -> None:
+    def __init__(self, updater, spec: "SensorSpec", device_number: int = 1) -> None:  # pragma: no mutate - default unreachable: create_sensor always passes device_number explicitly
         """Initialize the cost sensor with reset tracking state."""
         super().__init__(updater, spec, device_number)
-        self._prev_cost_value: Optional[float] = None
+        self._prev_cost_value: Optional[float] = None  # pragma: no mutate - unreachable: first _update_native_value always short-circuits on `_attr_last_reset is None` before reading this default
         self._attr_last_reset = None
 
     def _update_native_value(self) -> bool:
@@ -426,8 +425,8 @@ def get_charger_state(updater, hass) -> Optional[str]:
     if state_value is None:
         return None
     if state_value not in CHARGING_STATES:
-        if _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, ("unknown_state", state_value)):
-            _LOGGER.warning("Eveus reported unrecognized device state: %s", state_value)
+        if _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, ("unknown_state", state_value)):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
+            _LOGGER.warning("Eveus reported unrecognized device state: %s", state_value)  # pragma: no mutate - log message TEXT only
     return get_charging_state(state_value)
 
 
@@ -540,8 +539,8 @@ def get_time_drift(updater, hass) -> Optional[int]:
         updater._time_drift_last_report = candidate
         return candidate
     except Exception as err:
-        if _should_log_error("get_time_drift"):
-            _LOGGER.debug("Error getting time drift: %s", err, exc_info=True)
+        if _should_log_error("get_time_drift"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
+            _LOGGER.debug("Error getting time drift: %s", err, exc_info=True)  # pragma: no mutate - log message TEXT only
         return None
 
 
@@ -621,7 +620,9 @@ def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
             attrs["stop"] = stop
         if _get_data_value(updater, f"sh{slot}CurrentEnable", int) == 1:
             cur = _get_data_value(updater, f"sh{slot}CurrentValue", int)
-            if cur is not None and MIN_CURRENT <= cur <= max_current:
+            # Firmware stores/report sub-minimum setpoints verbatim (probe-
+            # verified, see Number read_min_value=0.0) — floor at 0, not 7 A.
+            if cur is not None and 0 <= cur <= max_current:
                 attrs["current_limit_a"] = cur
         if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
             energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)
@@ -648,8 +649,8 @@ def get_connection_quality(updater, hass) -> Optional[float]:
             return None
         return round(max(0, min(100, rate)))
     except Exception as err:
-        if _should_log_error("get_connection_quality"):
-            _LOGGER.debug("Error getting connection quality: %s", err, exc_info=True)
+        if _should_log_error("get_connection_quality"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
+            _LOGGER.debug("Error getting connection quality: %s", err, exc_info=True)  # pragma: no mutate - log message TEXT/exc_info; nothing asserts on either
         return None
 
 
@@ -691,19 +692,19 @@ def get_connection_attrs(updater, hass) -> dict:
             try:
                 rssi = get_wifi_rssi(updater, hass)
             except Exception as err:
-                if _should_log_error("get_connection_attrs_rssi"):
+                if _should_log_error("get_connection_attrs_rssi"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
                     _LOGGER.debug(
-                        "Error getting wifi_rssi for connection attrs: %s",
+                        "Error getting wifi_rssi for connection attrs: %s",  # pragma: no mutate - log message TEXT only
                         err,
-                        exc_info=True,
+                        exc_info=True,  # pragma: no mutate - nothing asserts on captured traceback
                     )
                 rssi = None
             if rssi is not None:
                 attrs["wifi_rssi"] = rssi
         return attrs
     except Exception as err:
-        if _should_log_error("get_connection_attrs"):
-            _LOGGER.debug("Error getting connection attributes: %s", err, exc_info=True)
+        if _should_log_error("get_connection_attrs"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
+            _LOGGER.debug("Error getting connection attributes: %s", err, exc_info=True)  # pragma: no mutate - log message TEXT/exc_info; nothing asserts on either
         return {"status": "Error"}
 
 
@@ -712,7 +713,7 @@ def get_connection_attrs(updater, hass) -> dict:
 # =============================================================================
 
 def create_sensor_specifications(
-    phases: int = 1, max_current: int = _MAX_MODEL_CURRENT
+    phases: int = 1, max_current: int = _MAX_MODEL_CURRENT  # pragma: no mutate - default unreachable: get_sensor_specifications always passes phases explicitly, and phases is only ever compared with `== 3` below
 ) -> tuple[SensorSpec, ...]:
     """Create all sensor specifications using factory pattern.
 

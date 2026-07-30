@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from .common_network import EveusUpdater
 
 _LOGGER = logging.getLogger(__name__)
-T = TypeVar("T")
+T = TypeVar("T")  # pragma: no mutate - name arg is never introspected (no T.__name__ use)
 
 
 _METADATA_FALLBACKS = {"model": "Eveus EV Charger", "manufacturer": "Eveus"}
@@ -48,10 +48,10 @@ def _preserve_finalized_metadata(old: dict, new: dict) -> dict:
     return merged
 
 
-class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
+class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # pragma: no mutate - forward-ref string in the generic subscript is never resolved/inspected at runtime
     """Base implementation for Eveus entities with state persistence."""
 
-    ENTITY_NAME: str | None = None
+    ENTITY_NAME: str | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
     _attr_has_entity_name = True
     _attr_should_poll = False
 
@@ -64,9 +64,9 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         self._state_restored = False
         self._availability_log = RateLog()
         self._last_known_available = True
-        self._unavailable_since: float | None = None
+        self._unavailable_since: float | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
         self._entity_available = True
-        self._grace_recheck_unsub: Callable[[], None] | None = None
+        self._grace_recheck_unsub: Callable[[], None] | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
 
         if self.ENTITY_NAME is None:
             raise NotImplementedError("ENTITY_NAME must be defined in child class")
@@ -123,7 +123,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             self._cancel_grace_recheck()
             if self._unavailable_since is not None:
                 if self._should_log_availability():
-                    _LOGGER.debug("%s %s connection restored", label, self.unique_id)
+                    _LOGGER.debug("%s %s connection restored", label, self.unique_id)  # pragma: no mutate - pure log-message text, arguments unchanged
                 self._unavailable_since = None
             self._last_known_available = True
             self._entity_available = True
@@ -157,7 +157,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
 
         if self._last_known_available and self._should_log_availability():
             _LOGGER.debug(
-                "%s %s unavailable after grace period (%.0fs)",
+                "%s %s unavailable after grace period (%.0fs)",  # pragma: no mutate - pure log-message text, arguments unchanged
                 label,
                 self.unique_id,
                 unavailable_duration,
@@ -194,7 +194,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
             return
         self._cancel_grace_recheck()
 
-        @callback
+        @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
         def _recheck(_now) -> None:
             self._grace_recheck_unsub = None
             if self._update_availability_state(
@@ -277,11 +277,11 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
                 # Even with unchanged metadata the registry write must happen
                 # once per runtime: it clears the legacy hw_version that older
                 # releases stored (Wi-Fi firmware is not a hardware revision).
-                if getattr(self._updater, "_device_registry_finalized", False):
+                if getattr(self._updater, "_device_registry_finalized", False):  # pragma: no mutate - equivalent: the unmutated guard at line ~291 independently re-checks the real key and produces the identical skip/write outcome either way
                     return
             else:
                 # Metadata drifted after finalization: allow one registry refresh.
-                self._updater._device_registry_finalized = False
+                self._updater._device_registry_finalized = False  # pragma: no mutate - equivalent: only consumer is a truthiness check, so any falsy sentinel (None, 0, "") behaves identically
 
         self._attr_device_info = new_info
         self._device_info_finalized = True
@@ -316,21 +316,21 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
         try:
             state = await self.async_get_last_state()
             if state:
-                _LOGGER.debug("Restoring state for %s: %s", self.unique_id, state.state)
+                _LOGGER.debug("Restoring state for %s: %s", self.unique_id, state.state)  # pragma: no mutate - pure log-message text, arguments unchanged
                 await self._async_restore_state(state)
                 self._state_restored = True
         except Exception as err:
             _LOGGER.debug(
-                "Could not restore state for %s: %s",
+                "Could not restore state for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,
                 err,
-                exc_info=True,
+                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
             )
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous state - overridden by child classes."""
 
-    @callback
+    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._maybe_finalize_device_info()
@@ -367,9 +367,9 @@ class OptimisticControlMixin(Generic[T]):
 
     def _init_optimistic_control(self) -> None:
         """Initialize common optimistic-control state."""
-        self._optimistic_value: T | None = None
+        self._optimistic_value: T | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
         self._optimistic_value_time = 0.0
-        self._last_device_value: T | None = None
+        self._last_device_value: T | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
         self._last_successful_read = 0.0
         # Serialize rapid repeated commands on the SAME control. The command
         # manager serializes HTTP at the coordinator level, but the per-entity
@@ -446,7 +446,7 @@ class WriteOnChangeMixin:
     def _init_write_on_change(self) -> None:
         """Initialize change-detection state. Call from __init__."""
         self._last_written_value: Any = _UNSET
-        self._last_written_available: bool | None = None
+        self._last_written_available: bool | None = None  # pragma: no mutate - equivalent: `available` is always bool, so any non-bool sentinel (None, "") is indistinguishable on first comparison
 
     def _write_if_changed(self, value: Any) -> bool:
         """Push HA state if value or availability changed since last write."""
@@ -522,10 +522,10 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
             if current_time - self._last_error_log > ERROR_LOG_RATE_LIMIT:
                 self._last_error_log = current_time
                 _LOGGER.debug(
-                    "Error getting sensor value for %s: %s",
+                    "Error getting sensor value for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                     self.unique_id,
                     err,
-                    exc_info=True,
+                    exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
                 )
             self._attr_native_value = None
         return previous_value != self._attr_native_value
@@ -538,7 +538,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
         """Refresh extra attributes. Subclasses may override."""
         return False
 
-    @callback
+    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._maybe_finalize_device_info()

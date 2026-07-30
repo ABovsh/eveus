@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.19.0 - 2026-07-30
+
+### 🐛 Fixed
+- **A new fault while the charger stays in the Error state now fires `eveus_error` again.** Previously only the first fault that put the charger into Error was reported; a different fault code appearing on a later poll was silently dropped, so automations never saw the escalated error. The same fault code repeating does not re-fire.
+- **The Schedule 1/2 sensor's `current_limit_a` attribute now shows schedule current limits below 7 A** (set on the charger itself), matching the schedule current number entities fixed in 4.18.1.
+- **A device trigger no longer crashes when the stored device number is corrupted.** A malformed config-entry value could raise an unhandled error while resolving triggers during setup retry; it's now treated as unreadable like any other bad value.
+- **Last Session Cost is now recognized as a monetary sensor**, matching the other cost sensors, so the frontend applies currency formatting/semantics to it.
+- **A charging session that ends while the charger is rejecting credentials is no longer reported with stale numbers.** If the charger refused the integration's login for a poll and then accepted it again, the session that finished in between could be recorded using readings taken before the refusal, leaving the Last Session sensors permanently wrong until the next session. Such a gap is now treated like any other connection gap and stays silent.
+- **Re-entering charger credentials now explains itself when another setup for the same charger is already open**, instead of failing with a generic "Unexpected error".
+- **Car Connected, Session Active, and OCPP Connected no longer keep showing their last value while the charger is unreachable.** Every other sensor blanks out on the first failed poll, so for up to a minute these three could still report a plugged-in car or a running session while the State sensor already read unknown. They now blank out together with the rest.
+
 ## 4.18.1 - 2026-07-14
 
 ### 🐛 Fixed

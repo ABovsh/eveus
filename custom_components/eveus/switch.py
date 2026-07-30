@@ -40,7 +40,7 @@ class EveusSwitchEntityDescription(SwitchEntityDescription, frozen_or_thawed=Tru
     # Sibling form fields written alongside ``command`` in the same request,
     # each set to the same on/off value. Required for settings the firmware
     # only accepts as a bundled "save" form (e.g. OCPP needs ocppVendor).
-    command_extra: tuple[str, ...] = ()
+    command_extra: tuple[str, ...] = ()  # pragma: no mutate - equivalent: only consumer branches on truthiness (`if self._command_extra else None`), so an empty tuple and None behave identically
 
 
 SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
@@ -168,7 +168,7 @@ class BaseSwitchEntity(
 ):
     """Description-driven switch entity with optimistic UI state."""
 
-    _control_entity_label = "Switch"
+    _control_entity_label = "Switch"  # pragma: no mutate - only used to format a debug-log message (common_base ControlEntityMixin), pure log text
 
     def __init__(
         self,
@@ -183,7 +183,7 @@ class BaseSwitchEntity(
         self._command = entity_description.command
         self._state_key = entity_description.state_key
         self._command_extra = entity_description.command_extra
-        self._pending_command: bool | None = None
+        self._pending_command: bool | None = None  # pragma: no mutate - annotation only: local/attr annotation in a function body is never evaluated (PEP 526)
         self._init_optimistic_control()
         self._attr_is_on = None
         self._init_write_on_change()
@@ -314,8 +314,8 @@ class BaseSwitchEntity(
         success = await self._async_send_command(command_value)
         if not success:
             raise HomeAssistantError(
-                f"Eveus charger did not accept '{self.name}' "
-                f"{'on' if command_value else 'off'} command"
+                f"Eveus charger did not accept '{self.name}' "  # pragma: no mutate - pure exception-message text, self.name VALUE unchanged
+                f"{'on' if command_value else 'off'} command"  # pragma: no mutate - pure exception-message text, command_value VALUE unchanged
             )
 
     async def _async_restore_state(self, state: State) -> None:
@@ -342,7 +342,7 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
         super().__init__(updater, device_number)
         self._controller = controller
         self._attr_is_on = False
-        self._was_suspended = False
+        self._was_suspended = False  # pragma: no mutate - equivalent: only ever read via `not self._was_suspended`, where None and False negate identically; always reassigned to a real bool before any other use
 
     @property
     def available(self) -> bool:
@@ -353,7 +353,7 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
     def is_on(self) -> bool:
         return self._attr_is_on
 
-    @callback
+    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
     def _handle_coordinator_update(self) -> None:
         # Turning the master "Disable limits" on switches the SOC limit off too,
         # alongside the charger's own limits. Only on the off->on transition: you

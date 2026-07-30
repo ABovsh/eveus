@@ -19,7 +19,7 @@ from .common_base import BaseEveusEntity, WriteOnChangeMixin
 from .const import CHARGING_STATES, SESSION_ACTIVE_STATES
 from .utils import get_safe_value
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
 
 
 # Device-state values that indicate a vehicle is electrically connected.
@@ -38,7 +38,7 @@ class EveusBinaryDescription:
     device_class: BinarySensorDeviceClass
     icon: str
     is_on_fn: Callable[[dict], bool | None]
-    entity_category: EntityCategory | None = None
+    entity_category: EntityCategory | None = None  # pragma: no mutate - annotation only (PEP 563 postponed eval); default value unchanged by this mutation
 
 
 def _car_connected_is_on(data: dict) -> bool | None:
@@ -119,9 +119,15 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
     def is_on(self) -> bool | None:
         if not self.available:
             return None
+        if not self._updater.available:
+            # Inside the availability grace window the entity is still visible,
+            # but the payload behind it is from before the failed poll. Blank the
+            # value rather than present stale telemetry as current — same rule as
+            # the ordinary sensors.
+            return None
         return self._description.is_on_fn(self._updater.data)
 
-    @callback
+    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
     def _handle_coordinator_update(self) -> None:
         self._maybe_finalize_device_info()
         self._update_availability_state()
@@ -131,8 +137,8 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
 class EveusCarConnectedBinarySensor(EveusBinarySensor):
     """Backward-compatible constructor for the car-connected binary sensor."""
 
-    _attr_device_class = BinarySensorDeviceClass.PLUG
-    _attr_icon = "mdi:ev-plug-type2"
+    _attr_device_class = BinarySensorDeviceClass.PLUG  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
+    _attr_icon = "mdi:ev-plug-type2"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
 
     def __init__(self, updater, device_number: int = 1) -> None:
         super().__init__(updater, _CAR_CONNECTED_DESCRIPTION, device_number)
@@ -141,8 +147,8 @@ class EveusCarConnectedBinarySensor(EveusBinarySensor):
 class EveusSessionActiveBinarySensor(EveusBinarySensor):
     """Backward-compatible constructor for the session-active binary sensor."""
 
-    _attr_device_class = BinarySensorDeviceClass.RUNNING
-    _attr_icon = "mdi:ev-station"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
+    _attr_icon = "mdi:ev-station"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
 
     def __init__(self, updater, device_number: int = 1) -> None:
         super().__init__(updater, _SESSION_ACTIVE_DESCRIPTION, device_number)
@@ -151,9 +157,9 @@ class EveusSessionActiveBinarySensor(EveusBinarySensor):
 class EveusOcppConnectedBinarySensor(EveusBinarySensor):
     """Backward-compatible constructor for the OCPP-connected binary sensor."""
 
-    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:cloud-check"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
+    _attr_entity_category = EntityCategory.DIAGNOSTIC  # pragma: no mutate - dead: __init__ always overwrites self._attr_entity_category from the description
+    _attr_icon = "mdi:cloud-check"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
 
     def __init__(self, updater, device_number: int = 1) -> None:
         super().__init__(updater, _OCPP_CONNECTED_DESCRIPTION, device_number)

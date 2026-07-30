@@ -857,3 +857,749 @@ def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:
     online_attrs = sd.get_connection_attrs(online, None)
     assert online_attrs["status"] == "Excellent"
     assert online_attrs["wifi_rssi"] == -50
+
+
+# --- Mutation-triage additions below (coordinator survivor closure) ---
+
+
+def test_module_level_tuning_constants_have_expected_values() -> None:
+    """A single value-equality check kills every arithmetic mutation of these
+    module-level tuning constants at once (cheaper than one test per mutant)."""
+    assert common_network.POST_COMMAND_REFRESH_DELAYS == (3, 10, 20)
+    assert common_network.TRANSITION_BURST_MIN_GAP == 30.0
+    assert common_network._MAX_OFFLINE_BACKOFF == 30
+    assert common_network._LEGACY_IDLE_STATE == 20
+    assert common_network._LEGACY_CHARGING_CANDIDATE_STATE == 3
+    assert common_network._LEGACY_PAUSE_GRACE_POLLS == 2
+
+
+def test_updater_initial_state_defaults() -> None:
+    """One assertion block kills every constructor default-value mutation at
+    once: each field's real initial value, checked directly on a fresh instance."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    assert updater.device_number is None
+    assert updater._poll_results.maxlen == 20
+    assert updater._last_success_time == 0.0
+    assert updater._last_success_monotonic == 0.0
+    assert updater._latency_samples.maxlen == 10
+    assert updater._connection_quality_cache is None
+    assert updater._silent_mode is False
+    assert updater._offline_announced is False
+    assert updater._last_error is None
+    assert updater._device_available is True
+    assert updater._device_registry_finalized is False
+    assert updater._next_poll_attempt == 0.0
+    assert updater._offline_probation == 0
+    assert updater._last_observed_state is None
+    assert updater._last_burst_monotonic is None
+    assert updater._event_prev_state is None
+    assert updater._event_prev_payload is None
+    assert updater._event_prev_error_code is None
+    assert updater._force_refresh_requests == 0
+    assert updater._shutting_down is False
+    assert updater._init_fw_fallback is None
+    assert updater._init_fw_fetch_done is False
+    assert updater._legacy_charging_latched is False
+    assert updater._legacy_zero_power_polls == 0
+
+    numbered = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), device_number=5
+    )
+    assert numbered.device_number == 5
+
+
+def test_basic_auth_property_returns_cached_object() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    assert updater.basic_auth is updater._basic_auth
+
+
+def test_bounded_clamps_out_of_range_and_none_values() -> None:
+    bounded = common_network._bounded
+
+    assert bounded(None, 100) is None
+    assert bounded(-1, 100) is None
+    assert bounded(0, 100) == 0
+    assert bounded(100, 100) == 100
+    assert bounded(101, 100) is None
+
+
+def test_looks_charging_from_measurements_detects_power_or_current() -> None:
+    looks_charging = common_network._looks_charging_from_measurements
+
+    assert looks_charging({"powerMeas": 100, "curMeas1": 0}) is True
+    assert looks_charging({"powerMeas": 0, "curMeas1": 5}) is True
+    assert looks_charging({"powerMeas": 0, "curMeas1": 0}) is False
+    assert looks_charging({"powerMeas": 1, "curMeas1": 0}) is True
+    assert looks_charging({"powerMeas": 0, "curMeas1": 1}) is True
+    assert looks_charging({}) is False
+
+
+def test_normalize_legacy_device_state_passes_through_modern_firmware() -> None:
+    """Presence of EITHER verFWMain or the legacy firmware alias marks modern
+    firmware; the payload must pass through completely untouched."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    only_ver = {"verFWMain": "1.23", "state": 3}
+    assert updater._normalize_legacy_device_state(dict(only_ver)) == only_ver
+
+    only_alias = {"firmware": "1.23", "state": 3}
+    assert updater._normalize_legacy_device_state(dict(only_alias)) == only_alias
+
+
+def test_normalize_legacy_device_state_translates_idle_code() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    data = updater._normalize_legacy_device_state({"state": 20})
+
+    assert data["state"] == common_network.DEVICE_STATE_STANDBY
+    assert data[common_network.LEGACY_RAW_STATE_KEY] == 20
+    assert updater._legacy_charging_latched is False
+
+
+def test_normalize_legacy_device_state_ignores_unmapped_codes() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    data = updater._normalize_legacy_device_state({"state": 5})
+
+    assert data == {"state": 5}
+    assert common_network.LEGACY_RAW_STATE_KEY not in data
+
+
+def test_normalize_legacy_device_state_latches_charging_when_power_flows() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    data = updater._normalize_legacy_device_state(
+        {"state": 3, "powerMeas": 7200, "curMeas1": 16}
+    )
+
+    assert data["state"] == common_network.DEVICE_STATE_CHARGING
+    assert data[common_network.LEGACY_RAW_STATE_KEY] == 3
+    assert updater._legacy_charging_latched is True
+    assert updater._legacy_zero_power_polls == 0
+
+
+def test_normalize_legacy_device_state_never_latches_on_first_powerless_poll() -> None:
+    """Regression guard for the and/or flip: a never-latched charge candidate
+    with no power reading must NOT be treated as charging just because the
+    zero-power-poll count happens to be under the grace threshold."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    assert updater._legacy_charging_latched is False
+
+    data = updater._normalize_legacy_device_state(
+        {"state": 3, "powerMeas": 0, "curMeas1": 0}
+    )
+
+    assert data == {"state": 3, "powerMeas": 0, "curMeas1": 0}
+    assert updater._legacy_charging_latched is False
+
+
+def test_normalize_legacy_device_state_tolerates_grace_window_then_reverts() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._legacy_charging_latched = True
+    updater._legacy_zero_power_polls = 0
+
+    # Within the grace window: stays translated as Charging, counter increments.
+    data = updater._normalize_legacy_device_state(
+        {"state": 3, "powerMeas": 0, "curMeas1": 0}
+    )
+    assert data["state"] == common_network.DEVICE_STATE_CHARGING
+    assert updater._legacy_zero_power_polls == 1
+    assert updater._legacy_charging_latched is True
+
+    # Grace window exhausted: latch resets, state reported unchanged (raw 3).
+    updater._legacy_zero_power_polls = common_network._LEGACY_PAUSE_GRACE_POLLS
+    data = updater._normalize_legacy_device_state(
+        {"state": 3, "powerMeas": 0, "curMeas1": 0}
+    )
+    assert data == {"state": 3, "powerMeas": 0, "curMeas1": 0}
+    assert updater._legacy_charging_latched is False
+    assert updater._legacy_zero_power_polls == 0
+
+
+class _FakeBus:
+    """Minimal HA event bus stand-in that records fired events in order."""
+
+    def __init__(self) -> None:
+        self.fired: list[tuple[str, dict]] = []
+
+    def async_fire(self, event_type: str, event_data: dict) -> None:
+        self.fired.append((event_type, event_data))
+
+
+def _updater_with_bus() -> tuple[EveusUpdater, "_FakeBus"]:
+    hass = SimpleNamespace(bus=_FakeBus(), is_stopping=False, loop=None)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+    return updater, hass.bus
+
+
+def test_emit_transition_events_first_poll_is_silent() -> None:
+    updater, bus = _updater_with_bus()
+
+    updater._emit_transition_events({"state": 4})
+
+    assert bus.fired == []
+    assert updater._event_prev_state == 4
+
+
+def test_emit_transition_events_fires_charging_started() -> None:
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
+    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
+
+    updater._emit_transition_events({"state": common_network.DEVICE_STATE_CHARGING})
+
+    # Standby -> Charging also crosses the plug-status boundary (2 is not in
+    # CONNECTED_STATES, 4 is), so car_connected fires alongside charging_started.
+    assert bus.fired == [
+        (common_network.EVENT_CHARGING_STARTED, {"device_number": 1}),
+        (common_network.EVENT_CAR_CONNECTED, {"device_number": 1}),
+    ]
+
+
+def test_emit_transition_events_fires_charging_finished_with_bounded_session_values() -> None:
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_CHARGING
+    updater._event_prev_payload = {
+        "state": common_network.DEVICE_STATE_CHARGING,
+        "sessionEnergy": 12.5,
+        "sessionMoney": 3.2,
+        "sessionTime": 3600,
+    }
+
+    # 5 = Charge Complete: both sides stay in CONNECTED_STATES, so no plug
+    # event fires alongside charging_finished -- keeps this assertion isolated.
+    updater._emit_transition_events({"state": 5})
+
+    assert bus.fired == [
+        (
+            common_network.EVENT_CHARGING_FINISHED,
+            {
+                "device_number": 1,
+                "reason": common_network.FINISHED_REASONS.get(5, "stopped"),
+                "session_energy_kwh": 12.5,
+                "session_cost": 3.2,
+                "session_duration_s": 3600,
+            },
+        )
+    ]
+
+
+def test_emit_transition_events_charging_finished_falls_back_to_stopped_reason() -> None:
+    """State 1 (System Test) has no FINISHED_REASONS entry, so it must fall
+    back to the default 'stopped' reason string."""
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_CHARGING
+    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_CHARGING}
+
+    updater._emit_transition_events({"state": 1})
+
+    reasons = dict(bus.fired)
+    assert reasons[common_network.EVENT_CHARGING_FINISHED]["reason"] == "stopped"
+
+
+def test_emit_transition_events_requires_previous_charging_for_finished_event() -> None:
+    """Regression guard for an and/or flip: a transition into a non-error
+    state must NOT fire charging_finished unless the PREVIOUS state was
+    actually Charging."""
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
+    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
+
+    updater._emit_transition_events({"state": 3})
+
+    event_types = [event_type for event_type, _ in bus.fired]
+    assert common_network.EVENT_CHARGING_FINISHED not in event_types
+
+
+def test_emit_transition_events_fires_error_event_on_new_error_state() -> None:
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
+    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
+
+    updater._emit_transition_events(
+        {"state": common_network.DEVICE_STATE_ERROR, "subState": 9}
+    )
+
+    assert bus.fired == [
+        (
+            common_network.EVENT_ERROR,
+            {
+                "device_number": 1,
+                "error_code": 9,
+                "error_text": common_network.get_error_state(9),
+            },
+        )
+    ]
+    assert updater._event_prev_error_code == 9
+
+
+def test_emit_transition_events_escalates_new_fault_code_within_persisting_error() -> None:
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_ERROR
+    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_ERROR}
+    updater._event_prev_error_code = 3
+
+    updater._emit_transition_events(
+        {"state": common_network.DEVICE_STATE_ERROR, "subState": 3}
+    )
+    assert bus.fired == []  # same fault code: no re-escalation
+
+    updater._emit_transition_events(
+        {"state": common_network.DEVICE_STATE_ERROR, "subState": 5}
+    )
+    assert bus.fired == [
+        (
+            common_network.EVENT_ERROR,
+            {
+                "device_number": 1,
+                "error_code": 5,
+                "error_text": common_network.get_error_state(5),
+            },
+        )
+    ]
+    assert updater._event_prev_error_code == 5
+
+
+def test_emit_transition_events_fires_car_connected_and_disconnected() -> None:
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
+    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
+
+    updater._emit_transition_events({"state": 3})  # Connected
+    assert bus.fired == [(common_network.EVENT_CAR_CONNECTED, {"device_number": 1})]
+
+    bus.fired.clear()
+    updater._event_prev_state = 3
+    updater._event_prev_payload = {"state": 3}
+    updater._emit_transition_events({"state": common_network.DEVICE_STATE_STANDBY})
+    assert bus.fired == [(common_network.EVENT_CAR_DISCONNECTED, {"device_number": 1})]
+
+
+def test_maybe_burst_on_transition_schedules_refresh_on_state_change() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._last_observed_state = common_network.DEVICE_STATE_STANDBY
+    updater._schedule_post_command_refresh = Mock()
+
+    updater._maybe_burst_on_transition({"state": common_network.DEVICE_STATE_CHARGING})
+
+    updater._schedule_post_command_refresh.assert_called_once()
+    assert updater._last_observed_state == common_network.DEVICE_STATE_CHARGING
+
+
+def test_maybe_burst_on_transition_suppressed_within_min_gap() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._last_observed_state = common_network.DEVICE_STATE_STANDBY
+    updater._last_burst_monotonic = time.monotonic()
+    updater._schedule_post_command_refresh = Mock()
+
+    updater._maybe_burst_on_transition({"state": common_network.DEVICE_STATE_CHARGING})
+
+    updater._schedule_post_command_refresh.assert_not_called()
+
+
+def test_maybe_burst_on_transition_allows_refresh_exactly_at_min_gap_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._last_observed_state = common_network.DEVICE_STATE_STANDBY
+    updater._last_burst_monotonic = 1000.0
+    updater._schedule_post_command_refresh = Mock()
+    monkeypatch.setattr(
+        common_network.time,
+        "monotonic",
+        lambda: 1000.0 + common_network.TRANSITION_BURST_MIN_GAP,
+    )
+
+    updater._maybe_burst_on_transition({"state": common_network.DEVICE_STATE_CHARGING})
+
+    updater._schedule_post_command_refresh.assert_called_once()
+
+
+def test_maybe_burst_on_transition_ignores_first_observation_and_same_state() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._schedule_post_command_refresh = Mock()
+
+    # First-ever observation: nothing to compare against yet.
+    updater._maybe_burst_on_transition({"state": common_network.DEVICE_STATE_CHARGING})
+    updater._schedule_post_command_refresh.assert_not_called()
+    assert updater._last_observed_state == common_network.DEVICE_STATE_CHARGING
+
+    # Same state reported again: not a transition.
+    updater._maybe_burst_on_transition({"state": common_network.DEVICE_STATE_CHARGING})
+    updater._schedule_post_command_refresh.assert_not_called()
+
+
+def test_maybe_burst_on_transition_ignores_out_of_domain_state() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._last_observed_state = common_network.DEVICE_STATE_STANDBY
+    updater._schedule_post_command_refresh = Mock()
+
+    updater._maybe_burst_on_transition({"state": 99})
+
+    updater._schedule_post_command_refresh.assert_not_called()
+    assert updater._last_observed_state == common_network.DEVICE_STATE_STANDBY
+
+
+def test_connection_quality_defaults_success_rate_to_100_with_no_polls() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    assert updater.connection_quality["success_rate"] == 100.0
+
+
+def test_connection_quality_computes_average_latency() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._latency_samples.extend([0.2, 0.4])
+    assert updater.connection_quality["latency_avg"] == pytest.approx(0.3)
+
+    empty_updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    assert empty_updater.connection_quality["latency_avg"] == 0.0
+
+
+def test_seconds_since_success_treats_nonpositive_monotonic_as_infinite() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    updater._last_success_monotonic = 0.0
+    assert updater._seconds_since_success() == float("inf")
+
+    updater._last_success_monotonic = 1.0
+    assert updater._seconds_since_success() != float("inf")
+
+
+def test_is_healthy_last_success_time_and_rate_boundaries() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._last_success_monotonic = time.monotonic()
+
+    updater._last_success_time = 0
+    assert updater._is_healthy(90) is False  # 0 must not count as "has succeeded"
+
+    updater._last_success_time = 1
+    assert updater._is_healthy(90) is True
+
+    assert updater._is_healthy(80) is False  # success_rate must be strictly > 80
+    assert updater._is_healthy(81) is True
+
+
+def test_is_healthy_seconds_since_success_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._last_success_time = 1
+    updater._last_success_monotonic = 1000.0
+
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0 + 300)
+    assert updater._is_healthy(90) is False  # exactly 300s: not healthy
+
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0 + 250)
+    assert updater._is_healthy(90) is True
+
+
+def test_is_likely_offline_exact_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._last_success_monotonic = 1000.0
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0 + 601)
+
+    updater._consecutive_failures = 10
+    assert updater.is_likely_offline is False  # exactly 10 failures: not yet offline
+
+    updater._consecutive_failures = 11
+    assert updater.is_likely_offline is True
+
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0 + 600)
+    assert updater.is_likely_offline is False  # exactly 600s: not yet offline
+
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0 + 600.001)
+    assert updater.is_likely_offline is True
+
+
+def test_send_command_defaults_to_retry_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_call_later(hass, delay, action):
+        return Mock()
+
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+
+    async def scenario() -> None:
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        received: dict[str, object] = {}
+
+        async def fake_send(command, value, *, retry=None, extra=None):
+            received["retry"] = retry
+            return True
+
+        updater._command_manager = SimpleNamespace(send_command=fake_send)
+
+        await updater.send_command("currentSet", 16)
+
+        assert received["retry"] is True
+
+    asyncio.run(scenario())
+
+
+def test_async_force_refresh_increments_and_restores_counter() -> None:
+    async def scenario() -> None:
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        seen: list[int] = []
+
+        async def fake_refresh() -> None:
+            seen.append(updater._force_refresh_requests)
+
+        updater.async_refresh = fake_refresh
+        # Simulate an already-in-flight forced refresh.
+        updater._force_refresh_requests = 1
+
+        await updater.async_force_refresh()
+
+        assert seen == [2]  # must accumulate, not reset to 1
+        assert updater._force_refresh_requests == 1  # decremented back down, not to 0
+
+    asyncio.run(scenario())
+
+
+def test_cancel_pending_refreshes_skips_the_currently_running_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    current_task = Mock()
+    other_task = Mock()
+    current_task.done.return_value = False
+    other_task.done.return_value = False
+    updater._post_command_refresh_tasks = [current_task, other_task]
+    monkeypatch.setattr(common_network.asyncio, "current_task", lambda: current_task)
+
+    updater._cancel_pending_refreshes()
+
+    current_task.cancel.assert_not_called()
+    other_task.cancel.assert_called_once()
+
+
+def test_scheduled_refresh_exits_when_shutting_down_before_hass_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater.hass = SimpleNamespace(is_stopping=False)
+    updater._shutting_down = True
+    refreshed = False
+    callbacks = []
+
+    async def refresh() -> None:
+        nonlocal refreshed
+        refreshed = True
+
+    def fake_call_later(hass, delay, action):
+        callbacks.append(action)
+        return Mock()
+
+    updater.async_refresh = refresh
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+
+    updater._schedule_post_command_refresh()
+    asyncio.run(callbacks[0](None))
+
+    assert refreshed is False
+
+
+def test_scheduled_refresh_removes_task_from_tracking_list_after_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        updater.hass = SimpleNamespace(is_stopping=False)
+
+        async def refresh() -> None:
+            return None
+
+        updater.async_refresh = refresh
+        callbacks = []
+
+        def fake_call_later(hass, delay, action):
+            callbacks.append(action)
+            return Mock()
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(common_network, "async_call_later", fake_call_later)
+            updater._schedule_post_command_refresh()
+            await callbacks[0](None)
+
+        assert updater._post_command_refresh_tasks == []
+
+    asyncio.run(scenario())
+
+
+def test_offline_backoff_skip_boundary_below_one_second(
+    coordinator: tuple[EveusUpdater, "_Session"],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater, session = coordinator
+    monkeypatch.setattr(common_network.time, "time", lambda: 1000.0)
+    updater._next_poll_attempt = 1000.5
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+
+def test_offline_backoff_skip_exact_upper_bound(
+    coordinator: tuple[EveusUpdater, "_Session"],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updater, session = coordinator
+    monkeypatch.setattr(common_network.time, "time", lambda: 1000.0)
+    updater._next_poll_attempt = 1000.0 + common_network._MAX_OFFLINE_BACKOFF
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+
+def test_update_data_records_positive_elapsed_latency_not_sum_of_clocks(
+    coordinator: tuple[EveusUpdater, "_Session"],
+) -> None:
+    """Regression guard for `time.monotonic() - start_monotonic` becoming `+`:
+    a real poll's latency is a tiny elapsed duration, never a sum of two
+    monotonic-clock readings (which would be a huge number of seconds)."""
+    updater, session = coordinator
+
+    asyncio.run(updater._async_update_data())
+
+    latency = updater._latency_samples[-1]
+    assert 0.0 <= latency < 5.0
+
+
+def test_async_maybe_fetch_init_firmware_skips_when_already_done() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._init_fw_fetch_done = True
+    updater.get_session = Mock()
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    updater.get_session.assert_not_called()
+
+
+def test_async_maybe_fetch_init_firmware_skips_for_modern_firmware_data() -> None:
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater.data = {"verFWMain": "1.23", "state": 4}
+    updater.get_session = Mock()
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    updater.get_session.assert_not_called()
+    assert updater._init_fw_fetch_done is True
+
+    alias_updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    alias_updater.data = {"firmware": "1.23", "state": 4}
+    alias_updater.get_session = Mock()
+
+    asyncio.run(alias_updater.async_maybe_fetch_init_firmware())
+
+    alias_updater.get_session.assert_not_called()
+
+
+def test_async_maybe_fetch_init_firmware_sets_fallback_from_esp_sw_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"ESP_SW_version": 151}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback == "1.51"
+    assert updater._init_fw_fetch_done is True
+    assert session.calls[0]["url"] == f"{TEST_BASE_URL}/init"
+
+
+def test_async_maybe_fetch_init_firmware_falls_back_to_mcu_sw_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"MCU_SW_version": 209}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback == "2.09"
+
+
+def test_async_maybe_fetch_init_firmware_accepts_zero_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"ESP_SW_version": 0}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback == "0.00"
+
+
+def test_async_maybe_fetch_init_firmware_rejects_negative_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"ESP_SW_version": -1}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback is None
+
+
+def test_async_maybe_fetch_init_firmware_accepts_upper_bound_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"ESP_SW_version": 10**6}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback == "10000.00"
+
+
+def test_async_maybe_fetch_init_firmware_rejects_version_just_above_upper_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"ESP_SW_version": 10**6 + 1}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback is None
+
+
+def test_async_maybe_fetch_init_firmware_rejects_boolean_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"ESP_SW_version": True}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback is None
+
+
+def test_async_maybe_fetch_init_firmware_rejects_non_integer_version_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload={"ESP_SW_version": "151"}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback is None
+
+
+def test_async_maybe_fetch_init_firmware_swallows_fetch_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())  # must not raise
+
+    assert updater._init_fw_fallback is None
+    assert updater._init_fw_fetch_done is True

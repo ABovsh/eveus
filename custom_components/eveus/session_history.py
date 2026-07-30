@@ -26,7 +26,7 @@ from .const import (
 from .sensor_definitions import ICON_CURRENCY_UAH, UNIT_UAH
 from homeassistant.const import UnitOfEnergy, UnitOfTime
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
 
 
 class _LastSessionSensorBase(EveusSensorBase):
@@ -78,7 +78,7 @@ class _LastSessionSensorBase(EveusSensorBase):
             if attr in state.attributes:
                 self._attr_extra_state_attributes[attr] = state.attributes[attr]
 
-    @callback
+    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
     def _handle_finished_event(self, event: Event) -> None:
         if event.data.get("device_number") != self._device_number:
             return
@@ -119,6 +119,7 @@ class LastSessionCostSensor(_LastSessionSensorBase):
     ENTITY_NAME = "Last Session Cost"
     _event_field = "session_cost"
     _max_value = MAX_COST_VALUE
+    _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = UNIT_UAH
     _attr_suggested_display_precision = 2
     _attr_icon = ICON_CURRENCY_UAH

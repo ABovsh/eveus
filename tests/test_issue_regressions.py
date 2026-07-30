@@ -115,3 +115,22 @@ def test_issue_8_user_step_schema_is_frontend_serializable() -> None:
     voluptuous_serialize.convert(
         cf.build_user_data_schema({}), custom_serializer=cv.custom_serializer
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #11 — firmware 1.x (MCU_SW_version 151) setup failure: /main reports
+# device-state 20, outside the 0-7 range newer firmware uses, and strict
+# validation rejected the whole payload, failing setup.
+# https://github.com/ABovsh/eveus/issues/11
+# Setup validation is deliberately lenient: any recognizable Eveus payload is
+# accepted regardless of the reported state code — the charger's own state
+# semantics are none of setup's business. Legacy state-code translation for
+# the coordinator's ongoing polls (20 -> Standby, 3 -> Charging while power
+# flows) is covered separately in test_issue11_fw151_state_semantics.py and
+# test_issue11_fw151_unknown_state.py; this anchor is setup-time only.
+# ---------------------------------------------------------------------------
+
+
+def test_issue_11_setup_accepts_firmware_1x_out_of_range_state() -> None:
+    result = cf.validate_device_response({"state": 20, "currentSet": 7}, "16A")
+    assert result["current_set"] == 7.0

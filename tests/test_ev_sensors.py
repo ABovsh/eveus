@@ -108,6 +108,73 @@ def test_calculator_has_no_baseline_state() -> None:
     assert not hasattr(calc, "restore_baseline")
 
 
+def test_soc_required_keys_names_the_three_required_helpers() -> None:
+    """_SOC_REQUIRED_KEYS documents the required-helper contract."""
+    from custom_components.eveus.ev_sensors import _SOC_REQUIRED_KEYS
+
+    assert _SOC_REQUIRED_KEYS == ("initial_soc", "battery_capacity", "soc_correction")
+
+
+def test_calculator_starts_with_no_initial_soc() -> None:
+    """A fresh calculator has initial_soc unset (None), not a placeholder value."""
+    calculator = CachedSOCCalculator()
+
+    assert calculator.initial_soc is None
+
+
+def test_get_soc_percent_exact_returns_none_only_when_kwh_missing_or_capacity_zero() -> None:
+    """get_soc_percent_exact must go unknown if EITHER the kWh calc failed OR
+    capacity is falsy — not only when both hold at once."""
+    calculator = _push(CachedSOCCalculator())
+
+    # kwh present, but battery_capacity falsy (0): must still be None.
+    calculator.set_value("battery_capacity", 0)
+    assert calculator.get_soc_percent_exact(20) is None
+
+
+def test_get_soc_percent_exact_returns_none_when_kwh_calc_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """kwh is None (calc error) while battery_capacity stays truthy: must still
+    go unknown rather than raising a TypeError on kwh / battery_capacity."""
+    import custom_components.eveus.ev_sensors as ev_sensors_module
+
+    calculator = _push(CachedSOCCalculator())
+    monkeypatch.setattr(
+        ev_sensors_module,
+        "calculate_soc_kwh",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    assert calculator.get_soc_percent_exact(20) is None
+
+
+def test_get_soc_percent_exact_clamps_to_zero_not_one() -> None:
+    """A battery at true 0% must report 0.0, not clamp up to 1.0."""
+    calculator = CachedSOCCalculator()
+    calculator.set_value("initial_soc", 0)
+    calculator.set_value("battery_capacity", 80)
+    calculator.set_value("soc_correction", 0)
+
+    assert calculator.get_soc_percent_exact(0) == 0.0
+
+
+def test_get_soc_percent_exact_clamps_to_hundred_not_above(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defensive upper clamp: get_soc_percent_exact must cap at exactly 100.0
+    even if calculate_soc_kwh ever returned a value above battery_capacity
+    (utils.calculate_soc_kwh already clamps to capacity today, so this
+    exercises the belt-and-braces ceiling here, not the normal data path)."""
+    import custom_components.eveus.ev_sensors as ev_sensors_module
+
+    calculator = _push(CachedSOCCalculator())
+    monkeypatch.setattr(ev_sensors_module, "calculate_soc_kwh", lambda *args: 150.0)
+
+    # battery_capacity=80 (from EV_HELPERS): 150/80*100 = 187.5% before clamping.
+    assert calculator.get_soc_percent_exact(5) == 100.0
+
+
 def test_soc_kwh_sensor_uses_measurement_state_class() -> None:
     # Regression: TOTAL without last_reset breaks HA statistics.
     # SOC kWh is a running gauge (not a monotonic lifetime counter).

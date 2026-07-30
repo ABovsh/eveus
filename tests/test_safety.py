@@ -1,6 +1,8 @@
 """Tests for Eveus safety Repairs notices."""
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +12,9 @@ from typing import Any
 import pytest
 
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.storage import Store
 
+from custom_components.eveus import safety
 from custom_components.eveus.const import (
     DOMAIN,
     ERROR_STATES,
@@ -18,6 +22,8 @@ from custom_components.eveus.const import (
     GROUND_CONTROL_CLEAR_POLLS,
     GROUND_CONTROL_TRIGGER_POLLS,
     GROUND_TRIGGER_POLLS,
+    LEAKAGE_RECOVERED_MA,
+    MAX_VALID_TEMPERATURE_C,
     TEMPERATURE_RECOVERY_POLLS,
     TEMPERATURE_TRIGGER_POLLS,
 )
@@ -25,6 +31,7 @@ from custom_components.eveus.safety import (
     POLICIES,
     EveusSafetyManager,
     SafetyLifecycle,
+    SafetyPolicyState,
     evaluate_policy_signals,
     safety_issue_id,
 )
@@ -148,6 +155,31 @@ def test_policy_lifecycles_match_safety_contract() -> None:
         assert by_key[key].lifecycle is SafetyLifecycle.LATCHED
 
 
+def test_safety_policy_is_frozen_and_slotted() -> None:
+    policy = POLICIES[0]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        policy.key = "mutated"
+    assert not hasattr(policy, "__dict__")
+
+
+def test_safety_policy_state_is_slotted() -> None:
+    assert not hasattr(SafetyPolicyState(), "__dict__")
+
+
+def test_safety_policy_state_defaults() -> None:
+    state = SafetyPolicyState()
+    assert state.trigger_streak == 0
+    assert state.recovery_streak == 0
+    assert state.recovered is False
+    assert state.recovered_since_raised is False
+
+
+def test_safety_store_uses_version_1() -> None:
+    hass = SimpleNamespace(data={}, config=SimpleNamespace(config_dir="/tmp"))
+    store = Store(hass, safety._SAFETY_STORE_VERSION, "test_key")
+    assert store.version == 1
+
+
 def test_safety_issue_ids_are_entry_scoped() -> None:
     one = SimpleNamespace(entry_id="one")
     two = SimpleNamespace(entry_id="two")
@@ -253,6 +285,59 @@ def test_leakage_peak_never_triggers_without_live_leakage() -> None:
     ) == (False, True)
 
 
+def test_temperature_boundary_at_max_valid_value_still_signals() -> None:
+    # The physical-sanity upper bound is inclusive: a reading exactly at
+    # MAX_VALID_TEMPERATURE_C is a real (if extreme) value, not an outlier to
+    # discard as unknown.
+    assert _signals(
+        "box_overheat", {"state": 2, "temperature1": MAX_VALID_TEMPERATURE_C}
+    ) == (True, False)
+
+
+def test_leakage_recovery_boundary_is_strict() -> None:
+    # Recovery requires strictly below the recovered threshold; a reading
+    # exactly at LEAKAGE_RECOVERED_MA has not yet recovered.
+    assert _signals(
+        "leakage_detected", {"state": 2, "leakValue": LEAKAGE_RECOVERED_MA}
+    ) == (False, False)
+
+
+def test_bare_fault_code_policy_recovers_when_no_raw_recovery_defined() -> None:
+    # relay_fault has no raw_recovered check: absence of its firmware fault
+    # code alone must be enough to consider it recovered.
+    assert _signals("relay_fault", {"state": 2}) == (False, True)
+
+
+def test_fault_code_missing_or_zero_substate_stays_unknown_for_bare_policies() -> None:
+    # A bare per-code policy has no raw signal to fall back on: if the
+    # firmware fault code itself cannot be read (missing subState) or reports
+    # "no cause" (subState 0), the result must stay unknown, never flip to a
+    # definite "resolved".
+    assert _signals("relay_fault", {"state": 7}) == (None, None)
+    assert _signals("relay_fault", {"state": 7, "subState": 0}) == (None, None)
+
+
+def test_corrupt_fault_code_does_not_override_definite_raw_trigger_false() -> None:
+    # An unrecognized/future subState alongside a clearly-safe raw reading
+    # must not be treated as "unknown" -- the trusted raw signal should still
+    # give a definite answer.
+    assert _signals(
+        "box_overheat", {"state": 7, "subState": 99, "temperature1": 50}
+    )[0] is False
+
+
+def test_matching_firmware_fault_requires_the_specific_code() -> None:
+    hass, entry, updater, manager = _manager(
+        {"state": 7, "subState": 2, "temperature1": 90}
+    )
+    manager.process()
+    # subState 2 is leakage_detected's code, not box_overheat's: the raw
+    # temperature debounce still applies, it must not bypass on poll 1.
+    assert _issue(hass, entry, "box_overheat") is None
+    manager.process()
+    assert _issue(hass, entry, "box_overheat") is not None
+
+
 def test_unknown_or_corrupt_values_leave_signals_unknown() -> None:
     for payload in (
         {},
@@ -306,6 +391,15 @@ def test_healthy_reading_resets_partial_trigger_streak() -> None:
     updater.data = {"state": 2, "ground": 0}
     manager.process()
     assert _issue(hass, entry, "ground_missing") is None
+    # A genuine reset restarts the debounce from scratch: GROUND_TRIGGER_POLLS
+    # consecutive polls after the reset (not a head start from the partial run
+    # before it) must be required before it triggers. One was already spent
+    # above, so GROUND_TRIGGER_POLLS - 2 more must still show no issue.
+    for _ in range(GROUND_TRIGGER_POLLS - 2):
+        manager.process()
+        assert _issue(hass, entry, "ground_missing") is None
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None
 
 
 def test_unknown_reading_neither_advances_nor_resets_streak() -> None:
@@ -332,6 +426,23 @@ def test_failed_poll_does_not_replay_stale_data_into_debounce() -> None:
     assert _issue(hass, entry, "box_overheat") is not None
 
 
+def test_failed_poll_with_available_true_does_not_auto_clear_from_stale_data() -> None:
+    # available=True but last_update_success=False (a failed poll while the
+    # updater still reports itself "available") must skip exactly like a
+    # fully-unavailable poll -- stale cached data must never auto-clear a fault.
+    hass, entry, updater, manager = _manager(
+        {"state": 7, "subState": 1, "ground": 0}
+    )
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None
+    updater.data = {"state": 2, "ground": 1}  # would-be recovery reading
+    updater.available = True
+    updater.last_update_success = False
+    for _ in range(GROUND_CLEAR_POLLS):
+        manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None
+
+
 def test_firmware_fault_bypasses_raw_debounce() -> None:
     hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
     manager.process()
@@ -346,6 +457,35 @@ def test_ground_missing_auto_clears_after_confirmed_recovery() -> None:
     assert _issue(hass, entry, "ground_missing") is not None
     manager.process()
     assert _issue(hass, entry, "ground_missing") is None
+
+
+def test_active_fault_followed_by_unknown_poll_does_not_falsely_auto_clear() -> None:
+    # A firmware fault that is still active must not be marked "recovered" just
+    # because the VERY NEXT poll happens to be corrupt/unknown -- an actual
+    # recovery reading has never been observed.
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 1, "ground": 0})
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None
+    updater.data = {}  # corrupt/unknown poll, immediately after an active fault
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None
+
+
+def test_auto_cleared_issue_needs_full_fresh_debounce_on_recurrence() -> None:
+    hass, entry, updater, manager = _manager({"state": 2, "ground": 0})
+    for _ in range(GROUND_TRIGGER_POLLS):
+        manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None
+    updater.data = {"state": 2, "ground": 1}
+    for _ in range(GROUND_CLEAR_POLLS):
+        manager.process()
+    assert _issue(hass, entry, "ground_missing") is None  # auto-cleared
+    updater.data = {"state": 2, "ground": 0}  # fresh recurrence
+    for _ in range(GROUND_TRIGGER_POLLS - 1):
+        manager.process()
+        assert _issue(hass, entry, "ground_missing") is None
+    manager.process()
+    assert _issue(hass, entry, "ground_missing") is not None
 
 
 def test_recovered_latched_issue_remains_until_ignored() -> None:
@@ -405,6 +545,31 @@ def test_recovered_then_acknowledged_issue_realerts_on_immediate_retrigger() -> 
     issue = _issue(hass, entry, "box_overheat")
     assert issue is not None
     assert issue.dismissed_version is None
+
+
+def test_recreated_issue_stops_being_sticky_after_immediate_retrigger() -> None:
+    # Continuation of the scenario above: once the fresh excursion has
+    # surfaced its own un-dismissed notice, the "recovered since raised"
+    # memory must have been cleared for THIS incident. If the user dismisses
+    # the fresh notice while it is still actively faulting (no new recovery),
+    # it must stay dismissed -- not keep getting silently un-dismissed.
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    manager.process()
+    updater.data = {"state": 2, "temperature1": 70}
+    for _ in range(TEMPERATURE_RECOVERY_POLLS):
+        manager.process()
+    ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
+    updater.data = {"state": 7, "subState": 5}
+    manager.process()  # fresh excursion recreates the notice
+    issue = _issue(hass, entry, "box_overheat")
+    assert issue is not None
+    assert issue.dismissed_version is None
+
+    ir.async_ignore_issue(hass, "eveus", safety_issue_id(entry, "box_overheat"), True)
+    manager.process()  # still actively faulting, no recovery happened
+    issue = _issue(hass, entry, "box_overheat")
+    assert issue is not None
+    assert issue.dismissed_version is not None
 
 
 def test_recovered_then_acknowledged_issue_realerts_through_hysteresis_band() -> None:
@@ -592,3 +757,43 @@ def test_v05_without_persisted_recovery_dismissed_issue_stays_hidden() -> None:
     issue = _issue(hass, entry, "box_overheat")
     assert issue is not None
     assert issue.dismissed_version is not None  # stays hidden
+
+
+def test_apply_persisted_defaults_missing_flag_to_false() -> None:
+    hass, entry, updater, manager = _manager()
+    manager._apply_persisted({"box_overheat": {}})
+    assert manager._states["box_overheat"].recovered_since_raised is False
+
+
+def test_async_load_restores_recovered_since_raised_from_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeStore:
+        def __init__(self, hass_: Any, version: int, key: str) -> None:
+            pass
+
+        async def async_load(self) -> dict[str, Any]:
+            return {"box_overheat": {"recovered_since_raised": True}}
+
+    monkeypatch.setattr(safety, "Store", _FakeStore)
+    hass, entry, updater, manager = _manager()
+
+    asyncio.run(manager.async_load())
+
+    assert manager._store is not None
+    assert manager._states["box_overheat"].recovered_since_raised is True
+
+
+def test_async_load_degrades_to_in_memory_only_on_store_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _RaisingStore:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(safety, "Store", _RaisingStore)
+    hass, entry, updater, manager = _manager()
+
+    asyncio.run(manager.async_load())
+
+    assert manager._store is None

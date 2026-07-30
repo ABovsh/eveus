@@ -413,6 +413,65 @@ def test_helper_sensor_resolve_remaining_inputs_edge_cases() -> None:
     assert sensor._resolve_remaining_inputs() is None
 
 
+def test_resolve_remaining_inputs_none_when_only_power_meas_invalid() -> None:
+    """power_meas is None (bad telemetry) but energy_charged is valid: must
+    still go unknown (the `or` in the None-check, not `and`) rather than
+    falling through to compare None against MAX_POWER_W."""
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    sensor = TimeToTargetSocSensor(
+        EveusTestUpdater({"powerMeas": "bad", "sessionEnergy": "1", "state": 4}),
+        1,
+        calculator,
+    )
+    sensor.hass = HelperHass(EV_HELPERS)
+
+    assert sensor._resolve_remaining_inputs() is None
+
+
+def test_resolve_remaining_inputs_accepts_power_meas_at_max_ceiling() -> None:
+    """MAX_POWER_W itself is a valid (inclusive) reading, not an outlier."""
+    from custom_components.eveus.const import MAX_POWER_W
+
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    sensor = TimeToTargetSocSensor(
+        EveusTestUpdater(
+            {"powerMeas": str(MAX_POWER_W), "sessionEnergy": "1", "state": 4}
+        ),
+        1,
+        calculator,
+    )
+    sensor.hass = HelperHass(EV_HELPERS)
+
+    assert sensor._resolve_remaining_inputs() is not None
+
+
+def test_energy_charged_accepts_value_at_max_ceiling() -> None:
+    """MAX_ENERGY_KWH itself is a valid (inclusive) reading, not an outlier."""
+    from custom_components.eveus.const import MAX_ENERGY_KWH
+
+    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": str(MAX_ENERGY_KWH)}))
+
+    assert sensor._get_energy_charged() == MAX_ENERGY_KWH
+
+
+def test_time_to_target_caches_the_computed_result_on_success() -> None:
+    """A successful computation must cache the actual result, not None —
+    otherwise a later stale-refresh read would show unknown instead of the
+    last good value."""
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    sensor = TimeToTargetSocSensor(
+        EveusTestUpdater({"sessionEnergy": "0", "powerMeas": "7000", "state": 4}),
+        1,
+        calculator,
+    )
+    sensor.hass = HelperHass(EV_HELPERS)
+
+    result = sensor._get_sensor_value()
+
+    assert result is not None
+    assert sensor._cached_value == result
+
+
 def test_time_to_target_drops_stale_value_on_calculation_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -867,6 +926,162 @@ def test_unknown_when_session_energy_corrupt(_ha_clock_plus3_ev):
     assert sensor._get_sensor_value() is None
 
 
+def test_energy_to_target_zero_fallback_is_exactly_zero_not_one(_ha_clock_plus3_ev):
+    """Outside an active session with sessionEnergy absent, the fallback must
+    be exactly 0.0 kWh delivered (reprojecting purely from Initial SOC), not
+    1.0 and not None."""
+    import pytest
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        EnergyToTargetSocSensor,
+    )
+
+    calc = _push_ev_helpers(CachedSOCCalculator())
+    sensor = EnergyToTargetSocSensor(EveusTestUpdater({"state": 2}), 1, calc)
+
+    # initial=20%*80=16kWh; target=80%*80=64kWh; remaining=48kWh; /0.9 loss = 53.33
+    assert sensor._get_sensor_value() == pytest.approx(53.33, abs=0.01)
+
+
+def test_energy_to_target_none_when_kwh_calc_fails_even_with_capacity_set(
+    _ha_clock_plus3_ev, monkeypatch: pytest.MonkeyPatch
+):
+    """current_kwh is None (calc failure) while battery_capacity is still
+    truthy: must go unknown (the `or`, not `and`) instead of crashing on
+    `target_soc * battery_capacity / 100 - None`."""
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        EnergyToTargetSocSensor,
+    )
+
+    calc = _push_ev_helpers(CachedSOCCalculator())
+    sensor = EnergyToTargetSocSensor(EveusTestUpdater({"sessionEnergy": "16"}), 1, calc)
+    monkeypatch.setattr(calc, "get_soc_kwh", lambda energy_charged: None)
+
+    assert sensor._get_sensor_value() is None
+
+
+def test_energy_to_target_zero_at_target_even_with_invalid_correction(
+    _ha_clock_plus3_ev, monkeypatch: pytest.MonkeyPatch
+):
+    """At exactly the target (remaining == 0), the result must be 0.0
+    unconditionally — the early return must not fall through to the
+    correction-range check (which would reject an out-of-range correction
+    and return None instead of the already-known-correct 0.0).
+
+    get_soc_kwh is mocked directly so the current-kWh calculation and the
+    end-of-function correction read are decoupled (both would otherwise draw
+    from the same soc_correction field)."""
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        EnergyToTargetSocSensor,
+    )
+
+    calc = CachedSOCCalculator()
+    calc.set_value("initial_soc", 20)
+    calc.set_value("battery_capacity", 50)
+    calc.set_value("soc_correction", 10)
+    calc.set_value("target_soc", 80)  # 80% of 50kWh = 40kWh
+    sensor = EnergyToTargetSocSensor(EveusTestUpdater({"sessionEnergy": "0"}), 1, calc)
+    monkeypatch.setattr(calc, "get_soc_kwh", lambda energy_charged: 40.0)  # exactly at target
+    monkeypatch.setattr(type(calc), "soc_correction", 100)  # invalid if the check ran
+
+    assert sensor._get_sensor_value() == 0.0
+
+
+def test_energy_to_target_accepts_zero_correction(_ha_clock_plus3_ev):
+    """soc_correction=0 (explicit no-loss config) is a valid lower boundary,
+    not an out-of-range value."""
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        EnergyToTargetSocSensor,
+    )
+
+    calc = CachedSOCCalculator()
+    calc.set_value("initial_soc", 20)
+    calc.set_value("battery_capacity", 80)
+    calc.set_value("soc_correction", 0)
+    calc.set_value("target_soc", 80)
+    sensor = EnergyToTargetSocSensor(EveusTestUpdater({"sessionEnergy": "0"}), 1, calc)
+
+    assert sensor._get_sensor_value() is not None
+
+
+def test_energy_to_target_rejects_correction_at_100(_ha_clock_plus3_ev):
+    """soc_correction=100 would divide by zero; it must be rejected (None),
+    not accepted through to the division."""
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        EnergyToTargetSocSensor,
+    )
+
+    calc = CachedSOCCalculator()
+    calc.set_value("initial_soc", 20)
+    calc.set_value("battery_capacity", 80)
+    calc.set_value("soc_correction", 100)
+    calc.set_value("target_soc", 80)
+    sensor = EnergyToTargetSocSensor(EveusTestUpdater({"sessionEnergy": "0"}), 1, calc)
+
+    assert sensor._get_sensor_value() is None
+
+
+def test_energy_to_target_rounds_to_two_decimals_not_three(_ha_clock_plus3_ev):
+    """The public value is rounded to 2 decimals, matching the sensor's
+    suggested_display_precision of 1 — not left at 3-decimal precision."""
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        EnergyToTargetSocSensor,
+    )
+
+    calc = _push_ev_helpers(CachedSOCCalculator())
+    sensor = EnergyToTargetSocSensor(
+        EveusTestUpdater({"sessionEnergy": "16"}), 1, calc
+    )
+
+    # 33.6kWh remaining battery / 0.9 efficiency = 37.333333... -> 37.33, not 37.333.
+    assert sensor._get_sensor_value() == 37.33
+
+
+def test_cost_to_target_rounds_to_two_decimals_not_three(
+    _ha_clock_plus3_ev, monkeypatch: pytest.MonkeyPatch
+):
+    """The forecast cost is rounded to 2 decimals, matching the sensor's
+    suggested_display_precision of 0 — not left at 3-decimal precision."""
+    import custom_components.eveus.sensor_definitions as sensor_definitions
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        CostToTargetSocSensor,
+    )
+
+    calc = _push_ev_helpers(CachedSOCCalculator())
+    sensor = CostToTargetSocSensor(EveusTestUpdater({"sessionEnergy": "16"}), 1, calc)
+    monkeypatch.setattr(sensor_definitions, "get_active_rate_cost", lambda *a, **kw: 7)
+
+    # remaining = 37.333333... kWh; * rate 7 = 261.333333... -> 261.33, not 261.333.
+    assert sensor._get_sensor_value() == 261.33
+
+
+def test_charging_finish_time_not_reached_when_one_second_remains(
+    _ha_clock_plus3_ev, monkeypatch: pytest.MonkeyPatch
+):
+    """A 1-second-remaining ETA is still charging (> 0), not "target
+    reached" — only seconds<=0 (None/0) means reached/invalid."""
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        ChargingFinishTimeSensor,
+    )
+
+    calc = _push_ev_helpers(CachedSOCCalculator())
+    sensor = ChargingFinishTimeSensor(
+        EveusTestUpdater({"sessionEnergy": "16", "powerMeas": "7000", "state": 4}),
+        1,
+        calc,
+    )
+    monkeypatch.setattr(ev_sensors, "calculate_remaining_seconds", lambda *args: 1)
+
+    assert sensor._get_sensor_value() is not None
+
+
 def test_prices_remaining_energy_with_active_tariff(_ha_clock_plus3_ev):
     import pytest
     from custom_components.eveus.ev_sensors import (
@@ -928,3 +1143,241 @@ def test_uses_rate2_when_active(_ha_clock_plus3_ev):
         calc,
     )
     assert sensor._get_sensor_value() == pytest.approx(80.64, abs=0.05)
+
+
+# =============================================================================
+# Static entity metadata (ENTITY_NAME/_attr_* class constants)
+# =============================================================================
+
+
+def _attr(cls: type, name: str):
+    """Read an HA CachedProperties-backed _attr_* class default.
+
+    HA's metaclass turns ``_attr_foo`` into a property on the class; the
+    literal default value it was assigned is stashed under the
+    name-mangled ``__attr_foo`` key in the class ``__dict__`` instead.
+    """
+    return vars(cls).get(f"__attr_{name}")
+
+
+def test_soc_kwh_sensor_metadata() -> None:
+    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+    from homeassistant.const import UnitOfEnergy
+
+    assert EVSocKwhSensor.ENTITY_NAME == "SOC Energy"
+    assert _attr(EVSocKwhSensor, "device_class") == SensorDeviceClass.ENERGY_STORAGE
+    assert _attr(EVSocKwhSensor, "native_unit_of_measurement") == UnitOfEnergy.KILO_WATT_HOUR
+    assert _attr(EVSocKwhSensor, "icon") == "mdi:battery-charging"
+    assert _attr(EVSocKwhSensor, "suggested_display_precision") == 1
+    assert _attr(EVSocKwhSensor, "state_class") == SensorStateClass.MEASUREMENT
+
+
+def test_soc_percent_sensor_metadata() -> None:
+    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+
+    assert EVSocPercentSensor.ENTITY_NAME == "SOC Percent"
+    assert _attr(EVSocPercentSensor, "device_class") == SensorDeviceClass.BATTERY
+    assert _attr(EVSocPercentSensor, "native_unit_of_measurement") == "%"
+    assert _attr(EVSocPercentSensor, "icon") == "mdi:battery-charging"
+    assert _attr(EVSocPercentSensor, "state_class") == SensorStateClass.MEASUREMENT
+    assert _attr(EVSocPercentSensor, "suggested_display_precision") == 0
+
+
+def test_time_to_target_soc_sensor_metadata() -> None:
+    assert TimeToTargetSocSensor.ENTITY_NAME == "Time to Target SOC"
+    assert _attr(TimeToTargetSocSensor, "icon") == "mdi:timer"
+
+
+def test_energy_to_target_soc_sensor_metadata() -> None:
+    from custom_components.eveus.ev_sensors import EnergyToTargetSocSensor
+    from homeassistant.components.sensor import SensorStateClass
+    from homeassistant.const import UnitOfEnergy
+
+    assert EnergyToTargetSocSensor.ENTITY_NAME == "Energy to Target SOC"
+    assert _attr(EnergyToTargetSocSensor, "native_unit_of_measurement") == UnitOfEnergy.KILO_WATT_HOUR
+    assert _attr(EnergyToTargetSocSensor, "icon") == "mdi:battery-arrow-up"
+    assert _attr(EnergyToTargetSocSensor, "state_class") == SensorStateClass.MEASUREMENT
+    assert _attr(EnergyToTargetSocSensor, "suggested_display_precision") == 1
+
+
+def test_cost_to_target_soc_sensor_metadata() -> None:
+    from custom_components.eveus.ev_sensors import CostToTargetSocSensor
+
+    assert CostToTargetSocSensor.ENTITY_NAME == "Cost to Target SOC"
+    assert _attr(CostToTargetSocSensor, "icon") == "mdi:cash-clock"
+    assert _attr(CostToTargetSocSensor, "suggested_display_precision") == 0
+
+
+def test_charging_finish_time_sensor_metadata() -> None:
+    from homeassistant.components.sensor import SensorDeviceClass
+
+    assert ChargingFinishTimeSensor.ENTITY_NAME == "Charging Finish Time"
+    assert _attr(ChargingFinishTimeSensor, "device_class") == SensorDeviceClass.TIMESTAMP
+    assert _attr(ChargingFinishTimeSensor, "icon") == "mdi:calendar-clock"
+
+
+# =============================================================================
+# Write-condition boolean logic in _on_soc_input_changed / _handle_coordinator_update
+# =============================================================================
+
+
+def _controlled_sensor(*, updater_available: bool = True, last_update_success: bool = True):
+    """An EVSocKwhSensor (helpers not required) whose sub-update hooks and
+    write calls can be fully controlled/observed by the caller.
+
+    Because _requires_helpers is False, `sensor.available` tracks only
+    `_entity_available`, so it stays constant across a call unless a
+    monkeypatched hook mutates `_entity_available` itself — isolating the
+    availability_changed/previous_available-vs-self.available booleans from
+    each other for precise testing.
+    """
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    updater = EveusTestUpdater({"sessionEnergy": "10"}, available=updater_available)
+    updater.last_update_success = last_update_success
+    sensor = EVSocKwhSensor(updater, 1, calculator)
+    sensor.hass = HelperHass(EV_HELPERS)
+    writes: list[int] = []
+    sensor.async_write_ha_state = lambda: writes.append(1)
+    return sensor, writes
+
+
+@pytest.mark.parametrize("method_name", ["_on_soc_input_changed", "_handle_coordinator_update"])
+def test_write_fires_when_availability_changed_flag_alone_is_true(method_name: str) -> None:
+    """availability_changed=True must trigger a write even when nothing else
+    (including the previous/current .available comparison) changed."""
+    sensor, writes = _controlled_sensor()
+    sensor._update_availability_state = lambda **kw: True
+    sensor._update_native_value = lambda: False
+    sensor._update_extra_state_attributes = lambda: False
+
+    getattr(sensor, method_name)()
+
+    assert writes == [1]
+
+
+@pytest.mark.parametrize("method_name", ["_on_soc_input_changed", "_handle_coordinator_update"])
+def test_write_is_quiet_when_nothing_reports_a_change(method_name: str) -> None:
+    """All-False sub-signals with no actual availability change: no write."""
+    sensor, writes = _controlled_sensor()
+    sensor._update_availability_state = lambda **kw: False
+    sensor._update_native_value = lambda: False
+    sensor._update_extra_state_attributes = lambda: False
+
+    getattr(sensor, method_name)()
+
+    assert writes == []
+
+
+@pytest.mark.parametrize("method_name", ["_on_soc_input_changed", "_handle_coordinator_update"])
+def test_stale_refresh_write_uses_or_of_availability_signals(method_name: str) -> None:
+    """Inside the stale (updater unavailable / failed) branch, a write must
+    fire on EITHER availability_changed being True OR the property actually
+    differing — never requiring both (rules out `and`) and never firing
+    merely because the two happen to already be equal (rules out `==`)."""
+    # Stale branch: updater unavailable AND last_update_success False, so a
+    # single-flag mutation of the guard's `or`->`and` doesn't also mask this.
+    sensor, writes = _controlled_sensor(updater_available=False, last_update_success=False)
+    sensor._update_availability_state = lambda **kw: True
+    sensor._update_native_value = lambda: False
+    sensor._update_extra_state_attributes = lambda: False
+
+    getattr(sensor, method_name)()
+
+    assert writes == [1]
+
+    # Second call: availability_changed False and no property change -> quiet.
+    sensor2, writes2 = _controlled_sensor(updater_available=False, last_update_success=False)
+    sensor2._update_availability_state = lambda **kw: False
+    sensor2._update_native_value = lambda: False
+    sensor2._update_extra_state_attributes = lambda: False
+
+    getattr(sensor2, method_name)()
+
+    assert writes2 == []
+
+
+@pytest.mark.parametrize("method_name", ["_on_soc_input_changed", "_handle_coordinator_update"])
+def test_stale_guard_treats_available_and_success_as_independent_or(method_name: str) -> None:
+    """Either the updater being unavailable OR a failed last update alone
+    must select the stale (no-recompute) branch — not require both."""
+    # available=True but last_update_success=False: still stale.
+    sensor, _writes = _controlled_sensor(updater_available=True, last_update_success=False)
+    sensor._update_availability_state = lambda **kw: False
+
+    def _boom():
+        raise AssertionError(f"{method_name} recomputed value on a stale refresh")
+
+    sensor._update_native_value = _boom
+    sensor._update_extra_state_attributes = _boom
+
+    getattr(sensor, method_name)()  # must not raise
+
+
+def test_on_soc_input_changed_recomputes_value_and_attributes_when_fresh() -> None:
+    """Non-stale branch: value_changed/attributes_changed alone must each be
+    able to trigger a write (attributes_changed=None mutation guard)."""
+    sensor, writes = _controlled_sensor()
+    sensor._update_availability_state = lambda **kw: False
+    sensor._update_native_value = lambda: False
+    sensor._update_extra_state_attributes = lambda: True
+
+    sensor._on_soc_input_changed()
+
+    assert writes == [1]
+
+
+def test_handle_coordinator_update_recomputes_attributes_when_fresh() -> None:
+    sensor, writes = _controlled_sensor()
+    sensor._update_availability_state = lambda **kw: False
+    sensor._update_native_value = lambda: False
+    sensor._update_extra_state_attributes = lambda: True
+
+    sensor._handle_coordinator_update()
+
+    assert writes == [1]
+
+
+def test_base_ev_helper_sensor_class_default_requires_helpers() -> None:
+    """The class-level default (before any subclass override) is True."""
+    assert BaseEVHelperSensor._requires_helpers is True
+
+
+def test_ev_helper_sensor_defaults_to_device_number_one() -> None:
+    """Omitting device_number must build a device-1 unique_id, not device-2+."""
+    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "10"}))
+
+    assert sensor.unique_id == "eveus_soc_energy"
+
+
+def test_ev_helper_sensor_starts_with_no_cached_value() -> None:
+    """The cache must start as None (unset), not a placeholder value."""
+    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "10"}))
+
+    assert sensor._cached_value is None
+
+
+def test_available_is_false_when_base_entity_is_unavailable_regardless_of_helpers() -> None:
+    """A sensor that doesn't require helpers must still go unavailable when
+    the base (connection-level) availability is False."""
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "10"}), 1, calculator)
+    sensor._entity_available = False
+
+    assert sensor.available is False
+
+
+def test_ev_helper_sensors_do_not_require_helpers_except_base_default() -> None:
+    """Only the base class defaults to requiring helpers; every concrete EV
+    sensor overrides it to False (each has its own unknown-when-missing
+    fallback instead of going fully unavailable)."""
+    from custom_components.eveus.ev_sensors import (
+        BaseEVHelperSensor,
+        EnergyToTargetSocSensor,
+    )
+
+    assert BaseEVHelperSensor._requires_helpers is True
+    assert EVSocKwhSensor._requires_helpers is False
+    assert EVSocPercentSensor._requires_helpers is False
+    assert TimeToTargetSocSensor._requires_helpers is False
+    assert EnergyToTargetSocSensor._requires_helpers is False
+    assert ChargingFinishTimeSensor._requires_helpers is False

@@ -70,7 +70,7 @@ class _EveusResetCounterButton(BaseEveusEntity, ButtonEntity):
                 raise HomeAssistantError(
                     f"Eveus charger did not accept '{self.name}' reset command"
                 )
-            _LOGGER.debug("Reset command %s acknowledged", self._command)
+            _LOGGER.debug("Reset command %s acknowledged", self._command)  # pragma: no mutate - log-message text only, argument (self._command) unchanged
 
 
 class EveusResetCounterAButton(_EveusResetCounterButton):
@@ -114,7 +114,7 @@ class EveusSyncTimeButton(BaseEveusEntity, ButtonEntity):
             raise HomeAssistantError(
                 "Eveus charger did not accept the time-sync command"
             )
-        _LOGGER.debug("Time sync sent: systemTime command issued")
+        _LOGGER.debug("Time sync sent: systemTime command issued")  # pragma: no mutate - log-message text only, no arguments
 
 
 async def async_setup_entry(

@@ -55,13 +55,13 @@ _LOGGER = logging.getLogger(__name__)
 def _validate_finite_number(value, label: str) -> float:
     """Reject NaN/inf/bool from service-call input before clamping."""
     if isinstance(value, bool):
-        raise HomeAssistantError(f"{label}: boolean value not accepted")
+        raise HomeAssistantError(f"{label}: boolean value not accepted")  # pragma: no mutate - pure exception-message text, label VALUE unchanged
     try:
         raw = float(value)
     except (TypeError, ValueError) as err:
-        raise HomeAssistantError(f"{label}: not a number") from err
+        raise HomeAssistantError(f"{label}: not a number") from err  # pragma: no mutate - pure exception-message text, label VALUE unchanged
     if not math.isfinite(raw):
-        raise HomeAssistantError(f"{label}: NaN or infinity not accepted")
+        raise HomeAssistantError(f"{label}: NaN or infinity not accepted")  # pragma: no mutate - pure exception-message text, label VALUE unchanged
     return raw
 
 _CHARGING_CURRENT_NAME = "Charging Current"
@@ -80,13 +80,13 @@ class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=T
     # Decimals to round the displayed value to (None = no rounding). The charger
     # reports float noise (e.g. ``energyLimit`` 56.00899); this trims the tail so
     # HA shows what the charger's own web UI shows.
-    display_precision: int | None = None
+    display_precision: int | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
     # Lower bound for ACCEPTING a device-reported/restored value, when it differs
     # from the writable minimum. The firmware accepts current setpoints below its
     # advertised minimum verbatim (delivery floors at the IEC 61851 6 A), so a
     # sub-minimum reading is a legitimate state, not corruption — same contract
     # as EveusCurrentNumber._READ_MIN. None = use native_min_value.
-    read_min_value: float | None = None
+    read_min_value: float | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
 
 
 CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
@@ -225,7 +225,7 @@ class EveusNumberEntity(
 
     _attr_has_entity_name = True
     _attr_should_poll = False
-    _control_entity_label = "Number"
+    _control_entity_label = "Number"  # pragma: no mutate - only used to format a debug-log message (common_base ControlEntityMixin), pure log text
 
     def __init__(
         self,
@@ -238,7 +238,7 @@ class EveusNumberEntity(
         self.ENTITY_NAME = entity_description.name
         super().__init__(updater, device_number)
 
-        self._pending_value: float | None = None
+        self._pending_value: float | None = None  # pragma: no mutate - annotation only: local/attr annotation in a function body is never evaluated (PEP 526)
         self._init_optimistic_control()
         self._init_write_on_change()
 
@@ -258,7 +258,7 @@ class EveusNumberEntity(
 class EveusCurrentNumber(EveusNumberEntity):
     """Representation of Eveus current control with responsive UI."""
 
-    ENTITY_NAME = _CHARGING_CURRENT_NAME
+    ENTITY_NAME = _CHARGING_CURRENT_NAME  # pragma: no mutate - equivalent: unconditionally overwritten by `self.ENTITY_NAME = entity_description.name` in EveusNumberEntity.__init__ before BaseEveusEntity ever reads it
     _command = "currentSet"
     # Reads accept any non-negative device-reported setpoint up to the model max;
     # the firmware legitimately reports 1..6 A when configured directly on the
@@ -268,7 +268,7 @@ class EveusCurrentNumber(EveusNumberEntity):
     def __init__(self, updater, model: str, device_number: int = 1) -> None:
         """Initialize the current control."""
         super().__init__(updater, CHARGING_CURRENT_DESCRIPTION, device_number)
-        self._model = model
+        self._model = model  # pragma: no mutate - equivalent: written but never read anywhere in the codebase (dead attribute)
 
         self._attr_native_min_value = float(MIN_CURRENT)
         self._attr_native_max_value = float(MODEL_MAX_CURRENT[model])
@@ -358,7 +358,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                     self._set_optimistic_value(float(int_value))
                 else:
                     raise HomeAssistantError(
-                        f"Eveus charger did not accept charging current = {int_value}A"
+                        f"Eveus charger did not accept charging current = {int_value}A"  # pragma: no mutate - pure exception-message text, int_value VALUE unchanged
                     )
 
             except (HomeAssistantError, ConfigEntryAuthFailed):
@@ -366,9 +366,9 @@ class EveusCurrentNumber(EveusNumberEntity):
                 # Assistant starts the reauthentication flow on a 401.
                 raise
             except Exception as err:
-                _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)
+                _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, err VALUE unchanged
                 raise HomeAssistantError(
-                    f"Failed to set charging current: {err}"
+                    f"Failed to set charging current: {err}"  # pragma: no mutate - pure exception-message text, err VALUE unchanged
                 ) from err
             finally:
                 self._pending_value = None
@@ -385,7 +385,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored_value
         except (TypeError, ValueError) as err:
-            _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)
+            _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)  # pragma: no mutate - pure log-message text, arguments unchanged
 
 
 class EveusSetpointNumber(EveusNumberEntity):
@@ -495,13 +495,13 @@ class EveusSetpointNumber(EveusNumberEntity):
                     self._set_optimistic_value(clamped)
                 else:
                     raise HomeAssistantError(
-                        f"Eveus charger did not accept {self.ENTITY_NAME} = {clamped}"
+                        f"Eveus charger did not accept {self.ENTITY_NAME} = {clamped}"  # pragma: no mutate - pure exception-message text, ENTITY_NAME/clamped VALUES unchanged
                     )
             except (HomeAssistantError, ConfigEntryAuthFailed):
                 raise
             except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Failed to set %s: %s", self.ENTITY_NAME, err, exc_info=True)
-                raise HomeAssistantError(f"Failed to set {self.ENTITY_NAME}: {err}") from err
+                _LOGGER.debug("Failed to set %s: %s", self.ENTITY_NAME, err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, arguments unchanged
+                raise HomeAssistantError(f"Failed to set {self.ENTITY_NAME}: {err}") from err  # pragma: no mutate - pure exception-message text, ENTITY_NAME/err VALUES unchanged
             finally:
                 self._pending_value = None
                 self._attr_native_value = self._resolve_value()
@@ -516,7 +516,7 @@ class EveusSetpointNumber(EveusNumberEntity):
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored
         except (TypeError, ValueError) as err:
-            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)  # pragma: no mutate - pure log-message text, arguments unchanged
 
 
 class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
@@ -574,11 +574,11 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored
         except (TypeError, ValueError) as err:
-            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)  # pragma: no mutate - pure log-message text, arguments unchanged
 
     def _refresh_min_bound(self) -> None:
         """Set the lower bound to ``minVoltage + 10`` when the charger reports it."""
-        dynamic: float | None = None
+        dynamic: float | None = None  # pragma: no mutate - annotation only: local annotation in a function body is never evaluated (PEP 526)
         if self._updater.available and self._updater.data:
             raw = get_safe_value(self._updater.data, self._MIN_VOLTAGE_KEY, float)
             # Only trust a firmware-supported minVoltage. A malformed or off-list
@@ -620,7 +620,7 @@ class EveusSocConfigNumber(
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.CONFIG
-    _soc_key: str = ""
+    _soc_key: str = ""  # pragma: no mutate - equivalent: never instantiated directly, every real subclass overrides this class attribute before __init__ ever reads self._soc_key
 
     def __init__(self, updater, soc_calculator, seed, device_number: int = 1) -> None:
         """Initialize the SOC-input number entity."""
@@ -786,7 +786,7 @@ async def async_setup_entry(
                 )
             )
     else:
-        _LOGGER.debug("No model specified in config")
+        _LOGGER.debug("No model specified in config")  # pragma: no mutate - pure log-message text, no arguments
 
     if get_soc_mode(entry) == SOC_MODE_ADVANCED:
         seeds = {

@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+# local py3.12 venv for real mutmut runs (see docs/internal/run_mutation_local.py)
+.venv-mut312/
 .env
 .DS_Store
 
@@ -23,4 +25,5 @@ SONAR_HARDENING_PLAN.md
 # Coverage / test artifacts
 .coverage
 coverage.xml
+.mutmut-cache
 .claude/

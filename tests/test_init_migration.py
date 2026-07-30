@@ -219,6 +219,48 @@ def test_migrate_entry_bumps_version_even_if_old_url_is_invalid() -> None:
     ]
 
 
+def test_migrate_entry_invalid_url_warning_logs_real_entry_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config_entries = _ConfigEntries()
+    hass = SimpleNamespace(config_entries=config_entries)
+    entry = SimpleNamespace(
+        data={CONF_HOST: "http://bad host name/main"},
+        unique_id="http://bad host name/main",
+        title="Eveus Charger (http://bad host name/main)",
+        version=1,
+        entry_id="entry-xyz",
+    )
+
+    with caplog.at_level("WARNING"):
+        assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert warnings[0].args == ("entry-xyz",)
+
+
+def test_migrate_entry_invalid_url_warning_falls_back_to_unknown_without_entry_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config_entries = _ConfigEntries()
+    hass = SimpleNamespace(config_entries=config_entries)
+    # No `entry_id` attribute at all -- the getattr default must be used verbatim.
+    entry = SimpleNamespace(
+        data={CONF_HOST: "http://bad host name/main"},
+        unique_id="http://bad host name/main",
+        title="Eveus Charger (http://bad host name/main)",
+        version=1,
+    )
+
+    with caplog.at_level("WARNING"):
+        assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert warnings[0].args == ("<unknown>",)
+
+
 class _LegacyRegistry:
     """Registry that reports the legacy input_number SOC helpers present."""
 
@@ -511,6 +553,127 @@ def test_resolve_phases_flags_invalid_values() -> None:
     assert _resolve_phases("garbage") == (1, True)
     assert _resolve_phases(2) == (1, True)
     assert _resolve_phases(None) == (1, True)
+    # bool is an int subclass (int(True) == 1); must still be flagged invalid,
+    # not silently accepted as a valid one-phase config.
+    assert _resolve_phases(True) == (DEFAULT_PHASES, True)
+    assert _resolve_phases(False) == (DEFAULT_PHASES, True)
+
+
+def test_advanced_only_entities_exact_contents() -> None:
+    from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
+
+    assert _ADVANCED_ONLY_ENTITIES == (
+        ("sensor", "soc_energy"),
+        ("sensor", "soc_percent"),
+        ("sensor", "time_to_target_soc"),
+        ("sensor", "charging_finish_time"),
+        ("sensor", "energy_to_target_soc"),
+        ("sensor", "cost_to_target_soc"),
+        ("number", "initial_soc"),
+        ("number", "target_soc"),
+        ("number", "battery_capacity"),
+        ("number", "soc_correction"),
+        ("switch", "limit_soc_enabled"),
+    )
+
+
+def test_three_phase_only_entities_exact_contents() -> None:
+    from custom_components.eveus import _THREE_PHASE_ONLY_ENTITIES
+
+    assert _THREE_PHASE_ONLY_ENTITIES == (
+        ("sensor", "current_phase_2"),
+        ("sensor", "current_phase_3"),
+        ("sensor", "voltage_phase_2"),
+        ("sensor", "voltage_phase_3"),
+    )
+
+
+def test_migrate_entry_skips_url_normalization_for_empty_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty/falsy host must skip the whole URL-normalization block, not
+    just fail to change the host -- observable via zero warning calls."""
+    warnings: list[tuple[object, ...]] = []
+    monkeypatch.setattr(eveus._LOGGER, "warning", lambda *a, **k: warnings.append(a))
+    config_entries = _ConfigEntries()
+    hass = SimpleNamespace(config_entries=config_entries)
+    entry = SimpleNamespace(
+        data={CONF_HOST: ""},
+        unique_id=None,
+        title="Eveus",
+        version=CONFIG_ENTRY_VERSION,
+    )
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+    assert warnings == []
+
+
+def test_migration_strips_path_for_https_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: _EmptyRegistryMigration())
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda *a, **k: None,
+    )
+    config_entries = _ConfigEntriesRecorder()
+    hass = SimpleNamespace(config_entries=config_entries)
+    legacy = f"https://{TEST_HOST}/main"
+    entry = SimpleNamespace(
+        data={CONF_HOST: legacy},
+        unique_id=legacy,
+        title=f"Eveus Charger ({legacy})",
+        version=1,
+    )
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    data = config_entries.calls[0]["data"]
+    assert data[CONF_HOST] == TEST_HOST
+    assert data[CONF_SCHEME] == "https"
+
+
+def test_migration_scrubs_username_only_credentials_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Username-only (no password) legacy credentials must still be
+    stripped, and the sanitized host must be clean -- no urlunparse params
+    artifact leaking into the persisted host."""
+    monkeypatch.setattr(eveus.er, "async_get", lambda hass: _EmptyRegistryMigration())
+    monkeypatch.setattr(
+        "custom_components.eveus.config_flow.migrate_device_identifiers",
+        lambda *a, **k: None,
+    )
+    config_entries = _ConfigEntriesRecorder()
+    hass = SimpleNamespace(config_entries=config_entries)
+    legacy = f"http://onlyuser@{TEST_HOST}"  # NOSONAR(python:S5332,python:S2068)
+    entry = SimpleNamespace(
+        data={CONF_HOST: legacy},
+        unique_id=legacy,
+        title=f"Eveus ({legacy})",
+        version=1,
+    )
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    data = config_entries.calls[0]["data"]
+    assert data[CONF_HOST] == TEST_HOST
+
+
+def test_migration_canonicalizes_unique_id_when_other_entries_dont_collide() -> None:
+    """Another entry existing (with a genuinely different unique_id) must not
+    block this entry's own unique_id canonicalization."""
+    other = SimpleNamespace(entry_id="e2", unique_id="some-other-charger.local")
+    entries = _MigrationEntries([other])
+    entry = SimpleNamespace(
+        entry_id="e1",
+        data={"host": "MYCHARGER.LOCAL", "soc_mode": "basic"},
+        unique_id="MYCHARGER.LOCAL",
+        title="Eveus Charger",
+        version=1,
+    )
+    assert asyncio.run(async_migrate_entry(_migration_hass(entries), entry))
+
+    (update,) = entries.updates
+    assert update["unique_id"] == "mycharger.local"
 
 
 def test_async_remove_entry_deletes_all_per_entry_issues(monkeypatch) -> None:

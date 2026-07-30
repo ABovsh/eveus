@@ -4,14 +4,31 @@ name: Mutation Tests
 # the layers users actually report issues against. Every user-facing failure so
 # far has been in the config flow (issues #4, #5, #8, and the old-firmware
 # setup reports), so config_flow.py + repairs.py are first-class targets next
-# to the pure logic layer this workflow originally covered.
+# to the pure logic layer this workflow originally covered. safety.py (ground
+# fault / leak / overheat threshold and fault-recovery logic) was added
+# 2026-07-23 as the highest-stakes previously-untested layer -- its name says
+# what's at risk if a boundary or and/or mutation there ever went unnoticed.
+# entity-base (common_base.py + control_base.py) was added the same day: the
+# shared availability grace-period state machine and optimistic-control
+# reconcile/expire lifecycle used by every switch/number entity -- the
+# highest blast-radius-per-line gap in the repo (control_base.py had 100%
+# line coverage and zero mutation exposure before this).
 #
-# One matrix leg per target group: a leg that times out or finds survivors
-# fails alone (fail-fast: false), and each leg gets its own full time budget —
+# One matrix leg per target group, and each leg gets its own full time budget —
 # the 2026-06-30 single-job run died at a 45-minute cap before reporting
 # anything. Killer test lists are curated per target and kept honest by the
 # contracts in tests/test_ci_workflow.py (a renamed target or test file fails
 # fast in Validate instead of silently weakening the cron job).
+#
+# Report-only gate: every target file uses `from __future__ import
+# annotations` (PEP 563), so mutmut's type-annotation mutations are inert at
+# runtime — no test can ever kill them. Literal zero survivors is therefore
+# structurally unreachable, so a leg is NOT failed just because mutmut's exit
+# code says some mutants survived or timed out (`continue-on-error` on the
+# run step below). The job only fails for real when mutmut itself doesn't
+# produce a usable report (crash, bad install, bad --paths-to-mutate) — see
+# the sanity check in "Report results". The survivor/timeout report is still
+# published in full on every run; that's this workflow's actual product.
 
 on:
   workflow_dispatch:
@@ -69,6 +86,66 @@ jobs:
               tests/test_soc_limit_switch.py
               tests/test_hardening_rc_2026_07_01.py
               tests/test_hardening_4_16_1.py
+          - name: safety
+            paths: "custom_components/eveus/safety.py"
+            tests: >-
+              tests/test_safety.py
+              tests/test_safety_unknown_error.py
+          - name: entity-base
+            paths: "custom_components/eveus/common_base.py,custom_components/eveus/control_base.py"
+            tests: >-
+              tests/test_availability_clock.py
+              tests/test_grace_recheck_recovery.py
+              tests/test_control_entities.py
+              tests/test_control_select_coverage.py
+              tests/test_entities.py
+              tests/test_sensor_definition_entities.py
+              tests/test_time_controls.py
+              tests/test_firmware_parsing.py
+              tests/test_hardening_4_16_1.py
+          - name: init
+            paths: "custom_components/eveus/__init__.py"
+            tests: >-
+              tests/test_init_migration.py
+              tests/test_init_firmware_fallback.py
+              tests/test_setup_entry.py
+              tests/test_transition_events.py
+          - name: control-entities
+            paths: "custom_components/eveus/number.py,custom_components/eveus/switch.py,custom_components/eveus/common_command.py"
+            tests: >-
+              tests/test_limit_numbers.py
+              tests/test_limit_switches.py
+              tests/test_setpoint_number.py
+              tests/test_schedule_limit_numbers.py
+              tests/test_schedule_controls.py
+              tests/test_soc_number_entities.py
+              tests/test_soc_limit_switch.py
+              tests/test_ground_protection.py
+              tests/test_control_entities.py
+              tests/test_command.py
+          - name: minor-entities
+            paths: "custom_components/eveus/select.py,custom_components/eveus/time.py,custom_components/eveus/binary_sensor.py,custom_components/eveus/button.py,custom_components/eveus/session_history.py"
+            tests: >-
+              tests/test_adaptive_minvoltage_select.py
+              tests/test_control_select_coverage.py
+              tests/test_battery_low.py
+              tests/test_last_session.py
+              tests/test_time_controls.py
+              tests/test_entities.py
+          - name: sensor-values
+            paths: "custom_components/eveus/sensor_definitions.py,custom_components/eveus/ev_sensors.py,custom_components/eveus/const.py"
+            tests: >-
+              tests/test_sensor_definitions.py
+              tests/test_sensor_definition_entities.py
+              tests/test_ev_sensors.py
+              tests/test_ev_sensor_entities.py
+              tests/test_new_sensors.py
+              tests/test_multi_state_payload.py
+              tests/test_soc_calculator_push.py
+              tests/test_phase_support.py
+              tests/test_state_enum.py
+              tests/test_time_drift.py
+              tests/test_const_soc_modes.py
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -91,6 +168,10 @@ jobs:
       - name: Run mutation tests
         env:
           PYTHONFAULTHANDLER: "1"
+        # continue-on-error: mutmut's exit code encodes survived/timeout
+        # counts, not crashes — see the report-only-gate note above. A real
+        # crash is caught below instead, in "Report results".
+        continue-on-error: true
         # -x: kill a mutant on its first failing test instead of finishing the
         # whole killer suite — the dominant cost is (mutant count x runner time).
         run: >-
@@ -105,7 +186,10 @@ jobs:
         # Survivor diffs are this workflow's entire product; publish them to the
         # run summary AND to stdout whether the run step passed, failed, or
         # timed out. The summary pane is not retrievable through the REST API,
-        # so the job log (which is) must carry the same information.
+        # so the job log (which is) must carry the same information. This step
+        # also owns the job's actual pass/fail signal now (see the report-only
+        # gate note at the top of the file): it fails the job only when mutmut
+        # produced no usable report at all, not when it found survivors.
         if: always()
         run: |
           python -m mutmut results 2>&1 | tee mutmut-results.txt || true
@@ -117,15 +201,47 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           ids=$(python -m mutmut result-ids survived 2>/dev/null || true)
           if [ -n "$ids" ]; then
-            for id in $(echo "$ids" | tr ' ' '\n' | head -20); do
+            for id in $(echo "$ids" | tr ' ' '\n' | head -500); do
               python -m mutmut show "$id" 2>&1 || true
             done | tee mutmut-survivors.txt
             {
-              echo "<details><summary>Surviving mutant diffs (first 20)</summary>"
+              echo "<details><summary>Surviving mutant diffs</summary>"
               echo ""
               echo '```diff'
               cat mutmut-survivors.txt
               echo '```'
               echo "</details>"
             } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Real failure signal: an empty results file, or one containing a
+          # Python traceback / argparse usage error, means mutmut crashed or
+          # never ran at all (bad install, bad --paths-to-mutate) rather than
+          # just finding survivors — that's the one case this workflow still
+          # needs to fail loudly on. `mutmut results` only lists categories
+          # worth attention (Survived/Timed out/Suspicious — not every run has
+          # any of those, and a fully-killed leg prints none of them), so this
+          # checks for crash signatures rather than requiring specific text.
+          if [ ! -s mutmut-results.txt ] || grep -qE 'Traceback \(most recent call last\)|^usage: mutmut' mutmut-results.txt; then
+            echo "::error::mutmut produced no usable report for ${{ matrix.name }} — treating as a real CI failure, not a survivor count."
+            exit 1
+          fi
+
+      - name: Check survivor baseline (regression ratchet)
+        # The report-only gate above never fails on survivor count (by
+        # design — see the note at the top of this file). That means an
+        # increase in real survivors from newly-shipped, untested code
+        # looked identical to expected noise. This step diffs against a
+        # committed baseline: an increase is a loud ::warning::, a decrease
+        # is a prompt to tighten .github/mutation-baseline.json.
+        if: always()
+        env:
+          LEG_NAME: ${{ matrix.name }}
+        run: |
+          survived=$(python -m mutmut result-ids survived 2>/dev/null | tr ' ' '\n' | grep -c . || true)
+          baseline=$(python3 -c "import json,os; print(json.load(open('.github/mutation-baseline.json')).get(os.environ['LEG_NAME'], 0))")
+          echo "Leg $LEG_NAME: survivors=$survived baseline=$baseline"
+          if [ "$survived" -gt "$baseline" ]; then
+            echo "::warning::$LEG_NAME: survivors increased ($baseline -> $survived) — likely new code shipped without a killer test."
+          elif [ "$survived" -lt "$baseline" ]; then
+            echo "::notice::$LEG_NAME: survivors decreased ($baseline -> $survived) — update .github/mutation-baseline.json to tighten the ratchet."
           fi

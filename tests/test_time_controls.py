@@ -85,8 +85,12 @@ def test_sync_time_button_raises_on_failure(monkeypatch: pytest.MonkeyPatch) -> 
     _disable_state_writes(button)
     monkeypatch.setattr("custom_components.eveus.button.time.time", lambda: 1778988912.9)
 
-    with pytest.raises(HomeAssistantError, match="did not accept"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         asyncio.run(button.async_press())
+    # Exact equality (not just a substring match) so a wrapped-string mutation
+    # of the error text can't slip through: mutmut's "XX...XX" string mutant
+    # still contains "did not accept" as a substring.
+    assert str(exc_info.value) == "Eveus charger did not accept the time-sync command"
     assert updater.commands == [("systemTime", 1778988912)]
 
 
@@ -448,3 +452,211 @@ def test_time_setup_entry_adds_four_schedule_entities() -> None:
         "schedule_2_stop",
     ]
     assert {entity._device_number for entity in added} == {2}
+
+
+# ---------------------------------------------------------------------------
+# time.py mutation-hardening gaps
+# ---------------------------------------------------------------------------
+
+
+def test_time_entity_description_is_frozen() -> None:
+    import dataclasses
+
+    from custom_components.eveus.time import EveusTimeEntityDescription
+
+    description = EveusTimeEntityDescription(key="probe", name="Probe")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        description.name = "Mutated"
+
+
+def test_time_entity_description_defaults_are_exact() -> None:
+    from custom_components.eveus.time import EveusTimeEntityDescription
+
+    description = EveusTimeEntityDescription(key="probe", name="Probe")
+    assert description.command == ""
+    assert description.state_key == ""
+
+
+@pytest.mark.parametrize(
+    "index,key,name,icon,command,state_key",
+    [
+        (0, "schedule_1_start", "Schedule 1 Start", "mdi:clock-start", "sh1Start", "sh1Start"),
+        (1, "schedule_1_stop", "Schedule 1 Stop", "mdi:clock-end", "sh1Stop", "sh1Stop"),
+        (2, "schedule_2_start", "Schedule 2 Start", "mdi:clock-start", "sh2Start", "sh2Start"),
+        (3, "schedule_2_stop", "Schedule 2 Stop", "mdi:clock-end", "sh2Stop", "sh2Stop"),
+    ],
+)
+def test_time_descriptions_metadata_is_exact(
+    index: int, key: str, name: str, icon: str, command: str, state_key: str
+) -> None:
+    description = TIME_DESCRIPTIONS[index]
+    assert description.key == key
+    assert description.name == name
+    assert description.icon == icon
+    assert description.command == command
+    assert description.state_key == state_key
+
+
+def test_minutes_to_time_boundary_zero_is_valid() -> None:
+    """`0 <= m < 1440`: m == 0 exactly must decode (the left bound is
+    inclusive) - distinguishes from a mutated `1 <= m` or `0 < m`."""
+    assert minutes_to_time(0) == dt.time(0, 0)
+
+
+def test_minutes_to_time_boundary_1440_is_invalid() -> None:
+    """The right bound is exclusive: 1440 (midnight next day) must be
+    rejected, not silently wrapped."""
+    assert minutes_to_time(1440) is None
+
+
+def test_schedule_time_control_entity_label_is_exact() -> None:
+    assert EveusScheduleTimeEntity._control_entity_label == "Time"
+
+
+def test_schedule_time_device_number_default_is_one() -> None:
+    entity = EveusScheduleTimeEntity(_Updater({}), TIME_DESCRIPTIONS[0])
+    assert entity.unique_id == "eveus_schedule_1_start"
+
+
+def test_read_device_value_boundary_zero_is_valid() -> None:
+    entity = _schedule_entity({"sh1Start": 0})
+    assert entity._read_device_value() == 0
+
+
+def test_read_device_value_boundary_1439_is_valid() -> None:
+    entity = _schedule_entity({"sh1Start": 1439})
+    assert entity._read_device_value() == 1439
+
+
+def test_read_device_value_boundary_1440_is_invalid() -> None:
+    entity = _schedule_entity({"sh1Start": 1440})
+    assert entity._read_device_value() is None
+
+
+def test_read_device_value_requires_real_and_not_or_gate() -> None:
+    """`available and data and key in data` must be a real AND chain: with
+    `available` False, an `or` mutation would still fall through to check
+    `data`/key membership and could return a stale value instead of None."""
+    entity = _schedule_entity({"sh1Start": 120}, available=False)
+    assert entity._read_device_value() is None
+
+
+def test_resolve_minutes_boundary_zero_is_valid() -> None:
+    entity = _schedule_entity({"sh1Start": 0})
+    assert entity._resolve_minutes() == 0
+
+
+def test_resolve_minutes_boundary_1440_is_invalid_falls_through() -> None:
+    """1440 is out of range for the device-value branch; with no last-known
+    value to fall back on, resolution must end in None."""
+    entity = _schedule_entity({"sh1Start": 1440})
+    assert entity._resolve_minutes() is None
+
+
+def test_resolve_minutes_requires_real_and_not_or_gate() -> None:
+    entity = _schedule_entity({"sh1Start": 120}, available=False)
+    assert entity._resolve_minutes() is None
+
+
+def test_resolve_minutes_grace_boundary_age_zero_is_valid(monkeypatch) -> None:
+    now = 1_700_000_000.0
+    monkeypatch.setattr("custom_components.eveus.time._time.time", lambda: now)
+    entity = _schedule_entity({"sh1Start": "bad"})
+    entity._last_device_value = 90
+    entity._last_successful_read = now  # age == 0 exactly
+
+    assert entity._resolve_minutes() == 90
+
+
+def test_resolve_minutes_grace_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+
+    now = 1_700_000_000.0
+    monkeypatch.setattr("custom_components.eveus.time._time.time", lambda: now)
+    entity = _schedule_entity({"sh1Start": "bad"})
+    entity._last_device_value = 90
+    entity._last_successful_read = now - CONTROL_GRACE_PERIOD  # age == grace exactly
+
+    assert entity._resolve_minutes() is None
+
+
+def test_schedule_time_pending_value_is_set_during_send(monkeypatch) -> None:
+    entity = _schedule_entity({"sh1Start": 60})
+    observed: list[int | None] = []
+
+    async def spy_send_command(command, value, *, retry=True):
+        observed.append(entity._pending_value)
+        return True
+
+    entity._updater.send_command = spy_send_command
+    asyncio.run(entity.async_set_value(dt.time(6, 30)))
+
+    assert observed == [390]
+    assert entity._pending_value is None
+
+
+def test_schedule_time_native_value_uses_real_hour_and_minute_division() -> None:
+    """120 minutes must decode to 02:00 (120 // 60 = 2, 120 % 60 = 0). 120 is
+    chosen because it distinguishes a //61 divisor mutation (120 // 61 == 1,
+    a different hour) - a value like 125 would not, since 125 // 61 also
+    equals 2.
+
+    The optimistic display value set right before the command is sent is
+    overwritten again in the `finally` block (recomputed via
+    `minutes_to_time`, which uses the correct //60 %60), so a plain
+    end-to-end assertion on `native_value` after the call can't distinguish
+    the mutation - capture the transient value at write time instead."""
+    entity = _schedule_entity({"sh1Start": 60})
+    observed: list[object] = []
+    original_write = entity._write_if_changed
+
+    def spy_write(value):
+        observed.append(value)
+        return original_write(value)
+
+    entity._write_if_changed = spy_write
+
+    asyncio.run(entity.async_set_value(dt.time(2, 0)))
+
+    assert entity._updater.commands == [("sh1Start", 120)]
+    # First write is the optimistic value computed directly from `minutes`.
+    assert observed[0] == dt.time(2, 0)
+
+
+def test_schedule_time_native_value_uses_real_minute_modulus() -> None:
+    """65 minutes must decode to 01:05 (65 % 60 = 5) - distinguishes a %61
+    modulus mutation (65 % 61 == 4, a different minute)."""
+    entity = _schedule_entity({"sh1Start": 60})
+    observed: list[object] = []
+    original_write = entity._write_if_changed
+
+    def spy_write(value):
+        observed.append(value)
+        return original_write(value)
+
+    entity._write_if_changed = spy_write
+
+    asyncio.run(entity.async_set_value(dt.time(1, 5)))
+
+    assert entity._updater.commands == [("sh1Start", 65)]
+    assert observed[0] == dt.time(1, 5)
+
+
+def test_schedule_time_set_value_exact_error_message() -> None:
+    entity = _schedule_entity({"sh1Start": 60})
+    entity._updater.command_result = False
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        asyncio.run(entity.async_set_value(dt.time(7, 15)))
+
+    assert str(exc_info.value) == f"Eveus charger did not accept '{entity.name}' = 07:15"
+
+
+def test_schedule_time_restore_stamps_a_real_timestamp() -> None:
+    entity = _schedule_entity({})
+    before = time.time()
+
+    asyncio.run(entity._async_restore_state(State("time.test", "08:45:00")))
+
+    assert entity._last_successful_read is not None
+    assert entity._last_successful_read >= before

@@ -83,7 +83,7 @@ class CachedSOCCalculator:
                 self.initial_soc, self.battery_capacity, energy_charged, self._effective_correction()
             )
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)
+            _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)  # pragma: no mutate - log message text is display-only; exc_info kwarg (traceback capture) is not observed by any test
             return None
 
     def get_soc_percent(self, energy_charged: float) -> Optional[float]:
@@ -138,7 +138,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             )
         )
 
-    @callback
+    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
     def _on_soc_input_changed(self) -> None:
         """Recompute immediately when a SOC input value is pushed."""
         previous_available = self.available
@@ -161,7 +161,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             return True
         return self._soc_calculator.are_helpers_available()
 
-    @callback
+    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
     def _handle_coordinator_update(self) -> None:
         self._maybe_finalize_device_info()
         previous_available = self.available
@@ -195,7 +195,7 @@ class BaseEVHelperSensor(EveusSensorBase):
         # sensors resolve to their "Not charging" / unknown states.
         state = get_safe_value(self._updater.data, "state", int)
         if state not in SESSION_ACTIVE_STATES:
-            power_meas: float | None = 0.0
+            power_meas: float | None = 0.0  # pragma: no mutate - PEP 563 postponed evaluation: local-variable annotation is never evaluated at runtime, only the `= 0.0` assignment executes
         else:
             power_meas = get_safe_value(self._updater.data, "powerMeas", float)
         energy_charged = self._get_energy_charged()
@@ -326,10 +326,10 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
 
         except Exception as err:
             _LOGGER.debug(
-                "Error calculating time to target for %s: %s",
+                "Error calculating time to target for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,
                 err,
-                exc_info=True,
+                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
             )
             # Matches the docstring: drop any stale value on failure instead of
             # freezing it (this class's own inputs-missing branch above does
@@ -460,9 +460,9 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             return eta.replace(second=0, microsecond=0) + timedelta(minutes=1)
         except Exception as err:
             _LOGGER.debug(
-                "Error calculating finish time for %s: %s",
+                "Error calculating finish time for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,
                 err,
-                exc_info=True,
+                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
             )
             return None

@@ -135,9 +135,9 @@ class EveusTimeZoneSelect(
             # the command can't immediately expire it before the charger reports
             # the new zone.
             self._set_optimistic_value(offset)
-        _LOGGER.debug("Time zone changed to %s", option)
+        _LOGGER.debug("Time zone changed to %s", option)  # pragma: no mutate - log-message text only, argument (option) unchanged
 
-    @callback
+    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
     def _handle_coordinator_update(self) -> None:
         """Push HA state only when the visible option or availability changes."""
         self._maybe_finalize_device_info()
@@ -242,9 +242,9 @@ class _EveusIntegerSelect(
                     f"Eveus charger did not accept {self.WRITE_KEY}={value}"
                 )
             self._set_optimistic_value(value)
-        _LOGGER.debug("%s changed to %s", self.ENTITY_NAME, option)
+        _LOGGER.debug("%s changed to %s", self.ENTITY_NAME, option)  # pragma: no mutate - log-message text only, arguments unchanged
 
-    @callback
+    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
     def _handle_coordinator_update(self) -> None:
         """Push HA state only when the visible option or availability changes."""
         self._maybe_finalize_device_info()

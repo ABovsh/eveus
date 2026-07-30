@@ -229,6 +229,94 @@ def test_build_soc_numbers_uses_defaults_when_seed_missing() -> None:
     assert by_key["soc_correction"].native_value == 7.5
 
 
+def test_soc_config_number_base_class_attrs() -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    assert n._attr_has_entity_name is True
+    assert n._attr_should_poll is False
+    assert n.available is True
+
+
+def test_soc_config_number_restore_rejects_bool_without_crash(monkeypatch) -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    n.hass = HelperHass({})
+    _run_added_to_hass(n, True, monkeypatch)  # bool must be rejected, not treated as 1.0
+    assert n.native_value == 50  # seed kept, no crash
+
+
+def test_soc_config_number_restore_rejects_garbage_string_without_crash(monkeypatch) -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    n.hass = HelperHass({})
+    _run_added_to_hass(n, "not-a-number", monkeypatch)
+    assert n.native_value == 50  # seed kept, no crash
+
+
+def test_soc_config_number_restore_range_boundaries(monkeypatch) -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)  # range 10..160
+    n.hass = HelperHass({})
+    _run_added_to_hass(n, 10, monkeypatch)
+    assert n.native_value == 10
+    n2 = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    n2.hass = HelperHass({})
+    _run_added_to_hass(n2, 160, monkeypatch)
+    assert n2.native_value == 160
+
+
+def test_soc_config_number_pushes_dispatcher_signal_only_with_hass() -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    n.hass = None
+    n._push()  # must not raise / must not attempt to dispatch without hass
+
+
+def test_initial_soc_number_full_contract() -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusInitialSocNumber(updater, calc, seed=20, device_number=1)
+    assert n._attr_icon == "mdi:battery-charging-40"
+    assert n._attr_native_unit_of_measurement == "%"
+    assert n._attr_native_step == 1
+    assert str(n._attr_mode).endswith("slider")
+
+
+def test_target_soc_number_full_contract() -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusTargetSocNumber(updater, calc, seed=80, device_number=1)
+    assert n._attr_icon == "mdi:battery-charging-high"
+    assert n._attr_native_unit_of_measurement == "%"
+    assert n._attr_native_step == 5
+    assert str(n._attr_mode).endswith("slider")
+
+
+def test_battery_capacity_number_full_contract() -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    assert n._attr_icon == "mdi:car-battery"
+    assert n._attr_native_unit_of_measurement == "kWh"
+    assert n._attr_native_step == 1
+    assert str(n._attr_mode).endswith("box")
+
+
+def test_soc_correction_number_full_contract() -> None:
+    updater = _updater()
+    calc = CachedSOCCalculator()
+    n = EveusSocCorrectionNumber(updater, calc, seed=7.5, device_number=1)
+    assert n._attr_icon == "mdi:chart-bell-curve"
+    assert n._attr_native_unit_of_measurement == "%"
+    assert n._attr_native_step == 0.5
+    assert str(n._attr_mode).endswith("box")
+
+
 def test_number_setup_entry_adds_soc_numbers_in_advanced_mode() -> None:
     added: list[object] = []
     calculator = CachedSOCCalculator()
