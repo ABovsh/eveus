@@ -835,6 +835,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except InvalidResponse as err:
                 errors["base"] = "invalid_response"
                 _LOGGER.debug("Invalid reauth response: %s", str(err))
+            except AbortFlow:
+                # A concurrent user/reconfigure flow on the same host makes
+                # async_set_unique_id abort; surface that reason instead of
+                # swallowing it into a generic "unknown" error.
+                raise
             except Exception:
                 _LOGGER.exception("Unexpected reauth exception")
                 errors["base"] = "unknown"

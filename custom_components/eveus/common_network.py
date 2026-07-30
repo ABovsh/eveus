@@ -226,6 +226,20 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._legacy_charging_latched = False
         self._legacy_zero_power_polls = 0
 
+    def _forget_poll_gap_state(self) -> None:
+        """Drop the state that is only meaningful between consecutive good polls.
+
+        Transitions observed across a gap must stay silent (see
+        ``_emit_transition_events``) and a stale legacy latch must not resurrect
+        "Charging" afterwards. Every interrupted poll clears this — including an
+        auth rejection, which deliberately skips the connectivity accounting but
+        is just as much a gap in the event stream.
+        """
+        self._reset_legacy_charging_latch()
+        self._event_prev_state = None
+        self._event_prev_payload = None
+        self._event_prev_error_code = None
+
     def _normalize_legacy_device_state(self, data: dict[str, Any]) -> dict[str, Any]:
         """Translate firmware-1.x state codes to their modern equivalents.
 
@@ -614,12 +628,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _record_failure(self, error: Exception) -> None:
         """Record a failed poll and tune retry cadence."""
         self._connection_quality_cache = None
-        self._reset_legacy_charging_latch()
-        # Transitions across an offline gap must stay silent (see
-        # _emit_transition_events); forget the last observed state.
-        self._event_prev_state = None
-        self._event_prev_payload = None
-        self._event_prev_error_code = None
+        self._forget_poll_gap_state()
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False
@@ -776,6 +785,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     self._connection_quality_cache = None
                     self._device_available = False
                     self._last_error = "ConfigEntryAuthFailed"
+                    # The event stream still has a hole here: polling stops
+                    # until reauth or a manual refresh, so a transition that
+                    # happens meanwhile must not be reconstructed from the
+                    # pre-401 payload once the charger answers again.
+                    self._forget_poll_gap_state()
                     raise ConfigEntryAuthFailed("Invalid authentication")
                 response.raise_for_status()
 
