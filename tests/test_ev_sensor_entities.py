@@ -665,7 +665,6 @@ def test_eta_not_charging_when_state_inactive() -> None:
     assert sensor._get_sensor_value() == "Not charging"
 
 
-import pytest as _pytest
 
 
 def _push_helpers_ev(calc):
@@ -687,7 +686,7 @@ def test_energy_to_target_does_not_zero_from_percent_rounding() -> None:
     value = sensor._get_sensor_value()
     assert value is not None
     # 0.44 kWh battery / 0.9 efficiency ≈ 0.49 kWh from the grid — must not be 0.
-    assert value == _pytest.approx(0.49, abs=0.02)
+    assert value == pytest.approx(0.49, abs=0.02)
 
 
 def test_cost_to_target_zero_at_target_without_tariff() -> None:

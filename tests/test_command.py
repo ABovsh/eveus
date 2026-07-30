@@ -206,7 +206,8 @@ def test_command_manager_serializes_concurrent_commands(
         "pageevent=currentSet&currentSet=16",
         "pageevent=evseEnabled&evseEnabled=1",
     ]
-    assert sleep_calls and 0 < sleep_calls[0] <= 1
+    assert sleep_calls
+    assert 0 < sleep_calls[0] <= 1
 
 
 def test_rate_limit_sleep_formula_and_boundaries(

@@ -146,4 +146,5 @@ def test_time_entity_all_four_keys_registered() -> None:
     }
     for desc in TIME_DESCRIPTIONS:
         assert desc.command == desc.state_key
-        assert desc.command.startswith("sh") and desc.command.endswith(("Start", "Stop"))
+        assert desc.command.startswith("sh")
+        assert desc.command.endswith(("Start", "Stop"))

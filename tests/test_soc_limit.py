@@ -146,7 +146,8 @@ def test_does_not_issue_or_emit_when_already_disabled_at_target():
     ctrl.set_enabled(True)
     ctrl.process()
     ctrl.process()
-    assert scheduled == [] and events == []
+    assert scheduled == []
+    assert events == []
 
 
 def test_missing_evse_at_active_poll_is_skipped_then_confirms():
@@ -234,14 +235,16 @@ def test_redundant_enable_does_not_refire():
     assert len(events) == 1
     ctrl.set_enabled(True)               # redundant — idempotent
     ctrl.process()                       # already fired; nothing
-    assert len(scheduled) == 1 and len(events) == 1
+    assert len(scheduled) == 1
+    assert len(events) == 1
 
 
 def test_does_not_fire_when_disabled():
     ctrl, scheduled, events = _make(_calc(), _updater(session_energy=30.0))
     ctrl.set_enabled(False)
     ctrl.process()
-    assert scheduled == [] and events == []
+    assert scheduled == []
+    assert events == []
 
 
 def test_disable_all_limits_stands_down_then_resumes():
@@ -252,27 +255,31 @@ def test_disable_all_limits_stands_down_then_resumes():
     )
     ctrl.set_enabled(True)
     ctrl.process()
-    assert scheduled == [] and events == []
+    assert scheduled == []
+    assert events == []
 
     updater.data["suspendLimits"] = 0
     ctrl.process()
     _confirm(updater)
     ctrl.process()
-    assert len(scheduled) == 1 and len(events) == 1
+    assert len(scheduled) == 1
+    assert len(events) == 1
 
 
 def test_does_not_fire_below_target():
     ctrl, scheduled, events = _make(_calc(target=90), _updater(session_energy=30.0))
     ctrl.set_enabled(True)
     ctrl.process()
-    assert scheduled == [] and events == []
+    assert scheduled == []
+    assert events == []
 
 
 def test_ignored_on_failed_poll():
     ctrl, scheduled, events = _make(_calc(), _updater(session_energy=30.0, ok=False))
     ctrl.set_enabled(True)
     ctrl.process()
-    assert scheduled == [] and events == []
+    assert scheduled == []
+    assert events == []
 
 
 def test_rearms_after_session_ends():
@@ -289,7 +296,8 @@ def test_rearms_after_session_ends():
     ctrl.process()                       # session 2: Stop sent
     _confirm(updater)                    # evseEnabled=1 -> confirm (2)
     ctrl.process()
-    assert len(scheduled) == 2 and len(events) == 2
+    assert len(scheduled) == 2
+    assert len(events) == 2
 
 
 def test_confirmation_during_inflight_stop_is_not_lost():
@@ -493,7 +501,8 @@ def test_missing_session_energy_at_active_poll_does_not_crash_or_stop():
     )
     ctrl.set_enabled(True)
     ctrl.process()  # must not raise, must not schedule a stop
-    assert scheduled == [] and events == []
+    assert scheduled == []
+    assert events == []
 
 
 def test_generation_increments_by_one_per_rearm():

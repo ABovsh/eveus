@@ -163,7 +163,8 @@ class TestChargingFinishTime:
         # Must be a tz-aware UTC timestamp suitable for device_class=timestamp.
         assert result.tzinfo is not None
         # Must be minute-aligned to avoid jitter on every poll.
-        assert result.second == 0 and result.microsecond == 0
+        assert result.second == 0
+        assert result.microsecond == 0
 
     def test_returns_none_when_not_charging(self) -> None:
         # powerMeas=0 → no ETA. Must be None (timestamp sensors hide on None).

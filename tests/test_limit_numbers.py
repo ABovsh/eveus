@@ -15,19 +15,22 @@ def _by_key(descs):
 def test_energy_limit_write_scale_is_1000():
     d = _by_key(GLOBAL_LIMIT_NUMBERS)["limit_energy"]
     assert d.command == "energyLimit"
-    assert d.device_to_ha == 1.0 and d.ha_to_device == 1000.0
+    assert d.device_to_ha == 1.0
+    assert d.ha_to_device == 1000.0
 
 
 def test_time_limit_scales_minutes_to_seconds():
     d = _by_key(GLOBAL_LIMIT_NUMBERS)["limit_time"]
     assert d.command == "timeLimit"
-    assert d.ha_to_device == 60.0 and abs(d.device_to_ha - 1 / 60) < 1e-9
+    assert d.ha_to_device == 60.0
+    assert abs(d.device_to_ha - 1 / 60) < 1e-9
 
 
 def test_cost_limit_is_one_to_one():
     d = _by_key(GLOBAL_LIMIT_NUMBERS)["limit_cost"]
     assert d.command == "moneyLimit"
-    assert d.device_to_ha == 1.0 and d.ha_to_device == 1.0
+    assert d.device_to_ha == 1.0
+    assert d.ha_to_device == 1.0
 
 
 # ─── full description-field contract (icon/state_key/min/max/step/unit) ─────

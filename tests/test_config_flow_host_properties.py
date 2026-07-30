@@ -65,7 +65,8 @@ def test_host_parser_only_ever_raises_vol_invalid(raw: str) -> None:
         host, scheme = _split_host_and_scheme(raw)
     except vol.Invalid:
         return
-    assert isinstance(host, str) and host
+    assert isinstance(host, str)
+    assert host
     assert scheme in ("http", "https")
 
 
@@ -105,7 +106,8 @@ def test_accepted_host_is_url_and_unique_id_safe(raw: str) -> None:
     # to a non-empty hostname and the same in-range port.
     parsed = urlparse(f"{scheme}://{host}")
     assert parsed.hostname
-    assert parsed.username is None and parsed.password is None
+    assert parsed.username is None
+    assert parsed.password is None
     if parsed.port is not None:
         assert 1 <= parsed.port <= 65535
         # The scheme-default port is stripped during validation, so it can
