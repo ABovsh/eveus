@@ -7,7 +7,7 @@
 > рівня заряду батареї електромобіля, розклади, сповіщення безпеки та готові
 > сутності для автоматизацій — без допоміжних шаблонних сенсорів.
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
 ![Версія](https://img.shields.io/badge/version-4.18.2-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
@@ -166,15 +166,16 @@
 
 ### Через HACS
 
-[![Додати репозиторій до HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&repository=eveus&category=integration)
+Інтеграція є у **стандартному каталозі HACS** — користувацький репозиторій
+додавати не потрібно.
+
+[![Відкрити репозиторій у HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&repository=eveus&category=integration)
 
 Або вручну:
 
-1. У HACS відкрийте **Користувацькі репозиторії**.
-2. Додайте `https://github.com/ABovsh/eveus` як репозиторій типу
-   **Integration**.
-3. Встановіть **Eveus EV Charger**.
-4. Перезапустіть Home Assistant.
+1. Відкрийте **HACS** і знайдіть **Eveus EV Charger**.
+2. Встановіть інтеграцію.
+3. Перезапустіть Home Assistant.
 
 ### Вручну
 

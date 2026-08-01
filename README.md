@@ -4,7 +4,7 @@
 
 > Full local control and monitoring for Eveus EV chargers: charging controls, current electrical measurements, charging costs, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/custom-components/hacs)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
 ![Version](https://img.shields.io/badge/version-4.18.2-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
@@ -118,14 +118,15 @@ See [Safety notices](#-safety-notices) for the full list of conditions and recom
 
 ### HACS
 
-[![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&repository=eveus&category=integration)
+The integration is in the **HACS default store** — no custom repository needed.
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&repository=eveus&category=integration)
 
 Or manually:
 
-1. HACS -> **Custom repositories**.
-2. Add `https://github.com/ABovsh/eveus` as **Integration**.
-3. Install **Eveus EV Charger**.
-4. Restart Home Assistant.
+1. Open **HACS** and search for **Eveus EV Charger**.
+2. Install it.
+3. Restart Home Assistant.
 
 ### Manual
 
