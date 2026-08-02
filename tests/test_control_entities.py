@@ -1196,12 +1196,12 @@ def test_binary_sensor_setup_entry_adds_all_status_entities() -> None:
 
 
 def test_car_connected_error_state_is_unknown() -> None:
-    from custom_components.eveus.binary_sensor import (
-        _CONNECTED_STATES,
-        _PLUG_UNKNOWN_STATES,
+    from custom_components.eveus.const import (
+        CONNECTED_STATES,
+        PLUG_UNKNOWN_STATES,
     )
-    assert 7 in _PLUG_UNKNOWN_STATES
-    assert 7 not in _CONNECTED_STATES
+    assert 7 in PLUG_UNKNOWN_STATES
+    assert 7 not in CONNECTED_STATES
 
 
 def test_timezone_select_suppresses_reconcile_while_pending() -> None:
@@ -1488,3 +1488,18 @@ def test_current_number_restore_populates_native_value() -> None:
     entity = EveusCurrentNumber(_Updater({}), "16A")
     asyncio.run(entity._async_restore_state(State("number.x", "12")))
     assert entity.native_value == 12.0
+
+
+def test_binary_sensor_plug_state_sets_come_from_const() -> None:
+    """The plug/connected state sets must have exactly one definition.
+
+    binary_sensor.py used to re-declare frozenset({3, 4, 5, 6}) and
+    frozenset({7}) locally, duplicating const.CONNECTED_STATES /
+    const.PLUG_UNKNOWN_STATES. A firmware state added to const would then
+    silently fail to reach Car Connected and Session Active.
+    """
+    from custom_components.eveus import binary_sensor as bs
+    from custom_components.eveus import const
+
+    assert bs.CONNECTED_STATES is const.CONNECTED_STATES
+    assert bs.PLUG_UNKNOWN_STATES is const.PLUG_UNKNOWN_STATES

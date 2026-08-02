@@ -95,3 +95,18 @@ def test_valid_min_voltages_is_the_exact_curated_set():
     assert _VALID_MIN_VOLTAGES == {
         150.0, 155.0, 160.0, 165.0, 170.0, 175.0, 180.0, 200.0
     }
+
+
+def test_min_voltage_option_list_has_a_single_definition():
+    """The firmware-supported minVoltage set must be defined exactly once.
+
+    select.py held the display list and number.py held its own float copy;
+    adding a voltage to one without the other would leave the undervoltage
+    write floor derived from a stale set.
+    """
+    from custom_components.eveus import const, number, select
+
+    assert select.MIN_VOLTAGE_OPTIONS is const.MIN_VOLTAGE_OPTIONS
+    assert number._VALID_MIN_VOLTAGES == frozenset(
+        float(v) for v in const.MIN_VOLTAGE_OPTIONS
+    )

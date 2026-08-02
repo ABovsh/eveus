@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Final, FrozenSet
+from typing import Final
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -16,18 +16,15 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, WriteOnChangeMixin
-from .const import CHARGING_STATES, SESSION_ACTIVE_STATES
+from .const import (
+    CHARGING_STATES,
+    CONNECTED_STATES,
+    PLUG_UNKNOWN_STATES,
+    SESSION_ACTIVE_STATES,
+)
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
-
-
-# Device-state values that indicate a vehicle is electrically connected.
-# Mirrors CHARGING_STATES in const.py: 3=Connected, 4=Charging, 5=Charge
-# Complete, 6=Paused. Standby (2), Startup (0), System Test (1), and Error (7)
-# explicitly do not imply a plug presence.
-_CONNECTED_STATES: Final[FrozenSet[int]] = frozenset({3, 4, 5, 6})
-_PLUG_UNKNOWN_STATES: Final[FrozenSet[int]] = frozenset({7})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -46,16 +43,16 @@ def _car_connected_is_on(data: dict) -> bool | None:
     state = get_safe_value(data, "state", int)
     if state is None or state not in CHARGING_STATES:
         return None
-    if state in _PLUG_UNKNOWN_STATES:
+    if state in PLUG_UNKNOWN_STATES:
         return None
-    return state in _CONNECTED_STATES
+    return state in CONNECTED_STATES
 
 
 def _session_active_is_on(data: dict) -> bool | None:
     state = get_safe_value(data, "state", int)
     if state is None or state not in CHARGING_STATES:
         return None
-    if state in _PLUG_UNKNOWN_STATES:
+    if state in PLUG_UNKNOWN_STATES:
         # In the error state the firmware cannot tell whether a session is
         # still active; reporting a definite "off" would falsely trigger
         # session-ended automations. Mirrors Car Connected.

@@ -17,10 +17,8 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from conftest import EV_HELPERS, EveusTestUpdater, HelperHass
 from custom_components.eveus import sensor_definitions as sensors
 from custom_components.eveus import utils
-from custom_components.eveus.binary_sensor import (
-    EveusCarConnectedBinarySensor,
-    _CONNECTED_STATES,
-)
+from custom_components.eveus.binary_sensor import EveusCarConnectedBinarySensor
+from custom_components.eveus.const import CONNECTED_STATES
 from custom_components.eveus.ev_sensors import (
     CachedSOCCalculator,
     ChargingFinishTimeSensor,
@@ -217,7 +215,7 @@ class TestCarConnectedBinarySensor:
         # Locking this set down: 3=Connected, 4=Charging, 5=Complete, 6=Paused.
         # Any change here is a behavior change and should require an explicit
         # update to this assertion.
-        assert _CONNECTED_STATES == frozenset({3, 4, 5, 6})
+        assert CONNECTED_STATES == frozenset({3, 4, 5, 6})
 
     def _make(self, data: dict, *, available: bool = True):
         sensor = EveusCarConnectedBinarySensor(

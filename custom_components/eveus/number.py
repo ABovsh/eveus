@@ -25,6 +25,7 @@ from . import EveusConfigEntry
 from .const import (
     MODEL_MAX_CURRENT,
     MIN_CURRENT,
+    MIN_VOLTAGE_OPTIONS,
     CONF_MODEL,
     CONTROL_GRACE_PERIOD,
     OPTIMISTIC_CONTROL_TTL,
@@ -148,13 +149,11 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
     ),
 )
 
-# Firmware-supported Minimum voltage options (gridRange=0 / 230 V), mirroring
-# select.py MIN_VOLTAGE_OPTIONS. The undervoltage floor (minVoltage + 10) is only
+# Float view of the shared firmware-supported Minimum voltage list (see
+# const.MIN_VOLTAGE_OPTIONS). The undervoltage floor (minVoltage + 10) is only
 # derived from one of these; a malformed or off-list minVoltage (e.g. -1000) must
 # not be trusted to widen the writable threshold below the safe static floor.
-_VALID_MIN_VOLTAGES = frozenset(
-    float(v) for v in (150, 155, 160, 165, 170, 175, 180, 200)
-)
+_VALID_MIN_VOLTAGES = frozenset(float(v) for v in MIN_VOLTAGE_OPTIONS)
 
 UNDERVOLTAGE_THRESHOLD_NUMBER = EveusSetpointNumberDescription(
     key="undervoltage_threshold",

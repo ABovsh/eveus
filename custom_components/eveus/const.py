@@ -156,6 +156,16 @@ MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
     MODEL_48A: 48,
 }
 
+# Firmware-supported "Minimum voltage" values (gridRange=0 / 230 V), in the
+# order the select shows them. Single source of truth: the Minimum voltage
+# select offers exactly these, and the Undervoltage threshold number derives
+# its dynamic write floor (minVoltage + 10) only from a value on this list —
+# a malformed or off-list minVoltage must not widen the floor below the safe
+# static minimum. Kept here so the two platforms cannot drift apart.
+MIN_VOLTAGE_OPTIONS: Final[List[str]] = [
+    "200", "180", "175", "170", "165", "160", "155", "150",
+]
+
 # Upper sanity ceilings for live telemetry, shared by the display sensors and
 # the SOC/ETA calculations so both reject the same corrupt finite outliers
 # (a finite but impossible value like 1e100) instead of only the display side.
