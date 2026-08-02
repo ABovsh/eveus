@@ -72,6 +72,62 @@ def test_recovery_after_grace_recheck_is_written_to_ha(
     )
 
 
+def test_recheck_write_routes_through_write_on_change_bookkeeping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recheck must call `_write_availability_only` when the entity has it,
+    not a raw `async_write_ha_state()`. The binary sensor above blanks its value
+    while unavailable, so its recovery write goes through on the value change
+    alone and can't tell the two apart; an entity whose value is unchanged
+    across the outage can — a raw write leaves `_last_written_available` True
+    and `_write_if_changed` then suppresses recovery as "unchanged".
+    """
+    from custom_components.eveus.common_base import BaseEveusEntity, WriteOnChangeMixin
+
+    class _Probe(WriteOnChangeMixin, BaseEveusEntity):
+        ENTITY_NAME = "Probe Constant Value"
+
+        def _handle_coordinator_update(self) -> None:
+            self._update_availability_state()
+            self._write_if_changed("constant")
+
+    updater = EveusTestUpdater({}, available=True)
+    entity = _Probe(updater, 1)
+    entity._init_write_on_change()
+    entity.hass = SimpleNamespace()
+
+    writes: list[bool] = []
+    entity.async_write_ha_state = lambda: writes.append(entity.available)
+
+    scheduled: list = []
+    monkeypatch.setattr(
+        common_base,
+        "async_call_later",
+        lambda _hass, _delay, action: scheduled.append(action) or (lambda: None),
+    )
+
+    fake_monotonic = 1_000_000.0
+    monkeypatch.setattr(common_base.time, "monotonic", lambda: fake_monotonic)
+
+    entity._handle_coordinator_update()
+    assert writes == [True]
+
+    updater.available = False
+    entity._handle_coordinator_update()  # starts the grace window
+    assert scheduled, "grace recheck must be scheduled"
+
+    fake_monotonic += common_base.AVAILABILITY_GRACE_PERIOD + 10
+    scheduled[-1](None)
+    assert entity.available is False
+    assert entity._last_written_available is False, (
+        "the recheck bypassed WriteOnChangeMixin bookkeeping"
+    )
+
+    updater.available = True
+    entity._handle_coordinator_update()
+    assert writes[-1] is True, "recovery write was suppressed as unchanged"
+
+
 def test_grace_recheck_delay_math_and_expiry_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
