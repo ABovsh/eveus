@@ -39,12 +39,12 @@ jobs:
             ha-pin: ""
             ha-label: "latest"
     steps:
-      - uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1" # v6
+        uses: "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" # v7.0.0
         with:
           python-version: "${{ matrix.python-version }}"
           cache: "pip"
@@ -101,7 +101,7 @@ jobs:
     if: github.event_name == 'push' && github.actor != 'dependabot[bot]'
     runs-on: "ubuntu-latest"
     steps:
-      - uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           # Full history so SonarCloud can attribute new code and blame lines.
           fetch-depth: 0
@@ -113,7 +113,7 @@ jobs:
           name: coverage-xml
 
       - name: SonarCloud scan
-        uses: "SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e" # v8.2.0
+        uses: "SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f" # v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: "https://sonarcloud.io"
@@ -122,7 +122,7 @@ jobs:
     name: HACS
     runs-on: "ubuntu-latest"
     steps:
-      - uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
       - name: HACS validation
@@ -134,7 +134,7 @@ jobs:
     name: Hassfest
     runs-on: "ubuntu-latest"
     steps:
-      - uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
-      - uses: home-assistant/actions/hassfest@f4ca6f671bd429efb108c0f2fa0ae8af0215986c # master 2026-07
+      - uses: home-assistant/actions/hassfest@ab22029681aa532bfe7de5774a9972d67bfbd2c0 # master 2026-07
