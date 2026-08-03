@@ -1,6 +1,10 @@
 """State/Substate sensors expose the ENUM device class with a full options list."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.helpers.entity import EntityCategory
 
@@ -76,3 +80,47 @@ def test_not_charging_reason_spec_is_fully_wired() -> None:
     assert spec.category == EntityCategory.DIAGNOSTIC
     assert spec.unit is None
     assert spec.state_class is None
+
+
+# Every sensor whose getter maps a payload int through a closed dict: the
+# option list must be exactly that dict's values, so the automation UI offers
+# a dropdown instead of free text (the reason state/substate became ENUM).
+_CLOSED_SET_SENSORS = {
+    "ground": ("Connected", "Not Connected"),
+    "rate_2_status": ("Enabled", "Disabled"),
+    "rate_3_status": ("Enabled", "Disabled"),
+    "adaptive_charging": ("Off", "Voltage", "Auto", "Power"),
+    "schedule_1": ("Enabled", "Disabled"),
+    "schedule_2": ("Enabled", "Disabled"),
+}
+
+
+@pytest.mark.parametrize(("key", "values"), sorted(_CLOSED_SET_SENSORS.items()))
+def test_closed_set_sensors_are_enums(key: str, values: tuple) -> None:
+    spec = _spec(key)
+    assert spec.device_class == SensorDeviceClass.ENUM
+    assert set(spec.options) == set(values)
+
+
+@pytest.mark.parametrize("key", sorted(_CLOSED_SET_SENSORS))
+def test_closed_set_getters_never_leave_their_option_list(key: str) -> None:
+    """An ENUM value outside the options list is dropped by HA — the sensor
+    would silently read `unknown` instead of its real state."""
+    spec = _spec(key)
+    updater = SimpleNamespace(data={}, available=True, connection_quality={})
+    produced = set()
+    for raw in list(range(-1, 12)) + ["1", "0", None, "junk"]:
+        updater.data = {k: raw for k in _PAYLOAD_KEYS[key]}
+        produced.add(spec.value_fn(updater, None))
+    produced.discard(None)
+    assert produced <= set(spec.options)
+
+
+_PAYLOAD_KEYS = {
+    "ground": ("ground",),
+    "rate_2_status": ("tarifAEnable",),
+    "rate_3_status": ("tarifBEnable",),
+    "adaptive_charging": ("aiStatus",),
+    "schedule_1": ("sh1Enabled",),
+    "schedule_2": ("sh2Enabled",),
+}

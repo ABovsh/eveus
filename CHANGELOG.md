@@ -5,6 +5,10 @@
 ### ✨ Added
 - **Not Charging Reason sensor** — one plain answer to "why isn't it charging": Cable Not Connected, Waiting for Car, Stopped by User, Energy/Time/Cost Limit Reached, Waiting for Schedule, Paused by Adaptive Mode, Charge Complete, Error, and more. In the Error state the exact fault name is in the `error` attribute (modern firmware). Enum sensor, so automations get a dropdown of all values. On firmware 1.x, where the detail codes mean something else, the reason comes from the charger state alone instead of being labelled with a code that does not apply.
 
+### 🔧 Changed
+- **Six more sensors offer a dropdown in the automation editor instead of a free-text field** — Ground, Rate 2/3 Status, Adaptive Charging and Schedule 1/2 now declare their full set of values, the same treatment State and Substate got in 4.18.0. Existing automations keep working; the values themselves are unchanged.
+- **Rate 2 Status and Rate 3 Status moved out of the device page's Diagnostic section** to sit beside Rate 2 Cost and Rate 3 Cost. Whether a rate is on and what it costs now appear together instead of in two different places. Entity IDs are unchanged.
+
 ### 🐛 Fixed
 - **Not Charging Reason no longer reports "nothing is holding it back" for a limit it cannot name.** A detail code the integration does not recognize — the kind a future charger firmware would introduce — was reported as Waiting for Car or Paused, which reads as "no limit is active" when in fact one is. Such a code now reads Unknown.
 - **A charger that omits its firmware version on a single reply keeps its detailed status.** That reply was treated as if it came from firmware 1.x, which both dropped Not Charging Reason to a generic answer and could momentarily rewrite a connected charger's state to charging. The firmware generation is now determined once and remembered.

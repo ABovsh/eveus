@@ -148,10 +148,19 @@ def test_status_like_entities_are_diagnostic() -> None:
     specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
 
     assert specs["Current Set"].category == EntityCategory.DIAGNOSTIC
-    assert specs["Rate 2 Status"].category == EntityCategory.DIAGNOSTIC
-    assert specs["Rate 3 Status"].category == EntityCategory.DIAGNOSTIC
     # Derived from State + Substate, and shown next to them under Diagnostic.
     assert specs["Not Charging Reason"].category == EntityCategory.DIAGNOSTIC
+
+
+def test_rate_status_sits_with_its_own_rate_cost() -> None:
+    """Whether a rate is on and what it costs belong in the same section.
+
+    They were split — the cost primary, the on/off flag diagnostic — so the
+    device page showed half of each tariff in each place.
+    """
+    specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
+    for n in (2, 3):
+        assert specs[f"Rate {n} Status"].category == specs[f"Rate {n} Cost"].category is None
 
 
 def test_session_energy_uses_measurement_state_class() -> None:

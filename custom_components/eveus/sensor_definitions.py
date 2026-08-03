@@ -320,10 +320,17 @@ def _make_value_getter(
 
 
 def _make_enum_getter(key: str, mapping: dict[int, str]):
-    """Read an int key and map it to a label, else None."""
+    """Read an int key and map it to a label, else None.
+
+    The getter carries its own label set on ``.options`` so a spec can declare
+    ``options=getter.options`` instead of restating the values — a restated
+    list drifts out of sync with the mapping, and any label missing from it is
+    silently rejected by Home Assistant at write time.
+    """
     def getter(updater, hass) -> Optional[str]:
         value = _get_data_value(updater, key, int)
         return mapping.get(value)
+    getter.options = tuple(dict.fromkeys(mapping.values()))
     return getter
 
 
@@ -726,6 +733,12 @@ def _make_schedule_getter(slot: int):
     return _make_enum_getter(key, {1: "Enabled", 0: "Disabled"})
 
 
+_rate_2_status = _make_rate_status_getter("tarifAEnable")
+_rate_3_status = _make_rate_status_getter("tarifBEnable")
+_schedule_1_state = _make_schedule_getter(1)
+_schedule_2_state = _make_schedule_getter(2)
+
+
 def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
     """Slot details: window, optional current/energy caps."""
     def getter(updater, hass) -> dict:
@@ -951,6 +964,8 @@ def create_sensor_specifications(
             key="ground", name="Ground", value_fn=get_ground_status,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:electric-switch",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=get_ground_status.options,
         ),
         SensorSpec(
             key="time_drift", name="Time Drift", value_fn=get_time_drift,
@@ -1090,15 +1105,17 @@ def create_sensor_specifications(
         ),
         SensorSpec(
             key="rate_2_status", name="Rate 2 Status",
-            value_fn=_make_rate_status_getter("tarifAEnable"),
-            sensor_type=SensorType.STATE, icon="mdi:clock-check",
-            category=EntityCategory.DIAGNOSTIC,
+            value_fn=_rate_2_status, sensor_type=SensorType.STATE,
+            icon="mdi:clock-check",
+            device_class=SensorDeviceClass.ENUM,
+            options=_rate_2_status.options,
         ),
         SensorSpec(
             key="rate_3_status", name="Rate 3 Status",
-            value_fn=_make_rate_status_getter("tarifBEnable"),
-            sensor_type=SensorType.STATE, icon="mdi:clock-check",
-            category=EntityCategory.DIAGNOSTIC,
+            value_fn=_rate_3_status, sensor_type=SensorType.STATE,
+            icon="mdi:clock-check",
+            device_class=SensorDeviceClass.ENUM,
+            options=_rate_3_status.options,
         ),
         SensorSpec(
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
@@ -1112,6 +1129,8 @@ def create_sensor_specifications(
             value_fn=get_adaptive_charging_state,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:auto-mode",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=get_adaptive_charging_state.options,
         ),
         SensorSpec(
             key="adaptive_current_limit", name="Adaptive Current Limit",
@@ -1124,17 +1143,21 @@ def create_sensor_specifications(
         ),
         SensorSpec(
             key="schedule_1", name="Schedule 1",
-            value_fn=_make_schedule_getter(1),
+            value_fn=_schedule_1_state,
             attributes_fn=_make_schedule_attrs(1, max_current),
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=_schedule_1_state.options,
         ),
         SensorSpec(
             key="schedule_2", name="Schedule 2",
-            value_fn=_make_schedule_getter(2),
+            value_fn=_schedule_2_state,
             attributes_fn=_make_schedule_attrs(2, max_current),
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=_schedule_2_state.options,
         ),
         SensorSpec(
             key="connection_quality", name="Connection Quality",
