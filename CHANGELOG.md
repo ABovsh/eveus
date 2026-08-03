@@ -10,8 +10,7 @@
 - **Rate 2 Status and Rate 3 Status moved out of the device page's Diagnostic section** to sit beside Rate 2 Cost and Rate 3 Cost. Whether a rate is on and what it costs now appear together instead of in two different places. Entity IDs are unchanged.
 
 ### 🐛 Fixed
-- **Not Charging Reason no longer reports "nothing is holding it back" for a limit it cannot name.** A detail code the integration does not recognize — the kind a future charger firmware would introduce — was reported as Waiting for Car or Paused, which reads as "no limit is active" when in fact one is. Such a code now reads Unknown.
-- **A charger that omits its firmware version on a single reply keeps its detailed status.** That reply was treated as if it came from firmware 1.x, which both dropped Not Charging Reason to a generic answer and could momentarily rewrite a connected charger's state to charging. The firmware generation is now determined once and remembered.
+- **A charger that leaves its firmware version out of a single reply is no longer mistaken for a firmware-1.x unit.** That reply got the 1.x state translation applied to it, which could briefly rewrite a connected charger's state to charging and fire a charging-started event for a session that never began. The firmware generation is now determined once and remembered.
 
 ### 📊 Dashboard
 - **Energy Dashboard guide** — the README now walks through adding the charger to Home Assistant's Energy Dashboard as an individual device (English and Ukrainian).
