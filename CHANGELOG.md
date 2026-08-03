@@ -13,6 +13,8 @@
 - **A charger that leaves its firmware version out of a single reply is no longer mistaken for a firmware-1.x unit.** That reply got the 1.x state translation applied to it, which could briefly rewrite a connected charger's state to charging and fire a charging-started event for a session that never began. The firmware generation is now determined once and remembered.
 
 ### 📊 Dashboard
+- **The ready-made dashboard now shows Not Charging Reason**, right above Substate in the Status card (English and Ukrainian layouts).
+- **Removed a "Final SOC" row from the Last Session card that pointed at an entity the integration never provided** — it rendered as an error card for everyone who pasted the dashboard.
 - **Energy Dashboard guide** — the README now walks through adding the charger to Home Assistant's Energy Dashboard as an individual device (English and Ukrainian).
 
 ## 4.18.2 - 2026-07-30
