@@ -150,6 +150,8 @@ def test_status_like_entities_are_diagnostic() -> None:
     assert specs["Current Set"].category == EntityCategory.DIAGNOSTIC
     assert specs["Rate 2 Status"].category == EntityCategory.DIAGNOSTIC
     assert specs["Rate 3 Status"].category == EntityCategory.DIAGNOSTIC
+    # Derived from State + Substate, and shown next to them under Diagnostic.
+    assert specs["Not Charging Reason"].category == EntityCategory.DIAGNOSTIC
 
 
 def test_session_energy_uses_measurement_state_class() -> None:
