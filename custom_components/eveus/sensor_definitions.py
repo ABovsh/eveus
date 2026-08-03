@@ -31,7 +31,11 @@ from .const import (
     get_charging_state,
     get_error_state,
     get_normal_substate,
+    is_modern_firmware_payload,
     CHARGING_STATES,
+    DEVICE_STATE_CHARGING,
+    DEVICE_STATE_ERROR,
+    DEVICE_STATE_STANDBY,
     ERROR_STATES,
     NORMAL_SUBSTATES,
     RATE_STATES,
@@ -472,6 +476,101 @@ def get_charger_substate(updater, hass) -> Optional[str]:
     return get_normal_substate(substate)
 
 
+NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
+    "Charging",
+    "Starting Up",
+    "Cable Not Connected",
+    "Waiting for Car",
+    "Charge Complete",
+    "Stopped by User",
+    "Energy Limit Reached",
+    "Time Limit Reached",
+    "Cost Limit Reached",
+    "Waiting for Schedule",
+    "Schedule Energy Limit Reached",
+    "Waiting for Activation",
+    "Paused by Adaptive Mode",
+    "Paused",
+    "Error",
+    "Unknown",
+)
+
+# subState meaning while the charger is Connected (3) or Paused (6) — the
+# reason it is holding off rather than delivering current. Schedule 1 and 2
+# collapse to one reason: which schedule fired is in the Schedule sensors.
+_SUBSTATE_REASONS: Final[Dict[int, str]] = {
+    1: "Stopped by User",
+    2: "Energy Limit Reached",
+    3: "Time Limit Reached",
+    4: "Cost Limit Reached",
+    5: "Waiting for Schedule",
+    6: "Schedule Energy Limit Reached",
+    7: "Waiting for Schedule",
+    8: "Schedule Energy Limit Reached",
+    9: "Waiting for Activation",
+    10: "Paused by Adaptive Mode",
+}
+
+
+def get_not_charging_reason(updater, hass) -> Optional[str]:
+    """Answer "why is the charger not charging right now" in one value.
+
+    State and Substate together already carry this, but reading them takes
+    knowing which substate texts apply in which state. This folds both into a
+    single closed set of reasons an automation can match on directly.
+    """
+    state = _get_data_value(updater, "state", int)
+    if state is None:
+        return None
+    # Same closed-ENUM constraint as get_charger_state: an unmapped firmware
+    # state must collapse to "Unknown" rather than be labelled with substate
+    # text that does not apply to it.
+    if state not in CHARGING_STATES:
+        return "Unknown"
+    if state == DEVICE_STATE_CHARGING:
+        return "Charging"
+    if state in (0, 1):
+        return "Starting Up"
+    if state == DEVICE_STATE_STANDBY:
+        return "Cable Not Connected"
+    if state == 5:
+        return "Charge Complete"
+    if state == DEVICE_STATE_ERROR:
+        return "Error"
+    # Only modern firmware's subState follows NORMAL_SUBSTATES. Firmware 1.x
+    # (GitHub issue #11) has its own codes, so reading one there would name a
+    # confident but arbitrary reason; fall through to the state-derived answer,
+    # which the coordinator's legacy translation already made correct.
+    if is_modern_firmware_payload(updater.data or {}):
+        reason = _SUBSTATE_REASONS.get(_get_data_value(updater, "subState", int))
+        if reason is not None:
+            return reason
+    # No limit is holding it back: Connected means the car has not asked for
+    # current yet, Paused means the charger itself is idling.
+    return "Waiting for Car" if state == 3 else "Paused"
+
+
+def get_not_charging_reason_attrs(updater, hass) -> dict:
+    """Expose the fault name in the Error state plus the raw suspend word."""
+    attrs: dict = {}
+    state = _get_data_value(updater, "state", int)
+    substate = _get_data_value(updater, "subState", int)
+    # subState 0 in the Error state is the contradictory "no fault code with an
+    # error" case get_charger_substate already blanks — no name to report. A
+    # firmware-1.x fault code is not an ERROR_STATES index at all, so it gets
+    # no name either; suspendErrors below is a raw word and stays either way.
+    if (
+        state == DEVICE_STATE_ERROR
+        and substate not in (None, 0)
+        and is_modern_firmware_payload(updater.data or {})
+    ):
+        attrs["error"] = get_error_state(substate)
+    suspend = _get_data_value(updater, "suspendErrors", int)
+    if suspend:
+        attrs["suspend_errors"] = suspend
+    return attrs
+
+
 get_ground_status = _make_enum_getter("ground", {1: "Connected", 0: "Not Connected"})
 
 
@@ -816,6 +915,15 @@ def create_sensor_specifications(
             options=tuple(NORMAL_SUBSTATES.values())
             + tuple(v for v in ERROR_STATES.values() if v != "No Error")
             + ("Unknown State", "Unknown Error"),
+        ),
+        SensorSpec(
+            key="not_charging_reason", name="Not Charging Reason",
+            value_fn=get_not_charging_reason,
+            attributes_fn=get_not_charging_reason_attrs,
+            sensor_type=SensorType.STATE,
+            icon="mdi:help-circle-outline",
+            device_class=SensorDeviceClass.ENUM,
+            options=NOT_CHARGING_REASON_OPTIONS,
         ),
         SensorSpec(
             key="ground", name="Ground", value_fn=get_ground_status,

@@ -25,6 +25,7 @@ from .const import (
     DEVICE_STATE_CHARGING,
     DEVICE_STATE_STANDBY,
     LEGACY_RAW_STATE_KEY,
+    is_modern_firmware_payload,
     DEVICE_STATE_ERROR,
     ERROR_LOG_RATE_LIMIT,
     MAX_COST_VALUE,
@@ -262,7 +263,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         `raw_state` diagnostic attribute. Codes this firmware may use that we
         have not seen yet stay untranslated and render as "Unknown".
         """
-        if data.get("verFWMain") or data.get("firmware"):
+        if is_modern_firmware_payload(data):
             return data
         state = get_safe_value(data, "state", int)
         if state == _LEGACY_CHARGING_CANDIDATE_STATE:

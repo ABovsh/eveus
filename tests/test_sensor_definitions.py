@@ -113,7 +113,8 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     assert "WiFi Signal" in names
     assert "Control Pilot" not in names
     assert "Adaptive Voltage Threshold" not in names
-    assert len(specs) == 33, sorted(names)
+    assert "Not Charging Reason" in names
+    assert len(specs) == 34, sorted(names)
 
 
 def test_sensor_specifications_adds_three_phase_sensors_when_requested() -> None:
@@ -956,6 +957,7 @@ _EXPECTED_SPEC_ICONS = {
     "counter_b_energy": "mdi:counter",
     "state": "mdi:state-machine",
     "substate": "mdi:information-variant",
+    "not_charging_reason": "mdi:help-circle-outline",
     "ground": "mdi:electric-switch",
     "time_drift": "mdi:clock-alert-outline",
     "box_temperature": "mdi:thermometer",

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### ✨ Added
+- **Not Charging Reason sensor** — one plain answer to "why isn't it charging": Cable Not Connected, Waiting for Car, Stopped by User, Energy/Time/Cost Limit Reached, Waiting for Schedule, Paused by Adaptive Mode, Charge Complete, Error, and more. In the Error state the exact fault name is in the `error` attribute. Enum sensor, so automations get a dropdown of all values. On firmware 1.x, where the detail codes mean something else, the reason comes from the charger state alone instead of being labelled with a code that does not apply.
+
 ## 4.18.2 - 2026-07-30
 
 ### 🐛 Fixed

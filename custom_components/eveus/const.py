@@ -28,6 +28,18 @@ DEVICE_STATE_ERROR: Final[int] = 7
 # attribute for diagnostics.
 LEGACY_RAW_STATE_KEY: Final[str] = "_legacy_raw_state"
 
+
+def is_modern_firmware_payload(data: dict) -> bool:
+    """Whether a /main payload comes from firmware that uses the modern maps.
+
+    Firmware 1.x (MCU_SW_version 151, GitHub issue #11) omits verFWMain and
+    its legacy `firmware` alias entirely; modern firmware always sends one of
+    them. This single marker — not the field values — is what decides whether
+    the payload's `state`/`subState` codes can be read with CHARGING_STATES,
+    NORMAL_SUBSTATES and ERROR_STATES.
+    """
+    return bool(data.get("verFWMain") or data.get("firmware"))
+
 # Device states that count as "a charging session is in progress": actively
 # Charging (4) or briefly Paused (6) mid-session. Excludes Connected (3) where
 # the car is plugged in but no session is running, and Charge Complete (5).
