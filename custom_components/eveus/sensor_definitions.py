@@ -522,9 +522,11 @@ _SUBSTATE_REASONS: Final[Dict[int, str]] = {
 def _reads_modern_codes(updater) -> bool:
     """Whether this updater's subState follows the modern maps.
 
-    Prefers the coordinator's sticky verdict (set the first time the firmware
-    marker is seen and never cleared) over the current payload, so a single
-    reply that omits verFWMain cannot silently downgrade the reason.
+    The real coordinator answers this itself: its `is_modern_firmware` already
+    ORs its sticky verdict (set the first time the firmware marker is seen,
+    never cleared) with the current payload, so one reply that omits verFWMain
+    cannot downgrade the reason. The payload fallback below is only for the
+    lightweight updater doubles in the tests, which have no such property.
     """
     sticky = getattr(updater, "is_modern_firmware", None)
     if sticky is not None:
