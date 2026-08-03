@@ -52,11 +52,30 @@ def test_reason_none_without_state():
     assert get_not_charging_reason(_modern(), None) is None
 
 
+@pytest.mark.parametrize("state", [3, 6])
+@pytest.mark.parametrize("substate", [11, 12, 99])
+def test_unrecognized_substate_is_unknown_not_no_limits(state, substate):
+    """A future firmware substate must not read as "nothing is holding it back".
+
+    subState 0 genuinely means no limit is active. An unmapped non-zero code
+    means some limit we cannot name IS active — reporting Waiting for Car or
+    Paused there is a confident lie, the same mistake the state branch above
+    already avoids by collapsing unmapped states to Unknown.
+    """
+    assert get_not_charging_reason(_modern(state=state, subState=substate), None) == "Unknown"
+
+
+@pytest.mark.parametrize(("state", "expected"), [(3, "Waiting for Car"), (6, "Paused")])
+def test_missing_substate_is_not_treated_as_an_unknown_code(state, expected):
+    """A payload without the field is missing data, not an unrecognized code."""
+    assert get_not_charging_reason(_modern(state=state), None) == expected
+
+
 def test_every_reason_is_a_declared_option():
     """HA rejects ENUM writes outside the options list — the sets must match."""
     payloads = [
-        {"state": s, "subState": sub} for s in range(8) for sub in range(11)
-    ] + [{"state": 20, "subState": 0}]
+        {"state": s, "subState": sub} for s in range(8) for sub in range(13)
+    ] + [{"state": 20, "subState": 0}, {"state": 3}, {"state": 6}]
     produced = {
         get_not_charging_reason(EveusTestUpdater(p), None)
         for p in payloads + [{**_MODERN, **p} for p in payloads]
@@ -126,3 +145,18 @@ def test_firmware_alias_counts_as_modern():
     """Older-but-modern payloads send `firmware` instead of verFWMain."""
     updater = EveusTestUpdater({"firmware": "3.04", "state": 3, "subState": 1})
     assert get_not_charging_reason(updater, None) == "Stopped by User"
+
+
+def test_a_degraded_modern_reply_keeps_the_detailed_reason():
+    """The coordinator's sticky verdict wins over one marker-less payload.
+
+    verFWMain is not a required field, so a modern charger can drop it on a
+    partial reply. Falling back to the generic state-derived reason there
+    would silently downgrade the sensor with no signal that it happened.
+    """
+    updater = EveusTestUpdater({"state": 3, "subState": 1})
+    updater.is_modern_firmware = True
+    assert get_not_charging_reason(updater, None) == "Stopped by User"
+    assert get_not_charging_reason_attrs(
+        EveusTestUpdater({"state": 7, "subState": 5}), None
+    ) == {}

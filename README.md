@@ -25,7 +25,7 @@
 
 The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
 
-**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Troubleshooting](#troubleshooting)
+**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Energy Dashboard](#energy-dashboard) · [Troubleshooting](#troubleshooting)
 
 ## ✨ Highlights
 
@@ -189,7 +189,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | --- | --- | --- |
 | `sensor.eveus_ev_charger_state` | Sensor | Main charger state, such as standby, charging, complete, or error. `enum` device class — automation state triggers offer a dropdown of all possible values |
 | `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label. `enum` device class — same dropdown behavior |
-| `sensor.eveus_ev_charger_not_charging_reason` | Sensor | Why charging is not running right now, in one value — cable not connected, waiting for the car, a limit reached, waiting for a schedule, and so on. `enum` device class; in the error state the fault name is in the `error` attribute |
+| `sensor.eveus_ev_charger_not_charging_reason` | Sensor | Why charging is not running right now, in one value — cable not connected, waiting for the car, a limit reached, waiting for a schedule, and so on. `enum` device class; in the error state the fault name is in the `error` attribute (modern firmware) |
 | `binary_sensor.eveus_ev_charger_car_connected` | Binary sensor | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Binary sensor | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | Reported OCPP connection state (diagnostic) |

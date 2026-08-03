@@ -512,6 +512,19 @@ _SUBSTATE_REASONS: Final[Dict[int, str]] = {
 }
 
 
+def _reads_modern_codes(updater) -> bool:
+    """Whether this updater's subState follows the modern maps.
+
+    Prefers the coordinator's sticky verdict (set the first time the firmware
+    marker is seen and never cleared) over the current payload, so a single
+    reply that omits verFWMain cannot silently downgrade the reason.
+    """
+    sticky = getattr(updater, "is_modern_firmware", None)
+    if sticky is not None:
+        return bool(sticky)
+    return is_modern_firmware_payload(updater.data or {})
+
+
 def get_not_charging_reason(updater, hass) -> Optional[str]:
     """Answer "why is the charger not charging right now" in one value.
 
@@ -541,10 +554,18 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
     # (GitHub issue #11) has its own codes, so reading one there would name a
     # confident but arbitrary reason; fall through to the state-derived answer,
     # which the coordinator's legacy translation already made correct.
-    if is_modern_firmware_payload(updater.data or {}):
-        reason = _SUBSTATE_REASONS.get(_get_data_value(updater, "subState", int))
+    if _reads_modern_codes(updater):
+        substate = _get_data_value(updater, "subState", int)
+        reason = _SUBSTATE_REASONS.get(substate)
         if reason is not None:
             return reason
+        # Same rule the state branch above follows: a code we cannot name is
+        # not the same as no code. subState 0 really does mean "no limits",
+        # but an unmapped non-zero one means some limit IS active — saying
+        # "nothing is holding it back" there would be a confident lie. A
+        # missing field is neither; it falls through as absent data.
+        if substate not in (None, 0):
+            return "Unknown"
     # No limit is holding it back: Connected means the car has not asked for
     # current yet, Paused means the charger itself is idling.
     return "Waiting for Car" if state == 3 else "Paused"
@@ -562,7 +583,7 @@ def get_not_charging_reason_attrs(updater, hass) -> dict:
     if (
         state == DEVICE_STATE_ERROR
         and substate not in (None, 0)
-        and is_modern_firmware_payload(updater.data or {})
+        and _reads_modern_codes(updater)
     ):
         attrs["error"] = get_error_state(substate)
     suspend = _get_data_value(updater, "suspendErrors", int)

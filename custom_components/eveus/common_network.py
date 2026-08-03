@@ -222,6 +222,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # a stale latch must not resurrect "Charging" after an outage.
         self._legacy_charging_latched = False
         self._legacy_zero_power_polls = 0
+        # Sticky, never cleared: a charger does not change firmware generation
+        # while the entry is loaded. verFWMain is not a required payload field,
+        # so one degraded reply that omits it must not demote a modern charger
+        # to the 1.x code translation for that poll.
+        self._modern_firmware_seen = False
+
+    @property
+    def is_modern_firmware(self) -> bool:
+        """Whether this charger's codes follow the modern state/substate maps."""
+        return self._modern_firmware_seen or is_modern_firmware_payload(self.data or {})
 
     def _reset_legacy_charging_latch(self) -> None:
         self._legacy_charging_latched = False
@@ -264,6 +274,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         have not seen yet stay untranslated and render as "Unknown".
         """
         if is_modern_firmware_payload(data):
+            self._modern_firmware_seen = True
+            return data
+        if self._modern_firmware_seen:
+            # A modern charger that dropped the marker on this reply. Applying
+            # the 1.x translation here would rewrite a Connected charger that
+            # is drawing power into Charging, firing a bogus transition event.
             return data
         state = get_safe_value(data, "state", int)
         if state == _LEGACY_CHARGING_CANDIDATE_STATE:

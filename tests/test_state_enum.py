@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.helpers.entity import EntityCategory
 
 from custom_components.eveus.const import (
     CHARGING_STATES,
@@ -51,3 +52,27 @@ def test_sensor_instance_gets_options_attr() -> None:
     sensor = _spec("state").create_sensor(updater)
     assert sensor._attr_device_class == SensorDeviceClass.ENUM
     assert set(CHARGING_STATES.values()) <= set(sensor._attr_options)
+
+
+def test_not_charging_reason_spec_is_fully_wired() -> None:
+    """Pin every attribute the sensor's usefulness depends on.
+
+    Dropping any of these fails silently in production: without the ENUM class
+    and options the automation UI falls back to free text, and without the
+    attributes function the `error`/`suspend_errors` attributes simply stop
+    appearing — no exception, no log line.
+    """
+    from custom_components.eveus.sensor_definitions import (
+        NOT_CHARGING_REASON_OPTIONS,
+        get_not_charging_reason,
+        get_not_charging_reason_attrs,
+    )
+
+    spec = _spec("not_charging_reason")
+    assert spec.device_class == SensorDeviceClass.ENUM
+    assert spec.options == NOT_CHARGING_REASON_OPTIONS
+    assert spec.value_fn is get_not_charging_reason
+    assert spec.attributes_fn is get_not_charging_reason_attrs
+    assert spec.category == EntityCategory.DIAGNOSTIC
+    assert spec.unit is None
+    assert spec.state_class is None
