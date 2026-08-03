@@ -113,6 +113,10 @@ def test_closed_set_getters_never_leave_their_option_list(key: str) -> None:
         updater.data = {k: raw for k in _PAYLOAD_KEYS[key]}
         produced.add(spec.value_fn(updater, None))
     produced.discard(None)
+    # Without this the test passes vacuously: a wrong _PAYLOAD_KEYS entry makes
+    # the getter read a key that is never present, so it returns None for every
+    # input and the empty set trivially satisfies the subset check below.
+    assert produced, f"{key}: the sweep produced no values — _PAYLOAD_KEYS is wrong"
     assert produced <= set(spec.options)
 
 
