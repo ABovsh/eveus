@@ -247,9 +247,16 @@ def test_get_sensor_specifications_falls_back_to_model_max_only_when_falsy() -> 
 
 
 def test_monotonic_energy_sensors_use_total_increasing() -> None:
+    """Both halves of Energy Dashboard compatibility, locked together.
+
+    The dashboard only offers a sensor as an individual device when it is
+    ENERGY + TOTAL_INCREASING; losing either class silently drops it from the
+    picker and discards its long-term statistics.
+    """
     specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
     for name in ("Total Energy", "Counter A Energy", "Counter B Energy"):
         assert specs[name].state_class == "total_increasing", f"{name} should be TOTAL_INCREASING"
+        assert specs[name].device_class == "energy", f"{name} should be ENERGY"
 
 
 def test_connection_attrs_returns_quantized_numerics_not_drifting_strings() -> None:

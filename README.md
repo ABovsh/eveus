@@ -431,6 +431,19 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 
 **If your device slug differs from `eveus_ev_charger`** (e.g. you renamed the charger or have several), find-and-replace `eveus_ev_charger` with your slug, or fix each entity with Home Assistant's entity picker after pasting.
 
+## Energy Dashboard
+
+Track EV charging in Home Assistant's Energy Dashboard in two minutes:
+
+1. Go to **Settings → Dashboards → Energy**.
+2. Under **Individual devices**, click **Add device**.
+3. Pick `sensor.eveus_ev_charger_total_energy` and save.
+
+Charging now shows up as its own bar in the energy views, including
+per-day/month history. Costs are already tracked by the integration itself —
+see `sensor.eveus_ev_charger_session_cost` and the Counter A/B cost sensors,
+which use the tariff configured on the charger (including night rates).
+
 ## Troubleshooting
 
 | Problem | What to check |
