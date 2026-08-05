@@ -168,6 +168,9 @@
       "substate": {
         "name": "Substate"
       },
+      "not_charging_reason": {
+        "name": "Not Charging Reason"
+      },
       "ground": {
         "name": "Ground"
       },

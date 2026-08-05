@@ -113,7 +113,8 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     assert "WiFi Signal" in names
     assert "Control Pilot" not in names
     assert "Adaptive Voltage Threshold" not in names
-    assert len(specs) == 33, sorted(names)
+    assert "Not Charging Reason" in names
+    assert len(specs) == 34, sorted(names)
 
 
 def test_sensor_specifications_adds_three_phase_sensors_when_requested() -> None:
@@ -147,8 +148,19 @@ def test_status_like_entities_are_diagnostic() -> None:
     specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
 
     assert specs["Current Set"].category == EntityCategory.DIAGNOSTIC
-    assert specs["Rate 2 Status"].category == EntityCategory.DIAGNOSTIC
-    assert specs["Rate 3 Status"].category == EntityCategory.DIAGNOSTIC
+    # Derived from State + Substate, and shown next to them under Diagnostic.
+    assert specs["Not Charging Reason"].category == EntityCategory.DIAGNOSTIC
+
+
+def test_rate_status_sits_with_its_own_rate_cost() -> None:
+    """Whether a rate is on and what it costs belong in the same section.
+
+    They were split — the cost primary, the on/off flag diagnostic — so the
+    device page showed half of each tariff in each place.
+    """
+    specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
+    for n in (2, 3):
+        assert specs[f"Rate {n} Status"].category == specs[f"Rate {n} Cost"].category is None
 
 
 def test_session_energy_uses_measurement_state_class() -> None:
@@ -246,9 +258,16 @@ def test_get_sensor_specifications_falls_back_to_model_max_only_when_falsy() -> 
 
 
 def test_monotonic_energy_sensors_use_total_increasing() -> None:
+    """Both halves of Energy Dashboard compatibility, locked together.
+
+    The dashboard only offers a sensor as an individual device when it is
+    ENERGY + TOTAL_INCREASING; losing either class silently drops it from the
+    picker and discards its long-term statistics.
+    """
     specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
     for name in ("Total Energy", "Counter A Energy", "Counter B Energy"):
         assert specs[name].state_class == "total_increasing", f"{name} should be TOTAL_INCREASING"
+        assert specs[name].device_class == "energy", f"{name} should be ENERGY"
 
 
 def test_connection_attrs_returns_quantized_numerics_not_drifting_strings() -> None:
@@ -956,6 +975,7 @@ _EXPECTED_SPEC_ICONS = {
     "counter_b_energy": "mdi:counter",
     "state": "mdi:state-machine",
     "substate": "mdi:information-variant",
+    "not_charging_reason": "mdi:help-circle-outline",
     "ground": "mdi:electric-switch",
     "time_drift": "mdi:clock-alert-outline",
     "box_temperature": "mdi:thermometer",

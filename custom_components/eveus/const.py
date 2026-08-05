@@ -28,6 +28,18 @@ DEVICE_STATE_ERROR: Final[int] = 7
 # attribute for diagnostics.
 LEGACY_RAW_STATE_KEY: Final[str] = "_legacy_raw_state"
 
+
+def is_modern_firmware_payload(data: dict) -> bool:
+    """Whether a /main payload comes from firmware that uses the modern maps.
+
+    Firmware 1.x (MCU_SW_version 151, GitHub issue #11) omits verFWMain and
+    its legacy `firmware` alias entirely; modern firmware always sends one of
+    them. This single marker — not the field values — is what decides whether
+    the payload's `state`/`subState` codes can be read with CHARGING_STATES,
+    NORMAL_SUBSTATES and ERROR_STATES.
+    """
+    return bool(data.get("verFWMain") or data.get("firmware"))
+
 # Device states that count as "a charging session is in progress": actively
 # Charging (4) or briefly Paused (6) mid-session. Excludes Connected (3) where
 # the car is plugged in but no session is running, and Charge Complete (5).
@@ -155,6 +167,16 @@ MODEL_MAX_CURRENT: Final[Dict[str, int]] = {
     MODEL_40A: 40,
     MODEL_48A: 48,
 }
+
+# Firmware-supported "Minimum voltage" values (gridRange=0 / 230 V), in the
+# order the select shows them. Single source of truth: the Minimum voltage
+# select offers exactly these, and the Undervoltage threshold number derives
+# its dynamic write floor (minVoltage + 10) only from a value on this list —
+# a malformed or off-list minVoltage must not widen the floor below the safe
+# static minimum. Kept here so the two platforms cannot drift apart.
+MIN_VOLTAGE_OPTIONS: Final[List[str]] = [
+    "200", "180", "175", "170", "165", "160", "155", "150",
+]
 
 # Upper sanity ceilings for live telemetry, shared by the display sensors and
 # the SOC/ETA calculations so both reject the same corrupt finite outliers

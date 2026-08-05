@@ -947,6 +947,37 @@ def test_normalize_legacy_device_state_passes_through_modern_firmware() -> None:
     assert updater._normalize_legacy_device_state(dict(only_alias)) == only_alias
 
 
+def test_modern_firmware_is_remembered_across_a_degraded_reply() -> None:
+    """One reply missing verFWMain must not turn a modern charger into a 1.x one.
+
+    The marker is not a required payload field — nothing stops a modern
+    charger from dropping it on a partial/degraded reply. Without stickiness
+    that single reply would be legacy-translated: a Connected (3) charger
+    drawing power would be rewritten to Charging (4), firing a bogus
+    charging_started event and corrupting the session sensors.
+    """
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    updater._normalize_legacy_device_state({"verFWMain": "3.05", "state": 2})
+    assert updater.is_modern_firmware is True
+
+    degraded = updater._normalize_legacy_device_state(
+        {"state": 3, "powerMeas": 7200, "curMeas1": 16}
+    )
+    assert degraded["state"] == 3
+    assert common_network.LEGACY_RAW_STATE_KEY not in degraded
+
+
+def test_legacy_firmware_is_not_falsely_marked_modern() -> None:
+    """A charger that never sends the marker keeps getting legacy treatment."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    assert updater.is_modern_firmware is False
+    data = updater._normalize_legacy_device_state({"state": 20})
+    assert data["state"] == common_network.DEVICE_STATE_STANDBY
+    assert updater.is_modern_firmware is False
+
+
 def test_normalize_legacy_device_state_translates_idle_code() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
 

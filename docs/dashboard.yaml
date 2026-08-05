@@ -32,6 +32,9 @@ sections:
         show_header_toggle: false
         state_color: true
         entities:
+          - entity: sensor.eveus_ev_charger_not_charging_reason
+            name: Not Charging Reason
+            icon: mdi:help-circle-outline
           - entity: sensor.eveus_ev_charger_substate
             name: Substate
             icon: mdi:information-outline
@@ -203,9 +206,6 @@ sections:
           - entity: sensor.eveus_ev_charger_last_session_duration
             name: Duration
             icon: mdi:timer-sand
-          - entity: sensor.eveus_ev_charger_last_session_final_soc
-            name: Final SOC
-            icon: mdi:battery-check
   - type: grid
     cards:
       - type: heading

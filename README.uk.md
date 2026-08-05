@@ -8,7 +8,7 @@
 > сутності для автоматизацій — без допоміжних шаблонних сенсорів.
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Версія](https://img.shields.io/badge/version-4.18.2-blue?style=for-the-badge)
+![Версія](https://img.shields.io/badge/version-4.19.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 - Документація: <https://abovsh.github.io/eveus/uk/>
@@ -247,6 +247,7 @@ Home Assistant може додати суфікс. Унікальні ідент
 | --- | --- | --- |
 | `sensor.eveus_ev_charger_state` | Сенсор | **Стан** (клас `enum` — тригер за станом пропонує список усіх можливих значень) |
 | `sensor.eveus_ev_charger_substate` | Сенсор | **Детальний стан** (клас `enum` — та сама поведінка) |
+| `sensor.eveus_ev_charger_not_charging_reason` | Сенсор | **Причина зупинки заряджання** — чому заряджання зараз не йде: кабель не підключено, очікування автомобіля, досягнуто ліміт, очікування розкладу тощо (клас `enum`; у стані помилки назва несправності — в атрибуті `error`, на сучасних прошивках) |
 | `binary_sensor.eveus_ev_charger_car_connected` | Бінарний сенсор | **Автомобіль підключено** |
 | `binary_sensor.eveus_ev_charger_session_active` | Бінарний сенсор | **Сесія активна** |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Бінарний сенсор | **З’єднання з OCPP** |
@@ -483,6 +484,19 @@ automation:
 Якщо ідентифікатори ваших сутностей не містять `eveus_ev_charger`, замініть цей
 фрагмент на ідентифікатор вашого пристрою. Для трифазної станції додайте до
 панелі сенсори струму й напруги фаз 2 та 3.
+
+## Energy Dashboard
+
+Додайте заряджання EV в Energy Dashboard Home Assistant за дві хвилини:
+
+1. Відкрийте **Налаштування → Панелі → Енергія**.
+2. У блоці **Окремі пристрої** натисніть **Додати пристрій**.
+3. Оберіть `sensor.eveus_ev_charger_total_energy` і збережіть.
+
+Заряджання з'явиться окремим стовпчиком в енергетичних видах, з історією по
+днях і місяцях. Вартість інтеграція рахує сама — дивіться
+`sensor.eveus_ev_charger_session_cost` та сенсори вартості лічильників A/B,
+які використовують тариф, налаштований на станції (включно з нічним).
 
 ## Усунення несправностей
 

@@ -36,6 +36,9 @@ sections:
         show_header_toggle: false
         state_color: true
         entities:
+          - entity: sensor.eveus_ev_charger_not_charging_reason
+            name: Причина зупинки заряджання
+            icon: mdi:help-circle-outline
           - entity: sensor.eveus_ev_charger_substate
             name: Детальний стан
             icon: mdi:information-outline
@@ -207,9 +210,6 @@ sections:
           - entity: sensor.eveus_ev_charger_last_session_duration
             name: Тривалість
             icon: mdi:timer-sand
-          - entity: sensor.eveus_ev_charger_last_session_final_soc
-            name: Фінальний SOC
-            icon: mdi:battery-check
   - type: grid
     cards:
       - type: heading

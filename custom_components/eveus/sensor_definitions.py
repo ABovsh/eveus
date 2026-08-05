@@ -31,7 +31,11 @@ from .const import (
     get_charging_state,
     get_error_state,
     get_normal_substate,
+    is_modern_firmware_payload,
     CHARGING_STATES,
+    DEVICE_STATE_CHARGING,
+    DEVICE_STATE_ERROR,
+    DEVICE_STATE_STANDBY,
     ERROR_STATES,
     NORMAL_SUBSTATES,
     RATE_STATES,
@@ -316,10 +320,17 @@ def _make_value_getter(
 
 
 def _make_enum_getter(key: str, mapping: dict[int, str]):
-    """Read an int key and map it to a label, else None."""
+    """Read an int key and map it to a label, else None.
+
+    The getter carries its own label set on ``.options`` so a spec can declare
+    ``options=getter.options`` instead of restating the values — a restated
+    list drifts out of sync with the mapping, and any label missing from it is
+    silently rejected by Home Assistant at write time.
+    """
     def getter(updater, hass) -> Optional[str]:
         value = _get_data_value(updater, key, int)
         return mapping.get(value)
+    getter.options = tuple(dict.fromkeys(mapping.values()))
     return getter
 
 
@@ -472,6 +483,124 @@ def get_charger_substate(updater, hass) -> Optional[str]:
     return get_normal_substate(substate)
 
 
+NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
+    "Charging",
+    "Starting Up",
+    "Cable Not Connected",
+    "Waiting for Car",
+    "Charge Complete",
+    "Stopped by User",
+    "Energy Limit Reached",
+    "Time Limit Reached",
+    "Cost Limit Reached",
+    "Waiting for Schedule",
+    "Schedule Energy Limit Reached",
+    "Waiting for Activation",
+    "Paused by Adaptive Mode",
+    "Paused",
+    "Error",
+    "Unknown",
+)
+
+# subState meaning while the charger is Connected (3) or Paused (6) — the
+# reason it is holding off rather than delivering current. Schedule 1 and 2
+# collapse to one reason: which schedule fired is in the Schedule sensors.
+_SUBSTATE_REASONS: Final[Dict[int, str]] = {
+    1: "Stopped by User",
+    2: "Energy Limit Reached",
+    3: "Time Limit Reached",
+    4: "Cost Limit Reached",
+    5: "Waiting for Schedule",
+    6: "Schedule Energy Limit Reached",
+    7: "Waiting for Schedule",
+    8: "Schedule Energy Limit Reached",
+    9: "Waiting for Activation",
+    10: "Paused by Adaptive Mode",
+}
+
+
+def _reads_modern_codes(updater) -> bool:
+    """Whether this updater's subState follows the modern maps.
+
+    The real coordinator answers this itself: its `is_modern_firmware` already
+    ORs its sticky verdict (set the first time the firmware marker is seen,
+    never cleared) with the current payload, so one reply that omits verFWMain
+    cannot downgrade the reason. The payload fallback below is only for the
+    lightweight updater doubles in the tests, which have no such property.
+    """
+    sticky = getattr(updater, "is_modern_firmware", None)
+    if sticky is not None:
+        return bool(sticky)
+    return is_modern_firmware_payload(updater.data or {})
+
+
+def get_not_charging_reason(updater, hass) -> Optional[str]:
+    """Answer "why is the charger not charging right now" in one value.
+
+    State and Substate together already carry this, but reading them takes
+    knowing which substate texts apply in which state. This folds both into a
+    single closed set of reasons an automation can match on directly.
+    """
+    state = _get_data_value(updater, "state", int)
+    if state is None:
+        return None
+    # Same closed-ENUM constraint as get_charger_state: an unmapped firmware
+    # state must collapse to "Unknown" rather than be labelled with substate
+    # text that does not apply to it.
+    if state not in CHARGING_STATES:
+        return "Unknown"
+    if state == DEVICE_STATE_CHARGING:
+        return "Charging"
+    if state in (0, 1):
+        return "Starting Up"
+    if state == DEVICE_STATE_STANDBY:
+        return "Cable Not Connected"
+    if state == 5:
+        return "Charge Complete"
+    if state == DEVICE_STATE_ERROR:
+        return "Error"
+    # Only modern firmware's subState follows NORMAL_SUBSTATES. Firmware 1.x
+    # (GitHub issue #11) has its own codes, so reading one there would name a
+    # confident but arbitrary reason; fall through to the state-derived answer,
+    # which the coordinator's legacy translation already made correct.
+    if _reads_modern_codes(updater):
+        substate = _get_data_value(updater, "subState", int)
+        reason = _SUBSTATE_REASONS.get(substate)
+        if reason is not None:
+            return reason
+        # Same rule the state branch above follows: a code we cannot name is
+        # not the same as no code. subState 0 really does mean "no limits",
+        # but an unmapped non-zero one means some limit IS active — saying
+        # "nothing is holding it back" there would be a confident lie. A
+        # missing field is neither; it falls through as absent data.
+        if substate not in (None, 0):
+            return "Unknown"
+    # No limit is holding it back: Connected means the car has not asked for
+    # current yet, Paused means the charger itself is idling.
+    return "Waiting for Car" if state == 3 else "Paused"
+
+
+def get_not_charging_reason_attrs(updater, hass) -> dict:
+    """Expose the fault name in the Error state plus the raw suspend word."""
+    attrs: dict = {}
+    state = _get_data_value(updater, "state", int)
+    substate = _get_data_value(updater, "subState", int)
+    # subState 0 in the Error state is the contradictory "no fault code with an
+    # error" case get_charger_substate already blanks — no name to report. A
+    # firmware-1.x fault code is not an ERROR_STATES index at all, so it gets
+    # no name either; suspendErrors below is a raw word and stays either way.
+    if (
+        state == DEVICE_STATE_ERROR
+        and substate not in (None, 0)
+        and _reads_modern_codes(updater)
+    ):
+        attrs["error"] = get_error_state(substate)
+    suspend = _get_data_value(updater, "suspendErrors", int)
+    if suspend:
+        attrs["suspend_errors"] = suspend
+    return attrs
+
+
 get_ground_status = _make_enum_getter("ground", {1: "Connected", 0: "Not Connected"})
 
 
@@ -604,6 +733,12 @@ def _make_schedule_getter(slot: int):
     """Slot enabled/disabled state."""
     key = f"sh{slot}Enabled"
     return _make_enum_getter(key, {1: "Enabled", 0: "Disabled"})
+
+
+_rate_2_status = _make_rate_status_getter("tarifAEnable")
+_rate_3_status = _make_rate_status_getter("tarifBEnable")
+_schedule_1_state = _make_schedule_getter(1)
+_schedule_2_state = _make_schedule_getter(2)
 
 
 def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
@@ -818,9 +953,21 @@ def create_sensor_specifications(
             + ("Unknown State", "Unknown Error"),
         ),
         SensorSpec(
+            key="not_charging_reason", name="Not Charging Reason",
+            value_fn=get_not_charging_reason,
+            attributes_fn=get_not_charging_reason_attrs,
+            sensor_type=SensorType.DIAGNOSTIC,
+            icon="mdi:help-circle-outline",
+            category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=NOT_CHARGING_REASON_OPTIONS,
+        ),
+        SensorSpec(
             key="ground", name="Ground", value_fn=get_ground_status,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:electric-switch",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=get_ground_status.options,
         ),
         SensorSpec(
             key="time_drift", name="Time Drift", value_fn=get_time_drift,
@@ -960,15 +1107,17 @@ def create_sensor_specifications(
         ),
         SensorSpec(
             key="rate_2_status", name="Rate 2 Status",
-            value_fn=_make_rate_status_getter("tarifAEnable"),
-            sensor_type=SensorType.STATE, icon="mdi:clock-check",
-            category=EntityCategory.DIAGNOSTIC,
+            value_fn=_rate_2_status, sensor_type=SensorType.STATE,
+            icon="mdi:clock-check",
+            device_class=SensorDeviceClass.ENUM,
+            options=_rate_2_status.options,
         ),
         SensorSpec(
             key="rate_3_status", name="Rate 3 Status",
-            value_fn=_make_rate_status_getter("tarifBEnable"),
-            sensor_type=SensorType.STATE, icon="mdi:clock-check",
-            category=EntityCategory.DIAGNOSTIC,
+            value_fn=_rate_3_status, sensor_type=SensorType.STATE,
+            icon="mdi:clock-check",
+            device_class=SensorDeviceClass.ENUM,
+            options=_rate_3_status.options,
         ),
         SensorSpec(
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
@@ -982,6 +1131,8 @@ def create_sensor_specifications(
             value_fn=get_adaptive_charging_state,
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:auto-mode",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=get_adaptive_charging_state.options,
         ),
         SensorSpec(
             key="adaptive_current_limit", name="Adaptive Current Limit",
@@ -994,17 +1145,21 @@ def create_sensor_specifications(
         ),
         SensorSpec(
             key="schedule_1", name="Schedule 1",
-            value_fn=_make_schedule_getter(1),
+            value_fn=_schedule_1_state,
             attributes_fn=_make_schedule_attrs(1, max_current),
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=_schedule_1_state.options,
         ),
         SensorSpec(
             key="schedule_2", name="Schedule 2",
-            value_fn=_make_schedule_getter(2),
+            value_fn=_schedule_2_state,
             attributes_fn=_make_schedule_attrs(2, max_current),
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
             category=EntityCategory.DIAGNOSTIC,
+            device_class=SensorDeviceClass.ENUM,
+            options=_schedule_2_state.options,
         ),
         SensorSpec(
             key="connection_quality", name="Connection Quality",

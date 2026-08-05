@@ -437,3 +437,37 @@ def test_thermal_repair_copy_explains_early_warning_before_stop() -> None:
             description = document["issues"][key]["description"]
             assert "80 °C" in description
             assert "85 °C" in description
+
+
+@pytest.mark.parametrize("name", ["dashboard.yaml", "dashboard-uk.yaml"])
+def test_shipped_dashboards_only_reference_real_sensors(name: str) -> None:
+    """Users paste these files verbatim — a stale entity id renders as an
+    error card in their dashboard, and nothing else in the repo would notice.
+    Only sensor.* is checked here: those ids come straight from the spec keys,
+    so the mapping is exact.
+    """
+    import re
+
+    import yaml
+
+    from custom_components.eveus.sensor_definitions import get_sensor_specifications
+
+    text = (ROOT / "docs" / name).read_text()
+    yaml.safe_load(text)  # the file must also stay parseable
+    # (?<!binary_) matters: "binary_sensor.…_car_connected" contains the
+    # sensor.* pattern as a substring and would be read as a missing sensor.
+    referenced = set(re.findall(r"(?<!binary_)sensor\.eveus_ev_charger_([a-z0-9_]+)", text))
+
+    # entity_id is built from the entity NAME (suggested_object_id=ENTITY_NAME),
+    # not from spec.key — e.g. key "leak_current" ships as "…_leakage_current".
+    known = {slugify(spec.name) for spec in get_sensor_specifications(phases=3)}
+    # Entities not built from a SensorSpec (EV helpers, Last Session history).
+    known |= {
+        slugify(n)
+        for n in (
+            "SOC Energy", "SOC Percent", "Time to Target SOC", "Charging Finish Time",
+            "Energy to Target SOC", "Cost to Target SOC",
+            "Last Session Energy", "Last Session Cost", "Last Session Duration",
+        )
+    }
+    assert referenced <= known, f"{name} references unknown sensors: {sorted(referenced - known)}"

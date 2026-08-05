@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.19.0 - 2026-08-05
+
+### ✨ Added
+- **Not Charging Reason sensor — the car is plugged in but nothing is happening, and now one sensor tells you why.** Until now that answer meant reading State and Substate together and knowing which substate texts apply in which state; `sensor.eveus_ev_charger_not_charging_reason` gives it directly: Cable Not Connected, Waiting for Car, Stopped by User, Energy/Time/Cost Limit Reached, Waiting for Schedule, Paused by Adaptive Mode, Charge Complete, Error, and more. Useful in a notification ("charging stopped: Cost Limit Reached") or as a condition that only alerts you when the reason is not one you expect. The automation editor offers the full list as a dropdown, so there is nothing to type by hand. In the Error state the exact fault name is in the `error` attribute (modern firmware). On firmware 1.x, where the detail codes mean something else, the reason comes from the charger state alone instead of being labelled with a code that does not apply.
+
+### 🔧 Changed
+- **Six more sensors offer a dropdown in the automation editor instead of a free-text field** — Ground, Rate 2/3 Status, Adaptive Charging and Schedule 1/2 now declare their full set of values, the same treatment State and Substate got in 4.18.0. You pick the value from a list instead of typing it, so an automation can no longer sit there never firing because of a misspelled state. Existing automations keep working; the values themselves are unchanged.
+- **Rate 2 Status and Rate 3 Status moved out of the device page's Diagnostic section** to sit beside Rate 2 Cost and Rate 3 Cost. Whether a rate is on and what it costs now appear together instead of in two different places. Entity IDs are unchanged.
+
+### 🐛 Fixed
+- **No more phantom "charging started" while the car sits plugged in and idle.** If the charger left its firmware version out of a single reply, that one reply was read as if it came from a firmware-1.x unit, which could flip the State sensor to Charging and fire `eveus_charging_started` for a session that never began — enough to trigger an automation on it. The firmware generation is now worked out once and remembered, so a single incomplete reply changes nothing.
+
+### 📊 Dashboard
+- **The ready-made dashboard now shows Not Charging Reason**, right above Substate in the Status card (English and Ukrainian layouts).
+- **Removed a "Final SOC" row from the Last Session card that pointed at an entity the integration never provided** — it rendered as an error card for everyone who pasted the dashboard.
+- **Energy Dashboard guide** — the README now walks through adding the charger to Home Assistant's Energy Dashboard as an individual device (English and Ukrainian).
+
 ## 4.18.2 - 2026-07-30
 
 ### 🐛 Fixed

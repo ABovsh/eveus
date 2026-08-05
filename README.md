@@ -5,7 +5,7 @@
 > Full local control and monitoring for Eveus EV chargers: charging controls, current electrical measurements, charging costs, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.18.2-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.19.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ABovsh_eveus&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ABovsh_eveus)
@@ -25,7 +25,7 @@
 
 The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
 
-**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Troubleshooting](#troubleshooting)
+**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Energy Dashboard](#energy-dashboard) · [Troubleshooting](#troubleshooting)
 
 ## ✨ Highlights
 
@@ -189,6 +189,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | --- | --- | --- |
 | `sensor.eveus_ev_charger_state` | Sensor | Main charger state, such as standby, charging, complete, or error. `enum` device class — automation state triggers offer a dropdown of all possible values |
 | `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label. `enum` device class — same dropdown behavior |
+| `sensor.eveus_ev_charger_not_charging_reason` | Sensor | Why charging is not running right now, in one value — cable not connected, waiting for the car, a limit reached, waiting for a schedule, and so on. `enum` device class; in the error state the fault name is in the `error` attribute (modern firmware) |
 | `binary_sensor.eveus_ev_charger_car_connected` | Binary sensor | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Binary sensor | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | Reported OCPP connection state (diagnostic) |
@@ -429,6 +430,19 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
 5. Click **Save**, then close the editor. The **Eveus** view appears as a new tab.
 
 **If your device slug differs from `eveus_ev_charger`** (e.g. you renamed the charger or have several), find-and-replace `eveus_ev_charger` with your slug, or fix each entity with Home Assistant's entity picker after pasting.
+
+## Energy Dashboard
+
+Track EV charging in Home Assistant's Energy Dashboard in two minutes:
+
+1. Go to **Settings → Dashboards → Energy**.
+2. Under **Individual devices**, click **Add device**.
+3. Pick `sensor.eveus_ev_charger_total_energy` and save.
+
+Charging now shows up as its own bar in the energy views, including
+per-day/month history. Costs are already tracked by the integration itself —
+see `sensor.eveus_ev_charger_session_cost` and the Counter A/B cost sensors,
+which use the tariff configured on the charger (including night rates).
 
 ## Troubleshooting
 

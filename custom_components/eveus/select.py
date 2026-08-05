@@ -17,7 +17,12 @@ from .common_base import (
     OptimisticControlMixin,
     WriteOnChangeMixin,
 )
-from .const import CONF_MODEL, CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
+from .const import (
+    CONF_MODEL,
+    CONTROL_GRACE_PERIOD,
+    MIN_VOLTAGE_OPTIONS,
+    OPTIMISTIC_CONTROL_TTL,
+)
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +37,6 @@ def _format_tz(offset: int) -> str:
 
 # Firmware accepts the full IANA range -12..+14 (verified on R3.05.2).
 TIMEZONE_OPTIONS: tuple[str, ...] = tuple(_format_tz(i) for i in range(-12, 15))
-MIN_VOLTAGE_OPTIONS = ["200", "180", "175", "170", "165", "160", "155", "150"]
 ADAPTIVE_OPTIONS = {0: "Off", 1: "Voltage", 2: "Auto", 3: "Power"}
 ADAPTIVE_TO_DEVICE = {option: value for value, option in ADAPTIVE_OPTIONS.items()}
 
