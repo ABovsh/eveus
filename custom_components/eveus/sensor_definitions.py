@@ -483,6 +483,11 @@ def get_charger_substate(updater, hass) -> Optional[str]:
     return get_normal_substate(substate)
 
 
+# The two reasons both schedule slots share — named so schedule 1 and 2 cannot
+# drift into two differently-spelled versions of the same reason.
+_REASON_WAITING_FOR_SCHEDULE: Final[str] = "Waiting for Schedule"
+_REASON_SCHEDULE_ENERGY_LIMIT: Final[str] = "Schedule Energy Limit Reached"
+
 NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
     "Charging",
     "Starting Up",
@@ -493,8 +498,8 @@ NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
     "Energy Limit Reached",
     "Time Limit Reached",
     "Cost Limit Reached",
-    "Waiting for Schedule",
-    "Schedule Energy Limit Reached",
+    _REASON_WAITING_FOR_SCHEDULE,
+    _REASON_SCHEDULE_ENERGY_LIMIT,
     "Waiting for Activation",
     "Paused by Adaptive Mode",
     "Paused",
@@ -510,10 +515,10 @@ _SUBSTATE_REASONS: Final[Dict[int, str]] = {
     2: "Energy Limit Reached",
     3: "Time Limit Reached",
     4: "Cost Limit Reached",
-    5: "Waiting for Schedule",
-    6: "Schedule Energy Limit Reached",
-    7: "Waiting for Schedule",
-    8: "Schedule Energy Limit Reached",
+    5: _REASON_WAITING_FOR_SCHEDULE,
+    6: _REASON_SCHEDULE_ENERGY_LIMIT,
+    7: _REASON_WAITING_FOR_SCHEDULE,
+    8: _REASON_SCHEDULE_ENERGY_LIMIT,
     9: "Waiting for Activation",
     10: "Paused by Adaptive Mode",
 }
