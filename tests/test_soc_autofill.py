@@ -283,8 +283,8 @@ def test_options_flow_clears_the_sensor_when_the_field_is_emptied() -> None:
     assert CONF_EXTERNAL_SOC_ENTITY not in entry.data
 
 
-def test_chosen_sensor_survives_the_first_switch_to_advanced() -> None:
-    """Switching to Advanced detours through the SOC step; the pick must persist."""
+def test_the_sensor_can_be_picked_on_the_first_switch_to_advanced() -> None:
+    """Basic hides the picker, so the SOC step is where the switcher picks one."""
     from custom_components.eveus.const import (
         CONF_BATTERY_CAPACITY,
         CONF_SOC_CORRECTION,
@@ -295,15 +295,53 @@ def test_chosen_sensor_survives_the_first_switch_to_advanced() -> None:
 
     flow, entry = _options_flow({CONF_SOC_MODE: SOC_MODE_BASIC})
 
-    form = asyncio.run(
-        flow.async_step_init(
-            {CONF_SOC_MODE: SOC_MODE_ADVANCED, CONF_EXTERNAL_SOC_ENTITY: CAR_SOC}
-        )
-    )
+    form = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_ADVANCED}))
     assert form["step_id"] == "soc"
     asyncio.run(
-        flow.async_step_soc({CONF_BATTERY_CAPACITY: 60, CONF_SOC_CORRECTION: 5})
+        flow.async_step_soc(
+            {
+                CONF_BATTERY_CAPACITY: 60,
+                CONF_SOC_CORRECTION: 5,
+                CONF_EXTERNAL_SOC_ENTITY: CAR_SOC,
+            }
+        )
     )
+
+    assert entry.data[CONF_EXTERNAL_SOC_ENTITY] == CAR_SOC
+
+
+def test_basic_mode_does_not_offer_the_picker() -> None:
+    """There is no Initial SOC in Basic mode, so the field has nothing to fill."""
+    from custom_components.eveus.const import CONF_SOC_MODE, SOC_MODE_BASIC
+
+    flow, _entry = _options_flow({CONF_SOC_MODE: SOC_MODE_BASIC})
+
+    form = asyncio.run(flow.async_step_init())
+
+    assert CONF_EXTERNAL_SOC_ENTITY not in form["data_schema"].schema
+
+
+def test_switching_to_basic_keeps_a_stored_sensor() -> None:
+    """A form that never showed the field must not be read as clearing it."""
+    from custom_components.eveus.const import (
+        CONF_SOC_MODE,
+        SOC_MODE_ADVANCED,
+        SOC_MODE_BASIC,
+    )
+
+    flow, entry = _options_flow(
+        {
+            CONF_SOC_MODE: SOC_MODE_ADVANCED,
+            CONF_EXTERNAL_SOC_ENTITY: CAR_SOC,
+            "battery_capacity": 60,
+            "soc_correction": 5,
+        }
+    )
+    asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_BASIC}))
+    assert entry.data[CONF_EXTERNAL_SOC_ENTITY] == CAR_SOC
+
+    flow, entry = _options_flow(entry.data)
+    asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_ADVANCED}))
 
     assert entry.data[CONF_EXTERNAL_SOC_ENTITY] == CAR_SOC
 
@@ -356,3 +394,117 @@ def test_reconfigure_keeps_the_chosen_car_sensor() -> None:
     merged = _merge_entry_data(existing, incoming)
 
     assert merged[CONF_EXTERNAL_SOC_ENTITY] == CAR_SOC
+
+
+# ---------------------------------------------------------------------------
+# Setup flow: picking the sensor during initial setup
+# ---------------------------------------------------------------------------
+
+def test_the_setup_flow_offers_the_picker_on_the_soc_step() -> None:
+    """Advanced setup collects the sensor alongside capacity and correction."""
+    from custom_components.eveus.config_flow import build_soc_step_schema
+
+    schema = build_soc_step_schema(
+        SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None))
+    )
+
+    assert CONF_EXTERNAL_SOC_ENTITY in schema.schema
+
+
+def test_the_setup_flow_stores_the_sensor_picked_during_setup() -> None:
+    """The pick lands in entry data, ready for the Initial SOC entity."""
+    from custom_components.eveus import config_flow
+    from custom_components.eveus.const import (
+        CONF_BATTERY_CAPACITY,
+        CONF_SOC_CORRECTION,
+        CONF_SOC_MODE,
+        SOC_MODE_ADVANCED,
+    )
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None))
+    flow._pending_entry = {"title": "Eveus", "data": {CONF_SOC_MODE: SOC_MODE_ADVANCED}}
+    flow.async_create_entry = lambda *, title, data: {"data": data}
+
+    entry = asyncio.run(
+        flow.async_step_soc(
+            {
+                CONF_BATTERY_CAPACITY: 60,
+                CONF_SOC_CORRECTION: 5,
+                CONF_EXTERNAL_SOC_ENTITY: CAR_SOC,
+            }
+        )
+    )
+
+    assert entry["data"][CONF_EXTERNAL_SOC_ENTITY] == CAR_SOC
+
+
+def test_the_setup_flow_stores_nothing_when_the_picker_is_left_empty() -> None:
+    """The field is optional; skipping it must not write an empty key."""
+    from custom_components.eveus import config_flow
+    from custom_components.eveus.const import (
+        CONF_BATTERY_CAPACITY,
+        CONF_SOC_CORRECTION,
+        CONF_SOC_MODE,
+        SOC_MODE_ADVANCED,
+    )
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None))
+    flow._pending_entry = {"title": "Eveus", "data": {CONF_SOC_MODE: SOC_MODE_ADVANCED}}
+    flow.async_create_entry = lambda *, title, data: {"data": data}
+
+    entry = asyncio.run(
+        flow.async_step_soc({CONF_BATTERY_CAPACITY: 60, CONF_SOC_CORRECTION: 5})
+    )
+
+    assert CONF_EXTERNAL_SOC_ENTITY not in entry["data"]
+
+
+# ---------------------------------------------------------------------------
+# Invariant: a session is a PLUG-IN, not a charge
+# ---------------------------------------------------------------------------
+
+def test_ten_pauses_without_unplugging_stay_one_session() -> None:
+    """The charger's energy counter is plug-based, so the anchor must be too.
+
+    Pausing, stopping and completing all leave the car plugged in and leave
+    ``sessionEnergy`` accumulating. Re-anchoring on any of them would subtract
+    energy that is still on the meter and make every SOC figure wrong for the
+    rest of the plug-in cycle.
+    """
+    entity, updater, calc = _build(car_soc=40, capacity=60, correction=0, seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+    assert entity.native_value == 40
+
+    delivered = 0.0
+    for cycle, interruption in enumerate([6, 3, 5, 6, 7, 3, 6, 5, 7, 6]):
+        delivered += 1.2
+        _poll(entity, updater, 4, session_energy=delivered)
+        # The car reports its real, rising SOC throughout; it must be ignored.
+        entity.hass = HelperHass({CAR_SOC: 40 + (cycle + 1) * 2})
+        _poll(entity, updater, interruption, session_energy=delivered)
+
+    _poll(entity, updater, 4, session_energy=delivered)
+
+    assert entity.native_value == 40
+    # 12 kWh into a 60 kWh pack at 0% loss = +20 points, accumulated across all
+    # ten interruptions rather than restarting at any of them.
+    assert delivered == pytest.approx(12.0)
+    assert calc.get_soc_percent(delivered) == 60
+
+
+def test_unplugging_is_the_only_thing_that_starts_a_new_session() -> None:
+    """Standby (2) is the unplugged state, and only it re-arms the seeding."""
+    entity, updater, _ = _build(car_soc=40, capacity=60, correction=0, seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, session_energy=6.0)
+    entity.hass = HelperHass({CAR_SOC: 50})
+    _poll(entity, updater, 2)
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, session_energy=0.0)
+
+    assert entity.native_value == 50

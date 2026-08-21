@@ -15,10 +15,11 @@
       },
       "soc": {
         "title": "SOC Monitoring Setup",
-        "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.",
+        "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.\n\nOptionally pick a sensor that reports your car's own battery level. It is read once per plug-in, when charging starts, and copied into Initial SOC. Every SOC figure is still calculated by the integration from that value and the charger's energy meter. Leave empty to set Initial SOC by hand.",
         "data": {
           "battery_capacity": "Battery capacity (kWh)",
-          "soc_correction": "Charging efficiency loss (%)"
+          "soc_correction": "Charging efficiency loss (%)",
+          "external_soc_entity": "Car SOC sensor (optional)"
         }
       },
       "reconfigure": {
@@ -66,14 +67,15 @@
           "soc_mode": "Integration mode",
           "external_soc_entity": "Car SOC sensor (optional)"
         },
-        "description": "Integration mode. Advanced adds SOC monitoring.\n\nOptionally pick a sensor that reports your car's own battery level. It is read once, when a charging session starts, and copied into Initial SOC (Advanced mode only). Every SOC figure is still calculated by the integration from that value and the charger's energy meter. Leave empty to set Initial SOC by hand."
+        "description": "Integration mode. Advanced adds SOC monitoring.\n\nOptionally pick a sensor that reports your car's own battery level. It is read once per plug-in, when charging starts, and copied into Initial SOC; pausing or restarting the charge without unplugging does not read it again. Every SOC figure is still calculated by the integration from that value and the charger's energy meter. Leave empty to set Initial SOC by hand."
       },
       "soc": {
         "title": "SOC Monitoring Setup",
-        "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.",
+        "description": "Set your EV's battery capacity and charging efficiency loss. You can change these anytime from the entities later.\n\nOptionally pick a sensor that reports your car's own battery level. It is read once per plug-in, when charging starts, and copied into Initial SOC. Every SOC figure is still calculated by the integration from that value and the charger's energy meter. Leave empty to set Initial SOC by hand.",
         "data": {
           "battery_capacity": "Battery capacity (kWh)",
-          "soc_correction": "Charging efficiency loss (%)"
+          "soc_correction": "Charging efficiency loss (%)",
+          "external_soc_entity": "Car SOC sensor (optional)"
         }
       }
     },

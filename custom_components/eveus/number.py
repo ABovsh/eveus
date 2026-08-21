@@ -737,6 +737,11 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             return
         if state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES:
             # Car unplugged: the next plug-in is a new session and seeds again.
+            # Unplugging is the ONLY thing that re-arms it, because it is the
+            # only thing that zeroes the charger's energy counter (see the
+            # invariant in const.py). Pause, manual stop, Charge Complete and a
+            # recovered fault all leave that counter running, so re-anchoring
+            # on any of them would subtract energy that is still on the meter.
             # Error is excluded because it hides the plug status rather than
             # reporting it, and must not re-arm seeding mid-session.
             self._session_seeded = False

@@ -40,6 +40,14 @@ def is_modern_firmware_payload(data: dict) -> bool:
     """
     return bool(data.get("verFWMain") or data.get("firmware"))
 
+# INVARIANT: a "session" for the charger's own counters is a PLUG-IN CYCLE,
+# not a charge. sessionEnergy/sessionTime/sessionMoney run from plug-in to
+# unplug and keep accumulating across pauses, manual stops, Charge Complete
+# and recovered faults; only unplugging zeroes them. Anything anchored to
+# those counters — Initial SOC above all — must be anchored per plug-in too.
+# The state sets below describe what the charger is doing right now, which is
+# a different question; do not read them as session boundaries.
+#
 # Device states that count as "a charging session is in progress": actively
 # Charging (4) or briefly Paused (6) mid-session. Excludes Connected (3) where
 # the car is plugged in but no session is running, and Charge Complete (5).

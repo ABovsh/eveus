@@ -315,17 +315,19 @@ If another integration already exposes your car's battery level, the charger can
 
 **How to set it**
 
-**Settings → Devices & Services → Eveus EV Charger → Configure**, then choose the sensor in **Car SOC sensor**. Leave the field empty to turn it off — that is also the default, and with it empty nothing about the integration changes.
+Pick it during setup on the **SOC Monitoring Setup** screen, or later under **Settings → Devices & Services → Eveus EV Charger → Configure** in **Car SOC sensor** (Advanced mode only — Basic mode has no Initial SOC to fill in, so the field is hidden there). Leave the field empty to turn it off — that is also the default, and with it empty nothing about the integration changes.
 
 **What happens, and when**
 
-The sensor is read **once per plug-in, at the moment a charging session starts**, and the reading is written into `number.eveus_ev_charger_initial_soc`:
+The sensor is read **once per plug-in, at the moment charging starts**, and the reading is written into `number.eveus_ev_charger_initial_soc`:
 
 ```
 Initial SOC = car SOC − energy already delivered this session, as battery %
 ```
 
-At a normal session start the charger's session energy is 0, so Initial SOC is simply what the car reports. The subtraction only matters when the start is seen a little late — the charger began charging between two polls, or charging restarted after completing — and it stops energy that is already on the meter from being counted twice.
+At a normal session start the charger's session energy is 0, so Initial SOC is simply what the car reports. The subtraction only matters when the start is seen a little late — the charger began charging between two polls — and it stops energy that is already on the meter from being counted twice.
+
+**A session is a plug-in, not a charge.** The charger's energy counter runs from the moment you plug in until you unplug, and the anchor follows it exactly. Pause and resume ten times, stop and restart the charge, let the car finish and start again, ride out a fault the charger recovers from — Initial SOC stays put while the energy meter keeps accumulating across all of it, so every SOC figure stays correct for the whole plug-in cycle. Only unplugging ends the session; the next plug-in reads the car again.
 
 If Home Assistant restarts while a session is running, nothing is seeded: Initial SOC keeps the value it already had, which is the right one for that session. The car is read at the start of a session, not at the start of Home Assistant.
 
@@ -333,6 +335,7 @@ If Home Assistant restarts while a session is running, nothing is seeded: Initia
 
 - **It does not follow the car during the session.** Later readings are ignored on purpose: cars report whole percent and update slowly, so tracking them would make SOC freeze and then jump. Between the anchor and the end of the session the charger's energy meter is the finer, faster signal.
 - **It does not overwrite your own value.** Move the slider by hand and it stays until the next plug-in.
+- **It does not re-read the car when you pause or restart a charge.** Those are the same session to the charger, and its energy meter has not been reset, so re-anchoring would double-count what is already on it.
 - **It never blanks anything, and it never guesses.** If the car is asleep, the sensor is unavailable, or the charger's reply arrives without its energy reading at session start, Initial SOC simply keeps the value it had, and you can set it by hand as before.
 
 ### Adaptive Charging And Schedules
