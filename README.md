@@ -309,7 +309,7 @@ If another integration already exposes your car's battery level, the charger can
 
 **What the sensor has to be**
 
-- A `sensor` entity that reports your car's battery level — normally provided by your car's own integration.
+- A `sensor` entity that reports your car's battery level — normally provided by your car's own integration. Advanced mode only; in Basic mode there is no Initial SOC to fill in.
 - Device class `battery`, unit `%`. The picker only lists sensors that match, so if yours is missing, it is missing that device class.
 - Its state must be a plain number from 0 to 100. `unknown`, `unavailable`, or anything unparseable is skipped.
 
@@ -325,7 +325,9 @@ The sensor is read **once per plug-in, at the moment a charging session starts**
 Initial SOC = car SOC − energy already delivered this session, as battery %
 ```
 
-At a normal session start the charger's session energy is 0, so Initial SOC is simply what the car reports. The subtraction only matters when the session start is seen late — for example after a Home Assistant restart, or when charging restarts after completing — and it stops energy that is already counted from being counted twice.
+At a normal session start the charger's session energy is 0, so Initial SOC is simply what the car reports. The subtraction only matters when the start is seen a little late — the charger began charging between two polls, or charging restarted after completing — and it stops energy that is already on the meter from being counted twice.
+
+If Home Assistant restarts while a session is running, nothing is seeded: Initial SOC keeps the value it already had, which is the right one for that session. The car is read at the start of a session, not at the start of Home Assistant.
 
 **What it deliberately does not do**
 

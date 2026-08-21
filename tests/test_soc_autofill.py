@@ -336,3 +336,19 @@ def test_seeding_is_skipped_before_the_entity_is_added_to_hass() -> None:
     _poll(entity, updater, 4)
 
     assert entity.native_value == 20
+
+
+def test_reconfigure_keeps_the_chosen_car_sensor() -> None:
+    """Changing host or credentials must not silently drop the sensor choice."""
+    from custom_components.eveus.config_flow import _merge_entry_data
+
+    existing = {
+        "host": "192.168.1.50",
+        "username": "eveus",
+        CONF_EXTERNAL_SOC_ENTITY: CAR_SOC,
+    }
+    incoming = {"host": "192.168.1.77", "username": "eveus", "password": "pw"}
+
+    merged = _merge_entry_data(existing, incoming)
+
+    assert merged[CONF_EXTERNAL_SOC_ENTITY] == CAR_SOC
