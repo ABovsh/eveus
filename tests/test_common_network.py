@@ -1091,12 +1091,13 @@ def test_emit_transition_events_fires_charging_started() -> None:
 def test_emit_transition_events_fires_charging_finished_with_bounded_session_values() -> None:
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_CHARGING
-    updater._event_prev_payload = {
+    updater._event_charging_payload = {
         "state": common_network.DEVICE_STATE_CHARGING,
         "sessionEnergy": 12.5,
         "sessionMoney": 3.2,
         "sessionTime": 3600,
     }
+    updater._event_prev_payload = updater._event_charging_payload
 
     # 5 = Charge Complete: both sides stay in CONNECTED_STATES, so no plug
     # event fires alongside charging_finished -- keeps this assertion isolated.
@@ -1122,6 +1123,7 @@ def test_emit_transition_events_charging_finished_falls_back_to_stopped_reason()
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_CHARGING
     updater._event_prev_payload = {"state": common_network.DEVICE_STATE_CHARGING}
+    updater._event_charging_payload = updater._event_prev_payload
 
     updater._emit_transition_events({"state": 1})
 
