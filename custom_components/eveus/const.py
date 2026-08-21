@@ -210,6 +210,11 @@ CONF_TARGET_SOC: Final[str] = "target_soc"
 CONF_BATTERY_CAPACITY: Final[str] = "battery_capacity"
 CONF_SOC_CORRECTION: Final[str] = "soc_correction"
 
+# Optional entity_id of an external car SOC sensor. When set, Initial SOC is
+# seeded from it once per plug-in cycle; everything downstream keeps using the
+# integration's own calculation.
+CONF_EXTERNAL_SOC_ENTITY: Final[str] = "external_soc_entity"
+
 DEFAULT_INITIAL_SOC: Final[float] = 20
 DEFAULT_TARGET_SOC: Final[float] = 80
 DEFAULT_BATTERY_CAPACITY: Final[float] = 50

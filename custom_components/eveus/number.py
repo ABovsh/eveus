@@ -12,7 +12,7 @@ from homeassistant.components.number import (
     NumberEntityDescription,
     RestoreNumber,
 )
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -41,6 +41,11 @@ from .const import (
     CONF_TARGET_SOC,
     CONF_BATTERY_CAPACITY,
     CONF_SOC_CORRECTION,
+    CONF_EXTERNAL_SOC_ENTITY,
+    CONNECTED_STATES,
+    MAX_ENERGY_KWH,
+    PLUG_UNKNOWN_STATES,
+    SESSION_ACTIVE_STATES,
 )
 from .common_base import (
     BaseEveusEntity,
@@ -669,8 +674,8 @@ class EveusSocConfigNumber(
                 self.hass, soc_update_signal(self._updater.config_entry.entry_id)
             )
 
-    async def async_set_native_value(self, value: float) -> None:
-        """Clamp, store, persist, and push a new SOC-input value."""
+    def _apply_value(self, value: float) -> None:
+        """Clamp, store, persist, and push a SOC-input value."""
         raw = _validate_finite_number(value, self.ENTITY_NAME)
         lo, hi = self.native_min_value, self.native_max_value
         clamped = max(lo, min(hi, raw))
@@ -678,9 +683,20 @@ class EveusSocConfigNumber(
         self._write_if_changed(clamped)
         self._push()
 
+    async def async_set_native_value(self, value: float) -> None:
+        """Clamp, store, persist, and push a new SOC-input value."""
+        self._apply_value(value)
+
 
 class EveusInitialSocNumber(EveusSocConfigNumber):
-    """Initial state of charge (%)."""
+    """Initial state of charge (%), optionally seeded from an external sensor.
+
+    When the entry names a car SOC sensor, its reading is copied here once per
+    plug-in cycle, at the moment a charging session starts. Nothing downstream
+    changes: every SOC figure is still computed by the integration from this
+    value plus the charger's own session-energy meter. The external sensor only
+    replaces the manual slider move a user would otherwise make before charging.
+    """
 
     _soc_key = "initial_soc"
     ENTITY_NAME = "Initial SOC"
@@ -689,6 +705,103 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
     _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["initial_soc"]
     _attr_native_step = 1
     _attr_mode = NumberMode.SLIDER
+
+    def __init__(self, updater, soc_calculator, seed, device_number: int = 1) -> None:
+        """Initialize the Initial SOC entity and its session tracking."""
+        super().__init__(updater, soc_calculator, seed, device_number)
+        self._prev_device_state: int | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+        self._session_seeded = False
+
+    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    def _handle_coordinator_update(self) -> None:
+        super()._handle_coordinator_update()
+        self._maybe_seed_from_external_soc()
+
+    def _external_soc_entity_id(self) -> str | None:
+        """Entity id of the configured car SOC sensor, if any."""
+        entry = getattr(self._updater, "config_entry", None)
+        return (getattr(entry, "data", None) or {}).get(CONF_EXTERNAL_SOC_ENTITY) or None
+
+    def _maybe_seed_from_external_soc(self) -> None:
+        """Copy the car's SOC into this entity when a session starts."""
+        if not self._updater.last_update_success:
+            # A failed refresh leaves the previous payload in place. Forgetting
+            # the last state keeps a change that happened while the charger was
+            # unreachable from looking like a session start on the next poll —
+            # the same rule the coordinator's transition events follow.
+            self._prev_device_state = None
+            return
+        state = get_safe_value(self._updater.data, "state", int)
+        previous, self._prev_device_state = self._prev_device_state, state
+        if state is None:
+            return
+        if state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES:
+            # Car unplugged: the next plug-in is a new session and seeds again.
+            # Error is excluded because it hides the plug status rather than
+            # reporting it, and must not re-arm seeding mid-session.
+            self._session_seeded = False
+            return
+        if previous is None or self._session_seeded:
+            return
+        if previous in SESSION_ACTIVE_STATES or state not in SESSION_ACTIVE_STATES:
+            return
+        if not self._external_soc_entity_id():
+            return
+        anchor = self._external_soc_anchor()
+        if anchor is None:
+            # ponytail: one reading per session start. A car still asleep at
+            # plug-in leaves the value as the user last set it (visible in the
+            # slider, correctable by hand); if that turns out to bite in
+            # practice, re-read on the sensor's next update instead of adding a
+            # polling window. Staying unseeded already lets a restarted session
+            # try again.
+            return
+        self._session_seeded = True
+        self._apply_value(anchor)
+
+    def _external_soc_anchor(self) -> float | None:
+        """Car SOC rebased to the start of this session, or None if unusable.
+
+        The reading is taken whenever the session start is observed, which is
+        not always the instant it began — a restored session or a resume after
+        a pause already has energy on the meter. Subtracting what the battery
+        has taken since gives the value this entity is defined to hold, so a
+        late reading anchors exactly like an immediate one.
+        """
+        external = self._read_external_soc()
+        if external is None:
+            return None
+        data = self._updater.data or {}
+        delivered = 0.0
+        if "sessionEnergy" in data:
+            delivered = get_safe_value(data, "sessionEnergy", float)
+            if delivered is None or not 0 <= delivered <= MAX_ENERGY_KWH:
+                return None
+        if delivered:
+            capacity = self._soc_calculator.battery_capacity
+            correction = self._soc_calculator.soc_correction
+            if not capacity or not 0 <= correction < 100:
+                return None
+            external -= delivered * (1 - correction / 100) / capacity * 100
+        return external
+
+    def _read_external_soc(self) -> float | None:
+        """Current car SOC as a plausible percentage, or None."""
+        if self.hass is None:
+            return None
+        state = self.hass.states.get(self._external_soc_entity_id())
+        if state is None:
+            return None
+        try:
+            value = float(state.state)
+        except (TypeError, ValueError):
+            # Covers "unknown", "unavailable", an empty state and any sensor
+            # that does not report a bare number.
+            return None
+        # Rejects NaN and both infinities along with out-of-range readings.
+        if not 0 <= value <= 100:
+            return None
+        return value
 
 
 class EveusTargetSocNumber(EveusSocConfigNumber):

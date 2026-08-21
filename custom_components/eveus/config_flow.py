@@ -20,6 +20,8 @@ from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import aiohttp_client, device_registry as dr
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -46,6 +48,7 @@ from .const import (
     CONF_TARGET_SOC,
     CONF_BATTERY_CAPACITY,
     CONF_SOC_CORRECTION,
+    CONF_EXTERNAL_SOC_ENTITY,
     DEFAULT_INITIAL_SOC,
     DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
@@ -881,17 +884,35 @@ class InvalidResponse(HomeAssistantError):
 class EveusOptionsFlow(OptionsFlow):
     """Toggle the integration mode (Basic / Advanced) after setup."""
 
+    # Entity picker for the optional car SOC sensor. Filtering on the battery
+    # device class keeps the dropdown to sensors that report a percentage.
+    _EXTERNAL_SOC_SELECTOR = EntitySelector(
+        EntitySelectorConfig(domain="sensor", device_class="battery")
+    )
+
     def __init__(self, entry) -> None:
         """Store the config entry being edited."""
         self._entry = entry
+        self._external_soc: str | None = entry.data.get(CONF_EXTERNAL_SOC_ENTITY)
+
+    def _store_external_soc(self, new_data: dict[str, Any]) -> None:
+        """Persist (or clear) the car SOC sensor chosen on the first step."""
+        if self._external_soc:
+            new_data[CONF_EXTERNAL_SOC_ENTITY] = self._external_soc
+        else:
+            new_data.pop(CONF_EXTERNAL_SOC_ENTITY, None)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Show and apply the SOC mode chooser."""
         if user_input is not None:
+            # An emptied entity picker submits no key at all, which is how the
+            # user clears a previously chosen sensor.
+            self._external_soc = user_input.get(CONF_EXTERNAL_SOC_ENTITY) or None
             new_data = dict(self._entry.data)
             new_data[CONF_SOC_MODE] = user_input[CONF_SOC_MODE]
+            self._store_external_soc(new_data)
             if user_input[CONF_SOC_MODE] == SOC_MODE_ADVANCED and (
                 CONF_BATTERY_CAPACITY not in new_data
                 or CONF_SOC_CORRECTION not in new_data
@@ -906,6 +927,10 @@ class EveusOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_SOC_MODE, default=get_soc_mode(self._entry)
                 ): _SOC_MODE_SELECTOR,
+                vol.Optional(
+                    CONF_EXTERNAL_SOC_ENTITY,
+                    description={"suggested_value": self._external_soc},
+                ): self._EXTERNAL_SOC_SELECTOR,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
@@ -920,6 +945,7 @@ class EveusOptionsFlow(OptionsFlow):
             # must not be rolled back to stale credentials/host on submit.
             new_data = dict(self._entry.data)
             new_data[CONF_SOC_MODE] = SOC_MODE_ADVANCED
+            self._store_external_soc(new_data)
             new_data[CONF_BATTERY_CAPACITY] = user_input[CONF_BATTERY_CAPACITY]
             new_data[CONF_SOC_CORRECTION] = user_input[CONF_SOC_CORRECTION]
             new_data.setdefault(CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC)

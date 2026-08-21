@@ -63,8 +63,10 @@
       "init": {
         "title": "Integration mode",
         "data": {
-          "soc_mode": "Integration mode"
-        }
+          "soc_mode": "Integration mode",
+          "external_soc_entity": "Car SOC sensor (optional)"
+        },
+        "description": "Integration mode. Advanced adds SOC monitoring.\n\nOptionally pick a sensor that reports your car's own battery level. It is read once, when a charging session starts, and copied into Initial SOC. Every SOC figure is still calculated by the integration from that value and the charger's energy meter. Leave empty to set Initial SOC by hand."
       },
       "soc": {
         "title": "SOC Monitoring Setup",

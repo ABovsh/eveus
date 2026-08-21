@@ -46,6 +46,7 @@ Pick **Advanced** mode and get battery SOC as native sensors — no helpers to c
 - **Time to Target SOC** and **Charging Finish Time** — when charging will be done
 - **Energy / Cost to Target SOC** — what's left to deliver and what it will cost
 - Inputs (initial SOC, target SOC, battery capacity, efficiency loss) are plain `number` entities you can set from any dashboard or automation
+- Optionally point the integration at your car's own SOC sensor and Initial SOC fills itself in when charging starts
 
 Pick **Basic** if you only want charging control. Switch modes anytime via **Configure**.
 
@@ -148,7 +149,7 @@ Or manually:
 
 Changing things later:
 
-- **Configure** — switch between Basic and Advanced. Switching to Advanced for the first time shows the same battery-capacity screen as setup.
+- **Configure** — switch between Basic and Advanced, and optionally pick a car SOC sensor (see [Filling Initial SOC from your car](#filling-initial-soc-from-your-car-optional)). Switching to Advanced for the first time shows the same battery-capacity screen as setup.
 - **Reconfigure** — change host, credentials, model, or phase count without reinstalling.
 
 ## 🛡️ Safety notices
@@ -299,6 +300,38 @@ Migration from old helpers is intentionally simple: replace the prefix `input_nu
 SOC uses the charger's native `sessionEnergy` value. The charger resets this value on every new plug-in, so continuous charging sessions survive Home Assistant restarts without a synthetic baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
 
 </details>
+
+#### Filling Initial SOC from your car (optional)
+
+If another integration already exposes your car's battery level, the charger can read it instead of you moving the Initial SOC slider before every charge.
+
+**The integration keeps calculating SOC exactly as it always has — from Initial SOC plus the charger's own energy meter. The sensor changes nothing about that. All it does is fill in Initial SOC automatically at the moment a charging session starts, instead of you typing it in.**
+
+**What the sensor has to be**
+
+- A `sensor` entity that reports your car's battery level — normally provided by your car's own integration.
+- Device class `battery`, unit `%`. The picker only lists sensors that match, so if yours is missing, it is missing that device class.
+- Its state must be a plain number from 0 to 100. `unknown`, `unavailable`, or anything unparseable is skipped.
+
+**How to set it**
+
+**Settings → Devices & Services → Eveus EV Charger → Configure**, then choose the sensor in **Car SOC sensor**. Leave the field empty to turn it off — that is also the default, and with it empty nothing about the integration changes.
+
+**What happens, and when**
+
+The sensor is read **once per plug-in, at the moment a charging session starts**, and the reading is written into `number.eveus_ev_charger_initial_soc`:
+
+```
+Initial SOC = car SOC − energy already delivered this session, as battery %
+```
+
+At a normal session start the charger's session energy is 0, so Initial SOC is simply what the car reports. The subtraction only matters when the session start is seen late — for example after a Home Assistant restart, or when charging restarts after completing — and it stops energy that is already counted from being counted twice.
+
+**What it deliberately does not do**
+
+- **It does not follow the car during the session.** Later readings are ignored on purpose: cars report whole percent and update slowly, so tracking them would make SOC freeze and then jump. Between the anchor and the end of the session the charger's energy meter is the finer, faster signal.
+- **It does not overwrite your own value.** Move the slider by hand and it stays until the next plug-in.
+- **It never blanks anything.** If the car is asleep or the sensor is unavailable at session start, Initial SOC simply keeps the value it had, and you can set it by hand as before.
 
 ### Adaptive Charging And Schedules
 
