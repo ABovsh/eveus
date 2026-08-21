@@ -772,11 +772,16 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         if external is None:
             return None
         data = self._updater.data or {}
-        delivered = 0.0
-        if "sessionEnergy" in data:
-            delivered = get_safe_value(data, "sessionEnergy", float)
-            if delivered is None or not 0 <= delivered <= MAX_ENERGY_KWH:
-                return None
+        if "sessionEnergy" not in data:
+            # This runs only once a session is already active, where an absent
+            # field is anomalous telemetry rather than "nothing delivered yet" —
+            # the same rule the SOC sensors follow. Reading it as zero would
+            # copy the car's SOC in un-rebased and overstate every SOC figure
+            # for the rest of the session.
+            return None
+        delivered = get_safe_value(data, "sessionEnergy", float)
+        if delivered is None or not 0 <= delivered <= MAX_ENERGY_KWH:
+            return None
         if delivered:
             capacity = self._soc_calculator.battery_capacity
             correction = self._soc_calculator.soc_correction

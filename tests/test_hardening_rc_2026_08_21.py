@@ -65,7 +65,6 @@ def test_charging_finished_fires_when_a_fault_ends_the_session() -> None:
     """Charging → Error → Charge Complete must still report the session."""
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
 
     updater._emit_transition_events(dict(_CHARGING_POLL))
     updater._emit_transition_events({"state": common_network.DEVICE_STATE_ERROR, "subState": 2})
@@ -88,7 +87,6 @@ def test_charging_finished_does_not_fire_when_the_fault_clears_back_to_charging(
     """A fault the charger recovers from mid-session did not end the session."""
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
 
     updater._emit_transition_events(dict(_CHARGING_POLL))
     updater._emit_transition_events({"state": common_network.DEVICE_STATE_ERROR, "subState": 2})
@@ -101,7 +99,6 @@ def test_error_to_idle_without_a_prior_session_stays_silent() -> None:
     """An Error seen before any charging poll must not fabricate a session."""
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_ERROR
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_ERROR}
 
     updater._emit_transition_events({"state": common_network.DEVICE_STATE_STANDBY})
 
@@ -112,7 +109,6 @@ def test_a_poll_gap_forgets_the_pending_session_snapshot() -> None:
     """Transitions across an offline gap stay silent — including this one."""
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
 
     updater._emit_transition_events(dict(_CHARGING_POLL))
     updater._emit_transition_events({"state": common_network.DEVICE_STATE_ERROR, "subState": 2})
@@ -168,3 +164,28 @@ def test_last_session_reason_keeps_every_reason_the_coordinator_fires() -> None:
         sensor = _last_session_sensor()
         sensor._handle_finished_event(_finished_event(reason))
         assert sensor.extra_state_attributes["reason"] == reason
+
+
+# --- Seeding must not read an absent sessionEnergy as "nothing delivered" ----
+
+from test_soc_autofill import (  # noqa: E402
+    _build as _build_initial_soc,
+    _no_dispatcher,  # noqa: F401 - autouse fixture, applies by being imported here
+    _poll as _poll_soc,
+)
+
+
+def test_seeding_is_skipped_when_session_energy_is_absent() -> None:
+    """Mid-session the field being absent is anomalous telemetry, not 0 kWh.
+
+    A session start observed late already has energy on the meter; reading an
+    absent field as zero would copy the car's SOC in un-rebased and overstate
+    every SOC figure for the rest of the session. Same rule the SOC sensors
+    follow.
+    """
+    entity, updater, _ = _build_initial_soc(car_soc=55, seed=20)
+
+    _poll_soc(entity, updater, 3)
+    _poll_soc(entity, updater, 4, session_energy=None)
+
+    assert entity.native_value == 20

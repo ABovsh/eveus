@@ -76,7 +76,6 @@ def _updater_after_401(monkeypatch: pytest.MonkeyPatch) -> EveusUpdater:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._schedule_post_command_refresh = Mock()
     updater._event_prev_state = DEVICE_STATE_CHARGING
-    updater._event_prev_payload = {"state": DEVICE_STATE_CHARGING, "sessionEnergy": 12.5}
     updater._event_prev_error_code = 7
     updater._legacy_charging_latched = True
     updater._legacy_zero_power_polls = 1
@@ -91,7 +90,7 @@ def test_auth_failure_clears_transition_memory(monkeypatch: pytest.MonkeyPatch) 
     updater = _updater_after_401(monkeypatch)
 
     assert updater._event_prev_state is None
-    assert updater._event_prev_payload is None
+    assert updater._event_charging_payload is None
     assert updater._event_prev_error_code is None
     assert updater._legacy_charging_latched is False
     assert updater._legacy_zero_power_polls == 0

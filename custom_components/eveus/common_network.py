@@ -197,7 +197,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # unlike it, this resets on every failed poll so transitions that
         # happened across an offline gap stay silent.
         self._event_prev_state: int | None = None
-        self._event_prev_payload: dict[str, Any] | None = None
         self._event_prev_error_code: int | None = None
         # Last payload seen while genuinely Charging, held until the session
         # ends. A fault can interrupt a session for several polls, so the
@@ -253,7 +252,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """
         self._reset_legacy_charging_latch()
         self._event_prev_state = None
-        self._event_prev_payload = None
         self._event_prev_error_code = None
         self._event_charging_payload = None
 
@@ -542,7 +540,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if state is None or state not in CHARGING_STATES:
             return
         previous = self._event_prev_state
-        self._event_prev_state, self._event_prev_payload = state, new_data
+        self._event_prev_state = state
         # Refresh on EVERY charging poll, not just the transition into
         # Charging: the session summary must reflect the last reading of the
         # session, and a continuing session returns early below.

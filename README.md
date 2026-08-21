@@ -333,7 +333,7 @@ If Home Assistant restarts while a session is running, nothing is seeded: Initia
 
 - **It does not follow the car during the session.** Later readings are ignored on purpose: cars report whole percent and update slowly, so tracking them would make SOC freeze and then jump. Between the anchor and the end of the session the charger's energy meter is the finer, faster signal.
 - **It does not overwrite your own value.** Move the slider by hand and it stays until the next plug-in.
-- **It never blanks anything.** If the car is asleep or the sensor is unavailable at session start, Initial SOC simply keeps the value it had, and you can set it by hand as before.
+- **It never blanks anything, and it never guesses.** If the car is asleep, the sensor is unavailable, or the charger's reply arrives without its energy reading at session start, Initial SOC simply keeps the value it had, and you can set it by hand as before.
 
 ### Adaptive Charging And Schedules
 

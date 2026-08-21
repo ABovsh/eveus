@@ -42,8 +42,12 @@ def _build(
     return entity, updater, calc
 
 
-def _poll(entity, updater, state, *, session_energy=None, success=True):
-    """Feed one coordinator poll with the given device state."""
+def _poll(entity, updater, state, *, session_energy=0.0, success=True):
+    """Feed one coordinator poll with the given device state.
+
+    ``session_energy=None`` omits the field entirely, which the charger does
+    only in an incomplete reply; every normal poll carries it.
+    """
     payload: dict[str, object] = {"state": state}
     if session_energy is not None:
         payload["sessionEnergy"] = session_energy
