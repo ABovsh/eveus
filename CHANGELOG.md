@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### 🐛 Fixed
+- **SOC Energy and SOC Percent no longer dip to the Initial SOC value if the charger leaves session energy out of a single reply.** During a charging session an incomplete reply was read as "0 kWh delivered so far", which pulled both sensors down to where the session started and then snapped them back on the next reply — a false drop in the charge-percentage graph and in anything watching it. Such a reply now leaves both sensors unknown for that moment, the way Energy to Target SOC already behaved.
+
 ## 4.19.0 - 2026-08-05
 
 ### ✨ Added
