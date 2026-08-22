@@ -525,3 +525,81 @@ def test_diagnostics_soc_block_survives_no_external_sensor() -> None:
     assert soc["external_soc_entity"] is None
     assert soc["external_soc_state"] is None
     assert soc["seeded_this_cycle"] is False
+
+
+# ---------------------------------------------------------------------------
+# Redaction: the explicit list is the only guard for four of its keys, so each
+# entry has to be pinned individually — the name heuristic does not back them up.
+# ---------------------------------------------------------------------------
+
+def _diag_with_main(payload: dict, entry_data: dict | None = None, hass=None):
+    updater = SimpleNamespace(
+        data={"verFWMain": "3.0.3", **payload},
+        last_update_success=True,
+        update_interval=timedelta(seconds=30),
+        connection_quality={},
+        is_likely_offline=False,
+    )
+    entry = SimpleNamespace(
+        title="Eveus Charger",
+        data={"host": TEST_HOST, **(entry_data or {})},
+        runtime_data=SimpleNamespace(updater=updater, device_number=1),
+    )
+    return asyncio.run(async_get_config_entry_diagnostics(hass, entry))
+
+
+def test_every_explicitly_redacted_main_field_is_redacted() -> None:
+    """Each TO_REDACT key must be removed from raw_main, not just the ones the
+    name heuristic happens to catch: host, stationId, unique_id and username
+    match no heuristic pattern, so the list is their only protection."""
+    from custom_components.eveus.diagnostics import TO_REDACT
+
+    secret = "LEAKED-VALUE"
+    diagnostics = _diag_with_main({key: secret for key in TO_REDACT})
+
+    leaked = [
+        key for key in TO_REDACT
+        if diagnostics["raw_main"].get(key) == secret
+    ]
+    assert not leaked, f"identifying fields survived redaction: {leaked}"
+
+
+def test_a_unique_id_in_entry_data_is_redacted() -> None:
+    """Not covered by any name heuristic — only the explicit list stops it."""
+    diagnostics = _diag_with_main({}, entry_data={"unique_id": "AA:BB:CC:DD"})
+
+    assert diagnostics["entry"]["data"]["unique_id"] == "**REDACTED**"
+
+
+def test_the_device_block_reports_the_fields_it_names() -> None:
+    """Each value is read from a specific /main key; a wrong key reads None."""
+    diagnostics = _diag_with_main({
+        "verFWWifi": "1.2.3",
+        "state": 4,
+        "subState": 2,
+        "currentSet": 16,
+        "model": "32A",
+        "manufacturer": "Eveus",
+    })
+
+    device = diagnostics["device"]
+    assert device["wifi_firmware"] == "1.2.3"
+    assert device["substate"] == 2
+    assert device["current_set"] == 16
+    assert device["model"] == "32A"
+    assert device["manufacturer"] == "Eveus"
+
+
+def test_the_car_sensor_is_not_read_when_none_is_configured() -> None:
+    """hass is available but no sensor is set: the lookup must be skipped, not
+    attempted with a None entity id."""
+    from conftest import HelperHass
+
+    hass = HelperHass({"sensor.car_battery_level": 55})
+    calc = _calculator(initial_soc=41, battery_capacity=60, soc_correction=5)
+
+    soc = _soc_entry(calc=calc, hass=hass)["soc"]
+
+    assert soc["external_soc_entity"] is None
+    assert soc["external_soc_state"] is None
+    assert hass.states.calls == []
