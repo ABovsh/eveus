@@ -833,3 +833,44 @@ def test_unplugging_clears_the_recorded_outcome() -> None:
     _poll(entity, updater, 2)
 
     assert calc.last_seed == {}
+
+
+def test_a_fresh_install_has_no_stored_seed_flag(monkeypatch) -> None:
+    """First ever start: nothing stored, so the cycle is free to seed."""
+    entity, updater, _ = _build(car_soc=55, seed=20)
+    monkeypatch.setattr(
+        number_module.BaseEveusEntity,
+        "async_added_to_hass",
+        lambda self: asyncio.sleep(0),
+    )
+    monkeypatch.setattr(
+        type(entity), "async_get_last_number_data",
+        lambda self: asyncio.sleep(0), raising=False,
+    )
+
+    async def no_extra_data(self):
+        return None
+
+    monkeypatch.setattr(
+        type(entity), "async_get_last_extra_data", no_extra_data, raising=False
+    )
+    asyncio.run(entity.async_added_to_hass())
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+
+    assert entity.native_value == 55
+
+
+def test_an_out_of_range_correction_names_itself(caplog) -> None:
+    """A corrupt SOC-correction helper blocks the rebase with its own reason."""
+    entity, updater, calc = _build(car_soc=55, seed=20)
+    calc.set_value("soc_correction", 150)
+
+    with caplog.at_level(logging.WARNING, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        _poll(entity, updater, 4, session_energy=3.0)
+
+    assert entity.native_value == 20
+    assert calc.last_seed["seeded"] is False
+    assert "correction" in calc.last_seed["detail"].lower()
+    assert "150" in calc.last_seed["detail"]
