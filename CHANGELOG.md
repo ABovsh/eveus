@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.20.0 - 2026-08-22
 
 ### ✨ Added
 - **Initial SOC can be filled in from your car's own battery sensor.** Pick a `sensor` with device class `battery` during setup or under **Configure → Car SOC sensor** (Advanced mode only) and its reading is copied into `number.eveus_ev_charger_initial_soc` once per plug-in, at the start of charging. Everything downstream is unchanged — SOC Percent, SOC Energy and the target/ETA sensors are still calculated from Initial SOC plus the charger's own energy meter.
