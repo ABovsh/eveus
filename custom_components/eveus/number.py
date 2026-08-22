@@ -5,11 +5,14 @@ import logging
 import math
 import time
 
+import dataclasses
+
 from homeassistant.components.number import (
     NumberEntity,
     NumberMode,
     NumberDeviceClass,
     NumberEntityDescription,
+    NumberExtraStoredData,
     RestoreNumber,
 )
 from homeassistant.core import HomeAssistant, State, callback
@@ -688,6 +691,17 @@ class EveusSocConfigNumber(
         self._apply_value(value)
 
 
+@dataclasses.dataclass
+class _InitialSocStoredData(NumberExtraStoredData):
+    """Stored number state plus whether this plug-in cycle was already seeded.
+
+    ``NumberExtraStoredData.from_dict`` reads its own five keys and ignores the
+    extra one, so the restored native value is unaffected by carrying it.
+    """
+
+    seeded: bool = False
+
+
 class EveusInitialSocNumber(EveusSocConfigNumber):
     """Initial state of charge (%), optionally seeded from an external sensor.
 
@@ -711,6 +725,28 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         super().__init__(updater, soc_calculator, seed, device_number)
         self._session_seeded = False
         self._seed_warned = False
+
+    @property
+    def extra_restore_state_data(self) -> _InitialSocStoredData:
+        """Persist the seeded flag alongside the value it belongs to."""
+        base = super().extra_restore_state_data
+        return _InitialSocStoredData(
+            **dataclasses.asdict(base), seeded=self._session_seeded
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the value, and whether this plug-in cycle already seeded it.
+
+        A config entry is reloaded whenever options are saved, which happens
+        routinely mid-charge. Without the flag the rebuilt entity would look
+        unseeded, re-anchor from the car on its first poll and silently discard
+        a value the user had corrected by hand. Only unplugging clears it, so a
+        cycle that never managed to seed still keeps retrying after a reload.
+        """
+        await super().async_added_to_hass()
+        stored = await self.async_get_last_extra_data()
+        if stored is not None:
+            self._session_seeded = bool(stored.as_dict().get("seeded"))
 
     @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
     def _handle_coordinator_update(self) -> None:

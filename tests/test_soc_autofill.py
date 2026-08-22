@@ -722,3 +722,114 @@ def test_only_advanced_mode_builds_the_initial_soc_entity(mode) -> None:
 
     built = any(isinstance(e, EveusInitialSocNumber) for e in added)
     assert built is (mode == "advanced")
+
+
+# ---------------------------------------------------------------------------
+# Surviving a config-entry reload mid-session
+# ---------------------------------------------------------------------------
+
+def _reload(entity, monkeypatch, *, restored_value, seeded):
+    """Bring the entity up the way HA does after a reload, with stored data."""
+    monkeypatch.setattr(
+        number_module.BaseEveusEntity,
+        "async_added_to_hass",
+        lambda self: asyncio.sleep(0),
+    )
+
+    async def fake_number_data(self):
+        return SimpleNamespace(native_value=restored_value)
+
+    async def fake_extra_data(self):
+        return SimpleNamespace(as_dict=lambda: {"seeded": seeded})
+
+    monkeypatch.setattr(
+        type(entity), "async_get_last_number_data", fake_number_data, raising=False
+    )
+    monkeypatch.setattr(
+        type(entity), "async_get_last_extra_data", fake_extra_data, raising=False
+    )
+    asyncio.run(entity.async_added_to_hass())
+
+
+def test_a_reload_mid_session_keeps_a_hand_corrected_value(monkeypatch) -> None:
+    """Saving options mid-charge must not revert a correction the user made."""
+    entity, updater, _ = _build(car_soc=55, seed=42)
+
+    _reload(entity, monkeypatch, restored_value=42, seeded=True)
+    _poll(entity, updater, 4, session_energy=10.0)
+
+    assert entity.native_value == 42
+
+
+def test_a_reload_before_any_seed_still_retries(monkeypatch) -> None:
+    """An unseeded cycle must keep trying across a reload, rebased as usual."""
+    entity, updater, _ = _build(car_soc=55, seed=20, capacity=60, correction=5)
+
+    _reload(entity, monkeypatch, restored_value=20, seeded=False)
+    _poll(entity, updater, 4, session_energy=10.0)
+
+    assert entity.native_value == pytest.approx(55 - 10.0 * 0.95 / 60 * 100)
+
+
+def test_unplugging_after_a_reload_re_arms_seeding(monkeypatch) -> None:
+    """A restored seeded flag must not block the next plug-in cycle."""
+    entity, updater, _ = _build(car_soc=55, seed=42)
+
+    _reload(entity, monkeypatch, restored_value=42, seeded=True)
+    _poll(entity, updater, 4, session_energy=10.0)
+    _poll(entity, updater, 2)
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+
+    assert entity.native_value == 55
+
+
+def test_the_seeded_flag_is_written_into_the_stored_state() -> None:
+    """The flag only survives a reload if it is actually persisted."""
+    entity, updater, _ = _build(car_soc=55, seed=20)
+
+    assert entity.extra_restore_state_data.as_dict()["seeded"] is False
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+
+    stored = entity.extra_restore_state_data.as_dict()
+    assert stored["seeded"] is True
+    assert stored["native_value"] == 55
+
+
+# ---------------------------------------------------------------------------
+# The seed outcome reaches the calculator that diagnostics reads
+# ---------------------------------------------------------------------------
+
+def test_a_real_seed_records_its_outcome_for_diagnostics() -> None:
+    """diagnostics reads last_seed; the seed path must actually populate it."""
+    entity, updater, calc = _build(car_soc=55, seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+
+    assert calc.last_seed["seeded"] is True
+    assert "55.0%" in calc.last_seed["detail"]
+    assert CAR_SOC in calc.last_seed["detail"]
+
+
+def test_a_real_failure_records_its_reason_for_diagnostics() -> None:
+    """The reason in the log must be the reason diagnostics shows."""
+    entity, updater, calc = _build(car_soc="unavailable", seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+
+    assert calc.last_seed["seeded"] is False
+    assert "unavailable" in calc.last_seed["detail"]
+
+
+def test_unplugging_clears_the_recorded_outcome() -> None:
+    """A finished cycle's result must not be reported as the current one."""
+    entity, updater, calc = _build(car_soc=55, seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+    _poll(entity, updater, 2)
+
+    assert calc.last_seed == {}
