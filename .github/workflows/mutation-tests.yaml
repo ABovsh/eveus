@@ -63,6 +63,9 @@ jobs:
               tests/test_issue_regressions.py
               tests/test_hardening_4_16_1.py
               tests/test_hardening_rc_2026_07_01.py
+              tests/test_hardening_rc_2026_07_10.py
+              tests/test_hardening_rc_2026_07_14.py
+              tests/test_hardening_rc_2026_07_30.py
           - name: payload-utils
             paths: "custom_components/eveus/utils.py,custom_components/eveus/_payload.py"
             tests: >-
@@ -72,6 +75,7 @@ jobs:
               tests/test_real_payload_schema.py
               tests/test_multi_state_payload.py
               tests/test_normalize_soc_input.py
+              tests/test_issue11_fw151_unknown_state.py
           - name: coordinator
             paths: "custom_components/eveus/common_network.py"
             tests: >-
@@ -79,6 +83,13 @@ jobs:
               tests/test_command.py
               tests/test_availability_clock.py
               tests/test_property_invariants.py
+              tests/test_hardening_rc_2026_07_10.py
+              tests/test_hardening_rc_2026_07_14.py
+              tests/test_hardening_rc_2026_07_19.py
+              tests/test_hardening_rc_2026_07_30.py
+              tests/test_hardening_rc_2026_08_21.py
+              tests/test_issue11_fw151_state_semantics.py
+              tests/test_issue11_fw151_unknown_state.py
           - name: soc-limit
             paths: "custom_components/eveus/soc_limit.py"
             tests: >-
@@ -103,6 +114,7 @@ jobs:
               tests/test_time_controls.py
               tests/test_firmware_parsing.py
               tests/test_hardening_4_16_1.py
+              tests/test_hardening_rc_2026_07_30.py
           - name: init
             paths: "custom_components/eveus/__init__.py"
             tests: >-
@@ -123,6 +135,9 @@ jobs:
               tests/test_ground_protection.py
               tests/test_control_entities.py
               tests/test_command.py
+              tests/test_soc_autofill.py
+              tests/test_hardening_rc_2026_07_10.py
+              tests/test_fw151_missing_fields_audit.py
           - name: minor-entities
             paths: "custom_components/eveus/select.py,custom_components/eveus/time.py,custom_components/eveus/binary_sensor.py,custom_components/eveus/button.py,custom_components/eveus/session_history.py"
             tests: >-
@@ -132,6 +147,10 @@ jobs:
               tests/test_last_session.py
               tests/test_time_controls.py
               tests/test_entities.py
+              tests/test_ocpp.py
+              tests/test_hardening_rc_2026_07_24.py
+              tests/test_hardening_rc_2026_07_30.py
+              tests/test_fw151_missing_fields_audit.py
           - name: sensor-values
             paths: "custom_components/eveus/sensor_definitions.py,custom_components/eveus/ev_sensors.py,custom_components/eveus/const.py"
             tests: >-
@@ -146,6 +165,20 @@ jobs:
               tests/test_state_enum.py
               tests/test_time_drift.py
               tests/test_const_soc_modes.py
+              tests/test_soc_autofill.py
+              tests/test_not_charging_reason.py
+              tests/test_hardening_rc_2026_07_19.py
+              tests/test_hardening_rc_2026_08_21.py
+              tests/test_issue11_fw151_state_semantics.py
+              tests/test_issue11_fw151_unknown_state.py
+          - name: diagnostics-triggers
+            paths: "custom_components/eveus/diagnostics.py,custom_components/eveus/device_trigger.py"
+            tests: >-
+              tests/test_diagnostics.py
+              tests/test_device_trigger.py
+              tests/test_soc_autofill.py
+              tests/test_hardening_rc_2026_07_14.py
+              tests/test_hardening_rc_2026_07_24.py
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

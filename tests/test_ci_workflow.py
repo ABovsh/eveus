@@ -100,6 +100,8 @@ def test_mutation_matrix_legs_are_disjoint_and_complete() -> None:
         "custom_components/eveus/sensor_definitions.py",
         "custom_components/eveus/ev_sensors.py",
         "custom_components/eveus/const.py",
+        "custom_components/eveus/diagnostics.py",
+        "custom_components/eveus/device_trigger.py",
     ):
         assert required in seen, f"mutation coverage lost for {required}"
 
@@ -223,3 +225,44 @@ def test_mutation_workflow_checks_survivor_baseline() -> None:
     assert baseline_steps[0].get("if") == "always()"
     assert "::warning::" in run_text
     assert "result-ids survived" in run_text
+
+
+# Meta-tests: they assert things about the repo itself (metadata, platform
+# naming, test quality) rather than exercising a mutable source module, so no
+# mutation leg can be killed by them.
+_NON_KILLER_TESTS = frozenset({
+    "tests/test_metadata.py",
+    "tests/test_name_platform_compat.py",
+    "tests/test_test_quality_contracts.py",
+    "tests/test_ci_workflow.py",
+})
+
+
+def test_every_test_file_is_wired_into_a_mutation_leg() -> None:
+    """A new test file must be assigned to a leg, or explicitly excused.
+
+    Adding a test file without wiring it in silently weakens the weekly run:
+    the target is still mutated, the tests that would kill those mutants never
+    run, and the survivor ratchet fires as if untested code had shipped.
+    """
+    import pathlib
+
+    wired = set()
+    for leg in _mutation_matrix_legs():
+        wired.update(leg["tests"].split())
+    on_disk = {
+        f"tests/{p.name}" for p in pathlib.Path("tests").glob("test_*.py")
+    }
+    unwired = on_disk - wired - _NON_KILLER_TESTS
+    assert not unwired, (
+        "test files wired to no mutation leg (add them to a leg's `tests:` "
+        f"list, or to _NON_KILLER_TESTS with a reason): {sorted(unwired)}"
+    )
+
+
+def test_non_killer_exclusions_still_exist() -> None:
+    """A renamed or deleted meta-test must not linger in the excuse list."""
+    import pathlib
+
+    missing = [t for t in _NON_KILLER_TESTS if not pathlib.Path(t).exists()]
+    assert not missing, f"stale entries in _NON_KILLER_TESTS: {missing}"
