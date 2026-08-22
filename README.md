@@ -303,48 +303,23 @@ SOC uses the charger's native `sessionEnergy` value. The charger resets this val
 
 #### Filling Initial SOC from your car (optional)
 
-If another integration already exposes your car's battery level, the charger can read it instead of you moving the Initial SOC slider before every charge.
+If another integration exposes your car's battery level, Eveus can read it instead of you moving the Initial SOC slider before every charge. Nothing else changes: SOC Percent, SOC Energy and the target/ETA sensors are still calculated from Initial SOC plus the charger's own energy meter.
 
-**The integration keeps calculating SOC exactly as it always has — from Initial SOC plus the charger's own energy meter. The sensor changes nothing about that. All it does is fill in Initial SOC automatically at the moment a charging session starts, instead of you typing it in.**
+**Setting it up**
 
-**What the sensor has to be**
+Pick the sensor during setup on the **SOC Monitoring Setup** screen, or later under **Settings → Devices & Services → Eveus EV Charger → Configure**. It has to be a `sensor` with device class `battery` and unit `%` — the picker only lists those, so if yours is missing, it lacks that device class. Advanced mode only. Leave it empty (the default) and nothing changes.
 
-- A `sensor` entity that reports your car's battery level — normally provided by your car's own integration. Advanced mode only; in Basic mode there is no Initial SOC to fill in.
-- Device class `battery`, unit `%`. The picker only lists sensors that match, so if yours is missing, it is missing that device class.
-- Its state must be a plain number from 0 to 100. `unknown`, `unavailable`, or anything unparseable is skipped.
+**When it reads the car**
 
-**How to set it**
+Once per plug-in, at the start of charging. If the car is asleep then — normal with a departure timer or a cheap-tariff window — it keeps trying on every poll until a reading arrives, subtracting whatever energy has already gone into the car so a late reading gives the same result as an immediate one. Once a reading lands, the sensor is not consulted again until you unplug.
 
-Pick it during setup on the **SOC Monitoring Setup** screen, or later under **Settings → Devices & Services → Eveus EV Charger → Configure** in **Car SOC sensor** (Advanced mode only — Basic mode has no Initial SOC to fill in, so the field is hidden there). Leave the field empty to turn it off — that is also the default, and with it empty nothing about the integration changes.
+**A plug-in is not a charge.** Pause and resume, stop and restart, let the car finish and top up again, ride out a fault the charger recovers from — to the charger that is all one session and its energy meter keeps running through it. Initial SOC stays put and every SOC figure stays right. Only unplugging starts a new one.
 
-**What happens, and when**
+**Your own value always wins.** Move the slider by hand and it stays until the next plug-in — including across a Home Assistant restart, or saving the integration's options mid-charge.
 
-The sensor is read **once per plug-in**, and the reading is written into `number.eveus_ev_charger_initial_soc`:
+**If nothing gets filled in**
 
-```
-Initial SOC = car SOC − energy already delivered this session, as battery %
-```
-
-At a normal session start the charger's session energy is 0, so Initial SOC is simply what the car reports. The subtraction matters when the reading arrives late — the charger began charging between two polls, or the car was asleep and woke up an hour into the charge — and it stops energy that is already on the meter from being counted twice. Because of it, a reading taken late anchors exactly like an immediate one.
-
-The first attempt is at the moment charging starts. If it cannot be used, the attempt simply repeats on the next poll, and keeps repeating until a reading lands or you unplug. That is what makes the feature work with a departure timer or a cheap-tariff window, where the car is usually asleep by the time charging begins. Once a reading lands, the car sensor is not consulted again for the rest of the plug-in.
-
-**A session is a plug-in, not a charge.** The charger's energy counter runs from the moment you plug in until you unplug, and the anchor follows it exactly. Pause and resume ten times, stop and restart the charge, let the car finish and start again, ride out a fault the charger recovers from — Initial SOC stays put while the energy meter keeps accumulating across all of it, so every SOC figure stays correct for the whole plug-in cycle. Only unplugging ends the session; the next plug-in reads the car again.
-
-If Home Assistant restarts — or the integration is reloaded, which happens every time you save its options — while a session is running, whether the value was already filled in is remembered along with it. An already-filled cycle keeps its value, so saving options mid-charge never discards a figure you corrected by hand; a cycle that had not managed to fill in yet carries on trying, and the energy already on the meter is subtracted so the anchor still lands on the right value.
-
-**What it deliberately does not do**
-
-- **It does not follow the car during the session.** Once one reading has landed, later ones are ignored on purpose: cars report whole percent and update slowly, so tracking them would make SOC freeze and then jump. Between the anchor and the end of the session the charger's energy meter is the finer, faster signal.
-- **It does not overwrite your own value.** Move the slider by hand and it stays until the next plug-in.
-- **It does not re-read the car when you pause or restart a charge.** Those are the same session to the charger, and its energy meter has not been reset, so re-anchoring would double-count what is already on it.
-- **It never blanks anything, and it never guesses.** While the car is asleep, the sensor is unavailable, or the charger's reply arrives without its energy reading, Initial SOC simply keeps the value it had and you can set it by hand as before. If the subtraction lands outside 0–100% — which means the reading was stale or wrong — it is refused rather than clamped, because a clamped value would look plausible and be wrong.
-
-**If it does not work**
-
-The first time a reading cannot be used in a plug-in cycle, the integration logs one warning naming the sensor and the reason (`the sensor reads 'unavailable'`, `the charger did not report session energy`, `the battery capacity helper is not set`, …). It is logged once per plug-in, not once per poll. A successful seed logs one line at info level with the value. **Settings → Devices & Services → Eveus → ⋮ → Download diagnostics** carries the same information under `soc`, along with the four SOC inputs and what the car sensor reads right now.
-
-With no car sensor configured — the default — none of this runs and nothing is logged.
+Check the log. One line per plug-in names the sensor and the reason (`the sensor reads 'unavailable'`, `the charger did not report session energy`, …). **Download diagnostics** shows the same under `soc`, plus what the car sensor reads right now. With no sensor configured, none of this runs and nothing is logged.
 
 ### Adaptive Charging And Schedules
 
