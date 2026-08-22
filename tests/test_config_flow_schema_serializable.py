@@ -192,6 +192,11 @@ def _frontend_submission(schema) -> dict:
             value = first[0] if isinstance(first, (list, tuple)) else first
         elif field.get("default") not in (None, vol.UNDEFINED):
             value = field["default"]
+        elif "entity" in (field.get("selector") or {}):
+            # An entity picker returns a real entity_id, and its schema
+            # validates the format — "x" would be rejected by the selector,
+            # not by a coercion bug.
+            value = "sensor.car_battery_level"
         else:
             value = "x"  # field with no default (e.g. password)
         submission[field["name"]] = str(value)  # frontend submits scalars as strings

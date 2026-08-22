@@ -40,6 +40,14 @@ def is_modern_firmware_payload(data: dict) -> bool:
     """
     return bool(data.get("verFWMain") or data.get("firmware"))
 
+# INVARIANT: a "session" for the charger's own counters is a PLUG-IN CYCLE,
+# not a charge. sessionEnergy/sessionTime/sessionMoney run from plug-in to
+# unplug and keep accumulating across pauses, manual stops, Charge Complete
+# and recovered faults; only unplugging zeroes them. Anything anchored to
+# those counters — Initial SOC above all — must be anchored per plug-in too.
+# The state sets below describe what the charger is doing right now, which is
+# a different question; do not read them as session boundaries.
+#
 # Device states that count as "a charging session is in progress": actively
 # Charging (4) or briefly Paused (6) mid-session. Excludes Connected (3) where
 # the car is plugged in but no session is running, and Charge Complete (5).
@@ -209,6 +217,11 @@ CONF_INITIAL_SOC: Final[str] = "initial_soc"
 CONF_TARGET_SOC: Final[str] = "target_soc"
 CONF_BATTERY_CAPACITY: Final[str] = "battery_capacity"
 CONF_SOC_CORRECTION: Final[str] = "soc_correction"
+
+# Optional entity_id of an external car SOC sensor. When set, Initial SOC is
+# seeded from it once per plug-in cycle; everything downstream keeps using the
+# integration's own calculation.
+CONF_EXTERNAL_SOC_ENTITY: Final[str] = "external_soc_entity"
 
 DEFAULT_INITIAL_SOC: Final[float] = 20
 DEFAULT_TARGET_SOC: Final[float] = 80

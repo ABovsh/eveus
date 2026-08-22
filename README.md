@@ -46,6 +46,7 @@ Pick **Advanced** mode and get battery SOC as native sensors — no helpers to c
 - **Time to Target SOC** and **Charging Finish Time** — when charging will be done
 - **Energy / Cost to Target SOC** — what's left to deliver and what it will cost
 - Inputs (initial SOC, target SOC, battery capacity, efficiency loss) are plain `number` entities you can set from any dashboard or automation
+- Optionally point the integration at your car's own SOC sensor and Initial SOC fills itself in once per plug-in
 
 Pick **Basic** if you only want charging control. Switch modes anytime via **Configure**.
 
@@ -148,7 +149,7 @@ Or manually:
 
 Changing things later:
 
-- **Configure** — switch between Basic and Advanced. Switching to Advanced for the first time shows the same battery-capacity screen as setup.
+- **Configure** — switch between Basic and Advanced, and optionally pick a car SOC sensor (see [Filling Initial SOC from your car](#filling-initial-soc-from-your-car-optional)). Switching to Advanced for the first time shows the same battery-capacity screen as setup.
 - **Reconfigure** — change host, credentials, model, or phase count without reinstalling.
 
 ## 🛡️ Safety notices
@@ -299,6 +300,26 @@ Migration from old helpers is intentionally simple: replace the prefix `input_nu
 SOC uses the charger's native `sessionEnergy` value. The charger resets this value on every new plug-in, so continuous charging sessions survive Home Assistant restarts without a synthetic baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
 
 </details>
+
+#### Filling Initial SOC from your car (optional)
+
+If another integration exposes your car's battery level, Eveus can read it instead of you moving the Initial SOC slider before every charge. Nothing else changes: SOC Percent, SOC Energy and the target/ETA sensors are still calculated from Initial SOC plus the charger's own energy meter.
+
+**Setting it up**
+
+Pick the sensor during setup on the **SOC Monitoring Setup** screen, or later under **Settings → Devices & Services → Eveus EV Charger → Configure**. It has to be a `sensor` with device class `battery` and unit `%` — the picker only lists those, so if yours is missing, it lacks that device class. Advanced mode only. Leave it empty (the default) and nothing changes.
+
+**When it reads the car**
+
+Once per plug-in, at the start of charging. If the car is asleep then — normal with a departure timer or a cheap-tariff window — it keeps trying on every poll until a reading arrives, subtracting whatever energy has already gone into the car so a late reading gives the same result as an immediate one. Once a reading lands, the sensor is not consulted again until you unplug.
+
+**A plug-in is not a charge.** Pause and resume, stop and restart, let the car finish and top up again, ride out a fault the charger recovers from — to the charger that is all one session and its energy meter keeps running through it. Initial SOC stays put and every SOC figure stays right. Only unplugging starts a new one.
+
+**Your own value always wins.** Move the slider by hand and it stays until the next plug-in — including across a Home Assistant restart, or saving the integration's options mid-charge.
+
+**If nothing gets filled in**
+
+Check the log. One line per plug-in names the sensor and the reason (`the sensor reads 'unavailable'`, `the charger did not report session energy`, …). **Download diagnostics** shows the same under `soc`, plus what the car sensor reads right now. With no sensor configured, none of this runs and nothing is logged.
 
 ### Adaptive Charging And Schedules
 

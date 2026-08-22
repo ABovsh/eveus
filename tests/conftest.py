@@ -507,7 +507,7 @@ class EveusTestUpdater:
         self.commands: list[tuple[str, object]] = []
         self.command_extras: list[dict[str, object] | None] = []
         self.command_result = True
-        self.config_entry = SimpleNamespace(entry_id="entry-id")
+        self.config_entry = SimpleNamespace(entry_id="entry-id", data={})
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None

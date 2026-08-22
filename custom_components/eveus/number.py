@@ -5,14 +5,17 @@ import logging
 import math
 import time
 
+import dataclasses
+
 from homeassistant.components.number import (
     NumberEntity,
     NumberMode,
     NumberDeviceClass,
     NumberEntityDescription,
+    NumberExtraStoredData,
     RestoreNumber,
 )
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -41,6 +44,11 @@ from .const import (
     CONF_TARGET_SOC,
     CONF_BATTERY_CAPACITY,
     CONF_SOC_CORRECTION,
+    CONF_EXTERNAL_SOC_ENTITY,
+    CONNECTED_STATES,
+    MAX_ENERGY_KWH,
+    PLUG_UNKNOWN_STATES,
+    SESSION_ACTIVE_STATES,
 )
 from .common_base import (
     BaseEveusEntity,
@@ -669,8 +677,8 @@ class EveusSocConfigNumber(
                 self.hass, soc_update_signal(self._updater.config_entry.entry_id)
             )
 
-    async def async_set_native_value(self, value: float) -> None:
-        """Clamp, store, persist, and push a new SOC-input value."""
+    def _apply_value(self, value: float) -> None:
+        """Clamp, store, persist, and push a SOC-input value."""
         raw = _validate_finite_number(value, self.ENTITY_NAME)
         lo, hi = self.native_min_value, self.native_max_value
         clamped = max(lo, min(hi, raw))
@@ -678,9 +686,31 @@ class EveusSocConfigNumber(
         self._write_if_changed(clamped)
         self._push()
 
+    async def async_set_native_value(self, value: float) -> None:
+        """Clamp, store, persist, and push a new SOC-input value."""
+        self._apply_value(value)
+
+
+@dataclasses.dataclass
+class _InitialSocStoredData(NumberExtraStoredData):
+    """Stored number state plus whether this plug-in cycle was already seeded.
+
+    ``NumberExtraStoredData.from_dict`` reads its own five keys and ignores the
+    extra one, so the restored native value is unaffected by carrying it.
+    """
+
+    seeded: bool = False
+
 
 class EveusInitialSocNumber(EveusSocConfigNumber):
-    """Initial state of charge (%)."""
+    """Initial state of charge (%), optionally seeded from an external sensor.
+
+    When the entry names a car SOC sensor, its reading is copied here once per
+    plug-in cycle, at the moment a charging session starts. Nothing downstream
+    changes: every SOC figure is still computed by the integration from this
+    value plus the charger's own session-energy meter. The external sensor only
+    replaces the manual slider move a user would otherwise make before charging.
+    """
 
     _soc_key = "initial_soc"
     ENTITY_NAME = "Initial SOC"
@@ -689,6 +719,153 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
     _attr_native_min_value, _attr_native_max_value = SOC_INPUT_LIMITS["initial_soc"]
     _attr_native_step = 1
     _attr_mode = NumberMode.SLIDER
+
+    def __init__(self, updater, soc_calculator, seed, device_number: int = 1) -> None:
+        """Initialize the Initial SOC entity and its session tracking."""
+        super().__init__(updater, soc_calculator, seed, device_number)
+        self._session_seeded = False
+        self._seed_warned = False
+
+    @property
+    def extra_restore_state_data(self) -> _InitialSocStoredData:
+        """Persist the seeded flag alongside the value it belongs to."""
+        base = super().extra_restore_state_data
+        return _InitialSocStoredData(
+            **dataclasses.asdict(base), seeded=self._session_seeded
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the value, and whether this plug-in cycle already seeded it.
+
+        A config entry is reloaded whenever options are saved, which happens
+        routinely mid-charge. Without the flag the rebuilt entity would look
+        unseeded, re-anchor from the car on its first poll and silently discard
+        a value the user had corrected by hand. Only unplugging clears it, so a
+        cycle that never managed to seed still keeps retrying after a reload.
+        """
+        await super().async_added_to_hass()
+        stored = await self.async_get_last_extra_data()
+        if stored is not None:
+            self._session_seeded = bool(stored.as_dict().get("seeded"))
+
+    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    def _handle_coordinator_update(self) -> None:
+        super()._handle_coordinator_update()
+        self._maybe_seed_from_external_soc()
+
+    def _external_soc_entity_id(self) -> str | None:
+        """Entity id of the configured car SOC sensor, if any."""
+        entry = getattr(self._updater, "config_entry", None)
+        return (getattr(entry, "data", None) or {}).get(CONF_EXTERNAL_SOC_ENTITY) or None
+
+    def _maybe_seed_from_external_soc(self) -> None:
+        """Copy the car's SOC into this entity while a session is running."""
+        if not self._updater.last_update_success:
+            # A failed refresh leaves the previous payload in place, so the
+            # meter reading is stale while the car sensor is live; rebasing one
+            # against the other would skew the anchor. Nothing is forgotten —
+            # the next successful poll retries.
+            return
+        state = get_safe_value(self._updater.data, "state", int)
+        if state is None:
+            return
+        if state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES:
+            # Car unplugged: the next plug-in is a new session and seeds again.
+            # Unplugging is the ONLY thing that re-arms it, because it is the
+            # only thing that zeroes the charger's energy counter (see the
+            # invariant in const.py). Pause, manual stop, Charge Complete and a
+            # recovered fault all leave that counter running, so re-anchoring
+            # on any of them would subtract energy that is still on the meter.
+            # Error is excluded because it hides the plug status rather than
+            # reporting it, and must not re-arm seeding mid-session.
+            self._session_seeded = False
+            self._seed_warned = False
+            self._soc_calculator.last_seed = {}
+            return
+        if self._session_seeded or state not in SESSION_ACTIVE_STATES:
+            return
+        entity_id = self._external_soc_entity_id()
+        if not entity_id or self.hass is None:
+            return
+        anchor = self._external_soc_anchor(entity_id)
+        if isinstance(anchor, str):
+            # Nothing usable this poll. The attempt repeats on every poll for
+            # the rest of the plug-in cycle, so a car that is still asleep at
+            # the start of a scheduled charge is picked up as soon as it wakes,
+            # and the value stays as the user last set it until then. The
+            # complaint is logged once per cycle, not once per poll.
+            self._soc_calculator.last_seed = {"seeded": False, "detail": anchor}
+            if not self._seed_warned:
+                self._seed_warned = True
+                _LOGGER.warning(
+                    "Initial SOC not seeded from %s: %s. Keeping the value you "
+                    "set last and retrying every poll until the reading becomes "
+                    "usable; set it by hand if it looks wrong.",
+                    entity_id,
+                    anchor,
+                )
+            return
+        self._session_seeded = True
+        self._apply_value(anchor)
+        self._soc_calculator.last_seed = {
+            "seeded": True,
+            "detail": f"{anchor:.1f}% from {entity_id}",
+        }
+        _LOGGER.info("Initial SOC seeded from %s: %.1f%%", entity_id, anchor)
+
+    def _external_soc_anchor(self, entity_id: str) -> float | str:
+        """Car SOC rebased to the start of this session, or why it is unusable.
+
+        The reading is taken whenever the session start is observed, which is
+        not always the instant it began — a restored session or a resume after
+        a pause already has energy on the meter. Subtracting what the battery
+        has taken since gives the value this entity is defined to hold, so a
+        late reading anchors exactly like an immediate one.
+        """
+        external = self._read_external_soc(entity_id)
+        if isinstance(external, str):
+            return external
+        data = self._updater.data or {}
+        if "sessionEnergy" not in data:
+            # This runs only once a session is already active, where an absent
+            # field is anomalous telemetry rather than "nothing delivered yet" —
+            # the same rule the SOC sensors follow. Reading it as zero would
+            # copy the car's SOC in un-rebased and overstate every SOC figure
+            # for the rest of the session.
+            return "the charger did not report session energy"
+        delivered = get_safe_value(data, "sessionEnergy", float)
+        if delivered is None or not 0 <= delivered <= MAX_ENERGY_KWH:
+            return f"the charger reported an unusable session energy ({data['sessionEnergy']!r})"
+        if delivered:
+            capacity = self._soc_calculator.battery_capacity
+            correction = self._soc_calculator.soc_correction
+            if not capacity:
+                return "the battery capacity helper is not set"
+            if not 0 <= correction < 100:
+                return f"the SOC correction helper is out of range ({correction})"
+            external -= delivered * (1 - correction / 100) / capacity * 100
+        # Out of range means the rebase produced nonsense (a stale or wrong car
+        # reading). Clamping it into 0-100 would publish a plausible-looking
+        # wrong anchor; refusing leaves the user's own value in the slider.
+        if not 0 <= external <= 100:
+            return f"the rebased anchor {external:.1f}% is outside 0-100%"
+        return external
+
+    def _read_external_soc(self, entity_id: str) -> float | str:
+        """Current car SOC as a plausible percentage, or why it is unusable."""
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return "the sensor does not exist"
+        try:
+            value = float(state.state)
+        except (TypeError, ValueError):
+            # Covers "unknown", "unavailable", an empty state and any sensor
+            # that does not report a bare number.
+            return f"the sensor reads {state.state!r}"
+        # Rejects NaN and both infinities along with out-of-range readings.
+        if not 0 <= value <= 100:
+            return f"the sensor reads {value}, outside 0-100%"
+        return value
 
 
 class EveusTargetSocNumber(EveusSocConfigNumber):

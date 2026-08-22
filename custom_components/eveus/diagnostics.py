@@ -9,7 +9,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import EveusConfigEntry
-from .const import LEGACY_RAW_STATE_KEY
+from .const import CONF_EXTERNAL_SOC_ENTITY, LEGACY_RAW_STATE_KEY
 
 # Redacted on every diagnostics download — credentials, host, IDs, and any
 # /main field that exposes the LAN address or hardware serial.
@@ -61,8 +61,38 @@ def _sensitive_keys(data: Mapping[str, Any]) -> set[str]:
     return keys
 
 
+def _soc_diagnostics(
+    hass: HomeAssistant | None,
+    entry: EveusConfigEntry,
+    calculator: Any,
+) -> dict[str, Any]:
+    """SOC inputs plus why the last external-sensor seed did or did not happen.
+
+    None of it is identifying — percentages, a kWh capacity and an entity id —
+    so it is reported verbatim. Without it a SOC bug report cannot be acted on:
+    every SOC figure is derived from these four values.
+    """
+    external = entry.data.get(CONF_EXTERNAL_SOC_ENTITY) or None
+    state = None
+    if external and hass is not None:
+        reading = hass.states.get(external)
+        state = None if reading is None else reading.state
+    last_seed = getattr(calculator, "last_seed", None) or {}
+    return {
+        "initial_soc": calculator.initial_soc,
+        "target_soc": calculator.target_soc,
+        "battery_capacity": calculator.battery_capacity,
+        "soc_correction": calculator.soc_correction,
+        "helpers_available": calculator.are_helpers_available(),
+        "external_soc_entity": external,
+        "external_soc_state": state,
+        "seeded_this_cycle": bool(last_seed.get("seeded")),
+        "seed_detail": last_seed.get("detail"),
+    }
+
+
 async def async_get_config_entry_diagnostics(
-    _hass: HomeAssistant,
+    hass: HomeAssistant,
     entry: EveusConfigEntry,
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
@@ -85,6 +115,7 @@ async def async_get_config_entry_diagnostics(
         return payload
 
     updater = runtime_data.updater
+    soc_calculator = getattr(runtime_data, "soc_calculator", None)
     data = updater.data or {}
     quality = updater.connection_quality
     payload.update(
@@ -116,6 +147,13 @@ async def async_get_config_entry_diagnostics(
                 "model": data.get("model"),
                 "manufacturer": data.get("manufacturer"),
             },
+            # SOC inputs and the external-sensor seeding outcome. Absent when
+            # setup predates the calculator (older entries under test).
+            **(
+                {"soc": _soc_diagnostics(hass, entry, soc_calculator)}
+                if soc_calculator is not None
+                else {}
+            ),
             # Full /main payload with sensitive identifiers removed. Useful for
             # bug reports — gives the developer the exact field set the device
             # reported without leaking serials or LAN addresses. Unknown but

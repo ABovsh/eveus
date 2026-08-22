@@ -1513,7 +1513,9 @@ def test_soc_step_schema_prefills_from_stored_entry_values() -> None:
         _Hass(), defaults={CONF_SOC_CORRECTION: 4.5}
     )
     defaults = {
-        str(key): key.default() for key in schema.schema if hasattr(key, "default")
+        str(key): key.default()
+        for key in schema.schema
+        if getattr(key, "default", vol.UNDEFINED) is not vol.UNDEFINED
     }
     assert defaults[CONF_SOC_CORRECTION] == 4.5
     assert defaults[CONF_BATTERY_CAPACITY] == config_flow.DEFAULT_BATTERY_CAPACITY

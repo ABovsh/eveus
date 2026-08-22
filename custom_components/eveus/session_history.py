@@ -19,12 +19,17 @@ from homeassistant.util import dt as dt_util
 from .common_base import EveusSensorBase
 from .const import (
     EVENT_CHARGING_FINISHED,
+    FINISHED_REASONS,
     MAX_COST_VALUE,
     MAX_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
 )
 from .sensor_definitions import ICON_CURRENCY_UAH, UNIT_UAH
 from homeassistant.const import UnitOfEnergy, UnitOfTime
+
+# Every reason the coordinator can fire, derived from the same mapping it uses
+# plus its own default, so the two can never drift apart.
+_KNOWN_FINISH_REASONS: frozenset[str] = frozenset(FINISHED_REASONS.values()) | {"stopped"}
 
 _LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
 
@@ -88,11 +93,26 @@ class _LastSessionSensorBase(EveusSensorBase):
         else:
             self._attr_native_value = value
             self._attr_extra_state_attributes = {
-                "reason": event.data.get("reason"),
+                "reason": self._reason_from_event(event.data),
                 "finished_at": dt_util.now().isoformat(),
             }
         if self.hass is not None:
             self.async_write_ha_state()
+
+    @staticmethod
+    def _reason_from_event(data: dict[str, Any]) -> Optional[str]:
+        """The finish reason, or None when it is not one the coordinator fires.
+
+        Same reasoning as ``_value_from_event``: the bus event is public, so an
+        arbitrary (or arbitrarily large) value must not reach a persisted
+        entity attribute.
+        """
+        reason = data.get("reason")
+        # isinstance first: an unhashable value (dict/list) would raise on the
+        # set membership test.
+        if not isinstance(reason, str) or reason not in _KNOWN_FINISH_REASONS:
+            return None
+        return reason
 
     def _value_from_event(self, data: dict[str, Any]) -> Optional[float]:
         # The coordinator already bounds what it fires, but the bus event is

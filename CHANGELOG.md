@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### ✨ Added
+- **Initial SOC can be filled in from your car's own battery sensor.** Pick a `sensor` with device class `battery` during setup or under **Configure → Car SOC sensor** (Advanced mode only) and its reading is copied into `number.eveus_ev_charger_initial_soc` once per plug-in, at the start of charging. Everything downstream is unchanged — SOC Percent, SOC Energy and the target/ETA sensors are still calculated from Initial SOC plus the charger's own energy meter.
+  - A plug-in, not a charge, is what re-reads the car: pauses, manual stops, Charge Complete and recovered faults leave the charger's energy counter running, so the value is anchored once per plug-in and stays correct for the whole cycle.
+  - If the car is asleep at the start of charging — normal with a departure timer — the reading is retried on every poll until one arrives. Energy already delivered is subtracted, so a late reading gives the same result as an immediate one.
+  - A value set by hand is never overwritten, including across a restart or an options save mid-charge.
+  - A reading that cannot be used leaves Initial SOC alone and is logged once per plug-in with the reason.
+  - Optional and empty by default; with it empty nothing runs and nothing is logged.
+- **Diagnostics now include a `soc` block.** Initial SOC, Target SOC, battery capacity and SOC correction, plus the configured car sensor, what it reads at download time, and whether this plug-in cycle was filled in or the reason it was not.
+
+### 🐛 Fixed
+- **A charging session cut short by a charger fault is now recorded like any other.** When the charger tripped into Error while charging — a ground fault, leak, overcurrent or overheat — and then settled into Standby, Connected or Charge Complete, the session was never reported as finished: Last Session Energy, Cost and Duration kept showing the session before it, and the `charging_finished` device trigger never fired. The summary is now taken from the last reading before the fault and reported once the charger leaves the Error state. A fault the charger recovers from mid-charge still does not end the session.
+- **SOC Energy and SOC Percent no longer dip to the Initial SOC value if the charger leaves session energy out of a single reply.** During a charging session an incomplete reply was read as "0 kWh delivered so far", which pulled both sensors down to where the session started and then snapped them back on the next reply — a false drop in the charge-percentage graph and in anything watching it. Such a reply now leaves both sensors unknown for that moment, the way Energy to Target SOC already behaved.
+
+### 🔒 Security
+- **The Last Session sensors no longer store an arbitrary "reason" sent by anything on the event bus.** The numbers on that event were already re-checked before being kept; the reason text now gets the same treatment and is discarded unless it is one the integration itself reports.
+
 ## 4.19.0 - 2026-08-05
 
 ### ✨ Added

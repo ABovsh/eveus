@@ -197,8 +197,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # unlike it, this resets on every failed poll so transitions that
         # happened across an offline gap stay silent.
         self._event_prev_state: int | None = None
-        self._event_prev_payload: dict[str, Any] | None = None
         self._event_prev_error_code: int | None = None
+        # Last payload seen while genuinely Charging, held until the session
+        # ends. A fault can interrupt a session for several polls, so the
+        # finished event cannot rely on Charging being the immediately
+        # preceding state.
+        self._event_charging_payload: dict[str, Any] | None = None
         self._force_refresh_requests = 0
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
@@ -248,8 +252,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """
         self._reset_legacy_charging_latch()
         self._event_prev_state = None
-        self._event_prev_payload = None
         self._event_prev_error_code = None
+        self._event_charging_payload = None
 
     def _normalize_legacy_device_state(self, data: dict[str, Any]) -> dict[str, Any]:
         """Translate firmware-1.x state codes to their modern equivalents.
@@ -535,8 +539,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             state = None
         if state is None or state not in CHARGING_STATES:
             return
-        previous, prev_payload = self._event_prev_state, self._event_prev_payload
-        self._event_prev_state, self._event_prev_payload = state, new_data
+        previous = self._event_prev_state
+        self._event_prev_state = state
+        # Refresh on EVERY charging poll, not just the transition into
+        # Charging: the session summary must reflect the last reading of the
+        # session, and a continuing session returns early below.
+        if state == DEVICE_STATE_CHARGING:
+            self._event_charging_payload = new_data
         if previous is None or self._shutting_down:
             # First poll after start/offline gap: remember the fault code so a
             # later code change within a persisting Error state still fires.
@@ -570,11 +579,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if state == DEVICE_STATE_CHARGING:
             bus.async_fire(EVENT_CHARGING_STARTED, dict(base))
-        elif previous == DEVICE_STATE_CHARGING and state != DEVICE_STATE_ERROR:
+        elif state != DEVICE_STATE_ERROR and self._event_charging_payload is not None:
             # Firmware resets session counters at the START of the next session,
             # not at charge end; snapshotting the last charging poll keeps the
-            # numbers stable regardless of when the next session begins.
-            snapshot = prev_payload or {}
+            # numbers stable regardless of when the next session begins — and
+            # also carries them across a fault that ended the session, where
+            # Charging is no longer the immediately preceding state.
+            snapshot = self._event_charging_payload
+            self._event_charging_payload = None
             bus.async_fire(
                 EVENT_CHARGING_FINISHED,
                 {

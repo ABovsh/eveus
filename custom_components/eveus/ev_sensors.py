@@ -49,6 +49,10 @@ class CachedSOCCalculator:
         self.battery_capacity: Optional[float] = None
         self.soc_correction_raw: Optional[float] = None
         self.target_soc: Optional[float] = None
+        # Outcome of the last external-SOC seed attempt in this plug-in cycle,
+        # recorded here rather than on the number entity so diagnostics can
+        # reach it through runtime_data. {"seeded": bool, "detail": str}.
+        self.last_seed: dict = {}
 
     def set_value(self, key: str, value: Optional[float]) -> None:
         """Store a pushed SOC input value (None clears it)."""
@@ -246,6 +250,24 @@ class BaseEVHelperSensor(EveusSensorBase):
         data = self._updater.data or {}
         return "sessionEnergy" in data and self._get_energy_charged() is None
 
+    def _session_energy_or_zero(self) -> float | None:
+        """Session kWh delivered, 0.0 before a session, None when unusable.
+
+        A present-but-corrupt reading is always unusable. The field being
+        absent entirely means 0 kWh delivered before a session starts, but
+        during an ACTIVE session it is anomalous telemetry: falling back to 0
+        would snap every from-initial-SOC figure back to the session start.
+        """
+        if self._session_energy_is_invalid():
+            return None
+        energy_charged = self._get_energy_charged()
+        if energy_charged is None:
+            state = get_safe_value(self._updater.data, "state", int)
+            if state in SESSION_ACTIVE_STATES:
+                return None
+            energy_charged = 0.0
+        return energy_charged
+
 
 # =============================================================================
 # Concrete EV sensors
@@ -266,13 +288,13 @@ class EVSocKwhSensor(BaseEVHelperSensor):
     _requires_helpers = False
 
     def _get_sensor_value(self) -> Optional[float]:
-        # If the charger has not yet reported sessionEnergy (cold start, offline
-        # blip, or no session ever began), treat it as 0 delivered — SOC then
-        # equals the user's Initial SOC. Prevents the entity from being
-        # "unknown" the moment HA boots before the first successful poll.
-        if self._session_energy_is_invalid():
+        # Outside a session an unreported sessionEnergy (cold start, offline
+        # blip, or no session ever began) means 0 delivered — SOC then equals
+        # the user's Initial SOC. Prevents the entity from being "unknown" the
+        # moment HA boots before the first successful poll.
+        energy_charged = self._session_energy_or_zero()
+        if energy_charged is None:
             return None
-        energy_charged = self._get_energy_charged() or 0.0
         # None means the SOC helper inputs are missing (or a calc error), not a
         # transient poll blip — go unknown instead of freezing on a stale value.
         result = self._soc_calculator.get_soc_kwh(energy_charged)
@@ -293,9 +315,9 @@ class EVSocPercentSensor(BaseEVHelperSensor):
 
     def _get_sensor_value(self) -> Optional[float]:
         # See EVSocKwhSensor._get_sensor_value — same Initial-SOC fallback.
-        if self._session_energy_is_invalid():
+        energy_charged = self._session_energy_or_zero()
+        if energy_charged is None:
             return None
-        energy_charged = self._get_energy_charged() or 0.0
         # None means the SOC helper inputs are missing, not a transient poll
         # blip — go unknown instead of freezing on a stale value.
         result = self._soc_calculator.get_soc_percent(energy_charged)
@@ -362,19 +384,9 @@ class EnergyToTargetSocSensor(BaseEVHelperSensor):
         calc = self._soc_calculator
         if not calc.are_helpers_available() or calc.target_soc is None:
             return None
-        if self._session_energy_is_invalid():
-            return None
-        energy_charged = self._get_energy_charged()
+        energy_charged = self._session_energy_or_zero()
         if energy_charged is None:
-            # Field absent entirely (a present-but-corrupt value returned None
-            # above). Before a session starts that simply means 0 kWh delivered;
-            # during an ACTIVE session it's anomalous telemetry, and falling
-            # back to 0 would snap the forecast back to the full from-initial-
-            # SOC estimate — go unknown instead.
-            state = get_safe_value(self._updater.data, "state", int)
-            if state in SESSION_ACTIVE_STATES:
-                return None
-            energy_charged = 0.0
+            return None
         # Work in kWh, not the whole-percent rounded SOC: on a large battery a
         # rounded-up percent would zero the estimate with real energy missing.
         current_kwh = calc.get_soc_kwh(energy_charged)

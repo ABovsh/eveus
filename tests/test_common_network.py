@@ -894,7 +894,7 @@ def test_updater_initial_state_defaults() -> None:
     assert updater._last_observed_state is None
     assert updater._last_burst_monotonic is None
     assert updater._event_prev_state is None
-    assert updater._event_prev_payload is None
+    assert updater._event_charging_payload is None
     assert updater._event_prev_error_code is None
     assert updater._force_refresh_requests == 0
     assert updater._shutting_down is False
@@ -1076,7 +1076,6 @@ def test_emit_transition_events_first_poll_is_silent() -> None:
 def test_emit_transition_events_fires_charging_started() -> None:
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
 
     updater._emit_transition_events({"state": common_network.DEVICE_STATE_CHARGING})
 
@@ -1091,7 +1090,7 @@ def test_emit_transition_events_fires_charging_started() -> None:
 def test_emit_transition_events_fires_charging_finished_with_bounded_session_values() -> None:
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_CHARGING
-    updater._event_prev_payload = {
+    updater._event_charging_payload = {
         "state": common_network.DEVICE_STATE_CHARGING,
         "sessionEnergy": 12.5,
         "sessionMoney": 3.2,
@@ -1121,7 +1120,7 @@ def test_emit_transition_events_charging_finished_falls_back_to_stopped_reason()
     back to the default 'stopped' reason string."""
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_CHARGING
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_CHARGING}
+    updater._event_charging_payload = {"state": common_network.DEVICE_STATE_CHARGING}
 
     updater._emit_transition_events({"state": 1})
 
@@ -1135,7 +1134,6 @@ def test_emit_transition_events_requires_previous_charging_for_finished_event() 
     actually Charging."""
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
 
     updater._emit_transition_events({"state": 3})
 
@@ -1146,7 +1144,6 @@ def test_emit_transition_events_requires_previous_charging_for_finished_event() 
 def test_emit_transition_events_fires_error_event_on_new_error_state() -> None:
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
 
     updater._emit_transition_events(
         {"state": common_network.DEVICE_STATE_ERROR, "subState": 9}
@@ -1168,7 +1165,6 @@ def test_emit_transition_events_fires_error_event_on_new_error_state() -> None:
 def test_emit_transition_events_escalates_new_fault_code_within_persisting_error() -> None:
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_ERROR
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_ERROR}
     updater._event_prev_error_code = 3
 
     updater._emit_transition_events(
@@ -1195,14 +1191,12 @@ def test_emit_transition_events_escalates_new_fault_code_within_persisting_error
 def test_emit_transition_events_fires_car_connected_and_disconnected() -> None:
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-    updater._event_prev_payload = {"state": common_network.DEVICE_STATE_STANDBY}
 
     updater._emit_transition_events({"state": 3})  # Connected
     assert bus.fired == [(common_network.EVENT_CAR_CONNECTED, {"device_number": 1})]
 
     bus.fired.clear()
     updater._event_prev_state = 3
-    updater._event_prev_payload = {"state": 3}
     updater._emit_transition_events({"state": common_network.DEVICE_STATE_STANDBY})
     assert bus.fired == [(common_network.EVENT_CAR_DISCONNECTED, {"device_number": 1})]
 
