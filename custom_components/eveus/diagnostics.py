@@ -13,6 +13,10 @@ from .const import CONF_EXTERNAL_SOC_ENTITY, LEGACY_RAW_STATE_KEY
 
 # Redacted on every diagnostics download — credentials, host, IDs, and any
 # /main field that exposes the LAN address or hardware serial.
+# NOTE: every entry here except host, stationId, unique_id and username is also
+# matched by _SENSITIVE_NAME_RE below, so mutating those out of this set cannot
+# change the output -- the heuristic still catches them. The four that are not
+# heuristic-matched are pinned individually in tests/test_diagnostics.py.
 TO_REDACT = {
     "password",
     "username",
@@ -99,7 +103,7 @@ async def async_get_config_entry_diagnostics(
     runtime_data = getattr(entry, "runtime_data", None)
     payload: dict[str, Any] = {
         "entry": {
-            "title": "Eveus Charger",
+            "title": "Eveus Charger",  # pragma: no mutate - display-only text, no behaviour attached
             "data": async_redact_data(dict(entry.data), _sensitive_keys(dict(entry.data))),
             "device_number": (
                 runtime_data.device_number if runtime_data is not None else None
@@ -110,7 +114,7 @@ async def async_get_config_entry_diagnostics(
     if runtime_data is None:
         payload["setup"] = {
             "ready": False,
-            "note": "Integration setup did not complete; runtime data unavailable.",
+            "note": "Integration setup did not complete; runtime data unavailable.",  # pragma: no mutate - display-only text, no behaviour attached
         }
         return payload
 
