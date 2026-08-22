@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+
+import pytest
 from types import SimpleNamespace
 
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
@@ -525,3 +527,129 @@ def test_diagnostics_soc_block_survives_no_external_sensor() -> None:
     assert soc["external_soc_entity"] is None
     assert soc["external_soc_state"] is None
     assert soc["seeded_this_cycle"] is False
+
+
+# ---------------------------------------------------------------------------
+# Redaction: the explicit list is the only guard for four of its keys, so each
+# entry has to be pinned individually — the name heuristic does not back them up.
+# ---------------------------------------------------------------------------
+
+def _diag_with_main(payload: dict, entry_data: dict | None = None, hass=None):
+    updater = SimpleNamespace(
+        data={"verFWMain": "3.0.3", **payload},
+        last_update_success=True,
+        update_interval=timedelta(seconds=30),
+        connection_quality={},
+        is_likely_offline=False,
+    )
+    entry = SimpleNamespace(
+        title="Eveus Charger",
+        data={"host": TEST_HOST, **(entry_data or {})},
+        runtime_data=SimpleNamespace(updater=updater, device_number=1),
+    )
+    return asyncio.run(async_get_config_entry_diagnostics(hass, entry))
+
+
+# Literal, NOT imported from diagnostics.py: a test that reads the same list it
+# is checking mutates along with it and proves nothing. These names are the
+# contract — every one of them must be scrubbed from a shared diagnostics file.
+_MUST_NEVER_LEAK = (
+    "password", "username", "host", "unique_id",
+    "serialNum", "serialNumCPU", "stationId", "STA_IP_Addres", "fwCRC32",
+)
+
+
+@pytest.mark.parametrize("field", _MUST_NEVER_LEAK)
+def test_an_identifying_main_field_never_survives_redaction(field) -> None:
+    """host, stationId, unique_id and username match no name heuristic, so the
+    explicit TO_REDACT list is the only thing standing between them and a
+    diagnostics file the user pastes into a public issue."""
+    secret = "LEAKED-VALUE"
+
+    diagnostics = _diag_with_main({field: secret})
+
+    assert diagnostics["raw_main"].get(field) != secret
+
+
+def test_a_unique_id_in_entry_data_is_redacted() -> None:
+    """Not covered by any name heuristic — only the explicit list stops it."""
+    diagnostics = _diag_with_main({}, entry_data={"unique_id": "AA:BB:CC:DD"})
+
+    assert diagnostics["entry"]["data"]["unique_id"] == "**REDACTED**"
+
+
+def test_the_device_block_reports_the_fields_it_names() -> None:
+    """Each value is read from a specific /main key; a wrong key reads None."""
+    diagnostics = _diag_with_main({
+        "verFWWifi": "1.2.3",
+        "state": 4,
+        "subState": 2,
+        "currentSet": 16,
+        "model": "32A",
+        "manufacturer": "Eveus",
+    })
+
+    device = diagnostics["device"]
+    assert device["wifi_firmware"] == "1.2.3"
+    assert device["substate"] == 2
+    assert device["current_set"] == 16
+    assert device["model"] == "32A"
+    assert device["manufacturer"] == "Eveus"
+
+
+def test_the_car_sensor_is_not_read_when_none_is_configured() -> None:
+    """hass is available but no sensor is set: the lookup must be skipped, not
+    attempted with a None entity id."""
+    from conftest import HelperHass
+
+    hass = HelperHass({"sensor.car_battery_level": 55})
+    calc = _calculator(initial_soc=41, battery_capacity=60, soc_correction=5)
+
+    soc = _soc_entry(calc=calc, hass=hass)["soc"]
+
+    assert soc["external_soc_entity"] is None
+    assert soc["external_soc_state"] is None
+    assert hass.states.calls == []
+
+
+def test_the_coordinator_block_reports_the_quality_fields_it_names() -> None:
+    """Each value is pulled from a named connection_quality key."""
+    diagnostics = _diag_with_main({})
+    diagnostics["coordinator"]  # present even with an empty quality dict
+
+    updater = SimpleNamespace(
+        data={"verFWMain": "3.0.3", "state": 4},
+        last_update_success=True,
+        update_interval=timedelta(seconds=30),
+        connection_quality={"consecutive_failures": 3, "last_error": "timeout"},
+        is_likely_offline=True,
+    )
+    entry = SimpleNamespace(
+        title="Eveus Charger",
+        data={"host": TEST_HOST},
+        runtime_data=SimpleNamespace(updater=updater, device_number=1),
+    )
+    coordinator = asyncio.run(async_get_config_entry_diagnostics(None, entry))["coordinator"]
+
+    assert coordinator["consecutive_failures"] == 3
+    assert coordinator["last_error"] == "timeout"
+    assert coordinator["is_likely_offline"] is True
+    assert coordinator["connection_quality"] == {
+        "consecutive_failures": 3,
+        "last_error": "timeout",
+    }
+
+
+def test_the_device_block_reports_the_current_state() -> None:
+    """`state` is read from its own /main key, not inferred."""
+    assert _diag_with_main({"state": 6})["device"]["state"] == 6
+
+
+def test_a_failed_setup_is_labelled_as_such() -> None:
+    """The partial payload has to say why it is partial, under a stable key."""
+    entry = SimpleNamespace(title="Eveus Charger", data={"host": TEST_HOST})
+
+    setup = asyncio.run(async_get_config_entry_diagnostics(None, entry))["setup"]
+
+    assert setup["ready"] is False
+    assert "note" in setup

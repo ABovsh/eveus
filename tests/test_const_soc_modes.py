@@ -16,6 +16,10 @@ def test_seed_conf_keys_and_defaults():
     assert const.CONF_TARGET_SOC == "target_soc"
     assert const.CONF_BATTERY_CAPACITY == "battery_capacity"
     assert const.CONF_SOC_CORRECTION == "soc_correction"
+    # Literal on purpose: this is the key an existing entry is already stored
+    # under. Renaming the constant would orphan every configured car sensor,
+    # and nothing else would notice — writer and reader both use the constant.
+    assert const.CONF_EXTERNAL_SOC_ENTITY == "external_soc_entity"
     assert const.DEFAULT_INITIAL_SOC == 20
     assert const.DEFAULT_TARGET_SOC == 80
     assert const.DEFAULT_BATTERY_CAPACITY == 50

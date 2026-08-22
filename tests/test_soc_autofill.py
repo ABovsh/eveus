@@ -874,3 +874,121 @@ def test_an_out_of_range_correction_names_itself(caplog) -> None:
     assert calc.last_seed["seeded"] is False
     assert "correction" in calc.last_seed["detail"].lower()
     assert "150" in calc.last_seed["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Boundaries. Every range check in the seeding path is inclusive on both ends;
+# these pin which end, so an off-by-one cannot pass unnoticed.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("car_soc", [0, 100])
+def test_the_extreme_car_readings_are_accepted(car_soc) -> None:
+    """0% and 100% are real readings, not sentinel values to reject."""
+    entity, updater, _ = _build(car_soc=car_soc, seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+
+    assert entity.native_value == car_soc
+
+
+@pytest.mark.parametrize("car_soc", [-1, 101])
+def test_a_reading_just_outside_the_range_is_refused(car_soc) -> None:
+    """One step past either end is a broken sensor, not a battery level."""
+    entity, updater, _ = _build(car_soc=car_soc, seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+
+    assert entity.native_value == 20
+
+
+def test_an_anchor_landing_exactly_on_zero_is_accepted() -> None:
+    """A car at 0% with nothing delivered anchors at 0, it is not 'out of range'."""
+    entity, updater, _ = _build(car_soc=10, seed=20, capacity=60, correction=0)
+
+    _poll(entity, updater, 3)
+    # 10% of 60 kWh = 6 kWh; backing exactly that out lands on 0.
+    _poll(entity, updater, 4, session_energy=6.0)
+
+    assert entity.native_value == 0
+
+
+def test_an_anchor_landing_exactly_on_one_hundred_is_accepted() -> None:
+    """Nothing delivered yet and a full car anchors at 100."""
+    entity, updater, _ = _build(car_soc=100, seed=20, capacity=60, correction=0)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, session_energy=0.0)
+
+    assert entity.native_value == 100
+
+
+@pytest.mark.parametrize("correction", [0, 99.9])
+def test_the_extreme_usable_corrections_still_rebase(correction) -> None:
+    """0% loss and just-under-100% loss are both usable in the rebase."""
+    entity, updater, _ = _build(car_soc=80, seed=20, capacity=60, correction=correction)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, session_energy=2.0)
+
+    expected = 80 - 2.0 * (1 - correction / 100) / 60 * 100
+    assert entity.native_value == pytest.approx(expected)
+
+
+def test_a_hundred_percent_correction_blocks_the_rebase(caplog) -> None:
+    """A 100% loss means no energy reaches the battery — the rebase is undefined."""
+    entity, updater, calc = _build(car_soc=80, seed=20, capacity=60, correction=100)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, session_energy=2.0)
+
+    assert entity.native_value == 20
+    assert "correction" in calc.last_seed["detail"].lower()
+
+
+def test_session_energy_exactly_at_the_ceiling_is_still_usable() -> None:
+    """MAX_ENERGY_KWH is the largest believable reading, not the first bad one."""
+    from custom_components.eveus.const import MAX_ENERGY_KWH
+
+    entity, updater, _ = _build(car_soc=100, seed=20, capacity=MAX_ENERGY_KWH, correction=0)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, session_energy=float(MAX_ENERGY_KWH))
+
+    assert entity.native_value == 0
+
+
+def test_the_picker_only_offers_battery_percentage_sensors() -> None:
+    """The device-class filter is what keeps the dropdown usable: without it the
+    picker lists every sensor in the system and the user cannot find the car."""
+    from custom_components.eveus.config_flow import build_soc_step_schema
+
+    schema = build_soc_step_schema(
+        SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None))
+    )
+    selector = next(
+        v for k, v in schema.schema.items()
+        if getattr(k, "schema", k) == CONF_EXTERNAL_SOC_ENTITY
+    )
+
+    config = selector.config
+    assert config["domain"] == ["sensor"]
+    assert config["device_class"] == ["battery"]
+
+
+def test_the_picker_is_prefilled_with_the_stored_sensor() -> None:
+    """Reopening the form must show the current pick, not an empty field, or
+    saving any other option silently looks like clearing it."""
+    from custom_components.eveus.config_flow import build_soc_step_schema
+
+    schema = build_soc_step_schema(
+        SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None)),
+        defaults={CONF_EXTERNAL_SOC_ENTITY: CAR_SOC},
+    )
+    key = next(
+        k for k in schema.schema
+        if getattr(k, "schema", k) == CONF_EXTERNAL_SOC_ENTITY
+    )
+
+    assert key.description == {"suggested_value": CAR_SOC}
