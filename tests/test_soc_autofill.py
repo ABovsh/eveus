@@ -957,3 +957,38 @@ def test_session_energy_exactly_at_the_ceiling_is_still_usable() -> None:
     _poll(entity, updater, 4, session_energy=float(MAX_ENERGY_KWH))
 
     assert entity.native_value == 0
+
+
+def test_the_picker_only_offers_battery_percentage_sensors() -> None:
+    """The device-class filter is what keeps the dropdown usable: without it the
+    picker lists every sensor in the system and the user cannot find the car."""
+    from custom_components.eveus.config_flow import build_soc_step_schema
+
+    schema = build_soc_step_schema(
+        SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None))
+    )
+    selector = next(
+        v for k, v in schema.schema.items()
+        if getattr(k, "schema", k) == CONF_EXTERNAL_SOC_ENTITY
+    )
+
+    config = selector.config
+    assert config["domain"] == ["sensor"]
+    assert config["device_class"] == ["battery"]
+
+
+def test_the_picker_is_prefilled_with_the_stored_sensor() -> None:
+    """Reopening the form must show the current pick, not an empty field, or
+    saving any other option silently looks like clearing it."""
+    from custom_components.eveus.config_flow import build_soc_step_schema
+
+    schema = build_soc_step_schema(
+        SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: None)),
+        defaults={CONF_EXTERNAL_SOC_ENTITY: CAR_SOC},
+    )
+    key = next(
+        k for k in schema.schema
+        if getattr(k, "schema", k) == CONF_EXTERNAL_SOC_ENTITY
+    )
+
+    assert key.description == {"suggested_value": CAR_SOC}

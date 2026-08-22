@@ -66,6 +66,7 @@ jobs:
               tests/test_hardening_rc_2026_07_10.py
               tests/test_hardening_rc_2026_07_14.py
               tests/test_hardening_rc_2026_07_30.py
+              tests/test_soc_autofill.py
           - name: payload-utils
             paths: "custom_components/eveus/utils.py,custom_components/eveus/_payload.py"
             tests: >-
