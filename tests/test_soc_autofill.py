@@ -1,5 +1,6 @@
 """Seeding Initial SOC from an optional external car SOC sensor."""
 import asyncio
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -162,17 +163,16 @@ def test_missing_car_entity_leaves_the_value_alone() -> None:
     assert entity.native_value == 20
 
 
-def test_a_sleeping_car_is_not_chased_for_the_rest_of_the_session() -> None:
-    """One reading per session start; a car that wakes later is not polled for."""
+def test_a_sleeping_car_is_chased_until_it_wakes() -> None:
+    """A car asleep at the start is picked up later in the same session."""
     entity, updater, _ = _build(car_soc="unavailable", seed=20)
 
     _poll(entity, updater, 3)
     _poll(entity, updater, 4)
     entity.hass = HelperHass({CAR_SOC: 62})
-    _poll(entity, updater, 6)
-    _poll(entity, updater, 4, session_energy=2.0)
+    _poll(entity, updater, 6, session_energy=2.0)
 
-    assert entity.native_value == 20
+    assert entity.native_value == pytest.approx(62 - 2.0 * 0.95 / 60 * 100)
 
 
 def test_a_restarted_session_seeds_after_a_failed_first_read() -> None:
@@ -188,13 +188,12 @@ def test_a_restarted_session_seeds_after_a_failed_first_read() -> None:
     assert entity.native_value == pytest.approx(62 - 2.0 * 0.95 / 60 * 100)
 
 
-def test_a_transition_across_a_failed_poll_never_seeds() -> None:
-    """An interrupted poll leaves stale data; it must not fake a session start."""
+def test_a_failed_poll_itself_never_seeds() -> None:
+    """Stale meter data must not be rebased against a live car reading."""
     entity, updater, _ = _build(car_soc=55, seed=20)
 
     _poll(entity, updater, 3)
-    _poll(entity, updater, 4, success=False)
-    _poll(entity, updater, 4)
+    _poll(entity, updater, 4, session_energy=8.0, success=False)
 
     assert entity.native_value == 20
 
@@ -209,14 +208,13 @@ def test_corrupt_session_energy_blocks_seeding() -> None:
     assert entity.native_value == 20
 
 
-def test_seeded_value_is_clamped_into_the_entity_range() -> None:
-    """Backing out more energy than the car reports cannot go below zero."""
-    entity, updater, _ = _build(car_soc=1, capacity=60, correction=0)
+def test_a_manually_set_value_is_still_clamped_into_the_entity_range() -> None:
+    """The slider itself keeps clamping; only the automatic anchor refuses."""
+    entity, _, _ = _build(car_soc=None, seed=20)
 
-    _poll(entity, updater, 3)
-    _poll(entity, updater, 4, session_energy=10.0)
+    asyncio.run(entity.async_set_native_value(140))
 
-    assert entity.native_value == 0
+    assert entity.native_value == 100
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +351,6 @@ def test_a_payload_without_a_device_state_is_ignored() -> None:
     _poll(entity, updater, 3)
     updater.data = {}
     entity._handle_coordinator_update()
-    _poll(entity, updater, 4)
 
     assert entity.native_value == 20
 
@@ -508,3 +505,220 @@ def test_unplugging_is_the_only_thing_that_starts_a_new_session() -> None:
     _poll(entity, updater, 4, session_energy=0.0)
 
     assert entity.native_value == 50
+
+
+# ---------------------------------------------------------------------------
+# Retrying the seed for the rest of the plug-in cycle
+# ---------------------------------------------------------------------------
+
+def test_a_car_that_wakes_mid_session_is_picked_up() -> None:
+    """The seed is retried every poll until it lands, then rebased."""
+    entity, updater, _ = _build(car_soc="unavailable", seed=20, capacity=60, correction=5)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+    _poll(entity, updater, 4, session_energy=3.0)
+    entity.hass = HelperHass({CAR_SOC: 45})
+    _poll(entity, updater, 4, session_energy=6.0)
+
+    assert entity.native_value == pytest.approx(45 - 6.0 * 0.95 / 60 * 100)
+
+
+def test_a_pause_rescues_a_missed_seed_exactly_like_a_stop() -> None:
+    """Which resume state the charger reports must not change the outcome."""
+    entity, updater, _ = _build(car_soc="unavailable", seed=20, capacity=60, correction=5)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4)
+    entity.hass = HelperHass({CAR_SOC: 62})
+    _poll(entity, updater, 6, session_energy=2.0)
+    _poll(entity, updater, 4, session_energy=2.0)
+
+    assert entity.native_value == pytest.approx(62 - 2.0 * 0.95 / 60 * 100)
+
+
+def test_a_transition_across_a_failed_poll_still_seeds() -> None:
+    """A Wi-Fi blip at the session start must not cost the whole cycle."""
+    entity, updater, _ = _build(car_soc=55, seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, success=False)
+    _poll(entity, updater, 4)
+
+    assert entity.native_value == 55
+
+
+def test_an_incomplete_reply_at_the_seed_point_is_retried() -> None:
+    """A missing sessionEnergy blocks one attempt, not the whole session."""
+    entity, updater, _ = _build(car_soc=44, seed=20)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, session_energy=None)
+    _poll(entity, updater, 4)
+
+    assert entity.native_value == 44
+
+
+def test_an_anchor_below_zero_is_rejected_not_clamped() -> None:
+    """A nonsense rebase must leave the user's value alone, not read 0%."""
+    entity, updater, _ = _build(car_soc=1, seed=20, capacity=60, correction=0)
+
+    _poll(entity, updater, 3)
+    _poll(entity, updater, 4, session_energy=10.0)
+
+    assert entity.native_value == 20
+
+
+# ---------------------------------------------------------------------------
+# Logging: why a seed did or did not happen
+# ---------------------------------------------------------------------------
+
+def test_a_successful_seed_is_logged_once(caplog) -> None:
+    """The automatic write is visible in the log with its value."""
+    entity, updater, _ = _build(car_soc=55, seed=20)
+
+    with caplog.at_level(logging.INFO, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        _poll(entity, updater, 4)
+        _poll(entity, updater, 4, session_energy=2.0)
+
+    seeded = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert len(seeded) == 1
+    assert CAR_SOC in seeded[0].getMessage()
+    assert "55" in seeded[0].getMessage()
+
+
+@pytest.mark.parametrize(
+    ("car_soc", "session_energy", "fragment"),
+    [
+        ("unavailable", 0.0, "unavailable"),
+        (150, 0.0, "outside"),
+        (55, None, "session energy"),
+        (55, "not-a-number", "session energy"),
+    ],
+)
+def test_a_failed_seed_logs_why(caplog, car_soc, session_energy, fragment) -> None:
+    """Each distinct reason a seed cannot happen names itself in the log."""
+    entity, updater, _ = _build(car_soc=car_soc, seed=20)
+
+    with caplog.at_level(logging.WARNING, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        _poll(entity, updater, 4, session_energy=session_energy)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert fragment in warnings[0].getMessage().lower()
+
+
+def test_a_missing_capacity_names_itself_in_the_log(caplog) -> None:
+    """A rebase blocked by unusable SOC helpers is distinguishable."""
+    entity, updater, calc = _build(car_soc=55, seed=20)
+    calc.set_value("battery_capacity", None)
+
+    with caplog.at_level(logging.WARNING, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        _poll(entity, updater, 4, session_energy=3.0)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "capacity" in warnings[0].getMessage().lower()
+
+
+def test_the_warning_is_not_repeated_on_every_poll(caplog) -> None:
+    """A retry every 30s must not fill the log with the same complaint."""
+    entity, updater, _ = _build(car_soc="unavailable", seed=20)
+
+    with caplog.at_level(logging.WARNING, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        for _ in range(10):
+            _poll(entity, updater, 4)
+
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+
+def test_a_new_plug_in_cycle_warns_again(caplog) -> None:
+    """Unplugging re-arms the warning as well as the seed."""
+    entity, updater, _ = _build(car_soc="unavailable", seed=20)
+
+    with caplog.at_level(logging.WARNING, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        _poll(entity, updater, 4)
+        _poll(entity, updater, 2)
+        _poll(entity, updater, 3)
+        _poll(entity, updater, 4)
+
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 2
+
+
+def test_a_late_success_after_warnings_is_still_logged(caplog) -> None:
+    """The car waking up mid-session is recorded, not swallowed by the warning."""
+    entity, updater, _ = _build(car_soc="unavailable", seed=20)
+
+    with caplog.at_level(logging.INFO, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        _poll(entity, updater, 4)
+        entity.hass = HelperHass({CAR_SOC: 45})
+        _poll(entity, updater, 4, session_energy=2.0)
+
+    assert len([r for r in caplog.records if r.levelno == logging.INFO]) == 1
+
+
+# ---------------------------------------------------------------------------
+# No effect, and no log noise, for anyone not using the feature
+# ---------------------------------------------------------------------------
+
+def test_no_sensor_configured_logs_nothing_at_all(caplog) -> None:
+    """The overwhelming majority of users must not see a single new line."""
+    entity, updater, _ = _build(external=None, seed=20)
+
+    with caplog.at_level(logging.DEBUG, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        for energy in (0.0, 2.0, 5.0, 9.0):
+            _poll(entity, updater, 4, session_energy=energy)
+        _poll(entity, updater, 2)
+
+    assert caplog.records == []
+
+
+def test_a_configured_sensor_logs_once_per_cycle_not_once_per_poll(caplog) -> None:
+    """A 30s poll across a long night must leave two lines, not a hundred."""
+    entity, updater, _ = _build(car_soc=55, seed=20)
+
+    with caplog.at_level(logging.DEBUG, logger=number_module._LOGGER.name):
+        _poll(entity, updater, 3)
+        for energy in range(40):
+            _poll(entity, updater, 4, session_energy=float(energy))
+        _poll(entity, updater, 2)
+        entity.hass = HelperHass({CAR_SOC: "unavailable"})
+        _poll(entity, updater, 3)
+        for energy in range(40):
+            _poll(entity, updater, 4, session_energy=float(energy))
+
+    assert len(caplog.records) == 2
+
+
+@pytest.mark.parametrize("mode", ["basic", "advanced"])
+def test_only_advanced_mode_builds_the_initial_soc_entity(mode) -> None:
+    """Basic mode has no Initial SOC entity, so nothing can seed or log there."""
+    from custom_components.eveus.ev_sensors import CachedSOCCalculator
+    from custom_components.eveus.number import async_setup_entry
+
+    added: list = []
+    updater = EveusTestUpdater({"currentSet": "10"})
+    entry = SimpleNamespace(
+        data={
+            "soc_mode": mode,
+            "model": "16A",
+            CONF_EXTERNAL_SOC_ENTITY: CAR_SOC,
+        },
+        runtime_data=SimpleNamespace(
+            updater=updater,
+            device_number=1,
+            soc_calculator=CachedSOCCalculator(),
+        ),
+    )
+
+    asyncio.run(async_setup_entry(None, entry, added.extend))
+
+    built = any(isinstance(e, EveusInitialSocNumber) for e in added)
+    assert built is (mode == "advanced")

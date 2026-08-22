@@ -427,3 +427,101 @@ def test_diagnostics_prefers_main_firmware_over_init_fallback() -> None:
 
     assert diagnostics["device"]["firmware"] == "3.0.3"
     assert diagnostics["device"]["legacy_raw_state"] is None
+
+
+# ---------------------------------------------------------------------------
+# SOC helpers and external-sensor seeding
+# ---------------------------------------------------------------------------
+
+def _soc_entry(*, calc, entry_data=None, hass=None):
+    """Build an entry whose runtime data carries a SOC calculator."""
+    updater = SimpleNamespace(
+        data={"verFWMain": "3.0.3", "state": 4, "sessionEnergy": 6.0},
+        last_update_success=True,
+        update_interval=timedelta(seconds=30),
+        connection_quality={},
+        is_likely_offline=False,
+    )
+    entry = SimpleNamespace(
+        title="Eveus Charger",
+        data={"host": TEST_HOST, **(entry_data or {})},
+        runtime_data=SimpleNamespace(
+            updater=updater, device_number=1, soc_calculator=calc
+        ),
+    )
+    return asyncio.run(async_get_config_entry_diagnostics(hass, entry))
+
+
+def _calculator(**values):
+    from custom_components.eveus.ev_sensors import CachedSOCCalculator
+
+    calc = CachedSOCCalculator()
+    for key, value in values.items():
+        calc.set_value(key, value)
+    return calc
+
+
+def test_diagnostics_reports_the_soc_helper_values() -> None:
+    """A SOC bug report is unactionable without the four inputs."""
+    calc = _calculator(
+        initial_soc=41, target_soc=80, battery_capacity=60, soc_correction=5
+    )
+
+    soc = _soc_entry(calc=calc)["soc"]
+
+    assert soc["initial_soc"] == 41
+    assert soc["target_soc"] == 80
+    assert soc["battery_capacity"] == 60
+    assert soc["soc_correction"] == 5
+    assert soc["helpers_available"] is True
+
+
+def test_diagnostics_reports_a_successful_seed() -> None:
+    """Whether this plug-in cycle was seeded is the key troubleshooting bit."""
+    calc = _calculator(initial_soc=41, battery_capacity=60, soc_correction=5)
+    calc.last_seed = {"seeded": True, "detail": "41.0% from sensor.car_battery_level"}
+
+    soc = _soc_entry(calc=calc)["soc"]
+
+    assert soc["seeded_this_cycle"] is True
+    assert "41.0%" in soc["seed_detail"]
+
+
+def test_diagnostics_reports_why_a_seed_was_refused() -> None:
+    """The reason in the log must also reach a downloaded diagnostics file."""
+    calc = _calculator(initial_soc=20, battery_capacity=60, soc_correction=5)
+    calc.last_seed = {"seeded": False, "detail": "the sensor reads 'unavailable'"}
+
+    soc = _soc_entry(calc=calc)["soc"]
+
+    assert soc["seeded_this_cycle"] is False
+    assert "unavailable" in soc["seed_detail"]
+
+
+def test_diagnostics_reports_the_car_sensor_and_its_live_state() -> None:
+    """Reading the sensor at download time shows whether it works right now."""
+    from custom_components.eveus.const import CONF_EXTERNAL_SOC_ENTITY
+    from conftest import HelperHass
+
+    calc = _calculator(initial_soc=41, battery_capacity=60, soc_correction=5)
+    hass = HelperHass({"sensor.car_battery_level": 55})
+
+    soc = _soc_entry(
+        calc=calc,
+        entry_data={CONF_EXTERNAL_SOC_ENTITY: "sensor.car_battery_level"},
+        hass=hass,
+    )["soc"]
+
+    assert soc["external_soc_entity"] == "sensor.car_battery_level"
+    assert soc["external_soc_state"] == "55"
+
+
+def test_diagnostics_soc_block_survives_no_external_sensor() -> None:
+    """The feature is optional; diagnostics must not depend on it."""
+    calc = _calculator(initial_soc=41, battery_capacity=60, soc_correction=5)
+
+    soc = _soc_entry(calc=calc)["soc"]
+
+    assert soc["external_soc_entity"] is None
+    assert soc["external_soc_state"] is None
+    assert soc["seeded_this_cycle"] is False

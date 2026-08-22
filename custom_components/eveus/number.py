@@ -709,8 +709,8 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
     def __init__(self, updater, soc_calculator, seed, device_number: int = 1) -> None:
         """Initialize the Initial SOC entity and its session tracking."""
         super().__init__(updater, soc_calculator, seed, device_number)
-        self._prev_device_state: int | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
         self._session_seeded = False
+        self._seed_warned = False
 
     @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
     def _handle_coordinator_update(self) -> None:
@@ -723,16 +723,14 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         return (getattr(entry, "data", None) or {}).get(CONF_EXTERNAL_SOC_ENTITY) or None
 
     def _maybe_seed_from_external_soc(self) -> None:
-        """Copy the car's SOC into this entity when a session starts."""
+        """Copy the car's SOC into this entity while a session is running."""
         if not self._updater.last_update_success:
-            # A failed refresh leaves the previous payload in place. Forgetting
-            # the last state keeps a change that happened while the charger was
-            # unreachable from looking like a session start on the next poll —
-            # the same rule the coordinator's transition events follow.
-            self._prev_device_state = None
+            # A failed refresh leaves the previous payload in place, so the
+            # meter reading is stale while the car sensor is live; rebasing one
+            # against the other would skew the anchor. Nothing is forgotten —
+            # the next successful poll retries.
             return
         state = get_safe_value(self._updater.data, "state", int)
-        previous, self._prev_device_state = self._prev_device_state, state
         if state is None:
             return
         if state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES:
@@ -745,27 +743,42 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             # Error is excluded because it hides the plug status rather than
             # reporting it, and must not re-arm seeding mid-session.
             self._session_seeded = False
+            self._seed_warned = False
+            self._soc_calculator.last_seed = {}
             return
-        if previous is None or self._session_seeded:
+        if self._session_seeded or state not in SESSION_ACTIVE_STATES:
             return
-        if previous in SESSION_ACTIVE_STATES or state not in SESSION_ACTIVE_STATES:
+        entity_id = self._external_soc_entity_id()
+        if not entity_id or self.hass is None:
             return
-        if not self._external_soc_entity_id():
-            return
-        anchor = self._external_soc_anchor()
-        if anchor is None:
-            # ponytail: one reading per session start. A car still asleep at
-            # plug-in leaves the value as the user last set it (visible in the
-            # slider, correctable by hand); if that turns out to bite in
-            # practice, re-read on the sensor's next update instead of adding a
-            # polling window. Staying unseeded already lets a restarted session
-            # try again.
+        anchor = self._external_soc_anchor(entity_id)
+        if isinstance(anchor, str):
+            # Nothing usable this poll. The attempt repeats on every poll for
+            # the rest of the plug-in cycle, so a car that is still asleep at
+            # the start of a scheduled charge is picked up as soon as it wakes,
+            # and the value stays as the user last set it until then. The
+            # complaint is logged once per cycle, not once per poll.
+            self._soc_calculator.last_seed = {"seeded": False, "detail": anchor}
+            if not self._seed_warned:
+                self._seed_warned = True
+                _LOGGER.warning(
+                    "Initial SOC not seeded from %s: %s. Keeping the value you "
+                    "set last and retrying every poll until the reading becomes "
+                    "usable; set it by hand if it looks wrong.",
+                    entity_id,
+                    anchor,
+                )
             return
         self._session_seeded = True
         self._apply_value(anchor)
+        self._soc_calculator.last_seed = {
+            "seeded": True,
+            "detail": f"{anchor:.1f}% from {entity_id}",
+        }
+        _LOGGER.info("Initial SOC seeded from %s: %.1f%%", entity_id, anchor)
 
-    def _external_soc_anchor(self) -> float | None:
-        """Car SOC rebased to the start of this session, or None if unusable.
+    def _external_soc_anchor(self, entity_id: str) -> float | str:
+        """Car SOC rebased to the start of this session, or why it is unusable.
 
         The reading is taken whenever the session start is observed, which is
         not always the instant it began — a restored session or a resume after
@@ -773,9 +786,9 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         has taken since gives the value this entity is defined to hold, so a
         late reading anchors exactly like an immediate one.
         """
-        external = self._read_external_soc()
-        if external is None:
-            return None
+        external = self._read_external_soc(entity_id)
+        if isinstance(external, str):
+            return external
         data = self._updater.data or {}
         if "sessionEnergy" not in data:
             # This runs only once a session is already active, where an absent
@@ -783,34 +796,39 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             # the same rule the SOC sensors follow. Reading it as zero would
             # copy the car's SOC in un-rebased and overstate every SOC figure
             # for the rest of the session.
-            return None
+            return "the charger did not report session energy"
         delivered = get_safe_value(data, "sessionEnergy", float)
         if delivered is None or not 0 <= delivered <= MAX_ENERGY_KWH:
-            return None
+            return f"the charger reported an unusable session energy ({data['sessionEnergy']!r})"
         if delivered:
             capacity = self._soc_calculator.battery_capacity
             correction = self._soc_calculator.soc_correction
-            if not capacity or not 0 <= correction < 100:
-                return None
+            if not capacity:
+                return "the battery capacity helper is not set"
+            if not 0 <= correction < 100:
+                return f"the SOC correction helper is out of range ({correction})"
             external -= delivered * (1 - correction / 100) / capacity * 100
+        # Out of range means the rebase produced nonsense (a stale or wrong car
+        # reading). Clamping it into 0-100 would publish a plausible-looking
+        # wrong anchor; refusing leaves the user's own value in the slider.
+        if not 0 <= external <= 100:
+            return f"the rebased anchor {external:.1f}% is outside 0-100%"
         return external
 
-    def _read_external_soc(self) -> float | None:
-        """Current car SOC as a plausible percentage, or None."""
-        if self.hass is None:
-            return None
-        state = self.hass.states.get(self._external_soc_entity_id())
+    def _read_external_soc(self, entity_id: str) -> float | str:
+        """Current car SOC as a plausible percentage, or why it is unusable."""
+        state = self.hass.states.get(entity_id)
         if state is None:
-            return None
+            return "the sensor does not exist"
         try:
             value = float(state.state)
         except (TypeError, ValueError):
             # Covers "unknown", "unavailable", an empty state and any sensor
             # that does not report a bare number.
-            return None
+            return f"the sensor reads {state.state!r}"
         # Rejects NaN and both infinities along with out-of-range readings.
         if not 0 <= value <= 100:
-            return None
+            return f"the sensor reads {value}, outside 0-100%"
         return value
 
 

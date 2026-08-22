@@ -49,6 +49,10 @@ class CachedSOCCalculator:
         self.battery_capacity: Optional[float] = None
         self.soc_correction_raw: Optional[float] = None
         self.target_soc: Optional[float] = None
+        # Outcome of the last external-SOC seed attempt in this plug-in cycle,
+        # recorded here rather than on the number entity so diagnostics can
+        # reach it through runtime_data. {"seeded": bool, "detail": str}.
+        self.last_seed: dict = {}
 
     def set_value(self, key: str, value: Optional[float]) -> None:
         """Store a pushed SOC input value (None clears it)."""
