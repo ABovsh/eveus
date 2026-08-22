@@ -726,7 +726,7 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         """Initialize the Initial SOC entity and its session tracking."""
         super().__init__(updater, soc_calculator, seed, device_number)
         self._session_seeded = False
-        self._seed_warned = False
+        self._seed_warned = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
 
     @property
     def extra_restore_state_data(self) -> _InitialSocStoredData:
@@ -780,8 +780,8 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             # on any of them would subtract energy that is still on the meter.
             # Error is excluded because it hides the plug status rather than
             # reporting it, and must not re-arm seeding mid-session.
-            self._session_seeded = False
-            self._seed_warned = False
+            self._session_seeded = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
+            self._seed_warned = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
             self._soc_calculator.last_seed = {}
             return
         if self._session_seeded or state not in SESSION_ACTIVE_STATES:
@@ -800,8 +800,8 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             if not self._seed_warned:
                 self._seed_warned = True
                 _LOGGER.warning(
-                    "Initial SOC not seeded from %s: %s. Keeping the value you "
-                    "set last and retrying every poll until the reading becomes "
+                    "Initial SOC not seeded from %s: %s. Keeping the value you "  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+                    "set last and retrying every poll until the reading becomes "  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
                     "usable; set it by hand if it looks wrong.",  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
                     entity_id,
                     anchor,
@@ -846,11 +846,14 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             if not 0 <= correction < 100:
                 return f"the SOC correction helper is out of range ({correction})"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
             external -= delivered * (1 - correction / 100) / capacity * 100
-        # Out of range means the rebase produced nonsense (a stale or wrong car
-        # reading). Clamping it into 0-100 would publish a plausible-looking
-        # wrong anchor; refusing leaves the user's own value in the slider.
-        if not 0 <= external <= 100:
-            return f"the rebased anchor {external:.1f}% is outside 0-100%"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+        # A negative anchor means the rebase produced nonsense (a stale or wrong
+        # car reading). Clamping it to 0 would publish a plausible-looking wrong
+        # anchor; refusing leaves the user's own value in the slider. Only the
+        # lower bound is checked: the reading is already capped at 100% and the
+        # rebase only subtracts, so an anchor above 100 cannot occur -- and
+        # re-checking it here would mask the cap's own upper bound from tests.
+        if external < 0:
+            return f"the rebased anchor {external:.1f}% is below 0%"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
         return external
 
     def _read_external_soc(self, entity_id: str) -> float | str:
