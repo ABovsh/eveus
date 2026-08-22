@@ -331,7 +331,7 @@ The first attempt is at the moment charging starts. If it cannot be used, the at
 
 **A session is a plug-in, not a charge.** The charger's energy counter runs from the moment you plug in until you unplug, and the anchor follows it exactly. Pause and resume ten times, stop and restart the charge, let the car finish and start again, ride out a fault the charger recovers from — Initial SOC stays put while the energy meter keeps accumulating across all of it, so every SOC figure stays correct for the whole plug-in cycle. Only unplugging ends the session; the next plug-in reads the car again.
 
-If Home Assistant restarts while a session is running and the value was already seeded, the restored Initial SOC is kept and no new reading is taken. If it had not been seeded yet, the attempt resumes after the restart and the energy already on the meter is subtracted, so the anchor still lands on the right value.
+If Home Assistant restarts — or the integration is reloaded, which happens every time you save its options — while a session is running, whether the value was already filled in is remembered along with it. An already-filled cycle keeps its value, so saving options mid-charge never discards a figure you corrected by hand; a cycle that had not managed to fill in yet carries on trying, and the energy already on the meter is subtracted so the anchor still lands on the right value.
 
 **What it deliberately does not do**
 
