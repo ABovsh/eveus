@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 import custom_components.eveus as eveus
@@ -1808,3 +1809,46 @@ def test_update_clock_drift_issue_fractional_classification_translation_key(
     assert created[-1][1]["translation_key"] == "clock_drift_fractional_timezone"
     assert created[-1][1]["translation_placeholders"] is None
     assert tracker.published == ("fractional", 0)
+
+
+class _PayloadFailingUpdater(_Updater):
+    """Mimics the coordinator's own first-refresh failure shape.
+
+    Home Assistant's DataUpdateCoordinator constructs ConfigEntryNotReady with
+    NO message and hangs the real cause off __cause__, so the reason shown on
+    the integration card would otherwise be empty.
+    """
+
+    async def async_config_entry_first_refresh(self) -> None:
+        err = ConfigEntryNotReady()
+        err.__cause__ = UpdateFailed(
+            "Invalid Eveus response: Eveus 'currentSet' value 32 exceeds model maximum 16"
+        )
+        raise err
+
+
+def test_setup_restates_first_refresh_reason_on_the_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The poll's failure reason must reach the config entry, not stop at the log.
+
+    This guards a non-obvious Home Assistant detail the specific payload
+    messages depend on. The coordinator raises ConfigEntryNotReady with NO
+    message, hanging the real cause off __cause__ — but ConfigEntryNotReady
+    inherits IntegrationError.__str__, which falls back to str(self.__cause__).
+    That fallback is the only reason Home Assistant stores the detailed text as
+    the entry's `reason` and shows it on the integration card. If it ever goes
+    away, a charger failing every poll silently returns to a bare "Retrying
+    setup" and this test is what catches it.
+    """
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _PayloadFailingUpdater)
+
+    with pytest.raises(ConfigEntryNotReady) as exc_info:
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    message = str(exc_info.value)
+    assert "currentSet" in message
+    assert "16" in message
+    assert hass.config_entries.forwarded == []
