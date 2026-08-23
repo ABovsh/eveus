@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.20.1 - 2026-08-23
 
 ### 🔧 Changed
 - **A charger reply that fails validation now names the rule that rejected it**, on the integration card and in the log, instead of a generic "invalid response". A charger model picked with a lower amperage than the charger actually reports, or a field an older firmware omits, now says so directly rather than leaving the integration retrying setup with no visible reason.

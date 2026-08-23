@@ -8,8 +8,9 @@
 > сутності для автоматизацій — без допоміжних шаблонних сенсорів.
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Версія](https://img.shields.io/badge/version-4.20.0-blue?style=for-the-badge)
+![Версія](https://img.shields.io/badge/version-4.20.1-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
+[![Завантажень](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=%D0%B7%D0%B0%D0%B2%D0%B0%D0%BD%D1%82%D0%B0%D0%B6%D0%B5%D0%BD%D1%8C)](https://github.com/ABovsh/eveus/releases)
 
 - Документація: <https://abovsh.github.io/eveus/uk/>
 - Обговорення: [тема в Home Assistant Community](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
