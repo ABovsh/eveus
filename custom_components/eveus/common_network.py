@@ -661,7 +661,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False
-        self._last_error = "ValueError" if isinstance(error, PayloadError) else type(error).__name__
+        # Same reasoning as the UpdateFailed message below: a PayloadError's
+        # text is ours, names the rule that rejected the poll, and carries no
+        # credentials, host, or body content. Diagnostics is the artifact users
+        # attach to an issue, so it must not be the one place that still says
+        # only "ValueError". Read by diagnostics alone — not published as an
+        # entity attribute, so a message that varies costs no database rows.
+        self._last_error = (
+            str(error) if isinstance(error, PayloadError) else type(error).__name__
+        )
         # A failure during recovery probation restarts it: the two qualifying
         # successes must be consecutive, or an unstable link could reach the
         # fast cadence on alternating good/bad polls.
@@ -838,7 +846,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             raise
         except ValueError as err:
             self._record_failure(err)
-            raise UpdateFailed(f"Invalid Eveus response: {type(err).__name__}") from err
+            # PayloadError messages are ours: they name the exact rule that
+            # failed ("'currentSet' value 32 exceeds model maximum 16") and
+            # contain no credentials, host, or body content. Surface them —
+            # this string is also the ConfigEntryNotReady reason shown on the
+            # integration card, and "PayloadError" alone leaves a charger with
+            # zero entities and nothing to diagnose. Any other ValueError
+            # (e.g. JSONDecodeError) keeps the type name, since its message is
+            # not ours to vouch for.
+            detail = str(err) if isinstance(err, PayloadError) else type(err).__name__
+            raise UpdateFailed(f"Invalid Eveus response: {detail}") from err
         except (
             aiohttp.ClientResponseError,
             aiohttp.ClientConnectorError,

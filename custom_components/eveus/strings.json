@@ -11,6 +11,10 @@
           "model": "Charger Model (16A, 32A, 40A or 48A)",
           "phases": "Phases (1 = single-phase, 3 = three-phase)",
           "soc_mode": "Integration mode"
+        },
+        "data_description": {
+          "username": "The charger's own web-interface credentials, not your Home Assistant login.",
+          "password": "The charger's own web-interface credentials, not your Home Assistant login."
         }
       },
       "soc": {
@@ -32,6 +36,10 @@
           "model": "Charger Model (16A, 32A, 40A or 48A)",
           "phases": "Phases (1 = single-phase, 3 = three-phase)",
           "soc_mode": "Integration mode"
+        },
+        "data_description": {
+          "username": "The charger's own web-interface credentials, not your Home Assistant login.",
+          "password": "The charger's own web-interface credentials, not your Home Assistant login."
         }
       },
       "reauth_confirm": {
@@ -40,6 +48,10 @@
         "data": {
           "username": "Username",
           "password": "Password"
+        },
+        "data_description": {
+          "username": "The charger's own web-interface credentials, not your Home Assistant login.",
+          "password": "The charger's own web-interface credentials, not your Home Assistant login."
         }
       }
     },

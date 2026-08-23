@@ -1,0 +1,58 @@
+name: Release asset
+
+# HACS installs this integration from the release asset (hacs.json sets
+# zip_release + filename), so every published release MUST carry eveus.zip.
+# A release without it is not installable at all, hence this job fails loudly.
+# The zip holds the CONTENTS of custom_components/eveus at its root — HACS
+# extracts it *into* custom_components/eveus, so a nested folder would produce
+# custom_components/eveus/eveus/manifest.json and the integration would not load.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)attach eveus.zip to"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-asset-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  attach:
+    name: Attach eveus.zip
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+
+      - name: Build eveus.zip
+        run: |
+          set -euo pipefail
+          git archive --format=zip -o eveus.zip HEAD:custom_components/eveus
+          python3 - <<'PY'
+          import json, os, zipfile
+          z = zipfile.ZipFile("eveus.zip")
+          names = z.namelist()
+          assert "manifest.json" in names, f"manifest.json must be at the zip root, got {names[:5]}"
+          version = json.loads(z.read("manifest.json"))["version"]
+          tag = os.environ["TAG"].lstrip("v")
+          assert version == tag, f"manifest version {version} does not match tag {tag}"
+          print(f"eveus.zip: {len(names)} files, version {version}")
+          PY
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" eveus.zip --clobber --repo "$GITHUB_REPOSITORY"

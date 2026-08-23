@@ -260,7 +260,7 @@ def test_update_data_rejects_non_finite_current_set(
 
     with pytest.raises(UpdateFailed):
         asyncio.run(updater._async_update_data())
-    assert updater.connection_quality["last_error"] == "ValueError"
+    assert "currentSet" in updater.connection_quality["last_error"]
 
 
 def test_update_data_raises_update_failed_for_non_dict_payload(
@@ -274,7 +274,7 @@ def test_update_data_raises_update_failed_for_non_dict_payload(
         asyncio.run(updater._async_update_data())
 
     assert updater.connection_quality["consecutive_failures"] == 1
-    assert updater.connection_quality["last_error"] == "ValueError"
+    assert "dict" in updater.connection_quality["last_error"]
 
 
 def test_update_data_marks_unavailable_and_raises_update_failed_on_network_failure(
@@ -1628,3 +1628,55 @@ def test_async_maybe_fetch_init_firmware_swallows_fetch_errors(
 
     assert updater._init_fw_fallback is None
     assert updater._init_fw_fetch_done is True
+
+
+def test_update_failed_carries_payload_rule_that_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A schema rejection must name the rule, not just "PayloadError".
+
+    The message reaches the user twice: as the ConfigEntryNotReady reason on the
+    integration card, and in the log. "Invalid Eveus response: PayloadError" is
+    indistinguishable between a wrong charger model, a missing field, and a
+    corrupt value, which leaves a charger with zero entities and no way to tell
+    why. The _payload messages already name the rule and carry no credentials,
+    host, or body content, so they are safe to surface verbatim.
+    """
+    session = _Session(_Response(payload={"state": 1, "currentSet": 32}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+
+    with pytest.raises(UpdateFailed) as excinfo:
+        asyncio.run(updater._async_update_data())
+
+    message = str(excinfo.value)
+    assert "currentSet" in message
+    assert "32" in message
+    assert "16" in message
+    assert "PayloadError" not in message
+
+
+def test_diagnostics_last_error_names_the_payload_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Diagnostics must report the same specific reason the log does.
+
+    A diagnostics download is what users are asked to attach to an issue.
+    collapsing every schema rejection to the bare word "ValueError" there,
+    while the log names the exact rule, means the artifact collected for triage
+    is the one missing the answer.
+    """
+    session = _Session(_Response(payload={"state": 1, "currentSet": 32}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+    last_error = updater.connection_quality["last_error"]
+    assert "currentSet" in last_error
+    assert last_error != "ValueError"
