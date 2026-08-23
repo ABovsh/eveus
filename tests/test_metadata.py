@@ -64,8 +64,21 @@ def test_hacs_metadata_has_allowed_keys_only() -> None:
         "content_in_root",
         "render_readme",
         "homeassistant",
+        "zip_release",
+        "filename",
     }
     assert hacs["homeassistant"] == "2025.1.0"
+
+
+def test_zip_release_asset_is_produced_by_the_release_workflow() -> None:
+    """A release without the named asset is not installable through HACS."""
+    hacs = json.loads((ROOT / "hacs.json").read_text())
+    workflow = (ROOT / ".github" / "workflows" / "release-asset.yaml").read_text()
+
+    assert hacs["zip_release"] is True
+    assert hacs["filename"] == "eveus.zip"
+    assert f"-o {hacs['filename']} HEAD:custom_components/eveus" in workflow
+    assert f'gh release upload "$TAG" {hacs["filename"]}' in workflow
 
 
 def test_translation_state_attributes_use_dictionary_shape() -> None:
