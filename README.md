@@ -140,8 +140,8 @@ Or manually:
 
 1. Go to **Settings → Devices & Services → Add Integration** and search for **Eveus EV Charger**.
 2. Enter the charger address — IP, hostname, or full URL (custom port, `http://`, and `https://` all work).
-3. Enter the username and password.
-4. Pick the charger model: **16A**, **32A**, **40A**, or **48A**.
+3. Enter the username and password. These are the charger's own web-interface credentials, **not** your Home Assistant login.
+4. Pick the charger model: **16A**, **32A**, **40A**, or **48A**. Pick the one that matches your hardware — a mismatch stops the charger from reporting.
 5. Pick the integration mode:
    - **Basic** — charging control and monitoring only.
    - **Advanced** — adds the SOC inputs and SOC/ETA sensors.
@@ -475,6 +475,17 @@ which use the tariff configured on the charger (including night rates).
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
 | A Repairs notice appeared | See [Safety notices](#-safety-notices) for what each one means and what to do |
+| The charger is nowhere in Devices | See [The charger does not appear after installing](#the-charger-does-not-appear-after-installing) |
+
+### The charger does not appear after installing
+
+Work through these in order — all three are far more common than an actual fault:
+
+1. **Installing from HACS does not add the integration.** HACS only downloads the files, and it creates its own entry named *Eveus EV Charger* holding a single update entity — that entry is HACS, not your charger. After installing, restart Home Assistant, then go to **Settings → Devices & Services → Add Integration** and add **Eveus EV Charger** separately.
+2. **Check the disabled integrations.** A disabled entry vanishes from the device list entirely. On **Settings → Devices & Services**, scroll to the bottom of the **Integrations** tab and expand **Disabled**; re-enable the entry from there.
+3. **Check the Integrations tab, not Devices.** If setup fails, the entry exists but no device or entities are created yet — so it is invisible under Devices while the *Eveus* card on the Integrations tab shows *Retrying setup*. Open that card to see the reason, which also appears once in **Settings → System → Logs**.
+
+A working charger creates roughly 85 entities. If you see a single update entity, you are looking at the HACS entry, not the integration.
 
 ### Older charger firmware
 

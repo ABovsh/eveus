@@ -838,7 +838,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             raise
         except ValueError as err:
             self._record_failure(err)
-            raise UpdateFailed(f"Invalid Eveus response: {type(err).__name__}") from err
+            # PayloadError messages are ours: they name the exact rule that
+            # failed ("'currentSet' value 32 exceeds model maximum 16") and
+            # contain no credentials, host, or body content. Surface them —
+            # this string is also the ConfigEntryNotReady reason shown on the
+            # integration card, and "PayloadError" alone leaves a charger with
+            # zero entities and nothing to diagnose. Any other ValueError
+            # (e.g. JSONDecodeError) keeps the type name, since its message is
+            # not ours to vouch for.
+            detail = str(err) if isinstance(err, PayloadError) else type(err).__name__
+            raise UpdateFailed(f"Invalid Eveus response: {detail}") from err
         except (
             aiohttp.ClientResponseError,
             aiohttp.ClientConnectorError,

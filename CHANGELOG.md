@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### 🔧 Changed
+- **A charger reply that fails validation now names the rule that rejected it**, on the integration card and in the log, instead of a generic "invalid response". A charger model that does not match the current the charger reports, or a field an older firmware omits, now says so directly rather than leaving the integration retrying setup with no visible reason.
+- **The username and password fields now explain themselves.** Both now say they are the charger's own web-interface credentials rather than the Home Assistant login. Shown during setup, Reconfigure, and when the charger asks for credentials again.
+- **Troubleshooting covers a charger that never appears in Devices.** The setup steps now spell out that installing from HACS does not add the integration, and a new section walks through the disabled-integrations list and the difference between the Devices and Integrations tabs.
+
 ## 4.20.0 - 2026-08-22
 
 ### ✨ Added

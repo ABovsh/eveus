@@ -1628,3 +1628,31 @@ def test_async_maybe_fetch_init_firmware_swallows_fetch_errors(
 
     assert updater._init_fw_fallback is None
     assert updater._init_fw_fetch_done is True
+
+
+def test_update_failed_carries_payload_rule_that_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A schema rejection must name the rule, not just "PayloadError".
+
+    The message reaches the user twice: as the ConfigEntryNotReady reason on the
+    integration card, and in the log. "Invalid Eveus response: PayloadError" is
+    indistinguishable between a wrong charger model, a missing field, and a
+    corrupt value, which leaves a charger with zero entities and no way to tell
+    why. The _payload messages already name the rule and carry no credentials,
+    host, or body content, so they are safe to surface verbatim.
+    """
+    session = _Session(_Response(payload={"state": 1, "currentSet": 32}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+
+    with pytest.raises(UpdateFailed) as excinfo:
+        asyncio.run(updater._async_update_data())
+
+    message = str(excinfo.value)
+    assert "currentSet" in message
+    assert "32" in message
+    assert "16" in message
+    assert "PayloadError" not in message
