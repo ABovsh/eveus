@@ -318,6 +318,8 @@ Once per plug-in, at the start of charging. If the car is asleep then — normal
 
 **Your own value always wins.** Move the slider by hand and it stays until the next plug-in — including across a Home Assistant restart, or saving the integration's options mid-charge.
 
+**Seeing which value is in use.** SOC Percent carries a `soc_anchor` attribute naming how Initial SOC was last set — the reading and sensor it was seeded from, why a seed could not be taken, or `set manually`. A stale anchor is what silently skews every SOC figure, so this makes it visible.
+
 **If nothing gets filled in**
 
 Check the log. One line per plug-in names the sensor and the reason (`the sensor reads 'unavailable'`, `the charger did not report session energy`, …). **Download diagnostics** shows the same under `soc`, plus what the car sensor reads right now. With no sensor configured, none of this runs and nothing is logged.

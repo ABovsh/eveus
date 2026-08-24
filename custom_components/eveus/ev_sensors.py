@@ -324,6 +324,28 @@ class EVSocPercentSensor(BaseEVHelperSensor):
         self._cached_value = result
         return self._cached_value
 
+    def _update_extra_state_attributes(self) -> bool:
+        """Report how Initial SOC — the anchor every SOC figure derives from —
+        was last set.
+
+        A stale hand-set Initial SOC skews every SOC reading with nothing on the
+        dashboard to say so; this was previously visible only in a downloaded
+        diagnostics file. `last_seed` is written on a plug-state change or a seed
+        attempt, never per poll, and this reports a change only when the values
+        actually differ — so it adds no recorder churn.
+        """
+        last_seed = getattr(self._soc_calculator, "last_seed", None) or {}
+        attributes = {
+            "soc_anchor_seeded": bool(last_seed.get("seeded")),
+            "soc_anchor": last_seed.get("detail") or "set manually",
+        }
+        # getattr with a default: HA's cached-property machinery raises rather
+        # than returning None when _attr_extra_state_attributes was never set.
+        if attributes == getattr(self, "_attr_extra_state_attributes", None):
+            return False
+        self._attr_extra_state_attributes = attributes
+        return True
+
 
 class TimeToTargetSocSensor(BaseEVHelperSensor):
     """Time to target SOC sensor."""

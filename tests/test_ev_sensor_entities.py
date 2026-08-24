@@ -1380,3 +1380,34 @@ def test_ev_helper_sensors_do_not_require_helpers_except_base_default() -> None:
     assert TimeToTargetSocSensor._requires_helpers is False
     assert EnergyToTargetSocSensor._requires_helpers is False
     assert ChargingFinishTimeSensor._requires_helpers is False
+
+
+def test_soc_percent_sensor_reports_how_it_was_anchored() -> None:
+    """The user must be able to see whether Initial SOC was seeded or set by hand.
+
+    Every SOC figure derives from Initial SOC. A stale hand-set value, or a
+    failed external-sensor seed, silently poisons the reading and was until now
+    only visible inside a downloaded diagnostics file.
+    """
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    updater = EveusTestUpdater({"sessionEnergy": "16"})
+    sensor = EVSocPercentSensor(updater, 1, calculator)
+
+    calculator.last_seed = {"seeded": True, "detail": "62.0% from sensor.car_battery"}
+    assert sensor._update_extra_state_attributes() is True
+    assert sensor.extra_state_attributes["soc_anchor"] == "62.0% from sensor.car_battery"
+    assert sensor.extra_state_attributes["soc_anchor_seeded"] is True
+
+    # Recorder hygiene: an unchanged anchor must NOT report a change, or the
+    # sensor writes a database row on every poll.
+    assert sensor._update_extra_state_attributes() is False
+
+    calculator.last_seed = {"seeded": False, "detail": "reading is unavailable"}
+    assert sensor._update_extra_state_attributes() is True
+    assert sensor.extra_state_attributes["soc_anchor"] == "reading is unavailable"
+    assert sensor.extra_state_attributes["soc_anchor_seeded"] is False
+
+    calculator.last_seed = {}
+    assert sensor._update_extra_state_attributes() is True
+    assert sensor.extra_state_attributes["soc_anchor"] == "set manually"
+    assert sensor.extra_state_attributes["soc_anchor_seeded"] is False

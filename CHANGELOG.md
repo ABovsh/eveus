@@ -6,6 +6,7 @@
 - Switches and selects no longer flicker back to their previous position while the charger's contactor is still closing.
 
 ### 🔧 Changed
+- SOC Percent now carries a `soc_anchor` attribute showing how Initial SOC was last set — seeded from your car's sensor, a failed seed with the reason, or set by hand.
 - Limit Time, Limit Energy, the schedule energy limits and Undervoltage threshold now declare their measurement type, so Home Assistant formats and converts them like any other duration, energy or voltage control.
 - Session Time's `duration_seconds` attribute now follows the same minute steps as the displayed value, so an active session no longer writes a database row on every poll.
 
