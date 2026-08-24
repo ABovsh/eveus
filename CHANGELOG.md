@@ -7,11 +7,11 @@
 - **A blueprint that stops charging when your house battery runs low.** Give it an inverter battery sensor and a percentage, and once the battery has stayed below that level for two minutes the car is stopped with the charger's own Stop command rather than by cutting its power. The two-minute hold keeps an inrush sag — a well pump, a kettle — from ending the session. Nothing leaves your network.
 
 ### 🐛 Fixed
-- **Switches and selects no longer flicker back** to their previous position while the charger's contactor is still closing.
+- **Controls no longer flicker back** to their previous position while the charger's contactor is still closing. Switches, selects, the Charging Current and limit numbers, and the schedule times all hold the value you set until the charger confirms it.
 
 ### 🔧 Changed
 - **You can now see where Initial SOC came from.** SOC Percent carries a `soc_anchor` attribute saying whether it was read from your car, set by hand, or failed to seed and why.
-- **Duration, energy and voltage controls now format and convert like every other Home Assistant control.** Limit Time, Limit Energy, the schedule energy limits and the Undervoltage threshold declare their measurement type.
+- **Duration, energy and voltage controls now declare what they measure.** Limit Time, Limit Energy, the schedule energy limits and the Undervoltage threshold carry a device class, so Home Assistant labels and groups them like every other control of that kind.
 - **Your recorder database grows about half as fast.** Measured over a week of normal use: ~50 % fewer rows — ~85 % while waiting for a charge, ~35 % during a session. Readings that had not meaningfully moved were writing a row on nearly every poll; now:
   - Live measurements hold their value until it moves by a step worth recording — Voltage 2 V (each phase), Current 0.2 A (each phase), Power 50 W, WiFi Signal 5 dBm, Box and Plug Temperature 2 °C, SOC Energy 0.1 kWh, Energy to Target SOC 0.25 kWh, Cost to Target SOC 1 UAH. Power and Current still drop to an exact 0 the moment charging stops.
   - Estimates are stated in steps that match their real precision: Time to Target SOC 5 minutes, Charging Finish Time 10.

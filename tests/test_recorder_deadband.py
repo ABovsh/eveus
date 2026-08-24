@@ -87,10 +87,17 @@ def test_dithering_getters_hold_until_the_deadband_is_crossed(
 
 
 def test_deadband_always_publishes_an_exact_zero() -> None:
-    """Charging stopping must show 0 W immediately, not a held 40 W."""
-    updater = _updater({})
+    """Charging stopping must show 0 W immediately, not a held 40 W.
 
+    The second case is the one that needs the explicit zero rule: a standby
+    reading is itself already inside the 50 W band, so a plain distance check
+    would hold "30 W" on the poll the contactor opens and never publish the 0.
+    """
+    updater = _updater({})
     assert _read(sd.get_power, updater, "powerMeas", [3500, 3480, 0]) == [3500, 3500, 0]
+
+    standby = _updater({})
+    assert _read(sd.get_power, standby, "powerMeas", [30, 0, 20]) == [30, 0, 0]
 
 
 def test_deadband_does_not_leak_between_chargers() -> None:
@@ -165,7 +172,12 @@ def test_soc_forecast_sensors_hold_within_their_deadband(
 
 
 def test_cost_to_target_holds_within_one_currency_unit() -> None:
-    """Displayed with no decimals at all — sub-hryvnia rows are invisible."""
+    """Displayed with no decimals at all — sub-hryvnia rows are invisible.
+
+    The middle step is what pins the 1 UAH band rather than the 0.25 kWh one
+    this sensor inherits from Energy to Target: it moves the cost by ~0.8 UAH,
+    far enough that the parent's band would have published it.
+    """
     sensor = _soc_sensor(CostToTargetSocSensor, "10", tarif="400", activeTarif="0")
     sensor._update_native_value()
     baseline = sensor._attr_native_value
@@ -173,8 +185,15 @@ def test_cost_to_target_holds_within_one_currency_unit() -> None:
 
     sensor._updater.data["sessionEnergy"] = "10.05"
     sensor._update_native_value()
-
     assert sensor._attr_native_value == baseline
+
+    sensor._updater.data["sessionEnergy"] = "10.2"
+    sensor._update_native_value()
+    assert sensor._attr_native_value == baseline
+
+    sensor._updater.data["sessionEnergy"] = "10.5"
+    sensor._update_native_value()
+    assert sensor._attr_native_value != baseline
 
 
 def test_time_to_target_snaps_to_a_five_minute_grid() -> None:
