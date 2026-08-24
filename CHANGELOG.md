@@ -13,9 +13,10 @@
 - **You can now see where Initial SOC came from.** SOC Percent carries a `soc_anchor` attribute saying whether it was read from your car, set by hand, or failed to seed and why.
 - **Duration, energy and voltage controls now format and convert like every other Home Assistant control.** Limit Time, Limit Energy, the schedule energy limits and the Undervoltage threshold declare their measurement type.
 - **Your recorder database grows about half as fast.** Measured over a week of normal use: ~50 % fewer rows — ~85 % while waiting for a charge, ~35 % during a session. Readings that had not meaningfully moved were writing a row on nearly every poll; now:
-  - Live measurements hold their value until it moves by a step worth recording — Voltage 2 V, Current 0.2 A, Power 50 W, WiFi Signal 3 dBm, SOC Energy 0.1 kWh, Energy to Target SOC 0.25 kWh, Cost to Target SOC 1 UAH. Power and Current still drop to an exact 0 the moment charging stops.
+  - Live measurements hold their value until it moves by a step worth recording — Voltage 2 V (each phase), Current 0.2 A (each phase), Power 50 W, WiFi Signal 5 dBm, Box and Plug Temperature 2 °C, SOC Energy 0.1 kWh, Energy to Target SOC 0.25 kWh, Cost to Target SOC 1 UAH. Power and Current still drop to an exact 0 the moment charging stops.
   - Estimates are stated in steps that match their real precision: Time to Target SOC 5 minutes, Charging Finish Time 10.
   - Attributes follow the same steps as the values they mirror, so Connection Quality and Session Time stop writing a row per poll while what they show stands still.
+  - While Initial SOC cannot be read from the car and the attempt repeats every poll, SOC Percent now states the reason once instead of restating it — with the energy delivered so far in it — on every poll.
 
 ## 4.20.1 - 2026-08-23
 

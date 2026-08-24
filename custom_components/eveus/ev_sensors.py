@@ -333,9 +333,10 @@ class EVSocPercentSensor(BaseEVHelperSensor):
 
         A stale hand-set Initial SOC skews every SOC reading with nothing on the
         dashboard to say so; this was previously visible only in a downloaded
-        diagnostics file. `last_seed` is written on a plug-state change or a seed
-        attempt, never per poll, and this reports a change only when the values
-        actually differ — so it adds no recorder churn.
+        diagnostics file. `last_seed` is written on a plug-state change, on a
+        successful seed, and once per cycle when seeding fails — never per poll
+        — and this reports a change only when the values actually differ, so it
+        adds no recorder churn.
         """
         last_seed = getattr(self._soc_calculator, "last_seed", None) or {}
         attributes = {

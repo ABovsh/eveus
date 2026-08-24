@@ -401,17 +401,22 @@ get_rate3_cost = _make_value_getter(
 )
 
 # Temperature getters
+# 2 degrees, not 1: these are whole-degree readings that alternate between two
+# adjacent values for hours, and a 1 degree band is no band at all — the next
+# distinct value is already 1 away.
 get_box_temperature = _make_value_getter(
     "temperature1",
     precision=0,
     minimum=MIN_VALID_TEMPERATURE_C,
     maximum=MAX_VALID_TEMPERATURE_C,
+    deadband=2,
 )
 get_plug_temperature = _make_value_getter(
     "temperature2",
     precision=0,
     minimum=MIN_VALID_TEMPERATURE_C,
     maximum=MAX_VALID_TEMPERATURE_C,
+    deadband=2,
 )
 
 # Other diagnostic getters
@@ -432,15 +437,29 @@ get_leak_current_peak = _make_value_getter(
     "leakValueH", precision=0, minimum=0, maximum=MAX_VALID_LEAKAGE_CURRENT_MA
 )
 # RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
+# 5 dBm: measured on the live charger, RSSI wanders across ~7 dBm with the link
+# unchanged, so a 3 dBm band still published one reading in seven — and this
+# value is mirrored into the Connection Quality attributes, which made it the
+# single largest source of recorder rows this integration produced.
 get_wifi_rssi = _make_value_getter(
-    "RSSI", precision=0, minimum=-120, maximum=0, deadband=3
+    "RSSI", precision=0, minimum=-120, maximum=0, deadband=5
 )
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
-get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT)
-get_current_phase_3 = _make_value_getter("curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT)
-get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
-get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
+# Same telemetry as phase 1, so the same damping — otherwise a 3-phase entry
+# keeps the per-poll churn the single-phase one just lost.
+get_current_phase_2 = _make_value_getter(
+    "curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+)
+get_current_phase_3 = _make_value_getter(
+    "curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+)
+get_voltage_phase_2 = _make_value_getter(
+    "voltMeas2", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+)
+get_voltage_phase_3 = _make_value_getter(
+    "voltMeas3", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+)
 
 
 # =============================================================================

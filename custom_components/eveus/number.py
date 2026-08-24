@@ -803,9 +803,14 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             # the start of a scheduled charge is picked up as soon as it wakes,
             # and the value stays as the user last set it until then. The
             # complaint is logged once per cycle, not once per poll.
-            self._soc_calculator.last_seed = {"seeded": False, "detail": anchor}
             if not self._seed_warned:
                 self._seed_warned = True
+                # Recorded once per cycle, like the log line below it, because
+                # SOC Percent publishes this text as its `soc_anchor`
+                # attribute: a reason that quotes the rebased percentage reads
+                # differently on every poll of a running session, which is a
+                # recorder row per poll for the rest of the cycle.
+                self._soc_calculator.last_seed = {"seeded": False, "detail": anchor}
                 _LOGGER.warning(
                     "Initial SOC not seeded from %s: %s. Keeping the value you "  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
                     "set last and retrying every poll until the reading becomes "  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording

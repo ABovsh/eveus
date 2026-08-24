@@ -73,8 +73,9 @@ def _read(getter, updater, key: str, values) -> list:
         (sd.get_current, "curMeas1", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3]),
         # Power wanders by tens of watts under a constant 3.5 kW draw.
         (sd.get_power, "powerMeas", [3500, 3520, 3480, 3560], [3500, 3500, 3500, 3560]),
-        # RSSI moves ±1 dBm between polls while the link is unchanged.
-        (sd.get_wifi_rssi, "RSSI", [-66, -67, -65, -70], [-66, -66, -66, -70]),
+        # RSSI wanders across several dBm between polls while the link is
+        # unchanged; only a swing wide enough to change the verdict is a row.
+        (sd.get_wifi_rssi, "RSSI", [-66, -67, -65, -72], [-66, -66, -66, -72]),
     ],
 )
 def test_dithering_getters_hold_until_the_deadband_is_crossed(
