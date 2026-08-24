@@ -235,6 +235,9 @@ _NON_KILLER_TESTS = frozenset({
     "tests/test_name_platform_compat.py",
     "tests/test_test_quality_contracts.py",
     "tests/test_ci_workflow.py",
+    # Skipped unless EVEUS_LIVE_HOST points at a real charger, so it can never
+    # kill a mutant in CI. It guards the fixture against firmware drift instead.
+    "tests/test_firmware_drift_live.py",
 })
 
 

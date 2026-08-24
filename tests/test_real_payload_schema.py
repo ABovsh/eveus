@@ -1,7 +1,7 @@
 """Schema-drift test: every value getter must work against a real /main payload.
 
 The fixture in `tests/fixtures/real_main_response.json` is a verbatim capture
-from a live Eveus Pro 1P 2024 (FW GRM070A-R3.05.2). If the charger firmware
+from a live Eveus Pro 1P 2024 (FW GRM070A-R3.05.4). If the charger firmware
 ever renames or drops a field this integration reads, this test fails loudly —
 which is what synthetic unit tests can't catch.
 

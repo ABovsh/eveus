@@ -193,7 +193,12 @@ def test_real_safe_payload_has_no_dangerous_trigger() -> None:
         for policy in POLICIES
         if evaluate_policy_signals(policy, payload)[0] is True
     }
-    assert triggered == {"ground_control_disabled"}
+    # Nothing at all: the charger this fixture was captured from reports
+    # groundCtrl=1 on GRM070A-R3.05.4. The earlier R3.05.2 capture had
+    # groundCtrl=0 and this asserted {"ground_control_disabled"}; the
+    # ground_control_disabled policy itself is exercised against synthetic
+    # payloads below, so nothing is lost by the real capture being clean.
+    assert triggered == set()
 
 
 def test_missing_ground_triggers_even_when_ground_control_is_disabled() -> None:

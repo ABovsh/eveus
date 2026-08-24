@@ -4,6 +4,9 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-p no:homeassistant"
+markers = [
+    "live: hits the real charger over the LAN; skipped unless EVEUS_LIVE_HOST and EVEUS_PASS are set",
+]
 
 [tool.coverage.run]
 branch = true
