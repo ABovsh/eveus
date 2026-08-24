@@ -239,6 +239,9 @@ _NON_KILLER_TESTS = frozenset({
     # Skipped unless EVEUS_LIVE_HOST points at a real charger, so it can never
     # kill a mutant in CI. It guards the fixture against firmware drift instead.
     "tests/test_firmware_drift_live.py",
+    # Asserts on the shipped blueprint YAML, not on integration code, so there
+    # is no mutant for it to kill.
+    "tests/test_blueprints.py",
 })
 
 

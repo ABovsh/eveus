@@ -36,6 +36,10 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        # Blueprints carry Home Assistant's !input tag, which plain
+        # SafeLoader cannot resolve; tests/test_blueprints.py parses them
+        # with that tag registered and checks more than well-formedness.
+        exclude: ^blueprints/
       - id: check-json
       - id: check-merge-conflict
       - id: no-commit-to-branch

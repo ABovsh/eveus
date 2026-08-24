@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### ✨ Added
+- **Charging session notifications, ready to import.** A blueprint sends a notification when a session starts and when it finishes, carrying the energy, cost and duration the charger recorded for that session. You pick the charger and the action that delivers it — a mobile app notification, Telegram, a persistent notification or your own script — and the text is prepared for you in a `message` variable. Import it from **Settings → Automations & Scenes → Blueprints → Import Blueprint**; the README has the URL.
+- **A blueprint that stops charging when your house battery runs low.** Give it an inverter battery sensor and a percentage, and once the battery has stayed below that level for two minutes the car is stopped with the charger's own Stop command rather than by cutting its power. The two-minute hold keeps an inrush sag — a well pump, a kettle — from ending the session. Nothing leaves your network.
+
 ### 🐛 Fixed
 - **Switches and selects no longer flicker back** to their previous position while the charger's contactor is still closing.
 

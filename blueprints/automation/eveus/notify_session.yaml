@@ -1,0 +1,64 @@
+blueprint:
+  name: "Eveus — charging session notification"
+  description: >-
+    Notifies you when the charger starts a session and when it finishes,
+    reporting the delivered energy, cost and duration the charger recorded for
+    that session.
+
+
+    Pick any action to deliver it — a mobile app notification, Telegram, a
+    persistent notification, or your own script — and use the ready-made
+    `message` variable inside it for the text.
+  domain: automation
+  source_url: https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml
+  input:
+    charger:
+      name: Eveus charger
+      selector:
+        device:
+          integration: eveus
+    notify_action:
+      name: Notification action
+      description: "Runs on both start and finish. Use the `message` variable for the text."
+      selector:
+        action: {}
+    currency:
+      name: Currency label
+      description: Appended to the session cost; the charger reports the number only.
+      default: UAH
+      selector:
+        text: {}
+
+# Start and finish can land in consecutive polls; queueing keeps the second one
+# from being dropped the way `single` would drop it.
+mode: queued
+max: 5
+
+triggers:
+  - trigger: device
+    domain: eveus
+    device_id: !input charger
+    type: charging_started
+    id: started
+  - trigger: device
+    domain: eveus
+    device_id: !input charger
+    type: charging_finished
+    id: finished
+
+variables:
+  currency: !input currency
+  message: >-
+    {% if trigger.id == 'started' %}
+    Charging started.
+    {%- else -%}
+    {% set data = trigger.event.data %}
+    {% set secs = data.session_duration_s | default(0, true) | int %}
+    Charging finished ({{ data.reason | default('stopped', true) }}):
+    {{ data.session_energy_kwh | default(0, true) | round(2) }} kWh,
+    {{ data.session_cost | default(0, true) | round(2) }} {{ currency }},
+    {{ '%dh %02dm' | format(secs // 3600, (secs % 3600) // 60) }}.
+    {%- endif %}
+
+actions:
+  - !input notify_action

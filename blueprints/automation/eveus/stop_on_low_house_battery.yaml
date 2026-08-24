@@ -1,0 +1,51 @@
+blueprint:
+  name: "Eveus — stop charging on low house battery"
+  description: >-
+    Stops the car charging with the charger's own Stop command — not by cutting
+    its power — once your inverter's battery falls below a threshold. Fully
+    local; no internet or cloud involved.
+
+
+    It only stops; add your own automation if you want charging to resume once
+    the battery recovers.
+  domain: automation
+  source_url: https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml
+  input:
+    battery_soc:
+      name: Inverter battery SOC sensor
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: battery
+    threshold:
+      name: Stop below
+      default: 40
+      selector:
+        number:
+          min: 5
+          max: 95
+          unit_of_measurement: "%"
+          mode: slider
+    stop_switch:
+      name: The charger's "Stop Charging" switch
+      selector:
+        entity:
+          filter:
+            domain: switch
+            integration: eveus
+
+mode: single
+
+triggers:
+  # Held for two minutes so an inrush sag — a well pump, a kettle — cannot end
+  # the charging session on its own.
+  - trigger: numeric_state
+    entity_id: !input battery_soc
+    below: !input threshold
+    for: "00:02:00"
+
+actions:
+  - action: switch.turn_on
+    target:
+      entity_id: !input stop_switch

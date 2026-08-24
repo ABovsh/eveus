@@ -468,6 +468,17 @@ per-day/month history. Costs are already tracked by the integration itself —
 see `sensor.eveus_ev_charger_session_cost` and the Counter A/B cost sensors,
 which use the tariff configured on the charger (including night rates).
 
+## Blueprints
+
+Two ready-made automations ship with the integration. Import either one from
+**Settings → Automations & Scenes → Blueprints → Import Blueprint**, paste the
+URL, then fill in the two or three fields it asks for — no YAML.
+
+| Blueprint | What it does | URL |
+| --- | --- | --- |
+| Charging session notification | Notifies on start and finish, with the session's energy, cost and duration, through the action of your choice | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
+| Stop charging on low house battery | Stops the car with the charger's own Stop command — not by cutting its power — when your inverter's battery drops below a threshold. Fully local | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
+
 ## Troubleshooting
 
 | Problem | What to check |
