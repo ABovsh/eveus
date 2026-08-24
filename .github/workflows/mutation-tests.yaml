@@ -265,8 +265,10 @@ jobs:
         # design — see the note at the top of this file). That means an
         # increase in real survivors from newly-shipped, untested code
         # looked identical to expected noise. This step diffs against a
-        # committed baseline: an increase is a loud ::warning::, a decrease
-        # is a prompt to tighten .github/mutation-baseline.json.
+        # committed baseline: an increase FAILS this job, a decrease is a
+        # prompt to tighten .github/mutation-baseline.json. Failing is safe
+        # here — this workflow is a weekly cron, never a PR gate — and a
+        # warning nobody reads is how a weakened killer-test list ships.
         if: always()
         env:
           LEG_NAME: ${{ matrix.name }}
@@ -275,7 +277,8 @@ jobs:
           baseline=$(python3 -c "import json,os; print(json.load(open('.github/mutation-baseline.json')).get(os.environ['LEG_NAME'], 0))")
           echo "Leg $LEG_NAME: survivors=$survived baseline=$baseline"
           if [ "$survived" -gt "$baseline" ]; then
-            echo "::warning::$LEG_NAME: survivors increased ($baseline -> $survived) — likely new code shipped without a killer test."
+            echo "::error::$LEG_NAME: survivors increased ($baseline -> $survived) — likely new code shipped without a killer test."
+            exit 1
           elif [ "$survived" -lt "$baseline" ]; then
             echo "::notice::$LEG_NAME: survivors decreased ($baseline -> $survived) — update .github/mutation-baseline.json to tighten the ratchet."
           fi
