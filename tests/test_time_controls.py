@@ -660,3 +660,22 @@ def test_schedule_time_restore_stamps_a_real_timestamp() -> None:
 
     assert entity._last_successful_read is not None
     assert entity._last_successful_read >= before
+
+
+def test_time_entity_wraps_unexpected_failures_like_its_siblings() -> None:
+    """An unexpected error must reach the user as a toast, not a raw traceback.
+
+    number/switch/select all convert a non-HomeAssistantError into
+    HomeAssistantError; time did not, so its failure mode differed from every
+    other control platform.
+    """
+    from unittest.mock import AsyncMock
+
+    from homeassistant.exceptions import HomeAssistantError
+
+    entity = _schedule_entity({"sh1Start": "75"})
+    entity._updater.send_command = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with pytest.raises(HomeAssistantError) as excinfo:
+        asyncio.run(entity.async_set_value(dt.time(hour=7, minute=30)))
+    assert not isinstance(excinfo.value, RuntimeError)
