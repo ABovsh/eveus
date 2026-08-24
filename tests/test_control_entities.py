@@ -1213,9 +1213,9 @@ def test_timezone_select_suppresses_reconcile_while_pending() -> None:
     select = EveusTimeZoneSelect(updater)
     disable_state_writes(select)
 
-    # Optimistic +3, stamped longer ago than the 10s mismatch TTL.
+    # Optimistic +3, stamped longer ago than the 16s mismatch TTL.
     select._set_optimistic_value(3)
-    select._optimistic_value_time = _t.time() - 11
+    select._optimistic_value_time = _t.time() - 17
 
     # While the command is in flight, a poll returning the old zone must NOT
     # expire the optimistic value.
@@ -1503,3 +1503,35 @@ def test_binary_sensor_plug_state_sets_come_from_const() -> None:
 
     assert bs.CONNECTED_STATES is const.CONNECTED_STATES
     assert bs.PLUG_UNKNOWN_STATES is const.PLUG_UNKNOWN_STATES
+
+
+def test_optimistic_value_survives_the_ten_second_confirmation_poll() -> None:
+    """A slow contactor must not make the UI snap back.
+
+    POST_COMMAND_REFRESH_DELAYS schedules a confirmation poll at 10 s and the
+    firmware may take up to 15 s to close the contactor. If the mismatch TTL
+    expires at or before that poll, a still-stale device reading clears the
+    optimistic value and the control visibly reverts until the 20 s poll.
+    """
+    from custom_components.eveus.common_base import OptimisticControlMixin
+    from custom_components.eveus.common_network import POST_COMMAND_REFRESH_DELAYS
+
+    mixin = OptimisticControlMixin()
+    mixin._init_optimistic_control()
+    mixin._optimistic_value = True
+    mixin._optimistic_value_time = 0.0
+
+    def same(optimistic, device):
+        return optimistic == device
+
+    # The confirmation poll is SCHEDULED at 10 s; it is reconciled once the
+    # HTTP round-trip returns, so the optimistic value is always a little older
+    # than the nominal delay by the time it is judged.
+    landed_at = float(POST_COMMAND_REFRESH_DELAYS[1]) + 0.3
+    mixin._reconcile_with_device(False, landed_at, same)
+    assert mixin._optimistic_value is True
+
+    # It must still clear by the last confirmation poll, so a genuinely
+    # rejected command is not held forever.
+    mixin._reconcile_with_device(False, float(POST_COMMAND_REFRESH_DELAYS[-1]), same)
+    assert mixin._optimistic_value is None

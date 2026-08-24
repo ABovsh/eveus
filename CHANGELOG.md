@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### 🐛 Fixed
+- Switches and selects no longer flicker back to their previous position while the charger's contactor is still closing.
+
 ### 🔧 Changed
 - Session Time's `duration_seconds` attribute now follows the same minute steps as the displayed value, so an active session no longer writes a database row on every poll.
 

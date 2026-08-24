@@ -1280,21 +1280,24 @@ def test_optimistic_control_init_exact_initial_values() -> None:
     assert control._last_successful_read == 0.0
 
 
-def test_reconcile_with_device_default_mismatch_ttl_is_exactly_ten() -> None:
-    """`_reconcile_with_device`'s mismatch_ttl default (10.0) is only ever
+def test_reconcile_with_device_default_mismatch_ttl_is_exactly_sixteen() -> None:
+    """`_reconcile_with_device`'s mismatch_ttl default (16.0) is only ever
     exercised via the default in production call sites; pin the exact
-    boundary here since nothing overrides it in existing tests."""
+    boundary here since nothing overrides it in existing tests.
+
+    16 s, not 10 s: the 10 s post-command confirmation poll lands a round-trip
+    after its nominal delay, and the contactor may take up to 15 s to close."""
 
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
     stamp = control._optimistic_value_time
 
-    # age = 10.5s > the true 10.0 default -> must clear even though confirm_fn
+    # age = 16.5s > the true 16.0 default -> must clear even though confirm_fn
     # says "not confirmed" and the clock never went backward.
     control._reconcile_with_device(
         99,
-        stamp + 10.5,
+        stamp + 16.5,
         lambda optimistic, device: False,
     )
     assert control._optimistic_value is None

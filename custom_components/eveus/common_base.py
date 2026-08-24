@@ -413,7 +413,13 @@ class OptimisticControlMixin(Generic[T]):
         current_time: float,
         confirm_fn: Callable[[T, T], bool],
         *,
-        mismatch_ttl: float = 10.0,
+        # 16 s, not 10 s: the charger's contactor can take 5-15 s to close and
+        # POST_COMMAND_REFRESH_DELAYS polls at 3/10/20 s. A 10 s TTL expired on
+        # the middle poll (which lands a round-trip after its nominal delay), so
+        # a still-stale reading cleared the optimistic value and the control
+        # visibly snapped back until the 20 s poll. 16 s clears the firmware's
+        # worst case and that poll while still resolving before the last one.
+        mismatch_ttl: float = 16.0,
     ) -> None:
         """Record a device value and clear optimistic state when reconciled."""
         self._last_device_value = new_value
