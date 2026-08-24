@@ -500,3 +500,24 @@ def test_undervoltage_threshold_write_state_guard_only_writes_on_real_change():
     updater.data = {"aiVoltage": 215, "minVoltage": 200}  # unchanged
     ent._handle_coordinator_update()
     ent.async_write_ha_state.assert_not_called()
+
+
+def test_unit_bearing_numbers_declare_a_device_class() -> None:
+    """A number with a physical unit must declare the matching device class.
+
+    Without it HA cannot convert units, format the value, or pick a default
+    icon. limit_cost is excluded: there is no monetary NumberDeviceClass.
+    """
+    from homeassistant.components.number import NumberDeviceClass
+
+    from custom_components.eveus.number import (
+        GLOBAL_LIMIT_NUMBERS,
+        UNDERVOLTAGE_THRESHOLD_NUMBER,
+    )
+
+    by_key = {d.key: d for d in GLOBAL_LIMIT_NUMBERS}
+    assert by_key["limit_time"].device_class is NumberDeviceClass.DURATION
+    assert by_key["limit_energy"].device_class is NumberDeviceClass.ENERGY
+    assert UNDERVOLTAGE_THRESHOLD_NUMBER.device_class is NumberDeviceClass.VOLTAGE
+    # Explicitly unchanged: no monetary NumberDeviceClass exists.
+    assert by_key["limit_cost"].device_class is None

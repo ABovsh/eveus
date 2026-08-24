@@ -123,6 +123,7 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         native_max_value=1440,
         native_step=5,
         native_unit_of_measurement="min",
+        device_class=NumberDeviceClass.DURATION,
         mode=NumberMode.BOX,
         display_precision=0,
     ),
@@ -139,6 +140,7 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         native_max_value=100,
         native_step=1,
         native_unit_of_measurement="kWh",
+        device_class=NumberDeviceClass.ENERGY,
         mode=NumberMode.BOX,
         display_precision=3,
     ),
@@ -174,6 +176,7 @@ UNDERVOLTAGE_THRESHOLD_NUMBER = EveusSetpointNumberDescription(
     native_max_value=220,
     native_step=1,
     native_unit_of_measurement="V",
+    device_class=NumberDeviceClass.VOLTAGE,
     mode=NumberMode.SLIDER,
 )
 
@@ -211,6 +214,7 @@ def _schedule_energy(n: int) -> EveusSetpointNumberDescription:
         native_max_value=100,
         native_step=1,
         native_unit_of_measurement="kWh",
+        device_class=NumberDeviceClass.ENERGY,
         mode=NumberMode.BOX,
         display_precision=3,  # trim firmware float noise (e.g. 76.371002 -> 76.371)
     )

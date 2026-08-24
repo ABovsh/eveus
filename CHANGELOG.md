@@ -6,6 +6,7 @@
 - Switches and selects no longer flicker back to their previous position while the charger's contactor is still closing.
 
 ### 🔧 Changed
+- Limit Time, Limit Energy, the schedule energy limits and Undervoltage threshold now declare their measurement type, so Home Assistant formats and converts them like any other duration, energy or voltage control.
 - Session Time's `duration_seconds` attribute now follows the same minute steps as the displayed value, so an active session no longer writes a database row on every poll.
 
 ## 4.20.1 - 2026-08-23
