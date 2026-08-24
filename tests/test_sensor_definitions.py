@@ -321,7 +321,7 @@ def test_state_getters_return_none_for_unknown_codes_and_missing_values() -> Non
 def test_session_time_and_active_rate_attributes_handle_edge_cases() -> None:
     assert sensors.get_session_time(_updater({"sessionTime": "3661"}), None) == "1h 01m"
     assert sensors.get_session_time_attrs(_updater({"sessionTime": "61"}), None) == {
-        "duration_seconds": 61
+        "duration_seconds": 60
     }
     assert sensors.get_session_time_attrs(_updater({}, available=False), None) == {}
     assert sensors.get_session_time_attrs(_updater({"sessionTime": "bad"}), None) == {}
@@ -1053,3 +1053,23 @@ class TestChargerStateAttributes:
     def test_empty_payload_is_handled(self) -> None:
         """No payload yet (first poll pending) must not raise."""
         assert sensors.get_charger_state_attributes(_updater(None), None) == {}
+
+
+def test_session_time_duration_attribute_is_minute_quantised() -> None:
+    """duration_seconds must move only when the visible state moves.
+
+    The state is minute-granular by design so an active session does not write
+    a recorder row on every poll. An attribute that ticks every poll makes HA
+    write one anyway, because a row is written on any attribute change.
+    """
+    first = sensors.get_session_time_attrs(_updater({"sessionTime": "61"}), None)
+    second = sensors.get_session_time_attrs(_updater({"sessionTime": "119"}), None)
+    assert first == second
+
+    third = sensors.get_session_time_attrs(_updater({"sessionTime": "120"}), None)
+    assert third != second
+    assert third == {"duration_seconds": 120}
+
+    # And it agrees with the grid the visible state already uses.
+    assert sensors.get_session_time(_updater({"sessionTime": "61"}), None) == \
+        sensors.get_session_time(_updater({"sessionTime": "119"}), None)

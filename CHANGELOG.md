@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### 🔧 Changed
+- Session Time's `duration_seconds` attribute now follows the same minute steps as the displayed value, so an active session no longer writes a database row on every poll.
+
 ## 4.20.1 - 2026-08-23
 
 ### 🔧 Changed

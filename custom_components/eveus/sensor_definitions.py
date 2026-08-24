@@ -629,7 +629,11 @@ def get_session_time_attrs(updater, hass) -> dict:
     # the attribute while the visible state already reads unknown.
     if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
         return {}
-    return {"duration_seconds": seconds}
+    # Quantised onto the same minute grid the visible state uses. HA writes a
+    # recorder row on any attribute change, so a per-poll-incrementing second
+    # count made this sensor write every poll while its state sat still — the
+    # exact churn the minute-granular state exists to avoid.
+    return {"duration_seconds": seconds - seconds % 60}
 
 
 def get_time_drift(updater, hass) -> Optional[int]:
