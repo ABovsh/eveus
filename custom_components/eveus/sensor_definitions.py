@@ -549,6 +549,7 @@ NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
     "Waiting for Activation",
     "Paused by Adaptive Mode",
     "Paused",
+    "Controlled by OCPP",
     "Error",
     "Unknown",
 )
@@ -606,10 +607,20 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
         return "Starting Up"
     if state == DEVICE_STATE_STANDBY:
         return "Cable Not Connected"
-    if state == 5:
-        return "Charge Complete"
     if state == DEVICE_STATE_ERROR:
         return "Error"
+    # OCPP hands start/stop to the backend or the vendor app, so no limit below
+    # can be what is holding the session back — nothing HA does will start one
+    # until it is switched off. Named ahead of those limits because it is the
+    # only reason here that points at a setting the user has to change.
+    if _get_data_value(updater, "ocppEnabled", int):
+        return "Controlled by OCPP"
+    # Firmware keeps subState alive in state 5, so 9 there is not a finished
+    # session — it is the charger holding for an external start command.
+    if _reads_modern_codes(updater) and _get_data_value(updater, "subState", int) == 9:
+        return _SUBSTATE_REASONS[9]
+    if state == 5:
+        return "Charge Complete"
     # Only modern firmware's subState follows NORMAL_SUBSTATES. Firmware 1.x
     # (GitHub issue #11) has its own codes, so reading one there would name a
     # confident but arbitrary reason; fall through to the state-derived answer,

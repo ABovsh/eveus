@@ -10,6 +10,8 @@
 - **Controls no longer flicker back** to their previous position while the charger's contactor is still closing. Switches, selects, the Charging Current and limit numbers, and the schedule times all hold the value you set until the charger confirms it.
 
 ### 🔧 Changed
+- **Not Charging Reason now names OCPP when OCPP is what is blocking the session.** With the **Connect to OCPP** switch on, the charger only starts on a command from the backend or the vendor mobile app, so the sensor reads **Controlled by OCPP** instead of a limit that is not the real obstacle. The states you can see for yourself — charging, no cable, an error, still starting up — are still reported as they were.
+- **A charger waiting to be activated no longer reports itself as finished.** Charge Complete was answered without looking at the substate underneath it, so a charger holding for an external start command read as a completed session. It now reads **Waiting for Activation**; a session that genuinely finished still reads **Charge Complete**.
 - **You can now see where Initial SOC came from.** SOC Percent carries a `soc_anchor` attribute saying whether it was read from your car, set by hand, or failed to seed and why.
 - **Duration, energy and voltage controls now declare what they measure.** Limit Time, Limit Energy, the schedule energy limits and the Undervoltage threshold carry a device class, so Home Assistant labels and groups them like every other control of that kind.
 - **Your recorder database grows about half as fast.** Measured over a week of normal use: ~50 % fewer rows — ~85 % while waiting for a charge, ~35 % during a session. Readings that had not meaningfully moved were writing a row on nearly every poll; now:
