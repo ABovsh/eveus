@@ -1073,3 +1073,55 @@ def test_session_time_duration_attribute_is_minute_quantised() -> None:
     # And it agrees with the grid the visible state already uses.
     assert sensors.get_session_time(_updater({"sessionTime": "61"}), None) == \
         sensors.get_session_time(_updater({"sessionTime": "119"}), None)
+
+
+def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
+    """Pin every field of the six diagnostic measurement specs.
+
+    They are rebuilt through the file's own tuple+comprehension idiom; this
+    asserts the produced specs stay identical to the hand-written ones.
+    """
+    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+    from homeassistant.const import (
+        SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        UnitOfElectricCurrent,
+        UnitOfElectricPotential,
+        UnitOfTemperature,
+    )
+    from homeassistant.helpers.entity import EntityCategory
+
+    from custom_components.eveus.sensor_definitions import (
+        SensorType,
+        create_sensor_specifications,
+    )
+
+    specs = {s.key: s for s in create_sensor_specifications(phases=1)}
+    expected = {
+        "box_temperature": ("Box Temperature", "mdi:thermometer",
+                            SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0),
+        "plug_temperature": ("Plug Temperature", "mdi:thermometer-high",
+                             SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0),
+        "battery_voltage": ("Battery Voltage", "mdi:battery",
+                            SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 2),
+        "leak_current": ("Leakage Current", "mdi:current-dc",
+                         SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0),
+        "leak_current_peak": ("Leakage Current Peak", "mdi:current-dc",
+                              SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0),
+        "wifi_signal": ("WiFi Signal", "mdi:wifi",
+                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0),
+    }
+    for key, (name, icon, device_class, unit, precision) in expected.items():
+        spec = specs[key]
+        assert spec.name == name
+        assert spec.icon == icon
+        assert spec.device_class == device_class
+        assert spec.unit == unit
+        assert spec.precision == precision
+        assert spec.sensor_type == SensorType.DIAGNOSTIC
+        assert spec.state_class == SensorStateClass.MEASUREMENT
+        assert spec.category == EntityCategory.DIAGNOSTIC
+
+    # Ordering is part of the contract: entity creation walks this list.
+    order = [s.key for s in create_sensor_specifications(phases=1)]
+    assert order == sorted(order, key=order.index)  # stable snapshot below
+    assert [k for k in order if k in expected] == list(expected)
