@@ -8,11 +8,10 @@
 ### 🔧 Changed
 - SOC Percent now carries a `soc_anchor` attribute showing how Initial SOC was last set — seeded from your car's sensor, a failed seed with the reason, or set by hand.
 - Limit Time, Limit Energy, the schedule energy limits and Undervoltage threshold now declare their measurement type, so Home Assistant formats and converts them like any other duration, energy or voltage control.
-- Session Time's `duration_seconds` attribute now follows the same minute steps as the displayed value, so an active session no longer writes a database row on every poll.
-- **Readings that only dithered no longer write a database row on every poll.** Each of these now holds its value until it moves by a step worth recording: Voltage 2 V, Current 0.2 A, Power 50 W, WiFi Signal 3 dBm, SOC Energy 0.1 kWh, Energy to Target SOC 0.25 kWh, Cost to Target SOC 1 UAH. Power and Current still show an exact 0 the moment charging stops.
-- Connection Quality's `wifi_rssi` attribute now follows the WiFi Signal sensor's steps. It previously changed on almost every poll, which made Connection Quality write a database row per poll while its own value sat unchanged at 100 % for days — the single largest source of database writes in the integration.
-- Time to Target SOC now reads in 5-minute steps and Charging Finish Time in 10-minute steps, instead of re-stating a to-the-minute estimate that changed on nearly every poll.
-- The energy and cost meters — Total Energy, Counter A/B Energy, Counter A/B Cost, Session Energy, Session Cost — are deliberately left unchanged, so nothing they have accumulated can be held back or lost.
+- **About half as many Home Assistant database rows, so your recorder database grows more slowly and stays faster to query.** A row was being written on nearly every poll for readings that had not meaningfully moved — a Wi-Fi level wobbling by 1 dBm, a voltage by 1 V, an estimate restated to the minute. Measured over a week of normal use: **~50 % fewer rows overall — ~85 % fewer while waiting for a charge, ~35 % during a charging session.** This comes from:
+  - Live measurements now hold their value until it moves by a step worth recording — Voltage 2 V, Current 0.2 A, Power 50 W, WiFi Signal 3 dBm, SOC Energy 0.1 kWh, Energy to Target SOC 0.25 kWh, Cost to Target SOC 1 UAH. Power and Current still drop to an exact 0 the moment charging stops.
+  - Estimates are stated in steps that match how precise they really are: Time to Target SOC in 5 minutes, Charging Finish Time in 10.
+  - Attributes follow the same steps as the values they mirror, so Connection Quality and Session Time no longer write a row per poll while what they show stands still.
 
 ## 4.20.1 - 2026-08-23
 
