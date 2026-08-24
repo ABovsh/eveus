@@ -20,7 +20,7 @@ from .const import (
     CONTROL_GRACE_PERIOD,
     ERROR_LOG_RATE_LIMIT,
 )
-from .utils import RateLog, get_device_info, get_device_suffix
+from .utils import RateLog, apply_deadband, get_device_info, get_device_suffix
 
 if TYPE_CHECKING:
     from .common_network import EveusUpdater
@@ -485,6 +485,11 @@ class WriteOnChangeMixin:
 class EveusSensorBase(BaseEveusEntity, SensorEntity):
     """Base sensor entity."""
 
+    # Optional churn damping for sensors whose reading dithers between polls:
+    # the published value is held until it moves this far. Set on the subclass
+    # (or from a SensorSpec); None leaves every reading published verbatim.
+    _deadband: float | None = None
+
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the sensor."""
         super().__init__(updater, device_number)
@@ -522,6 +527,8 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
 
         try:
             value = self._get_sensor_value()
+            if self._deadband is not None:
+                value = apply_deadband(previous_value, value, self._deadband)
             self._attr_native_value = value
         except Exception as err:
             current_time = time.time()

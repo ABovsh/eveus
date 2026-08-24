@@ -286,6 +286,9 @@ class EVSocKwhSensor(BaseEVHelperSensor):
     _attr_suggested_display_precision = 1
     _attr_state_class = SensorStateClass.MEASUREMENT
     _requires_helpers = False
+    # A battery level, not a meter: nothing accumulates here, so holding it
+    # within 0.1 kWh loses nothing and drops the per-poll write while charging.
+    _deadband = 0.1
 
     def _get_sensor_value(self) -> Optional[float]:
         # Outside a session an unreported sessionEnergy (cold start, offline
@@ -400,6 +403,9 @@ class EnergyToTargetSocSensor(BaseEVHelperSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 1
     _requires_helpers = False
+    # A forecast displayed to one decimal — a 0.25 kWh step is finer than the
+    # estimate's own accuracy, so it costs no information.
+    _deadband = 0.25
 
     def _remaining_grid_kwh(self) -> Optional[float]:
         """Grid kWh to target, 0.0 at target, or None when not computable."""
@@ -444,6 +450,9 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
     _attr_native_unit_of_measurement = "UAH"
     _attr_icon = "mdi:cash-clock"
     _attr_suggested_display_precision = 0
+    # Displayed with no decimals at all, so anything under a hryvnia was a
+    # recorder row nobody could see.
+    _deadband = 1.0
 
     def _get_sensor_value(self) -> Optional[float]:
         from .sensor_definitions import get_active_rate_cost
@@ -488,10 +497,15 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             if seconds is None or seconds <= 0:
                 # None = not charging / invalid; 0 = target reached
                 return None
-            # Round to the next whole minute so the state doesn't jitter on
-            # every poll (each tick would otherwise produce a fresh timestamp).
-            eta = dt_util.utcnow() + timedelta(seconds=seconds)
-            return eta.replace(second=0, microsecond=0) + timedelta(minutes=1)
+            # Snap up to the next 10-minute boundary. Rounding to the next
+            # whole minute still produced a fresh timestamp on most polls,
+            # because the estimate is re-derived from a fluctuating power
+            # reading. Always advances (1..10 minutes), so the stamp stays in
+            # the future the way the old next-minute rounding guaranteed.
+            eta = (dt_util.utcnow() + timedelta(seconds=seconds)).replace(
+                second=0, microsecond=0
+            )
+            return eta + timedelta(minutes=10 - eta.minute % 10)
         except Exception as err:
             _LOGGER.debug(
                 "Error calculating finish time for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged

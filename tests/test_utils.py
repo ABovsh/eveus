@@ -153,7 +153,7 @@ def test_soc_calculations_clamp_to_battery_capacity() -> None:
 def test_calculate_remaining_time_states() -> None:
     assert utils.calculate_remaining_time(80, 80, 7000, 80, 7.5) == "Target reached"
     assert utils.calculate_remaining_time(20, 80, 0, 80, 7.5) == "Not charging"
-    assert utils.calculate_remaining_time(20, 80, 7000, 80, 0) == "6h 51m"
+    assert utils.calculate_remaining_time(20, 80, 7000, 80, 0) == "6h 50m"
     assert utils.calculate_remaining_time(120, 80, 7000, 80, 0) == "unavailable"
 
 

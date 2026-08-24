@@ -55,6 +55,7 @@ from .const import (
 )
 from .utils import (
     RateLog,
+    apply_deadband,
     format_duration,
     get_charger_wall_clock_seconds,
     get_local_wall_clock_seconds,
@@ -295,8 +296,17 @@ def _make_value_getter(
     minimum: Optional[float] = None,
     maximum: Optional[float] = None,
     exclusive_min: bool = False,
+    deadband: Optional[float] = None,
 ):
-    """Factory for simple data getter functions."""
+    """Factory for simple data getter functions.
+
+    ``deadband`` damps a reading that dithers between polls: the getter keeps
+    returning the last value it emitted until the payload moves by at least
+    that much. It lives here, on the shared factory, so a field read by more
+    than one consumer (RSSI: the WiFi Signal sensor AND the Connection Quality
+    `wifi_rssi` attribute) is damped once and cannot drift apart — the anchor
+    is per updater, so two chargers never share one.
+    """
     def getter(updater, hass):
         if not updater.available or not updater.data:
             return None
@@ -315,7 +325,16 @@ def _make_value_getter(
             return None
         if transform:
             value = transform(value)
-        return round(value, precision)
+        value = round(value, precision)
+        if deadband is None:
+            return value
+        anchors = getattr(updater, "_deadband_anchors", None)
+        if anchors is None:
+            anchors = {}
+            updater._deadband_anchors = anchors
+        value = apply_deadband(anchors.get(key), value, deadband)
+        anchors[key] = value
+        return value
     return getter
 
 
@@ -335,9 +354,15 @@ def _make_enum_getter(key: str, mapping: dict[int, str]):
 
 
 # Measurement getters
-get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
-get_current = _make_value_getter("curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT)
-get_power = _make_value_getter("powerMeas", precision=1, minimum=0, maximum=_MAX_POWER)
+get_voltage = _make_value_getter(
+    "voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+)
+get_current = _make_value_getter(
+    "curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+)
+get_power = _make_value_getter(
+    "powerMeas", precision=1, minimum=0, maximum=_MAX_POWER, deadband=50
+)
 # Energy getters
 get_session_energy = _make_value_getter(
     "sessionEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
@@ -407,7 +432,9 @@ get_leak_current_peak = _make_value_getter(
     "leakValueH", precision=0, minimum=0, maximum=MAX_VALID_LEAKAGE_CURRENT_MA
 )
 # RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
-get_wifi_rssi = _make_value_getter("RSSI", precision=0, minimum=-120, maximum=0)
+get_wifi_rssi = _make_value_getter(
+    "RSSI", precision=0, minimum=-120, maximum=0, deadband=3
+)
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
 get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT)

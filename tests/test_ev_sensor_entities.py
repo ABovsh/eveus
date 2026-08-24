@@ -495,7 +495,9 @@ def test_time_to_target_drops_stale_value_on_calculation_error(
     assert sensor._cached_value is None
 
 
-def test_charging_finish_time_rounds_to_next_minute(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_charging_finish_time_rounds_up_to_the_ten_minute_grid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fixed_now = ev_sensors.datetime(2026, 5, 22, 10, 0, 30)
     monkeypatch.setattr(ev_sensors.dt_util, "utcnow", lambda: fixed_now)
     monkeypatch.setattr(ev_sensors, "calculate_remaining_seconds", lambda *args: 90)
@@ -505,7 +507,7 @@ def test_charging_finish_time_rounds_to_next_minute(monkeypatch: pytest.MonkeyPa
     )
     sensor.hass = HelperHass(EV_HELPERS)
 
-    assert sensor._get_sensor_value() == ev_sensors.datetime(2026, 5, 22, 10, 3)
+    assert sensor._get_sensor_value() == ev_sensors.datetime(2026, 5, 22, 10, 10)
 
 
 def test_charging_finish_time_returns_none_for_non_eta_states(

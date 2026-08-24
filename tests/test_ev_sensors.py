@@ -45,7 +45,7 @@ def test_time_to_target_soc_uses_shared_calculator() -> None:
         calculator,
     )
 
-    assert sensor._get_sensor_value() == "7h 37m"
+    assert sensor._get_sensor_value() == "7h 35m"
     assert calculator.battery_capacity == 80
     assert calculator.target_soc == 80
 

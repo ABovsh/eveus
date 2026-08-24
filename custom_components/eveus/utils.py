@@ -519,6 +519,21 @@ def calculate_remaining_seconds(
     return None
 
 
+def apply_deadband(last: float | None, value, deadband: float):
+    """Hold `value` at `last` until it moves by at least `deadband`.
+
+    Home Assistant writes a recorder row on every state change, so a reading
+    that dithers by one unit between polls costs one row per poll forever.
+    Rounding cannot fix that — a value sitting on a rounding boundary still
+    flips every poll — so the comparison is against the LAST PUBLISHED value,
+    not against a grid. An exact zero always passes through: "charging
+    stopped" must never be hidden behind a deadband.
+    """
+    if last is None or value is None or value == 0:
+        return value
+    return last if abs(value - last) < deadband else value
+
+
 def calculate_remaining_time(
     current_soc: float | int,
     target_soc: float | int,
@@ -539,4 +554,9 @@ def calculate_remaining_time(
     total_minutes = round(result / 60, 0)
     if total_minutes < 1:
         return "< 1m"
+    # Snap to a 5-minute grid: a minute-granular ETA re-derived from a
+    # fluctuating power reading changed on most polls, and no one plans a
+    # charge to the minute five hours out. Never rounds down to "0m" — under
+    # 5 minutes the sensor still reads 5m until it drops below one minute.
+    total_minutes = max(5, round(total_minutes / 5) * 5)
     return format_duration(int(total_minutes * 60))

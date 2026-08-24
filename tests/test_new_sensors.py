@@ -127,7 +127,7 @@ class TestSessionCost:
 # ---------------------------------------------------------------------------
 
 _FIXED_NOW = datetime(2026, 5, 16, 10, 0, 0, tzinfo=timezone.utc)
-_EXPECTED_FINISH = datetime(2026, 5, 16, 17, 38, 0, tzinfo=timezone.utc)
+_EXPECTED_FINISH = datetime(2026, 5, 16, 17, 40, 0, tzinfo=timezone.utc)
 
 
 _HELPER_KEYS = {
@@ -156,11 +156,12 @@ class TestChargingFinishTime:
             return_value=_FIXED_NOW,
         ):
             result = sensor._get_sensor_value()
-        # ~27428s ahead, rounded up to the next whole minute.
+        # ~27428s ahead, snapped up to the next 10-minute boundary.
         assert result == _EXPECTED_FINISH
         # Must be a tz-aware UTC timestamp suitable for device_class=timestamp.
         assert result.tzinfo is not None
-        # Must be minute-aligned to avoid jitter on every poll.
+        # Must sit on the 10-minute grid to avoid jitter on every poll.
+        assert result.minute % 10 == 0
         assert result.second == 0
         assert result.microsecond == 0
 
