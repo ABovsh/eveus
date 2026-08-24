@@ -501,3 +501,50 @@ async def test_repair_flow_blocks_unique_id_collision():
     assert result["type"] == "form"
     assert result["errors"] == {"base": "already_configured"}
     hass.config_entries.async_update_entry.assert_not_called()
+
+
+def test_repair_flow_keeps_the_issue_when_the_reload_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`repairs.py` checks reload_ok; nothing exercised the False branch.
+
+    The repair notice must SURVIVE a failed reload so the user can retry —
+    that is the whole reason the reload happens before the issue is deleted.
+    """
+
+    async def fake_validate_input(hass, data):
+        return {
+            "title": f"Eveus Charger ({TEST_HOST})",
+            "data": normalize_user_input(data),
+            "device_info": {"current_set": 16},
+        }
+
+    deleted: list[tuple[str, str]] = []
+    entry = SimpleNamespace(entry_id="entry-id", data=_data())
+    config_entries = _ConfigEntries(entry)
+
+    # _ConfigEntries.async_reload returns None, which is NOT False, so it takes
+    # the success path. Override it to reach the branch under test.
+    async def failing_reload(entry_id: str) -> bool:
+        config_entries.reloaded.append(entry_id)
+        return False
+
+    config_entries.async_reload = failing_reload
+    hass = SimpleNamespace(config_entries=config_entries)
+    monkeypatch.setattr(repairs, "validate_input", fake_validate_input)
+    monkeypatch.setattr(
+        repairs.ir,
+        "async_delete_issue",
+        lambda hass, domain, issue_id: deleted.append((domain, issue_id)),
+    )
+
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
+    result = asyncio.run(flow.async_step_confirm(_data(**{CONF_PASSWORD: "new"})))
+
+    # Form re-shown with an error, never create_entry.
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "unknown"}
+    # The data change is still committed...
+    assert config_entries.updated[0]["data"][CONF_PASSWORD] == "new"
+    # ...and crucially the repair notice is still there for the retry.
+    assert deleted == []
