@@ -3,15 +3,15 @@
 ## Unreleased
 
 ### 🐛 Fixed
-- Switches and selects no longer flicker back to their previous position while the charger's contactor is still closing.
+- **Switches and selects no longer flicker back** to their previous position while the charger's contactor is still closing.
 
 ### 🔧 Changed
-- SOC Percent now carries a `soc_anchor` attribute showing how Initial SOC was last set — seeded from your car's sensor, a failed seed with the reason, or set by hand.
-- Limit Time, Limit Energy, the schedule energy limits and Undervoltage threshold now declare their measurement type, so Home Assistant formats and converts them like any other duration, energy or voltage control.
-- **About half as many Home Assistant database rows, so your recorder database grows more slowly and stays faster to query.** A row was being written on nearly every poll for readings that had not meaningfully moved — a Wi-Fi level wobbling by 1 dBm, a voltage by 1 V, an estimate restated to the minute. Measured over a week of normal use: **~50 % fewer rows overall — ~85 % fewer while waiting for a charge, ~35 % during a charging session.** This comes from:
-  - Live measurements now hold their value until it moves by a step worth recording — Voltage 2 V, Current 0.2 A, Power 50 W, WiFi Signal 3 dBm, SOC Energy 0.1 kWh, Energy to Target SOC 0.25 kWh, Cost to Target SOC 1 UAH. Power and Current still drop to an exact 0 the moment charging stops.
-  - Estimates are stated in steps that match how precise they really are: Time to Target SOC in 5 minutes, Charging Finish Time in 10.
-  - Attributes follow the same steps as the values they mirror, so Connection Quality and Session Time no longer write a row per poll while what they show stands still.
+- **You can now see where Initial SOC came from.** SOC Percent carries a `soc_anchor` attribute saying whether it was read from your car, set by hand, or failed to seed and why.
+- **Duration, energy and voltage controls now format and convert like every other Home Assistant control.** Limit Time, Limit Energy, the schedule energy limits and the Undervoltage threshold declare their measurement type.
+- **Your recorder database grows about half as fast.** Measured over a week of normal use: ~50 % fewer rows — ~85 % while waiting for a charge, ~35 % during a session. Readings that had not meaningfully moved were writing a row on nearly every poll; now:
+  - Live measurements hold their value until it moves by a step worth recording — Voltage 2 V, Current 0.2 A, Power 50 W, WiFi Signal 3 dBm, SOC Energy 0.1 kWh, Energy to Target SOC 0.25 kWh, Cost to Target SOC 1 UAH. Power and Current still drop to an exact 0 the moment charging stops.
+  - Estimates are stated in steps that match their real precision: Time to Target SOC 5 minutes, Charging Finish Time 10.
+  - Attributes follow the same steps as the values they mirror, so Connection Quality and Session Time stop writing a row per poll while what they show stands still.
 
 ## 4.20.1 - 2026-08-23
 
