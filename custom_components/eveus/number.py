@@ -373,8 +373,11 @@ class EveusCurrentNumber(EveusNumberEntity):
                     )
 
             except (HomeAssistantError, ConfigEntryAuthFailed):
-                # ConfigEntryAuthFailed must propagate untouched so Home
-                # Assistant starts the reauthentication flow on a 401.
+                # ConfigEntryAuthFailed propagates untouched. It does NOT start
+                # reauth from here — the entity service-call path has no such
+                # hook. Reauth is started by the coordinator when the same 401
+                # comes back from /main, within one poll interval. Re-raising
+                # keeps the toast honest and lets that mechanism do its job.
                 raise
             except Exception as err:
                 _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, err VALUE unchanged
