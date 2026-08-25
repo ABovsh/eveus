@@ -196,6 +196,7 @@ def _schedule_current(n: int) -> EveusSetpointNumberDescription:
         read_min_value=0.0,
         native_step=1,
         native_unit_of_measurement="A",
+        device_class=NumberDeviceClass.CURRENT,
         mode=NumberMode.BOX,
     )
 
