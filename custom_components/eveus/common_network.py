@@ -800,9 +800,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
-        start_time = time.time()
-        # Latency is measured on the monotonic clock so a wall-clock step during
-        # the request can't record a negative or absurd sample.
+        # Every deadline here is on the monotonic clock, so a wall-clock step
+        # during the request can't record a negative or absurd latency sample
+        # or stretch the offline backoff.
         start_monotonic = time.monotonic()
         bypass_backoff = self._force_refresh_requests > 0
         backoff_remaining = self._next_poll_attempt - start_monotonic

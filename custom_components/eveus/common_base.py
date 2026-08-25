@@ -486,8 +486,9 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
     """Base sensor entity."""
 
     # Optional churn damping for sensors whose reading dithers between polls:
-    # the published value is held until it moves this far. Set on the subclass
-    # (or from a SensorSpec); None leaves every reading published verbatim.
+    # the published value is held until it moves this far. Set on the subclass;
+    # None leaves every reading published verbatim. (Spec-driven sensors damp
+    # inside their getter instead — see _make_value_getter's `deadband`.)
     _deadband: float | None = None
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
