@@ -156,12 +156,12 @@ class TestChargingFinishTime:
             return_value=_FIXED_NOW,
         ):
             result = sensor._get_sensor_value()
-        # ~27428s ahead, snapped up to the next 10-minute boundary.
+        # ~27428s ahead, snapped up to the next 5-minute boundary.
         assert result == _EXPECTED_FINISH
         # Must be a tz-aware UTC timestamp suitable for device_class=timestamp.
         assert result.tzinfo is not None
-        # Must sit on the 10-minute grid to avoid jitter on every poll.
-        assert result.minute % 10 == 0
+        # Must sit on the 5-minute grid to avoid jitter on every poll.
+        assert result.minute % 5 == 0
         assert result.second == 0
         assert result.microsecond == 0
 

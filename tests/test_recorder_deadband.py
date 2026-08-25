@@ -206,12 +206,12 @@ def test_time_to_target_snaps_to_a_five_minute_grid() -> None:
 
 
 @pytest.mark.parametrize("session_energy", ["0", "1", "2.5", "7", "13.75"])
-def test_charging_finish_time_snaps_to_a_ten_minute_grid(session_energy: str) -> None:
-    """Every estimate lands on a 10-minute boundary, and never in the past."""
+def test_charging_finish_time_snaps_to_a_five_minute_grid(session_energy: str) -> None:
+    """Every estimate lands on a 5-minute boundary, and never in the past."""
     sensor = _soc_sensor(ChargingFinishTimeSensor, session_energy, powerMeas="7000")
 
     finish = sensor._get_sensor_value()
 
-    assert finish.minute % 10 == 0
+    assert finish.minute % 5 == 0
     assert (finish.second, finish.microsecond) == (0, 0)
     assert finish > dt_util.utcnow()

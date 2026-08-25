@@ -498,15 +498,17 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             if seconds is None or seconds <= 0:
                 # None = not charging / invalid; 0 = target reached
                 return None
-            # Snap up to the next 10-minute boundary. Rounding to the next
-            # whole minute still produced a fresh timestamp on most polls,
-            # because the estimate is re-derived from a fluctuating power
-            # reading. Always advances (1..10 minutes), so the stamp stays in
-            # the future the way the old next-minute rounding guaranteed.
+            # Snap up to the next 5-minute boundary — the same grid Time to
+            # Target SOC states its estimate on, so the two never disagree by
+            # more than one step. Rounding to the next whole minute still
+            # produced a fresh timestamp on most polls, because the estimate is
+            # re-derived from a fluctuating power reading. Always advances
+            # (1..5 minutes), so the stamp stays in the future the way the old
+            # next-minute rounding guaranteed.
             eta = (dt_util.utcnow() + timedelta(seconds=seconds)).replace(
                 second=0, microsecond=0
             )
-            return eta + timedelta(minutes=10 - eta.minute % 10)
+            return eta + timedelta(minutes=5 - eta.minute % 5)
         except Exception as err:
             _LOGGER.debug(
                 "Error calculating finish time for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
