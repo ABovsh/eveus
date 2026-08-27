@@ -2481,3 +2481,47 @@ def test_validate_input_logs_unrecognizable_payload_at_warning(
         and "not an Eveus /main payload" in record.message
         for record in caplog.records
     )
+
+
+def test_options_flow_aborts_when_the_reload_fails() -> None:
+    """Saving options but failing to reload must not be reported as success.
+
+    `EveusOptionsFlow._apply` returns async_abort(reason="reload_failed") for
+    it and nothing exercised that branch: a user could be told the mode switch
+    took effect when the entry never came back up.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    entry = SimpleNamespace(
+        entry_id="entry-id",
+        data={
+            CONF_HOST: TEST_HOST,
+            CONF_USERNAME: TEST_USERNAME,
+            CONF_PASSWORD: TEST_PASSWORD,
+            CONF_MODEL: MODEL_16A,
+            CONF_SOC_MODE: SOC_MODE_BASIC,
+        },
+        options={},
+    )
+
+    def fake_update_entry(target, **kwargs):
+        if "data" in kwargs:
+            target.data = dict(kwargs["data"])
+        return True
+
+    flow = config_flow.EveusOptionsFlow(entry)
+    flow.hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_update_entry=Mock(side_effect=fake_update_entry),
+            async_reload=AsyncMock(return_value=False),
+        )
+    )
+    flow.async_abort = lambda reason: {"type": "abort", "reason": reason}
+    flow.async_create_entry = lambda **kwargs: {"type": "create_entry", **kwargs}
+
+    result = asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_BASIC}))
+
+    # The data change is committed either way — only the success claim is gated.
+    assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
+    assert result == {"type": "abort", "reason": "reload_failed"}

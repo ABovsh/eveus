@@ -55,6 +55,7 @@ from .const import (
 )
 from .utils import (
     RateLog,
+    apply_deadband,
     format_duration,
     get_charger_wall_clock_seconds,
     get_local_wall_clock_seconds,
@@ -295,8 +296,17 @@ def _make_value_getter(
     minimum: Optional[float] = None,
     maximum: Optional[float] = None,
     exclusive_min: bool = False,
+    deadband: Optional[float] = None,
 ):
-    """Factory for simple data getter functions."""
+    """Factory for simple data getter functions.
+
+    ``deadband`` damps a reading that dithers between polls: the getter keeps
+    returning the last value it emitted until the payload moves by at least
+    that much. It lives here, on the shared factory, so a field read by more
+    than one consumer (RSSI: the WiFi Signal sensor AND the Connection Quality
+    `wifi_rssi` attribute) is damped once and cannot drift apart — the anchor
+    is per updater, so two chargers never share one.
+    """
     def getter(updater, hass):
         if not updater.available or not updater.data:
             return None
@@ -315,7 +325,16 @@ def _make_value_getter(
             return None
         if transform:
             value = transform(value)
-        return round(value, precision)
+        value = round(value, precision)
+        if deadband is None:
+            return value
+        anchors = getattr(updater, "_deadband_anchors", None)
+        if anchors is None:
+            anchors = {}
+            updater._deadband_anchors = anchors
+        value = apply_deadband(anchors.get(key), value, deadband)
+        anchors[key] = value
+        return value
     return getter
 
 
@@ -335,9 +354,15 @@ def _make_enum_getter(key: str, mapping: dict[int, str]):
 
 
 # Measurement getters
-get_voltage = _make_value_getter("voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
-get_current = _make_value_getter("curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT)
-get_power = _make_value_getter("powerMeas", precision=1, minimum=0, maximum=_MAX_POWER)
+get_voltage = _make_value_getter(
+    "voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+)
+get_current = _make_value_getter(
+    "curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+)
+get_power = _make_value_getter(
+    "powerMeas", precision=1, minimum=0, maximum=_MAX_POWER, deadband=50
+)
 # Energy getters
 get_session_energy = _make_value_getter(
     "sessionEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
@@ -376,17 +401,22 @@ get_rate3_cost = _make_value_getter(
 )
 
 # Temperature getters
+# 2 degrees, not 1: these are whole-degree readings that alternate between two
+# adjacent values for hours, and a 1 degree band is no band at all — the next
+# distinct value is already 1 away.
 get_box_temperature = _make_value_getter(
     "temperature1",
     precision=0,
     minimum=MIN_VALID_TEMPERATURE_C,
     maximum=MAX_VALID_TEMPERATURE_C,
+    deadband=2,
 )
 get_plug_temperature = _make_value_getter(
     "temperature2",
     precision=0,
     minimum=MIN_VALID_TEMPERATURE_C,
     maximum=MAX_VALID_TEMPERATURE_C,
+    deadband=2,
 )
 
 # Other diagnostic getters
@@ -407,13 +437,29 @@ get_leak_current_peak = _make_value_getter(
     "leakValueH", precision=0, minimum=0, maximum=MAX_VALID_LEAKAGE_CURRENT_MA
 )
 # RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
-get_wifi_rssi = _make_value_getter("RSSI", precision=0, minimum=-120, maximum=0)
+# 5 dBm: measured on the live charger, RSSI wanders across ~7 dBm with the link
+# unchanged, so a 3 dBm band still published one reading in seven — and this
+# value is mirrored into the Connection Quality attributes, which made it the
+# single largest source of recorder rows this integration produced.
+get_wifi_rssi = _make_value_getter(
+    "RSSI", precision=0, minimum=-120, maximum=0, deadband=5
+)
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
-get_current_phase_2 = _make_value_getter("curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT)
-get_current_phase_3 = _make_value_getter("curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT)
-get_voltage_phase_2 = _make_value_getter("voltMeas2", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
-get_voltage_phase_3 = _make_value_getter("voltMeas3", precision=0, minimum=0, maximum=_MAX_VOLTAGE)
+# Same telemetry as phase 1, so the same damping — otherwise a 3-phase entry
+# keeps the per-poll churn the single-phase one just lost.
+get_current_phase_2 = _make_value_getter(
+    "curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+)
+get_current_phase_3 = _make_value_getter(
+    "curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+)
+get_voltage_phase_2 = _make_value_getter(
+    "voltMeas2", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+)
+get_voltage_phase_3 = _make_value_getter(
+    "voltMeas3", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+)
 
 
 # =============================================================================
@@ -503,6 +549,7 @@ NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
     "Waiting for Activation",
     "Paused by Adaptive Mode",
     "Paused",
+    "Controlled by OCPP",
     "Error",
     "Unknown",
 )
@@ -560,10 +607,20 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
         return "Starting Up"
     if state == DEVICE_STATE_STANDBY:
         return "Cable Not Connected"
-    if state == 5:
-        return "Charge Complete"
     if state == DEVICE_STATE_ERROR:
         return "Error"
+    # OCPP hands start/stop to the backend or the vendor app, so no limit below
+    # can be what is holding the session back — nothing HA does will start one
+    # until it is switched off. Named ahead of those limits because it is the
+    # only reason here that points at a setting the user has to change.
+    if _get_data_value(updater, "ocppEnabled", int):
+        return "Controlled by OCPP"
+    # Firmware keeps subState alive in state 5, so 9 there is not a finished
+    # session — it is the charger holding for an external start command.
+    if _reads_modern_codes(updater) and _get_data_value(updater, "subState", int) == 9:
+        return _SUBSTATE_REASONS[9]
+    if state == 5:
+        return "Charge Complete"
     # Only modern firmware's subState follows NORMAL_SUBSTATES. Firmware 1.x
     # (GitHub issue #11) has its own codes, so reading one there would name a
     # confident but arbitrary reason; fall through to the state-derived answer,
@@ -629,7 +686,11 @@ def get_session_time_attrs(updater, hass) -> dict:
     # the attribute while the visible state already reads unknown.
     if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
         return {}
-    return {"duration_seconds": seconds}
+    # Quantised onto the same minute grid the visible state uses. HA writes a
+    # recorder row on any attribute change, so a per-poll-incrementing second
+    # count made this sensor write every poll while its state sat still — the
+    # exact churn the minute-granular state exists to avoid.
+    return {"duration_seconds": seconds - seconds % 60}
 
 
 def get_time_drift(updater, hass) -> Optional[int]:
@@ -980,55 +1041,42 @@ def create_sensor_specifications(
             unit=UnitOfTime.SECONDS,
             category=EntityCategory.DIAGNOSTIC,
         ),
-        SensorSpec(
-            key="box_temperature", name="Box Temperature", value_fn=get_box_temperature,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:thermometer",
-            device_class=SensorDeviceClass.TEMPERATURE,
-            state_class=SensorStateClass.MEASUREMENT,
-            unit=UnitOfTemperature.CELSIUS, precision=0,
-            category=EntityCategory.DIAGNOSTIC,
-        ),
-        SensorSpec(
-            key="plug_temperature", name="Plug Temperature", value_fn=get_plug_temperature,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:thermometer-high",
-            device_class=SensorDeviceClass.TEMPERATURE,
-            state_class=SensorStateClass.MEASUREMENT,
-            unit=UnitOfTemperature.CELSIUS, precision=0,
-            category=EntityCategory.DIAGNOSTIC,
-        ),
-        SensorSpec(
-            key="battery_voltage", name="Battery Voltage", value_fn=get_battery_voltage,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:battery",
-            device_class=SensorDeviceClass.VOLTAGE,
-            state_class=SensorStateClass.MEASUREMENT,
-            unit=UnitOfElectricPotential.VOLT, precision=2,
-            category=EntityCategory.DIAGNOSTIC,
-        ),
-        SensorSpec(
-            key="leak_current", name="Leakage Current", value_fn=get_leak_current,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-dc",
-            device_class=SensorDeviceClass.CURRENT,
-            state_class=SensorStateClass.MEASUREMENT,
-            unit=UnitOfElectricCurrent.MILLIAMPERE, precision=0,
-            category=EntityCategory.DIAGNOSTIC,
-        ),
-        SensorSpec(
-            key="leak_current_peak", name="Leakage Current Peak",
-            value_fn=get_leak_current_peak,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:current-dc",
-            device_class=SensorDeviceClass.CURRENT,
-            state_class=SensorStateClass.MEASUREMENT,
-            unit=UnitOfElectricCurrent.MILLIAMPERE, precision=0,
-            category=EntityCategory.DIAGNOSTIC,
-        ),
-        SensorSpec(
-            key="wifi_signal", name="WiFi Signal",
-            value_fn=get_wifi_rssi,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:wifi",
-            device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-            state_class=SensorStateClass.MEASUREMENT,
-            unit=SIGNAL_STRENGTH_DECIBELS_MILLIWATT, precision=0,
-            category=EntityCategory.DIAGNOSTIC,
+        # Same tuple+comprehension idiom as `measurements` above: these six
+        # differ only in name/getter/icon/device class/unit/precision, so
+        # spelling out the three shared fields six times was pure repetition.
+        *(
+            SensorSpec(
+                key=key,
+                name=name,
+                value_fn=fn,
+                sensor_type=SensorType.DIAGNOSTIC,
+                icon=icon,
+                device_class=device_class,
+                state_class=SensorStateClass.MEASUREMENT,
+                unit=unit,
+                precision=precision,
+                category=EntityCategory.DIAGNOSTIC,
+            )
+            for key, name, fn, icon, device_class, unit, precision in (
+                ("box_temperature", "Box Temperature", get_box_temperature,
+                 "mdi:thermometer", SensorDeviceClass.TEMPERATURE,
+                 UnitOfTemperature.CELSIUS, 0),
+                ("plug_temperature", "Plug Temperature", get_plug_temperature,
+                 "mdi:thermometer-high", SensorDeviceClass.TEMPERATURE,
+                 UnitOfTemperature.CELSIUS, 0),
+                ("battery_voltage", "Battery Voltage", get_battery_voltage,
+                 "mdi:battery", SensorDeviceClass.VOLTAGE,
+                 UnitOfElectricPotential.VOLT, 2),
+                ("leak_current", "Leakage Current", get_leak_current,
+                 "mdi:current-dc", SensorDeviceClass.CURRENT,
+                 UnitOfElectricCurrent.MILLIAMPERE, 0),
+                ("leak_current_peak", "Leakage Current Peak", get_leak_current_peak,
+                 "mdi:current-dc", SensorDeviceClass.CURRENT,
+                 UnitOfElectricCurrent.MILLIAMPERE, 0),
+                ("wifi_signal", "WiFi Signal", get_wifi_rssi,
+                 "mdi:wifi", SensorDeviceClass.SIGNAL_STRENGTH,
+                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0),
+            )
         ),
     ]
 

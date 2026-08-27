@@ -123,6 +123,7 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         native_max_value=1440,
         native_step=5,
         native_unit_of_measurement="min",
+        device_class=NumberDeviceClass.DURATION,
         mode=NumberMode.BOX,
         display_precision=0,
     ),
@@ -139,6 +140,7 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         native_max_value=100,
         native_step=1,
         native_unit_of_measurement="kWh",
+        device_class=NumberDeviceClass.ENERGY,
         mode=NumberMode.BOX,
         display_precision=3,
     ),
@@ -174,6 +176,7 @@ UNDERVOLTAGE_THRESHOLD_NUMBER = EveusSetpointNumberDescription(
     native_max_value=220,
     native_step=1,
     native_unit_of_measurement="V",
+    device_class=NumberDeviceClass.VOLTAGE,
     mode=NumberMode.SLIDER,
 )
 
@@ -193,6 +196,7 @@ def _schedule_current(n: int) -> EveusSetpointNumberDescription:
         read_min_value=0.0,
         native_step=1,
         native_unit_of_measurement="A",
+        device_class=NumberDeviceClass.CURRENT,
         mode=NumberMode.BOX,
     )
 
@@ -211,6 +215,7 @@ def _schedule_energy(n: int) -> EveusSetpointNumberDescription:
         native_max_value=100,
         native_step=1,
         native_unit_of_measurement="kWh",
+        device_class=NumberDeviceClass.ENERGY,
         mode=NumberMode.BOX,
         display_precision=3,  # trim firmware float noise (e.g. 76.371002 -> 76.371)
     )
@@ -369,8 +374,11 @@ class EveusCurrentNumber(EveusNumberEntity):
                     )
 
             except (HomeAssistantError, ConfigEntryAuthFailed):
-                # ConfigEntryAuthFailed must propagate untouched so Home
-                # Assistant starts the reauthentication flow on a 401.
+                # ConfigEntryAuthFailed propagates untouched. It does NOT start
+                # reauth from here — the entity service-call path has no such
+                # hook. Reauth is started by the coordinator when the same 401
+                # comes back from /main, within one poll interval. Re-raising
+                # keeps the toast honest and lets that mechanism do its job.
                 raise
             except Exception as err:
                 _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, err VALUE unchanged
@@ -796,9 +804,14 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             # the start of a scheduled charge is picked up as soon as it wakes,
             # and the value stays as the user last set it until then. The
             # complaint is logged once per cycle, not once per poll.
-            self._soc_calculator.last_seed = {"seeded": False, "detail": anchor}
             if not self._seed_warned:
                 self._seed_warned = True
+                # Recorded once per cycle, like the log line below it, because
+                # SOC Percent publishes this text as its `soc_anchor`
+                # attribute: a reason that quotes the rebased percentage reads
+                # differently on every poll of a running session, which is a
+                # recorder row per poll for the rest of the cycle.
+                self._soc_calculator.last_seed = {"seeded": False, "detail": anchor}
                 _LOGGER.warning(
                     "Initial SOC not seeded from %s: %s. Keeping the value you "  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
                     "set last and retrying every poll until the reading becomes "  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from homeassistant.components.time import TimeEntity, TimeEntityDescription
 from homeassistant.core import HomeAssistant, State
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as ha_dt
@@ -22,7 +22,7 @@ from .control_base import CommandBackedEntity
 from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
 from .utils import get_safe_value
 
-_LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -193,6 +193,18 @@ class EveusScheduleTimeEntity(
                         f"Eveus charger did not accept '{self.name}' = "
                         f"{self._attr_native_value.strftime('%H:%M')}"
                     )
+            except (HomeAssistantError, ConfigEntryAuthFailed):
+                # Same contract as number/switch/select: a HomeAssistantError is
+                # already the user-facing toast, and ConfigEntryAuthFailed must
+                # reach Home Assistant untouched.
+                raise
+            except Exception as err:
+                _LOGGER.debug(  # pragma: no mutate - pure log-message text, err VALUE unchanged
+                    "Failed to set %s: %s", self.name, err, exc_info=True
+                )
+                raise HomeAssistantError(
+                    f"Failed to set '{self.name}': {err}"  # pragma: no mutate - pure exception-message text, err VALUE unchanged
+                ) from err
             finally:
                 self._pending_value = None
                 self._attr_native_value = minutes_to_time(self._resolve_minutes())

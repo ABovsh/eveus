@@ -4,6 +4,9 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-p no:homeassistant"
+markers = [
+    "live: hits the real charger over the LAN; skipped unless EVEUS_LIVE_HOST and EVEUS_PASS are set",
+]
 
 [tool.coverage.run]
 branch = true
@@ -20,4 +23,6 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E9", "F401", "F63", "F7", "F82"]
+# F841 catches the leftover of a refactor that stops using a local — the
+# exact residue the monotonic-clock change left behind in common_network.
+select = ["E9", "F401", "F63", "F7", "F82", "F841"]

@@ -160,3 +160,89 @@ def test_a_degraded_modern_reply_keeps_the_detailed_reason():
     assert get_not_charging_reason_attrs(
         EveusTestUpdater({"state": 7, "subState": 5}), None
     ) == {}
+
+
+# =============================================================================
+# External control (OCPP) — GitHub community report
+# =============================================================================
+#
+# With OCPP enabled the charger only starts on a command from the backend or
+# the vendor mobile app, so nothing HA does will begin a session. Verified on
+# hardware: flipping ocppEnabled moves subState 0 <-> 9 immediately, with no
+# cable connected and no backend transaction in flight.
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # The reported case: the charger sat in state 5 with subState 9, and
+        # the reason read "Charge Complete" while the real blocker was OCPP.
+        ({"state": 5, "subState": 9, "ocppEnabled": 1}, "Controlled by OCPP"),
+        ({"state": 3, "subState": 9, "ocppEnabled": 1}, "Controlled by OCPP"),
+        ({"state": 6, "subState": 0, "ocppEnabled": 1}, "Controlled by OCPP"),
+        # Naming the external controller beats naming a limit: the limit
+        # cannot be what is holding the session back if HA cannot start one.
+        ({"state": 3, "subState": 1, "ocppEnabled": 1}, "Controlled by OCPP"),
+    ],
+)
+def test_ocpp_control_is_named_before_the_state_derived_reason(payload, expected):
+    assert get_not_charging_reason(_modern(**payload), None) == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # Facts the user can see for themselves outrank the OCPP note.
+        ({"state": 4, "subState": 0, "ocppEnabled": 1}, "Charging"),
+        ({"state": 2, "subState": 9, "ocppEnabled": 1}, "Cable Not Connected"),
+        ({"state": 7, "subState": 5, "ocppEnabled": 1}, "Error"),
+        ({"state": 0, "subState": 9, "ocppEnabled": 1}, "Starting Up"),
+        ({"state": 20, "subState": 9, "ocppEnabled": 1}, "Unknown"),
+    ],
+)
+def test_ocpp_does_not_mask_what_the_charger_plainly_shows(payload, expected):
+    assert get_not_charging_reason(_modern(**payload), None) == expected
+
+
+@pytest.mark.parametrize("flag", [0, None])
+def test_ocpp_reason_needs_the_flag_actually_set(flag):
+    """A disabled or absent flag must not invent an external controller."""
+    payload = {"state": 3, "subState": 1}
+    if flag is not None:
+        payload["ocppEnabled"] = flag
+    assert get_not_charging_reason(_modern(**payload), None) == "Stopped by User"
+
+
+def test_waiting_for_activation_survives_the_charge_complete_state():
+    """state 5 must stop swallowing the substate that explains the hold.
+
+    Firmware keeps subState alive in state 5 (observed: state 5 carrying
+    subState 1 for a whole session), so returning "Charge Complete" without
+    reading it hides the one code that says the charger is waiting to be
+    activated — the exact value the reporter saw and could not act on.
+    """
+    assert (
+        get_not_charging_reason(_modern(state=5, subState=9), None)
+        == "Waiting for Activation"
+    )
+
+
+def test_a_normal_completion_still_reads_as_charge_complete():
+    """Only subState 9 overrides state 5; a finished session is untouched."""
+    for substate in (0, 1, 2, 5):
+        assert (
+            get_not_charging_reason(_modern(state=5, subState=substate), None)
+            == "Charge Complete"
+        )
+
+
+def test_legacy_firmware_keeps_charge_complete_for_substate_9():
+    """A 1.x substate 9 is not "waiting for activation" — do not read it."""
+    assert (
+        get_not_charging_reason(EveusTestUpdater({"state": 5, "subState": 9}), None)
+        == "Charge Complete"
+    )
+
+
+def test_every_reason_is_a_declared_enum_option():
+    assert "Controlled by OCPP" in NOT_CHARGING_REASON_OPTIONS

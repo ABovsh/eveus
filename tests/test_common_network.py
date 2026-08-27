@@ -313,7 +313,7 @@ def test_initial_network_failure_raises_update_failed(
 def test_offline_backoff_skip_raises_even_without_prior_data() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater.data = None
-    updater._next_poll_attempt = time.time() + RETRY_DELAY
+    updater._next_poll_attempt = time.monotonic() + RETRY_DELAY
 
     with pytest.raises(UpdateFailed):
         asyncio.run(updater._async_update_data())
@@ -325,7 +325,7 @@ def test_force_refresh_bypasses_offline_backoff_once(
     session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
-    updater._next_poll_attempt = time.time() + RETRY_DELAY
+    updater._next_poll_attempt = time.monotonic() + RETRY_DELAY
     updater._force_refresh_requests = 1
 
     data = asyncio.run(updater._async_update_data())
@@ -427,7 +427,7 @@ def test_failure_recording_reduces_polling_when_device_appears_offline() -> None
     updater._record_failure(asyncio.TimeoutError())
 
     assert updater.is_likely_offline is True
-    assert updater._next_poll_attempt > time.time()
+    assert updater._next_poll_attempt > time.monotonic()
     assert updater.connection_quality["last_error"] == "TimeoutError"
 
 
@@ -1456,7 +1456,7 @@ def test_offline_backoff_skip_boundary_below_one_second(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     updater, session = coordinator
-    monkeypatch.setattr(common_network.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0)
     updater._next_poll_attempt = 1000.5
 
     with pytest.raises(UpdateFailed):
@@ -1468,7 +1468,7 @@ def test_offline_backoff_skip_exact_upper_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     updater, session = coordinator
-    monkeypatch.setattr(common_network.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0)
     updater._next_poll_attempt = 1000.0 + common_network._MAX_OFFLINE_BACKOFF
 
     with pytest.raises(UpdateFailed):
@@ -1680,3 +1680,23 @@ def test_diagnostics_last_error_names_the_payload_rule(
     last_error = updater.connection_quality["last_error"]
     assert "currentSet" in last_error
     assert last_error != "ValueError"
+
+
+def test_offline_backoff_deadline_is_monotonic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A backward wall-clock step must not extend the offline backoff.
+
+    Every other deadline in this module already times on the monotonic clock
+    for exactly this reason; the backoff was the last wall-clock holdout, and a
+    mixed pair (stamped on one clock, compared against the other) is worse than
+    either alone.
+    """
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0)
+    monkeypatch.setattr(common_network.time, "time", lambda: 5000.0)
+    updater._consecutive_failures = 99
+    updater._record_failure(RuntimeError("offline"))
+    stamped = updater._next_poll_attempt
+
+    # The deadline must be expressed on the monotonic clock, not the wall clock.
+    assert 1000.0 < stamped <= 1000.0 + common_network._MAX_OFFLINE_BACKOFF

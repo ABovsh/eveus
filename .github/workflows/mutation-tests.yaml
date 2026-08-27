@@ -76,6 +76,7 @@ jobs:
               tests/test_real_payload_schema.py
               tests/test_multi_state_payload.py
               tests/test_normalize_soc_input.py
+              tests/test_recorder_deadband.py
               tests/test_issue11_fw151_unknown_state.py
           - name: coordinator
             paths: "custom_components/eveus/common_network.py"
@@ -115,6 +116,7 @@ jobs:
               tests/test_time_controls.py
               tests/test_firmware_parsing.py
               tests/test_hardening_4_16_1.py
+              tests/test_recorder_deadband.py
               tests/test_hardening_rc_2026_07_30.py
           - name: init
             paths: "custom_components/eveus/__init__.py"
@@ -138,6 +140,8 @@ jobs:
               tests/test_command.py
               tests/test_soc_autofill.py
               tests/test_hardening_rc_2026_07_10.py
+              tests/test_hardening_rc_2026_08_24.py
+              tests/test_hardening_rc_2026_08_25.py
               tests/test_fw151_missing_fields_audit.py
           - name: minor-entities
             paths: "custom_components/eveus/select.py,custom_components/eveus/time.py,custom_components/eveus/binary_sensor.py,custom_components/eveus/button.py,custom_components/eveus/session_history.py"
@@ -157,6 +161,7 @@ jobs:
             tests: >-
               tests/test_sensor_definitions.py
               tests/test_sensor_definition_entities.py
+              tests/test_recorder_deadband.py
               tests/test_ev_sensors.py
               tests/test_ev_sensor_entities.py
               tests/test_new_sensors.py
@@ -170,6 +175,7 @@ jobs:
               tests/test_not_charging_reason.py
               tests/test_hardening_rc_2026_07_19.py
               tests/test_hardening_rc_2026_08_21.py
+              tests/test_hardening_rc_2026_08_24.py
               tests/test_issue11_fw151_state_semantics.py
               tests/test_issue11_fw151_unknown_state.py
           - name: diagnostics-triggers
@@ -265,8 +271,10 @@ jobs:
         # design — see the note at the top of this file). That means an
         # increase in real survivors from newly-shipped, untested code
         # looked identical to expected noise. This step diffs against a
-        # committed baseline: an increase is a loud ::warning::, a decrease
-        # is a prompt to tighten .github/mutation-baseline.json.
+        # committed baseline: an increase FAILS this job, a decrease is a
+        # prompt to tighten .github/mutation-baseline.json. Failing is safe
+        # here — this workflow is a weekly cron, never a PR gate — and a
+        # warning nobody reads is how a weakened killer-test list ships.
         if: always()
         env:
           LEG_NAME: ${{ matrix.name }}
@@ -275,7 +283,8 @@ jobs:
           baseline=$(python3 -c "import json,os; print(json.load(open('.github/mutation-baseline.json')).get(os.environ['LEG_NAME'], 0))")
           echo "Leg $LEG_NAME: survivors=$survived baseline=$baseline"
           if [ "$survived" -gt "$baseline" ]; then
-            echo "::warning::$LEG_NAME: survivors increased ($baseline -> $survived) — likely new code shipped without a killer test."
+            echo "::error::$LEG_NAME: survivors increased ($baseline -> $survived) — likely new code shipped without a killer test."
+            exit 1
           elif [ "$survived" -lt "$baseline" ]; then
             echo "::notice::$LEG_NAME: survivors decreased ($baseline -> $survived) — update .github/mutation-baseline.json to tighten the ratchet."
           fi

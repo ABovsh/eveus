@@ -223,7 +223,8 @@ def test_mutation_workflow_checks_survivor_baseline() -> None:
     assert len(baseline_steps) == 1, "expected exactly one baseline-check step"
     run_text = baseline_steps[0]["run"]
     assert baseline_steps[0].get("if") == "always()"
-    assert "::warning::" in run_text
+    # An increase is an error that fails the job, not a warning nobody reads.
+    assert "::error::" in run_text
     assert "result-ids survived" in run_text
 
 
@@ -235,6 +236,12 @@ _NON_KILLER_TESTS = frozenset({
     "tests/test_name_platform_compat.py",
     "tests/test_test_quality_contracts.py",
     "tests/test_ci_workflow.py",
+    # Skipped unless EVEUS_LIVE_HOST points at a real charger, so it can never
+    # kill a mutant in CI. It guards the fixture against firmware drift instead.
+    "tests/test_firmware_drift_live.py",
+    # Asserts on the shipped blueprint YAML, not on integration code, so there
+    # is no mutant for it to kill.
+    "tests/test_blueprints.py",
 })
 
 
@@ -266,3 +273,20 @@ def test_non_killer_exclusions_still_exist() -> None:
 
     missing = [t for t in _NON_KILLER_TESTS if not pathlib.Path(t).exists()]
     assert not missing, f"stale entries in _NON_KILLER_TESTS: {missing}"
+
+
+def test_mutation_ratchet_fails_the_job_on_an_increase() -> None:
+    """A survivor increase must fail the job, not just print a warning.
+
+    This workflow is a weekly cron, not a PR gate, so failing it loudly costs
+    nothing but attention — and a silent warning is exactly how a weakened
+    killer-test list ships unnoticed.
+    """
+    from pathlib import Path
+
+    body = Path(".github/workflows/mutation-tests.yaml").read_text(encoding="utf-8")
+    ratchet = body.split("Check survivor baseline")[1]
+    increase_branch = ratchet.split('elif [ "$survived" -lt "$baseline" ]')[0]
+    assert "exit 1" in increase_branch, (
+        "the survivors-increased branch does not fail the job"
+    )

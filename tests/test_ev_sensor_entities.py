@@ -495,7 +495,9 @@ def test_time_to_target_drops_stale_value_on_calculation_error(
     assert sensor._cached_value is None
 
 
-def test_charging_finish_time_rounds_to_next_minute(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_charging_finish_time_rounds_up_to_the_five_minute_grid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fixed_now = ev_sensors.datetime(2026, 5, 22, 10, 0, 30)
     monkeypatch.setattr(ev_sensors.dt_util, "utcnow", lambda: fixed_now)
     monkeypatch.setattr(ev_sensors, "calculate_remaining_seconds", lambda *args: 90)
@@ -505,7 +507,9 @@ def test_charging_finish_time_rounds_to_next_minute(monkeypatch: pytest.MonkeyPa
     )
     sensor.hass = HelperHass(EV_HELPERS)
 
-    assert sensor._get_sensor_value() == ev_sensors.datetime(2026, 5, 22, 10, 3)
+    # 10:00:30 + 90 s = 10:02, snapped up to the next 5-minute boundary — the
+    # same grid Time to Target SOC states its estimate on.
+    assert sensor._get_sensor_value() == ev_sensors.datetime(2026, 5, 22, 10, 5)
 
 
 def test_charging_finish_time_returns_none_for_non_eta_states(
@@ -1380,3 +1384,34 @@ def test_ev_helper_sensors_do_not_require_helpers_except_base_default() -> None:
     assert TimeToTargetSocSensor._requires_helpers is False
     assert EnergyToTargetSocSensor._requires_helpers is False
     assert ChargingFinishTimeSensor._requires_helpers is False
+
+
+def test_soc_percent_sensor_reports_how_it_was_anchored() -> None:
+    """The user must be able to see whether Initial SOC was seeded or set by hand.
+
+    Every SOC figure derives from Initial SOC. A stale hand-set value, or a
+    failed external-sensor seed, silently poisons the reading and was until now
+    only visible inside a downloaded diagnostics file.
+    """
+    calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
+    updater = EveusTestUpdater({"sessionEnergy": "16"})
+    sensor = EVSocPercentSensor(updater, 1, calculator)
+
+    calculator.last_seed = {"seeded": True, "detail": "62.0% from sensor.car_battery"}
+    assert sensor._update_extra_state_attributes() is True
+    assert sensor.extra_state_attributes["soc_anchor"] == "62.0% from sensor.car_battery"
+    assert sensor.extra_state_attributes["soc_anchor_seeded"] is True
+
+    # Recorder hygiene: an unchanged anchor must NOT report a change, or the
+    # sensor writes a database row on every poll.
+    assert sensor._update_extra_state_attributes() is False
+
+    calculator.last_seed = {"seeded": False, "detail": "reading is unavailable"}
+    assert sensor._update_extra_state_attributes() is True
+    assert sensor.extra_state_attributes["soc_anchor"] == "reading is unavailable"
+    assert sensor.extra_state_attributes["soc_anchor_seeded"] is False
+
+    calculator.last_seed = {}
+    assert sensor._update_extra_state_attributes() is True
+    assert sensor.extra_state_attributes["soc_anchor"] == "set manually"
+    assert sensor.extra_state_attributes["soc_anchor_seeded"] is False

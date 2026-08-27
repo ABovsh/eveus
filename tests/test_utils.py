@@ -153,7 +153,7 @@ def test_soc_calculations_clamp_to_battery_capacity() -> None:
 def test_calculate_remaining_time_states() -> None:
     assert utils.calculate_remaining_time(80, 80, 7000, 80, 7.5) == "Target reached"
     assert utils.calculate_remaining_time(20, 80, 0, 80, 7.5) == "Not charging"
-    assert utils.calculate_remaining_time(20, 80, 7000, 80, 0) == "6h 51m"
+    assert utils.calculate_remaining_time(20, 80, 7000, 80, 0) == "6h 50m"
     assert utils.calculate_remaining_time(120, 80, 7000, 80, 0) == "unavailable"
 
 
@@ -487,3 +487,10 @@ def test_remaining_seconds_cap_boundary_is_inclusive() -> None:
     assert utils.calculate_remaining_seconds(28, 100, 1000, 1000, 0) == 2592000.0
     # A hair over the cap (still finite): unavailable.
     assert utils.calculate_remaining_seconds(27.999, 100, 1000, 1000, 0) is None
+
+
+def test_calculate_remaining_time_never_reports_zero_minutes() -> None:
+    """A sub-5-minute estimate reads 5m, never 0m, until it drops under a minute."""
+    assert utils.calculate_remaining_time(79.7, 80, 7000, 80, 0) == "5m"
+    assert utils.calculate_remaining_time(79.9, 80, 7000, 80, 0) == "5m"
+    assert utils.calculate_remaining_time(79.95, 80, 7000, 80, 0) == "< 1m"

@@ -5,7 +5,7 @@
 > Full local control and monitoring for Eveus EV chargers: charging controls, current electrical measurements, charging costs, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.20.1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.21.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
@@ -191,7 +191,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | --- | --- | --- |
 | `sensor.eveus_ev_charger_state` | Sensor | Main charger state, such as standby, charging, complete, or error. `enum` device class — automation state triggers offer a dropdown of all possible values |
 | `sensor.eveus_ev_charger_substate` | Sensor | Detailed charger substate or error label. `enum` device class — same dropdown behavior |
-| `sensor.eveus_ev_charger_not_charging_reason` | Sensor | Why charging is not running right now, in one value — cable not connected, waiting for the car, a limit reached, waiting for a schedule, and so on. `enum` device class; in the error state the fault name is in the `error` attribute (modern firmware) |
+| `sensor.eveus_ev_charger_not_charging_reason` | Sensor | Why charging is not running right now, in one value — cable not connected, waiting for the car, a limit reached, waiting for a schedule, and so on. Reads **Controlled by OCPP** while the OCPP switch is on, since the backend or mobile app decides when a session starts. `enum` device class; in the error state the fault name is in the `error` attribute (modern firmware) |
 | `binary_sensor.eveus_ev_charger_car_connected` | Binary sensor | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Binary sensor | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Binary sensor | Reported OCPP connection state (diagnostic) |
@@ -317,6 +317,8 @@ Once per plug-in, at the start of charging. If the car is asleep then — normal
 **A plug-in is not a charge.** Pause and resume, stop and restart, let the car finish and top up again, ride out a fault the charger recovers from — to the charger that is all one session and its energy meter keeps running through it. Initial SOC stays put and every SOC figure stays right. Only unplugging starts a new one.
 
 **Your own value always wins.** Move the slider by hand and it stays until the next plug-in — including across a Home Assistant restart, or saving the integration's options mid-charge.
+
+**Seeing which value is in use.** SOC Percent carries a `soc_anchor` attribute naming how Initial SOC was last set — the reading and sensor it was seeded from, why a seed could not be taken, or `set manually`. A stale anchor is what silently skews every SOC figure, so this makes it visible.
 
 **If nothing gets filled in**
 
@@ -465,6 +467,17 @@ Charging now shows up as its own bar in the energy views, including
 per-day/month history. Costs are already tracked by the integration itself —
 see `sensor.eveus_ev_charger_session_cost` and the Counter A/B cost sensors,
 which use the tariff configured on the charger (including night rates).
+
+## Blueprints
+
+Two ready-made automations ship with the integration. Import either one from
+**Settings → Automations & Scenes → Blueprints → Import Blueprint**, paste the
+URL, then fill in the two or three fields it asks for — no YAML.
+
+| Blueprint | What it does | URL |
+| --- | --- | --- |
+| Charging session notification | Notifies on start and finish, with the session's energy, cost and duration, through the action of your choice | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
+| Stop charging on low house battery | Stops the car with the charger's own Stop command — not by cutting its power — when your inverter's battery drops below a threshold. Fully local | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
 
 ## Troubleshooting
 

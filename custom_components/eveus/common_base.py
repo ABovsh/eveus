@@ -20,7 +20,7 @@ from .const import (
     CONTROL_GRACE_PERIOD,
     ERROR_LOG_RATE_LIMIT,
 )
-from .utils import RateLog, get_device_info, get_device_suffix
+from .utils import RateLog, apply_deadband, get_device_info, get_device_suffix
 
 if TYPE_CHECKING:
     from .common_network import EveusUpdater
@@ -413,7 +413,13 @@ class OptimisticControlMixin(Generic[T]):
         current_time: float,
         confirm_fn: Callable[[T, T], bool],
         *,
-        mismatch_ttl: float = 10.0,
+        # 16 s, not 10 s: the charger's contactor can take 5-15 s to close and
+        # POST_COMMAND_REFRESH_DELAYS polls at 3/10/20 s. A 10 s TTL expired on
+        # the middle poll (which lands a round-trip after its nominal delay), so
+        # a still-stale reading cleared the optimistic value and the control
+        # visibly snapped back until the 20 s poll. 16 s clears the firmware's
+        # worst case and that poll while still resolving before the last one.
+        mismatch_ttl: float = 16.0,
     ) -> None:
         """Record a device value and clear optimistic state when reconciled."""
         self._last_device_value = new_value
@@ -479,6 +485,12 @@ class WriteOnChangeMixin:
 class EveusSensorBase(BaseEveusEntity, SensorEntity):
     """Base sensor entity."""
 
+    # Optional churn damping for sensors whose reading dithers between polls:
+    # the published value is held until it moves this far. Set on the subclass;
+    # None leaves every reading published verbatim. (Spec-driven sensors damp
+    # inside their getter instead — see _make_value_getter's `deadband`.)
+    _deadband: float | None = None
+
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the sensor."""
         super().__init__(updater, device_number)
@@ -516,6 +528,8 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
 
         try:
             value = self._get_sensor_value()
+            if self._deadband is not None:
+                value = apply_deadband(previous_value, value, self._deadband)
             self._attr_native_value = value
         except Exception as err:
             current_time = time.time()

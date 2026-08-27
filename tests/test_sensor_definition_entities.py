@@ -468,7 +468,9 @@ def test_valid_session_time_still_renders() -> None:
 
     updater = EveusTestUpdater(data={"sessionTime": 3661})
     assert get_session_time(updater, None) == "1h 01m"
-    assert get_session_time_attrs(updater, None) == {"duration_seconds": 3661}
+    # Quantised onto the same minute grid as the state ("1h 01m"): the raw
+    # second count ticked every poll and wrote a recorder row each time.
+    assert get_session_time_attrs(updater, None) == {"duration_seconds": 3660}
 
 
 @pytest.mark.parametrize(

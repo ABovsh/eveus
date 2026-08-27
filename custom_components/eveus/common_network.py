@@ -680,7 +680,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._silent_mode = True
 
         if self.is_likely_offline:
-            self._next_poll_attempt = time.time() + _MAX_OFFLINE_BACKOFF
+            # Monotonic, like every other deadline in this module: an NTP step
+            # or a VM resume must not lengthen or shorten the backoff.
+            self._next_poll_attempt = time.monotonic() + _MAX_OFFLINE_BACKOFF
             self._set_update_interval(OFFLINE_UPDATE_INTERVAL)
             if not self._offline_announced:
                 _LOGGER.debug("Eveus device appears offline, reducing poll frequency")
@@ -798,12 +800,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
-        start_time = time.time()
-        # Latency is measured on the monotonic clock so a wall-clock step during
-        # the request can't record a negative or absurd sample.
+        # Every deadline here is on the monotonic clock, so a wall-clock step
+        # during the request can't record a negative or absurd latency sample
+        # or stretch the offline backoff.
         start_monotonic = time.monotonic()
         bypass_backoff = self._force_refresh_requests > 0
-        backoff_remaining = self._next_poll_attempt - start_time
+        backoff_remaining = self._next_poll_attempt - start_monotonic
         if 0 < backoff_remaining <= _MAX_OFFLINE_BACKOFF and not bypass_backoff:
             raise UpdateFailed("Skipping Eveus poll during offline backoff")
 

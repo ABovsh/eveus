@@ -321,7 +321,7 @@ def test_state_getters_return_none_for_unknown_codes_and_missing_values() -> Non
 def test_session_time_and_active_rate_attributes_handle_edge_cases() -> None:
     assert sensors.get_session_time(_updater({"sessionTime": "3661"}), None) == "1h 01m"
     assert sensors.get_session_time_attrs(_updater({"sessionTime": "61"}), None) == {
-        "duration_seconds": 61
+        "duration_seconds": 60
     }
     assert sensors.get_session_time_attrs(_updater({}, available=False), None) == {}
     assert sensors.get_session_time_attrs(_updater({"sessionTime": "bad"}), None) == {}
@@ -1053,3 +1053,75 @@ class TestChargerStateAttributes:
     def test_empty_payload_is_handled(self) -> None:
         """No payload yet (first poll pending) must not raise."""
         assert sensors.get_charger_state_attributes(_updater(None), None) == {}
+
+
+def test_session_time_duration_attribute_is_minute_quantised() -> None:
+    """duration_seconds must move only when the visible state moves.
+
+    The state is minute-granular by design so an active session does not write
+    a recorder row on every poll. An attribute that ticks every poll makes HA
+    write one anyway, because a row is written on any attribute change.
+    """
+    first = sensors.get_session_time_attrs(_updater({"sessionTime": "61"}), None)
+    second = sensors.get_session_time_attrs(_updater({"sessionTime": "119"}), None)
+    assert first == second
+
+    third = sensors.get_session_time_attrs(_updater({"sessionTime": "120"}), None)
+    assert third != second
+    assert third == {"duration_seconds": 120}
+
+    # And it agrees with the grid the visible state already uses.
+    assert sensors.get_session_time(_updater({"sessionTime": "61"}), None) == \
+        sensors.get_session_time(_updater({"sessionTime": "119"}), None)
+
+
+def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
+    """Pin every field of the six diagnostic measurement specs.
+
+    They are rebuilt through the file's own tuple+comprehension idiom; this
+    asserts the produced specs stay identical to the hand-written ones.
+    """
+    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+    from homeassistant.const import (
+        SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        UnitOfElectricCurrent,
+        UnitOfElectricPotential,
+        UnitOfTemperature,
+    )
+    from homeassistant.helpers.entity import EntityCategory
+
+    from custom_components.eveus.sensor_definitions import (
+        SensorType,
+        create_sensor_specifications,
+    )
+
+    specs = {s.key: s for s in create_sensor_specifications(phases=1)}
+    expected = {
+        "box_temperature": ("Box Temperature", "mdi:thermometer",
+                            SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0),
+        "plug_temperature": ("Plug Temperature", "mdi:thermometer-high",
+                             SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0),
+        "battery_voltage": ("Battery Voltage", "mdi:battery",
+                            SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 2),
+        "leak_current": ("Leakage Current", "mdi:current-dc",
+                         SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0),
+        "leak_current_peak": ("Leakage Current Peak", "mdi:current-dc",
+                              SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0),
+        "wifi_signal": ("WiFi Signal", "mdi:wifi",
+                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0),
+    }
+    for key, (name, icon, device_class, unit, precision) in expected.items():
+        spec = specs[key]
+        assert spec.name == name
+        assert spec.icon == icon
+        assert spec.device_class == device_class
+        assert spec.unit == unit
+        assert spec.precision == precision
+        assert spec.sensor_type == SensorType.DIAGNOSTIC
+        assert spec.state_class == SensorStateClass.MEASUREMENT
+        assert spec.category == EntityCategory.DIAGNOSTIC
+
+    # Ordering is part of the contract: entity creation walks this list.
+    order = [s.key for s in create_sensor_specifications(phases=1)]
+    assert order == sorted(order, key=order.index)  # stable snapshot below
+    assert [k for k in order if k in expected] == list(expected)
