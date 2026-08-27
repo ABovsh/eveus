@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.21.0 - 2026-08-27
 
 ### ✨ Added
 - **Charging session notifications, ready to import.** A blueprint sends a notification when a session starts and when it finishes, carrying the energy, cost and duration the charger recorded for that session. You pick the charger and the action that delivers it — a mobile app notification, Telegram, a persistent notification or your own script — and the text is prepared for you in a `message` variable. Import it from **Settings → Automations & Scenes → Blueprints → Import Blueprint**; the README has the URL.
