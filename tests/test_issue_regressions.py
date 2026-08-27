@@ -12,13 +12,13 @@ Open feature requests are tracked on GitHub, not here:
 from __future__ import annotations
 
 import pytest
-import voluptuous_serialize
 from conftest import (
     TEST_HOST,
     TEST_PASSWORD,
     TEST_USERNAME,
     EveusTestUpdater,
     disable_state_writes,
+    serialize_schema,
 )
 
 from custom_components.eveus import config_flow as cf
@@ -110,11 +110,7 @@ def test_issue_7_firmware_update_recognized_without_reload() -> None:
 
 
 def test_issue_8_user_step_schema_is_frontend_serializable() -> None:
-    import homeassistant.helpers.config_validation as cv
-
-    voluptuous_serialize.convert(
-        cf.build_user_data_schema({}), custom_serializer=cv.custom_serializer
-    )
+    serialize_schema(cf.build_user_data_schema({}))
 
 
 # ---------------------------------------------------------------------------

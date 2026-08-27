@@ -645,3 +645,26 @@ def wire_flow_reload_success(flow: Any, entry: Any, captured: dict | None = None
         )
     )
     flow.async_abort = lambda reason: {"type": "abort", "reason": reason}
+
+
+def serialize_schema(schema):
+    """Serialize a flow schema the way the running Home Assistant does.
+
+    HA 2026.9 replaced ``voluptuous_serialize.convert`` with
+    ``probatio.to_field_list`` and dropped the old package from its
+    dependencies; on that release the old converter returns HA's UNSUPPORTED
+    sentinel for a selector instead of a field list. Prefer whichever
+    serializer the installed HA actually uses, so the guard keeps testing the
+    real frontend contract on both the supported floor and the ceiling.
+    """
+    import homeassistant.helpers.config_validation as cv
+
+    try:
+        from probatio import to_field_list
+    except ImportError:
+        import voluptuous_serialize
+
+        return voluptuous_serialize.convert(
+            schema, custom_serializer=cv.custom_serializer
+        )
+    return to_field_list(schema, custom_serializer=cv.custom_serializer)

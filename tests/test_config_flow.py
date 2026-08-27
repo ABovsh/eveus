@@ -1890,15 +1890,14 @@ def test_split_host_accepts_bare_ipv6(raw, expected_host) -> None:
 
 
 def test_soc_schema_is_serializable_and_validates_range() -> None:
-    import homeassistant.helpers.config_validation as cv
-    import voluptuous_serialize
+    from conftest import serialize_schema
     from custom_components.eveus import config_flow as cf
 
     class _Hass:
         states = type("S", (), {"get": staticmethod(lambda eid: None)})()
 
     schema = cf.build_soc_step_schema(_Hass(), defaults={})
-    voluptuous_serialize.convert(schema, custom_serializer=cv.custom_serializer)
+    serialize_schema(schema)
 
     cap_lo, cap_hi = cf.SOC_INPUT_LIMITS["battery_capacity"]
     schema({"battery_capacity": cap_lo, "soc_correction": 0})  # valid submission

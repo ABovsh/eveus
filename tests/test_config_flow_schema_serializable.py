@@ -1,6 +1,6 @@
 """Every config-flow step schema must be JSON-serializable for the frontend.
 
-Home Assistant serializes a flow's ``data_schema`` with ``voluptuous_serialize``
+Home Assistant serializes a flow's ``data_schema`` for the frontend
 before sending it to the UI. A bare validator function in the schema makes that
 conversion raise, so the config dialog fails to load with a 500 error (issue #8).
 These tests reproduce that serialization the exact way HA does.
@@ -16,9 +16,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 
-import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-import voluptuous_serialize
+from conftest import serialize_schema
 
 from custom_components.eveus import config_flow as cf
 from custom_components.eveus.const import (
@@ -64,7 +63,7 @@ class _FakeEntry:
 
 def _assert_serializable(schema) -> None:
     """Serialize a schema exactly as HA's frontend layer does."""
-    voluptuous_serialize.convert(schema, custom_serializer=cv.custom_serializer)
+    serialize_schema(schema)
 
 
 def _own_step_handlers(obj):
@@ -183,7 +182,7 @@ def _frontend_submission(schema) -> dict:
     the submission from that same serialized contract and stringify it,
     reproducing exactly what the frontend sends.
     """
-    serialized = voluptuous_serialize.convert(schema, custom_serializer=cv.custom_serializer)
+    serialized = serialize_schema(schema)
     submission = {}
     for field in serialized:
         options = field.get("options")
