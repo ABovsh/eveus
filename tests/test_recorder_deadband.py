@@ -286,3 +286,67 @@ def test_current_holds_the_two_tenth_dither_seen_all_session() -> None:
     assert _read(sd.get_current, updater, "curMeas1", [15.7, 15.9, 15.6, 15.8]) == (
         pytest.approx([15.7, 15.7, 15.7, 15.7])
     )
+
+
+# --- Session Time: the charger counts from plug-in, not from charge start ---
+
+
+def _session(seconds: int, state: int, updater=None):
+    updater = updater or _updater({})
+    updater.data.update({"sessionTime": seconds, "state": state})
+    return updater
+
+
+def test_session_time_still_states_every_minute_while_charging() -> None:
+    """The one state where the running minute is what the user is watching."""
+    updater = _session(3600, 4)
+    assert sd.get_session_time(updater, None) == "1h 00m"
+
+    _session(3660, 4, updater)
+    assert sd.get_session_time(updater, None) == "1h 01m"
+
+
+def test_session_time_states_five_minute_steps_once_charging_ends() -> None:
+    """The charger's counter runs until the cable comes out, not until the
+    charge finishes: a car left plugged in overnight after Charge Complete
+    wrote a row every minute for a figure nobody is reading."""
+    updater = _session(15600, 5)
+    baseline = sd.get_session_time(updater, None)
+
+    _session(15660, 5, updater)
+    assert sd.get_session_time(updater, None) == baseline
+
+    _session(15900, 5, updater)
+    assert sd.get_session_time(updater, None) != baseline
+
+
+def test_session_time_never_counts_backwards_when_charging_ends() -> None:
+    """Charging states the minute, standby states the five — so the coarser
+    step must not drag an already-published time back down."""
+    updater = _session(15780, 4)
+    assert sd.get_session_time(updater, None) == "4h 23m"
+
+    # The five-minute floor of the very next reading is 4h 20m — three minutes
+    # BEHIND what the charge already published.
+    _session(15790, 5, updater)
+    assert sd.get_session_time(updater, None) == "4h 23m"
+
+
+def test_session_time_attribute_follows_the_state_it_mirrors() -> None:
+    """An attribute writes a row exactly like a state does."""
+    updater = _session(15600, 5)
+    baseline = sd.get_session_time_attrs(updater, None)["duration_seconds"]
+
+    _session(15660, 5, updater)
+
+    assert sd.get_session_time_attrs(updater, None)["duration_seconds"] == baseline
+
+
+def test_session_time_restarts_cleanly_when_the_cable_comes_out() -> None:
+    """Unplugging resets the charger's counter; the held value must not stick."""
+    updater = _session(15600, 5)
+    sd.get_session_time(updater, None)
+
+    _session(120, 4, updater)
+
+    assert sd.get_session_time(updater, None) == "2m"

@@ -39,6 +39,7 @@ from .const import (
     ERROR_STATES,
     NORMAL_SUBSTATES,
     RATE_STATES,
+    SESSION_ACTIVE_STATES,
     ERROR_LOG_RATE_LIMIT,
     LEGACY_RAW_STATE_KEY,
     MODEL_MAX_CURRENT,
@@ -666,31 +667,64 @@ def get_not_charging_reason_attrs(updater, hass) -> dict:
 get_ground_status = _make_enum_getter("ground", {1: "Connected", 0: "Not Connected"})
 
 
-def get_session_time(updater, hass) -> Optional[str]:
-    """Get formatted session time."""
+# The charger counts a session from PLUG-IN, not from the start of charging,
+# and stops only when the cable comes out — so a car left connected after
+# Charge Complete kept this figure ticking, one recorder row per minute, for a
+# duration nobody is reading any more. While a charge is actually running the
+# minute is what the user is watching; outside one, a coarser step costs
+# nothing.
+_SESSION_TIME_STEP_CHARGING_SECONDS: Final[int] = 60
+_SESSION_TIME_STEP_IDLE_SECONDS: Final[int] = 300
+
+
+def _get_session_seconds(updater) -> Optional[int]:
+    """Session duration, stepped by whether a charge is actually running.
+
+    Shared by the state and its mirroring attribute so the two grids cannot
+    drift apart — an attribute writes a recorder row exactly like a state does.
+    """
     seconds = _get_data_value(updater, "sessionTime", int)
     # A negative duration is physically impossible; an absurd one (corrupt RTC /
     # counter) would render an overlong state string. Surface `unknown` for both
     # instead of a plausible-but-wrong value.
     if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
         return None
-    return format_duration(seconds)
+    state = _get_data_value(updater, "state", int)
+    step = (
+        _SESSION_TIME_STEP_CHARGING_SECONDS
+        if state in SESSION_ACTIVE_STATES
+        else _SESSION_TIME_STEP_IDLE_SECONDS
+    )
+    stepped = seconds - seconds % step
+    last = getattr(updater, "_session_time_seconds", None)
+    # Charging states the minute and standby the five, so the moment a charge
+    # ends the coarser step would drag the published figure back down by up to
+    # four minutes. Hold it instead — but only while the charger's own counter
+    # is still ahead of it, so unplugging (which resets that counter) starts
+    # the next session from zero rather than from a stale hold.
+    if last is not None and stepped < last <= seconds:
+        stepped = last
+    updater._session_time_seconds = stepped
+    return stepped
+
+
+def get_session_time(updater, hass) -> Optional[str]:
+    """Get formatted session time."""
+    seconds = _get_session_seconds(updater)
+    return None if seconds is None else format_duration(seconds)
 
 
 def get_session_time_attrs(updater, hass) -> dict:
     """Get session time attributes."""
     if not updater.available:
         return {}
-    seconds = _get_data_value(updater, "sessionTime", int)
-    # Mirror the state getter's bounds: an absurd duration must not leak into
-    # the attribute while the visible state already reads unknown.
-    if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
-        return {}
-    # Quantised onto the same minute grid the visible state uses. HA writes a
-    # recorder row on any attribute change, so a per-poll-incrementing second
-    # count made this sensor write every poll while its state sat still — the
-    # exact churn the minute-granular state exists to avoid.
-    return {"duration_seconds": seconds - seconds % 60}
+    seconds = _get_session_seconds(updater)
+    # Mirror the state getter's bounds and its grid: an absurd duration must not
+    # leak into the attribute while the visible state already reads unknown, and
+    # a per-poll-incrementing second count made this sensor write every poll
+    # while its state sat still — the exact churn the coarser grid exists to
+    # avoid.
+    return {} if seconds is None else {"duration_seconds": seconds}
 
 
 def get_time_drift(updater, hass) -> Optional[int]:
