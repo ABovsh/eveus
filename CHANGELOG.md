@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 🐛 Fixed
+- **Charging Finish Time no longer jumps back and forth between two times.** The estimate is re-worked from a fluctuating power reading on every poll, and one sitting between two five-minute marks alternated between them for a whole session — so an automation set to fire before the charge finishes was re-triggered every half minute, and a database row was written each time with nothing having changed. Both charge estimates — Charging Finish Time and Time to Target SOC — now hold the time they state until it really moves by five minutes.
+- **Current no longer records a swing it cannot show.** The reading wanders across 15.6–15.9 A for a whole session at a fixed 16 A; the step worth recording is now 0.25 A, so that swing is held instead of written on nearly every poll.
+
 ## 4.21.0 - 2026-08-27
 
 ### ✨ Added

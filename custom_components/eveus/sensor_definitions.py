@@ -358,7 +358,7 @@ get_voltage = _make_value_getter(
     "voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
 )
 get_current = _make_value_getter(
-    "curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+    "curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.25
 )
 get_power = _make_value_getter(
     "powerMeas", precision=1, minimum=0, maximum=_MAX_POWER, deadband=50
@@ -449,10 +449,10 @@ get_wifi_rssi = _make_value_getter(
 # Same telemetry as phase 1, so the same damping — otherwise a 3-phase entry
 # keeps the per-poll churn the single-phase one just lost.
 get_current_phase_2 = _make_value_getter(
-    "curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+    "curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.25
 )
 get_current_phase_3 = _make_value_getter(
-    "curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+    "curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.25
 )
 get_voltage_phase_2 = _make_value_getter(
     "voltMeas2", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2

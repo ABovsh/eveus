@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import pytest
 from conftest import EV_HELPERS, EveusTestUpdater
+from datetime import datetime
 from types import SimpleNamespace
 
 from homeassistant.util import dt as dt_util
 
+from custom_components.eveus import ev_sensors
+from custom_components.eveus import utils
 from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus.ev_sensors import (
     CachedSOCCalculator,
@@ -215,3 +218,71 @@ def test_charging_finish_time_snaps_to_a_five_minute_grid(session_energy: str) -
     assert finish.minute % 5 == 0
     assert (finish.second, finish.microsecond) == (0, 0)
     assert finish > dt_util.utcnow()
+
+
+# --- ETA estimates: a grid alone does not stop boundary flipping ---
+
+
+def _freeze(monkeypatch, moment: datetime) -> None:
+    monkeypatch.setattr(ev_sensors.dt_util, "utcnow", lambda: moment)
+
+
+def _feed_seconds(monkeypatch, first: float) -> dict:
+    """Drive the one calculation both estimates resolve through.
+
+    The returned dict is the poll: set ``["seconds"]`` to move the estimate,
+    so the series is what the charger reports, not how many times a sensor
+    happens to ask.
+    """
+    poll = {"seconds": first}
+    monkeypatch.setattr(
+        utils, "_remaining_seconds_or_state", lambda *_a, **_k: poll["seconds"]
+    )
+    return poll
+
+
+def test_charging_finish_time_holds_a_dither_across_a_grid_boundary(
+    monkeypatch,
+) -> None:
+    """Two estimates 2 minutes apart must not land in two different buckets.
+
+    Measured on hardware over a 4.3 h session: 183 rows for 2 distinct values,
+    the stamp alternating between 12:15 and 12:20 on consecutive polls. Snapping
+    to a grid cannot fix that — an estimate sitting on a bucket edge flips every
+    poll — so the estimate is held until it moves by a full step.
+    """
+    sensor = _soc_sensor(ChargingFinishTimeSensor, "1", powerMeas="7000")
+    _freeze(monkeypatch, datetime(2026, 8, 28, 12, 0, tzinfo=dt_util.UTC))
+    poll = _feed_seconds(monkeypatch, 7490)
+
+    first = sensor._get_sensor_value()
+    poll["seconds"] = 7610
+    second = sensor._get_sensor_value()
+
+    assert second == first
+
+
+def test_time_to_target_holds_a_dither_across_a_grid_boundary(monkeypatch) -> None:
+    """Same defect, same session: 2h 05m <-> 2h 10m on consecutive polls."""
+    sensor = _soc_sensor(TimeToTargetSocSensor, "1", powerMeas="7000")
+    poll = _feed_seconds(monkeypatch, 7350)
+
+    first = sensor._get_sensor_value()
+    poll["seconds"] = 7580
+    second = sensor._get_sensor_value()
+
+    assert second == first
+
+
+def test_current_holds_the_two_tenth_dither_seen_all_session() -> None:
+    """15.6/15.7/15.8/15.9 all session: a 0.2 A step must not be a row.
+
+    The old 0.2 A band let exactly that swing through, because the reading is
+    compared with `abs(value - last) < deadband` and 15.9 - 15.7 lands a hair
+    ABOVE 0.2 in binary floating point.
+    """
+    updater = _updater({})
+
+    assert _read(sd.get_current, updater, "curMeas1", [15.7, 15.9, 15.6, 15.8]) == (
+        pytest.approx([15.7, 15.7, 15.7, 15.7])
+    )

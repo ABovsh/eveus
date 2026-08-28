@@ -16,6 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .common_base import EveusSensorBase
 from .utils import (
+    apply_deadband,
     calculate_remaining_seconds,
     calculate_remaining_time,
     calculate_soc_kwh,
@@ -31,6 +32,10 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Both charge estimates are stated on this grid and damped by this step, so the
+# two can never disagree by more than one bucket.
+_ESTIMATE_STEP_MINUTES = 5
 
 
 # =============================================================================
@@ -220,6 +225,28 @@ class BaseEVHelperSensor(EveusSensorBase):
             return None
         return (current_soc, target_soc, power_meas, battery_capacity, soc_correction)
 
+    def _damped_estimate(self, key: str, value, step: float):
+        """Hold an estimate at its last published value until it moves a step.
+
+        Both charge estimates are re-derived from a fluctuating power reading
+        on every poll, so a bare grid snap leaves the value flipping between
+        two adjacent buckets forever — one recorder row per poll for a figure
+        that never really moved. Damping lives here, on the shared base, so
+        Time to Target and Charging Finish Time cannot drift apart. The anchor
+        sits on the updater (one per charger) and is dropped whenever the
+        estimate goes away, so the next session starts clean.
+        """
+        anchors = getattr(self._updater, "_estimate_anchors", None)
+        if anchors is None:
+            anchors = {}
+            self._updater._estimate_anchors = anchors
+        if value is None:
+            anchors.pop(key, None)
+            return None
+        held = apply_deadband(anchors.get(key), value, step)
+        anchors[key] = held
+        return held
+
     def _get_energy_charged(self) -> float | None:
         """Energy delivered in the current session, in kWh.
 
@@ -368,7 +395,16 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             if inputs is None:
                 self._cached_value = None
                 return None
-            result = calculate_remaining_time(*inputs)
+            seconds = calculate_remaining_seconds(*inputs)
+            raw_minutes = (
+                round(seconds / 60, 0) if seconds is not None and seconds > 0 else None
+            )
+            result = calculate_remaining_time(
+                *inputs,
+                minutes_override=self._damped_estimate(
+                    "eta_minutes", raw_minutes, _ESTIMATE_STEP_MINUTES
+                ),
+            )
             self._cached_value = result
             return result
 
@@ -498,14 +534,29 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             if seconds is None or seconds <= 0:
                 # None = not charging / invalid; 0 = target reached
                 return None
-            # Snap up to the next 5-minute boundary — the same grid Time to
-            # Target SOC states its estimate on, so the two never disagree by
-            # more than one step. Rounding to the next whole minute still
-            # produced a fresh timestamp on most polls, because the estimate is
-            # re-derived from a fluctuating power reading. Always advances
-            # (1..5 minutes), so the stamp stays in the future the way the old
-            # next-minute rounding guaranteed.
-            eta = (dt_util.utcnow() + timedelta(seconds=seconds)).replace(
+            # Damp the instant itself, THEN snap up to the next 5-minute
+            # boundary — the same grid Time to Target SOC states its estimate
+            # on, so the two never disagree by more than one step. Snapping
+            # alone was not enough: an estimate sitting on a bucket edge
+            # alternated between the two adjacent stamps on every poll, which
+            # both flooded the recorder and re-fired any automation watching
+            # this timestamp. The anchor is the undamped instant, so a real
+            # shift of a full step still re-anchors immediately, and an anchor
+            # that has fallen due is always replaced — the stamp stays in the
+            # future the way the old next-minute rounding guaranteed.
+            now = dt_util.utcnow()
+            eta = now + timedelta(seconds=seconds)
+            held = self._damped_estimate(
+                "finish_time", eta.timestamp(), _ESTIMATE_STEP_MINUTES * 60
+            )
+            if held <= now.timestamp():
+                held = eta.timestamp()
+                self._updater._estimate_anchors["finish_time"] = held
+            # Shift `eta` by the damped delta rather than rebuilding the stamp
+            # from the epoch: both sides come from the same `.timestamp()`, so
+            # the difference is exact, and the result keeps whatever timezone
+            # `dt_util.utcnow()` handed us.
+            eta = (eta + timedelta(seconds=held - eta.timestamp())).replace(
                 second=0, microsecond=0
             )
             return eta + timedelta(minutes=5 - eta.minute % 5)

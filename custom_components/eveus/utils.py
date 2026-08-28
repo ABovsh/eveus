@@ -540,8 +540,15 @@ def calculate_remaining_time(
     power_meas: float | int,
     battery_capacity: float | int,
     correction: float | int,
+    minutes_override: float | None = None,
 ) -> str:
-    """Calculate remaining time as a human-readable string."""
+    """Calculate remaining time as a human-readable string.
+
+    ``minutes_override`` supplies a caller-damped minute count in place of the
+    one derived here, so the estimate can be held steady across polls (see
+    ``apply_deadband``) while this function stays the only place that snaps it
+    to the display grid.
+    """
     result = _remaining_seconds_or_state(
         current_soc, target_soc, power_meas, battery_capacity, correction,
     )
@@ -551,12 +558,17 @@ def calculate_remaining_time(
         return "Not charging"
     if result == _REMAINING_UNAVAILABLE:
         return "unavailable"
-    total_minutes = round(result / 60, 0)
+    total_minutes = (
+        round(result / 60, 0) if minutes_override is None else minutes_override
+    )
     if total_minutes < 1:
         return "< 1m"
     # Snap to a 5-minute grid: a minute-granular ETA re-derived from a
     # fluctuating power reading changed on most polls, and no one plans a
     # charge to the minute five hours out. Never rounds down to "0m" — under
     # 5 minutes the sensor still reads 5m until it drops below one minute.
+    # The grid alone does NOT stop the churn — an estimate sitting on a bucket
+    # edge flips between the two adjacent buckets on every poll — which is why
+    # the caller damps the minute count before it gets here.
     total_minutes = max(5, round(total_minutes / 5) * 5)
     return format_duration(int(total_minutes * 60))
