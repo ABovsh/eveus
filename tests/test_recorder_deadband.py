@@ -350,3 +350,54 @@ def test_session_time_restarts_cleanly_when_the_cable_comes_out() -> None:
     _session(120, 4, updater)
 
     assert sd.get_session_time(updater, None) == "2m"
+
+
+def test_time_to_target_holds_the_jitter_measured_on_hardware(monkeypatch) -> None:
+    """A band the size of the grid step is crossed by the swing it must absorb.
+
+    Measured on the charger: power wanders 3504-3537 W all session, which moves
+    an eight-hour estimate about five minutes peak to peak -- the same size as
+    the band. So the band opens on the extremes, and because it re-anchors on
+    the RAW estimate it re-anchors on a peak, leaving the opposite peak a full
+    swing away and crossing again on the next poll. The recorder showed the
+    result: 8h 05m <-> 8h 10m <-> 8h 15m, 26 rows for 19 values in three hours.
+    A band has to be wider than the noise it absorbs, and measured from the
+    value that was actually published.
+    """
+    sensor = _soc_sensor(TimeToTargetSocSensor, "1", powerMeas="7000")
+    poll = _feed_seconds(monkeypatch, 492 * 60)
+
+    seen = [sensor._get_sensor_value()]
+    for minutes in (487, 492, 487, 492, 488):
+        poll["seconds"] = minutes * 60
+        seen.append(sensor._get_sensor_value())
+
+    assert seen == [seen[0]] * len(seen)
+
+
+def test_charging_finish_time_holds_the_jitter_measured_on_hardware(
+    monkeypatch,
+) -> None:
+    """Same session, same swing: 23:35 <-> 23:40 on alternating polls."""
+    sensor = _soc_sensor(ChargingFinishTimeSensor, "1", powerMeas="7000")
+    _freeze(monkeypatch, datetime(2026, 8, 29, 15, 21, tzinfo=dt_util.UTC))
+    poll = _feed_seconds(monkeypatch, 492 * 60)
+
+    seen = [sensor._get_sensor_value()]
+    for minutes in (487, 492, 487, 492, 488):
+        poll["seconds"] = minutes * 60
+        seen.append(sensor._get_sensor_value())
+
+    assert seen == [seen[0]] * len(seen)
+
+
+def test_estimate_still_follows_a_real_decline() -> None:
+    """Damping must not freeze the estimate: a genuine drop still lands."""
+    sensor = _soc_sensor(TimeToTargetSocSensor, "1", powerMeas="7000")
+    first = sensor._get_sensor_value()
+    sensor._updater.data["powerMeas"] = "14000"
+    sensor._soc_calculator._cache.clear() if hasattr(
+        sensor._soc_calculator, "_cache"
+    ) else None
+
+    assert sensor._get_sensor_value() != first

@@ -16,7 +16,6 @@ from homeassistant.util import dt as dt_util
 
 from .common_base import EveusSensorBase
 from .utils import (
-    apply_deadband,
     calculate_remaining_seconds,
     calculate_remaining_time,
     calculate_soc_kwh,
@@ -36,6 +35,13 @@ _LOGGER = logging.getLogger(__name__)
 # Both charge estimates are stated on this grid and damped by this step, so the
 # two can never disagree by more than one bucket.
 _ESTIMATE_STEP_MINUTES = 5
+
+# Share of the estimate the charger's own power swing is worth. Measured on the
+# charger: 3504-3537 W across a session at a fixed current, so an estimate
+# wanders by about half a percent either side. A band has to be WIDER than the
+# swing it absorbs -- one that merely equals it opens on the extremes -- and the
+# swing scales with the estimate, so the band does too.
+_ESTIMATE_NOISE_FRACTION = 0.03
 
 
 # =============================================================================
@@ -243,7 +249,19 @@ class BaseEVHelperSensor(EveusSensorBase):
         if value is None:
             anchors.pop(key, None)
             return None
-        held = apply_deadband(anchors.get(key), value, step)
+        held = anchors.get(key)
+        # Two things the plain deadband got wrong, and both have to be fixed
+        # together or the value still flips: the band is measured from the
+        # PUBLISHED bucket rather than from the raw estimate (re-anchoring on
+        # the raw lands the anchor on a swing peak, leaving the opposite peak a
+        # full swing away), and it is wider than the swing rather than equal to
+        # it. Below the point where the proportional band overtakes it, one grid
+        # step is already many times the swing -- one and a half of it, because
+        # the published bucket can itself sit half a step off the raw estimate
+        # that produced it.
+        band = max(step * 1.5, _ESTIMATE_NOISE_FRACTION * abs(value))
+        if held is None or abs(value - held) >= band:
+            held = round(value / step) * step
         anchors[key] = held
         return held
 
@@ -540,10 +558,9 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             # alone was not enough: an estimate sitting on a bucket edge
             # alternated between the two adjacent stamps on every poll, which
             # both flooded the recorder and re-fired any automation watching
-            # this timestamp. The anchor is the undamped instant, so a real
-            # shift of a full step still re-anchors immediately, and an anchor
-            # that has fallen due is always replaced — the stamp stays in the
-            # future the way the old next-minute rounding guaranteed.
+            # this timestamp. An anchor that has fallen due is always replaced,
+            # so the stamp stays in the future the way the old next-minute
+            # rounding guaranteed.
             now = dt_util.utcnow()
             eta = now + timedelta(seconds=seconds)
             held = self._damped_estimate(
