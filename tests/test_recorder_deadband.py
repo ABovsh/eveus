@@ -89,6 +89,17 @@ def test_dithering_getters_hold_until_the_deadband_is_crossed(
     assert _read(getter, updater, key, feed) == pytest.approx(expected)
 
 
+def test_power_deadband_boundary_is_exactly_fifty_watts() -> None:
+    """A 50 W swing publishes; anything smaller holds — pins the exact band."""
+    updater = _updater({})
+
+    assert _read(sd.get_power, updater, "powerMeas", [3500, 3549, 3550]) == [
+        3500,
+        3500,
+        3550,
+    ]
+
+
 def test_deadband_always_publishes_an_exact_zero() -> None:
     """Charging stopping must show 0 W immediately, not a held 40 W.
 
@@ -195,6 +206,18 @@ def test_cost_to_target_holds_within_one_currency_unit() -> None:
     assert sensor._attr_native_value == baseline
 
     sensor._updater.data["sessionEnergy"] = "10.5"
+    sensor._update_native_value()
+    assert sensor._attr_native_value != baseline
+
+
+def test_cost_to_target_deadband_boundary_is_exactly_one_uah() -> None:
+    """At 4.00 UAH/kWh, a 0.25 kWh step is exactly 1 UAH and must publish."""
+    sensor = _soc_sensor(CostToTargetSocSensor, "10", tarif="400", activeTarif="0")
+    sensor._update_native_value()
+    baseline = sensor._attr_native_value
+    assert baseline is not None
+
+    sensor._updater.data["sessionEnergy"] = "10.25"
     sensor._update_native_value()
     assert sensor._attr_native_value != baseline
 

@@ -489,7 +489,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
     # the published value is held until it moves this far. Set on the subclass;
     # None leaves every reading published verbatim. (Spec-driven sensors damp
     # inside their getter instead — see _make_value_getter's `deadband`.)
-    _deadband: float | None = None
+    _deadband: float | None = None  # pragma: no mutate - annotation only; `from __future__ import annotations` stores it as a string, so no code ever evaluates it
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the sensor."""

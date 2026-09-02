@@ -199,12 +199,8 @@ class EveusScheduleTimeEntity(
                 # reach Home Assistant untouched.
                 raise
             except Exception as err:
-                _LOGGER.debug(  # pragma: no mutate - pure log-message text, err VALUE unchanged
-                    "Failed to set %s: %s", self.name, err, exc_info=True
-                )
-                raise HomeAssistantError(
-                    f"Failed to set '{self.name}': {err}"  # pragma: no mutate - pure exception-message text, err VALUE unchanged
-                ) from err
+                _LOGGER.debug("Failed to set %s: %s", self.name, err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, arguments unchanged
+                raise HomeAssistantError(f"Failed to set '{self.name}': {err}") from err  # pragma: no mutate - pure exception-message text, err VALUE unchanged
             finally:
                 self._pending_value = None
                 self._attr_native_value = minutes_to_time(self._resolve_minutes())
