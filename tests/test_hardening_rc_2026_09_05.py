@@ -168,3 +168,25 @@ def test_current_phases_hold_the_same_swing_phase_one_holds(getter, key) -> None
     assert _read(getter, _updater({}), key, [15.7, 15.9, 15.6, 15.8]) == (
         pytest.approx([15.7, 15.7, 15.7, 15.7])
     )
+
+
+def test_time_to_target_forgets_its_anchor_when_its_inputs_go_away(
+    monkeypatch,
+) -> None:
+    """The other half of the same rule, on the other estimate.
+
+    Time to Target drops its anchor for free on the ordinary path, by routing a
+    `None` minute count through the damper. The path where the SOC inputs
+    themselves disappear returns earlier than that, so it needs the same
+    explicit drop the finish stamp needs — otherwise the pair is symmetric only
+    by accident, which is how they came apart the first time.
+    """
+    sensor = _soc_sensor(TimeToTargetSocSensor, "1", powerMeas="7000")
+    _feed_seconds(monkeypatch, 2 * 3600)
+    sensor._get_sensor_value()
+    assert "eta_minutes" in sensor._updater._estimate_anchors
+
+    sensor._soc_calculator.set_value("battery_capacity", None)
+    assert sensor._get_sensor_value() is None
+
+    assert "eta_minutes" not in sensor._updater._estimate_anchors
