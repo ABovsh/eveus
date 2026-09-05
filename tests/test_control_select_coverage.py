@@ -130,7 +130,11 @@ def test_min_voltage_grace_window_shows_restored_option_while_offline() -> None:
 
 
 def test_min_voltage_grace_window_expired_returns_none() -> None:
-    select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
+    select = select_module.EveusMinVoltageSelect(_Updater({}, available=True))
     _mute(select)
     select._last_device_value = 180
     select._last_successful_read = time.time() - CONTROL_GRACE_PERIOD - 1
@@ -258,7 +262,11 @@ def test_timezone_grace_window_boundary_age_zero_is_valid(monkeypatch) -> None:
 def test_timezone_grace_window_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
     now = 1_700_000_000.0
     monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
-    select = select_module.EveusTimeZoneSelect(_Updater({}, available=False))
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
+    select = select_module.EveusTimeZoneSelect(_Updater({}, available=True))
     _mute(select)
     select._last_device_value = 3
     select._last_successful_read = now - CONTROL_GRACE_PERIOD  # age == grace exactly
@@ -280,7 +288,11 @@ def test_min_voltage_grace_window_boundary_age_zero_is_valid(monkeypatch) -> Non
 def test_min_voltage_grace_window_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
     now = 1_700_000_000.0
     monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
-    select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
+    select = select_module.EveusMinVoltageSelect(_Updater({}, available=True))
     _mute(select)
     select._last_device_value = 180
     select._last_successful_read = now - CONTROL_GRACE_PERIOD  # age == grace exactly

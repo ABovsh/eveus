@@ -207,3 +207,125 @@ def test_binary_sensor_goes_unavailable_rather_than_blank(clock) -> None:
 
     assert entity.available is False
     assert entity.is_on is None
+
+
+# --- Controls: the same rule, and a window that has to be anchored the same way
+
+# The control families all resolve a value through the same shape: optimistic
+# value, then the live payload, then the last device reading. It is that last
+# step whose window was measured from the wrong moment.
+def _control_cases():
+    """One case per control family: build it, feed it, and read it back.
+
+    Each family exposes its resolution under a different name
+    (`_resolve_value`, `_resolve_state`, `_resolve_minutes`, `current_option`),
+    which is exactly why the same defect could sit in all four unnoticed.
+    """
+    from custom_components.eveus.number import (
+        GLOBAL_LIMIT_NUMBERS,
+        EveusCurrentNumber,
+        EveusSetpointNumber,
+    )
+    from custom_components.eveus.select import EveusAdaptiveModeSelect
+    from custom_components.eveus.switch import SWITCH_DESCRIPTIONS, BaseSwitchEntity
+    from custom_components.eveus.time import TIME_DESCRIPTIONS, EveusScheduleTimeEntity
+
+    setpoint = GLOBAL_LIMIT_NUMBERS[0]
+    return [
+        (
+            "number/current",
+            lambda u: EveusCurrentNumber(u, "16A"),
+            {"currentSet": 16},
+            lambda e: e._resolve_value(),
+        ),
+        (
+            "number/setpoint",
+            lambda u: EveusSetpointNumber(u, setpoint, device_number=1),
+            {setpoint.state_key: 100},
+            lambda e: e._resolve_value(),
+        ),
+        (
+            "switch",
+            lambda u: BaseSwitchEntity(u, SWITCH_DESCRIPTIONS[0]),
+            {"evseEnabled": 1},
+            lambda e: e._resolve_state(),
+        ),
+        (
+            "select",
+            lambda u: EveusAdaptiveModeSelect(u),
+            {"aiStatus": 1},
+            lambda e: e.current_option,
+        ),
+        (
+            "time",
+            lambda u: EveusScheduleTimeEntity(u, TIME_DESCRIPTIONS[0]),
+            {"sh1Start": 1380},
+            lambda e: e._resolve_minutes(),
+        ),
+    ]
+
+
+def _control_ids():
+    return [case[0] for case in _control_cases()]
+
+
+def _built_control(case):
+    _name, build, payload, read = case
+    updater = EveusTestUpdater(dict(payload))
+    entity = build(updater)
+    disable_state_writes(entity)
+    entity.hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kiev"))
+    entity._handle_coordinator_update()
+    return entity, updater, read
+
+
+@pytest.mark.parametrize("case", _control_cases(), ids=_control_ids())
+def test_control_holds_its_value_through_the_grace_window(case, clock) -> None:
+    """A visible control must never resolve to blank.
+
+    The value hold and the availability window are both `CONTROL_GRACE_PERIOD`
+    long, but they were anchored to different moments: the hold ran from the
+    last SUCCESSFUL read, the availability window from the FIRST FAILED one.
+    The gap between them is one poll interval, so at the idle cadence — five
+    minutes between polls — the hold had always expired by the time the first
+    poll failed, and every control published `unknown` for the 30 seconds
+    before it honestly went `unavailable`.
+
+    Measured live on 2026-09-05 22:39:53: 30 switches, numbers, selects and
+    times wrote `unknown` on the first failed poll, `unavailable` at 22:40:23.
+    The same charger dropping out at 17:09:03 — while a session held it on the
+    fast cadence — showed none of it, which is why the poll interval, not the
+    window length, is the thing to test.
+    """
+    name = case[0]
+    entity, updater, read = _built_control(case)
+    resolved = read(entity)
+    assert resolved is not None, f"{name}: setup failed, nothing read from the payload"
+
+    # Idle cadence: the next poll comes minutes after the last good one, so the
+    # last-successful-read window is long gone before anything goes wrong.
+    entity._last_successful_read -= 5 * 60
+
+    updater.available = False
+    entity._handle_coordinator_update()
+
+    assert entity.available is True, f"{name}: still inside the availability window"
+    assert read(entity) == resolved, (
+        f"{name}: a visible control blanked on the first failed poll"
+    )
+
+
+@pytest.mark.parametrize("case", _control_cases(), ids=_control_ids())
+def test_control_goes_unavailable_when_its_window_closes(case, clock) -> None:
+    """The hold ends with the entity, not before it and not after."""
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+
+    name = case[0]
+    entity, updater, _read = _built_control(case)
+
+    updater.available = False
+    entity._handle_coordinator_update()
+    clock["t"] = _START + CONTROL_GRACE_PERIOD + 1
+    entity._handle_coordinator_update()
+
+    assert entity.available is False, f"{name}: should have gone unavailable"

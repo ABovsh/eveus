@@ -19,7 +19,7 @@ from .common_base import (
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
-from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
+from .const import OPTIMISTIC_CONTROL_TTL
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -169,9 +169,8 @@ class EveusScheduleTimeEntity(
             if device_value is not None and 0 <= device_value < 1440:
                 return int(device_value)
 
-        if self._last_device_value is not None:
-            if 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
-                return self._last_device_value
+        if self._may_hold_last_device_value(current_time):
+            return self._last_device_value
 
         return None
 

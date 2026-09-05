@@ -162,7 +162,11 @@ def test_availability_grace_uses_monotonic_not_wall_clock(
 def test_control_fallback_rejects_future_read_timestamp() -> None:
     from custom_components.eveus.number import EveusCurrentNumber
 
-    entity = EveusCurrentNumber(EveusTestUpdater({}, available=False), "16A")
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
+    entity = EveusCurrentNumber(EveusTestUpdater({}, available=True), "16A")
     entity._last_device_value = 10.0
     entity._last_successful_read = time.time() + 10_000  # backward jump
 

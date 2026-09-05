@@ -30,7 +30,6 @@ from .const import (
     MIN_CURRENT,
     MIN_VOLTAGE_OPTIONS,
     CONF_MODEL,
-    CONTROL_GRACE_PERIOD,
     OPTIMISTIC_CONTROL_TTL,
     SOC_INPUT_LIMITS,
     DEFAULT_INITIAL_SOC,
@@ -339,11 +338,8 @@ class EveusCurrentNumber(EveusNumberEntity):
             ):
                 return float(device_value)
 
-        if self._last_device_value is not None:
-            # 0 <= age: a backward wall-clock jump must not extend the grace
-            # window indefinitely (mirrors the optimistic-state TTL guard).
-            if 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
-                return self._last_device_value
+        if self._may_hold_last_device_value(current_time):
+            return self._last_device_value
 
         return None
 
@@ -477,9 +473,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         device_value = self._read_device_value()
         if device_value is not None:
             return device_value
-        if self._last_device_value is not None and (
-            0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
-        ):
+        if self._may_hold_last_device_value(current_time):
             return self._last_device_value
         return None
 

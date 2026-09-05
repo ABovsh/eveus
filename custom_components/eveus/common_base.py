@@ -381,6 +381,35 @@ class ControlEntityMixin:
 class OptimisticControlMixin(Generic[T]):
     """Shared optimistic-state reconciliation for command-capable controls."""
 
+    def _may_hold_last_device_value(self, current_time: float) -> bool:
+        """Whether the last reading from the charger may still be published.
+
+        Two windows, and they are NOT the same window measured twice:
+
+        - `_in_availability_grace` — the charger is missing polls and this
+          entity is still visible. A visible control must never resolve to
+          blank, so the last reading stands for exactly as long as the entity
+          does. This has to be anchored to the FIRST FAILED poll, the way
+          availability is: the old wall-clock window ran from the last
+          SUCCESSFUL read instead, and the gap between the two is one poll
+          interval — so at the idle cadence (minutes between polls) the hold had
+          always expired before anything went wrong, and every control published
+          `unknown` for 30 seconds before honestly going `unavailable`. Measured
+          live 2026-09-05 22:39:53: 30 switches, numbers, selects and times did
+          exactly that. The same charger dropping out at 17:09:03, while a
+          session held it on the fast cadence, showed none of it.
+        - the `CONTROL_GRACE_PERIOD` window from the last successful read — the
+          charger is ANSWERING but has stopped carrying this key. That is a data
+          problem the user should eventually see, so it still times out.
+        """
+        if self._last_device_value is None:
+            return False
+        if self._in_availability_grace:  # type: ignore[attr-defined]
+            return True
+        # 0 <= age: a backward wall-clock jump must not extend the window
+        # indefinitely (mirrors the optimistic-state TTL guard).
+        return 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
+
     def _init_optimistic_control(self) -> None:
         """Initialize common optimistic-control state."""
         self._optimistic_value: T | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)

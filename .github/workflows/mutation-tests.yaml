@@ -138,6 +138,7 @@ jobs:
               tests/test_soc_limit_switch.py
               tests/test_ground_protection.py
               tests/test_control_entities.py
+              tests/test_grace_holds_last_value.py
               tests/test_command.py
               tests/test_soc_autofill.py
               tests/test_hardening_rc_2026_07_10.py

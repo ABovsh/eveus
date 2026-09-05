@@ -1383,7 +1383,11 @@ def test_current_number_resolve_value_max_boundary_and_grace_edges() -> None:
     # Grace-period fallback: age == 0 is inside the window; age == GRACE is not.
     from custom_components.eveus.const import CONTROL_GRACE_PERIOD
 
-    entity._updater.available = False
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
+    entity._updater.available = True
     entity._updater.data = {}
     entity._last_device_value = 9.0
     entity._last_successful_read = time.time()
