@@ -204,6 +204,12 @@ class OptimizedEveusSensor(EveusSensorBase):
             # drops any stale payload-derived field (e.g. RSSI) when offline.
             if self._updater.available or self._spec.available_when_offline:
                 attrs = self._spec.attributes_fn(self._updater, self.hass)
+            elif self._in_availability_grace:
+                # An attribute change writes a recorder row exactly like a
+                # state change, and dropping the attributes on a missed poll
+                # writes one on the way down and another on the way back up.
+                # Hold them for the same window the value is held for.
+                return False
         except Exception as err:
             if self._should_log_error(f"attributes_{self._spec.key}"):
                 _LOGGER.debug(

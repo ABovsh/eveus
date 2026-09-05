@@ -102,6 +102,22 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         """Return stable English object id seed regardless of frontend language."""
         return self.ENTITY_NAME
 
+    @property
+    def _in_availability_grace(self) -> bool:
+        """True while this entity is still visible on a poll the charger missed.
+
+        The grace window exists so ONE failed poll does not flap every entity
+        to `unavailable` and back. That is only worth having if the entity keeps
+        showing what it last read: an entity that stays available and blank
+        publishes `unknown`, which is strictly worse than `unavailable` for a
+        consumer — `unavailable` is skipped by helpers and statistics, while
+        `unknown` is ingested as a real, invalid state. A charger timeout on
+        2026-09-05 blanked 36 entities for 60 s and two `utility_meter` helpers
+        logged "received an invalid new state ... : unknown" before the entities
+        honestly went unavailable.
+        """
+        return self._entity_available and not self._updater.available
+
     def _update_availability_state(
         self,
         *,
@@ -536,7 +552,6 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
             value = self._get_sensor_value()
             if self._deadband is not None:
                 value = apply_deadband(previous_value, value, self._deadband)
-            self._attr_native_value = value
         except Exception as err:
             current_time = time.time()
             if current_time - self._last_error_log > ERROR_LOG_RATE_LIMIT:
@@ -547,7 +562,18 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
                     err,
                     exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
                 )
-            self._attr_native_value = None
+            value = None
+        if value is None and self._in_availability_grace:
+            # Every charger-backed getter returns None while the updater is
+            # offline (`_get_data_value` gates on it), so a missed poll would
+            # blank this entity while it is still available — see
+            # `_in_availability_grace`. Keep the last reading instead. This is
+            # the rule the SOC sensors already follow by skipping the whole
+            # recompute on a failed poll; it now holds for every sensor.
+            # Scoped to a value that went away: a sensor that can still compute
+            # something real while polls fail (Connection Quality) publishes it.
+            return False
+        self._attr_native_value = value
         return previous_value != self._attr_native_value
 
     def _get_sensor_value(self) -> Any:

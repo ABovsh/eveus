@@ -112,6 +112,7 @@ jobs:
               tests/test_control_entities.py
               tests/test_control_select_coverage.py
               tests/test_entities.py
+              tests/test_grace_holds_last_value.py
               tests/test_sensor_definition_entities.py
               tests/test_time_controls.py
               tests/test_firmware_parsing.py
@@ -152,6 +153,7 @@ jobs:
               tests/test_last_session.py
               tests/test_time_controls.py
               tests/test_entities.py
+              tests/test_grace_holds_last_value.py
               tests/test_ocpp.py
               tests/test_hardening_rc_2026_07_24.py
               tests/test_hardening_rc_2026_07_30.py
@@ -161,6 +163,7 @@ jobs:
             tests: >-
               tests/test_sensor_definitions.py
               tests/test_sensor_definition_entities.py
+              tests/test_grace_holds_last_value.py
               tests/test_recorder_deadband.py
               tests/test_ev_sensors.py
               tests/test_ev_sensor_entities.py
