@@ -133,7 +133,7 @@ sections:
         show_header_toggle: false
         entities:
           - entity: number.eveus_ev_charger_battery_capacity
-            name: Ємність акумулятора
+            name: Ємність батареї
             icon: mdi:car-battery
           - entity: number.eveus_ev_charger_initial_soc
             name: Початковий SOC
