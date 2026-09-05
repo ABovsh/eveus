@@ -290,3 +290,78 @@ def test_mutation_ratchet_fails_the_job_on_an_increase() -> None:
     assert "exit 1" in increase_branch, (
         "the survivors-increased branch does not fail the job"
     )
+
+
+# Package modules deliberately outside the mutation matrix. Each needs a
+# reason, and test_unmutated_modules_still_exist keeps the list from rotting.
+_UNMUTATED_MODULES = frozenset({
+    # Pure re-export shim: imports and __all__, no branch for a mutant to hide
+    # in.
+    "custom_components/eveus/common.py",
+    # Platform setup. Its one real branch (the SOC-mode gate deciding whether
+    # the six EV sensors exist) is covered by test_soc_sensors_only_in_advanced,
+    # but wiring it into a leg shifts that leg's survivor count and the ratchet
+    # fails the job on any increase — so it needs a mutmut run to re-baseline
+    # .github/mutation-baseline.json in the same commit. Excused until then.
+    "custom_components/eveus/sensor.py",
+})
+
+
+def test_every_package_module_is_mutated_or_excused() -> None:
+    """A new module must join a mutation leg, or say why it does not.
+
+    The sibling check for test files has existed since the workflow landed;
+    the one for SOURCE files was a hand-written list, so a module added to the
+    package simply never appeared in it and was mutated by nothing, silently.
+    Deriving the set from the directory is what makes that impossible.
+    """
+    import pathlib
+
+    mutated = set()
+    for leg in _mutation_matrix_legs():
+        mutated.update(leg["paths"].split(","))
+    on_disk = {
+        f"custom_components/eveus/{p.name}"
+        for p in pathlib.Path("custom_components/eveus").glob("*.py")
+    }
+    unmutated = on_disk - mutated - _UNMUTATED_MODULES
+    assert not unmutated, (
+        "package modules mutated by no leg (add them to a leg's `paths:` and "
+        "re-baseline, or to _UNMUTATED_MODULES with a reason): "
+        f"{sorted(unmutated)}"
+    )
+
+
+def test_unmutated_modules_still_exist() -> None:
+    """A renamed or deleted module must not linger in the excuse list."""
+    import pathlib
+
+    missing = [m for m in _UNMUTATED_MODULES if not pathlib.Path(m).exists()]
+    assert not missing, f"stale entries in _UNMUTATED_MODULES: {missing}"
+
+
+def test_leak_guard_denies_every_internal_doc_class_gitignore_lists() -> None:
+    """The guard and .gitignore must name the same classes.
+
+    .gitignore is the fast pre-flight; this workflow is the control, because
+    it "cannot be bypassed by a local --no-verify or a force-push" — its own
+    words. A class the guard does not know is a class only the bypassable half
+    is protecting, which is the wrong way round.
+    """
+    guard = Path(".github/workflows/leak-guard.yml").read_text(encoding="utf-8")
+    deny = re.search(r"deny='([^']+)'", guard)
+    assert deny is not None, "leak-guard must define a deny expression"
+    expression = deny.group(1)
+
+    for sample in (
+        "docs/superpowers/plan.md",
+        "docs/internal/notes.md",
+        "HARDENING_PLAN.md",
+        "API_SPEC.md",
+        "AUDIT_FINDINGS_4_10.md",
+        "eveus-assessment-2026.md",
+        "notes.local.md",
+    ):
+        assert re.search(expression, sample), (
+            f"leak guard would let {sample} through"
+        )

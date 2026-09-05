@@ -29,7 +29,7 @@ jobs:
       - name: Block internal / auto-generated docs
         run: |
           set -euo pipefail
-          deny='(^|/)(superpowers|internal)/|_PLAN\.md$|_SPEC\.md$|\.plan\.md$|AUDIT_FINDINGS.*\.md$|-assessment-.*\.md$'
+          deny='(^|/)(superpowers|internal)/|_PLAN\.md$|_SPEC\.md$|\.plan\.md$|AUDIT_FINDINGS.*\.md$|-assessment-.*\.md$|\.local\.md$'
           bad="$(git ls-files | grep -nE "$deny" || true)"
           if [ -n "$bad" ]; then
             echo "::error::Internal/auto-generated docs must never be committed to this public repo:"
