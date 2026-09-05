@@ -231,7 +231,12 @@ class BaseEVHelperSensor(EveusSensorBase):
             return None
         return (current_soc, target_soc, power_meas, battery_capacity, soc_correction)
 
-    def _damped_estimate(self, key: str, value, step: float):
+    # The `updater._estimate_anchors` key this sensor damps, if any. Naming it
+    # on the class is what lets every no-estimate exit drop the hold without
+    # each one having to remember which key it owns.
+    _ESTIMATE_KEY: str | None = None
+
+    def _damped_estimate(self, key: str, value, step: float, scale: float | None = None):
         """Hold an estimate at its last published value until it moves a step.
 
         Both charge estimates are re-derived from a fluctuating power reading
@@ -259,11 +264,31 @@ class BaseEVHelperSensor(EveusSensorBase):
         # step is already many times the swing -- one and a half of it, because
         # the published bucket can itself sit half a step off the raw estimate
         # that produced it.
-        band = max(step * 1.5, _ESTIMATE_NOISE_FRACTION * abs(value))
+        # The proportional half is a share of how much TIME the estimate still
+        # has to run, which `scale` carries when the damped value is not itself
+        # that duration. An absolute instant has no magnitude of its own — a
+        # Unix timestamp is ~1.8e9, and three percent of one is centuries, a
+        # band no real change could ever cross — so the finish stamp passes the
+        # seconds remaining and both estimates end up on the same band.
+        magnitude = abs(value if scale is None else scale)
+        band = max(step * 1.5, _ESTIMATE_NOISE_FRACTION * magnitude)
         if held is None or abs(value - held) >= band:
             held = round(value / step) * step
         anchors[key] = held
         return held
+
+    def _forget_estimate(self) -> None:
+        """Drop this sensor's held estimate, if it damps one.
+
+        Every exit that publishes no estimate goes through here, so a session
+        that ends cannot seed the next one with the instant it was holding.
+        Naming the key on the class rather than at each `return None` is what
+        stops the two estimates drifting apart again: the finish stamp used to
+        return early without clearing while Time to Target cleared by routing
+        its `None` through the damper.
+        """
+        if self._ESTIMATE_KEY is not None:
+            self._damped_estimate(self._ESTIMATE_KEY, None, _ESTIMATE_STEP_MINUTES)
 
     def _get_energy_charged(self) -> float | None:
         """Energy delivered in the current session, in kWh.
@@ -402,6 +427,7 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
     ENTITY_NAME = "Time to Target SOC"
     _attr_icon = "mdi:timer"
     _requires_helpers = False
+    _ESTIMATE_KEY = "eta_minutes"
 
     def _get_sensor_value(self) -> str | None:
         """Time to target as a UI string, or None (unknown) when it can't be
@@ -411,6 +437,7 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
         try:
             inputs = self._resolve_remaining_inputs()
             if inputs is None:
+                self._forget_estimate()
                 self._cached_value = None
                 return None
             seconds = calculate_remaining_seconds(*inputs)
@@ -537,6 +564,7 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
 
     ENTITY_NAME = "Charging Finish Time"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _ESTIMATE_KEY = "finish_time"
     _attr_icon = "mdi:calendar-clock"
     # Available whenever online; reads None (via _resolve_remaining_inputs) when
     # target/helpers are missing, so the timestamp entity always exists.
@@ -547,10 +575,12 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
         try:
             inputs = self._resolve_remaining_inputs()
             if inputs is None:
+                self._forget_estimate()
                 return None
             seconds = calculate_remaining_seconds(*inputs)
             if seconds is None or seconds <= 0:
                 # None = not charging / invalid; 0 = target reached
+                self._forget_estimate()
                 return None
             # Damp the instant itself, THEN snap up to the next 5-minute
             # boundary — the same grid Time to Target SOC states its estimate
@@ -564,7 +594,10 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             now = dt_util.utcnow()
             eta = now + timedelta(seconds=seconds)
             held = self._damped_estimate(
-                "finish_time", eta.timestamp(), _ESTIMATE_STEP_MINUTES * 60
+                "finish_time",
+                eta.timestamp(),
+                _ESTIMATE_STEP_MINUTES * 60,
+                scale=seconds,
             )
             if held <= now.timestamp():
                 held = eta.timestamp()

@@ -176,6 +176,7 @@ jobs:
               tests/test_hardening_rc_2026_07_19.py
               tests/test_hardening_rc_2026_08_21.py
               tests/test_hardening_rc_2026_08_24.py
+              tests/test_hardening_rc_2026_09_05.py
               tests/test_issue11_fw151_state_semantics.py
               tests/test_issue11_fw151_unknown_state.py
           - name: diagnostics-triggers
