@@ -190,3 +190,56 @@ def test_time_to_target_forgets_its_anchor_when_its_inputs_go_away(
     assert sensor._get_sensor_value() is None
 
     assert "eta_minutes" not in sensor._updater._estimate_anchors
+
+
+# --- The optimistic value must outrank a stale device reading ---
+
+
+def test_setpoint_number_optimistic_value_outranks_a_stale_device_reading() -> None:
+    """The largest control family had no guard on the rule it depends on.
+
+    A setpoint written by the user is shown immediately and held for the
+    optimistic TTL, because the charger keeps reporting the OLD number until it
+    has applied the new one. `EveusCurrentNumber` has had this precedence
+    pinned since the optimistic layer landed; the setpoint family — Energy and
+    Cost Limit, every schedule limit, the Undervoltage threshold — never got
+    the equivalent, so reversing the two reads left the whole suite green while
+    every one of those sliders snapped back to the stale value after a write.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.eveus.number import (
+        EveusSetpointNumber,
+        EveusSetpointNumberDescription,
+    )
+
+    description = EveusSetpointNumberDescription(
+        key="limit_energy",
+        name="Limit Energy",
+        command="energyLimit",
+        state_key="energyLimit",
+        device_to_ha=1.0,
+        ha_to_device=1000.0,
+        native_min_value=0.0,
+        native_max_value=100.0,
+        native_step=1.0,
+        native_unit_of_measurement="kWh",
+    )
+    updater = MagicMock()
+    updater.available = True
+    updater.data = {"energyLimit": 10}
+    updater.send_command = AsyncMock(return_value=True)
+    updater.config_entry = MagicMock()
+    entity = EveusSetpointNumber(updater, description, device_number=1)
+    entity.hass = MagicMock()
+    entity.async_write_ha_state = MagicMock()
+
+    # The charger still reports the old figure, as it does until it applies the
+    # write — so the two sources disagree, which is the only state in which the
+    # precedence is observable at all.
+    import asyncio
+
+    asyncio.run(entity.async_set_native_value(40))
+    assert updater.data["energyLimit"] == 10
+
+    assert entity._resolve_value() == 40.0
