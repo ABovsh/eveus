@@ -199,7 +199,7 @@ The tables below show default entity IDs for the first charger named **Eveus EV 
 | `number.eveus_ev_charger_limit_time` | Number | **Limit: Time** session limit (min) |
 | `number.eveus_ev_charger_limit_energy` | Number | **Limit: Energy** session limit (kWh) |
 | `number.eveus_ev_charger_limit_cost` | Number | **Limit: Cost** session limit (UAH) |
-| `select.eveus_ev_charger_minimum_voltage` | Select | **Minimum voltage** undervoltage threshold (150–200 V) |
+| `select.eveus_ev_charger_minimum_voltage` | Select | **Minimum voltage** — lowest supply voltage at which the charger still charges (150–200 V). Separate from the adaptive **Undervoltage threshold** |
 | `switch.eveus_ev_charger_stop_charging` | Switch | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Switch | Enable one-charge mode |
 | `switch.eveus_ev_charger_ground_protection` | Switch | Enable or disable the charger's missing-ground shutdown protection. Turning it off lets charging continue without a detected ground |
