@@ -243,3 +243,44 @@ def test_setpoint_number_optimistic_value_outranks_a_stale_device_reading() -> N
     assert updater.data["energyLimit"] == 10
 
     assert entity._resolve_value() == 40.0
+
+
+# --- The damped minute count must respect the display floor the raw one had ---
+
+
+@pytest.mark.parametrize("seconds", [60, 120, 150])
+def test_time_to_target_never_states_under_a_minute_while_minutes_remain(
+    monkeypatch, seconds: int
+) -> None:
+    """A small estimate must not be damped down to "< 1m".
+
+    ``calculate_remaining_time`` promises in its own comment that it "never
+    rounds down to 0m — under 5 minutes the sensor still reads 5m until it
+    drops below one minute". The damper snaps the minute count onto the
+    five-minute grid BEFORE that function sees it, and ``round(2 / 5) * 5`` is
+    zero — so a charge with two minutes left began reading "< 1m". It then
+    stuck there for the rest of the charge, because the band is measured from
+    the held zero and nothing under seven and a half minutes can cross it.
+    """
+    sensor = _soc_sensor(TimeToTargetSocSensor, "1", powerMeas="7000")
+    poll = _feed_seconds(monkeypatch, seconds)
+
+    first = sensor._get_sensor_value()
+    assert first == "5m"
+
+    # And it must not fall into "< 1m" on the polls that follow either.
+    poll["seconds"] = seconds - 10
+    assert sensor._get_sensor_value() == "5m"
+
+
+def test_time_to_target_still_states_under_a_minute_below_the_minute(
+    monkeypatch,
+) -> None:
+    """The floor is a floor, not a lie: a genuinely sub-minute estimate still
+    reads "< 1m", exactly as the undamped path did."""
+    sensor = _soc_sensor(TimeToTargetSocSensor, "1", powerMeas="7000")
+    poll = _feed_seconds(monkeypatch, 120)
+    assert sensor._get_sensor_value() == "5m"
+
+    poll["seconds"] = 20
+    assert sensor._get_sensor_value() == "< 1m"

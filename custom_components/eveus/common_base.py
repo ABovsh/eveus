@@ -489,7 +489,13 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
     # the published value is held until it moves this far. Set on the subclass;
     # None leaves every reading published verbatim. (Spec-driven sensors damp
     # inside their getter instead — see _make_value_getter's `deadband`.)
-    _deadband: float | None = None  # pragma: no mutate - annotation only; `from __future__ import annotations` stores it as a string, so no code ever evaluates it
+    # pragma: no mutate on the assignment below, and NOT because it is only an
+    # annotation -- `_update_native_value` really does read it. It stands
+    # because every value a mutant can leave here is already accounted for: a
+    # non-numeric one (mutmut turns None into "") is caught by the deadband
+    # tests, and a zero-width band publishes every reading verbatim, which is
+    # exactly what None means.
+    _deadband: float | None = None  # pragma: no mutate - see the note above
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the sensor."""

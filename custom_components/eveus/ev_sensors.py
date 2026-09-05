@@ -32,8 +32,12 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Both charge estimates are stated on this grid and damped by this step, so the
-# two can never disagree by more than one bucket.
+# Both charge estimates are stated on this grid and damped by this step. They
+# are two views of one calculation, so they move together — but they do not
+# read identically: Time to Target rounds its minute count to the NEAREST
+# bucket while the finish stamp snaps UP to the next one, so the stamp runs one
+# bucket ahead, and up to one more while the nearest-rounding half sits on the
+# low side. Measured over a two-hour decline, the widest gap is 7 minutes.
 _ESTIMATE_STEP_MINUTES = 5
 
 # Share of the estimate the charger's own power swing is worth. Measured on the
@@ -444,12 +448,21 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             raw_minutes = (
                 round(seconds / 60, 0) if seconds is not None and seconds > 0 else None
             )
-            result = calculate_remaining_time(
-                *inputs,
-                minutes_override=self._damped_estimate(
-                    "eta_minutes", raw_minutes, _ESTIMATE_STEP_MINUTES
-                ),
+            held = self._damped_estimate(
+                "eta_minutes", raw_minutes, _ESTIMATE_STEP_MINUTES
             )
+            # The grid snap takes a one- or two-minute estimate to ZERO, and
+            # zero renders as "< 1m" — for a charge that still has minutes to
+            # run, and permanently, since the band is then measured from that
+            # zero and nothing under a step and a half can cross it.
+            # `calculate_remaining_time` states the floor it has always held
+            # ("never rounds down to 0m — under 5 minutes the sensor still
+            # reads 5m until it drops below one minute"); apply it to the
+            # damped count too. The anchor keeps its snapped value, so this is
+            # a display floor and not a second, hidden band.
+            if held is not None and raw_minutes >= 1:
+                held = max(_ESTIMATE_STEP_MINUTES, held)
+            result = calculate_remaining_time(*inputs, minutes_override=held)
             self._cached_value = result
             return result
 
@@ -584,7 +597,9 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
                 return None
             # Damp the instant itself, THEN snap up to the next 5-minute
             # boundary — the same grid Time to Target SOC states its estimate
-            # on, so the two never disagree by more than one step. Snapping
+            # on, and the same band, so the two move together (see
+            # _ESTIMATE_STEP_MINUTES for the gap the two roundings leave
+            # between them). Snapping
             # alone was not enough: an estimate sitting on a bucket edge
             # alternated between the two adjacent stamps on every poll, which
             # both flooded the recorder and re-fired any automation watching
