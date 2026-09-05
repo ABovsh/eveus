@@ -133,6 +133,10 @@ class SensorSpec:
     # Sensors whose value DESCRIBES connectivity must stay readable while the
     # poll is failing — that is exactly when their data matters.
     available_when_offline: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
+    # The published value comes from a hold kept on the UPDATER, which a reload
+    # throws away — so it has to be seeded from the restored state or the sensor
+    # counts backwards after a restart. See `_seed_session_hold`.
+    restores_session_hold: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
 
     def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
         """Create sensor instance from specification."""
@@ -173,6 +177,40 @@ class OptimizedEveusSensor(EveusSensorBase):
         if self._spec.available_when_offline:
             return True
         return super().available
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the updater-side hold this sensor's value is built on."""
+        await super().async_added_to_hass()
+        if self._spec.restores_session_hold:
+            self._seed_session_hold(await self.async_get_last_state())
+
+    def _seed_session_hold(self, state) -> None:
+        """Re-arm `_session_time_seconds` from the state HA kept for us.
+
+        The never-count-backwards hold lives on the updater, so a reload drops
+        it and the first reading afterwards takes the coarse idle floor —
+        up to 4:59 BEHIND what the sensor last published. Live 2026-09-05: the
+        charger reported 509 095 s (5d 21h 24m) and the sensor came back from a
+        restart reading 5d 21h 20m.
+
+        Seeded from the `duration_seconds` attribute rather than by parsing the
+        display string back: it is the exact stepped number the hold works in.
+        A value that is missing, non-numeric or outside the range the getter
+        itself accepts is discarded — a corrupt restore must not become the
+        floor every later reading is measured against. Nothing here can
+        resurrect a finished session: the hold only applies while the charger's
+        own counter is still ahead of it, so a cable pulled while HA was down
+        starts from zero as usual.
+        """
+        if state is None:
+            return
+        try:
+            seconds = int((state.attributes or {}).get("duration_seconds"))
+        except (TypeError, ValueError):
+            return
+        if not 0 <= seconds <= MAX_SESSION_TIME_SECONDS:
+            return
+        self._updater._session_time_seconds = seconds
 
     def _should_log_error(self, function_name: str) -> bool:
         """Check if we should log errors for a function (rate limited)."""
@@ -1162,6 +1200,7 @@ def create_sensor_specifications(
             key="session_time", name="Session Time", value_fn=get_session_time,
             sensor_type=SensorType.STATE, icon="mdi:timer",
             attributes_fn=get_session_time_attrs,
+            restores_session_hold=True,
         ),
         SensorSpec(
             key="counter_a_cost", name="Counter A Cost", value_fn=get_counter_a_cost,

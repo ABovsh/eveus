@@ -424,3 +424,104 @@ def test_estimate_still_follows_a_real_decline() -> None:
     ) else None
 
     assert sensor._get_sensor_value() != first
+
+
+# --- Session Time: the hold has to survive a restart, or it counts backwards --
+
+
+def _session_time_sensor(updater):
+    spec = next(
+        s
+        for s in sd.create_sensor_specifications(phases=1, max_current=16)
+        if s.key == "session_time"
+    )
+    return spec.create_sensor(updater)
+
+
+def _restored(updater, attributes: dict | None, state: str = "5d 21h 24m"):
+    """Build the sensor and hand it the state HA kept from before the restart."""
+    from homeassistant.core import State
+
+    sensor = _session_time_sensor(updater)
+    sensor._seed_session_hold(State("sensor.eveus_session_time", state, attributes))
+    return sensor
+
+
+def test_only_session_time_declares_a_hold_to_restore() -> None:
+    """The wiring, so the behaviour below cannot pass on a sensor nobody builds.
+
+    `isinstance(..., RestoreEntity)` proves nothing here — every Eveus entity is
+    one. What matters is which spec asks for the seeding.
+    """
+    declared = {
+        spec.key
+        for spec in sd.create_sensor_specifications(phases=1, max_current=16)
+        if spec.restores_session_hold
+    }
+    assert declared == {"session_time"}
+
+
+def test_being_added_to_hass_seeds_the_hold(monkeypatch) -> None:
+    """The override has to run on the real entity-add path, not just be callable."""
+    import asyncio
+
+    from homeassistant.core import State
+
+    async def _no_base_setup(self) -> None:
+        return None
+
+    monkeypatch.setattr(
+        sd.EveusSensorBase, "async_added_to_hass", _no_base_setup, raising=True
+    )
+    updater = _session(509095, 2)
+    sensor = _session_time_sensor(updater)
+
+    async def _last_state():
+        return State("sensor.x", "5d 21h 24m", {"duration_seconds": 509040})
+
+    sensor.async_get_last_state = _last_state
+    asyncio.run(sensor.async_added_to_hass())
+
+    assert sd.get_session_time(updater, None) == "5d 21h 24m"
+
+
+def test_session_time_hold_survives_a_restart() -> None:
+    """The hold lives on the updater, so a reload used to drop it.
+
+    A charge that ended left the figure on the minute grid; the next reading
+    after a restart takes the five-minute idle floor, which is up to 4:59
+    BEHIND it. Measured live 2026-09-05: the charger reported 509 095 s
+    (5d 21h 24m) and the sensor published 5d 21h 20m across a restart.
+    """
+    updater = _session(509095, 2)
+    sensor = _restored(updater, {"duration_seconds": 509040})
+    assert sensor is not None
+
+    assert sd.get_session_time(updater, None) == "5d 21h 24m"
+
+
+def test_a_restored_hold_never_outranks_a_counter_that_reset() -> None:
+    """Unplugged while HA was down: the charger's own counter starts over and
+    the restored hold must not resurrect the finished session."""
+    updater = _session(120, 4)
+    _restored(updater, {"duration_seconds": 509040})
+
+    assert sd.get_session_time(updater, None) == "2m"
+
+
+@pytest.mark.parametrize("restored", [-1, 10**9, "nonsense", None])
+def test_an_unusable_restored_hold_is_ignored(restored) -> None:
+    """A corrupt or out-of-range restored value must not become the floor."""
+    updater = _session(509095, 2)
+    _restored(updater, {"duration_seconds": restored})
+
+    assert sd.get_session_time(updater, None) == "5d 21h 20m"
+
+
+def test_a_restart_with_no_previous_state_changes_nothing() -> None:
+    """First install, or a state HA could not keep."""
+    updater = _session(509095, 2)
+    sensor = _session_time_sensor(updater)
+    sensor._seed_session_hold(None)
+
+    assert sd.get_session_time(updater, None) == "5d 21h 20m"
