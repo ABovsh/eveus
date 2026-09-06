@@ -236,8 +236,9 @@ _NON_KILLER_TESTS = frozenset({
     "tests/test_name_platform_compat.py",
     "tests/test_test_quality_contracts.py",
     "tests/test_ci_workflow.py",
-    # Skipped unless EVEUS_LIVE_HOST points at a real charger, so it can never
-    # kill a mutant in CI. It guards the fixture against firmware drift instead.
+    # Its charger-facing test needs EVEUS_LIVE_HOST; its `_OPTIONAL_FIELDS`
+    # self-check does run in CI but asserts on test data, not integration code.
+    # Neither can kill a mutant; the file guards the fixture against drift.
     "tests/test_firmware_drift_live.py",
     # Asserts on the shipped blueprint YAML, not on integration code, so there
     # is no mutant for it to kill.
@@ -340,28 +341,56 @@ def test_unmutated_modules_still_exist() -> None:
     assert not missing, f"stale entries in _UNMUTATED_MODULES: {missing}"
 
 
-def test_leak_guard_denies_every_internal_doc_class_gitignore_lists() -> None:
-    """The guard and .gitignore must name the same classes.
+def _internal_doc_patterns_from_gitignore() -> list[str]:
+    """The internal-doc block of .gitignore, read as data.
 
-    .gitignore is the fast pre-flight; this workflow is the control, because
-    it "cannot be bypassed by a local --no-verify or a force-push" — its own
-    words. A class the guard does not know is a class only the bypassable half
-    is protecting, which is the wrong way round.
+    Bounded by its own header comment and the first blank line after it, so a
+    pattern added to that block is picked up here with no edit.
+    """
+    lines = Path(".gitignore").read_text(encoding="utf-8").splitlines()
+    start = next(
+        k for k, line in enumerate(lines) if line.startswith("# Internal/private docs")
+    )
+    patterns = []
+    for line in lines[start + 1:]:
+        if not line.strip():
+            break
+        if not line.startswith("#"):
+            patterns.append(line.strip())
+    return patterns
+
+
+def test_leak_guard_denies_every_internal_doc_class_gitignore_lists() -> None:
+    """The guard and `.gitignore` must name the same classes.
+
+    .gitignore is the fast pre-flight; this workflow is the control, because it
+    "cannot be bypassed by a local --no-verify or a force-push" — its own words.
+    A class the guard does not know is protected only by the bypassable half of
+    the pair, which is the wrong way round.
+
+    The samples are DERIVED from .gitignore, not hand-typed. This test exists
+    because a round found `*.local.md` listed in .gitignore and missing from the
+    guard; a fixed sample list pins today's state and cannot catch the next one
+    — the same defect wearing a different filename.
     """
     guard = Path(".github/workflows/leak-guard.yml").read_text(encoding="utf-8")
     deny = re.search(r"deny='([^']+)'", guard)
     assert deny is not None, "leak-guard must define a deny expression"
     expression = deny.group(1)
 
-    for sample in (
-        "docs/superpowers/plan.md",
-        "docs/internal/notes.md",
-        "HARDENING_PLAN.md",
-        "API_SPEC.md",
-        "AUDIT_FINDINGS_4_10.md",
-        "eveus-assessment-2026.md",
-        "notes.local.md",
-    ):
+    patterns = _internal_doc_patterns_from_gitignore()
+    assert len(patterns) >= 7, (
+        f"only {len(patterns)} patterns found in .gitignore's internal-doc block "
+        "— its header comment or terminating blank line moved"
+    )
+
+    for pattern in patterns:
+        if not (pattern.endswith("/") or pattern.endswith(".md")):
+            continue  # non-document artifacts are not this guard's job
+        sample = (
+            f"{pattern}notes.md" if pattern.endswith("/") else pattern.replace("*", "x")
+        )
         assert re.search(expression, sample), (
-            f"leak guard would let {sample} through"
+            f".gitignore lists {pattern!r} as an internal-doc class but the leak "
+            f"guard would let {sample!r} through — add it to the deny expression"
         )

@@ -22,6 +22,7 @@ from custom_components.eveus import ev_sensors
 from custom_components.eveus import utils
 from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus.ev_sensors import (
+    _ESTIMATE_STEP_MINUTES,
     CachedSOCCalculator,
     ChargingFinishTimeSensor,
     TimeToTargetSocSensor,
@@ -284,3 +285,56 @@ def test_time_to_target_still_states_under_a_minute_below_the_minute(
 
     poll["seconds"] = 20
     assert sensor._get_sensor_value() == "< 1m"
+
+
+# --- The grid is applied ONCE, not twice ---
+
+
+def test_finish_stamp_does_not_overshoot_the_time_it_states(monkeypatch) -> None:
+    """`_damped_estimate` already snaps the instant onto the five-minute grid.
+
+    Feeding that grid-aligned instant into the older unconditional "snap UP to
+    the next boundary" step adds a further full step every time, because an
+    aligned minute always has `minute % 5 == 0`. The stamp then sits up to one
+    and a half steps beyond the estimate it is supposed to state, and the two
+    charge estimates — which the design says are two views of one calculation —
+    drift apart systematically rather than by rounding.
+    """
+    moment = datetime(2026, 9, 5, 12, 0, tzinfo=dt_util.UTC)
+    for remaining in range(3600, 6 * 3600, 337):
+        sensor = _soc_sensor(ChargingFinishTimeSensor, "1", powerMeas="7000")
+        _freeze(monkeypatch, moment)
+        _feed_seconds(monkeypatch, remaining)
+        stamp = sensor._get_sensor_value()
+        overshoot = (stamp - moment).total_seconds() - remaining
+        assert overshoot <= _ESTIMATE_STEP_MINUTES * 60, (
+            f"{remaining}s remaining: stamp overshoots by {overshoot / 60:.1f} min, "
+            f"more than the one {_ESTIMATE_STEP_MINUTES}-minute step the grid allows"
+        )
+        assert stamp > moment, "the stamp must stay in the future"
+
+
+def test_both_estimates_state_the_same_time_not_just_the_same_band(
+    monkeypatch,
+) -> None:
+    """The stronger half of the sibling invariant.
+
+    The existing guard compares WHICH polls moved; it cannot see the two
+    estimates agreeing on when to move while disagreeing on the answer.
+    """
+    moment = datetime(2026, 9, 5, 12, 0, tzinfo=dt_util.UTC)
+    for remaining in (3600, 5000, 7200, 9999, 14400):
+        finish = _soc_sensor(ChargingFinishTimeSensor, "1", powerMeas="7000")
+        eta = _soc_sensor(TimeToTargetSocSensor, "1", powerMeas="7000")
+        _freeze(monkeypatch, moment)
+        _feed_seconds(monkeypatch, remaining)
+        stamp_minutes = (finish._get_sensor_value() - moment).total_seconds() / 60
+        text = eta._get_sensor_value()
+        hours, _, mins = text.partition("h ")
+        stated = int(hours) * 60 + int(mins.rstrip("m")) if mins else int(
+            text.rstrip("m")
+        )
+        assert abs(stamp_minutes - stated) <= _ESTIMATE_STEP_MINUTES, (
+            f"{remaining}s remaining: finish stamp says {stamp_minutes:.0f} min, "
+            f"Time to Target says {stated} min"
+        )

@@ -127,7 +127,11 @@ class TestSessionCost:
 # ---------------------------------------------------------------------------
 
 _FIXED_NOW = datetime(2026, 5, 16, 10, 0, 0, tzinfo=timezone.utc)
-_EXPECTED_FINISH = datetime(2026, 5, 16, 17, 40, 0, tzinfo=timezone.utc)
+# 10:00 + ~27428s = 17:37:08, stated on the nearest five-minute grid point.
+# Was 17:40 while the grid was applied twice — once by the estimate damper
+# and again by an unconditional snap-up that an aligned minute could not
+# be a no-op for.
+_EXPECTED_FINISH = datetime(2026, 5, 16, 17, 35, 0, tzinfo=timezone.utc)
 
 
 _HELPER_KEYS = {
@@ -156,7 +160,7 @@ class TestChargingFinishTime:
             return_value=_FIXED_NOW,
         ):
             result = sensor._get_sensor_value()
-        # ~27428s ahead, snapped up to the next 5-minute boundary.
+        # ~27428s ahead, stated on the nearest 5-minute grid point.
         assert result == _EXPECTED_FINISH
         # Must be a tz-aware UTC timestamp suitable for device_class=timestamp.
         assert result.tzinfo is not None

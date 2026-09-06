@@ -467,6 +467,10 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             return result
 
         except Exception as err:
+            # Third exit that publishes no estimate, so it drops the anchor like
+            # the other two: a hold left behind by a failed computation is
+            # measured against on the next successful one.
+            self._forget_estimate()
             _LOGGER.debug(
                 "Error calculating time to target for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,
@@ -624,8 +628,21 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             eta = (eta + timedelta(seconds=held - eta.timestamp())).replace(
                 second=0, microsecond=0
             )
-            return eta + timedelta(minutes=5 - eta.minute % 5)
+            # Snap UP only if the instant is not already on the grid.
+            # `_damped_estimate` returns a multiple of the step, so an
+            # unconditional ceiling — which is what this was before the damping
+            # landed — always added a further full step to an aligned minute,
+            # putting the stamp up to one and a half steps beyond the estimate
+            # it states. The fallback branch above is the one path that can
+            # still hand this an unaligned instant, which is why the ceiling
+            # stays rather than being deleted.
+            remainder = eta.minute % _ESTIMATE_STEP_MINUTES
+            if remainder:
+                eta += timedelta(minutes=_ESTIMATE_STEP_MINUTES - remainder)
+            return eta
         except Exception as err:
+            # Same third exit as Time to Target's — see there.
+            self._forget_estimate()
             _LOGGER.debug(
                 "Error calculating finish time for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,

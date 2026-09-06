@@ -179,10 +179,18 @@ class OptimizedEveusSensor(EveusSensorBase):
         return super().available
 
     async def async_added_to_hass(self) -> None:
-        """Restore the updater-side hold this sensor's value is built on."""
-        await super().async_added_to_hass()
+        """Restore the updater-side hold this sensor's value is built on.
+
+        The base class computes and caches the first value inside
+        `super().async_added_to_hass()`, so a seed applied afterwards fixes
+        every poll EXCEPT the one the reload was about: the entity would come
+        back showing the coarse floor — the exact 4:59 regression this seeding
+        exists to remove — and only correct itself on the next poll, minutes
+        away at the idle cadence. Seed first, then let the base read.
+        """
         if self._spec.restores_session_hold:
             self._seed_session_hold(await self.async_get_last_state())
+        await super().async_added_to_hass()
 
     def _seed_session_hold(self, state) -> None:
         """Re-arm `_session_time_seconds` from the state HA kept for us.

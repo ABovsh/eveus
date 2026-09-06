@@ -77,6 +77,7 @@ jobs:
               tests/test_multi_state_payload.py
               tests/test_normalize_soc_input.py
               tests/test_recorder_deadband.py
+              tests/test_hardening_rc_2026_09_05.py
               tests/test_issue11_fw151_unknown_state.py
           - name: coordinator
             paths: "custom_components/eveus/common_network.py"
@@ -144,6 +145,7 @@ jobs:
               tests/test_hardening_rc_2026_07_10.py
               tests/test_hardening_rc_2026_08_24.py
               tests/test_hardening_rc_2026_08_25.py
+              tests/test_hardening_rc_2026_09_05.py
               tests/test_fw151_missing_fields_audit.py
           - name: minor-entities
             paths: "custom_components/eveus/select.py,custom_components/eveus/time.py,custom_components/eveus/binary_sensor.py,custom_components/eveus/button.py,custom_components/eveus/session_history.py"

@@ -467,11 +467,17 @@ def test_being_added_to_hass_seeds_the_hold(monkeypatch) -> None:
 
     from homeassistant.core import State
 
-    async def _no_base_setup(self) -> None:
+    # Stub the COORDINATOR entity, not EveusSensorBase: the base's own
+    # async_added_to_hass computes and caches the first value, and stubbing it
+    # away is what let the seeding run one step too late without any test
+    # noticing. Everything from BaseEveusEntity down now runs for real.
+    from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+    async def _no_coordinator_setup(self) -> None:
         return None
 
     monkeypatch.setattr(
-        sd.EveusSensorBase, "async_added_to_hass", _no_base_setup, raising=True
+        CoordinatorEntity, "async_added_to_hass", _no_coordinator_setup, raising=True
     )
     updater = _session(509095, 2)
     sensor = _session_time_sensor(updater)
@@ -482,7 +488,12 @@ def test_being_added_to_hass_seeds_the_hold(monkeypatch) -> None:
     sensor.async_get_last_state = _last_state
     asyncio.run(sensor.async_added_to_hass())
 
+    # The hold itself, and — the part the stub used to hide — the value the
+    # entity has ALREADY published by the time it finishes being added. A seed
+    # that lands after the first computation fixes polls 2+ and leaves the
+    # regression exactly where it was seen: on the first reading after a reload.
     assert sd.get_session_time(updater, None) == "5d 21h 24m"
+    assert sensor.native_value == "5d 21h 24m"
 
 
 def test_session_time_hold_survives_a_restart() -> None:

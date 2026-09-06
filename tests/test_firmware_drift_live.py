@@ -33,13 +33,9 @@ HOST = os.environ.get("EVEUS_LIVE_HOST")
 PASSWORD = os.environ.get("EVEUS_PASS")
 USERNAME = os.environ.get("EVEUS_LIVE_USER", "eveus")
 
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.skipif(
-        not HOST,
-        reason="set EVEUS_LIVE_HOST to run the live firmware-drift check",
-    ),
-]
+# The live gating is applied to the test that TALKS TO THE CHARGER, not at
+# module scope: the `_OPTIONAL_FIELDS` self-check needs no network and must run
+# in CI, or the excuse list is guarded by something that never executes there.
 
 
 def _fetch_live() -> dict:
@@ -81,6 +77,10 @@ def test_optional_fields_are_all_in_the_fixture() -> None:
     assert not missing, f"_OPTIONAL_FIELDS names fields the fixture lacks: {missing}"
 
 
+@pytest.mark.live
+@pytest.mark.skipif(
+    not HOST, reason="set EVEUS_LIVE_HOST to run the live firmware-drift check"
+)
 def test_live_charger_field_set_matches_the_fixture() -> None:
     """The fixture must describe the firmware actually in service.
 
