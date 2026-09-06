@@ -754,6 +754,11 @@ def _get_session_seconds(updater) -> Optional[int]:
     # four minutes. Hold it instead — but only while the charger's own counter
     # is still ahead of it, so unplugging (which resets that counter) starts
     # the next session from zero rather than from a stale hold.
+    # NOT pragma'd, deliberately, even though `stepped <` vs `stepped <=` is
+    # unobservable (at equality the assignment below is a no-op): mutmut's
+    # pragma is line-level, and the UPPER comparison on this same line is
+    # load-bearing -- silencing the line would silence that too. The equivalent
+    # mutant is carried in .github/mutation-baseline.json instead.
     if last is not None and stepped < last <= seconds:
         stepped = last
     updater._session_time_seconds = stepped

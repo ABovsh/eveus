@@ -31,6 +31,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.eveus import ev_sensors, utils
 from custom_components.eveus.ev_sensors import (
     _ESTIMATE_STEP_MINUTES,
+    _SUB_MINUTE_SECONDS,
     CachedSOCCalculator,
     ChargingFinishTimeSensor,
     TimeToTargetSocSensor,
@@ -264,3 +265,87 @@ def test_the_stamp_never_falls_into_the_past(monkeypatch) -> None:
         poll["seconds"] = 90  # a minute and a half, from here to the end
         stamp = finish._get_sensor_value()
         assert stamp > poll["now"], f"stamp {stamp} is not in the future"
+
+
+# --- The band: what it absorbs, and what it must let through ---
+
+
+def _moves(monkeypatch, remaining: float, to: float) -> bool:
+    """Does the stamp change when the estimate jumps from `remaining` to `to`?"""
+    finish, _, poll = _pair(monkeypatch, remaining)
+    before = finish._get_sensor_value()
+    poll["seconds"] = to
+    return finish._get_sensor_value() != before
+
+
+@pytest.mark.parametrize(
+    ("remaining", "jump", "publishes", "why"),
+    [
+        # Short charge: the flat floor of one and a half grid steps rules.
+        (2 * 3600, 300, False, "5 min is inside the 7.5 min floor"),
+        (2 * 3600, 600, True, "10 min is past it"),
+        # Long charge: 3 % of the time remaining overtakes the flat floor.
+        (10 * 3600, 600, False, "10 min is inside 3 % of ten hours (18 min)"),
+        (10 * 3600, 1500, True, "25 min is past it"),
+    ],
+)
+def test_the_band_is_the_wider_of_a_flat_floor_and_a_share_of_the_estimate(
+    monkeypatch, remaining: int, jump: int, publishes: bool, why: str
+) -> None:
+    """Both halves of `max(step * 1.5, fraction * seconds)` have to bite.
+
+    Only the long-charge pair can see the proportional half at all — on a short
+    charge the flat floor is always the larger — so a band that dropped the
+    fraction, or divided by the estimate instead of scaling with it, would look
+    correct everywhere except on an overnight charge, which is precisely where
+    the same power swing moves the answer furthest.
+    """
+    assert _moves(monkeypatch, remaining, remaining - jump) is publishes, why
+
+
+def test_a_move_exactly_the_width_of_the_band_publishes(monkeypatch) -> None:
+    """`>=` and not `>`: the boundary itself is a real move.
+
+    Stated rather than left to chance because it is the one comparison whose
+    two forms differ on exactly one value, and a band is a rounding decision —
+    silently taking the other side of it costs a row the user was owed, or
+    keeps one they were not.
+    """
+    remaining = 2 * 3600
+    band = _ESTIMATE_STEP_MINUTES * 60 * 1.5
+
+    finish, _, poll = _pair(monkeypatch, remaining)
+    before = finish._get_sensor_value()
+    # The anchor is snapped to the grid, so measure the move from the anchor
+    # rather than from the raw estimate it came from.
+    held = finish._updater._estimate_anchors["finish_at"]
+    poll["seconds"] = held - START.timestamp() - band
+
+    assert finish._get_sensor_value() != before
+
+
+def test_the_sub_minute_threshold_is_thirty_seconds(monkeypatch) -> None:
+    """The exact second at which the display floor lifts.
+
+    Half a minute is where `round(seconds / 60)` turns zero, which is the rule
+    `calculate_remaining_time` has always used. Pinning the boundary is what
+    stops the threshold drifting into the floor's territory, where a charge
+    with a minute left would read "< 1m", or out of it, where one with seconds
+    left would read "5m".
+
+    The constant is pinned to the PROPERTY it claims rather than to its digits:
+    it must be the last second that rounds to zero minutes. Any larger value
+    happens to behave the same today — above half a minute both branches end at
+    the same "5m", because `calculate_remaining_time` applies the same floor —
+    so only the lower edge is load-bearing, and only this assertion sees it.
+    """
+    assert round(_SUB_MINUTE_SECONDS / 60) == 0
+    assert round((_SUB_MINUTE_SECONDS + 1) / 60) == 1
+
+    _, eta, poll = _pair(monkeypatch, 2 * 3600)
+
+    poll["seconds"] = 30
+    assert eta._get_sensor_value() == "< 1m"
+
+    poll["seconds"] = 31
+    assert eta._get_sensor_value() == "5m"

@@ -23,6 +23,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.eveus import ev_sensors
 from custom_components.eveus import utils
 from custom_components.eveus import sensor_definitions as sd
+from custom_components.eveus.const import MAX_SESSION_TIME_SECONDS
 from custom_components.eveus.ev_sensors import (
     CachedSOCCalculator,
     ChargingFinishTimeSensor,
@@ -558,3 +559,57 @@ def test_rssi_deadband_boundary_is_exactly_five_dbm() -> None:
         -66,  # 4 dBm: inside the band, held
         -71,  # 5 dBm: a move EQUAL to the band publishes
     ]
+
+
+@pytest.mark.parametrize(
+    ("restored", "accepted"),
+    [
+        (0, True),  # a session that has only just begun
+        (MAX_SESSION_TIME_SECONDS, True),  # the longest one the getter allows
+        (MAX_SESSION_TIME_SECONDS + 1, False),  # one second past it
+    ],
+)
+def test_the_restored_hold_accepts_exactly_the_range_the_getter_does(
+    restored, accepted
+) -> None:
+    """Both ends of `0 <= seconds <= MAX` are inclusive, and nothing past them.
+
+    The corrupt-value cases sit far outside the range, so they cannot tell an
+    inclusive bound from an exclusive one. These three can: a zero rejected
+    would drop the hold on the poll after a plug-in, and a bound that stopped
+    being inclusive at the top would reject the very value the getter itself
+    still publishes — the seed would silently do nothing on the longest
+    sessions, which are exactly the ones the hold exists for.
+    """
+    updater = _session(MAX_SESSION_TIME_SECONDS, 2)
+    sensor = _restored(updater, {"duration_seconds": restored})
+
+    seeded = getattr(sensor._updater, "_session_time_seconds", None)
+    assert (seeded == restored) is accepted
+
+
+def test_the_hold_only_applies_while_the_charger_is_still_ahead_of_it() -> None:
+    """`stepped < last <= seconds`, and both comparisons are load-bearing.
+
+    The middle term is the held figure. It may only stand while the charger's
+    own counter has reached it — otherwise a cable pulled and replugged would
+    inherit the old session's floor — and only while the coarser step would
+    actually drag the display backwards. Equality on each side is the case that
+    separates the operators: `last == stepped` is nothing to hold, and
+    `last == seconds` is a counter that has exactly caught up, which must still
+    hold rather than fall back a step.
+    """
+    # last == seconds exactly. 3660 s is a whole minute but NOT a whole five,
+    # so the charging step holds it verbatim and the idle step would drop it to
+    # 3600 — the one shape where the upper comparison's two forms disagree.
+    updater = _session(3660, 4)
+    assert sd.get_session_time(updater, None) == "1h 01m"
+
+    updater.data["state"] = 2
+    assert sd.get_session_time(updater, None) == "1h 01m", (
+        "a counter that has exactly reached the hold must not fall back a step"
+    )
+
+    # And the hold is released the moment the coarse step catches up.
+    updater.data["sessionTime"] = 3900
+    assert sd.get_session_time(updater, None) == "1h 05m"

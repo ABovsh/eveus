@@ -40,8 +40,15 @@ _LOGGER = logging.getLogger(__name__)
 _ESTIMATE_STEP_MINUTES = 5
 _ESTIMATE_STEP_SECONDS = _ESTIMATE_STEP_MINUTES * 60
 
-# The single anchor, held on the updater (one per charger).
-_ESTIMATE_ANCHOR_KEY = "finish_at"
+# The single anchor, held on the updater (one per charger). Never read as a
+# literal anywhere, so its spelling is unobservable — a mutation to it is
+# equivalent by construction.
+_ESTIMATE_ANCHOR_KEY = "finish_at"  # pragma: no mutate - private dict key, never compared against a literal
+
+# Below this, `round(seconds / 60)` is zero and `calculate_remaining_time`
+# states "< 1m". Naming the threshold in SECONDS rather than re-deriving a
+# minute count keeps one number to test instead of a rounding to reason about.
+_SUB_MINUTE_SECONDS = 30
 
 # Share of the estimate the charger's own power swing is worth. Measured on the
 # charger: 3504-3537 W across a session at a fixed current, so an estimate
@@ -296,6 +303,11 @@ class BaseEVHelperSensor(EveusSensorBase):
                 # is the same floor `calculate_remaining_time` has always
                 # applied to the duration ("under 5 minutes the sensor still
                 # reads 5m").
+                # `//` and `int(/)` agree for every real Unix timestamp (both
+                # floor a positive number), so a mutation between them is
+                # equivalent -- but the `+ 1` on this same line is not, and
+                # mutmut's pragma is line-level, so this stays mutable and the
+                # equivalent half is carried in the baseline instead.
                 held = (int(now_ts // _ESTIMATE_STEP_SECONDS) + 1) * _ESTIMATE_STEP_SECONDS
         anchors[_ESTIMATE_ANCHOR_KEY] = held
         return held
@@ -463,19 +475,17 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             seconds = calculate_remaining_seconds(*inputs)
             now = dt_util.utcnow()
             held = self._damped_finish_timestamp(seconds, now)
-            raw_minutes = (
-                round(seconds / 60, 0) if seconds is not None and seconds > 0 else None
-            )
-            if held is None:
-                # No estimate: `calculate_remaining_time` states why itself
-                # ("Not charging", "unavailable", target reached).
+            if held is None or seconds <= _SUB_MINUTE_SECONDS:
+                # Two cases, one answer: let `calculate_remaining_time` derive
+                # the count itself. With no estimate it states why ("Not
+                # charging", "unavailable", target reached) without ever
+                # reaching the override; under a minute it states "< 1m", which
+                # is also what handing it the raw count would produce. The
+                # branch exists to keep the sub-minute case AWAY from the floor
+                # below — the anchor is the next grid point by then, so
+                # projecting off it would read "5m" with the cable seconds from
+                # done.
                 minutes = None
-            elif raw_minutes < 1:
-                # Under a minute left is stated plainly. The anchor is the next
-                # grid point by then, so projecting off it would say "5m" while
-                # the cable is seconds from done — the floor below is a floor,
-                # not a lie.
-                minutes = raw_minutes
             else:
                 # The projection, and the whole point of one anchor: this is
                 # the same instant Charging Finish Time publishes, expressed as
