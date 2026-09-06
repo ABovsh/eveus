@@ -134,6 +134,31 @@ def test_sensor_never_publishes_unknown_before_it_publishes_unavailable(clock) -
     assert entity.available is False
 
 
+def test_holding_a_reading_reports_no_change(clock) -> None:
+    """A held value is by definition an UNCHANGED value, and must say so.
+
+    `_update_native_value` returns "did the visible value change", and every
+    caller uses that answer to decide whether to write the entity's state. The
+    grace-window hold returns early, before the usual comparison, so its return
+    value is asserted nowhere else: claiming True there would have the entity
+    re-publish an identical reading on every poll the charger misses — the
+    opposite of the point, since holding exists to keep those polls off the
+    recorder in the first place.
+    """
+    updater = EveusTestUpdater({"totalEnergy": "5178.63"})
+    entity = _sensor(updater, _spec(_payload_value))
+    entity._handle_coordinator_update()
+
+    updater.available = False
+
+    assert entity._update_native_value() is False
+    assert entity.native_value == 5178.63
+    # And once the charger answers with something new it is a change again.
+    updater.available = True
+    updater.data["totalEnergy"] = "5180.00"
+    assert entity._update_native_value() is True
+
+
 def test_sensor_attributes_survive_the_grace_window(clock) -> None:
     """Attributes write a recorder row exactly like a state does."""
     updater = EveusTestUpdater({"totalEnergy": "5178.63"})
