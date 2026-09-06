@@ -329,3 +329,22 @@ def test_control_goes_unavailable_when_its_window_closes(case, clock) -> None:
     entity._handle_coordinator_update()
 
     assert entity.available is False, f"{name}: should have gone unavailable"
+
+
+def test_binary_sensor_answers_before_it_has_ever_read_the_charger(clock) -> None:
+    """HA starts while the charger is already offline.
+
+    The first poll fails, so `is_on` takes the grace-window branch and reads the
+    last successful reading — on an entity that has never had one. Found by
+    reverting this round's own hunks one at a time: the initialiser for that
+    attribute was the one code hunk the suite did not hold in place, and without
+    it this path raises AttributeError inside the entity's first state write.
+    """
+    updater = EveusTestUpdater({"state": 4}, available=False)
+    entity = EveusCarConnectedBinarySensor(updater)
+    disable_state_writes(entity)
+
+    entity._handle_coordinator_update()
+
+    assert entity.available is True, "inside the grace window on the first failure"
+    assert entity.is_on is None, "nothing has ever been read, so there is nothing to hold"
