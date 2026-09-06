@@ -1,16 +1,22 @@
-# Gitleaks configuration — extends the default ruleset with project allowlists.
+# Gitleaks configuration — default ruleset plus this project's allowlist.
+# Credentials never live in source here: the charger's user/password come from
+# the HA config entry at runtime. The entries below are the recurring shapes
+# that trip gitleaks' generic-api-key entropy check.
+
 [extend]
 useDefault = true
 
-# Documentation and user-facing notes hold no real secrets — credentials for
-# this integration always flow through Home Assistant's config entry, never the
-# source tree. Allowlist markdown so doc IDs / example tokens don't false-trip.
 [allowlist]
-description = "Documentation is not a secret store"
-paths = [
-  '''docs/.*\.md''',
-  '''.*README\.md''',
-  '''CHANGELOG\.md''',
-  '''CLAUDE\.md''',
-  '''info\.md''',
+description = "Home Assistant entity keys and documentation placeholders"
+regexTarget = "line"
+regexes = [
+  # Entity/state keys in platform definitions: key="voltage_phase_2",
+  # state_key="sh1EnergyEnable". Identifiers, not secrets.
+  '''(state_)?key\s*=\s*"[A-Za-z][A-Za-z0-9_]{2,48}"''',
+  # Placeholder credentials in docs and test docstrings. Deliberately narrow:
+  # README is still scanned, so a real token pasted there is still caught.
+  '''USER:PASS''',
+  '''real_login:real_password''',
+  '''-u wrong:wrong''',
+  '''CHARGER_IP''',
 ]

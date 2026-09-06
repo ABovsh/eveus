@@ -1,13 +1,17 @@
 name: Leak Guard
 
-# Fails the build if internal / auto-generated docs (planning artifacts,
-# audit findings, superpowers/internal output) ever land in the repo.
-# Runs on every push and PR regardless of which client or agent pushed,
-# so it cannot be bypassed by a local --no-verify or a force-push.
+# Blocks internal/auto-generated docs and credential material from reaching this
+# public repo. Runs on every push and PR regardless of which client or agent
+# pushed, so a local --no-verify or a force-push cannot bypass it.
+#
+# The deny-list lives in .github/leak-guard.sh, generated from
+# /opt/scripts/git-hooks/leak-guard.sh -- edit there and re-run sync-leak-guard.sh.
 
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 4 * * 1"   # Monday 04:17 UTC -- history audit
   workflow_dispatch:
 
 permissions:
@@ -18,24 +22,72 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  guard:
+  paths:
+    name: Disallowed paths
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
-      - name: Block internal / auto-generated docs
+      - name: Scan
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          deny='(^|/)(superpowers|internal)/|_PLAN\.md$|_SPEC\.md$|\.plan\.md$|AUDIT_FINDINGS.*\.md$|-assessment-.*\.md$|\.local\.md$'
-          bad="$(git ls-files | grep -nE "$deny" || true)"
-          if [ -n "$bad" ]; then
-            echo "::error::Internal/auto-generated docs must never be committed to this public repo:"
-            echo "$bad"
-            echo ""
-            echo "Remove them from the repo (and add the path to .gitignore)."
-            exit 1
+          ZERO=0000000000000000000000000000000000000000
+          # Check the commits this event introduces, not just the tip: a file
+          # added and deleted within one push leaves a public blob behind while
+          # a tip-only check stays green.
+          if [ "$EVENT" = "pull_request" ] && [ -n "${BASE:-}" ]; then
+            exec .github/leak-guard.sh range "$BASE" "$HEAD_SHA"
           fi
-          echo "Leak guard passed: no internal docs in tree."
+          if [ "$EVENT" = "push" ] && [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$ZERO" ] \
+             && git cat-file -e "$BEFORE" 2>/dev/null; then
+            exec .github/leak-guard.sh range "$BEFORE" "$HEAD_SHA"
+          fi
+          # New branch, force-push past the baseline, schedule or dispatch.
+          exec .github/leak-guard.sh tree "$HEAD_SHA"
+
+  secrets:
+    name: Credential content
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Filename patterns cannot catch a token pasted into a README or a test
+      # fixture. Allowlist project false positives in .gitleaks.toml.
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
+
+  history:
+    name: History audit (report only)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Reports what is already reachable in published history. Non-blocking:
+      # the only fix is a filter-repo rewrite plus a force-push, which is a
+      # deliberate decision, not something a red build should force.
+      - name: Audit full history
+        run: |
+          if ! out="$(.github/leak-guard.sh history 2>&1)"; then
+            echo "::warning::Disallowed paths exist in published history (rewrite needed)"
+            echo "$out"
+          else
+            echo "$out"
+          fi
