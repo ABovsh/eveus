@@ -137,16 +137,18 @@ def test_both_estimates_take_the_same_band_for_the_same_remaining_time(
         (sd.get_current_phase_3, "curMeas3"),
     ],
 )
-def test_current_phases_hold_the_same_swing_phase_one_holds(getter, key) -> None:
+def test_current_phases_take_the_same_step_as_phase_one(getter, key) -> None:
     """Phases 2 and 3 are the same telemetry, so they take the same step.
 
-    The existing parametrised case only proves SOME band is present: its feed
-    crosses at 0.2 A and at 0.25 A alike, so the widening phase 1 received
-    could be reverted on these two with the suite still green. Phase 2/3
-    silently keeping a narrower band than phase 1 has shipped once already.
+    Compared against phase 1 on the same feed rather than against a hardcoded
+    swing: a swing chosen for one band silently stops discriminating when the
+    band moves, and phase 2/3 keeping a narrower band than phase 1 has shipped
+    once already. This holds whatever the band is set to.
     """
-    assert _read(getter, _updater({}), key, [15.7, 15.9, 15.6, 15.8]) == (
-        pytest.approx([15.7, 15.7, 15.7, 15.7])
+    feed = [15.7, 15.9, 15.6, 15.8, 16.1, 15.9, 12.0]
+
+    assert _read(getter, _updater({}), key, feed) == pytest.approx(
+        _read(sd.get_current, _updater({}), "curMeas1", feed)
     )
 
 

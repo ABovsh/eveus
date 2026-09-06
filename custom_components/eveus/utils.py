@@ -529,11 +529,10 @@ def apply_deadband(last: float | None, value, deadband: float):
     not against a grid. An exact zero always passes through: "charging
     stopped" must never be hidden behind a deadband.
 
-    A move EQUAL to `deadband` publishes. Callers sizing a band against
-    measured hardware therefore have to clear the swing's full peak-to-peak
-    spread, not its largest single step: a reading wandering 15.6-15.9 A needs
-    more than 0.2, because from an anchor at 15.7 it reaches 0.2 up and 0.1
-    down and either end publishing re-anchors it onto a swing peak.
+    The comparison is strict, so a move EQUAL to `deadband` publishes and
+    re-anchors on the value it published. A band therefore holds a swing whose
+    steps stay strictly inside it, measured from wherever the last publish left
+    the anchor -- not necessarily from the middle of the swing.
     """
     if last is None or value is None or value == 0:
         return value

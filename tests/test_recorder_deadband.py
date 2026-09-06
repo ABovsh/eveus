@@ -298,21 +298,33 @@ def test_time_to_target_holds_a_dither_across_a_grid_boundary(monkeypatch) -> No
     assert second == first
 
 
-def test_current_holds_the_two_tenth_dither_seen_all_session() -> None:
-    """15.6/15.7/15.8/15.9 all session: a 0.2 A step must not be a row.
+def test_current_holds_a_tenth_of_an_amp_from_any_anchor() -> None:
+    """The 0.2 A band holds the 0.1 A step, wherever the last publish anchored.
 
-    The band has to exceed the swing's full peak-to-peak spread, not match its
-    largest single step: anchored at 15.7, this swing reaches 0.2 A up and
-    0.1 A down, and `apply_deadband` publishes a delta EQUAL to the band by
-    design (`abs(value - last) < deadband`). So the old 0.2 A band let 15.9
-    through on every visit and the reading wrote a row on nearly every poll.
-    Binary floating point is a red herring here — 15.9 - 15.7 does land a hair
-    above 0.2, but an exact 0.2 would have published too.
+    `apply_deadband` compares strictly, so 0.2 A is the first move that
+    publishes and 0.1 A never is — and that has to hold from every anchor the
+    swing can leave behind, not just from its middle, because publishing
+    re-anchors on the value published. Live over a fortnight the reading sits
+    on 15.6/15.7/15.8/15.9, so each of those is a reachable anchor.
+    """
+    for anchor in (15.6, 15.7, 15.8, 15.9):
+        neighbours = [round(anchor + step, 1) for step in (0.1, -0.1, 0.1)]
+        updater = _updater({})
+        assert _read(
+            sd.get_current, updater, "curMeas1", [anchor, *neighbours]
+        ) == pytest.approx([anchor] * 4), f"0.1 A step published from {anchor}"
+
+
+def test_current_publishes_a_two_tenth_move_by_design() -> None:
+    """0.2 A is the band, and a move equal to the band is a row.
+
+    Pinned so the boundary cannot drift silently: the charger reports current
+    to 0.1 A, so this is the smallest move the sensor is allowed to record.
     """
     updater = _updater({})
 
-    assert _read(sd.get_current, updater, "curMeas1", [15.7, 15.9, 15.6, 15.8]) == (
-        pytest.approx([15.7, 15.7, 15.7, 15.7])
+    assert _read(sd.get_current, updater, "curMeas1", [15.7, 15.9]) == pytest.approx(
+        [15.7, 15.9]
     )
 
 

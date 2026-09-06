@@ -19,7 +19,7 @@ from .common_base import (
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
-from .const import OPTIMISTIC_CONTROL_TTL
+from .const import OPTIMISTIC_CONTROL_TTL, UNUSABLE_RESTORED_STATES
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -207,7 +207,7 @@ class EveusScheduleTimeEntity(
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
-        if not state or state.state in (None, "unknown", "unavailable"):  # pragma: no mutate - sentinel-equivalence: "unknown"/"unavailable" never parse via ha_dt.parse_time either, so the subsequent `if restored is None: return` guard already catches them regardless of this literal
+        if not state or state.state in UNUSABLE_RESTORED_STATES:  # pragma: no mutate - sentinel-equivalence: "unknown"/"unavailable" never parse via ha_dt.parse_time either, so the subsequent `if restored is None: return` guard already catches them regardless of this literal
             return
         restored = ha_dt.parse_time(state.state)
         if restored is None:

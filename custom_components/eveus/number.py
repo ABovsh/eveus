@@ -32,6 +32,7 @@ from .const import (
     CONF_MODEL,
     OPTIMISTIC_CONTROL_TTL,
     SOC_INPUT_LIMITS,
+    UNUSABLE_RESTORED_STATES,
     DEFAULT_INITIAL_SOC,
     DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
@@ -389,7 +390,7 @@ class EveusCurrentNumber(EveusNumberEntity):
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
         try:
-            if state and state.state not in (None, "unknown", "unavailable"):
+            if state and state.state not in UNUSABLE_RESTORED_STATES:
                 restored_value = float(state.state)
                 if self._READ_MIN <= restored_value <= self._attr_native_max_value:
                     self._last_device_value = restored_value

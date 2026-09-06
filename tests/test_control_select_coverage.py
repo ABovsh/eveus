@@ -16,7 +16,10 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 
 from conftest import TEST_HOST
+from custom_components.eveus import const
+from custom_components.eveus import number as number_module
 from custom_components.eveus import select as select_module
+from custom_components.eveus import time as time_module
 from custom_components.eveus.const import CONTROL_GRACE_PERIOD
 from custom_components.eveus.control_base import CommandBackedEntity
 
@@ -553,17 +556,21 @@ def test_select_setup_entry_adds_min_voltage_when_model_configured() -> None:
     }
 
 
-def test_both_restore_paths_reject_the_same_unusable_states() -> None:
-    """One rule, spelled once, for both selects.
+def test_every_restore_path_rejects_the_same_unusable_states() -> None:
+    """One rule, spelled once, for every platform that restores a value.
 
     The behavioural half — a restored "unknown" seeds nothing — is already
     covered above, and it cannot tell the guard's strings from a typo: the
-    option lookup each path runs afterwards rejects them anyway, so the guard
-    is an early exit rather than the only defence. Pinning the named tuple is
-    what makes an edit to either sentinel visible, and what keeps the two
-    restore paths from drifting to different spellings of the same rule.
+    parse or option lookup each path runs afterwards rejects them anyway, so
+    the guard is an early exit rather than the only defence. Pinning the named
+    tuple is what makes an edit to either sentinel visible, and what keeps the
+    restore paths — selects, numbers and the schedule times — from drifting to
+    different spellings of the same rule.
     """
-    assert select_module._UNUSABLE_RESTORED_STATES == (None, "unknown", "unavailable")
+    assert const.UNUSABLE_RESTORED_STATES == (None, "unknown", "unavailable")
+    assert select_module.UNUSABLE_RESTORED_STATES is const.UNUSABLE_RESTORED_STATES
+    assert number_module.UNUSABLE_RESTORED_STATES is const.UNUSABLE_RESTORED_STATES
+    assert time_module.UNUSABLE_RESTORED_STATES is const.UNUSABLE_RESTORED_STATES
 
     for factory in (
         select_module.EveusMinVoltageSelect,

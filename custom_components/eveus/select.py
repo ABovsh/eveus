@@ -21,19 +21,11 @@ from .const import (
     CONF_MODEL,
     MIN_VOLTAGE_OPTIONS,
     OPTIMISTIC_CONTROL_TTL,
+    UNUSABLE_RESTORED_STATES,
 )
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
-
-# What Home Assistant restores when it has no usable value to give back. Both
-# strings are ALSO rejected by the option lookup each restore path runs after
-# this guard (neither is a valid time-zone offset or an OPTION_TO_DEVICE key),
-# so the guard is an early exit rather than the only defence — which is exactly
-# why no behavioural test can tell either string from a typo. Naming them once
-# is what lets `test_control_select_coverage` pin them, and stops the two
-# restore paths spelling the same rule differently.
-_UNUSABLE_RESTORED_STATES: tuple = (None, "unknown", "unavailable")
 
 
 def _format_tz(offset: int) -> str:
@@ -105,7 +97,7 @@ class EveusTimeZoneSelect(
         restart while the charger is still offline, instead of dropping to
         `unknown` until the first successful poll.
         """
-        if state is None or state.state in _UNUSABLE_RESTORED_STATES:
+        if state is None or state.state in UNUSABLE_RESTORED_STATES:
             return
         if state.state in TIMEZONE_OPTIONS:
             try:
@@ -217,7 +209,7 @@ class _EveusIntegerSelect(
 
     async def _async_restore_state(self, state: State) -> None:
         """Seed the last device value from the restored HA state."""
-        if state is None or state.state in _UNUSABLE_RESTORED_STATES:
+        if state is None or state.state in UNUSABLE_RESTORED_STATES:
             return
         value = self.OPTION_TO_DEVICE.get(state.state)
         if value is not None:

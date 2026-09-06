@@ -87,6 +87,14 @@ ERROR_LOG_RATE_LIMIT: Final[int] = 300
 STATE_CACHE_TTL: Final[int] = 60
 OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 
+# What Home Assistant hands back when it has no usable value to restore. Every
+# `_async_restore_state` on every platform rejects the same three, so the rule
+# is spelled once here rather than re-typed per platform: a control seeded from
+# "unknown" would take that string as a device reading. Each path also runs its
+# own parse or option lookup afterwards, which rejects these anyway, so this is
+# an early exit rather than the only defence.
+UNUSABLE_RESTORED_STATES: Final[tuple] = (None, "unknown", "unavailable")
+
 # CR2032 coin cell inside the charger (reported as `vBat`). A low reading is
 # surfaced as an informational "replace soon" notice (we don't model exactly
 # which charger functions depend on it, only that some may be limited). The
