@@ -1,9 +1,14 @@
 """Unit tests for optional EV helper sensors."""
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
+from homeassistant.util import dt as dt_util
+
 from conftest import EV_HELPERS, EveusTestUpdater, HelperHass
+from custom_components.eveus import ev_sensors
 from custom_components.eveus.ev_sensors import (
     CachedSOCCalculator,
     EVSocKwhSensor,
@@ -37,7 +42,17 @@ def test_ev_sensors_keep_soc_calculator_per_instance() -> None:
     assert first._soc_calculator is not second._soc_calculator
 
 
-def test_time_to_target_soc_uses_shared_calculator() -> None:
+def test_time_to_target_soc_uses_shared_calculator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The clock has to be pinned. Time to Target is projected off the damped
+    # FINISH INSTANT, which sits on an absolute five-minute boundary, so the
+    # duration it states depends on where "now" falls inside that step: the
+    # same 7h 37m estimate reads 7h 35m or 7h 40m depending on the minute of
+    # the hour. That is the price of the two estimates agreeing, and against a
+    # live clock it made this assertion pass or fail by the time of day.
+    moment = datetime(2026, 9, 5, 12, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(ev_sensors.dt_util, "utcnow", lambda: moment)
     calculator = _push(CachedSOCCalculator())
     sensor = TimeToTargetSocSensor(
         EveusTestUpdater({"sessionEnergy": "0", "powerMeas": "7000", "state": 4}),
