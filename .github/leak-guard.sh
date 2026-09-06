@@ -26,12 +26,15 @@ INTERNAL_RE='(^|/)(superpowers|internal|private)/|(^|/)docs/plans?/|[-_.](plan|s
 # --- Exemptions: templates, placeholders, fixtures. ----------------------
 ALLOW_RE='/\.gitkeep$|\.(example|sample|template|dist)$|(^|/)(example|sample|template)[-_.]|(^|/)tests?/fixtures?/'
 
-scan() {  # reads NUL-free paths on stdin, prints "CLASS<TAB>path"
-  grep -ivE "$ALLOW_RE" \
-    | awk -v s="$SECRET_RE" -v i="$INTERNAL_RE" '
-        { l = tolower($0) }
-        l ~ s { print "SECRET\t" $0; next }
-        l ~ i { print "INTERNAL\t" $0 }'
+scan() {  # reads paths on stdin, prints "CLASS<TAB>path"
+  # grep, not awk: awk -v strips the backslashes out of an ERE, which both warns
+  # on every run and silently loosens the patterns (\.env$ would become .env$).
+  local paths
+  paths="$(grep -ivE "$ALLOW_RE")" || true
+  [ -n "$paths" ] || return 0
+  printf '%s\n' "$paths" | grep -iE "$SECRET_RE" | sed 's/^/SECRET\t/' || true
+  printf '%s\n' "$paths" | grep -iE "$INTERNAL_RE" | grep -ivE "$SECRET_RE" \
+    | sed 's/^/INTERNAL\t/' || true
 }
 
 mode="${1:-tree}"
