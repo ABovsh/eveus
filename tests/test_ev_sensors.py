@@ -199,3 +199,17 @@ def test_soc_kwh_sensor_uses_measurement_state_class() -> None:
     assert default_state_class == SensorStateClass.MEASUREMENT, (
         f"EVSocKwhSensor._attr_state_class should be MEASUREMENT, got {default_state_class!r}"
     )
+
+
+def test_last_seed_starts_as_an_empty_dict_not_none() -> None:
+    """Diagnostics reads `last_seed` through runtime_data before any charge.
+
+    It is documented as `{"seeded": bool, "detail": str}`, and diagnostics
+    reaches it on a charger that has never attempted an external-SOC seed. A
+    None there is not an empty result — it is an AttributeError in whatever
+    unpacks it, on the one artifact a user attaches to a bug report.
+    """
+    calculator = CachedSOCCalculator()
+
+    assert calculator.last_seed == {}
+    assert isinstance(calculator.last_seed, dict)

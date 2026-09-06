@@ -6,6 +6,7 @@ import pytest
 from conftest import EveusTestUpdater, spec_value_fn
 from custom_components.eveus.sensor_definitions import (
     NOT_CHARGING_REASON_OPTIONS,
+    get_error_state,
     get_not_charging_reason,
     get_not_charging_reason_attrs,
 )
@@ -246,3 +247,20 @@ def test_legacy_firmware_keeps_charge_complete_for_substate_9():
 
 def test_every_reason_is_a_declared_enum_option():
     assert "Controlled by OCPP" in NOT_CHARGING_REASON_OPTIONS
+
+
+def test_error_substate_zero_is_the_only_code_that_names_no_error():
+    """`substate not in (None, 0)` is a check on ZERO, and only on zero.
+
+    subState 0 in the Error state is the contradictory "error with no fault
+    code" case, which `get_charger_substate` already blanks — there is no name
+    to report, so no `error` attribute is written. Every other code does name
+    one. Testing the pair either side of the boundary is what separates this
+    from a check on any other sentinel value: with the 0 swapped for a 1, the
+    codeless error would name `ERROR_STATES[0]` and a real code 1 fault would
+    go unnamed.
+    """
+    assert get_not_charging_reason_attrs(_modern(state=7, subState=0), None) == {}
+    assert get_not_charging_reason_attrs(_modern(state=7, subState=1), None) == {
+        "error": get_error_state(1)
+    }

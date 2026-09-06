@@ -804,7 +804,15 @@ def get_time_drift(updater, hass) -> Optional[int]:
         # drift only jitters within one grid step) is then applied only to a
         # non-zero candidate — so the zero/tolerance band always clears a stale
         # non-zero drift once the clock is synchronized (e.g. 30 s -> 0 s).
-        if abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS:
+        # pragma: no mutate below - equivalent, and provably so: the quantum
+        # rounds every |drift| up to half of itself (15 s) to zero already,
+        # so for any tolerance under that this branch is a fast path to the
+        # answer the else-branch computes anyway. `<` and `<=` cannot be
+        # told apart at 5 s, and neither can the constant's exact value.
+        # test_time_drift_tolerance_band_is_inclusive_at_both_signs asserts
+        # the tolerance stays under half a quantum, so this stops being
+        # true loudly rather than silently.
+        if abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS:  # pragma: no mutate - see the note above
             candidate = 0
         else:
             candidate = (

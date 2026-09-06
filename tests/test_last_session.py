@@ -11,6 +11,7 @@ from homeassistant.const import UnitOfEnergy, UnitOfTime
 
 import custom_components.eveus.session_history as session_history
 from custom_components.eveus.const import (
+    FINISHED_REASONS,
     MAX_ENERGY_KWH,
 )
 from custom_components.eveus.sensor_definitions import ICON_CURRENCY_UAH, UNIT_UAH
@@ -213,3 +214,45 @@ def test_restore_state_requires_real_or_not_and_gate() -> None:
     state = SimpleNamespace(state="-5", attributes={})
     asyncio.run(sensor._async_restore_state(state))
     assert sensor.native_value is None
+
+
+def test_reason_from_event_requires_a_real_or_not_an_and_gate() -> None:
+    """`not isinstance(reason, str) or reason not in KNOWN` must be a real OR.
+
+    An unhashable reason (dict/list) is the case that reads as an `and` being
+    harmless: it fails the isinstance half, and the membership half would raise
+    on it, so the short-circuit looks load-bearing either way. The case that
+    actually separates the two operators is a plain STRING nobody fires — with
+    a mutated `and`, `not isinstance` is False, the whole gate short-circuits
+    to False, and an arbitrary string from the public bus event lands in a
+    persisted entity attribute.
+    """
+    sensor = LastSessionEnergySensor(_updater(), 1)
+
+    assert sensor._reason_from_event({"reason": "obviously-not-a-reason"}) is None
+    assert sensor._reason_from_event({"reason": {"nested": "value"}}) is None
+    assert sensor._reason_from_event({"reason": ["listy"]}) is None
+    assert sensor._reason_from_event({"reason": 3}) is None
+    assert sensor._reason_from_event({}) is None
+    # ...and every reason the coordinator really does fire still gets through.
+    for reason in FINISHED_REASONS.values():
+        assert sensor._reason_from_event({"reason": reason}) == reason
+
+
+def test_known_finish_reasons_is_exactly_what_the_coordinator_can_fire() -> None:
+    """The accepted set is the coordinator's mapping plus its fallback default.
+
+    Both halves are read from the same constant the coordinator uses, so the
+    two cannot drift apart — which is the whole claim the module's comment
+    makes. The union looks redundant today, and is: the fallback "stopped" is
+    also `FINISHED_REASONS[3]`. It stays because it pins the FALLBACK
+    independently, so relabelling state 3 could not silently stop the default
+    reason being accepted. Spelling the set out here is what stops the literal
+    being edited to something the coordinator never sends.
+    """
+    fallback = FINISHED_REASONS[3]
+
+    assert session_history._KNOWN_FINISH_REASONS == frozenset(
+        FINISHED_REASONS.values()
+    ) | {fallback}
+    assert fallback in FINISHED_REASONS.values()

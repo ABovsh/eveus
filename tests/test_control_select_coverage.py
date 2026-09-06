@@ -551,3 +551,28 @@ def test_select_setup_entry_adds_min_voltage_when_model_configured() -> None:
         "Adaptive Mode",
         "Minimum voltage",
     }
+
+
+def test_both_restore_paths_reject_the_same_unusable_states() -> None:
+    """One rule, spelled once, for both selects.
+
+    The behavioural half — a restored "unknown" seeds nothing — is already
+    covered above, and it cannot tell the guard's strings from a typo: the
+    option lookup each path runs afterwards rejects them anyway, so the guard
+    is an early exit rather than the only defence. Pinning the named tuple is
+    what makes an edit to either sentinel visible, and what keeps the two
+    restore paths from drifting to different spellings of the same rule.
+    """
+    assert select_module._UNUSABLE_RESTORED_STATES == (None, "unknown", "unavailable")
+
+    for factory in (
+        select_module.EveusMinVoltageSelect,
+        select_module.EveusTimeZoneSelect,
+    ):
+        for unusable in ("unknown", "unavailable"):
+            select = factory(_Updater({}, available=False))
+            _mute(select)
+            asyncio.run(select._async_restore_state(State("select.x", unusable)))
+            assert select._last_device_value is None, (
+                f"{factory.__name__} seeded itself from a restored {unusable!r}"
+            )

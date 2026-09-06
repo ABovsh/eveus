@@ -300,9 +300,13 @@ def test_time_to_target_holds_a_dither_across_a_grid_boundary(monkeypatch) -> No
 def test_current_holds_the_two_tenth_dither_seen_all_session() -> None:
     """15.6/15.7/15.8/15.9 all session: a 0.2 A step must not be a row.
 
-    The old 0.2 A band let exactly that swing through, because the reading is
-    compared with `abs(value - last) < deadband` and 15.9 - 15.7 lands a hair
-    ABOVE 0.2 in binary floating point.
+    The band has to exceed the swing's full peak-to-peak spread, not match its
+    largest single step: anchored at 15.7, this swing reaches 0.2 A up and
+    0.1 A down, and `apply_deadband` publishes a delta EQUAL to the band by
+    design (`abs(value - last) < deadband`). So the old 0.2 A band let 15.9
+    through on every visit and the reading wrote a row on nearly every poll.
+    Binary floating point is a red herring here — 15.9 - 15.7 does land a hair
+    above 0.2, but an exact 0.2 would have published too.
     """
     updater = _updater({})
 
@@ -536,3 +540,21 @@ def test_a_restart_with_no_previous_state_changes_nothing() -> None:
     sensor._seed_session_hold(None)
 
     assert sd.get_session_time(updater, None) == "5d 21h 20m"
+
+
+def test_rssi_deadband_boundary_is_exactly_five_dbm() -> None:
+    """A 5 dBm move publishes; 4 holds — pins the exact band.
+
+    The parametrised dither case crosses at 5 and at 6 alike, so the band could
+    be widened by a dBm with the suite still green. RSSI is mirrored into the
+    Connection Quality attributes, which made it the single largest source of
+    recorder rows this integration produced, so the band it actually takes is
+    worth stating rather than inferring.
+    """
+    updater = _updater({})
+
+    assert _read(sd.get_wifi_rssi, updater, "RSSI", [-66, -70, -71]) == [
+        -66,  # anchor
+        -66,  # 4 dBm: inside the band, held
+        -71,  # 5 dBm: a move EQUAL to the band publishes
+    ]

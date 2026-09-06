@@ -9,6 +9,10 @@ import pytest
 from homeassistant.util import dt as dt_util
 
 import custom_components.eveus.sensor_definitions as sd
+from custom_components.eveus.const import (
+    TIME_DRIFT_QUANTUM_SECONDS,
+    TIME_DRIFT_TOLERANCE_SECONDS,
+)
 from custom_components.eveus.utils import get_charger_wall_clock_seconds
 
 TZ_HOURS = 3
@@ -72,6 +76,32 @@ def test_time_drift_is_zero_when_in_sync() -> None:
 def test_time_drift_tolerates_small_jitter() -> None:
     assert sd.get_time_drift(_updater(3), None) == 0
     assert sd.get_time_drift(_updater(-3), None) == 0
+
+
+def test_time_drift_tolerance_band_is_inclusive_at_both_signs() -> None:
+    """A drift of EXACTLY the tolerance still reads in sync.
+
+    `abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS` is the one comparison in this
+    getter whose boundary nothing else pins: the jitter cases sit inside the
+    band and the signed-drift cases sit far outside it, so a `<` would have
+    changed only this single second either way. It matters because the value
+    just past the band does not read 5 s either -- it snaps to the 30 s
+    quantum, which rounds anything up to 15 s to zero as well. That is why the
+    branch cannot be killed by a mutation test and carries a pragma: the
+    tolerance is a fast path to an answer the quantum already gives, for any
+    tolerance below half a quantum. It is still the branch that DOCUMENTS
+    "in sync", and the first place a future narrower quantum would show up.
+    """
+    tolerance = TIME_DRIFT_TOLERANCE_SECONDS
+    assert tolerance * 2 <= TIME_DRIFT_QUANTUM_SECONDS, (
+        "the tolerance has grown past half the quantum: it now has an effect "
+        "the quantum does not, and needs its own boundary coverage"
+    )
+
+    assert sd.get_time_drift(_updater(tolerance), None) == 0
+    assert sd.get_time_drift(_updater(-tolerance), None) == 0
+    # The first drift that is genuinely reported rather than absorbed.
+    assert sd.get_time_drift(_updater(TIME_DRIFT_QUANTUM_SECONDS), None) != 0
 
 
 def test_time_drift_reports_signed_drift() -> None:
