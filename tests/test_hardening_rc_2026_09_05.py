@@ -127,27 +127,6 @@ def test_both_estimates_take_the_same_band_for_the_same_remaining_time(
     assert moved(ChargingFinishTimeSensor) == moved(TimeToTargetSocSensor)
 
 
-def test_charging_finish_time_forgets_its_anchor_when_the_estimate_goes_away(
-    monkeypatch,
-) -> None:
-    """A session that ends must not seed the next one.
-
-    Time to Target routes its `None` through the damper, which drops the
-    anchor. The finish stamp returned early instead, leaving the previous
-    session's held instant in place for the next one to inherit.
-    """
-    sensor = _soc_sensor(ChargingFinishTimeSensor, "1", powerMeas="7000")
-    _freeze(monkeypatch, datetime(2026, 9, 5, 12, 0, tzinfo=dt_util.UTC))
-    poll = _feed_seconds(monkeypatch, 2 * 3600)
-    sensor._get_sensor_value()
-    assert "finish_time" in sensor._updater._estimate_anchors
-
-    poll["seconds"] = None
-    assert sensor._get_sensor_value() is None
-
-    assert "finish_time" not in sensor._updater._estimate_anchors
-
-
 # --- Every phase takes the step its own comment says it takes ---
 
 
@@ -169,28 +148,6 @@ def test_current_phases_hold_the_same_swing_phase_one_holds(getter, key) -> None
     assert _read(getter, _updater({}), key, [15.7, 15.9, 15.6, 15.8]) == (
         pytest.approx([15.7, 15.7, 15.7, 15.7])
     )
-
-
-def test_time_to_target_forgets_its_anchor_when_its_inputs_go_away(
-    monkeypatch,
-) -> None:
-    """The other half of the same rule, on the other estimate.
-
-    Time to Target drops its anchor for free on the ordinary path, by routing a
-    `None` minute count through the damper. The path where the SOC inputs
-    themselves disappear returns earlier than that, so it needs the same
-    explicit drop the finish stamp needs — otherwise the pair is symmetric only
-    by accident, which is how they came apart the first time.
-    """
-    sensor = _soc_sensor(TimeToTargetSocSensor, "1", powerMeas="7000")
-    _feed_seconds(monkeypatch, 2 * 3600)
-    sensor._get_sensor_value()
-    assert "eta_minutes" in sensor._updater._estimate_anchors
-
-    sensor._soc_calculator.set_value("battery_capacity", None)
-    assert sensor._get_sensor_value() is None
-
-    assert "eta_minutes" not in sensor._updater._estimate_anchors
 
 
 # --- The optimistic value must outrank a stale device reading ---

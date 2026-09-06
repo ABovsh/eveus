@@ -167,6 +167,7 @@ jobs:
               tests/test_sensor_definitions.py
               tests/test_sensor_definition_entities.py
               tests/test_grace_holds_last_value.py
+              tests/test_one_estimate_anchor.py
               tests/test_recorder_deadband.py
               tests/test_ev_sensors.py
               tests/test_ev_sensor_entities.py

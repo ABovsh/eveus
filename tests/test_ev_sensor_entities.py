@@ -498,7 +498,10 @@ def test_time_to_target_drops_stale_value_on_calculation_error(
 def test_charging_finish_time_rounds_up_to_the_five_minute_grid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fixed_now = ev_sensors.datetime(2026, 5, 22, 10, 0, 30)
+    # Aware, like the real `dt_util.utcnow()` this stands in for: the stamp is
+    # rebuilt from the anchor's Unix timestamp, which a naive fake clock would
+    # reinterpret as local time.
+    fixed_now = ev_sensors.datetime(2026, 5, 22, 10, 0, 30, tzinfo=ev_sensors.dt_util.UTC)
     monkeypatch.setattr(ev_sensors.dt_util, "utcnow", lambda: fixed_now)
     monkeypatch.setattr(ev_sensors, "calculate_remaining_seconds", lambda *args: 90)
     calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
@@ -507,9 +510,13 @@ def test_charging_finish_time_rounds_up_to_the_five_minute_grid(
     )
     sensor.hass = HelperHass(EV_HELPERS)
 
-    # 10:00:30 + 90 s = 10:02, snapped up to the next 5-minute boundary — the
-    # same grid Time to Target SOC states its estimate on.
-    assert sensor._get_sensor_value() == ev_sensors.datetime(2026, 5, 22, 10, 5)
+    # 10:00:30 + 90 s = 10:02. The grid is applied by NEAREST, which here lands
+    # on 10:00 — at or behind `now` — so the anchor takes the next boundary
+    # instead. The stamp must never be published in the past, and a charge
+    # running out its last few minutes is exactly when it otherwise would be.
+    assert sensor._get_sensor_value() == ev_sensors.datetime(
+        2026, 5, 22, 10, 5, tzinfo=ev_sensors.dt_util.UTC
+    )
 
 
 def test_charging_finish_time_returns_none_for_non_eta_states(
