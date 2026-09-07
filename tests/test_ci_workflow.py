@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import subprocess
 import shlex
 
 import yaml
@@ -360,10 +361,38 @@ def _internal_doc_patterns_from_gitignore() -> list[str]:
     return patterns
 
 
+def _leak_guard_expression(name: str) -> str:
+    """One of the deny expressions, read from the script that owns it.
+
+    The list moved out of the workflow and into `.github/leak-guard.sh` on
+    2026-09-06 (generated from /opt/scripts/git-hooks/leak-guard.sh). Reading it
+    from wherever it lives today is the point: a test anchored to the old
+    location stopped checking anything at all when the list moved.
+    """
+    script = Path(".github/leak-guard.sh").read_text(encoding="utf-8")
+    match = re.search(rf"^{name}='([^']+)'", script, re.M)
+    assert match is not None, f"leak-guard.sh must define {name}"
+    return match.group(1)
+
+
+def _guard_matches(expression: str, sample: str) -> bool:
+    """Ask the guard's own engine, not Python's.
+
+    `scan()` classifies with `grep -iE`, so the match is case-INSENSITIVE ERE.
+    Python's `re.search` would answer this question differently for two of the
+    classes .gitignore lists — `AUDIT_FINDINGS*.md` and `*_PLAN.md` are matched
+    only by the `-i`.
+    """
+    return subprocess.run(
+        ["grep", "-iE", expression],
+        input=f"{sample}\n", capture_output=True, text=True, check=False,
+    ).returncode == 0
+
+
 def test_leak_guard_denies_every_internal_doc_class_gitignore_lists() -> None:
     """The guard and `.gitignore` must name the same classes.
 
-    .gitignore is the fast pre-flight; this workflow is the control, because it
+    .gitignore is the fast pre-flight; the guard is the control, because it
     "cannot be bypassed by a local --no-verify or a force-push" — its own words.
     A class the guard does not know is protected only by the bypassable half of
     the pair, which is the wrong way round.
@@ -371,12 +400,17 @@ def test_leak_guard_denies_every_internal_doc_class_gitignore_lists() -> None:
     The samples are DERIVED from .gitignore, not hand-typed. This test exists
     because a round found `*.local.md` listed in .gitignore and missing from the
     guard; a fixed sample list pins today's state and cannot catch the next one
-    — the same defect wearing a different filename.
+    — the same defect wearing a different filename. It checks BEHAVIOUR (the
+    real expression, through the real matcher, with the real case rules) rather
+    than the shape of the file the expression happens to live in.
     """
-    guard = Path(".github/workflows/leak-guard.yml").read_text(encoding="utf-8")
-    deny = re.search(r"deny='([^']+)'", guard)
-    assert deny is not None, "leak-guard must define a deny expression"
-    expression = deny.group(1)
+    workflow = Path(".github/workflows/leak-guard.yml").read_text(encoding="utf-8")
+    assert ".github/leak-guard.sh" in workflow, (
+        "the workflow must invoke the checker script — an expression nothing "
+        "calls guards nothing"
+    )
+    internal_re = _leak_guard_expression("INTERNAL_RE")
+    allow_re = _leak_guard_expression("ALLOW_RE")
 
     patterns = _internal_doc_patterns_from_gitignore()
     assert len(patterns) >= 7, (
@@ -390,7 +424,14 @@ def test_leak_guard_denies_every_internal_doc_class_gitignore_lists() -> None:
         sample = (
             f"{pattern}notes.md" if pattern.endswith("/") else pattern.replace("*", "x")
         )
-        assert re.search(expression, sample), (
+        # `scan()` drops ALLOW_RE hits BEFORE classifying, so an exempted sample
+        # would pass this test while leaking in production.
+        assert not _guard_matches(allow_re, sample), (
+            f"{sample!r} is exempted by the guard's ALLOW_RE, so the INTERNAL_RE "
+            "check below would be vacuous"
+        )
+        assert _guard_matches(internal_re, sample), (
             f".gitignore lists {pattern!r} as an internal-doc class but the leak "
-            f"guard would let {sample!r} through — add it to the deny expression"
+            f"guard would let {sample!r} through — add it to INTERNAL_RE in "
+            "/opt/scripts/git-hooks/leak-guard.sh and re-run sync-leak-guard.sh"
         )
