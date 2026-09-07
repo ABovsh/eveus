@@ -383,6 +383,7 @@ def test_device_registry_finalized_once_for_shared_updater(
     entities = [PowerEntity(updater), VoltageEntity(updater)]
     for entity in entities:
         entity.hass = object()
+        entity.device_entry = SimpleNamespace(id="device-id")
 
     updates: list[tuple[str, dict[str, object]]] = []
 

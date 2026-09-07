@@ -638,6 +638,7 @@ def test_registry_hw_version_cleared_when_info_already_final(monkeypatch) -> Non
     updater = EveusTestUpdater({"verFWMain": "GRM070A-R3.05.2"})
     entity = _Sensor(updater, 1)
     entity.hass = SimpleNamespace()
+    entity.device_entry = SimpleNamespace(id="dev1")
     assert entity._device_info_finalized is True  # firmware known at construction
 
     updated: dict = {}

@@ -309,7 +309,9 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
             identifiers = new_info.get("identifiers")
             if not identifiers:
                 return
-            device = registry.async_get_device(identifiers=identifiers)
+            # HA binds the device before adding the entity. Reuse that binding:
+            # identifiers are no longer globally unique across config entries.
+            device = self.device_entry
             if device is None:
                 return
             update_kwargs: dict[str, Any] = {

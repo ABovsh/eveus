@@ -120,6 +120,7 @@ jobs:
               tests/test_hardening_4_16_1.py
               tests/test_recorder_deadband.py
               tests/test_hardening_rc_2026_07_30.py
+              tests/test_hardening_rc_2026_09_07.py
           - name: init
             paths: "custom_components/eveus/__init__.py"
             tests: >-
@@ -150,6 +151,7 @@ jobs:
           - name: minor-entities
             paths: "custom_components/eveus/select.py,custom_components/eveus/time.py,custom_components/eveus/binary_sensor.py,custom_components/eveus/button.py,custom_components/eveus/session_history.py"
             tests: >-
+              tests/test_hardening_rc_2026_09_07.py
               tests/test_adaptive_minvoltage_select.py
               tests/test_control_select_coverage.py
               tests/test_battery_low.py

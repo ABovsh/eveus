@@ -120,7 +120,8 @@ class _LastSessionSensorBase(EveusSensorBase):
         value = data.get(self._event_field)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        if not math.isfinite(value) or not 0 <= value <= self._max_value:
+        # Bound raw integers before math.isfinite coerces them to float.
+        if not 0 <= value <= self._max_value or not math.isfinite(value):
             return None
         return value
 
