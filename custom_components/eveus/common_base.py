@@ -306,11 +306,15 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
             return
         if not getattr(self._updater, "_device_registry_finalized", False):
             registry = dr.async_get(self.hass)
-            identifiers = new_info.get("identifiers")
-            if not identifiers:
+            # Malformed device_info must not reach the registry at all.
+            if not new_info.get("identifiers"):
                 return
-            # HA binds the device before adding the entity. Reuse that binding:
-            # identifiers are no longer globally unique across config entries.
+            # HA binds the device to the entity in async_add_entities, before
+            # async_added_to_hass, so this is always set by the time a coordinator
+            # update lands here. Reusing that binding writes to the device this
+            # entity actually belongs to, rather than to whichever device happens
+            # to carry a matching identifier -- including a stale one left behind
+            # by a removed entry.
             device = self.device_entry
             if device is None:
                 return

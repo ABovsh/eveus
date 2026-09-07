@@ -770,6 +770,8 @@ def test_base_entity_finalize_skips_registry_update_without_identifiers(
         ),
     )
     entity.hass = object()
+    # Bound to a device, so only the missing identifiers can stop the write.
+    entity.device_entry = SimpleNamespace(id="device-id")
     updater.data = {"verFWMain": "R3.05.2"}
     monkeypatch.setattr(
         entity,
@@ -778,8 +780,8 @@ def test_base_entity_finalize_skips_registry_update_without_identifiers(
     )
 
     class Registry:
-        def async_get_device(self, *args, **kwargs):
-            raise AssertionError("must not query registry without identifiers")
+        def async_update_device(self, *args, **kwargs):
+            raise AssertionError("must not write to the registry without identifiers")
 
     monkeypatch.setattr("custom_components.eveus.common_base.dr.async_get", lambda hass: Registry())
 

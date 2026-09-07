@@ -24,7 +24,7 @@ def test_metadata_uses_attached_device_without_legacy_lookup(monkeypatch, attach
     entity.hass = SimpleNamespace()
     entity.device_entry = SimpleNamespace(id="owned-device") if attached else None
     registry = Mock()
-    registry.async_get_device.side_effect = AssertionError("deprecated global lookup")
+    registry.async_get_device.side_effect = AssertionError("identifier lookup must not pick the device")
     monkeypatch.setattr("custom_components.eveus.common_base.dr.async_get", lambda hass: registry)
 
     entity._maybe_finalize_device_info()

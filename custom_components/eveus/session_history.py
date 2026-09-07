@@ -120,8 +120,11 @@ class _LastSessionSensorBase(EveusSensorBase):
         value = data.get(self._event_field)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        # Bound raw integers before math.isfinite coerces them to float.
-        if not 0 <= value <= self._max_value or not math.isfinite(value):
+        # Compare before any float coercion: math.isfinite() raises OverflowError
+        # on a bignum an automation can put on the bus. The bound is a finite int,
+        # so this check also rejects inf (fails the upper bound) and nan (fails
+        # every comparison) -- an explicit isfinite() here would be unreachable.
+        if not 0 <= value <= self._max_value:
             return None
         return value
 

@@ -92,8 +92,6 @@ Add as many Eveus chargers as you have; each gets its own device and entities.
 - **Honest controls** — every command is confirmed against the charger; failures raise a visible HA error instead of silently pretending
 - **Guided recovery** — a changed password opens a re-authentication flow (and isn't mislabeled as "charger offline"); broken connection settings surface as a fixable Repairs issue
 - **Safe diagnostics** — downloads redact credentials and identifying fields, so they're safe to attach to a GitHub issue
-- **Device information** — firmware metadata updates use the entity's assigned device, compatible with Home Assistant's per-entry device registry.
-- **Session history validation** — Last Session sensors reject invalid values in externally generated charging events.
 
 ### 🛡️ Safety watchdog
 Your charger already protects itself — this integration makes those protections **visible and actionable in Home Assistant**. Each condition raises a clear **Repairs** notice (English and Ukrainian):
