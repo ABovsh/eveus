@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.22.0 - 2026-09-12
 
 ### ⚠️ Breaking
 - **About 1,440 fewer database rows a day, permanently.** `primary_rate_cost`, `rate_2_cost`, `rate_3_cost`, `leakage_current` and `leakage_current_peak` no longer record long-term statistics: they report prices you configured and a fault the charger announces itself, so their 5-minute and hourly aggregates recorded a value that never moved, and statistics are never purged. All five keep their current value, their attributes and their history — only a Statistics Graph card or long-term trend built on one of them stops gaining new data.
