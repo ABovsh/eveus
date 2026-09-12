@@ -266,8 +266,12 @@ def test_setpoint_number_resolve_value_grace_period_boundaries():
     from custom_components.eveus.const import CONTROL_GRACE_PERIOD
     import time
 
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
     ent, updater = _make(ENERGY)
-    updater.available = False
+    updater.available = True
     updater.data = {}
     ent._last_device_value = 42.0
     ent._last_successful_read = time.time()

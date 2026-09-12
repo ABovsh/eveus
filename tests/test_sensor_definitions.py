@@ -319,8 +319,8 @@ def test_state_getters_return_none_for_unknown_codes_and_missing_values() -> Non
 
 
 def test_session_time_and_active_rate_attributes_handle_edge_cases() -> None:
-    assert sensors.get_session_time(_updater({"sessionTime": "3661"}), None) == "1h 01m"
-    assert sensors.get_session_time_attrs(_updater({"sessionTime": "61"}), None) == {
+    assert sensors.get_session_time(_updater({"sessionTime": "3661", "state": 4}), None) == "1h 01m"
+    assert sensors.get_session_time_attrs(_updater({"sessionTime": "61", "state": 4}), None) == {
         "duration_seconds": 60
     }
     assert sensors.get_session_time_attrs(_updater({}, available=False), None) == {}
@@ -1062,17 +1062,17 @@ def test_session_time_duration_attribute_is_minute_quantised() -> None:
     a recorder row on every poll. An attribute that ticks every poll makes HA
     write one anyway, because a row is written on any attribute change.
     """
-    first = sensors.get_session_time_attrs(_updater({"sessionTime": "61"}), None)
-    second = sensors.get_session_time_attrs(_updater({"sessionTime": "119"}), None)
+    first = sensors.get_session_time_attrs(_updater({"sessionTime": "61", "state": 4}), None)
+    second = sensors.get_session_time_attrs(_updater({"sessionTime": "119", "state": 4}), None)
     assert first == second
 
-    third = sensors.get_session_time_attrs(_updater({"sessionTime": "120"}), None)
+    third = sensors.get_session_time_attrs(_updater({"sessionTime": "120", "state": 4}), None)
     assert third != second
     assert third == {"duration_seconds": 120}
 
     # And it agrees with the grid the visible state already uses.
-    assert sensors.get_session_time(_updater({"sessionTime": "61"}), None) == \
-        sensors.get_session_time(_updater({"sessionTime": "119"}), None)
+    assert sensors.get_session_time(_updater({"sessionTime": "61", "state": 4}), None) == \
+        sensors.get_session_time(_updater({"sessionTime": "119", "state": 4}), None)
 
 
 def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
@@ -1096,21 +1096,25 @@ def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
     )
 
     specs = {s.key: s for s in create_sensor_specifications(phases=1)}
+    MEASURED = SensorStateClass.MEASUREMENT
+    # `state_class` is per entry, not blanket: it turns on the forever-kept
+    # statistics, so the two leakage readings — an event the charger reports
+    # itself, whose peak it keeps on the device — carry none.
     expected = {
         "box_temperature": ("Box Temperature", "mdi:thermometer",
-                            SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0),
+                            SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0, MEASURED),
         "plug_temperature": ("Plug Temperature", "mdi:thermometer-high",
-                             SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0),
+                             SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0, MEASURED),
         "battery_voltage": ("Battery Voltage", "mdi:battery",
-                            SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 2),
+                            SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 2, MEASURED),
         "leak_current": ("Leakage Current", "mdi:current-dc",
-                         SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0),
+                         SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0, None),
         "leak_current_peak": ("Leakage Current Peak", "mdi:current-dc",
-                              SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0),
+                              SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0, None),
         "wifi_signal": ("WiFi Signal", "mdi:wifi",
-                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0),
+                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, MEASURED),
     }
-    for key, (name, icon, device_class, unit, precision) in expected.items():
+    for key, (name, icon, device_class, unit, precision, state_class) in expected.items():
         spec = specs[key]
         assert spec.name == name
         assert spec.icon == icon
@@ -1118,7 +1122,7 @@ def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
         assert spec.unit == unit
         assert spec.precision == precision
         assert spec.sensor_type == SensorType.DIAGNOSTIC
-        assert spec.state_class == SensorStateClass.MEASUREMENT
+        assert spec.state_class == state_class
         assert spec.category == EntityCategory.DIAGNOSTIC
 
     # Ordering is part of the contract: entity creation walks this list.

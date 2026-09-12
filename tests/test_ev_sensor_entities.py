@@ -498,7 +498,10 @@ def test_time_to_target_drops_stale_value_on_calculation_error(
 def test_charging_finish_time_rounds_up_to_the_five_minute_grid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fixed_now = ev_sensors.datetime(2026, 5, 22, 10, 0, 30)
+    # Aware, like the real `dt_util.utcnow()` this stands in for: the stamp is
+    # rebuilt from the anchor's Unix timestamp, which a naive fake clock would
+    # reinterpret as local time.
+    fixed_now = ev_sensors.datetime(2026, 5, 22, 10, 0, 30, tzinfo=ev_sensors.dt_util.UTC)
     monkeypatch.setattr(ev_sensors.dt_util, "utcnow", lambda: fixed_now)
     monkeypatch.setattr(ev_sensors, "calculate_remaining_seconds", lambda *args: 90)
     calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
@@ -507,9 +510,13 @@ def test_charging_finish_time_rounds_up_to_the_five_minute_grid(
     )
     sensor.hass = HelperHass(EV_HELPERS)
 
-    # 10:00:30 + 90 s = 10:02, snapped up to the next 5-minute boundary — the
-    # same grid Time to Target SOC states its estimate on.
-    assert sensor._get_sensor_value() == ev_sensors.datetime(2026, 5, 22, 10, 5)
+    # 10:00:30 + 90 s = 10:02. The grid is applied by NEAREST, which here lands
+    # on 10:00 — at or behind `now` — so the anchor takes the next boundary
+    # instead. The stamp must never be published in the past, and a charge
+    # running out its last few minutes is exactly when it otherwise would be.
+    assert sensor._get_sensor_value() == ev_sensors.datetime(
+        2026, 5, 22, 10, 5, tzinfo=ev_sensors.dt_util.UTC
+    )
 
 
 def test_charging_finish_time_returns_none_for_non_eta_states(
@@ -1369,10 +1376,18 @@ def test_available_is_false_when_base_entity_is_unavailable_regardless_of_helper
     assert sensor.available is False
 
 
-def test_ev_helper_sensors_do_not_require_helpers_except_base_default() -> None:
-    """Only the base class defaults to requiring helpers; every concrete EV
-    sensor overrides it to False (each has its own unknown-when-missing
-    fallback instead of going fully unavailable)."""
+def test_only_the_timestamp_sensor_requires_the_soc_inputs() -> None:
+    """Whether a sensor needs the SOC inputs follows from what it can say without them.
+
+    A sensor that can express the absence of an answer in its own state keeps
+    `_requires_helpers = False` and reports that instead of disappearing: the
+    SOC pair falls back to the user's Initial SOC, Time to Target and Energy to
+    Target report "Not charging" / no remaining energy. Charging Finish Time
+    cannot — `device_class=timestamp` accepts a datetime or nothing, and
+    nothing is recorded as `unknown`, which helpers and statistics ingest as a
+    real but invalid reading where they would skip `unavailable`. So it is the
+    one EV helper sensor that goes unavailable rather than blank.
+    """
     from custom_components.eveus.ev_sensors import (
         BaseEVHelperSensor,
         EnergyToTargetSocSensor,
@@ -1383,7 +1398,7 @@ def test_ev_helper_sensors_do_not_require_helpers_except_base_default() -> None:
     assert EVSocPercentSensor._requires_helpers is False
     assert TimeToTargetSocSensor._requires_helpers is False
     assert EnergyToTargetSocSensor._requires_helpers is False
-    assert ChargingFinishTimeSensor._requires_helpers is False
+    assert ChargingFinishTimeSensor._requires_helpers is True
 
 
 def test_soc_percent_sensor_reports_how_it_was_anchored() -> None:

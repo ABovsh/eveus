@@ -93,10 +93,18 @@ def _bounded(value: float | int | None, maximum: float) -> float | int | None:
     sensors, so it must apply the same sanity bounds as the live sensors
     reading these fields — a corrupt finite outlier in the final charging
     poll would otherwise latch (and survive restarts) until the next session.
+
+    Precision is part of that parity: the live Session Energy/Cost specs
+    declare ``precision=2``, so the firmware's float dust never reaches their
+    state. Rounding here keeps the captured twin from publishing it either
+    (live HA read ``last_session_energy = 27.9899997711182`` against a Session
+    Energy of 28.0 on 2026-09-12). ``round`` returns an int unchanged, so the
+    integer duration field keeps its type. The bound is still checked on the
+    RAW value, so rounding can never lift a reading in through the ceiling.
     """
     if value is None or not 0 <= value <= maximum:
         return None
-    return value
+    return round(value, 2)
 
 
 def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
@@ -349,6 +357,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._connection_quality_cache = {
             "success_rate": success_rate,
             "latency_avg": avg_latency,
+            # How much of the rolling window the average is built from. A cold
+            # start pays for connection setup, so the first samples run high
+            # and the average is not yet representative — the sensor uses this
+            # to keep tracking until the window has filled instead of holding
+            # the spike. Diagnostics gets it for free.
+            "latency_samples": len(self._latency_samples),
             "consecutive_failures": self._consecutive_failures,
             "consecutive_command_failures": self._command_manager.consecutive_failures,
             "is_healthy": self._is_healthy(success_rate),

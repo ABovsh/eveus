@@ -639,6 +639,7 @@ def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.Monkey
         ),
     )
     entity.hass = object()
+    entity.device_entry = SimpleNamespace(id="device-id")
     updater.data = {
         "verFWMain": "R3.05.2",
         "verFWWifi": "W1.0",
@@ -687,6 +688,7 @@ def test_base_entity_finalize_updates_registry_with_minimal_device_info(
         ),
     )
     entity.hass = object()
+    entity.device_entry = SimpleNamespace(id="device-id")
     updater.data = {"verFWMain": "R3.05.2"}
     monkeypatch.setattr(
         entity,
@@ -768,6 +770,8 @@ def test_base_entity_finalize_skips_registry_update_without_identifiers(
         ),
     )
     entity.hass = object()
+    # Bound to a device, so only the missing identifiers can stop the write.
+    entity.device_entry = SimpleNamespace(id="device-id")
     updater.data = {"verFWMain": "R3.05.2"}
     monkeypatch.setattr(
         entity,
@@ -776,8 +780,8 @@ def test_base_entity_finalize_skips_registry_update_without_identifiers(
     )
 
     class Registry:
-        def async_get_device(self, *args, **kwargs):
-            raise AssertionError("must not query registry without identifiers")
+        def async_update_device(self, *args, **kwargs):
+            raise AssertionError("must not write to the registry without identifiers")
 
     monkeypatch.setattr("custom_components.eveus.common_base.dr.async_get", lambda hass: Registry())
 
@@ -1196,6 +1200,7 @@ def test_device_registry_write_guards_use_exact_finalized_key() -> None:
     entities = [ProbeA(updater), ProbeB(updater)]
     for entity in entities:
         entity.hass = object()
+        entity.device_entry = SimpleNamespace(id="device-id")
 
     registry = MagicMock()
     registry.async_get_device.return_value = SimpleNamespace(id="device-id")
@@ -1247,6 +1252,7 @@ def test_device_registry_finalized_reset_on_metadata_drift() -> None:
 
     entity = Probe(updater)
     entity.hass = object()
+    entity.device_entry = SimpleNamespace(id="device-id")
     assert entity._device_info_finalized is True
 
     registry = MagicMock()

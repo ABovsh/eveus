@@ -110,6 +110,11 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
         self._attr_device_class = description.device_class
         self._attr_icon = description.icon
         self._attr_entity_category = description.entity_category
+        # Last reading taken from a SUCCESSFUL poll, republished through the
+        # grace window. Kept here rather than derived in the coordinator
+        # callback so `is_on` still answers before the first update, the way
+        # HA reads it when the entity is added.
+        self._last_known_is_on: bool | None = None
         self._init_write_on_change()
 
     @property
@@ -118,11 +123,15 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
             return None
         if not self._updater.available:
             # Inside the availability grace window the entity is still visible,
-            # but the payload behind it is from before the failed poll. Blank the
-            # value rather than present stale telemetry as current — same rule as
-            # the ordinary sensors.
-            return None
-        return self._description.is_on_fn(self._updater.data)
+            # and the payload behind it is from before the failed poll. Keep
+            # publishing that reading rather than a blank: staying available
+            # and empty means HA writes `unknown`, which a helper ingests as a
+            # real state, where `unavailable` — what this entity becomes when
+            # the window closes — is skipped. Same rule as the ordinary
+            # sensors; see `BaseEveusEntity._in_availability_grace`.
+            return self._last_known_is_on
+        self._last_known_is_on = self._description.is_on_fn(self._updater.data)
+        return self._last_known_is_on
 
     @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
     def _handle_coordinator_update(self) -> None:

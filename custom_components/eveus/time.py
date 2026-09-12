@@ -19,7 +19,7 @@ from .common_base import (
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
-from .const import CONTROL_GRACE_PERIOD, OPTIMISTIC_CONTROL_TTL
+from .const import OPTIMISTIC_CONTROL_TTL, UNUSABLE_RESTORED_STATES
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -169,9 +169,8 @@ class EveusScheduleTimeEntity(
             if device_value is not None and 0 <= device_value < 1440:
                 return int(device_value)
 
-        if self._last_device_value is not None:
-            if 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
-                return self._last_device_value
+        if self._may_hold_last_device_value(current_time):
+            return self._last_device_value
 
         return None
 
@@ -199,12 +198,8 @@ class EveusScheduleTimeEntity(
                 # reach Home Assistant untouched.
                 raise
             except Exception as err:
-                _LOGGER.debug(  # pragma: no mutate - pure log-message text, err VALUE unchanged
-                    "Failed to set %s: %s", self.name, err, exc_info=True
-                )
-                raise HomeAssistantError(
-                    f"Failed to set '{self.name}': {err}"  # pragma: no mutate - pure exception-message text, err VALUE unchanged
-                ) from err
+                _LOGGER.debug("Failed to set %s: %s", self.name, err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, arguments unchanged
+                raise HomeAssistantError(f"Failed to set '{self.name}': {err}") from err  # pragma: no mutate - pure exception-message text, err VALUE unchanged
             finally:
                 self._pending_value = None
                 self._attr_native_value = minutes_to_time(self._resolve_minutes())
@@ -212,7 +207,7 @@ class EveusScheduleTimeEntity(
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
-        if not state or state.state in (None, "unknown", "unavailable"):  # pragma: no mutate - sentinel-equivalence: "unknown"/"unavailable" never parse via ha_dt.parse_time either, so the subsequent `if restored is None: return` guard already catches them regardless of this literal
+        if not state or state.state in UNUSABLE_RESTORED_STATES:  # pragma: no mutate - sentinel-equivalence: "unknown"/"unavailable" never parse via ha_dt.parse_time either, so the subsequent `if restored is None: return` guard already catches them regardless of this literal
             return
         restored = ha_dt.parse_time(state.state)
         if restored is None:

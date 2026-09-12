@@ -30,9 +30,9 @@ from .const import (
     MIN_CURRENT,
     MIN_VOLTAGE_OPTIONS,
     CONF_MODEL,
-    CONTROL_GRACE_PERIOD,
     OPTIMISTIC_CONTROL_TTL,
     SOC_INPUT_LIMITS,
+    UNUSABLE_RESTORED_STATES,
     DEFAULT_INITIAL_SOC,
     DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
@@ -339,11 +339,8 @@ class EveusCurrentNumber(EveusNumberEntity):
             ):
                 return float(device_value)
 
-        if self._last_device_value is not None:
-            # 0 <= age: a backward wall-clock jump must not extend the grace
-            # window indefinitely (mirrors the optimistic-state TTL guard).
-            if 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD:
-                return self._last_device_value
+        if self._may_hold_last_device_value(current_time):
+            return self._last_device_value
 
         return None
 
@@ -393,7 +390,7 @@ class EveusCurrentNumber(EveusNumberEntity):
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
         try:
-            if state and state.state not in (None, "unknown", "unavailable"):
+            if state and state.state not in UNUSABLE_RESTORED_STATES:
                 restored_value = float(state.state)
                 if self._READ_MIN <= restored_value <= self._attr_native_max_value:
                     self._last_device_value = restored_value
@@ -477,9 +474,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         device_value = self._read_device_value()
         if device_value is not None:
             return device_value
-        if self._last_device_value is not None and (
-            0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
-        ):
+        if self._may_hold_last_device_value(current_time):
             return self._last_device_value
         return None
 

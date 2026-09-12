@@ -102,6 +102,22 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         """Return stable English object id seed regardless of frontend language."""
         return self.ENTITY_NAME
 
+    @property
+    def _in_availability_grace(self) -> bool:
+        """True while this entity is still visible on a poll the charger missed.
+
+        The grace window exists so ONE failed poll does not flap every entity
+        to `unavailable` and back. That is only worth having if the entity keeps
+        showing what it last read: an entity that stays available and blank
+        publishes `unknown`, which is strictly worse than `unavailable` for a
+        consumer — `unavailable` is skipped by helpers and statistics, while
+        `unknown` is ingested as a real, invalid state. A charger timeout on
+        2026-09-05 blanked 36 entities for 60 s and two `utility_meter` helpers
+        logged "received an invalid new state ... : unknown" before the entities
+        honestly went unavailable.
+        """
+        return self._entity_available and not self._updater.available
+
     def _update_availability_state(
         self,
         *,
@@ -290,10 +306,16 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
             return
         if not getattr(self._updater, "_device_registry_finalized", False):
             registry = dr.async_get(self.hass)
-            identifiers = new_info.get("identifiers")
-            if not identifiers:
+            # Malformed device_info must not reach the registry at all.
+            if not new_info.get("identifiers"):
                 return
-            device = registry.async_get_device(identifiers=identifiers)
+            # HA binds the device to the entity in async_add_entities, before
+            # async_added_to_hass, so this is always set by the time a coordinator
+            # update lands here. Reusing that binding writes to the device this
+            # entity actually belongs to, rather than to whichever device happens
+            # to carry a matching identifier -- including a stale one left behind
+            # by a removed entry.
+            device = self.device_entry
             if device is None:
                 return
             update_kwargs: dict[str, Any] = {
@@ -364,6 +386,35 @@ class ControlEntityMixin:
 
 class OptimisticControlMixin(Generic[T]):
     """Shared optimistic-state reconciliation for command-capable controls."""
+
+    def _may_hold_last_device_value(self, current_time: float) -> bool:
+        """Whether the last reading from the charger may still be published.
+
+        Two windows, and they are NOT the same window measured twice:
+
+        - `_in_availability_grace` — the charger is missing polls and this
+          entity is still visible. A visible control must never resolve to
+          blank, so the last reading stands for exactly as long as the entity
+          does. This has to be anchored to the FIRST FAILED poll, the way
+          availability is: the old wall-clock window ran from the last
+          SUCCESSFUL read instead, and the gap between the two is one poll
+          interval — so at the idle cadence (minutes between polls) the hold had
+          always expired before anything went wrong, and every control published
+          `unknown` for 30 seconds before honestly going `unavailable`. Measured
+          live 2026-09-05 22:39:53: 30 switches, numbers, selects and times did
+          exactly that. The same charger dropping out at 17:09:03, while a
+          session held it on the fast cadence, showed none of it.
+        - the `CONTROL_GRACE_PERIOD` window from the last successful read — the
+          charger is ANSWERING but has stopped carrying this key. That is a data
+          problem the user should eventually see, so it still times out.
+        """
+        if self._last_device_value is None:
+            return False
+        if self._in_availability_grace:  # type: ignore[attr-defined]
+            return True
+        # 0 <= age: a backward wall-clock jump must not extend the window
+        # indefinitely (mirrors the optimistic-state TTL guard).
+        return 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
 
     def _init_optimistic_control(self) -> None:
         """Initialize common optimistic-control state."""
@@ -489,7 +540,13 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
     # the published value is held until it moves this far. Set on the subclass;
     # None leaves every reading published verbatim. (Spec-driven sensors damp
     # inside their getter instead — see _make_value_getter's `deadband`.)
-    _deadband: float | None = None
+    # pragma: no mutate on the assignment below, and NOT because it is only an
+    # annotation -- `_update_native_value` really does read it. It stands
+    # because every value a mutant can leave here is already accounted for: a
+    # non-numeric one (mutmut turns None into "") is caught by the deadband
+    # tests, and a zero-width band publishes every reading verbatim, which is
+    # exactly what None means.
+    _deadband: float | None = None  # pragma: no mutate - see the note above
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the sensor."""
@@ -530,7 +587,6 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
             value = self._get_sensor_value()
             if self._deadband is not None:
                 value = apply_deadband(previous_value, value, self._deadband)
-            self._attr_native_value = value
         except Exception as err:
             current_time = time.time()
             if current_time - self._last_error_log > ERROR_LOG_RATE_LIMIT:
@@ -541,7 +597,18 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
                     err,
                     exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
                 )
-            self._attr_native_value = None
+            value = None
+        if value is None and self._in_availability_grace:
+            # Every charger-backed getter returns None while the updater is
+            # offline (`_get_data_value` gates on it), so a missed poll would
+            # blank this entity while it is still available — see
+            # `_in_availability_grace`. Keep the last reading instead. This is
+            # the rule the SOC sensors already follow by skipping the whole
+            # recompute on a failed poll; it now holds for every sensor.
+            # Scoped to a value that went away: a sensor that can still compute
+            # something real while polls fail (Connection Quality) publishes it.
+            return False
+        self._attr_native_value = value
         return previous_value != self._attr_native_value
 
     def _get_sensor_value(self) -> Any:

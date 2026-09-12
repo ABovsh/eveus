@@ -159,7 +159,7 @@ def test_reauth_confirm_propagates_abort_flow(monkeypatch: pytest.MonkeyPatch) -
     assert excinfo.value.reason == "already_in_progress"
 
 
-# --- E-F01: binary sensors must blank their value during the grace window -----
+# --- E-F01 (REVERSED 2026-09-05): binary sensors HOLD through the grace window
 
 
 def _car_connected_sensor(updater):
@@ -172,10 +172,25 @@ def _car_connected_sensor(updater):
     return sensor
 
 
-def test_binary_sensor_blanks_value_during_grace_window(
+def test_binary_sensor_holds_value_during_grace_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stale telemetry must not display as current, as for every other sensor."""
+    """Reverses this round's own E-F01, on evidence it did not have.
+
+    E-F01 made binary sensors blank during the grace window "as for every
+    other sensor" — symmetry with the spec sensors. The spec sensors were the
+    wrong sibling to copy: staying available with no value is published as
+    `unknown`, and on 2026-09-05 a charger timeout blanked 36 entities for
+    60 s, which two `utility_meter` helpers ingested as an invalid state
+    ("received an invalid new state ... : unknown") before the entities
+    honestly turned `unavailable`. The SOC sensors had always held instead,
+    and every control entity holds through its own 30 s window, so blanking
+    was the odd one out in three places at once.
+
+    Both families now hold, and the entity goes `unavailable` — never
+    `unknown` — when the window closes. Full reasoning in
+    `BaseEveusEntity._in_availability_grace`.
+    """
     monkeypatch.setattr(
         common_base, "async_call_later", lambda *args, **kwargs: (lambda: None)
     )
@@ -191,4 +206,4 @@ def test_binary_sensor_blanks_value_during_grace_window(
     sensor._handle_coordinator_update()
 
     assert sensor.available is True
-    assert sensor.is_on is None
+    assert sensor.is_on is True

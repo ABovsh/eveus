@@ -16,7 +16,10 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 
 from conftest import TEST_HOST
+from custom_components.eveus import const
+from custom_components.eveus import number as number_module
 from custom_components.eveus import select as select_module
+from custom_components.eveus import time as time_module
 from custom_components.eveus.const import CONTROL_GRACE_PERIOD
 from custom_components.eveus.control_base import CommandBackedEntity
 
@@ -130,7 +133,11 @@ def test_min_voltage_grace_window_shows_restored_option_while_offline() -> None:
 
 
 def test_min_voltage_grace_window_expired_returns_none() -> None:
-    select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
+    select = select_module.EveusMinVoltageSelect(_Updater({}, available=True))
     _mute(select)
     select._last_device_value = 180
     select._last_successful_read = time.time() - CONTROL_GRACE_PERIOD - 1
@@ -258,7 +265,11 @@ def test_timezone_grace_window_boundary_age_zero_is_valid(monkeypatch) -> None:
 def test_timezone_grace_window_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
     now = 1_700_000_000.0
     monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
-    select = select_module.EveusTimeZoneSelect(_Updater({}, available=False))
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
+    select = select_module.EveusTimeZoneSelect(_Updater({}, available=True))
     _mute(select)
     select._last_device_value = 3
     select._last_successful_read = now - CONTROL_GRACE_PERIOD  # age == grace exactly
@@ -280,7 +291,11 @@ def test_min_voltage_grace_window_boundary_age_zero_is_valid(monkeypatch) -> Non
 def test_min_voltage_grace_window_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
     now = 1_700_000_000.0
     monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
-    select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
+    # `available=True` with the key absent: this isolates the window that
+    # measures from the last successful read, which is the one this test is
+    # about. With the coordinator OFFLINE the value is held for as long as
+    # the entity stays visible instead — see test_grace_holds_last_value.py.
+    select = select_module.EveusMinVoltageSelect(_Updater({}, available=True))
     _mute(select)
     select._last_device_value = 180
     select._last_successful_read = now - CONTROL_GRACE_PERIOD  # age == grace exactly
@@ -539,3 +554,32 @@ def test_select_setup_entry_adds_min_voltage_when_model_configured() -> None:
         "Adaptive Mode",
         "Minimum voltage",
     }
+
+
+def test_every_restore_path_rejects_the_same_unusable_states() -> None:
+    """One rule, spelled once, for every platform that restores a value.
+
+    The behavioural half — a restored "unknown" seeds nothing — is already
+    covered above, and it cannot tell the guard's strings from a typo: the
+    parse or option lookup each path runs afterwards rejects them anyway, so
+    the guard is an early exit rather than the only defence. Pinning the named
+    tuple is what makes an edit to either sentinel visible, and what keeps the
+    restore paths — selects, numbers and the schedule times — from drifting to
+    different spellings of the same rule.
+    """
+    assert const.UNUSABLE_RESTORED_STATES == (None, "unknown", "unavailable")
+    assert select_module.UNUSABLE_RESTORED_STATES is const.UNUSABLE_RESTORED_STATES
+    assert number_module.UNUSABLE_RESTORED_STATES is const.UNUSABLE_RESTORED_STATES
+    assert time_module.UNUSABLE_RESTORED_STATES is const.UNUSABLE_RESTORED_STATES
+
+    for factory in (
+        select_module.EveusMinVoltageSelect,
+        select_module.EveusTimeZoneSelect,
+    ):
+        for unusable in ("unknown", "unavailable"):
+            select = factory(_Updater({}, available=False))
+            _mute(select)
+            asyncio.run(select._async_restore_state(State("select.x", unusable)))
+            assert select._last_device_value is None, (
+                f"{factory.__name__} seeded itself from a restored {unusable!r}"
+            )

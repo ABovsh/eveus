@@ -39,6 +39,7 @@ from .const import (
     ERROR_STATES,
     NORMAL_SUBSTATES,
     RATE_STATES,
+    SESSION_ACTIVE_STATES,
     ERROR_LOG_RATE_LIMIT,
     LEGACY_RAW_STATE_KEY,
     MODEL_MAX_CURRENT,
@@ -132,6 +133,10 @@ class SensorSpec:
     # Sensors whose value DESCRIBES connectivity must stay readable while the
     # poll is failing — that is exactly when their data matters.
     available_when_offline: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
+    # The published value comes from a hold kept on the UPDATER, which a reload
+    # throws away — so it has to be seeded from the restored state or the sensor
+    # counts backwards after a restart. See `_seed_session_hold`.
+    restores_session_hold: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
 
     def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
         """Create sensor instance from specification."""
@@ -173,6 +178,48 @@ class OptimizedEveusSensor(EveusSensorBase):
             return True
         return super().available
 
+    async def async_added_to_hass(self) -> None:
+        """Restore the updater-side hold this sensor's value is built on.
+
+        The base class computes and caches the first value inside
+        `super().async_added_to_hass()`, so a seed applied afterwards fixes
+        every poll EXCEPT the one the reload was about: the entity would come
+        back showing the coarse floor — the exact 4:59 regression this seeding
+        exists to remove — and only correct itself on the next poll, minutes
+        away at the idle cadence. Seed first, then let the base read.
+        """
+        if self._spec.restores_session_hold:
+            self._seed_session_hold(await self.async_get_last_state())
+        await super().async_added_to_hass()
+
+    def _seed_session_hold(self, state) -> None:
+        """Re-arm `_session_time_seconds` from the state HA kept for us.
+
+        The never-count-backwards hold lives on the updater, so a reload drops
+        it and the first reading afterwards takes the coarse idle floor —
+        up to 4:59 BEHIND what the sensor last published. Live 2026-09-05: the
+        charger reported 509 095 s (5d 21h 24m) and the sensor came back from a
+        restart reading 5d 21h 20m.
+
+        Seeded from the `duration_seconds` attribute rather than by parsing the
+        display string back: it is the exact stepped number the hold works in.
+        A value that is missing, non-numeric or outside the range the getter
+        itself accepts is discarded — a corrupt restore must not become the
+        floor every later reading is measured against. Nothing here can
+        resurrect a finished session: the hold only applies while the charger's
+        own counter is still ahead of it, so a cable pulled while HA was down
+        starts from zero as usual.
+        """
+        if state is None:
+            return
+        try:
+            seconds = int((state.attributes or {}).get("duration_seconds"))
+        except (TypeError, ValueError):
+            return
+        if not 0 <= seconds <= MAX_SESSION_TIME_SECONDS:
+            return
+        self._updater._session_time_seconds = seconds
+
     def _should_log_error(self, function_name: str) -> bool:
         """Check if we should log errors for a function (rate limited)."""
         return self._error_log.should_log(ERROR_LOG_RATE_LIMIT, function_name)
@@ -203,6 +250,12 @@ class OptimizedEveusSensor(EveusSensorBase):
             # drops any stale payload-derived field (e.g. RSSI) when offline.
             if self._updater.available or self._spec.available_when_offline:
                 attrs = self._spec.attributes_fn(self._updater, self.hass)
+            elif self._in_availability_grace:
+                # An attribute change writes a recorder row exactly like a
+                # state change, and dropping the attributes on a missed poll
+                # writes one on the way down and another on the way back up.
+                # Hold them for the same window the value is held for.
+                return False
         except Exception as err:
             if self._should_log_error(f"attributes_{self._spec.key}"):
                 _LOGGER.debug(
@@ -289,6 +342,23 @@ def _get_data_value(updater, key: str, converter=float, default=None):
 # Value getter factories — replace ~20 identical functions
 # =============================================================================
 
+def _deadband_anchor_store(updater) -> dict:
+    """The per-updater store of last-published values, created on first use.
+
+    Every damped reading anchors here, so a field read by more than one
+    consumer is damped once and the two cannot drift apart. The type guard is
+    load-bearing rather than decorative: anything that is not the store (an
+    absent attribute, or a stand-in that answers every attribute) must be
+    replaced with a real dict, because the alternative is arithmetic against a
+    non-number, which the callers would report as a failed reading.
+    """
+    anchors = getattr(updater, "_deadband_anchors", None)
+    if not isinstance(anchors, dict):
+        anchors = {}
+        updater._deadband_anchors = anchors
+    return anchors
+
+
 def _make_value_getter(
     key: str,
     precision: int = 0,
@@ -328,10 +398,7 @@ def _make_value_getter(
         value = round(value, precision)
         if deadband is None:
             return value
-        anchors = getattr(updater, "_deadband_anchors", None)
-        if anchors is None:
-            anchors = {}
-            updater._deadband_anchors = anchors
+        anchors = _deadband_anchor_store(updater)
         value = apply_deadband(anchors.get(key), value, deadband)
         anchors[key] = value
         return value
@@ -666,31 +733,69 @@ def get_not_charging_reason_attrs(updater, hass) -> dict:
 get_ground_status = _make_enum_getter("ground", {1: "Connected", 0: "Not Connected"})
 
 
-def get_session_time(updater, hass) -> Optional[str]:
-    """Get formatted session time."""
+# The charger counts a session from PLUG-IN, not from the start of charging,
+# and stops only when the cable comes out — so a car left connected after
+# Charge Complete kept this figure ticking, one recorder row per minute, for a
+# duration nobody is reading any more. While a charge is actually running the
+# minute is what the user is watching; outside one, a coarser step costs
+# nothing.
+_SESSION_TIME_STEP_CHARGING_SECONDS: Final[int] = 60
+_SESSION_TIME_STEP_IDLE_SECONDS: Final[int] = 300
+
+
+def _get_session_seconds(updater) -> Optional[int]:
+    """Session duration, stepped by whether a charge is actually running.
+
+    Shared by the state and its mirroring attribute so the two grids cannot
+    drift apart — an attribute writes a recorder row exactly like a state does.
+    """
     seconds = _get_data_value(updater, "sessionTime", int)
     # A negative duration is physically impossible; an absurd one (corrupt RTC /
     # counter) would render an overlong state string. Surface `unknown` for both
     # instead of a plausible-but-wrong value.
     if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
         return None
-    return format_duration(seconds)
+    state = _get_data_value(updater, "state", int)
+    step = (
+        _SESSION_TIME_STEP_CHARGING_SECONDS
+        if state in SESSION_ACTIVE_STATES
+        else _SESSION_TIME_STEP_IDLE_SECONDS
+    )
+    stepped = seconds - seconds % step
+    last = getattr(updater, "_session_time_seconds", None)
+    # Charging states the minute and standby the five, so the moment a charge
+    # ends the coarser step would drag the published figure back down by up to
+    # four minutes. Hold it instead — but only while the charger's own counter
+    # is still ahead of it, so unplugging (which resets that counter) starts
+    # the next session from zero rather than from a stale hold.
+    # NOT pragma'd, deliberately, even though `stepped <` vs `stepped <=` is
+    # unobservable (at equality the assignment below is a no-op): mutmut's
+    # pragma is line-level, and the UPPER comparison on this same line is
+    # load-bearing -- silencing the line would silence that too. The equivalent
+    # mutant is carried in .github/mutation-baseline.json instead.
+    if last is not None and stepped < last <= seconds:
+        stepped = last
+    updater._session_time_seconds = stepped
+    return stepped
+
+
+def get_session_time(updater, hass) -> Optional[str]:
+    """Get formatted session time."""
+    seconds = _get_session_seconds(updater)
+    return None if seconds is None else format_duration(seconds)
 
 
 def get_session_time_attrs(updater, hass) -> dict:
     """Get session time attributes."""
     if not updater.available:
         return {}
-    seconds = _get_data_value(updater, "sessionTime", int)
-    # Mirror the state getter's bounds: an absurd duration must not leak into
-    # the attribute while the visible state already reads unknown.
-    if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
-        return {}
-    # Quantised onto the same minute grid the visible state uses. HA writes a
-    # recorder row on any attribute change, so a per-poll-incrementing second
-    # count made this sensor write every poll while its state sat still — the
-    # exact churn the minute-granular state exists to avoid.
-    return {"duration_seconds": seconds - seconds % 60}
+    seconds = _get_session_seconds(updater)
+    # Mirror the state getter's bounds and its grid: an absurd duration must not
+    # leak into the attribute while the visible state already reads unknown, and
+    # a per-poll-incrementing second count made this sensor write every poll
+    # while its state sat still — the exact churn the coarser grid exists to
+    # avoid.
+    return {} if seconds is None else {"duration_seconds": seconds}
 
 
 def get_time_drift(updater, hass) -> Optional[int]:
@@ -718,7 +823,15 @@ def get_time_drift(updater, hass) -> Optional[int]:
         # drift only jitters within one grid step) is then applied only to a
         # non-zero candidate — so the zero/tolerance band always clears a stale
         # non-zero drift once the clock is synchronized (e.g. 30 s -> 0 s).
-        if abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS:
+        # pragma: no mutate below - equivalent, and provably so: the quantum
+        # rounds every |drift| up to half of itself (15 s) to zero already,
+        # so for any tolerance under that this branch is a fast path to the
+        # answer the else-branch computes anyway. `<` and `<=` cannot be
+        # told apart at 5 s, and neither can the constant's exact value.
+        # test_time_drift_tolerance_band_is_inclusive_at_both_signs asserts
+        # the tolerance stays under half a quantum, so this stops being
+        # true loudly rather than silently.
+        if abs(drift) <= TIME_DRIFT_TOLERANCE_SECONDS:  # pragma: no mutate - see the note above
             candidate = 0
         else:
             candidate = (
@@ -837,6 +950,53 @@ def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
 # Connection quality
 # =============================================================================
 
+# Latency is published on a 0.5 s grid: finer steps are noise on a LAN poll,
+# and the attribute is a diagnostic, not a measurement.
+_LATENCY_STEP: Final[float] = 0.5
+_LATENCY_ANCHOR: Final[str] = "__latency_avg"
+_LATENCY_ANCHOR_SAMPLES: Final[str] = "__latency_avg_samples"
+
+
+def _held_latency(updater, latency_avg: float, samples: object = None) -> float:
+    """Snap latency to the display grid, holding the LAST PUBLISHED step.
+
+    Rounding on its own is not a deadband. A rolling average parked on a step
+    edge re-rounds to the other side on every poll, and an attribute change
+    writes a recorder row exactly like a state change does — so the sensor
+    churns while its state never moves. Measured on the live charger
+    2026-09-12: the average sat on the 0.25 s edge, alternated 0.0 / 0.5, and
+    was 25 of the 56 rows this integration wrote in a two-hour idle window —
+    its single biggest writer with nothing charging. So the grid is only
+    re-entered once the reading is a full step from what was last published.
+
+    ``samples`` is how many response times the average is built from, and it
+    exists because a hold is only as good as the value it latches onto. A cold
+    start pays for connection setup, so the first samples run high; anchoring
+    on them parks the figure on a spike it can never leave (the same charger
+    reported 0.5 s for a whole run while answering in 0.10-0.13 s — a wrong
+    reading held forever, which is worse than the churn the hold removes).
+    While that count is still rising the window is still filling, so the figure
+    tracks; once it stops rising the window is full and the hold takes over.
+    A count that is absent or not an integer means an updater that does not
+    report one, and holds from the first reading.
+
+    The anchor lives on the updater (shared with ``_make_value_getter``'s
+    deadbands), so two chargers never share one.
+    """
+    anchors = _deadband_anchor_store(updater)
+    last = anchors.get(_LATENCY_ANCHOR)
+    filling = (
+        isinstance(samples, int)
+        and not isinstance(samples, bool)
+        and samples != anchors.get(_LATENCY_ANCHOR_SAMPLES)
+    )
+    if last is None or filling or abs(latency_avg - last) >= _LATENCY_STEP:
+        last = round(latency_avg / _LATENCY_STEP) * _LATENCY_STEP
+        anchors[_LATENCY_ANCHOR] = last
+    anchors[_LATENCY_ANCHOR_SAMPLES] = samples
+    return last
+
+
 def get_connection_quality(updater, hass) -> Optional[float]:
     """Get connection quality as numeric value.
 
@@ -883,7 +1043,9 @@ def get_connection_attrs(updater, hass) -> dict:
             status = "Critical"
         attrs: dict[str, Any] = {
             "connection_quality": round(success_rate),
-            "latency_avg": round(latency_avg * 2) / 2,
+            "latency_avg": _held_latency(
+                updater, latency_avg, metrics.get("latency_samples")
+            ),
             "status": status,
         }
         if updater.available:
@@ -1052,30 +1214,42 @@ def create_sensor_specifications(
                 sensor_type=SensorType.DIAGNOSTIC,
                 icon=icon,
                 device_class=device_class,
-                state_class=SensorStateClass.MEASUREMENT,
+                # Per-entry, not blanket: `state_class` is what turns on the
+                # forever-kept 5-minute and hourly statistics, so only a
+                # reading whose long-term trend is worth that cost declares it.
+                state_class=state_class,
                 unit=unit,
                 precision=precision,
                 category=EntityCategory.DIAGNOSTIC,
             )
-            for key, name, fn, icon, device_class, unit, precision in (
+            for key, name, fn, icon, device_class, unit, precision, state_class in (
                 ("box_temperature", "Box Temperature", get_box_temperature,
                  "mdi:thermometer", SensorDeviceClass.TEMPERATURE,
-                 UnitOfTemperature.CELSIUS, 0),
+                 UnitOfTemperature.CELSIUS, 0, SensorStateClass.MEASUREMENT),
                 ("plug_temperature", "Plug Temperature", get_plug_temperature,
                  "mdi:thermometer-high", SensorDeviceClass.TEMPERATURE,
-                 UnitOfTemperature.CELSIUS, 0),
+                 UnitOfTemperature.CELSIUS, 0, SensorStateClass.MEASUREMENT),
+                # The CR2032 clock cell drains over YEARS, and the recorder
+                # keeps states for days — statistics is the only place that
+                # slope exists, and it is what says to replace the cell before
+                # the clock resets. Slow is not the same as static.
                 ("battery_voltage", "Battery Voltage", get_battery_voltage,
                  "mdi:battery", SensorDeviceClass.VOLTAGE,
-                 UnitOfElectricPotential.VOLT, 2),
+                 UnitOfElectricPotential.VOLT, 2, SensorStateClass.MEASUREMENT),
+                # Leakage is an EVENT, not a trend: above the charger's 30 mA
+                # threshold it trips and reports the fault itself, and
+                # `leakValueH` is the charger's own peak-ever counter, so the
+                # worst value stays readable from the device. Averaging a
+                # healthy 0 mA every five minutes forever buys nothing.
                 ("leak_current", "Leakage Current", get_leak_current,
                  "mdi:current-dc", SensorDeviceClass.CURRENT,
-                 UnitOfElectricCurrent.MILLIAMPERE, 0),
+                 UnitOfElectricCurrent.MILLIAMPERE, 0, None),
                 ("leak_current_peak", "Leakage Current Peak", get_leak_current_peak,
                  "mdi:current-dc", SensorDeviceClass.CURRENT,
-                 UnitOfElectricCurrent.MILLIAMPERE, 0),
+                 UnitOfElectricCurrent.MILLIAMPERE, 0, None),
                 ("wifi_signal", "WiFi Signal", get_wifi_rssi,
                  "mdi:wifi", SensorDeviceClass.SIGNAL_STRENGTH,
-                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0),
+                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, SensorStateClass.MEASUREMENT),
             )
         ),
     ]
@@ -1122,6 +1296,7 @@ def create_sensor_specifications(
             key="session_time", name="Session Time", value_fn=get_session_time,
             sensor_type=SensorType.STATE, icon="mdi:timer",
             attributes_fn=get_session_time_attrs,
+            restores_session_hold=True,
         ),
         SensorSpec(
             key="counter_a_cost", name="Counter A Cost", value_fn=get_counter_a_cost,
@@ -1138,9 +1313,11 @@ def create_sensor_specifications(
             tracks_reset=True,
         ),
         SensorSpec(
+            # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
+            # not a measurement: no state_class, so it writes no statistics.
             key="primary_rate_cost", name="Primary Rate Cost", value_fn=get_primary_rate_cost,
             sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
+            unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
             key="active_rate_cost", name="Active Rate Cost", value_fn=get_active_rate_cost,
@@ -1149,14 +1326,18 @@ def create_sensor_specifications(
             attributes_fn=get_active_rate_attrs,
         ),
         SensorSpec(
+            # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
+            # not a measurement: no state_class, so it writes no statistics.
             key="rate_2_cost", name="Rate 2 Cost", value_fn=get_rate2_cost,
             sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
+            unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
+            # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
+            # not a measurement: no state_class, so it writes no statistics.
             key="rate_3_cost", name="Rate 3 Cost", value_fn=get_rate3_cost,
             sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
+            unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
             key="rate_2_status", name="Rate 2 Status",

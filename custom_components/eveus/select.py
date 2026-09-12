@@ -19,9 +19,9 @@ from .common_base import (
 )
 from .const import (
     CONF_MODEL,
-    CONTROL_GRACE_PERIOD,
     MIN_VOLTAGE_OPTIONS,
     OPTIMISTIC_CONTROL_TTL,
+    UNUSABLE_RESTORED_STATES,
 )
 from .utils import get_safe_value
 
@@ -86,10 +86,7 @@ class EveusTimeZoneSelect(
         device = self._device_option()
         if device is not None:
             return device
-        if (
-            self._last_device_value is not None
-            and 0 <= time.time() - self._last_successful_read < CONTROL_GRACE_PERIOD
-        ):
+        if self._may_hold_last_device_value(time.time()):
             return _format_tz(self._last_device_value)
         return None
 
@@ -100,7 +97,7 @@ class EveusTimeZoneSelect(
         restart while the charger is still offline, instead of dropping to
         `unknown` until the first successful poll.
         """
-        if state is None or state.state in (None, "unknown", "unavailable"):
+        if state is None or state.state in UNUSABLE_RESTORED_STATES:
             return
         if state.state in TIMEZONE_OPTIONS:
             try:
@@ -206,16 +203,13 @@ class _EveusIntegerSelect(
         device = self._device_option()
         if device is not None:
             return device
-        if (
-            self._last_device_value is not None
-            and 0 <= time.time() - self._last_successful_read < CONTROL_GRACE_PERIOD
-        ):
+        if self._may_hold_last_device_value(time.time()):
             return self.DEVICE_TO_OPTION.get(self._last_device_value)
         return None
 
     async def _async_restore_state(self, state: State) -> None:
         """Seed the last device value from the restored HA state."""
-        if state is None or state.state in (None, "unknown", "unavailable"):
+        if state is None or state.state in UNUSABLE_RESTORED_STATES:
             return
         value = self.OPTION_TO_DEVICE.get(state.state)
         if value is not None:

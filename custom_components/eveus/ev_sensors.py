@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import ClassVar, Optional
 
 from homeassistant.components.sensor import (
@@ -31,6 +31,31 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Both charge estimates are stated on this grid and damped by this step. They
+# are two views of one calculation, and there is exactly ONE of them: the
+# damped finish instant. Time to Target is projected off it, so the two can
+# disagree only by that projection's own rounding — half a step — and no later
+# change to one sensor can walk them apart the way two anchors did.
+_ESTIMATE_STEP_MINUTES = 5
+_ESTIMATE_STEP_SECONDS = _ESTIMATE_STEP_MINUTES * 60
+
+# The single anchor, held on the updater (one per charger). Never read as a
+# literal anywhere, so its spelling is unobservable — a mutation to it is
+# equivalent by construction.
+_ESTIMATE_ANCHOR_KEY = "finish_at"  # pragma: no mutate - private dict key, never compared against a literal
+
+# Below this, `round(seconds / 60)` is zero and `calculate_remaining_time`
+# states "< 1m". Naming the threshold in SECONDS rather than re-deriving a
+# minute count keeps one number to test instead of a rounding to reason about.
+_SUB_MINUTE_SECONDS = 30
+
+# Share of the estimate the charger's own power swing is worth. Measured on the
+# charger: 3504-3537 W across a session at a fixed current, so an estimate
+# wanders by about half a percent either side. A band has to be WIDER than the
+# swing it absorbs -- one that merely equals it opens on the extremes -- and the
+# swing scales with the estimate, so the band does too.
+_ESTIMATE_NOISE_FRACTION = 0.03
 
 
 # =============================================================================
@@ -220,6 +245,84 @@ class BaseEVHelperSensor(EveusSensorBase):
             return None
         return (current_soc, target_soc, power_meas, battery_capacity, soc_correction)
 
+    def _anchors(self) -> dict:
+        """The charger-wide store the single estimate anchor lives in."""
+        anchors = getattr(self._updater, "_estimate_anchors", None)
+        if anchors is None:
+            anchors = {}
+            self._updater._estimate_anchors = anchors
+        return anchors
+
+    def _damped_finish_timestamp(self, seconds, now: datetime) -> float | None:
+        """The ONE damped quantity both charge estimates are views of.
+
+        Returns the held finish instant as a Unix timestamp on the
+        `_ESTIMATE_STEP_MINUTES` grid, or None when there is no estimate to
+        state (which also drops the anchor, so a session that ends cannot seed
+        the next one).
+
+        Why an instant and not a duration, given that Time to Target displays a
+        duration: an instant is what actually stays still. Damping the duration
+        freezes a NUMBER while the clock keeps moving underneath it, which
+        silently means a finish time sliding one minute later every minute —
+        so the two sensors, damped separately, disagreed by up to 7 minutes on
+        a two-hour charge and 17 on a ten-hour one, on a sawtooth that reset
+        every time the duration re-anchored. Time to Target is now `held - now`
+        instead, which costs it a row every five minutes while charging (it is
+        counting down, which is its job) and buys the pair an agreement that
+        holds by construction rather than by a test.
+
+        The band is measured from the HELD instant rather than from the raw
+        estimate: re-anchoring on the raw lands the anchor on a swing peak,
+        leaving the opposite peak a full swing away. It is also wider than the
+        swing rather than equal to it — one that merely equals the swing opens
+        on the extremes. The charger's own power reading moves 3504-3537 W
+        across a session at a fixed current, about half a percent either side,
+        and that share of the answer grows with the answer, so the band is the
+        larger of one and a half grid steps and `_ESTIMATE_NOISE_FRACTION` of
+        the time still to run.
+        """
+        anchors = self._anchors()
+        if seconds is None or seconds <= 0:
+            anchors.pop(_ESTIMATE_ANCHOR_KEY, None)
+            return None
+        now_ts = now.timestamp()
+        eta = now_ts + seconds
+        held = anchors.get(_ESTIMATE_ANCHOR_KEY)
+        band = max(
+            _ESTIMATE_STEP_SECONDS * 1.5, _ESTIMATE_NOISE_FRACTION * seconds
+        )
+        # A held instant that has come due is re-anchored like any other stale
+        # one: the stamp has to stay in the future, and a charge running past
+        # its own estimate is exactly when it would not.
+        if held is None or abs(eta - held) >= band or held <= now_ts:
+            held = round(eta / _ESTIMATE_STEP_SECONDS) * _ESTIMATE_STEP_SECONDS
+            if held <= now_ts:
+                # Nearest-grid rounding can land on or behind `now` when only a
+                # few minutes remain. Take the next grid point instead, which
+                # is the same floor `calculate_remaining_time` has always
+                # applied to the duration ("under 5 minutes the sensor still
+                # reads 5m").
+                # `//` and `int(/)` agree for every real Unix timestamp (both
+                # floor a positive number), so a mutation between them is
+                # equivalent -- but the `+ 1` on this same line is not, and
+                # mutmut's pragma is line-level, so this stays mutable and the
+                # equivalent half is carried in the baseline instead.
+                held = (int(now_ts // _ESTIMATE_STEP_SECONDS) + 1) * _ESTIMATE_STEP_SECONDS
+        anchors[_ESTIMATE_ANCHOR_KEY] = held
+        return held
+
+    def _forget_estimate(self) -> None:
+        """Drop the held finish instant.
+
+        Every exit that publishes no estimate goes through here, so a session
+        that ends cannot seed the next one with the instant it was holding.
+        One key for both sensors is what stops them drifting apart again: the
+        finish stamp used to return early without clearing while Time to Target
+        cleared by routing its `None` through its own separate damper.
+        """
+        self._anchors().pop(_ESTIMATE_ANCHOR_KEY, None)
+
     def _get_energy_charged(self) -> float | None:
         """Energy delivered in the current session, in kWh.
 
@@ -366,13 +469,49 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
         try:
             inputs = self._resolve_remaining_inputs()
             if inputs is None:
+                self._forget_estimate()
                 self._cached_value = None
                 return None
-            result = calculate_remaining_time(*inputs)
+            seconds = calculate_remaining_seconds(*inputs)
+            now = dt_util.utcnow()
+            held = self._damped_finish_timestamp(seconds, now)
+            if held is None or seconds <= _SUB_MINUTE_SECONDS:
+                # Two cases, one answer: let `calculate_remaining_time` derive
+                # the count itself. With no estimate it states why ("Not
+                # charging", "unavailable", target reached) without ever
+                # reaching the override; under a minute it states "< 1m", which
+                # is also what handing it the raw count would produce. The
+                # branch exists to keep the sub-minute case AWAY from the floor
+                # below — the anchor is the next grid point by then, so
+                # projecting off it would read "5m" with the cable seconds from
+                # done.
+                minutes = None
+            else:
+                # The projection, and the whole point of one anchor: this is
+                # the same instant Charging Finish Time publishes, expressed as
+                # what is left of it, and `calculate_remaining_time` snaps it
+                # onto the shared grid.
+                #
+                # The floor is the one place the two are allowed to part, and
+                # it predates the damping: `calculate_remaining_time` promises
+                # it "never rounds down to 0m — under 5 minutes the sensor
+                # still reads 5m until it drops below one minute". Inside the
+                # final grid step the anchor sits on the next boundary, which
+                # can be seconds away, so the raw projection would render
+                # "< 1m" for a charge with minutes left. Hold the floor and let
+                # the stamp state the boundary exactly.
+                minutes = max(
+                    _ESTIMATE_STEP_MINUTES, (held - now.timestamp()) / 60
+                )
+            result = calculate_remaining_time(*inputs, minutes_override=minutes)
             self._cached_value = result
             return result
 
         except Exception as err:
+            # Third exit that publishes no estimate, so it drops the anchor like
+            # the other two: a hold left behind by a failed computation is
+            # measured against on the next successful one.
+            self._forget_estimate()
             _LOGGER.debug(
                 "Error calculating time to target for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,
@@ -484,32 +623,66 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
     ENTITY_NAME = "Charging Finish Time"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:calendar-clock"
-    # Available whenever online; reads None (via _resolve_remaining_inputs) when
-    # target/helpers are missing, so the timestamp entity always exists.
-    _requires_helpers = False
+    # The helper gate comes from the base class: no Target SOC means no finish
+    # time, which is a blank, and `available` below explains why a blank here
+    # has to be `unavailable`.
+    _requires_helpers = True
+
+    @property
+    def available(self) -> bool:
+        """Unavailable whenever there is no charge to finish.
+
+        Time to Target can say "Not charging"; a `device_class=timestamp`
+        entity has only a datetime or nothing, so its one honest blank is
+        `unavailable` — the state helpers, statistics and templates skip —
+        rather than `unknown`, which they ingest as a real but invalid
+        reading. Measured on live hardware 2026-09-12: this sensor went
+        `unknown` the moment the charge completed while its sibling correctly
+        read "Not charging".
+
+        Gated on the charger's own state, never on the computed stamp: the
+        recompute in `_update_native_value` only runs while the entity is
+        available, so a value-derived gate would latch the sensor off for good
+        the first time it produced no estimate.
+        """
+        if not super().available:
+            return False
+        # A held reading stays visible through a missed poll, so availability
+        # must not flap faster than the value it guards — otherwise one missed
+        # poll writes a row on the way down and another on the way back up.
+        if self._in_availability_grace:
+            return True
+        return (
+            get_safe_value(self._updater.data, "state", int) in SESSION_ACTIVE_STATES
+        )
 
     def _get_sensor_value(self) -> Optional[datetime]:
         """Compute the finish-time stamp."""
         try:
             inputs = self._resolve_remaining_inputs()
             if inputs is None:
+                self._forget_estimate()
                 return None
             seconds = calculate_remaining_seconds(*inputs)
-            if seconds is None or seconds <= 0:
+            # The anchor IS this sensor's value — Time to Target is the same
+            # instant expressed as what is left of it. Damping an estimate
+            # re-derived from a fluctuating power reading is what stops a stamp
+            # sitting on a grid edge alternating between the two adjacent
+            # buckets on every poll, which both flooded the recorder and
+            # re-fired any automation waiting on this timestamp.
+            held = self._damped_finish_timestamp(seconds, dt_util.utcnow())
+            if held is None:
                 # None = not charging / invalid; 0 = target reached
                 return None
-            # Snap up to the next 5-minute boundary — the same grid Time to
-            # Target SOC states its estimate on, so the two never disagree by
-            # more than one step. Rounding to the next whole minute still
-            # produced a fresh timestamp on most polls, because the estimate is
-            # re-derived from a fluctuating power reading. Always advances
-            # (1..5 minutes), so the stamp stays in the future the way the old
-            # next-minute rounding guaranteed.
-            eta = (dt_util.utcnow() + timedelta(seconds=seconds)).replace(
-                second=0, microsecond=0
-            )
-            return eta + timedelta(minutes=5 - eta.minute % 5)
+            # Built from the epoch value rather than shifted from `now`: the
+            # anchor is an exact multiple of the grid, so rounding it to a
+            # whole second lands on the boundary with no float dust to truncate
+            # (a stamp a microsecond short of the minute, blanked to :00,
+            # would read a whole minute early).
+            return dt_util.utc_from_timestamp(round(held))
         except Exception as err:
+            # Same third exit as Time to Target's — see there.
+            self._forget_estimate()
             _LOGGER.debug(
                 "Error calculating finish time for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,

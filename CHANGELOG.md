@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.22.0 - 2026-09-12
+
+### ⚠️ Breaking
+- **About 1,440 fewer database rows a day, permanently.** `primary_rate_cost`, `rate_2_cost`, `rate_3_cost`, `leakage_current` and `leakage_current_peak` no longer record long-term statistics: they report prices you configured and a fault the charger announces itself, so their 5-minute and hourly aggregates recorded a value that never moved, and statistics are never purged. All five keep their current value, their attributes and their history — only a Statistics Graph card or long-term trend built on one of them stops gaining new data.
+
+### 🐛 Fixed
+- **A missed poll no longer blanks every reading.** One failed poll left the charger's sensors, binary sensors, switches, numbers, selects and schedule times visible but empty, and anything reading them — a utility meter, a statistic, a template — took that blank as a real but invalid value instead of skipping it, so a utility meter fed by Total Energy logged an error on every gap. Each reading now holds until the charger answers again, then turns unavailable rather than blank.
+- **An automation set to fire before your charge finishes no longer re-triggers every half minute.** Charging Finish Time is re-worked from a fluctuating power reading on every poll, and one sitting between two five-minute marks alternated between them for a whole session. It now holds the time it states until the estimate really moves, states the nearest five-minute mark rather than the one after it, and never a time already past; Time to Target SOC is that same held time expressed as what is left of it, so the two can no longer disagree — they had drifted up to 17 minutes apart on a ten-hour charge.
+- **Session Time stops writing a database row every minute while nothing is charging.** The charger counts a session from the moment the cable goes in until it comes out, so a car left plugged in after Charge Complete kept the figure ticking all night; it is now stated in five-minute steps whenever a charge is not running, and still to the minute while one is.
+- **Connection Quality stops writing a database row on every poll.** Its `latency_avg` attribute sat on the edge of the half-second step it reports and re-rounded to the other side each poll, recording a change continuously while the sensor displayed a steady 100 % — the biggest single writer among the charger's entities while nothing was charging. It now holds until the latency moves a full step.
+- **Templates and statistics no longer ingest a bogus Charging Finish Time between charges.** With no charge running there is no finish time to state, and the blank it published was recorded as `unknown`, which they take as a real but invalid reading rather than skipping. It now reads `unavailable`; an automation or template that tested it for `unknown` should test for `unavailable`.
+- **Last Session Energy and Cost now report two decimals instead of a long chain of them.** They read the same charger fields as Session Energy and Session Cost but skipped their rounding, so a session those recorded as 28.0 kWh was captured as 27.9899997711182.
+- **Malformed session events no longer raise an error.** Last Session sensors reject oversized energy, cost and duration values sent by external automations.
+
 ## 4.21.0 - 2026-08-27
 
 ### ✨ Added

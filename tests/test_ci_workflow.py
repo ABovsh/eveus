@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import subprocess
 import shlex
 
 import yaml
@@ -236,8 +237,9 @@ _NON_KILLER_TESTS = frozenset({
     "tests/test_name_platform_compat.py",
     "tests/test_test_quality_contracts.py",
     "tests/test_ci_workflow.py",
-    # Skipped unless EVEUS_LIVE_HOST points at a real charger, so it can never
-    # kill a mutant in CI. It guards the fixture against firmware drift instead.
+    # Its charger-facing test needs EVEUS_LIVE_HOST; its `_OPTIONAL_FIELDS`
+    # self-check does run in CI but asserts on test data, not integration code.
+    # Neither can kill a mutant; the file guards the fixture against drift.
     "tests/test_firmware_drift_live.py",
     # Asserts on the shipped blueprint YAML, not on integration code, so there
     # is no mutant for it to kill.
@@ -290,3 +292,146 @@ def test_mutation_ratchet_fails_the_job_on_an_increase() -> None:
     assert "exit 1" in increase_branch, (
         "the survivors-increased branch does not fail the job"
     )
+
+
+# Package modules deliberately outside the mutation matrix. Each needs a
+# reason, and test_unmutated_modules_still_exist keeps the list from rotting.
+_UNMUTATED_MODULES = frozenset({
+    # Pure re-export shim: imports and __all__, no branch for a mutant to hide
+    # in.
+    "custom_components/eveus/common.py",
+    # Platform setup. Its one real branch (the SOC-mode gate deciding whether
+    # the six EV sensors exist) is covered by test_soc_sensors_only_in_advanced,
+    # but wiring it into a leg shifts that leg's survivor count and the ratchet
+    # fails the job on any increase — so it needs a mutmut run to re-baseline
+    # .github/mutation-baseline.json in the same commit. Excused until then.
+    "custom_components/eveus/sensor.py",
+})
+
+
+def test_every_package_module_is_mutated_or_excused() -> None:
+    """A new module must join a mutation leg, or say why it does not.
+
+    The sibling check for test files has existed since the workflow landed;
+    the one for SOURCE files was a hand-written list, so a module added to the
+    package simply never appeared in it and was mutated by nothing, silently.
+    Deriving the set from the directory is what makes that impossible.
+    """
+    import pathlib
+
+    mutated = set()
+    for leg in _mutation_matrix_legs():
+        mutated.update(leg["paths"].split(","))
+    on_disk = {
+        f"custom_components/eveus/{p.name}"
+        for p in pathlib.Path("custom_components/eveus").glob("*.py")
+    }
+    unmutated = on_disk - mutated - _UNMUTATED_MODULES
+    assert not unmutated, (
+        "package modules mutated by no leg (add them to a leg's `paths:` and "
+        "re-baseline, or to _UNMUTATED_MODULES with a reason): "
+        f"{sorted(unmutated)}"
+    )
+
+
+def test_unmutated_modules_still_exist() -> None:
+    """A renamed or deleted module must not linger in the excuse list."""
+    import pathlib
+
+    missing = [m for m in _UNMUTATED_MODULES if not pathlib.Path(m).exists()]
+    assert not missing, f"stale entries in _UNMUTATED_MODULES: {missing}"
+
+
+def _internal_doc_patterns_from_gitignore() -> list[str]:
+    """The internal-doc block of .gitignore, read as data.
+
+    Bounded by its own header comment and the first blank line after it, so a
+    pattern added to that block is picked up here with no edit.
+    """
+    lines = Path(".gitignore").read_text(encoding="utf-8").splitlines()
+    start = next(
+        k for k, line in enumerate(lines) if line.startswith("# Internal/private docs")
+    )
+    patterns = []
+    for line in lines[start + 1:]:
+        if not line.strip():
+            break
+        if not line.startswith("#"):
+            patterns.append(line.strip())
+    return patterns
+
+
+def _leak_guard_expression(name: str) -> str:
+    """One of the deny expressions, read from the script that owns it.
+
+    The list moved out of the workflow and into `.github/leak-guard.sh` on
+    2026-09-06 (generated from /opt/scripts/git-hooks/leak-guard.sh). Reading it
+    from wherever it lives today is the point: a test anchored to the old
+    location stopped checking anything at all when the list moved.
+    """
+    script = Path(".github/leak-guard.sh").read_text(encoding="utf-8")
+    match = re.search(rf"^{name}='([^']+)'", script, re.M)
+    assert match is not None, f"leak-guard.sh must define {name}"
+    return match.group(1)
+
+
+def _guard_matches(expression: str, sample: str) -> bool:
+    """Ask the guard's own engine, not Python's.
+
+    `scan()` classifies with `grep -iE`, so the match is case-INSENSITIVE ERE.
+    Python's `re.search` would answer this question differently for two of the
+    classes .gitignore lists — `AUDIT_FINDINGS*.md` and `*_PLAN.md` are matched
+    only by the `-i`.
+    """
+    return subprocess.run(
+        ["grep", "-iE", expression],
+        input=f"{sample}\n", capture_output=True, text=True, check=False,
+    ).returncode == 0
+
+
+def test_leak_guard_denies_every_internal_doc_class_gitignore_lists() -> None:
+    """The guard and `.gitignore` must name the same classes.
+
+    .gitignore is the fast pre-flight; the guard is the control, because it
+    "cannot be bypassed by a local --no-verify or a force-push" — its own words.
+    A class the guard does not know is protected only by the bypassable half of
+    the pair, which is the wrong way round.
+
+    The samples are DERIVED from .gitignore, not hand-typed. This test exists
+    because a round found `*.local.md` listed in .gitignore and missing from the
+    guard; a fixed sample list pins today's state and cannot catch the next one
+    — the same defect wearing a different filename. It checks BEHAVIOUR (the
+    real expression, through the real matcher, with the real case rules) rather
+    than the shape of the file the expression happens to live in.
+    """
+    workflow = Path(".github/workflows/leak-guard.yml").read_text(encoding="utf-8")
+    assert ".github/leak-guard.sh" in workflow, (
+        "the workflow must invoke the checker script — an expression nothing "
+        "calls guards nothing"
+    )
+    internal_re = _leak_guard_expression("INTERNAL_RE")
+    allow_re = _leak_guard_expression("ALLOW_RE")
+
+    patterns = _internal_doc_patterns_from_gitignore()
+    assert len(patterns) >= 7, (
+        f"only {len(patterns)} patterns found in .gitignore's internal-doc block "
+        "— its header comment or terminating blank line moved"
+    )
+
+    for pattern in patterns:
+        if not (pattern.endswith("/") or pattern.endswith(".md")):
+            continue  # non-document artifacts are not this guard's job
+        sample = (
+            f"{pattern}notes.md" if pattern.endswith("/") else pattern.replace("*", "x")
+        )
+        # `scan()` drops ALLOW_RE hits BEFORE classifying, so an exempted sample
+        # would pass this test while leaking in production.
+        assert not _guard_matches(allow_re, sample), (
+            f"{sample!r} is exempted by the guard's ALLOW_RE, so the INTERNAL_RE "
+            "check below would be vacuous"
+        )
+        assert _guard_matches(internal_re, sample), (
+            f".gitignore lists {pattern!r} as an internal-doc class but the leak "
+            f"guard would let {sample!r} through — add it to INTERNAL_RE in "
+            "/opt/scripts/git-hooks/leak-guard.sh and re-run sync-leak-guard.sh"
+        )

@@ -11,6 +11,7 @@ from homeassistant.const import UnitOfEnergy, UnitOfTime
 
 import custom_components.eveus.session_history as session_history
 from custom_components.eveus.const import (
+    FINISHED_REASONS,
     MAX_ENERGY_KWH,
 )
 from custom_components.eveus.sensor_definitions import ICON_CURRENCY_UAH, UNIT_UAH
@@ -213,3 +214,83 @@ def test_restore_state_requires_real_or_not_and_gate() -> None:
     state = SimpleNamespace(state="-5", attributes={})
     asyncio.run(sensor._async_restore_state(state))
     assert sensor.native_value is None
+
+
+def test_reason_from_event_requires_a_real_or_not_an_and_gate() -> None:
+    """`not isinstance(reason, str) or reason not in KNOWN` must be a real OR.
+
+    An unhashable reason (dict/list) is the case that reads as an `and` being
+    harmless: it fails the isinstance half, and the membership half would raise
+    on it, so the short-circuit looks load-bearing either way. The case that
+    actually separates the two operators is a plain STRING nobody fires — with
+    a mutated `and`, `not isinstance` is False, the whole gate short-circuits
+    to False, and an arbitrary string from the public bus event lands in a
+    persisted entity attribute.
+    """
+    sensor = LastSessionEnergySensor(_updater(), 1)
+
+    assert sensor._reason_from_event({"reason": "obviously-not-a-reason"}) is None
+    assert sensor._reason_from_event({"reason": {"nested": "value"}}) is None
+    assert sensor._reason_from_event({"reason": ["listy"]}) is None
+    assert sensor._reason_from_event({"reason": 3}) is None
+    assert sensor._reason_from_event({}) is None
+    # ...and every reason the coordinator really does fire still gets through.
+    for reason in FINISHED_REASONS.values():
+        assert sensor._reason_from_event({"reason": reason}) == reason
+
+
+def test_known_finish_reasons_is_exactly_what_the_coordinator_can_fire() -> None:
+    """The accepted set is the coordinator's mapping plus its fallback default.
+
+    Both halves are read from the same constant the coordinator uses, so the
+    two cannot drift apart — which is the whole claim the module's comment
+    makes. The union looks redundant today, and is: the fallback "stopped" is
+    also `FINISHED_REASONS[3]`. It stays because it pins the FALLBACK
+    independently, so relabelling state 3 could not silently stop the default
+    reason being accepted. Spelling the set out here is what stops the literal
+    being edited to something the coordinator never sends.
+    """
+    fallback = FINISHED_REASONS[3]
+
+    assert session_history._KNOWN_FINISH_REASONS == frozenset(
+        FINISHED_REASONS.values()
+    ) | {fallback}
+    assert fallback in FINISHED_REASONS.values()
+
+
+def test_finished_event_rounds_to_the_precision_the_live_sensors_publish() -> None:
+    """The captured snapshot must carry the live sensors' precision, not raw floats.
+
+    `_bounded` documents its job as applying "the same sanity bounds as the live
+    sensors reading these fields" — precision is part of that parity. The live
+    Session Energy / Session Cost specs declare `precision=2`, so the firmware's
+    float dust never reaches their state. The event snapshot skipped the
+    rounding, which is how live HA ended up with
+    `sensor.eveus_ev_charger_last_session_energy = 27.9899997711182` on
+    2026-09-12 while Session Energy read 28.0 for the same session.
+    """
+    from custom_components.eveus.common_network import _bounded
+    from custom_components.eveus.const import MAX_ENERGY_KWH
+
+    assert _bounded(27.9899997711182, MAX_ENERGY_KWH) == 27.99
+
+    # Bounds behaviour is unchanged by the rounding.
+    assert _bounded(-0.1, MAX_ENERGY_KWH) is None
+    assert _bounded(MAX_ENERGY_KWH + 1, MAX_ENERGY_KWH) is None
+    assert _bounded(None, MAX_ENERGY_KWH) is None
+
+    # An integer field (session duration) must stay an int, not become 27.0.
+    assert _bounded(1847, MAX_ENERGY_KWH) == 1847
+    assert isinstance(_bounded(1847, MAX_ENERGY_KWH), int)
+
+
+def test_rounding_cannot_push_a_value_past_its_ceiling() -> None:
+    """A reading just under the bound must not round up through it.
+
+    The bound is checked on the raw value, so a figure inside the ceiling stays
+    accepted; rounding it must not then report more than the ceiling allows.
+    """
+    from custom_components.eveus.common_network import _bounded
+
+    assert _bounded(9.999, 10) == 10.0
+    assert _bounded(10.001, 10) is None

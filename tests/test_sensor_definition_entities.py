@@ -213,6 +213,7 @@ def test_session_ground_time_drift_and_connection_helpers() -> None:
         available=True,
         data={
             "sessionTime": "3660",
+            "state": 4,
             "ground": "0",
             "systemTime": "1714300000",
             "timeZone": "3",
@@ -466,7 +467,7 @@ def test_negative_session_time_reads_unknown() -> None:
 def test_valid_session_time_still_renders() -> None:
     from conftest import EveusTestUpdater
 
-    updater = EveusTestUpdater(data={"sessionTime": 3661})
+    updater = EveusTestUpdater(data={"sessionTime": 3661, "state": 4})
     assert get_session_time(updater, None) == "1h 01m"
     # Quantised onto the same minute grid as the state ("1h 01m"): the raw
     # second count ticked every poll and wrote a recorder row each time.
