@@ -342,6 +342,23 @@ def _get_data_value(updater, key: str, converter=float, default=None):
 # Value getter factories — replace ~20 identical functions
 # =============================================================================
 
+def _deadband_anchor_store(updater) -> dict:
+    """The per-updater store of last-published values, created on first use.
+
+    Every damped reading anchors here, so a field read by more than one
+    consumer is damped once and the two cannot drift apart. The type guard is
+    load-bearing rather than decorative: anything that is not the store (an
+    absent attribute, or a stand-in that answers every attribute) must be
+    replaced with a real dict, because the alternative is arithmetic against a
+    non-number, which the callers would report as a failed reading.
+    """
+    anchors = getattr(updater, "_deadband_anchors", None)
+    if not isinstance(anchors, dict):
+        anchors = {}
+        updater._deadband_anchors = anchors
+    return anchors
+
+
 def _make_value_getter(
     key: str,
     precision: int = 0,
@@ -381,10 +398,7 @@ def _make_value_getter(
         value = round(value, precision)
         if deadband is None:
             return value
-        anchors = getattr(updater, "_deadband_anchors", None)
-        if anchors is None:
-            anchors = {}
-            updater._deadband_anchors = anchors
+        anchors = _deadband_anchor_store(updater)
         value = apply_deadband(anchors.get(key), value, deadband)
         anchors[key] = value
         return value
@@ -936,6 +950,34 @@ def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
 # Connection quality
 # =============================================================================
 
+# Latency is published on a 0.5 s grid: finer steps are noise on a LAN poll,
+# and the attribute is a diagnostic, not a measurement.
+_LATENCY_STEP: Final[float] = 0.5
+_LATENCY_ANCHOR: Final[str] = "__latency_avg"
+
+
+def _held_latency(updater, latency_avg: float) -> float:
+    """Snap latency to the display grid, holding the LAST PUBLISHED step.
+
+    Rounding on its own is not a deadband. A rolling average parked on a step
+    edge re-rounds to the other side on every poll, and an attribute change
+    writes a recorder row exactly like a state change does — so the sensor
+    churns while its state never moves. Measured on the live charger
+    2026-09-12: the poll average sits on 0.25 s, which alternated 0.0 / 0.5 and
+    made this one attribute 25 of the 56 eveus rows in a two-hour idle window.
+
+    So the grid is only re-entered once the reading is a full step away from
+    what was last published. The anchor lives on the updater (shared with
+    ``_make_value_getter``'s deadbands), so two chargers never share one.
+    """
+    anchors = _deadband_anchor_store(updater)
+    last = anchors.get(_LATENCY_ANCHOR)
+    if last is None or abs(latency_avg - last) >= _LATENCY_STEP:
+        last = round(latency_avg / _LATENCY_STEP) * _LATENCY_STEP
+        anchors[_LATENCY_ANCHOR] = last
+    return last
+
+
 def get_connection_quality(updater, hass) -> Optional[float]:
     """Get connection quality as numeric value.
 
@@ -982,7 +1024,7 @@ def get_connection_attrs(updater, hass) -> dict:
             status = "Critical"
         attrs: dict[str, Any] = {
             "connection_quality": round(success_rate),
-            "latency_avg": round(latency_avg * 2) / 2,
+            "latency_avg": _held_latency(updater, latency_avg),
             "status": status,
         }
         if updater.available:

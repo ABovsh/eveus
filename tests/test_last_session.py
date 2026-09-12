@@ -256,3 +256,41 @@ def test_known_finish_reasons_is_exactly_what_the_coordinator_can_fire() -> None
         FINISHED_REASONS.values()
     ) | {fallback}
     assert fallback in FINISHED_REASONS.values()
+
+
+def test_finished_event_rounds_to_the_precision_the_live_sensors_publish() -> None:
+    """The captured snapshot must carry the live sensors' precision, not raw floats.
+
+    `_bounded` documents its job as applying "the same sanity bounds as the live
+    sensors reading these fields" — precision is part of that parity. The live
+    Session Energy / Session Cost specs declare `precision=2`, so the firmware's
+    float dust never reaches their state. The event snapshot skipped the
+    rounding, which is how live HA ended up with
+    `sensor.eveus_ev_charger_last_session_energy = 27.9899997711182` on
+    2026-09-12 while Session Energy read 28.0 for the same session.
+    """
+    from custom_components.eveus.common_network import _bounded
+    from custom_components.eveus.const import MAX_ENERGY_KWH
+
+    assert _bounded(27.9899997711182, MAX_ENERGY_KWH) == 27.99
+
+    # Bounds behaviour is unchanged by the rounding.
+    assert _bounded(-0.1, MAX_ENERGY_KWH) is None
+    assert _bounded(MAX_ENERGY_KWH + 1, MAX_ENERGY_KWH) is None
+    assert _bounded(None, MAX_ENERGY_KWH) is None
+
+    # An integer field (session duration) must stay an int, not become 27.0.
+    assert _bounded(1847, MAX_ENERGY_KWH) == 1847
+    assert isinstance(_bounded(1847, MAX_ENERGY_KWH), int)
+
+
+def test_rounding_cannot_push_a_value_past_its_ceiling() -> None:
+    """A reading just under the bound must not round up through it.
+
+    The bound is checked on the raw value, so a figure inside the ceiling stays
+    accepted; rounding it must not then report more than the ceiling allows.
+    """
+    from custom_components.eveus.common_network import _bounded
+
+    assert _bounded(9.999, 10) == 10.0
+    assert _bounded(10.001, 10) is None

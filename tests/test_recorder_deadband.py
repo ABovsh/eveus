@@ -625,3 +625,77 @@ def test_the_hold_only_applies_while_the_charger_is_still_ahead_of_it() -> None:
     # And the hold is released the moment the coarse step catches up.
     updater.data["sessionTime"] = 3900
     assert sd.get_session_time(updater, None) == "1h 05m"
+
+
+def test_latency_avg_holds_instead_of_flipping_across_its_rounding_boundary() -> None:
+    """`latency_avg` must hold its last published step, not re-round every poll.
+
+    Measured on live hardware 2026-09-12: the rolling poll latency sits right on
+    the 0.25 s edge of the 0.5 s display grid, so a plain `round(x * 2) / 2`
+    alternated 0.0 / 0.5 / 0.0 on consecutive polls. The state never moved off
+    100, but an attribute change writes a recorder row exactly like a state
+    change — 25 of the 56 eveus rows in a two-hour idle window were this one
+    attribute dithering. Rounding is not a deadband: the fix has to hold
+    against the LAST PUBLISHED step.
+    """
+    quality = {"success_rate": 100, "latency_avg": 0.24}
+    updater = SimpleNamespace(available=True, data={}, connection_quality=quality)
+
+    first = sd.get_connection_attrs(updater, None)["latency_avg"]
+
+    # Dither across the boundary the way the hardware does, never moving a full step.
+    for sample in (0.26, 0.24, 0.26, 0.24, 0.26):
+        quality["latency_avg"] = sample
+        assert sd.get_connection_attrs(updater, None)["latency_avg"] == first, (
+            f"latency_avg republished on a {sample - 0.25:+.2f}s wobble around the "
+            "grid edge — that is one recorder row per poll, forever"
+        )
+
+    # A genuine degradation of a full step still gets through.
+    quality["latency_avg"] = first + 0.75
+    assert sd.get_connection_attrs(updater, None)["latency_avg"] > first, (
+        "a real latency increase must not be swallowed by the hold"
+    )
+
+
+def test_latency_avg_hold_is_per_updater() -> None:
+    """Two chargers must not share one latency anchor."""
+    slow = SimpleNamespace(
+        available=True, data={}, connection_quality={"success_rate": 100, "latency_avg": 3.0}
+    )
+    fast = SimpleNamespace(
+        available=True, data={}, connection_quality={"success_rate": 100, "latency_avg": 0.0}
+    )
+
+    assert sd.get_connection_attrs(slow, None)["latency_avg"] == 3.0
+    assert sd.get_connection_attrs(fast, None)["latency_avg"] == 0.0
+    assert sd.get_connection_attrs(slow, None)["latency_avg"] == 3.0
+
+
+def test_a_non_dict_anchor_store_is_replaced_not_used() -> None:
+    """A stand-in that answers every attribute must not poison a reading.
+
+    `_deadband_anchor_store` is reached via `getattr(updater, ..., None)`, so
+    anything that answers arbitrary attributes hands back a non-dict whose
+    `.get()` returns a non-number. Doing arithmetic against that raises, and
+    both callers report a raised getter as a failed reading — a valid latency
+    or current would surface as `{"status": "Error"}` / `None` rather than the
+    value the charger actually reported.
+    """
+    class _AnswersAnything:
+        available = True
+        data: dict = {}
+        connection_quality = {"success_rate": 75, "latency_avg": 0.42}
+
+        def __getattr__(self, name):  # pragma: no cover - mirrors a mock's behaviour
+            return _AnswersAnything()
+
+        def get(self, *_args):
+            return _AnswersAnything()
+
+    updater = _AnswersAnything()
+    attrs = sd.get_connection_attrs(updater, None)
+
+    assert attrs["status"] == "Fair", "a valid reading must survive a bogus anchor store"
+    assert attrs["latency_avg"] == 0.5
+    assert isinstance(updater._deadband_anchors, dict)
