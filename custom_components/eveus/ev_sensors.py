@@ -623,9 +623,38 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
     ENTITY_NAME = "Charging Finish Time"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:calendar-clock"
-    # Available whenever online; reads None (via _resolve_remaining_inputs) when
-    # target/helpers are missing, so the timestamp entity always exists.
-    _requires_helpers = False
+    # The helper gate comes from the base class: no Target SOC means no finish
+    # time, which is a blank, and `available` below explains why a blank here
+    # has to be `unavailable`.
+    _requires_helpers = True
+
+    @property
+    def available(self) -> bool:
+        """Unavailable whenever there is no charge to finish.
+
+        Time to Target can say "Not charging"; a `device_class=timestamp`
+        entity has only a datetime or nothing, so its one honest blank is
+        `unavailable` — the state helpers, statistics and templates skip —
+        rather than `unknown`, which they ingest as a real but invalid
+        reading. Measured on live hardware 2026-09-12: this sensor went
+        `unknown` the moment the charge completed while its sibling correctly
+        read "Not charging".
+
+        Gated on the charger's own state, never on the computed stamp: the
+        recompute in `_update_native_value` only runs while the entity is
+        available, so a value-derived gate would latch the sensor off for good
+        the first time it produced no estimate.
+        """
+        if not super().available:
+            return False
+        # A held reading stays visible through a missed poll, so availability
+        # must not flap faster than the value it guards — otherwise one missed
+        # poll writes a row on the way down and another on the way back up.
+        if self._in_availability_grace:
+            return True
+        return (
+            get_safe_value(self._updater.data, "state", int) in SESSION_ACTIVE_STATES
+        )
 
     def _get_sensor_value(self) -> Optional[datetime]:
         """Compute the finish-time stamp."""

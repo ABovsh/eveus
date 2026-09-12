@@ -1376,10 +1376,18 @@ def test_available_is_false_when_base_entity_is_unavailable_regardless_of_helper
     assert sensor.available is False
 
 
-def test_ev_helper_sensors_do_not_require_helpers_except_base_default() -> None:
-    """Only the base class defaults to requiring helpers; every concrete EV
-    sensor overrides it to False (each has its own unknown-when-missing
-    fallback instead of going fully unavailable)."""
+def test_only_the_timestamp_sensor_requires_the_soc_inputs() -> None:
+    """Whether a sensor needs the SOC inputs follows from what it can say without them.
+
+    A sensor that can express the absence of an answer in its own state keeps
+    `_requires_helpers = False` and reports that instead of disappearing: the
+    SOC pair falls back to the user's Initial SOC, Time to Target and Energy to
+    Target report "Not charging" / no remaining energy. Charging Finish Time
+    cannot — `device_class=timestamp` accepts a datetime or nothing, and
+    nothing is recorded as `unknown`, which helpers and statistics ingest as a
+    real but invalid reading where they would skip `unavailable`. So it is the
+    one EV helper sensor that goes unavailable rather than blank.
+    """
     from custom_components.eveus.ev_sensors import (
         BaseEVHelperSensor,
         EnergyToTargetSocSensor,
@@ -1390,7 +1398,7 @@ def test_ev_helper_sensors_do_not_require_helpers_except_base_default() -> None:
     assert EVSocPercentSensor._requires_helpers is False
     assert TimeToTargetSocSensor._requires_helpers is False
     assert EnergyToTargetSocSensor._requires_helpers is False
-    assert ChargingFinishTimeSensor._requires_helpers is False
+    assert ChargingFinishTimeSensor._requires_helpers is True
 
 
 def test_soc_percent_sensor_reports_how_it_was_anchored() -> None:

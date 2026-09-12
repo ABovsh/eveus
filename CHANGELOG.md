@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### 🐛 Fixed
+- **Charging Finish Time now reads `unavailable` between charges, not `unknown`.** With no charge running there is no finish time, and a `device_class: timestamp` entity has no "Not charging" wording to fall back on the way Time to Target SOC does — so it published a blank, which Home Assistant records as `unknown` and which templates, statistics and helpers treat as a real but invalid reading instead of skipping. It now reports unavailable whenever no charge is running or Target SOC and Battery Capacity are not set. An automation or template that tested it for `unknown` should test for `unavailable`.
 - **Connection Quality stops writing to the database on every poll.** Its `latency_avg` attribute sat on the edge of the half-second step it reports and re-rounded to the other side each poll, so the sensor recorded a change continuously while the value it displayed stood still at 100 % — it was the single biggest writer among the charger's entities while nothing was charging. The figure now holds until the latency moves a full step.
 - **Last Session Energy and Cost no longer report a long chain of decimals.** Both now carry the same two decimals as Session Energy and Session Cost, which read the same `sessionEnergy` and `sessionMoney` fields: a session those recorded as 28.0 kWh had been captured as 27.9899997711182.
 - **Malformed session events no longer raise an error.** Last Session sensors reject oversized energy, cost and duration values sent by external automations.

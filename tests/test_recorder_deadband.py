@@ -734,3 +734,73 @@ def test_the_latency_hold_does_not_latch_onto_a_cold_start_spike() -> None:
     for avg in (0.11, 0.30, 0.09, 0.28):
         quality["latency_avg"] = avg
         assert sd.get_connection_attrs(updater, None)["latency_avg"] == 0.0
+
+
+_SOC_INPUTS = {
+    "initial_soc": 20,
+    "battery_capacity": 80,
+    "soc_correction": 10,
+    "target_soc": 80,
+}
+
+
+def _finish_sensor(state: int, helpers=_SOC_INPUTS, **updater_kw):
+    """A Charging Finish Time sensor over a charger in the given device state."""
+    calculator = CachedSOCCalculator()
+    if helpers:
+        for key, value in helpers.items():
+            calculator.set_value(key, value)
+    updater = EveusTestUpdater(
+        {"state": state, "sessionEnergy": "16", "powerMeas": "7000"}, **updater_kw
+    )
+    return ChargingFinishTimeSensor(updater, 1, calculator)
+
+
+def test_charging_finish_time_is_unavailable_not_unknown_between_charges() -> None:
+    """A timestamp with no charge to finish must be `unavailable`, never blank.
+
+    Time to Target has a "Not charging" string to fall back on; a
+    `device_class=timestamp` entity has only a datetime or nothing, so its one
+    honest blank is `unavailable` — the state helpers, statistics and templates
+    SKIP — rather than `unknown`, which they ingest as a real but invalid
+    reading. Seen on live hardware 2026-09-12: the sensor went `unknown` the
+    moment the charge completed at 13:17:52, while its sibling correctly
+    reported "Not charging".
+    """
+    charging = _finish_sensor(4)
+    assert charging.available is True
+    assert charging._get_sensor_value() is not None
+
+    for state, label in ((1, "Standby"), (2, "Connected"), (5, "Charge Complete")):
+        idle = _finish_sensor(state)
+        assert idle.available is False, (
+            f"in {label} there is no finish time to state, so the entity must be "
+            "unavailable rather than publish a blank HA records as `unknown`"
+        )
+
+
+def test_charging_finish_time_is_unavailable_when_the_soc_inputs_are_missing() -> None:
+    """No Target SOC is the same kind of blank, and gets the same answer."""
+    assert _finish_sensor(4, helpers=None).available is False
+
+
+def test_charging_finish_time_survives_a_missed_poll_while_charging() -> None:
+    """Availability must not flap faster than the value it guards.
+
+    The reading is held through the grace window, so the entity has to stay
+    available for that window too — otherwise a single missed poll writes an
+    `unavailable` row on the way down and another on the way back up, which is
+    the churn the hold exists to prevent.
+    """
+    sensor = _finish_sensor(4)
+    sensor._attr_native_value = datetime(2026, 6, 18, 10, 30)
+
+    # Simulate the charger missing a poll: still inside the grace window.
+    sensor._updater.available = False
+    object.__setattr__(sensor, "_grace_started", None)
+    if hasattr(type(sensor), "_in_availability_grace"):
+        import unittest.mock as _m
+        with _m.patch.object(
+            type(sensor), "_in_availability_grace", property(lambda self: True)
+        ):
+            assert sensor.available is True, "a held reading must stay visible"
