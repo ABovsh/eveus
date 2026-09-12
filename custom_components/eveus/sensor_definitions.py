@@ -954,27 +954,46 @@ def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
 # and the attribute is a diagnostic, not a measurement.
 _LATENCY_STEP: Final[float] = 0.5
 _LATENCY_ANCHOR: Final[str] = "__latency_avg"
+_LATENCY_ANCHOR_SAMPLES: Final[str] = "__latency_avg_samples"
 
 
-def _held_latency(updater, latency_avg: float) -> float:
+def _held_latency(updater, latency_avg: float, samples: object = None) -> float:
     """Snap latency to the display grid, holding the LAST PUBLISHED step.
 
     Rounding on its own is not a deadband. A rolling average parked on a step
     edge re-rounds to the other side on every poll, and an attribute change
     writes a recorder row exactly like a state change does — so the sensor
     churns while its state never moves. Measured on the live charger
-    2026-09-12: the poll average sits on 0.25 s, which alternated 0.0 / 0.5 and
-    made this one attribute 25 of the 56 eveus rows in a two-hour idle window.
+    2026-09-12: the average sat on the 0.25 s edge, alternated 0.0 / 0.5, and
+    was 25 of the 56 rows this integration wrote in a two-hour idle window —
+    its single biggest writer with nothing charging. So the grid is only
+    re-entered once the reading is a full step from what was last published.
 
-    So the grid is only re-entered once the reading is a full step away from
-    what was last published. The anchor lives on the updater (shared with
-    ``_make_value_getter``'s deadbands), so two chargers never share one.
+    ``samples`` is how many response times the average is built from, and it
+    exists because a hold is only as good as the value it latches onto. A cold
+    start pays for connection setup, so the first samples run high; anchoring
+    on them parks the figure on a spike it can never leave (the same charger
+    reported 0.5 s for a whole run while answering in 0.10-0.13 s — a wrong
+    reading held forever, which is worse than the churn the hold removes).
+    While that count is still rising the window is still filling, so the figure
+    tracks; once it stops rising the window is full and the hold takes over.
+    A count that is absent or not an integer means an updater that does not
+    report one, and holds from the first reading.
+
+    The anchor lives on the updater (shared with ``_make_value_getter``'s
+    deadbands), so two chargers never share one.
     """
     anchors = _deadband_anchor_store(updater)
     last = anchors.get(_LATENCY_ANCHOR)
-    if last is None or abs(latency_avg - last) >= _LATENCY_STEP:
+    filling = (
+        isinstance(samples, int)
+        and not isinstance(samples, bool)
+        and samples != anchors.get(_LATENCY_ANCHOR_SAMPLES)
+    )
+    if last is None or filling or abs(latency_avg - last) >= _LATENCY_STEP:
         last = round(latency_avg / _LATENCY_STEP) * _LATENCY_STEP
         anchors[_LATENCY_ANCHOR] = last
+    anchors[_LATENCY_ANCHOR_SAMPLES] = samples
     return last
 
 
@@ -1024,7 +1043,9 @@ def get_connection_attrs(updater, hass) -> dict:
             status = "Critical"
         attrs: dict[str, Any] = {
             "connection_quality": round(success_rate),
-            "latency_avg": _held_latency(updater, latency_avg),
+            "latency_avg": _held_latency(
+                updater, latency_avg, metrics.get("latency_samples")
+            ),
             "status": status,
         }
         if updater.available:

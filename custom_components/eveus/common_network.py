@@ -357,6 +357,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._connection_quality_cache = {
             "success_rate": success_rate,
             "latency_avg": avg_latency,
+            # How much of the rolling window the average is built from. A cold
+            # start pays for connection setup, so the first samples run high
+            # and the average is not yet representative — the sensor uses this
+            # to keep tracking until the window has filled instead of holding
+            # the spike. Diagnostics gets it for free.
+            "latency_samples": len(self._latency_samples),
             "consecutive_failures": self._consecutive_failures,
             "consecutive_command_failures": self._command_manager.consecutive_failures,
             "is_healthy": self._is_healthy(success_rate),

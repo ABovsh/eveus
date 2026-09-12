@@ -699,3 +699,38 @@ def test_a_non_dict_anchor_store_is_replaced_not_used() -> None:
     assert attrs["status"] == "Fair", "a valid reading must survive a bogus anchor store"
     assert attrs["latency_avg"] == 0.5
     assert isinstance(updater._deadband_anchors, dict)
+
+
+def test_the_latency_hold_does_not_latch_onto_a_cold_start_spike() -> None:
+    """The first poll after a restart is the slowest, and must not become the answer.
+
+    A cold start pays for connection setup, so the rolling average begins on an
+    unrepresentative high sample and settles as the window fills. Anchoring on
+    that first reading parks the published figure on the spike: measured on live
+    hardware 2026-09-12, latency_avg held 0.5 s for the whole run while the
+    charger was actually answering in 0.10-0.13 s. A hold that never revisits
+    its own boundary reports a wrong value forever, which is worse than the
+    churn it was added to remove — so while the sample window is still filling
+    the figure tracks, and only then holds.
+    """
+    quality = {"success_rate": 100, "latency_avg": 3.0, "latency_samples": 1}
+    updater = SimpleNamespace(available=True, data={}, connection_quality=quality)
+
+    assert sd.get_connection_attrs(updater, None)["latency_avg"] == 3.0
+
+    # The window fills with the charger's real response times; the average
+    # settles and the published figure has to follow it down.
+    for samples, avg in ((2, 1.55), (4, 0.8), (7, 0.4), (10, 0.13)):
+        quality["latency_samples"] = samples
+        quality["latency_avg"] = avg
+        published = sd.get_connection_attrs(updater, None)["latency_avg"]
+
+    assert published == 0.0, (
+        f"a full window averaging {quality['latency_avg']}s still published "
+        f"{published}s — the hold latched onto the cold-start spike"
+    )
+
+    # Once the window is full the hold engages: further dither is absorbed.
+    for avg in (0.11, 0.30, 0.09, 0.28):
+        quality["latency_avg"] = avg
+        assert sd.get_connection_attrs(updater, None)["latency_avg"] == 0.0
