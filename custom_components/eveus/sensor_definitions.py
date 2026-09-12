@@ -1214,30 +1214,42 @@ def create_sensor_specifications(
                 sensor_type=SensorType.DIAGNOSTIC,
                 icon=icon,
                 device_class=device_class,
-                state_class=SensorStateClass.MEASUREMENT,
+                # Per-entry, not blanket: `state_class` is what turns on the
+                # forever-kept 5-minute and hourly statistics, so only a
+                # reading whose long-term trend is worth that cost declares it.
+                state_class=state_class,
                 unit=unit,
                 precision=precision,
                 category=EntityCategory.DIAGNOSTIC,
             )
-            for key, name, fn, icon, device_class, unit, precision in (
+            for key, name, fn, icon, device_class, unit, precision, state_class in (
                 ("box_temperature", "Box Temperature", get_box_temperature,
                  "mdi:thermometer", SensorDeviceClass.TEMPERATURE,
-                 UnitOfTemperature.CELSIUS, 0),
+                 UnitOfTemperature.CELSIUS, 0, SensorStateClass.MEASUREMENT),
                 ("plug_temperature", "Plug Temperature", get_plug_temperature,
                  "mdi:thermometer-high", SensorDeviceClass.TEMPERATURE,
-                 UnitOfTemperature.CELSIUS, 0),
+                 UnitOfTemperature.CELSIUS, 0, SensorStateClass.MEASUREMENT),
+                # The CR2032 clock cell drains over YEARS, and the recorder
+                # keeps states for days — statistics is the only place that
+                # slope exists, and it is what says to replace the cell before
+                # the clock resets. Slow is not the same as static.
                 ("battery_voltage", "Battery Voltage", get_battery_voltage,
                  "mdi:battery", SensorDeviceClass.VOLTAGE,
-                 UnitOfElectricPotential.VOLT, 2),
+                 UnitOfElectricPotential.VOLT, 2, SensorStateClass.MEASUREMENT),
+                # Leakage is an EVENT, not a trend: above the charger's 30 mA
+                # threshold it trips and reports the fault itself, and
+                # `leakValueH` is the charger's own peak-ever counter, so the
+                # worst value stays readable from the device. Averaging a
+                # healthy 0 mA every five minutes forever buys nothing.
                 ("leak_current", "Leakage Current", get_leak_current,
                  "mdi:current-dc", SensorDeviceClass.CURRENT,
-                 UnitOfElectricCurrent.MILLIAMPERE, 0),
+                 UnitOfElectricCurrent.MILLIAMPERE, 0, None),
                 ("leak_current_peak", "Leakage Current Peak", get_leak_current_peak,
                  "mdi:current-dc", SensorDeviceClass.CURRENT,
-                 UnitOfElectricCurrent.MILLIAMPERE, 0),
+                 UnitOfElectricCurrent.MILLIAMPERE, 0, None),
                 ("wifi_signal", "WiFi Signal", get_wifi_rssi,
                  "mdi:wifi", SensorDeviceClass.SIGNAL_STRENGTH,
-                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0),
+                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, SensorStateClass.MEASUREMENT),
             )
         ),
     ]
@@ -1301,9 +1313,11 @@ def create_sensor_specifications(
             tracks_reset=True,
         ),
         SensorSpec(
+            # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
+            # not a measurement: no state_class, so it writes no statistics.
             key="primary_rate_cost", name="Primary Rate Cost", value_fn=get_primary_rate_cost,
             sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
+            unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
             key="active_rate_cost", name="Active Rate Cost", value_fn=get_active_rate_cost,
@@ -1312,14 +1326,18 @@ def create_sensor_specifications(
             attributes_fn=get_active_rate_attrs,
         ),
         SensorSpec(
+            # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
+            # not a measurement: no state_class, so it writes no statistics.
             key="rate_2_cost", name="Rate 2 Cost", value_fn=get_rate2_cost,
             sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
+            unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
+            # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
+            # not a measurement: no state_class, so it writes no statistics.
             key="rate_3_cost", name="Rate 3 Cost", value_fn=get_rate3_cost,
             sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
+            unit=UNIT_UAH_PER_KWH, precision=2,
         ),
         SensorSpec(
             key="rate_2_status", name="Rate 2 Status",

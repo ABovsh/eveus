@@ -1096,21 +1096,25 @@ def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
     )
 
     specs = {s.key: s for s in create_sensor_specifications(phases=1)}
+    MEASURED = SensorStateClass.MEASUREMENT
+    # `state_class` is per entry, not blanket: it turns on the forever-kept
+    # statistics, so the two leakage readings — an event the charger reports
+    # itself, whose peak it keeps on the device — carry none.
     expected = {
         "box_temperature": ("Box Temperature", "mdi:thermometer",
-                            SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0),
+                            SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0, MEASURED),
         "plug_temperature": ("Plug Temperature", "mdi:thermometer-high",
-                             SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0),
+                             SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, 0, MEASURED),
         "battery_voltage": ("Battery Voltage", "mdi:battery",
-                            SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 2),
+                            SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 2, MEASURED),
         "leak_current": ("Leakage Current", "mdi:current-dc",
-                         SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0),
+                         SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0, None),
         "leak_current_peak": ("Leakage Current Peak", "mdi:current-dc",
-                              SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0),
+                              SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0, None),
         "wifi_signal": ("WiFi Signal", "mdi:wifi",
-                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0),
+                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, MEASURED),
     }
-    for key, (name, icon, device_class, unit, precision) in expected.items():
+    for key, (name, icon, device_class, unit, precision, state_class) in expected.items():
         spec = specs[key]
         assert spec.name == name
         assert spec.icon == icon
@@ -1118,7 +1122,7 @@ def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
         assert spec.unit == unit
         assert spec.precision == precision
         assert spec.sensor_type == SensorType.DIAGNOSTIC
-        assert spec.state_class == SensorStateClass.MEASUREMENT
+        assert spec.state_class == state_class
         assert spec.category == EntityCategory.DIAGNOSTIC
 
     # Ordering is part of the contract: entity creation walks this list.

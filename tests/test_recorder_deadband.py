@@ -804,3 +804,54 @@ def test_charging_finish_time_survives_a_missed_poll_while_charging() -> None:
             type(sensor), "_in_availability_grace", property(lambda self: True)
         ):
             assert sensor.available is True, "a held reading must stay visible"
+
+
+def test_configured_and_event_only_readings_carry_no_state_class() -> None:
+    """Long-term statistics are for measured quantities that actually move.
+
+    `state_class` is what turns on the 5-minute + hourly statistics rows, and
+    those are kept forever — never purged. Measured on live hardware
+    2026-09-12: with the states side damped, statistics outnumbered states
+    26 : 1 while idle (316/h against 12/h), and over a week these readings
+    recorded a single value each.
+
+    They are not measurements:
+      * the three rate sensors are the prices the OWNER typed into the charger
+        (`tarif`, `tarif_2`, `tarif_3`) — a 5-minute mean of a hand-set number;
+      * leakage is an EVENT, not a trend. Above 30 mA the charger trips and
+        says so, and `leakValueH` is the charger's own peak-ever counter, so
+        the worst value stays readable from the device itself.
+
+    Both keep their state, their history and their tiles. Only the forever-kept
+    aggregates go.
+    """
+    specs = {s.key: s for s in sd.create_sensor_specifications()}
+
+    for key in ("primary_rate_cost", "rate_2_cost", "rate_3_cost",
+                "leak_current", "leak_current_peak"):
+        assert specs[key].state_class is None, (
+            f"{key} still declares a state_class, so it still writes ~288 "
+            "statistics rows a day for a value that does not move"
+        )
+
+
+def test_the_readings_that_do_move_keep_their_statistics() -> None:
+    """The counter-case, so the change above cannot be over-applied.
+
+    Battery Voltage is the charger's CR2032 clock cell. It reads 2.80 V against
+    a 3.0 V nominal and has already fallen from 2.87 V, and a coin cell dies
+    over YEARS — with a 10-day recorder purge, statistics is the only place
+    that slope survives at all, and it is what says to replace the cell before
+    the clock resets. A very slowly moving signal is the case statistics are
+    FOR, not an argument against them.
+
+    Active Rate Cost switches between the three configured rates by time of
+    day, so unlike the rates themselves it genuinely varies.
+    """
+    specs = {s.key: s for s in sd.create_sensor_specifications()}
+
+    for key in ("battery_voltage", "active_rate_cost", "box_temperature",
+                "plug_temperature", "wifi_signal"):
+        assert specs[key].state_class is not None, (
+            f"{key} moves on its own and its long-term trend is the point"
+        )
