@@ -695,3 +695,66 @@ def test_production_logs_never_carry_raw_exception_text_or_tracebacks() -> None:
                     if isinstance(raw, ast.Name) and raw.id == node.name:
                         offenders.append(f"{path.name}:{call.lineno} raw {raw.id}")
     assert offenders == [], "\n".join(offenders)
+
+
+# I18: raw_main and entry data are allowlists. A field the integration does not
+# know may carry anything a future firmware adds, so only its name and type are
+# reported — never its value, even when the name looks harmless.
+_SENTINEL = "SECRET-SENTINEL-9f3c"
+
+
+def test_an_unknown_main_field_reports_its_type_but_never_its_value() -> None:
+    diagnostics = _diag_with_main(
+        {"state": 2, "cloudBlob": _SENTINEL, "nestedThing": {"inner": _SENTINEL}}
+    )
+
+    assert _SENTINEL not in repr(diagnostics)
+    assert "cloudBlob" not in diagnostics["raw_main"]
+    assert diagnostics["raw_main"]["state"] == 2
+    assert diagnostics["unknown_main_fields"] == {
+        "cloudBlob": "str",
+        "nestedThing": "dict",
+    }
+
+
+def test_a_known_main_field_with_a_nested_value_reports_only_its_type() -> None:
+    diagnostics = _diag_with_main({"model": {"inner": _SENTINEL}})
+
+    assert _SENTINEL not in repr(diagnostics)
+    assert diagnostics["raw_main"]["model"] == "<dict>"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["192.168.1.77", "SN20240912345", "home wifi", "x" * 80, "wifiSSID", "a/b"],
+)
+def test_an_identifying_unknown_field_name_is_not_echoed(name) -> None:
+    diagnostics = _diag_with_main({name: 1})
+
+    assert name not in repr(diagnostics)
+    assert diagnostics["unknown_main_fields_suppressed"] == 1
+
+
+def test_real_firmware_payloads_are_reported_as_known_fields() -> None:
+    """Every field the modern and fw1.51 captures carry stays useful in reports."""
+    import json
+    from pathlib import Path
+
+    fixtures = Path(__file__).parent / "fixtures"
+    for name in ("real_main_response.json", "fw151_unknown_state_main.json"):
+        payload = json.loads((fixtures / name).read_text())
+        diagnostics = _diag_with_main(payload)
+        assert diagnostics["unknown_main_fields"] == {}, name
+        assert set(diagnostics["raw_main"]) == set(payload) | {"verFWMain"}, name
+
+
+def test_an_unknown_entry_data_field_reports_its_type_but_never_its_value() -> None:
+    diagnostics = _diag_with_main(
+        {},
+        entry_data={"phases": 3, "soc_mode": "advanced", "cloud_blob": _SENTINEL},
+    )
+
+    assert _SENTINEL not in repr(diagnostics)
+    assert diagnostics["entry"]["data"]["phases"] == 3
+    assert diagnostics["entry"]["data"]["soc_mode"] == "advanced"
+    assert diagnostics["entry"]["unknown_fields"] == {"cloud_blob": "str"}
