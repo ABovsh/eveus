@@ -16,7 +16,7 @@ from homeassistant.components.number import (
     RestoreNumber,
 )
 from homeassistant.core import HomeAssistant, State, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
@@ -253,6 +253,9 @@ class EveusNumberEntity(
         self._init_optimistic_control()
         self._init_write_on_change()
 
+    def _set_pending(self, value: float | None) -> None:
+        self._pending_value = value
+
     async def async_added_to_hass(self) -> None:
         """Restore the previous HA value, then prefer fresh coordinator data.
 
@@ -339,37 +342,18 @@ class EveusCurrentNumber(EveusNumberEntity):
         )
         int_value = int(round(clamped_value))
 
+        # An auth rejection propagates untouched and does NOT start reauth from
+        # here — the entity service-call path has no such hook. The coordinator
+        # starts it when the same 401 comes back from /main within one poll.
         async with self._command_lock:
-            try:
-                self._pending_value = float(int_value)
-                self._attr_native_value = self._pending_value
-                self._write_if_changed(self._attr_native_value)
-
-                success = await self._updater.send_command(self._command, int_value)
-
-                if success:
-                    self._set_optimistic_value(float(int_value))
-                else:
-                    raise HomeAssistantError(
-                        f"Eveus charger did not accept charging current = {int_value}A"  # pragma: no mutate - pure exception-message text, int_value VALUE unchanged
-                    )
-
-            except (HomeAssistantError, ConfigEntryAuthFailed):
-                # ConfigEntryAuthFailed propagates untouched. It does NOT start
-                # reauth from here — the entity service-call path has no such
-                # hook. Reauth is started by the coordinator when the same 401
-                # comes back from /main, within one poll interval. Re-raising
-                # keeps the toast honest and lets that mechanism do its job.
-                raise
-            except Exception as err:
-                _LOGGER.debug("Failed to set current value: %s", type(err).__name__)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, err VALUE unchanged
-                raise HomeAssistantError(
-                    f"Failed to set charging current: {err}"  # pragma: no mutate - pure exception-message text, err VALUE unchanged
-                ) from err
-            finally:
-                self._pending_value = None
-                self._attr_native_value = self._resolve_value()
-                self._write_if_changed(self._attr_native_value)
+            await self._send_pinned_command(
+                device_value=int_value,
+                pending=float(int_value),
+                shown=float(int_value),
+                accepted=float(int_value),
+                rejected_message=f"Eveus charger did not accept charging current = {int_value}A",  # pragma: no mutate - pure exception-message text
+                failure_prefix="Failed to set charging current",  # pragma: no mutate - pure exception-message text
+            )
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
@@ -471,27 +455,14 @@ class EveusSetpointNumber(EveusNumberEntity):
             clamped = max(
                 self._attr_native_min_value, min(self._attr_native_max_value, raw)
             )
-            device_value = int(round(clamped * self._ha_to_device))
-            try:
-                self._pending_value = clamped
-                self._attr_native_value = clamped
-                self._write_if_changed(self._attr_native_value)
-                success = await self._updater.send_command(self._command, device_value)
-                if success:
-                    self._set_optimistic_value(clamped)
-                else:
-                    raise HomeAssistantError(
-                        f"Eveus charger did not accept {self.ENTITY_NAME} = {clamped}"  # pragma: no mutate - pure exception-message text, ENTITY_NAME/clamped VALUES unchanged
-                    )
-            except (HomeAssistantError, ConfigEntryAuthFailed):
-                raise
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Failed to set %s: %s", self.ENTITY_NAME, type(err).__name__)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, arguments unchanged
-                raise HomeAssistantError(f"Failed to set {self.ENTITY_NAME}: {err}") from err  # pragma: no mutate - pure exception-message text, ENTITY_NAME/err VALUES unchanged
-            finally:
-                self._pending_value = None
-                self._attr_native_value = self._resolve_value()
-                self._write_if_changed(self._attr_native_value)
+            await self._send_pinned_command(
+                device_value=int(round(clamped * self._ha_to_device)),
+                pending=clamped,
+                shown=clamped,
+                accepted=clamped,
+                rejected_message=f"Eveus charger did not accept {self.ENTITY_NAME} = {clamped}",  # pragma: no mutate - pure exception-message text
+                failure_prefix=f"Failed to set {self.ENTITY_NAME}",  # pragma: no mutate - pure exception-message text
+            )
 
     async def _async_restore_state(self, state: State) -> None:
         try:
