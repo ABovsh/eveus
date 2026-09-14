@@ -952,8 +952,8 @@ def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
 # Latency is published on a 0.5 s grid: finer steps are noise on a LAN poll,
 # and the attribute is a diagnostic, not a measurement.
 _LATENCY_STEP: Final[float] = 0.5
-_LATENCY_ANCHOR: Final[str] = "__latency_avg"
-_LATENCY_ANCHOR_SAMPLES: Final[str] = "__latency_avg_samples"
+_LATENCY_ANCHOR: Final[str] = "__latency_avg"  # pragma: no mutate - equivalent: an opaque private key in the per-updater anchor store; any distinct value (None, a renamed literal) keys the same hold
+_LATENCY_ANCHOR_SAMPLES: Final[str] = "__latency_avg_samples"  # pragma: no mutate - equivalent: an opaque private key in the per-updater anchor store; any distinct value (None, a renamed literal) keys the same hold
 
 
 def _held_latency(updater, latency_avg: float, samples: object = None) -> float:

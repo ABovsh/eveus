@@ -81,7 +81,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         except (HomeAssistantError, ConfigEntryAuthFailed):
             raise
         except Exception as err:
-            _LOGGER.debug("%s: %s", failure_prefix, type(err).__name__)
+            _LOGGER.debug("%s: %s", failure_prefix, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
             raise HomeAssistantError(f"{failure_prefix}: {err}") from err
         finally:
             self._set_pending(None)

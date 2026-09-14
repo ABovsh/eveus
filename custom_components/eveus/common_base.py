@@ -430,7 +430,7 @@ class OptimisticControlMixin(Generic[T]):
           problem the user should eventually see, so it still times out.
         """
         if self._last_device_value is None:
-            return False
+            return False  # pragma: no mutate - equivalent: the only caller then returns _last_device_value, which is None either way; the guard exists so the elapsed-time arithmetic below never runs without a reading
         if self._in_availability_grace:  # type: ignore[attr-defined]
             return True
         # Monotonic elapsed time, so a wall-clock step cannot move this window;

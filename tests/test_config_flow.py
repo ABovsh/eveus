@@ -2687,3 +2687,22 @@ def test_every_flow_step_lets_abort_flow_through(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(AbortFlow):
         _run_flow_step(step, monkeypatch, AbortFlow("already_configured"))
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("text/html; charset=utf-8", "text/html"),
+        ("Application/JSON", "application/json"),
+        (None, "unknown"),
+        ("", "unknown"),
+        ("http://192.168.1.77/login", "unknown"),
+        ("text/html charset=SN20240912345", "unknown"),
+    ],
+)
+def test_logged_media_type_keeps_only_a_bare_type(header, expected) -> None:
+    """Header parameters and malformed values are charger text and never reach the log."""
+    from types import SimpleNamespace
+
+    headers = {} if header is None else {"Content-Type": header}
+    assert config_flow._safe_media_type(SimpleNamespace(headers=headers)) == expected

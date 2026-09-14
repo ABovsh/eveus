@@ -911,6 +911,10 @@ def test_bounded_clamps_out_of_range_and_none_values() -> None:
     assert bounded(0, 100) == 0
     assert bounded(100, 100) == 100
     assert bounded(101, 100) is None
+    # Two decimals, like the live Session Energy/Cost specs; ints keep their type.
+    assert bounded(27.9899997711182, 100) == 27.99
+    assert bounded(1.23456, 100) == 1.23
+    assert bounded(7, 100) == 7 and isinstance(bounded(7, 100), int)
 
 
 def test_looks_charging_from_measurements_detects_power_or_current() -> None:
@@ -1264,6 +1268,7 @@ def test_connection_quality_computes_average_latency() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._latency_samples.extend([0.2, 0.4])
     assert updater.connection_quality["latency_avg"] == pytest.approx(0.3)
+    assert updater.connection_quality["latency_samples"] == 2
 
     empty_updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     assert empty_updater.connection_quality["latency_avg"] == 0.0

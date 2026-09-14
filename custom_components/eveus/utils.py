@@ -495,7 +495,7 @@ def _remaining_seconds_or_state(
         return seconds
 
     except Exception as err:
-        _LOGGER.debug("Error computing remaining seconds: %s", type(err).__name__)
+        _LOGGER.debug("Error computing remaining seconds: %s", type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
         return _REMAINING_UNAVAILABLE
 
 

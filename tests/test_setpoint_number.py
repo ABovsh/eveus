@@ -525,3 +525,20 @@ def test_unit_bearing_numbers_declare_a_device_class() -> None:
     assert UNDERVOLTAGE_THRESHOLD_NUMBER.device_class is NumberDeviceClass.VOLTAGE
     # Explicitly unchanged: no monetary NumberDeviceClass exists.
     assert by_key["limit_cost"].device_class is None
+
+
+def test_write_errors_name_the_setting_and_the_rejected_value():
+    """A user sees which setting failed, and the value only when one was sent."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    ent, updater = _make(ENERGY)
+    updater.send_command = AsyncMock(return_value=False)
+    with pytest.raises(HomeAssistantError) as rejected:
+        asyncio.run(ent.async_set_native_value(40))
+    assert str(rejected.value) == "Eveus charger did not accept Limit Energy = 40.0"
+
+    ent, updater = _make(ENERGY)
+    updater.send_command = AsyncMock(side_effect=RuntimeError("boom"))
+    with pytest.raises(HomeAssistantError) as failed:
+        asyncio.run(ent.async_set_native_value(40))
+    assert str(failed.value) == "Failed to set Limit Energy: boom"

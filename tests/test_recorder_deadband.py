@@ -658,6 +658,21 @@ def test_latency_avg_holds_instead_of_flipping_across_its_rounding_boundary() ->
     )
 
 
+def test_latency_avg_hold_is_measured_from_a_nonzero_step_and_opens_at_exactly_one_step() -> None:
+    """The distance is |reading - published|, and a full 0.5 s step re-enters the grid."""
+    quality = {"success_rate": 100, "latency_avg": 1.0}
+    updater = SimpleNamespace(available=True, data={}, connection_quality=quality)
+    assert sd.get_connection_attrs(updater, None)["latency_avg"] == 1.0
+
+    # 0.26 s below the published step would re-round to 0.5; the hold keeps 1.0.
+    quality["latency_avg"] = 0.74
+    assert sd.get_connection_attrs(updater, None)["latency_avg"] == 1.0
+
+    # Exactly one step away is a real move, not a wobble.
+    quality["latency_avg"] = 1.5
+    assert sd.get_connection_attrs(updater, None)["latency_avg"] == 1.5
+
+
 def test_latency_avg_hold_is_per_updater() -> None:
     """Two chargers must not share one latency anchor."""
     slow = SimpleNamespace(

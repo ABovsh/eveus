@@ -561,6 +561,36 @@ def test_async_setup_entry_raises_ocpp_issue_on_first_refresh(
     ]
 
 
+def test_async_setup_entry_follows_battery_and_clock_issues_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both repairs evaluate at setup and again on each poll, with their own tracker."""
+    calls: list[tuple[str, object, object]] = []
+    hass = _hass()
+    entry = _Entry(_data(device_number=1))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(
+        eveus,
+        "_update_battery_low_issue",
+        lambda h, e, u, tracker: calls.append(("battery", e, tracker)),
+    )
+    monkeypatch.setattr(
+        eveus,
+        "_update_clock_drift_issue",
+        lambda h, e, u, tracker: calls.append(("clock", e, tracker)),
+    )
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    assert [(kind, e) for kind, e, _ in calls] == [("battery", entry), ("clock", entry)]
+    assert isinstance(calls[0][2], eveus._BatteryLowTracker)
+    assert isinstance(calls[1][2], eveus._ClockDriftTracker)
+
+    calls.clear()
+    for listener in entry.runtime_data.updater.listeners:
+        listener()
+    assert [kind for kind, _, _ in calls] == ["battery", "clock"]
+
+
 def test_async_setup_entry_normalizes_stored_device_number(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

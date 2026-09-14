@@ -189,7 +189,7 @@ def _safe_media_type(response: Any) -> str:
     Header parameters and malformed values are charger-controlled text and
     never reach the log.
     """
-    raw = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip()
+    raw = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip()  # pragma: no mutate - equivalent: only [0] is kept (maxsplit is invisible) and any non-empty fallback fails _MEDIA_TYPE exactly like ""
     return raw.lower() if _MEDIA_TYPE.fullmatch(raw) else "unknown"
 
 

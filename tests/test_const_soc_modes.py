@@ -235,3 +235,10 @@ def test_state_lookup_helpers_return_mapped_and_default_values():
     assert const.get_error_state(999) == "Unknown Error"
     assert const.get_normal_substate(0) == "No Limits"
     assert const.get_normal_substate(999) == "Unknown State"
+
+
+def test_unusable_restored_states_are_exactly_home_assistants_no_value_states():
+    """Every platform's restore rejects these three; a missing one seeds a control from a sentinel."""
+    from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+
+    assert const.UNUSABLE_RESTORED_STATES == (None, STATE_UNKNOWN, STATE_UNAVAILABLE)

@@ -477,7 +477,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 except asyncio.CancelledError:
                     raise
                 except Exception as err:  # noqa: BLE001
-                    _LOGGER.debug("Post-command refresh failed: %s", type(err).__name__)
+                    _LOGGER.debug("Post-command refresh failed: %s", type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
                 finally:
                     if task in self._post_command_refresh_tasks:
                         self._post_command_refresh_tasks.remove(task)

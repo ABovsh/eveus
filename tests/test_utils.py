@@ -494,3 +494,25 @@ def test_calculate_remaining_time_never_reports_zero_minutes() -> None:
     assert utils.calculate_remaining_time(79.7, 80, 7000, 80, 0) == "5m"
     assert utils.calculate_remaining_time(79.9, 80, 7000, 80, 0) == "5m"
     assert utils.calculate_remaining_time(79.95, 80, 7000, 80, 0) == "< 1m"
+
+
+@pytest.mark.parametrize(
+    ("status", "rejected"), [(200, False), (299, False), (300, True), (302, True), (399, True), (400, False)]
+)
+def test_raise_for_redirect_rejects_exactly_the_3xx_range(status: int, rejected: bool) -> None:
+    """Only 300-399 is a redirect; 4xx stays with raise_for_status and its error mapping."""
+    import aiohttp
+
+    from custom_components.eveus._payload import raise_for_redirect
+
+    request_info = object()
+    response = SimpleNamespace(status=status, request_info=request_info)
+    if not rejected:
+        assert raise_for_redirect(response) is None
+        return
+    with pytest.raises(aiohttp.ClientResponseError) as err:
+        raise_for_redirect(response)
+    assert err.value.status == status
+    assert err.value.message == "Redirect rejected"
+    assert err.value.request_info is request_info
+    assert err.value.history == ()
