@@ -105,9 +105,9 @@ def test_min_voltage_handle_update_skips_reconcile_while_pending() -> None:
     select._handle_coordinator_update()  # must return early, no crash
 
 
-def test_min_voltage_device_option_none_when_unavailable() -> None:
+def test_min_voltage_option_none_when_unavailable() -> None:
     select = select_module.EveusMinVoltageSelect(_Updater({"minVoltage": 200}, available=False))
-    assert select._device_option() is None
+    assert select.current_option is None
 
 
 def test_min_voltage_restore_state_seeds_last_device_value() -> None:

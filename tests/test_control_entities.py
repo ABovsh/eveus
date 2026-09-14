@@ -229,8 +229,9 @@ def test_current_number_wraps_unexpected_command_exception() -> None:
     entity = EveusCurrentNumber(BrokenUpdater({"currentSet": "16"}), "16A")
     _disable_state_writes(entity)
 
-    with pytest.raises(HomeAssistantError, match="Failed to set charging current"):
+    with pytest.raises(HomeAssistantError) as failed:
         asyncio.run(entity.async_set_native_value(12))
+    assert str(failed.value) == "Failed to set charging current: network disappeared"
 
     assert entity._pending_value is None
     assert entity._optimistic_value is None
@@ -1263,7 +1264,7 @@ def test_timezone_select_ignores_device_value_when_offline() -> None:
     from custom_components.eveus.select import EveusTimeZoneSelect
 
     select = EveusTimeZoneSelect(EveusTestUpdater(data={"timeZone": 3}, available=False))
-    assert select._device_option() is None
+    assert select.current_option is None
 
 
 def test_timezone_select_uses_device_value_when_online() -> None:
@@ -1271,7 +1272,7 @@ def test_timezone_select_uses_device_value_when_online() -> None:
     from custom_components.eveus.select import EveusTimeZoneSelect
 
     select = EveusTimeZoneSelect(EveusTestUpdater(data={"timeZone": 3}, available=True))
-    assert select._device_option() == "+3"
+    assert select.current_option == "+3"
 
 
 def test_timezone_select_restores_last_option_within_grace() -> None:

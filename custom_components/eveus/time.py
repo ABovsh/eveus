@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import logging
 import time as _time
 from dataclasses import dataclass
 
@@ -20,8 +19,6 @@ from .common_base import (
 from .control_base import CommandBackedEntity
 from .const import UNUSABLE_RESTORED_STATES
 from .utils import get_safe_value
-
-_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

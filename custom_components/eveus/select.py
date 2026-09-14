@@ -62,18 +62,13 @@ class EveusTimeZoneSelect(
         self._init_write_on_change()
         self._command_pending = False
 
-    def _device_option(self) -> str | None:
-        """Resolve the formatted timezone string from fresh coordinator data.
+    def _device_value(self) -> int | None:
+        """The charger's offset, only when it is one of the offered options.
 
         Gated on availability like the other controls: the coordinator retains
         the last payload after failed polls, so without this gate an offline
         charger would reconcile against a stale `timeZone` and revert the choice.
         """
-        offset = self._device_value()
-        return None if offset is None else _format_tz(offset)
-
-    def _device_value(self) -> int | None:
-        """The charger's offset, only when it is one of the offered options."""
         if not self._updater.available:
             return None
         value = get_safe_value(self._updater.data or {}, "timeZone", int, None)
@@ -178,11 +173,6 @@ class _EveusIntegerSelect(
         self._init_optimistic_control()
         self._init_write_on_change()
         self._command_pending = False
-
-    def _device_option(self) -> str | None:
-        """Resolve the select option from fresh coordinator data."""
-        value = self._device_value()
-        return None if value is None else self.DEVICE_TO_OPTION[value]
 
     def _device_value(self) -> int | None:
         """The charger's setting, only when it maps to an offered option."""
