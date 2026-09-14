@@ -762,3 +762,24 @@ def test_force_refresh_bypass_counter_untouched():
     _make_offline(updater)
     updater._record_failure(TimeoutError())
     assert updater._force_refresh_requests == 0
+
+
+def test_capped_reader_reports_deep_nesting_as_malformed_payload() -> None:
+    """RecursionError is not a ValueError; the poll's ValueError handler would
+    miss it and skip failure accounting, so it is normalized."""
+    from custom_components.eveus._payload import PayloadError, read_json_capped
+    import asyncio
+
+    body = b"[" * 100_000 + b"]" * 100_000
+
+    class _Content:
+        async def iter_chunked(self, n):
+            yield body
+
+    class _Resp:
+        content_length = len(body)
+        content = _Content()
+
+    with pytest.raises(PayloadError) as err:
+        asyncio.run(read_json_capped(_Resp()))
+    assert err.value.code == "malformed"

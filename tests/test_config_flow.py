@@ -2616,3 +2616,22 @@ def test_user_flow_unexpected_error_logs_only_its_class(
     assert result["errors"] == {"base": "unknown"}
     _assert_no_sentinel(caplog)
     assert "_SecretError" in caplog.text
+
+
+def test_validate_input_deeply_nested_json_is_an_invalid_response() -> None:
+    """A size-compliant but deeply nested body makes json.loads raise
+    RecursionError, which is not a ValueError; setup must classify it as the
+    same invalid response the runtime poll does, not an unexpected error."""
+    body = "[" * 100_000 + "]" * 100_000
+    hass = _Hass(_Session(_Response(payload=body)))
+
+    with pytest.raises(InvalidResponse):
+        asyncio.run(validate_input(hass, _input()))
+
+
+@pytest.mark.parametrize("payload", [[], [{"state": 2, "currentSet": 16}], "null", "42"])
+def test_validate_input_non_object_json_root_is_an_invalid_response(payload) -> None:
+    hass = _Hass(_Session(_Response(payload=payload if isinstance(payload, str) else json.dumps(payload))))
+
+    with pytest.raises(InvalidResponse):
+        asyncio.run(validate_input(hass, _input()))
