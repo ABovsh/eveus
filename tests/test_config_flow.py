@@ -2635,3 +2635,16 @@ def test_validate_input_non_object_json_root_is_an_invalid_response(payload) -> 
 
     with pytest.raises(InvalidResponse):
         asyncio.run(validate_input(hass, _input()))
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_validate_input_rejects_a_redirect_without_following_it(status: int) -> None:
+    response = _Response(status=status)
+    response.headers = {"Location": "http://leak-host-sentinel.lan/main"}
+    session = _Session(response)
+
+    with pytest.raises(CannotConnect) as err:
+        asyncio.run(validate_input(_Hass(session), _input()))
+
+    assert str(err.value) == f"HTTP {status}"
+    assert [call["allow_redirects"] for call in session.calls] == [False]

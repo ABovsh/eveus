@@ -44,7 +44,12 @@ from .const import (
     SESSION_ACTIVE_STATES,
     UPDATE_TIMEOUT,
 )
-from ._payload import PayloadError, read_json_capped, validate_main_payload
+from ._payload import (
+    PayloadError,
+    raise_for_redirect,
+    read_json_capped,
+    validate_main_payload,
+)
 from .utils import RateLog, get_safe_value
 
 _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
@@ -785,7 +790,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 self.url_for("/init"),
                 auth=self._basic_auth,
                 timeout=_UPDATE_TIMEOUT_OBJ,
+                allow_redirects=False,
             ) as response:
+                raise_for_redirect(response)
                 response.raise_for_status()
                 init_data = await read_json_capped(response)
         except (
@@ -828,6 +835,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 self.url_for("/main"),
                 auth=self._basic_auth,
                 timeout=_UPDATE_TIMEOUT_OBJ,
+                allow_redirects=False,
             ) as response:
                 if response.status == 401:
                     # An auth rejection is not a connectivity failure: don't
@@ -844,6 +852,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     # pre-401 payload once the charger answers again.
                     self._forget_poll_gap_state()
                     raise ConfigEntryAuthFailed("Invalid authentication")
+                raise_for_redirect(response)
                 response.raise_for_status()
 
                 new_data = await read_json_capped(response)

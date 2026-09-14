@@ -57,7 +57,12 @@ from .const import (
     UPDATE_TIMEOUT,
     get_soc_mode,
 )
-from ._payload import PayloadError, decode_json_body, read_body_capped
+from ._payload import (
+    PayloadError,
+    decode_json_body,
+    raise_for_redirect,
+    read_body_capped,
+)
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
@@ -486,10 +491,12 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                 normalized_data[CONF_PASSWORD],
             ),
             timeout=timeout,
+            allow_redirects=False,
         ) as response:
             host = normalized_data[CONF_HOST]
             if response.status == 401:
                 raise InvalidAuth("Invalid credentials")
+            raise_for_redirect(response)
             response.raise_for_status()
 
             # Read the raw body ourselves (instead of response.json) so a

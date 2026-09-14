@@ -5,6 +5,8 @@ import json
 import math
 from typing import Any, Literal
 
+import aiohttp
+
 from .const import MODEL_MAX_CURRENT
 
 MessageStyle = Literal["network", "config_flow"]
@@ -13,6 +15,25 @@ MessageStyle = Literal["network", "config_flow"]
 # proxy, captive portal, or wrong endpoint returning a huge (or unbounded
 # chunked) body cannot exhaust memory or stall the event loop.
 MAX_RESPONSE_BODY_BYTES = 1_000_000
+
+
+def raise_for_redirect(response: Any) -> None:
+    """Reject a 3xx reply as an HTTP error.
+
+    Charger requests are sent with ``allow_redirects=False`` so credentials and
+    command forms never follow a redirect to another origin; aiohttp then
+    returns the 3xx itself, which ``raise_for_status()`` accepts. Raising
+    ``ClientResponseError`` routes it through each caller's existing HTTP-error
+    handling, which never retries a 3xx. The Location header is not carried.
+    """
+    status = response.status
+    if 300 <= status < 400:
+        raise aiohttp.ClientResponseError(
+            request_info=getattr(response, "request_info", None),
+            history=(),
+            status=status,
+            message="Redirect rejected",
+        )
 
 
 async def read_body_capped(

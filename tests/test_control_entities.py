@@ -975,6 +975,8 @@ def test_v18_command_manager_resolves_callable_value_at_post_time():
     from custom_components.eveus.common_command import CommandManager
 
     class _Resp:
+        status = 200
+
         async def __aenter__(self):
             return self
 

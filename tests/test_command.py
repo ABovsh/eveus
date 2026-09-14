@@ -25,6 +25,7 @@ class _Response:
     ) -> None:
         self.raise_error = raise_error
         self.response_status = response_status
+        self.status = 200
 
     async def __aenter__(self) -> "_Response":
         return self
@@ -536,3 +537,15 @@ def test_command_manager_unexpected_error_logs_only_its_class(
     assert sentinel not in caplog.text
     assert TEST_HOST not in caplog.text
     assert "_SecretError" in caplog.text
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_command_rejects_a_redirect_without_following_or_retrying(status: int) -> None:
+    """Following a redirect would re-send the command form to another origin."""
+    response = _Response()
+    response.status = status
+    session = _Session(response)
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("currentSet", 16)) is False
+    assert [call["allow_redirects"] for call in session.calls] == [False]

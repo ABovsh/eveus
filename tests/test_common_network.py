@@ -1700,3 +1700,38 @@ def test_offline_backoff_deadline_is_monotonic(monkeypatch: pytest.MonkeyPatch) 
 
     # The deadline must be expressed on the monotonic clock, not the wall clock.
     assert 1000.0 < stamped <= 1000.0 + common_network._MAX_OFFLINE_BACKOFF
+
+
+_REDIRECTS = [301, 302, 303, 307, 308]
+
+
+@pytest.mark.parametrize("status", _REDIRECTS)
+def test_poll_rejects_a_redirect_without_following_it(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A redirect could send the Basic Auth header or read telemetry from
+    another origin; aiohttp follows it by default and raise_for_status() does
+    not reject 3xx, so the poll must refuse both explicitly."""
+    session = _Session(_Response(status=status, payload={"state": 4, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+    assert [call["allow_redirects"] for call in session.calls] == [False]
+    assert updater.connection_quality["consecutive_failures"] == 1
+
+
+@pytest.mark.parametrize("status", _REDIRECTS)
+def test_init_firmware_fetch_rejects_a_redirect(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    session = _Session(_Response(status=status, payload={"ESP_SW_version": 151}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback is None
+    assert [call["allow_redirects"] for call in session.calls] == [False]

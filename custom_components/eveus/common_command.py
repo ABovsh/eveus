@@ -10,6 +10,7 @@ import aiohttp
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import COMMAND_TIMEOUT, ERROR_LOG_RATE_LIMIT
+from ._payload import raise_for_redirect
 from .utils import RateLog
 
 _COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
@@ -163,7 +164,9 @@ class CommandManager:
             headers={"Content-type": "application/x-www-form-urlencoded"},
             data=payload,
             timeout=_COMMAND_TIMEOUT_OBJ,
+            allow_redirects=False,
         ) as response:
+            raise_for_redirect(response)
             response.raise_for_status()
             self._consecutive_failures = 0
             return True

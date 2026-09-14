@@ -6,6 +6,7 @@
 - **Setup reports a deeply nested reply as an invalid response.** A reply nested too deeply to decode was shown as a failure to connect with an unexpected error; setup now rejects it the same way polling does.
 
 ### 🔒 Privacy
+- **Requests to the charger no longer follow redirects.** A reply redirecting elsewhere is rejected as an HTTP error, so your credentials and commands are never sent to another address; a command answered with a redirect is not retried.
 - **Logs no longer carry what the charger sent back, its address or error text.** A failed setup logs the HTTP status, the media type and the body size instead of the first 200 bytes of the reply, the key names of an unrecognised payload or the charger's host; every other failure logs the error type instead of its message and traceback.
 
 ## 4.22.0 - 2026-09-12
