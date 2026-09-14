@@ -179,3 +179,23 @@ def test_trace_loader_rejects_keys_outside_the_sanitized_allowlist(tmp_path, mon
 
     with pytest.raises(ValueError, match="allowlist"):
         trace_replay.load_trace("leaky.json")
+
+
+def test_legacy_fw151_trace_keeps_state_translation_and_setpoint_behavior(monkeypatch) -> None:
+    """Firmware 1.x stays supported: legacy codes translate, missing optional
+    fields are not failures, and controls behave as on modern firmware."""
+    from custom_components.eveus.const import DEVICE_STATE_CHARGING, DEVICE_STATE_STANDBY
+    from trace_replay import load_trace, replay
+
+    result = replay(load_trace("legacy_fw151_setpoint_and_charge.json"), monkeypatch)
+
+    assert [(s["device_state"], s["available"], s["charging_current"]) for s in result.observed] == [
+        (DEVICE_STATE_STANDBY, True, 7.0),  # legacy idle 20 -> Standby; 7 A read as-is
+        (DEVICE_STATE_STANDBY, True, 10.0),  # command accepted
+        (DEVICE_STATE_STANDBY, True, 10.0),  # charger still reports 7: no snap-back
+        (DEVICE_STATE_STANDBY, True, 10.0),  # confirmed
+        (DEVICE_STATE_CHARGING, True, 10.0),  # legacy 3 with power -> Charging
+        (DEVICE_STATE_CHARGING, False, 10.0),  # missed poll: held through grace
+        (DEVICE_STATE_STANDBY, True, 10.0),  # back to legacy idle
+    ]
+    assert result.session.commands == [{"pageevent": ["currentSet"], "currentSet": ["10"]}]

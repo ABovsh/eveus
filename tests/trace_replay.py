@@ -136,7 +136,12 @@ def replay(trace: dict[str, Any], monkeypatch) -> Replay:
                     updater.last_update_success = False
                 _notify(result)
             result.observed.append(
-                {"at": step["at"], **{name: e.native_value for name, e in result.entities.items()}}
+                {
+                    "at": step["at"],
+                    "device_state": (updater.data or {}).get("state"),
+                    "available": updater.available,
+                    **{name: e.native_value for name, e in result.entities.items()},
+                }
             )
 
     asyncio.run(run())

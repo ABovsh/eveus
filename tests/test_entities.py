@@ -1719,3 +1719,25 @@ def test_device_info_is_built_once_per_snapshot_not_once_per_entity(monkeypatch)
     probe = Probe(other)
     probe._maybe_finalize_device_info()
     assert probe._attr_device_info["configuration_url"].endswith("192.168.1.51")
+
+
+def test_device_info_snapshot_picks_up_a_late_init_firmware_fallback() -> None:
+    """Firmware 1.x has no firmware string in /main; its version arrives from
+    /init after the first poll. The per-snapshot metadata must not keep
+    serving "Unknown" for the same payload once the fallback is known."""
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe"
+
+    updater = _Updater()
+    updater.data = {"state": 20, "currentSet": 7}  # fw1.51: no verFWMain/verFWWifi
+    updater.scheme = "http"
+    updater._init_fw_fallback = None
+    entity = Probe(updater)
+    entity._maybe_finalize_device_info()
+    assert entity._build_device_info()["sw_version"] == "Unknown"
+
+    updater._init_fw_fallback = "1.51"  # same payload object, fallback now resolved
+    entity._maybe_finalize_device_info()
+
+    assert entity._attr_device_info["sw_version"] == "1.51"
