@@ -159,6 +159,42 @@ def test_command_manager_applies_rate_limit_after_failure(
     assert manager._last_command_time > 0
 
 
+def test_preflight_rejection_sends_nothing_and_keeps_rate_limit_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A preflight veto is not a command: no POST, no failure, no pacing debt.
+
+    Consuming the 1 s spacing here would delay the next real command (a user's
+    Stop right after a withdrawn SOC-limit Stop) for no network reason.
+    """
+    sleeps: list[float] = []
+
+    async def _spy_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", _spy_sleep)
+    monkeypatch.setattr(
+        "custom_components.eveus.common_command.time.monotonic", lambda: 100.0
+    )
+    session = _Session(_Response())
+    manager = CommandManager(_Updater(session))
+    manager._last_command_time = 50.0
+
+    assert asyncio.run(
+        manager.send_command("evseEnabled", 1, preflight=lambda: False)
+    ) is False
+    assert session.calls == []
+    assert manager._consecutive_failures == 0
+    assert manager._last_command_time == 50.0
+
+    # First-ever command vetoed: the next real command is still unspaced.
+    fresh = CommandManager(_Updater(session))
+    assert asyncio.run(fresh.send_command("evseEnabled", 1, preflight=lambda: False)) is False
+    assert asyncio.run(fresh.send_command("evseEnabled", 1)) is True
+    assert sleeps == []
+    assert len(session.calls) == 1
+
+
 def test_command_manager_recovers_after_transient_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

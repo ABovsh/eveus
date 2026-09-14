@@ -88,12 +88,16 @@ class CommandManager:
                 if time_since_last < 1:
                     await asyncio.sleep(max(0.0, min(1.0, 1 - time_since_last)))
 
+            # Only a real attempt paces the next command: a preflight veto
+            # touches no network, so it must not delay a user's next write.
+            attempted = False
             try:
                 last_error: Exception | None = None
                 retry_attempts = _COMMAND_RETRY_ATTEMPTS if retry else 0
                 for attempt in range(retry_attempts + 1):  # pragma: no mutate - equivalent: both break conditions below always fire at attempt<=retry_attempts, so a larger range upper bound is unreachable dead code
                     if preflight is not None and not preflight():
                         return False
+                    attempted = True
                     try:
                         return await self._post_command(command, value, extra)
                     except aiohttp.ClientResponseError as err:
@@ -143,7 +147,8 @@ class CommandManager:
                     )
                 return False
             finally:
-                self._last_command_time = time.monotonic()
+                if attempted:
+                    self._last_command_time = time.monotonic()
 
     async def _post_command(
         self, command: str, value: Any, extra: dict[str, Any] | None = None
