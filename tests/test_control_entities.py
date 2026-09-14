@@ -49,14 +49,14 @@ def test_current_number_native_value_precedence_and_restore() -> None:
 
     entity._pending_value = None
     entity._optimistic_value = 24
-    entity._optimistic_value_time = time.time()
+    entity._optimistic_value_time = time.monotonic()
     assert entity.native_value == 16
     assert entity._resolve_value() == 24
 
     entity._optimistic_value_time = 0
     updater.data = {}
     entity._last_device_value = 18
-    entity._last_successful_read = time.time()
+    entity._last_successful_read = time.monotonic()
     assert entity.native_value == 16
     assert entity._resolve_value() == 18
 
@@ -80,7 +80,7 @@ def test_current_number_update_reconciles_optimistic_value() -> None:
     entity = EveusCurrentNumber(updater, "16A")
     _disable_state_writes(entity)
     entity._optimistic_value = 12
-    entity._optimistic_value_time = time.time()
+    entity._optimistic_value_time = time.monotonic()
 
     entity._handle_coordinator_update()
 
@@ -149,7 +149,7 @@ def test_command_backed_controls_preserve_optimistic_lifecycle_parity() -> None:
         assert visible_value(entity) == confirmed_visible
 
         entity._set_optimistic_value(optimistic_value)
-        entity._optimistic_value_time = time.time() - 3600
+        entity._optimistic_value_time = time.monotonic() - 3600
         entity._updater.data = {state_key: confirmed_payload}
         entity._handle_coordinator_update()
 
@@ -268,7 +268,7 @@ def test_switch_state_precedence_restore_and_commands() -> None:
 
     entity._pending_command = None
     entity._optimistic_state = True
-    entity._optimistic_state_time = time.time()
+    entity._optimistic_state_time = time.monotonic()
     assert entity.is_on is None
     assert entity._resolve_state() is True
 
@@ -290,7 +290,7 @@ def test_switch_update_reconciles_optimistic_state() -> None:
     entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
     entity._optimistic_state = True
-    entity._optimistic_state_time = time.time()
+    entity._optimistic_state_time = time.monotonic()
 
     entity._handle_coordinator_update()
 
@@ -459,7 +459,7 @@ def test_switch_test_alias_properties_round_trip() -> None:
 def test_switch_resolves_recent_restored_state_when_payload_missing() -> None:
     entity = _one_charge_switch(_Updater({}))
     entity._last_device_state = True
-    entity._last_successful_read = time.time()
+    entity._last_successful_read = time.monotonic()
 
     assert entity._resolve_state() is True
 
@@ -630,10 +630,10 @@ def test_switch_resolve_state_grace_boundary_exact(monkeypatch) -> None:
     ent._last_successful_read = 1000.0
     from custom_components.eveus.const import CONTROL_GRACE_PERIOD
 
-    monkeypatch.setattr(switch_mod.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(switch_mod.time, "monotonic", lambda: 1000.0)
     assert ent._resolve_state() is True
 
-    monkeypatch.setattr(switch_mod.time, "time", lambda: 1000.0 + CONTROL_GRACE_PERIOD)
+    monkeypatch.setattr(switch_mod.time, "monotonic", lambda: 1000.0 + CONTROL_GRACE_PERIOD)
     assert ent._resolve_state() is None
 
 
@@ -675,7 +675,7 @@ def test_switch_restore_seeds_successful_read() -> None:
     from custom_components.eveus import switch as switch_mod
     description = switch_mod.SWITCH_DESCRIPTIONS[1]
     sw = switch_mod.BaseSwitchEntity(_Updater({}), description, 1)
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(sw._async_restore_state(State("switch.x", "on")))
     assert sw._last_successful_read >= before
     assert sw._last_device_value is True
@@ -685,7 +685,7 @@ def test_number_restore_seeds_successful_read() -> None:
     import asyncio, time
     from homeassistant.core import State
     num = EveusCurrentNumber(_Updater({}), "16A", 1)
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(num._async_restore_state(State("number.x", "12")))
     assert num._last_successful_read >= before
     assert num._last_device_value == 12.0
@@ -1217,7 +1217,7 @@ def test_timezone_select_suppresses_reconcile_while_pending() -> None:
 
     # Optimistic +3, stamped longer ago than the 16s mismatch TTL.
     select._set_optimistic_value(3)
-    select._optimistic_value_time = _t.time() - 17
+    select._optimistic_value_time = _t.monotonic() - 17
 
     # While the command is in flight, a poll returning the old zone must NOT
     # expire the optimistic value.
@@ -1392,10 +1392,10 @@ def test_current_number_resolve_value_max_boundary_and_grace_edges() -> None:
     entity._updater.available = True
     entity._updater.data = {}
     entity._last_device_value = 9.0
-    entity._last_successful_read = time.time()
+    entity._last_successful_read = time.monotonic()
     assert entity._resolve_value() == 9.0  # age ~0
 
-    entity._last_successful_read = time.time() - CONTROL_GRACE_PERIOD
+    entity._last_successful_read = time.monotonic() - CONTROL_GRACE_PERIOD
     assert entity._resolve_value() is None  # age >= grace period, expired
 
 
@@ -1417,11 +1417,11 @@ def test_current_number_resolve_value_grace_boundary_exact(monkeypatch) -> None:
     entity._last_device_value = 5.0
     entity._last_successful_read = 1000.0
 
-    monkeypatch.setattr(number_mod.time, "time", lambda: 1000.0)  # age == 0 exactly
+    monkeypatch.setattr(number_mod.time, "monotonic", lambda: 1000.0)  # age == 0 exactly
     assert entity._resolve_value() == 5.0
 
     monkeypatch.setattr(
-        number_mod.time, "time", lambda: 1000.0 + CONTROL_GRACE_PERIOD
+        number_mod.time, "monotonic", lambda: 1000.0 + CONTROL_GRACE_PERIOD
     )  # age == GRACE exactly -> expired
     assert entity._resolve_value() is None
 

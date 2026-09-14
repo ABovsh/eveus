@@ -327,7 +327,7 @@ class EveusCurrentNumber(EveusNumberEntity):
 
     def _resolve_value(self) -> float | None:
         """Resolve current value from command, optimistic, device, and restore state."""
-        current_time = time.time()
+        current_time = time.monotonic()
 
         if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
             return self._optimistic_value
@@ -394,7 +394,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                 restored_value = float(state.state)
                 if self._READ_MIN <= restored_value <= self._attr_native_max_value:
                     self._last_device_value = restored_value
-                    self._last_successful_read = time.time()
+                    self._last_successful_read = time.monotonic()
                     self._attr_native_value = restored_value
         except (TypeError, ValueError) as err:
             _LOGGER.debug("Could not restore number state for %s: %s", self.name, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
@@ -468,7 +468,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         return self._pending_value
 
     def _resolve_value(self) -> float | None:
-        current_time = time.time()
+        current_time = time.monotonic()
         if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
             return self._optimistic_value
         device_value = self._read_device_value()
@@ -523,7 +523,7 @@ class EveusSetpointNumber(EveusNumberEntity):
                 restored = float(state.state)
                 if self._read_min <= restored <= self._attr_native_max_value:
                     self._last_device_value = restored
-                    self._last_successful_read = time.time()
+                    self._last_successful_read = time.monotonic()
                     self._attr_native_value = restored
         except (TypeError, ValueError) as err:
             _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
@@ -581,7 +581,7 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
                 restored = float(state.state)
                 if self._READ_MIN <= restored <= self._attr_native_max_value:
                     self._last_device_value = restored
-                    self._last_successful_read = time.time()
+                    self._last_successful_read = time.monotonic()
                     self._attr_native_value = restored
         except (TypeError, ValueError) as err:
             _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged

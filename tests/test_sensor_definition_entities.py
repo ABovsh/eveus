@@ -837,7 +837,7 @@ def test_v14_charger_number_prefers_fresh_device_over_restored(monkeypatch) -> N
     num.hass = MagicMock()
     num.async_write_ha_state = MagicMock()
     num._last_device_value = 10.0
-    num._last_successful_read = _t.time()
+    num._last_successful_read = _t.monotonic()
     num._attr_native_value = 10.0
     monkeypatch.setattr(
         "custom_components.eveus.common_base.BaseEveusEntity.async_added_to_hass",

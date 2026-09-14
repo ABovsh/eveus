@@ -168,7 +168,7 @@ def test_control_fallback_rejects_future_read_timestamp() -> None:
     # the entity stays visible instead — see test_grace_holds_last_value.py.
     entity = EveusCurrentNumber(EveusTestUpdater({}, available=True), "16A")
     entity._last_device_value = 10.0
-    entity._last_successful_read = time.time() + 10_000  # backward jump
+    entity._last_successful_read = time.monotonic() + 10_000  # stamp ahead of the clock
 
     assert entity._resolve_value() is None
 
@@ -498,3 +498,60 @@ def test_one_in_sync_poll_resets_debounce(_ha_local_clock_utc_plus_3_avail) -> N
     tracker.evaluate(_p(900))
     tracker.evaluate(_p(0))
     assert tracker.evaluate(_p(900)) is None
+
+
+def _split_clock(monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict]:
+    """Drive wall-clock and monotonic time independently in every control module."""
+    from custom_components.eveus import common_base, control_base, number, select, switch
+    from custom_components.eveus import time as time_platform
+
+    wall = {"t": 1_000_000.0}
+    mono = {"t": 5_000.0}
+    fake = SimpleNamespace(time=lambda: wall["t"], monotonic=lambda: mono["t"])
+    for module in (common_base, control_base, number, select, switch):
+        monkeypatch.setattr(module, "time", fake)
+    monkeypatch.setattr(time_platform, "_time", fake)
+    return wall, mono
+
+
+@pytest.mark.parametrize("jump", [3600.0, -3600.0])
+def test_wall_clock_jump_neither_expires_nor_extends_pending_control_value(
+    monkeypatch: pytest.MonkeyPatch, jump: float
+) -> None:
+    from custom_components.eveus.number import EveusCurrentNumber
+
+    wall, mono = _split_clock(monkeypatch)
+    entity = EveusCurrentNumber(EveusTestUpdater({"currentSet": "16"}), "16A")
+    disable_state_writes(entity)
+    entity._set_optimistic_value(10.0)
+
+    wall["t"] += jump
+    mono["t"] += 1
+    assert entity._resolve_value() == 10.0
+
+    # Only elapsed monotonic time ends the hold.
+    wall["t"] -= jump
+    mono["t"] += 120
+    assert entity._resolve_value() == 16.0
+
+
+@pytest.mark.parametrize("jump", [3600.0, -3600.0])
+def test_wall_clock_jump_neither_expires_nor_extends_missing_field_hold(
+    monkeypatch: pytest.MonkeyPatch, jump: float
+) -> None:
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+    from custom_components.eveus.number import EveusCurrentNumber
+
+    wall, mono = _split_clock(monkeypatch)
+    updater = EveusTestUpdater({"currentSet": "16"})
+    entity = EveusCurrentNumber(updater, "16A")
+    disable_state_writes(entity)
+    entity._handle_coordinator_update()
+    updater.data = {}
+
+    wall["t"] += jump
+    mono["t"] += CONTROL_GRACE_PERIOD - 1
+    assert entity._resolve_value() == 16.0
+
+    mono["t"] += 2
+    assert entity._resolve_value() is None

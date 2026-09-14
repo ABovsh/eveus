@@ -795,7 +795,7 @@ def test_optimistic_control_mixin_reconciles_and_expires(monkeypatch: pytest.Mon
 
     control = Optimistic()
     control._init_optimistic_control()
-    monkeypatch.setattr("custom_components.eveus.common_base.time.time", lambda: 10.0)
+    monkeypatch.setattr("custom_components.eveus.common_base.time.monotonic", lambda: 10.0)
     control._set_optimistic_value(7)
 
     assert control._optimistic_value_is_valid(12.0, 5.0) is True

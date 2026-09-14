@@ -411,8 +411,8 @@ class OptimisticControlMixin(Generic[T]):
             return False
         if self._in_availability_grace:  # type: ignore[attr-defined]
             return True
-        # 0 <= age: a backward wall-clock jump must not extend the window
-        # indefinitely (mirrors the optimistic-state TTL guard).
+        # Monotonic elapsed time, so a wall-clock step cannot move this window;
+        # 0 <= age still rejects a stamp from a different clock base.
         return 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
 
     def _init_optimistic_control(self) -> None:
@@ -435,14 +435,14 @@ class OptimisticControlMixin(Generic[T]):
     def _set_optimistic_value(self, value: T) -> None:
         """Store an optimistic value after a successful command."""
         self._optimistic_value = value
-        self._optimistic_value_time = time.time()
+        self._optimistic_value_time = time.monotonic()
 
     def _optimistic_value_is_valid(self, current_time: float, ttl: float) -> bool:
         """Return whether the optimistic value should still be trusted.
 
-        Uses a wall-clock delta, so a backward system-clock step makes the age
-        negative; treat that as expired (untrustworthy timer) instead of
-        "valid forever".
+        Measured on the monotonic clock, so a wall-clock step neither expires
+        nor extends it. A negative age can only come from a stamp on another
+        clock base; treat it as expired instead of "valid forever".
         """
         if self._optimistic_value is None:
             return False
@@ -450,7 +450,7 @@ class OptimisticControlMixin(Generic[T]):
         return 0 <= age < ttl
 
     def _expire_optimistic_value(self, current_time: float, ttl: float) -> None:
-        """Expire optimistic state after its absolute TTL (or a backward clock)."""
+        """Expire optimistic state after its monotonic TTL (or a foreign stamp)."""
         if self._optimistic_value is None:
             return
         age = current_time - self._optimistic_value_time

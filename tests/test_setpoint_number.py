@@ -274,11 +274,11 @@ def test_setpoint_number_resolve_value_grace_period_boundaries():
     updater.available = True
     updater.data = {}
     ent._last_device_value = 42.0
-    ent._last_successful_read = time.time()
+    ent._last_successful_read = time.monotonic()
     assert ent._resolve_value() == 42.0  # age ~0, within grace
 
     # Grace expired -> must not return the stale value.
-    ent._last_successful_read = time.time() - CONTROL_GRACE_PERIOD
+    ent._last_successful_read = time.monotonic() - CONTROL_GRACE_PERIOD
     assert ent._resolve_value() is None
 
 
@@ -293,11 +293,11 @@ def test_setpoint_number_resolve_value_grace_boundary_exact(monkeypatch):
     ent._last_device_value = 7.0
     ent._last_successful_read = 1000.0
 
-    monkeypatch.setattr(number_mod.time, "time", lambda: 1000.0)  # age == 0 exactly
+    monkeypatch.setattr(number_mod.time, "monotonic", lambda: 1000.0)  # age == 0 exactly
     assert ent._resolve_value() == 7.0
 
     monkeypatch.setattr(
-        number_mod.time, "time", lambda: 1000.0 + CONTROL_GRACE_PERIOD
+        number_mod.time, "monotonic", lambda: 1000.0 + CONTROL_GRACE_PERIOD
     )  # age == GRACE exactly -> must NOT be treated as still fresh
     assert ent._resolve_value() is None
 
@@ -313,7 +313,7 @@ def test_setpoint_number_resolve_value_ignores_stale_value_when_grace_expired_bu
     updater.available = True
     updater.data = {}  # no energyLimit key -> device read returns None
     ent._last_device_value = 5.0
-    ent._last_successful_read = time.time() - CONTROL_GRACE_PERIOD - 10
+    ent._last_successful_read = time.monotonic() - CONTROL_GRACE_PERIOD - 10
     assert ent._resolve_value() is None
 
 
@@ -388,7 +388,7 @@ def test_setpoint_number_restore_records_a_real_read_timestamp():
 
     ent, _ = _make(ENERGY)
     ent._last_successful_read = None
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(ent._async_restore_state(State("number.x", "50")))
     assert ent._last_successful_read is not None
     assert ent._last_successful_read >= before
@@ -483,7 +483,7 @@ def test_undervoltage_threshold_restore_records_a_real_read_timestamp():
 
     ent, _ = _make_threshold({})
     ent._last_successful_read = None
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(ent._async_restore_state(State("number.x", "150")))
     assert ent._last_successful_read is not None
     assert ent._last_successful_read >= before

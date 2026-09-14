@@ -58,7 +58,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             self._write_availability_only()  # type: ignore[attr-defined]
             return
 
-        current_time = time.time()
+        current_time = time.monotonic()
         device_value = self._read_device_value()
         if device_value is not None:
             self._reconcile_with_device(

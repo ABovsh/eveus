@@ -260,7 +260,7 @@ class BaseSwitchEntity(
         source is available, so a missing/invalid payload field is not exposed
         as a real ``off`` state that automations could act on.
         """
-        current_time = time.time()
+        current_time = time.monotonic()
 
         if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
             return bool(self._optimistic_value)
@@ -320,7 +320,7 @@ class BaseSwitchEntity(
         """Restore previous display state only; no commands sent on startup."""
         if state and state.state in ("on", "off"):
             self._last_device_value = state.state == "on"
-            self._last_successful_read = time.time()
+            self._last_successful_read = time.monotonic()
             self._attr_is_on = self._last_device_value
 
 

@@ -155,7 +155,7 @@ class EveusScheduleTimeEntity(
 
     def _resolve_minutes(self) -> int | None:
         """Resolve minutes value from optimistic, device, or restore state."""
-        current_time = _time.time()
+        current_time = _time.monotonic()
 
         if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
             return self._optimistic_value
@@ -213,7 +213,7 @@ class EveusScheduleTimeEntity(
         if restored is None:
             return
         self._last_device_value = time_to_minutes(restored)
-        self._last_successful_read = _time.time()
+        self._last_successful_read = _time.monotonic()
         self._attr_native_value = restored
 
 async def async_setup_entry(

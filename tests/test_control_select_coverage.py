@@ -128,7 +128,7 @@ def test_min_voltage_grace_window_shows_restored_option_while_offline() -> None:
     select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
     _mute(select)
     select._last_device_value = 180
-    select._last_successful_read = time.time()
+    select._last_successful_read = time.monotonic()
     assert select.current_option == "180"
 
 
@@ -140,7 +140,7 @@ def test_min_voltage_grace_window_expired_returns_none() -> None:
     select = select_module.EveusMinVoltageSelect(_Updater({}, available=True))
     _mute(select)
     select._last_device_value = 180
-    select._last_successful_read = time.time() - CONTROL_GRACE_PERIOD - 1
+    select._last_successful_read = time.monotonic() - CONTROL_GRACE_PERIOD - 1
     assert select.current_option is None
 
 
@@ -253,7 +253,7 @@ def test_select_command_pending_starts_false(cls) -> None:
 
 def test_timezone_grace_window_boundary_age_zero_is_valid(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.select.time.monotonic", lambda: now)
     select = select_module.EveusTimeZoneSelect(_Updater({}, available=False))
     _mute(select)
     select._last_device_value = 3
@@ -264,7 +264,7 @@ def test_timezone_grace_window_boundary_age_zero_is_valid(monkeypatch) -> None:
 
 def test_timezone_grace_window_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.select.time.monotonic", lambda: now)
     # `available=True` with the key absent: this isolates the window that
     # measures from the last successful read, which is the one this test is
     # about. With the coordinator OFFLINE the value is held for as long as
@@ -279,7 +279,7 @@ def test_timezone_grace_window_boundary_age_equals_grace_period_expires(monkeypa
 
 def test_min_voltage_grace_window_boundary_age_zero_is_valid(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.select.time.monotonic", lambda: now)
     select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
     _mute(select)
     select._last_device_value = 180
@@ -290,7 +290,7 @@ def test_min_voltage_grace_window_boundary_age_zero_is_valid(monkeypatch) -> Non
 
 def test_min_voltage_grace_window_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.select.time.monotonic", lambda: now)
     # `available=True` with the key absent: this isolates the window that
     # measures from the last successful read, which is the one this test is
     # about. With the coordinator OFFLINE the value is held for as long as
@@ -350,7 +350,7 @@ def test_timezone_restore_state_stamps_a_real_timestamp() -> None:
     on a valid restore, not just get some truthy placeholder."""
     select = select_module.EveusTimeZoneSelect(_Updater({}, available=False))
     _mute(select)
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(select._async_restore_state(State("select.tz", "+2")))
     assert select._last_successful_read is not None
     assert select._last_successful_read >= before
@@ -359,7 +359,7 @@ def test_timezone_restore_state_stamps_a_real_timestamp() -> None:
 def test_min_voltage_restore_state_stamps_a_real_timestamp() -> None:
     select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
     _mute(select)
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(select._async_restore_state(State("select.mv", "180")))
     assert select._last_successful_read is not None
     assert select._last_successful_read >= before

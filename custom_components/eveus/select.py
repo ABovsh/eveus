@@ -81,12 +81,12 @@ class EveusTimeZoneSelect(
     def current_option(self) -> str | None:
         """Return optimistic value while pending; else device value; else the
         last good value through the grace window (restored across restarts)."""
-        if self._optimistic_value_is_valid(time.time(), OPTIMISTIC_CONTROL_TTL):
+        if self._optimistic_value_is_valid(time.monotonic(), OPTIMISTIC_CONTROL_TTL):
             return _format_tz(self._optimistic_value)
         device = self._device_option()
         if device is not None:
             return device
-        if self._may_hold_last_device_value(time.time()):
+        if self._may_hold_last_device_value(time.monotonic()):
             return _format_tz(self._last_device_value)
         return None
 
@@ -102,7 +102,7 @@ class EveusTimeZoneSelect(
         if state.state in TIMEZONE_OPTIONS:
             try:
                 self._last_device_value = int(state.state)
-                self._last_successful_read = time.time()
+                self._last_successful_read = time.monotonic()
             except (TypeError, ValueError):
                 pass
 
@@ -148,7 +148,7 @@ class EveusTimeZoneSelect(
             # while our own command is still in flight.
             self._write_if_changed(self.current_option)
             return
-        current_time = time.time()
+        current_time = time.monotonic()
         device_option = self._device_option()
         if device_option is not None:
             try:
@@ -198,12 +198,12 @@ class _EveusIntegerSelect(
     @property
     def current_option(self) -> str | None:
         """Return optimistic, device, or grace-window restored option."""
-        if self._optimistic_value_is_valid(time.time(), OPTIMISTIC_CONTROL_TTL):
+        if self._optimistic_value_is_valid(time.monotonic(), OPTIMISTIC_CONTROL_TTL):
             return self.DEVICE_TO_OPTION.get(self._optimistic_value)
         device = self._device_option()
         if device is not None:
             return device
-        if self._may_hold_last_device_value(time.time()):
+        if self._may_hold_last_device_value(time.monotonic()):
             return self.DEVICE_TO_OPTION.get(self._last_device_value)
         return None
 
@@ -214,7 +214,7 @@ class _EveusIntegerSelect(
         value = self.OPTION_TO_DEVICE.get(state.state)
         if value is not None:
             self._last_device_value = value
-            self._last_successful_read = time.time()
+            self._last_successful_read = time.monotonic()
 
     async def async_select_option(self, option: str) -> None:
         """Send the selected integer value to the charger with optimistic UI."""
@@ -250,7 +250,7 @@ class _EveusIntegerSelect(
         if self._command_pending:
             self._write_if_changed(self.current_option)
             return
-        current_time = time.time()
+        current_time = time.monotonic()
         device_option = self._device_option()
         if device_option is not None:
             device_value = self.OPTION_TO_DEVICE[device_option]
