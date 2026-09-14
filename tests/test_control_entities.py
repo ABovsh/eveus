@@ -1541,3 +1541,60 @@ def test_optimistic_value_survives_the_ten_second_confirmation_poll() -> None:
     # rejected command is not held forever.
     mixin._reconcile_with_device(False, float(POST_COMMAND_REFRESH_DELAYS[-1]), same)
     assert mixin._optimistic_value is None
+
+
+# --- a write that is cancelled mid-flight releases its pin on every family ---
+
+
+class _BlockingUpdater(_Updater):
+    def __init__(self, data):
+        super().__init__(data)
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send_command(self, command, value, *, retry=True, extra=None, preflight=None):
+        self.commands.append((command, value))
+        self.entered.set()
+        await self.release.wait()
+        return True
+
+
+def _current(updater):
+    return EveusCurrentNumber(updater, "16A"), lambda e: e.async_set_native_value(10), 16.0
+
+
+def _setpoint(updater):
+    from custom_components.eveus.number import GLOBAL_LIMIT_NUMBERS, EveusSetpointNumber
+
+    description = next(d for d in GLOBAL_LIMIT_NUMBERS if d.key == "limit_time")
+    return EveusSetpointNumber(updater, description), lambda e: e.async_set_native_value(90), 60.0
+
+
+def _schedule_time(updater):
+    return (
+        EveusScheduleTimeEntity(updater, TIME_DESCRIPTIONS[0]),
+        lambda e: e.async_set_value(dt.time(7, 15)),
+        dt.time(23, 0),
+    )
+
+
+@pytest.mark.parametrize("factory", [_current, _setpoint, _schedule_time])
+def test_cancelled_write_releases_the_pin_and_shows_the_device_value(factory) -> None:
+    updater = _BlockingUpdater({"currentSet": "16", "timeLimit": "3600", "sh1Start": "1380"})
+    entity, write, device_display = factory(updater)
+    _disable_state_writes(entity)
+
+    async def scenario():
+        task = asyncio.ensure_future(write(entity))
+        await asyncio.wait_for(updater.entered.wait(), 2)
+        assert entity._get_pending() is not None
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert entity._get_pending() is None
+    assert entity._optimistic_value is None
+    assert entity._resolve_display_value() == device_display
+    assert (getattr(entity, "_attr_native_value", None)) == device_display

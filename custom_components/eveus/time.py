@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 from homeassistant.components.time import TimeEntity, TimeEntityDescription
 from homeassistant.core import HomeAssistant, State
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as ha_dt
@@ -153,6 +152,9 @@ class EveusScheduleTimeEntity(
         """Return the pending schedule command sentinel."""
         return self._pending_value
 
+    def _set_pending(self, value: int | None) -> None:
+        self._pending_value = value
+
     def _resolve_minutes(self) -> int | None:
         """Resolve minutes value from optimistic, device, or restore state."""
         return self._resolve_held_value(self._read_device_value())
@@ -161,32 +163,18 @@ class EveusScheduleTimeEntity(
         """Send the new start/stop value to the charger with optimistic UI."""
         minutes = time_to_minutes(value)
 
+        shown = dt.time(hour=minutes // 60, minute=minutes % 60)
         async with self._command_lock:
-            self._pending_value = minutes
-            self._attr_native_value = dt.time(hour=minutes // 60, minute=minutes % 60)
-            self._write_if_changed(self._attr_native_value)
-
-            try:
-                success = await self._updater.send_command(self._command, minutes)
-                if success:
-                    self._set_optimistic_value(minutes)
-                else:
-                    raise HomeAssistantError(
-                        f"Eveus charger did not accept '{self.name}' = "
-                        f"{self._attr_native_value.strftime('%H:%M')}"
-                    )
-            except (HomeAssistantError, ConfigEntryAuthFailed):
-                # Same contract as number/switch/select: a HomeAssistantError is
-                # already the user-facing toast, and ConfigEntryAuthFailed must
-                # reach Home Assistant untouched.
-                raise
-            except Exception as err:
-                _LOGGER.debug("Failed to set %s: %s", self.name, type(err).__name__)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, arguments unchanged
-                raise HomeAssistantError(f"Failed to set '{self.name}': {err}") from err  # pragma: no mutate - pure exception-message text, err VALUE unchanged
-            finally:
-                self._pending_value = None
-                self._attr_native_value = minutes_to_time(self._resolve_minutes())
-                self._write_if_changed(self._attr_native_value)
+            await self._send_pinned_command(
+                device_value=minutes,
+                pending=minutes,
+                shown=shown,
+                accepted=minutes,
+                rejected_message=(
+                    f"Eveus charger did not accept '{self.name}' = {shown.strftime('%H:%M')}"
+                ),
+                failure_prefix=f"Failed to set '{self.name}'",  # pragma: no mutate - pure exception-message text
+            )
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
