@@ -31,7 +31,12 @@ def _config_flow_source() -> str:
 
 
 def _error_keys_in_code() -> set[str]:
-    return set(re.findall(r'errors\["base"\]\s*=\s*"([a-z_]+)"', _config_flow_source()))
+    source = _config_flow_source()
+    # Keys are assigned directly, or returned by the shared `_flow_error` mapper.
+    mapper = source[source.index("def _flow_error(") : source.index("def _cannot_connect_placeholders(")]
+    return set(re.findall(r'errors\["base"\]\s*=\s*"([a-z_]+)"', source)) | set(
+        re.findall(r'"([a-z_]+)"(?=, (?:_cannot_connect_placeholders|\{\})|\))', mapper)
+    )
 
 
 def _abort_reasons_in_code() -> set[str]:

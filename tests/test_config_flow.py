@@ -2638,3 +2638,52 @@ def test_validate_input_rejects_a_redirect_without_following_it(status: int) -> 
 
     assert str(err.value) == f"HTTP {status}"
     assert [call["allow_redirects"] for call in session.calls] == [False]
+
+
+_FLOW_FAILURES = [
+    (CannotConnect("HTTP 503"), "cannot_connect", {"error_detail": "HTTP 503"}),
+    (InvalidAuth(), "invalid_auth", None),
+    (InvalidInput("bad host"), "invalid_input", None),
+    (InvalidDevice("wrong device"), "invalid_device", None),
+    (InvalidResponse("not JSON"), "invalid_response", None),
+    (RuntimeError("boom"), "unknown", None),
+]
+
+
+def _run_flow_step(step: str, monkeypatch: pytest.MonkeyPatch, failure: Exception):
+    async def fake_validate_input(hass, data):
+        raise failure
+
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    entry = type("Entry", (), {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST})()
+    flow._get_reconfigure_entry = lambda: entry
+    flow._get_reauth_entry = lambda: entry
+    if step == "user":
+        return asyncio.run(flow.async_step_user(_input()))
+    if step == "reconfigure":
+        return asyncio.run(flow.async_step_reconfigure(_input()))
+    return asyncio.run(
+        flow.async_step_reauth_confirm({CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD})
+    )
+
+
+@pytest.mark.parametrize("step", ["user", "reconfigure", "reauth"])
+@pytest.mark.parametrize(("failure", "base", "placeholders"), _FLOW_FAILURES)
+def test_every_flow_step_maps_a_failure_the_same_way(
+    monkeypatch: pytest.MonkeyPatch, step: str, failure: Exception, base: str, placeholders
+) -> None:
+    result = _run_flow_step(step, monkeypatch, failure)
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": base}
+    assert result["description_placeholders"] == placeholders
+
+
+@pytest.mark.parametrize("step", ["user", "reconfigure", "reauth"])
+def test_every_flow_step_lets_abort_flow_through(monkeypatch: pytest.MonkeyPatch, step: str) -> None:
+    from homeassistant.data_entry_flow import AbortFlow
+
+    with pytest.raises(AbortFlow):
+        _run_flow_step(step, monkeypatch, AbortFlow("already_configured"))

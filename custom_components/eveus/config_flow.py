@@ -564,6 +564,29 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         raise CannotConnect(f"Unexpected error: {type(err).__name__}") from err
 
 
+def _flow_error(err: Exception, step: str) -> tuple[str, dict[str, str]]:
+    """Map a validation failure to its form error key and placeholders.
+
+    Shared by every step that validates a charger, so one failure reads the
+    same in setup, reconfigure and reauth. The integration's own validation
+    errors carry fixed messages; anything else is logged by class only.
+    """
+    if isinstance(err, CannotConnect):
+        return "cannot_connect", _cannot_connect_placeholders(err)
+    if isinstance(err, InvalidAuth):
+        return "invalid_auth", {}
+    for error_type, key in (
+        (InvalidInput, "invalid_input"),
+        (InvalidDevice, "invalid_device"),
+        (InvalidResponse, "invalid_response"),
+    ):
+        if isinstance(err, error_type):
+            _LOGGER.debug("Eveus %s step: %s (%s)", step, key, str(err))
+            return key, {}
+    _LOGGER.error("Unexpected Eveus %s error: %s", step, type(err).__name__)
+    return "unknown", {}
+
+
 def _cannot_connect_placeholders(err: Exception) -> dict[str, str]:
     """Build the error_detail placeholder for the cannot_connect message.
 
@@ -610,28 +633,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_soc()
                 return self._finish_entry()
 
-            except CannotConnect as err:
-                errors["base"] = "cannot_connect"
-                placeholders = _cannot_connect_placeholders(err)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except InvalidInput as err:
-                errors["base"] = "invalid_input"
-                _LOGGER.debug("Invalid input: %s", str(err))
-            except InvalidDevice as err:
-                errors["base"] = "invalid_device"
-                _LOGGER.debug("Invalid device: %s", str(err))
-            except InvalidResponse as err:
-                errors["base"] = "invalid_response"
-                _LOGGER.debug("Invalid response: %s", str(err))
             except AbortFlow:
                 # `_abort_if_unique_id_configured()` raises AbortFlow, which is an
                 # Exception subclass. Let it propagate so the duplicate charger
                 # aborts with "already_configured" instead of a generic "unknown".
                 raise
             except Exception as err:
-                _LOGGER.error("Unexpected exception: %s", type(err).__name__)
-                errors["base"] = "unknown"
+                errors["base"], placeholders = _flow_error(err, "user")
 
         # Re-show with the submitted values as defaults so a validation error
         # (wrong password, unreachable host, ...) doesn't wipe the whole form —
@@ -750,27 +758,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_abort(reason="reload_failed")
                 return self.async_abort(reason="reconfigure_successful")
 
-            except CannotConnect as err:
-                errors["base"] = "cannot_connect"
-                placeholders = _cannot_connect_placeholders(err)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except InvalidInput as err:
-                errors["base"] = "invalid_input"
-                _LOGGER.debug("Invalid reconfigure input: %s", str(err))
-            except InvalidDevice as err:
-                errors["base"] = "invalid_device"
-                _LOGGER.debug("Invalid reconfigure device: %s", str(err))
-            except InvalidResponse as err:
-                errors["base"] = "invalid_response"
-                _LOGGER.debug("Invalid reconfigure response: %s", str(err))
             except AbortFlow:
                 # Duplicate-host abort must reach the user as "already_configured"
                 # rather than being swallowed into a generic "unknown" error.
                 raise
             except Exception as err:
-                _LOGGER.error("Unexpected reconfigure exception: %s", type(err).__name__)
-                errors["base"] = "unknown"
+                errors["base"], placeholders = _flow_error(err, "reconfigure")
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -857,28 +850,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_abort(reason="reload_failed")
                 return self.async_abort(reason="reauth_successful")
 
-            except CannotConnect as err:
-                errors["base"] = "cannot_connect"
-                placeholders = _cannot_connect_placeholders(err)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except InvalidInput as err:
-                errors["base"] = "invalid_input"
-                _LOGGER.debug("Invalid reauth input: %s", str(err))
-            except InvalidDevice as err:
-                errors["base"] = "invalid_device"
-                _LOGGER.debug("Invalid reauth device: %s", str(err))
-            except InvalidResponse as err:
-                errors["base"] = "invalid_response"
-                _LOGGER.debug("Invalid reauth response: %s", str(err))
             except AbortFlow:
                 # A concurrent user/reconfigure flow on the same host makes
                 # async_set_unique_id abort; surface that reason instead of
                 # swallowing it into a generic "unknown" error.
                 raise
             except Exception as err:
-                _LOGGER.error("Unexpected reauth exception: %s", type(err).__name__)
-                errors["base"] = "unknown"
+                errors["base"], placeholders = _flow_error(err, "reauth")
 
         return self.async_show_form(
             step_id="reauth_confirm",
