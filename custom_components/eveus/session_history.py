@@ -8,7 +8,6 @@ them permanently. RestoreEntity keeps them across HA restarts.
 """
 from __future__ import annotations
 
-import logging
 import math
 from typing import Any, Optional
 
@@ -31,7 +30,6 @@ from homeassistant.const import UnitOfEnergy, UnitOfTime
 # plus its own default, so the two can never drift apart.
 _KNOWN_FINISH_REASONS: frozenset[str] = frozenset(FINISHED_REASONS.values()) | {"stopped"}
 
-_LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
 
 
 class _LastSessionSensorBase(EveusSensorBase):

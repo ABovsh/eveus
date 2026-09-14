@@ -1253,40 +1253,24 @@ def create_sensor_specifications(
     ]
 
     if phases == 3:
-        diagnostic_specs.extend([
-            SensorSpec(
-                key="current_phase_2", name="Current Phase 2",
-                value_fn=get_current_phase_2,
-                sensor_type=SensorType.MEASUREMENT, icon=ICON_CURRENT_AC,
-                device_class=SensorDeviceClass.CURRENT,
-                state_class=SensorStateClass.MEASUREMENT,
-                unit=UnitOfElectricCurrent.AMPERE, precision=1,
-            ),
-            SensorSpec(
-                key="current_phase_3", name="Current Phase 3",
-                value_fn=get_current_phase_3,
-                sensor_type=SensorType.MEASUREMENT, icon=ICON_CURRENT_AC,
-                device_class=SensorDeviceClass.CURRENT,
-                state_class=SensorStateClass.MEASUREMENT,
-                unit=UnitOfElectricCurrent.AMPERE, precision=1,
-            ),
-            SensorSpec(
-                key="voltage_phase_2", name="Voltage Phase 2",
-                value_fn=get_voltage_phase_2,
-                sensor_type=SensorType.MEASUREMENT, icon=ICON_FLASH,
-                device_class=SensorDeviceClass.VOLTAGE,
-                state_class=SensorStateClass.MEASUREMENT,
-                unit=UnitOfElectricPotential.VOLT, precision=0,
-            ),
-            SensorSpec(
-                key="voltage_phase_3", name="Voltage Phase 3",
-                value_fn=get_voltage_phase_3,
-                sensor_type=SensorType.MEASUREMENT, icon=ICON_FLASH,
-                device_class=SensorDeviceClass.VOLTAGE,
-                state_class=SensorStateClass.MEASUREMENT,
-                unit=UnitOfElectricPotential.VOLT, precision=0,
-            ),
-        ])
+        # Phases 2 and 3 repeat phase 1's metadata; current first, then voltage.
+        for kind, getters, icon, device_class, unit, precision in (
+            ("current", (get_current_phase_2, get_current_phase_3), ICON_CURRENT_AC,
+             SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1),
+            ("voltage", (get_voltage_phase_2, get_voltage_phase_3), ICON_FLASH,
+             SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0),
+        ):
+            for phase, getter in zip((2, 3), getters):
+                diagnostic_specs.append(
+                    SensorSpec(
+                        key=f"{kind}_phase_{phase}", name=f"{kind.title()} Phase {phase}",
+                        value_fn=getter,
+                        sensor_type=SensorType.MEASUREMENT, icon=icon,
+                        device_class=device_class,
+                        state_class=SensorStateClass.MEASUREMENT,
+                        unit=unit, precision=precision,
+                    )
+                )
 
     # Special sensors
     special_specs = [
