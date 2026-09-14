@@ -97,7 +97,7 @@ class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=T
     read_min_value: float | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
 
 
-CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
+CHARGING_CURRENT_DESCRIPTION = EveusSetpointNumberDescription(
     key="charging_current",
     name=_CHARGING_CURRENT_NAME,
     icon="mdi:current-ac",
@@ -106,6 +106,10 @@ CHARGING_CURRENT_DESCRIPTION = NumberEntityDescription(
     mode=NumberMode.SLIDER,
     native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
     device_class=NumberDeviceClass.CURRENT,
+    command="currentSet",
+    state_key="currentSet",
+    # The write floor and the model maximum are applied per entity.
+    read_min_value=0.0,
 )
 
 GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
@@ -269,105 +273,6 @@ class EveusNumberEntity(
         self._set_display_value(self._resolve_display_value())
 
 
-class EveusCurrentNumber(EveusNumberEntity):
-    """Representation of Eveus current control with responsive UI."""
-
-    ENTITY_NAME = _CHARGING_CURRENT_NAME  # pragma: no mutate - equivalent: unconditionally overwritten by `self.ENTITY_NAME = entity_description.name` in EveusNumberEntity.__init__ before BaseEveusEntity ever reads it
-    _command = "currentSet"
-    # Reads accept any non-negative device-reported setpoint up to the model max;
-    # the firmware legitimately reports 1..6 A when configured directly on the
-    # charger. HA WRITES are still clamped to native_min_value (MIN_CURRENT, 7 A).
-    _READ_MIN = 0.0
-
-    def __init__(self, updater, model: str, device_number: int = 1) -> None:
-        """Initialize the current control."""
-        super().__init__(updater, CHARGING_CURRENT_DESCRIPTION, device_number)
-        self._model = model  # pragma: no mutate - equivalent: written but never read anywhere in the codebase (dead attribute)
-
-        self._attr_native_min_value = float(MIN_CURRENT)
-        self._attr_native_max_value = float(MODEL_MAX_CURRENT[model])
-        self._attr_native_value = self._resolve_value()
-
-    @property
-    def native_value(self) -> float | None:
-        """Return cached current value without side effects."""
-        return self._attr_native_value
-
-    @property
-    def _state_key(self) -> str:
-        """Return the coordinator payload key backing this control."""
-        return self._command
-
-    def _read_device_value(self) -> float | None:
-        """Return the latest valid current value from coordinator data."""
-        if not (self._updater.available and self._updater.data):
-            return None
-        if self._command not in self._updater.data:
-            return None
-        device_value = get_safe_value(self._updater.data, self._command, float)
-        if device_value is not None and (
-            self._READ_MIN <= device_value <= self._attr_native_max_value
-        ):
-            return float(device_value)
-        return None
-
-    def _values_equal(self, optimistic: float, device: float) -> bool:
-        """Return whether a device current confirms the optimistic value."""
-        return abs(optimistic - device) < 0.5
-
-    def _resolve_display_value(self) -> float | None:
-        """Resolve the current display value."""
-        return self._resolve_value()
-
-    def _set_display_value(self, value: float | None) -> None:
-        """Store the current display value."""
-        self._attr_native_value = value
-
-    def _get_pending(self) -> float | None:
-        """Return the pending current command sentinel."""
-        return self._pending_value
-
-    def _resolve_value(self) -> float | None:
-        """Resolve current value from command, optimistic, device, and restore state."""
-        return self._resolve_held_value(self._read_device_value())
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Set new current value with optimistic UI."""
-        # Validate before taking the lock so a bad value fails fast without
-        # blocking on an in-flight command.
-        raw = _validate_finite_number(value, _CHARGING_CURRENT_NAME)
-        clamped_value = max(
-            self._attr_native_min_value,
-            min(self._attr_native_max_value, raw),
-        )
-        int_value = int(round(clamped_value))
-
-        # An auth rejection propagates untouched and does NOT start reauth from
-        # here — the entity service-call path has no such hook. The coordinator
-        # starts it when the same 401 comes back from /main within one poll.
-        async with self._command_lock:
-            await self._send_pinned_command(
-                device_value=int_value,
-                pending=float(int_value),
-                shown=float(int_value),
-                accepted=float(int_value),
-                rejected_message=f"Eveus charger did not accept charging current = {int_value}A",  # pragma: no mutate - pure exception-message text
-                failure_prefix="Failed to set charging current",  # pragma: no mutate - pure exception-message text
-            )
-
-    async def _async_restore_state(self, state: State) -> None:
-        """Restore previous display value only — no commands sent on startup."""
-        try:
-            if state and state.state not in UNUSABLE_RESTORED_STATES:
-                restored_value = float(state.state)
-                if self._READ_MIN <= restored_value <= self._attr_native_max_value:
-                    self._last_device_value = restored_value
-                    self._last_successful_read = time.monotonic()
-                    self._attr_native_value = restored_value
-        except (TypeError, ValueError) as err:
-            _LOGGER.debug("Could not restore number state for %s: %s", self.name, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
-
-
 class EveusSetpointNumber(EveusNumberEntity):
     """Charger-backed optimistic setpoint number, scaled per description."""
 
@@ -438,6 +343,14 @@ class EveusSetpointNumber(EveusNumberEntity):
     def _resolve_value(self) -> float | None:
         return self._resolve_held_value(self._read_device_value())
 
+    def _normalize_write(self, value: float) -> float:
+        """Hook: adjust a validated HA value before it is clamped and sent."""
+        return value
+
+    def _write_label(self, value: float | None = None) -> str:
+        """Hook: how a write is named in the errors a user sees."""
+        return self.ENTITY_NAME if value is None else f"{self.ENTITY_NAME} = {value}"
+
     def _pre_send_refresh(self) -> None:
         """Hook: refresh dynamic bounds just before clamping a queued write.
 
@@ -446,7 +359,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         """
 
     async def async_set_native_value(self, value: float) -> None:
-        raw = _validate_finite_number(value, self.ENTITY_NAME)
+        raw = self._normalize_write(_validate_finite_number(value, self.ENTITY_NAME))
         async with self._command_lock:
             # Clamp INSIDE the lock against a freshly refreshed bound: a write
             # queued behind another command must honour a dynamic min/max that
@@ -460,13 +373,13 @@ class EveusSetpointNumber(EveusNumberEntity):
                 pending=clamped,
                 shown=clamped,
                 accepted=clamped,
-                rejected_message=f"Eveus charger did not accept {self.ENTITY_NAME} = {clamped}",  # pragma: no mutate - pure exception-message text
-                failure_prefix=f"Failed to set {self.ENTITY_NAME}",  # pragma: no mutate - pure exception-message text
+                rejected_message=f"Eveus charger did not accept {self._write_label(clamped)}",  # pragma: no mutate - pure exception-message text
+                failure_prefix=f"Failed to set {self._write_label()}",  # pragma: no mutate - pure exception-message text
             )
 
     async def _async_restore_state(self, state: State) -> None:
         try:
-            if state and state.state not in (None, "unknown", "unavailable"):
+            if state and state.state not in UNUSABLE_RESTORED_STATES:
                 restored = float(state.state)
                 if self._read_min <= restored <= self._attr_native_max_value:
                     self._last_device_value = restored
@@ -474,6 +387,33 @@ class EveusSetpointNumber(EveusNumberEntity):
                     self._attr_native_value = restored
         except (TypeError, ValueError) as err:
             _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
+
+
+class EveusCurrentNumber(EveusSetpointNumber):
+    """Charging Current: a whole-amp setpoint bounded by the charger model.
+
+    Reads accept any non-negative device-reported setpoint up to the model max;
+    the firmware legitimately reports 1..6 A when configured directly on the
+    charger. HA WRITES are still clamped to MIN_CURRENT (7 A).
+    """
+
+    def __init__(self, updater, model: str, device_number: int = 1) -> None:
+        """Initialize the current control."""
+        super().__init__(
+            updater,
+            CHARGING_CURRENT_DESCRIPTION,
+            device_number,
+            min_value=float(MIN_CURRENT),
+            max_value=float(MODEL_MAX_CURRENT[model]),
+        )
+
+    def _normalize_write(self, value: float) -> float:
+        return float(round(value))
+
+    def _write_label(self, value: float | None = None) -> str:
+        if value is None:
+            return "charging current"  # pragma: no mutate - pure exception-message text
+        return f"charging current = {int(value)}A"  # pragma: no mutate - pure exception-message text
 
 
 class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
@@ -524,7 +464,7 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
     async def _async_restore_state(self, state: State) -> None:
         """Restore across the read range, not the (narrower) write floor."""
         try:
-            if state and state.state not in (None, "unknown", "unavailable"):
+            if state and state.state not in UNUSABLE_RESTORED_STATES:
                 restored = float(state.state)
                 if self._READ_MIN <= restored <= self._attr_native_max_value:
                     self._last_device_value = restored
