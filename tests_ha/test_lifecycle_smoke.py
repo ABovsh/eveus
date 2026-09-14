@@ -30,7 +30,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMockResponse,
 )
 
-from custom_components.eveus import common_base
+from custom_components.eveus import common_base, common_network
 from custom_components.eveus.const import (
     AVAILABILITY_GRACE_PERIOD,
     CONF_MODEL,
@@ -67,6 +67,40 @@ REPRESENTATIVE_STATES = {
 }
 CURRENT = "number.eveus_ev_charger_charging_current"
 VOLTAGE = "sensor.eveus_ev_charger_voltage"
+
+
+class _MockedSession:
+    """Routes the integration's POSTs to the mocker without a real ClientSession.
+
+    The `aioclient_mock` fixture builds a real session whose DNS resolver,
+    closed at teardown on older Home Assistant releases, leaves a shutdown
+    thread behind that the plugin's cleanup check rejects.
+    """
+
+    def __init__(self, mocker: AiohttpClientMocker) -> None:
+        self._mocker = mocker
+
+    def post(self, url: str, **kwargs: object) -> _MockedRequest:
+        return _MockedRequest(self._mocker.match_request("post", url, **kwargs))
+
+
+class _MockedRequest:
+    def __init__(self, pending) -> None:
+        self._pending = pending
+
+    async def __aenter__(self) -> AiohttpClientMockResponse:
+        return await self._pending
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+
+@pytest.fixture
+def aioclient_mock(monkeypatch: pytest.MonkeyPatch) -> AiohttpClientMocker:
+    mocker = AiohttpClientMocker()
+    session = _MockedSession(mocker)
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    return mocker
 
 
 def _entry(hass: HomeAssistant, host: str) -> MockConfigEntry:

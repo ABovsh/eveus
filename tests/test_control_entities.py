@@ -53,7 +53,7 @@ def test_current_number_native_value_precedence_and_restore() -> None:
     assert entity.native_value == 16
     assert entity._resolve_value() == 24
 
-    entity._optimistic_value_time = 0
+    entity._optimistic_value_time = time.monotonic() - 10_000  # long expired, whatever the host uptime
     updater.data = {}
     entity._last_device_value = 18
     entity._last_successful_read = time.monotonic()
@@ -168,7 +168,7 @@ def test_current_number_update_clears_stale_mismatched_optimistic_value() -> Non
     entity = EveusCurrentNumber(updater, "16A")
     _disable_state_writes(entity)
     entity._optimistic_value = 14
-    entity._optimistic_value_time = 0
+    entity._optimistic_value_time = time.monotonic() - 10_000
 
     entity._handle_coordinator_update()
 
@@ -249,7 +249,7 @@ def test_current_number_restore_ignores_invalid_or_out_of_range_values() -> None
 def test_current_number_returns_none_for_stale_device_value() -> None:
     entity = EveusCurrentNumber(_Updater({}), "16A")
     entity._last_device_value = 12
-    entity._last_successful_read = 0
+    entity._last_successful_read = time.monotonic() - 10_000
 
     assert entity.native_value is None
 
@@ -272,7 +272,7 @@ def test_switch_state_precedence_restore_and_commands() -> None:
     assert entity.is_on is None
     assert entity._resolve_state() is True
 
-    entity._optimistic_state_time = 0
+    entity._optimistic_state_time = time.monotonic() - 10_000
     updater.data = {"oneCharge": "1"}
     assert entity.is_on is None
     assert entity._resolve_state() is True
@@ -303,7 +303,7 @@ def test_switch_update_clears_stale_mismatched_optimistic_state() -> None:
     entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
     entity._optimistic_state = True
-    entity._optimistic_state_time = 0
+    entity._optimistic_state_time = time.monotonic() - 10_000
 
     entity._handle_coordinator_update()
 
