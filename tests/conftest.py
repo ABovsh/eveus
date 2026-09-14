@@ -482,6 +482,17 @@ class HelperHass:
         self.states = HelperStates(values)
 
 
+class StreamReaderStub:
+    """Minimal aiohttp StreamReader stand-in for the capped body readers."""
+
+    def __init__(self, raw: bytes) -> None:
+        self._raw = raw
+
+    async def iter_chunked(self, size: int):
+        for i in range(0, len(self._raw), size):
+            yield self._raw[i : i + size]
+
+
 class EveusTestUpdater:
     """Reusable coordinator/updater fake for direct entity tests."""
 

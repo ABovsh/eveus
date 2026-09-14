@@ -11,6 +11,7 @@ import voluptuous as vol
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 
 from conftest import (
+    StreamReaderStub,
     TEST_BASE_URL,
     TEST_HOST,
     TEST_HOST_ALT,
@@ -120,19 +121,8 @@ class _Response:
         return len(self._body_bytes())
 
     @property
-    def content(self) -> "_StreamReader":
-        return _StreamReader(self._body_bytes())
-
-
-class _StreamReader:
-    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
-
-    def __init__(self, raw: bytes) -> None:
-        self._raw = raw
-
-    async def iter_chunked(self, size: int):
-        for i in range(0, len(self._raw), size):
-            yield self._raw[i : i + size]
+    def content(self) -> "StreamReaderStub":
+        return StreamReaderStub(self._body_bytes())
 
 
 class _Session:

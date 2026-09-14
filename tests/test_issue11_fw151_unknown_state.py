@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import StreamReaderStub, EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import common_network, sensor_definitions as sd
 from custom_components.eveus._payload import validate_main_payload
 from custom_components.eveus.common_network import EveusUpdater
@@ -80,17 +80,8 @@ class _Response:
         return len(json.dumps(self.payload).encode())
 
     @property
-    def content(self) -> "_StreamReader":
-        return _StreamReader(json.dumps(self.payload).encode())
-
-
-class _StreamReader:
-    def __init__(self, raw: bytes) -> None:
-        self._raw = raw
-
-    async def iter_chunked(self, size: int):
-        for i in range(0, len(self._raw), size):
-            yield self._raw[i : i + size]
+    def content(self) -> "StreamReaderStub":
+        return StreamReaderStub(json.dumps(self.payload).encode())
 
 
 class _Session:

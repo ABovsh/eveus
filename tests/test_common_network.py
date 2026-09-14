@@ -13,7 +13,7 @@ import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from conftest import TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import StreamReaderStub, TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.const import (
@@ -58,20 +58,9 @@ class _Response:
         return len(body.encode())
 
     @property
-    def content(self) -> "_StreamReader":
+    def content(self) -> "StreamReaderStub":
         body = self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
-        return _StreamReader(body.encode())
-
-
-class _StreamReader:
-    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
-
-    def __init__(self, raw: bytes) -> None:
-        self._raw = raw
-
-    async def iter_chunked(self, size: int):
-        for i in range(0, len(self._raw), size):
-            yield self._raw[i : i + size]
+        return StreamReaderStub(body.encode())
 
 
 class _Session:
