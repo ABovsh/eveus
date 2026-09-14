@@ -25,7 +25,7 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 FIXTURES = Path(__file__).parent / "fixtures"
 _ALLOWED_KEYS = {
     "state", "subState", "evseEnabled", "powerMeas", "curMeas1", "currentSet",
-    "logReady", "sessionEnergy", "sessionTime", "suspendLimits",
+    "logReady", "sessionEnergy", "sessionTime", "suspendLimits", "RSSI", "temperature2",
 }
 
 
@@ -86,10 +86,18 @@ class Replay:
     clock: dict[str, float]
     observed: list[dict[str, Any]] = field(default_factory=list)
     refresh_requests: int = 0
+    # Per sensor: every (available, state, attributes) it published that differed
+    # from its previous publication -- what the recorder turns into a row.
+    publications: dict[str, list[tuple[Any, ...]]] = field(default_factory=dict)
+    sensors: dict[str, Any] = field(default_factory=dict)
 
 
-def replay(trace: dict[str, Any], monkeypatch) -> Replay:
-    """Run every step and record entity values after each one."""
+def replay(trace: dict[str, Any], monkeypatch, *, sensors: bool = False) -> Replay:
+    """Run every step and record entity values after each one.
+
+    With ``sensors`` the standard single-phase sensor set rides along and every
+    change it would publish is recorded in ``publications``.
+    """
     clock = {"t": 10_000.0}
     fake_time = SimpleNamespace(monotonic=lambda: clock["t"], time=lambda: 1.7e9 + clock["t"])
     for module in (common_base, common_network, control_base, number):
@@ -107,6 +115,13 @@ def replay(trace: dict[str, Any], monkeypatch) -> Replay:
     current = EveusCurrentNumber(updater, "16A")
     current.async_write_ha_state = lambda: None
     result.entities["charging_current"] = current
+    if sensors:
+        from custom_components.eveus.sensor_definitions import get_sensor_specifications
+
+        for spec in get_sensor_specifications(phases=1, max_current=16):
+            sensor = spec.create_sensor(updater, 1)
+            sensor.async_write_ha_state = lambda: None
+            result.sensors[spec.key] = sensor
 
     base = json.loads((FIXTURES / trace["base_payload"]).read_text(encoding="utf-8"))
     payload = copy.deepcopy(base)
@@ -151,3 +166,13 @@ def replay(trace: dict[str, Any], monkeypatch) -> Replay:
 def _notify(result: Replay) -> None:
     for entity in result.entities.values():
         entity._handle_coordinator_update()
+    for key, sensor in result.sensors.items():
+        sensor._handle_coordinator_update()
+        snapshot = (
+            sensor.available,
+            sensor.native_value if sensor.available else None,
+            sensor.extra_state_attributes if sensor.available else None,
+        )
+        history = result.publications.setdefault(key, [])
+        if not history or history[-1] != snapshot:
+            history.append(snapshot)

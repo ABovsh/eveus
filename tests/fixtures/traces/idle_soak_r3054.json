@@ -1,0 +1,402 @@
+{
+ "description": "Idle charger soak: 30 consecutive /main reads 10 s apart (denser than the 60 s idle cadence, so per-poll flutter is over-represented). Car disconnected, stop flag set, 0 W.",
+ "source": "measured",
+ "firmware": "GRM070A-R3.05.4",
+ "recorded": "2026-09-15",
+ "base_payload": "real_main_response.json",
+ "sanitization": "Only the listed telemetry keys are replayed on top of the public base payload; no identifiers, systemTime or raw captures.",
+ "steps": [
+  {
+   "at": 0.2,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 10.3,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 20.6,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 30.7,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 40.8,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 51.1,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 61.2,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 71.6,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 81.9,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 92.2,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 102.5,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 112.8,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 123.1,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 133.3,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 143.7,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 153.9,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 164.1,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 174.2,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -68,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 184.4,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 194.6,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 204.9,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 215.1,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 225.3,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 235.5,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 245.6,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -70,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 255.8,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8
+   },
+   "drop": [
+    "logReady"
+   ]
+  },
+  {
+   "at": 266.1,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -72,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 276.2,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 9,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 286.4,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  },
+  {
+   "at": 296.5,
+   "poll": "ok",
+   "main": {
+    "state": 2,
+    "evseEnabled": 1,
+    "powerMeas": 0,
+    "curMeas1": 0,
+    "RSSI": -69,
+    "temperature2": 8,
+    "logReady": 1
+   }
+  }
+ ]
+}

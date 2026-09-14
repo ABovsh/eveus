@@ -199,3 +199,27 @@ def test_legacy_fw151_trace_keeps_state_translation_and_setpoint_behavior(monkey
         (DEVICE_STATE_STANDBY, True, 10.0),  # back to legacy idle
     ]
     assert result.session.commands == [{"pageevent": ["currentSet"], "currentSet": ["10"]}]
+
+
+def test_idle_soak_trace_stays_within_its_recorder_write_budget(monkeypatch) -> None:
+    """I19: 30 measured idle polls must not publish anything after the first.
+
+    RSSI and plug temperature really do flutter in this capture; a publication
+    per flutter is a recorder row per poll for every idle hour. The budget is the
+    baseline measured at rc 560a4ab: one publication per sensor, valid zeroes
+    included. Time Drift is not covered (systemTime is not replayed).
+    """
+    from trace_replay import load_trace, replay
+
+    trace = load_trace("idle_soak_r3054.json")
+    fed = lambda key: {step["main"][key] for step in trace["steps"]}  # noqa: E731
+    assert len(fed("RSSI")) > 1 and len(fed("temperature2")) > 1, "trace no longer exercises flutter"
+
+    result = replay(trace, monkeypatch, sensors=True)
+
+    extra = {key: history for key, history in result.publications.items() if len(history) > 1}
+    assert extra == {}
+    assert len(result.publications) == len(result.sensors) == 34
+    assert result.publications["power"][0][1] == 0.0
+    assert result.publications["current"][0][1] == 0.0
+    assert all(snapshot[0] for history in result.publications.values() for snapshot in history)
