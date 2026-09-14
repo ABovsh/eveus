@@ -19,7 +19,7 @@ from .common_base import (
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
-from .const import OPTIMISTIC_CONTROL_TTL, UNUSABLE_RESTORED_STATES
+from .const import UNUSABLE_RESTORED_STATES
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -155,24 +155,7 @@ class EveusScheduleTimeEntity(
 
     def _resolve_minutes(self) -> int | None:
         """Resolve minutes value from optimistic, device, or restore state."""
-        current_time = _time.monotonic()
-
-        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
-            return self._optimistic_value
-
-        if (
-            self._updater.available
-            and self._updater.data
-            and self._state_key in self._updater.data
-        ):
-            device_value = get_safe_value(self._updater.data, self._state_key, int)
-            if device_value is not None and 0 <= device_value < 1440:
-                return int(device_value)
-
-        if self._may_hold_last_device_value(current_time):
-            return self._last_device_value
-
-        return None
+        return self._resolve_held_value(self._read_device_value())
 
     async def async_set_value(self, value: dt.time) -> None:
         """Send the new start/stop value to the charger with optimistic UI."""

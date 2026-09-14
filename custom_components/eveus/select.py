@@ -69,26 +69,24 @@ class EveusTimeZoneSelect(
         the last payload after failed polls, so without this gate an offline
         charger would reconcile against a stale `timeZone` and revert the choice.
         """
+        offset = self._device_value()
+        return None if offset is None else _format_tz(offset)
+
+    def _device_value(self) -> int | None:
+        """The charger's offset, only when it is one of the offered options."""
         if not self._updater.available:
             return None
         value = get_safe_value(self._updater.data or {}, "timeZone", int, None)
-        if value is None:
+        if value is None or _format_tz(value) not in TIMEZONE_OPTIONS:
             return None
-        formatted = _format_tz(value)
-        return formatted if formatted in TIMEZONE_OPTIONS else None
+        return value
 
     @property
     def current_option(self) -> str | None:
         """Return optimistic value while pending; else device value; else the
         last good value through the grace window (restored across restarts)."""
-        if self._optimistic_value_is_valid(time.monotonic(), OPTIMISTIC_CONTROL_TTL):
-            return _format_tz(self._optimistic_value)
-        device = self._device_option()
-        if device is not None:
-            return device
-        if self._may_hold_last_device_value(time.monotonic()):
-            return _format_tz(self._last_device_value)
-        return None
+        offset = self._resolve_held_value(self._device_value())
+        return None if offset is None else _format_tz(offset)
 
     async def _async_restore_state(self, state: State) -> None:
         """Seed the last device value from the restored HA state.
@@ -149,18 +147,13 @@ class EveusTimeZoneSelect(
             self._write_if_changed(self.current_option)
             return
         current_time = time.monotonic()
-        device_option = self._device_option()
-        if device_option is not None:
-            try:
-                device_value = int(device_option)
-            except ValueError:
-                device_value = None
-            if device_value is not None:
-                self._reconcile_with_device(
-                    device_value,
-                    current_time,
-                    lambda optimistic, device: optimistic == device,
-                )
+        device_value = self._device_value()
+        if device_value is not None:
+            self._reconcile_with_device(
+                device_value,
+                current_time,
+                lambda optimistic, device: optimistic == device,
+            )
         self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
         self._write_if_changed(self.current_option)
 
@@ -188,24 +181,21 @@ class _EveusIntegerSelect(
 
     def _device_option(self) -> str | None:
         """Resolve the select option from fresh coordinator data."""
+        value = self._device_value()
+        return None if value is None else self.DEVICE_TO_OPTION[value]
+
+    def _device_value(self) -> int | None:
+        """The charger's setting, only when it maps to an offered option."""
         if not self._updater.available:
             return None
         value = get_safe_value(self._updater.data or {}, self.READ_KEY, int, None)
-        if value is None:
-            return None
-        return self.DEVICE_TO_OPTION.get(value)
+        return value if value in self.DEVICE_TO_OPTION else None
 
     @property
     def current_option(self) -> str | None:
         """Return optimistic, device, or grace-window restored option."""
-        if self._optimistic_value_is_valid(time.monotonic(), OPTIMISTIC_CONTROL_TTL):
-            return self.DEVICE_TO_OPTION.get(self._optimistic_value)
-        device = self._device_option()
-        if device is not None:
-            return device
-        if self._may_hold_last_device_value(time.monotonic()):
-            return self.DEVICE_TO_OPTION.get(self._last_device_value)
-        return None
+        value = self._resolve_held_value(self._device_value())
+        return None if value is None else self.DEVICE_TO_OPTION.get(value)
 
     async def _async_restore_state(self, state: State) -> None:
         """Seed the last device value from the restored HA state."""
@@ -251,9 +241,8 @@ class _EveusIntegerSelect(
             self._write_if_changed(self.current_option)
             return
         current_time = time.monotonic()
-        device_option = self._device_option()
-        if device_option is not None:
-            device_value = self.OPTION_TO_DEVICE[device_option]
+        device_value = self._device_value()
+        if device_value is not None:
             self._reconcile_with_device(
                 device_value,
                 current_time,

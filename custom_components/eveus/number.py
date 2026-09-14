@@ -30,7 +30,6 @@ from .const import (
     MIN_CURRENT,
     MIN_VOLTAGE_OPTIONS,
     CONF_MODEL,
-    OPTIMISTIC_CONTROL_TTL,
     SOC_INPUT_LIMITS,
     UNUSABLE_RESTORED_STATES,
     DEFAULT_INITIAL_SOC,
@@ -327,22 +326,7 @@ class EveusCurrentNumber(EveusNumberEntity):
 
     def _resolve_value(self) -> float | None:
         """Resolve current value from command, optimistic, device, and restore state."""
-        current_time = time.monotonic()
-
-        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
-            return self._optimistic_value
-
-        if self._updater.available and self._updater.data and self._command in self._updater.data:
-            device_value = get_safe_value(self._updater.data, self._command, float)
-            if device_value is not None and (
-                self._READ_MIN <= device_value <= self._attr_native_max_value
-            ):
-                return float(device_value)
-
-        if self._may_hold_last_device_value(current_time):
-            return self._last_device_value
-
-        return None
+        return self._resolve_held_value(self._read_device_value())
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new current value with optimistic UI."""
@@ -468,15 +452,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         return self._pending_value
 
     def _resolve_value(self) -> float | None:
-        current_time = time.monotonic()
-        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
-            return self._optimistic_value
-        device_value = self._read_device_value()
-        if device_value is not None:
-            return device_value
-        if self._may_hold_last_device_value(current_time):
-            return self._last_device_value
-        return None
+        return self._resolve_held_value(self._read_device_value())
 
     def _pre_send_refresh(self) -> None:
         """Hook: refresh dynamic bounds just before clamping a queued write.

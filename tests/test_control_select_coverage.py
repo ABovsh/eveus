@@ -442,21 +442,20 @@ def test_min_voltage_select_command_pending_true_during_send(monkeypatch) -> Non
 # --- _handle_coordinator_update device-value derivation guards ---
 
 
-def test_timezone_handle_update_value_error_guard_skips_reconcile_not_empty_string(
+def test_timezone_handle_update_skips_reconcile_for_an_offset_it_cannot_offer(
     monkeypatch,
 ) -> None:
-    """When `_device_option()` returns something non-numeric (defensive path),
-    the except-branch must set device_value to None (skipping reconcile), not
-    the empty string (which is not-None and would wrongly trigger reconcile)."""
-    select = select_module.EveusTimeZoneSelect(_Updater({"timeZone": 0}))
+    """An offset outside the offered options is not a device reading: it must
+    neither reconcile the optimistic value nor be shown."""
+    select = select_module.EveusTimeZoneSelect(_Updater({"timeZone": 99}))
     _mute(select)
-    monkeypatch.setattr(select, "_device_option", lambda: "not-an-int")
     calls: list[object] = []
     monkeypatch.setattr(select, "_reconcile_with_device", lambda *a, **k: calls.append(a))
 
     select._handle_coordinator_update()
 
     assert calls == []
+    assert select.current_option is None
 
 
 def test_min_voltage_handle_update_uses_real_device_option_not_forced_none(

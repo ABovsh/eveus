@@ -20,7 +20,6 @@ from .common_base import (
 )
 from .control_base import CommandBackedEntity
 from .const import (
-    OPTIMISTIC_CONTROL_TTL,
     SOC_MODE_ADVANCED,
     get_soc_mode,
 )
@@ -260,20 +259,8 @@ class BaseSwitchEntity(
         source is available, so a missing/invalid payload field is not exposed
         as a real ``off`` state that automations could act on.
         """
-        current_time = time.monotonic()
-
-        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
-            return bool(self._optimistic_value)
-
-        if self._updater.available and self._updater.data and self._state_key in self._updater.data:
-            device_value = get_safe_value(self._updater.data, self._state_key, int)
-            if device_value in (0, 1):
-                return bool(device_value)
-
-        if self._may_hold_last_device_value(current_time):
-            return self._last_device_value
-
-        return None
+        value = self._resolve_held_value(self._read_device_value())
+        return None if value is None else bool(value)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""

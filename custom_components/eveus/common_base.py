@@ -19,6 +19,7 @@ from .const import (
     AVAILABILITY_GRACE_PERIOD,
     CONTROL_GRACE_PERIOD,
     ERROR_LOG_RATE_LIMIT,
+    OPTIMISTIC_CONTROL_TTL,
 )
 from .utils import RateLog, apply_deadband, get_device_info, get_device_suffix
 
@@ -414,6 +415,23 @@ class OptimisticControlMixin(Generic[T]):
         # Monotonic elapsed time, so a wall-clock step cannot move this window;
         # 0 <= age still rejects a stamp from a different clock base.
         return 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
+
+    def _resolve_held_value(self, device_value: T | None) -> T | None:
+        """The one display precedence every control shares.
+
+        A still-valid optimistic value, else the valid device reading, else the
+        last reading while it may be held (``_may_hold_last_device_value``),
+        else nothing. Callers pass the device value read once for this
+        resolution and format the result for their platform.
+        """
+        current_time = time.monotonic()
+        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
+            return self._optimistic_value
+        if device_value is not None:
+            return device_value
+        if self._may_hold_last_device_value(current_time):
+            return self._last_device_value
+        return None
 
     def _init_optimistic_control(self) -> None:
         """Initialize common optimistic-control state."""
