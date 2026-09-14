@@ -141,3 +141,41 @@ def test_validate_main_payload_accepts_real_payload(real_payload) -> None:
 def test_validate_main_payload_rejects_invalid_payloads(payload, match) -> None:
     with pytest.raises(PayloadError, match=match):
         validate_main_payload(payload, MODEL_16A)
+
+
+# --- recorded timelines replayed against the real coordinator ---
+
+
+def test_idle_current_setpoint_trace_holds_the_new_value_through_a_late_confirmation(
+    monkeypatch,
+) -> None:
+    from trace_replay import load_trace, replay
+
+    result = replay(load_trace("idle_current_setpoint_r3054.json"), monkeypatch)
+
+    assert [step["charging_current"] for step in result.observed] == [
+        16.0,  # first poll
+        15.0,  # command accepted
+        15.0,  # charger still reports 16: the optimistic value must not snap back
+        15.0,  # confirmed; logReady missing is not a failure
+        15.0,
+        15.0,  # one failed poll: held, not blanked
+        15.0,  # recovered, logReady back
+    ]
+    assert result.session.commands == [{"pageevent": ["currentSet"], "currentSet": ["15"]}]
+    assert result.refresh_requests == 1
+    assert result.entities["charging_current"]._optimistic_value is None
+
+
+def test_trace_loader_rejects_keys_outside_the_sanitized_allowlist(tmp_path, monkeypatch) -> None:
+    import trace_replay
+
+    (tmp_path / "traces").mkdir()
+    (tmp_path / "traces" / "leaky.json").write_text(
+        json.dumps({"source": "measured", "steps": [{"at": 0, "poll": "ok", "main": {"serialNum": "X"}}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(trace_replay, "FIXTURES", tmp_path)
+
+    with pytest.raises(ValueError, match="allowlist"):
+        trace_replay.load_trace("leaky.json")
