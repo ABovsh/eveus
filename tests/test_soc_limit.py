@@ -328,12 +328,13 @@ def test_confirmation_during_inflight_stop_is_not_lost():
         ctrl = SocLimitController(hass, updater, calc)
         ctrl.set_enabled(True)
         ctrl.process()              # spawns Stop; blocks on gate after recording token
+        stop_task = ctrl._stop_task
         await asyncio.sleep(0)      # let _stop record _pending then block on send
         # The stop took effect at the charger before its HTTP response returned:
         updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1, "suspendLimits": 0}
         ctrl.process()              # confirms via the in-flight token
         gate.set()
-        await asyncio.sleep(0.02)
+        await asyncio.gather(stop_task, return_exceptions=True)
         assert len(events) == 1
 
     asyncio.run(scenario())
@@ -356,7 +357,7 @@ def test_inflight_stop_superseded_by_toggle_fires_nothing():
         updater.available = True
         updater.last_update_success = True
         updater.device_number = 1
-        updater.data = {"state": 4, "sessionEnergy": 30.0, "suspendLimits": 0}
+        updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
         updater.send_command = slow_send
 
         hass = MagicMock()
@@ -366,11 +367,14 @@ def test_inflight_stop_superseded_by_toggle_fires_nothing():
         ctrl = SocLimitController(hass, updater, calc)
         ctrl.set_enabled(True)
         ctrl.process()              # spawns attempt A, which blocks on the gate
+        attempt_a = ctrl._stop_task
+        assert attempt_a is not None  # without evseEnabled no attempt spawns
         await asyncio.sleep(0)      # let A reach `await gate.wait()`
         ctrl.set_enabled(False)     # cancels A, bumps the generation
         ctrl.set_enabled(True)      # re-arm into a fresh generation
         gate.set()                  # release A (now superseded/cancelled)
-        await asyncio.sleep(0.02)   # let the event loop settle
+        await asyncio.gather(attempt_a, return_exceptions=True)
+        assert attempt_a.cancelled()
         assert events == []         # the superseded attempt fired nothing
         assert ctrl._fired is False  # new epoch's latch is clean
 
@@ -604,12 +608,14 @@ def test_second_poll_does_not_spawn_concurrent_stop_while_one_is_inflight():
         ctrl = SocLimitController(hass, updater, calc)
         ctrl.set_enabled(True)
         ctrl.process()  # spawns attempt A
+        attempt_a = ctrl._stop_task
         await asyncio.sleep(0)  # let A reach the send_command gate
         ctrl.process()  # must see the in-flight task and wait, not spawn B
         await asyncio.sleep(0)  # let B run to its own gate, if it was (wrongly) spawned
         assert len(send_calls) == 1
         gate.set()
-        await asyncio.sleep(0.02)
+        await asyncio.gather(attempt_a, return_exceptions=True)
+        assert len(send_calls) == 1
 
     asyncio.run(scenario())
 
