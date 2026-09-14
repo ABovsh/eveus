@@ -6,6 +6,7 @@ from collections import deque
 from datetime import timedelta
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 import aiohttp
@@ -411,6 +412,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         *,
         retry: bool = True,
         extra: dict[str, Any] | None = None,
+        preflight: Callable[[], bool] | None = None,
     ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
         if self._shutting_down:
@@ -419,7 +421,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return False
         try:
             success = await self._command_manager.send_command(
-                command, value, retry=retry, extra=extra
+                command, value, retry=retry, extra=extra, preflight=preflight
             )
         finally:
             # Invalidate even on the raising path (401 -> ConfigEntryAuthFailed)

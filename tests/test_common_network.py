@@ -1348,7 +1348,7 @@ def test_send_command_defaults_to_retry_enabled(
         updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
         received: dict[str, object] = {}
 
-        async def fake_send(command, value, *, retry=None, extra=None):
+        async def fake_send(command, value, *, retry=None, extra=None, preflight=None):
             received["retry"] = retry
             return True
 

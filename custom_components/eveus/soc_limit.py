@@ -227,6 +227,23 @@ class SocLimitController:
             self._stop(generation, round(current), round(target), energy, session_time)
         )
 
+    def _stop_still_due(self, generation: int) -> bool:
+        """Whether this Stop may still be transmitted, checked at the wire.
+
+        Cancellation on re-arm and the pre-lock ``suspendLimits`` read cannot
+        cover a Stop that waits behind another command or a retry backoff: a
+        poll meanwhile can turn "Disable limits" on (``process()`` only stands
+        down, it does not cancel), and a cancellation can lose the race with the
+        lock hand-off. Re-read everything against the latest poll.
+        """
+        data = self._updater.data
+        return (
+            # Disabling or unloading re-arms, so the generation covers both.
+            generation == self._generation
+            and isinstance(data, dict)
+            and get_safe_value(data, "suspendLimits", int) == 0
+        )
+
     def _emit_reached(self, soc: int, target: int) -> None:
         """Latch and fire the reached event exactly once for this session."""
         self._fired = True
@@ -283,7 +300,9 @@ class SocLimitController:
         try:
             # evseEnabled=1 is the Stop command (0 = keep charging); this matches
             # the Stop Charging switch, not the field's misleading name.
-            stopped = await self._updater.send_command("evseEnabled", 1)
+            stopped = await self._updater.send_command(
+                "evseEnabled", 1, preflight=lambda: self._stop_still_due(generation)
+            )
         except asyncio.CancelledError:
             raise
         except ConfigEntryAuthFailed:

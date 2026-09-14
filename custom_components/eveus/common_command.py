@@ -3,6 +3,7 @@ import logging
 import asyncio
 import random
 import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
 
@@ -61,12 +62,19 @@ class CommandManager:
         *,
         retry: bool = True,
         extra: dict[str, Any] | None = None,
+        preflight: Callable[[], bool] | None = None,
     ) -> bool:
         """Send command with rate limiting, retry/backoff, and error handling.
 
         ``extra`` adds sibling form fields to the same request. Some firmware
         settings (e.g. OCPP) are only honored when several fields are written
         together as one "save" form, not as a bare single-field write.
+
+        ``preflight`` is re-evaluated inside the command lock immediately before
+        every attempt, including each retry: a command that was valid when
+        queued can stop being so while it waits behind another command or a
+        backoff. A rejection returns False without a POST, a retry or a failure
+        count — nothing went wrong on the network.
         """
         async with self._lock:
             # Rate limit: minimum 1 second between commands. Monotonic clock so a
@@ -84,6 +92,8 @@ class CommandManager:
                 last_error: Exception | None = None
                 retry_attempts = _COMMAND_RETRY_ATTEMPTS if retry else 0
                 for attempt in range(retry_attempts + 1):  # pragma: no mutate - equivalent: both break conditions below always fire at attempt<=retry_attempts, so a larger range upper bound is unreachable dead code
+                    if preflight is not None and not preflight():
+                        return False
                     try:
                         return await self._post_command(command, value, extra)
                     except aiohttp.ClientResponseError as err:
