@@ -653,3 +653,45 @@ def test_a_failed_setup_is_labelled_as_such() -> None:
 
     assert setup["ready"] is False
     assert "note" in setup
+
+
+def test_production_logs_never_carry_raw_exception_text_or_tracebacks() -> None:
+    """Exception text and tracebacks can embed the charger URL, response
+    content or credentials; failure logs name the exception class instead.
+    The integration's own validation errors carry fixed messages and stay."""
+    import ast
+    from pathlib import Path
+
+    owned = {"InvalidInput", "InvalidDevice", "InvalidResponse", "CannotConnect", "InvalidAuth"}
+    package = Path(__file__).parent.parent / "custom_components" / "eveus"
+    offenders: list[str] = []
+
+    def is_logger_call(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "_LOGGER"
+        )
+
+    for path in sorted(package.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if is_logger_call(node):
+                where = f"{path.name}:{node.lineno}"
+                if node.func.attr == "exception":
+                    offenders.append(f"{where} _LOGGER.exception")
+                if any(kw.arg == "exc_info" for kw in node.keywords):
+                    offenders.append(f"{where} exc_info")
+            if not (isinstance(node, ast.ExceptHandler) and node.name):
+                continue
+            if isinstance(node.type, ast.Name) and node.type.id in owned:
+                continue
+            for call in (n for stmt in node.body for n in ast.walk(stmt) if is_logger_call(n)):
+                for arg in call.args[1:]:
+                    raw = arg
+                    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id in {"str", "repr"} and arg.args:
+                        raw = arg.args[0]
+                    if isinstance(raw, ast.Name) and raw.id == node.name:
+                        offenders.append(f"{path.name}:{call.lineno} raw {raw.id}")
+    assert offenders == [], "\n".join(offenders)

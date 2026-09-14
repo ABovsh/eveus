@@ -233,7 +233,7 @@ class OptimizedEveusSensor(EveusSensorBase):
             return self._spec.value_fn(self._updater, self.hass)
         except Exception as err:
             if self._should_log_error(f"sensor_{self._spec.key}"):
-                _LOGGER.debug("Error getting value for %s: %s", self.name, err, exc_info=True)  # pragma: no mutate - log message text/exc_info; nothing asserts on either
+                _LOGGER.debug("Error getting value for %s: %s", self.name, type(err).__name__)  # pragma: no mutate - log message text/exc_info; nothing asserts on either
             return None
 
     def _update_extra_state_attributes(self) -> bool:
@@ -261,8 +261,7 @@ class OptimizedEveusSensor(EveusSensorBase):
                 _LOGGER.debug(
                     "Error getting attributes for %s: %s",  # pragma: no mutate - log message text only
                     self.name,
-                    err,
-                    exc_info=True,  # pragma: no mutate - nothing asserts on captured traceback
+                    type(err).__name__,
                 )
         self._attr_extra_state_attributes = attrs or {}
         return previous_attrs != self._attr_extra_state_attributes
@@ -848,7 +847,7 @@ def get_time_drift(updater, hass) -> Optional[int]:
         return candidate
     except Exception as err:
         if _should_log_error("get_time_drift"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
-            _LOGGER.debug("Error getting time drift: %s", err, exc_info=True)  # pragma: no mutate - log message TEXT only
+            _LOGGER.debug("Error getting time drift: %s", type(err).__name__)  # pragma: no mutate - log message TEXT only
         return None
 
 
@@ -1011,7 +1010,7 @@ def get_connection_quality(updater, hass) -> Optional[float]:
         return round(max(0, min(100, rate)))
     except Exception as err:
         if _should_log_error("get_connection_quality"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
-            _LOGGER.debug("Error getting connection quality: %s", err, exc_info=True)  # pragma: no mutate - log message TEXT/exc_info; nothing asserts on either
+            _LOGGER.debug("Error getting connection quality: %s", type(err).__name__)  # pragma: no mutate - log message TEXT/exc_info; nothing asserts on either
         return None
 
 
@@ -1058,8 +1057,7 @@ def get_connection_attrs(updater, hass) -> dict:
                 if _should_log_error("get_connection_attrs_rssi"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
                     _LOGGER.debug(
                         "Error getting wifi_rssi for connection attrs: %s",  # pragma: no mutate - log message TEXT only
-                        err,
-                        exc_info=True,  # pragma: no mutate - nothing asserts on captured traceback
+                        type(err).__name__,
                     )
                 rssi = None
             if rssi is not None:
@@ -1067,7 +1065,7 @@ def get_connection_attrs(updater, hass) -> dict:
         return attrs
     except Exception as err:
         if _should_log_error("get_connection_attrs"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
-            _LOGGER.debug("Error getting connection attributes: %s", err, exc_info=True)  # pragma: no mutate - log message TEXT/exc_info; nothing asserts on either
+            _LOGGER.debug("Error getting connection attributes: %s", type(err).__name__)  # pragma: no mutate - log message TEXT/exc_info; nothing asserts on either
         return {"status": "Error"}
 
 

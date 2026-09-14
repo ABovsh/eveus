@@ -512,3 +512,27 @@ def test_post_command_short_circuits_while_shutting_down() -> None:
 
     assert asyncio.run(manager._post_command("currentSet", 16)) is False
     assert len(session.calls) == 0
+
+
+def test_command_manager_unexpected_error_logs_only_its_class(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sentinel = "TOKEN-SENTINEL"
+
+    class _SecretError(RuntimeError):
+        pass
+
+    class _ExplodingSession:
+        def post(self, url: str, **kwargs: object):
+            try:
+                raise ValueError(f"cause {sentinel}")
+            except ValueError as cause:
+                raise _SecretError(f"{url} {sentinel}") from cause
+
+    manager = CommandManager(_Updater(_ExplodingSession()))
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.common_command"):
+        assert asyncio.run(manager.send_command("currentSet", 16)) is False
+
+    assert sentinel not in caplog.text
+    assert TEST_HOST not in caplog.text
+    assert "_SecretError" in caplog.text

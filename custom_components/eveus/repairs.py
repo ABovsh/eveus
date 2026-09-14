@@ -123,7 +123,7 @@ class InvalidConfigRepairFlow(RepairsFlow):
             except InvalidResponse:
                 errors["base"] = "invalid_response"
             except Exception as err:
-                _LOGGER.debug("Unexpected Eveus repair flow error: %s", err, exc_info=True)
+                _LOGGER.debug("Unexpected Eveus repair flow error: %s", type(err).__name__)
                 errors["base"] = "unknown"
 
         return self.async_show_form(

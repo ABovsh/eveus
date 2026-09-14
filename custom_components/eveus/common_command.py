@@ -128,8 +128,7 @@ class CommandManager:
                     _LOGGER.debug(
                         "Command %s unexpected error: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                         command,
-                        err,
-                        exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                        type(err).__name__,
                     )
                 return False
             finally:

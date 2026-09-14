@@ -134,9 +134,9 @@ def test_time_drift_handles_data_access_exception_without_raising() -> None:
     assert sd.get_time_drift(BrokenUpdater(), None) is None
 
 
-def test_time_drift_exception_log_includes_traceback(caplog) -> None:
-    """The except-block debug log passes exc_info=True so the traceback is
-    attached to the log record -- not just the bare error text."""
+def test_time_drift_exception_log_names_the_class_without_text_or_traceback(caplog) -> None:
+    """The except-block debug log names the exception class only: its text and
+    traceback can carry charger content, so neither reaches the record."""
     import logging
 
     class BrokenUpdater:
@@ -144,7 +144,7 @@ def test_time_drift_exception_log_includes_traceback(caplog) -> None:
 
         @property
         def data(self):
-            raise RuntimeError("boom")
+            raise RuntimeError("TOKEN-SENTINEL")
 
     # The rate limiter is a module-level singleton shared across tests; clear
     # this key so an earlier test's call doesn't suppress ours.
@@ -157,7 +157,9 @@ def test_time_drift_exception_log_includes_traceback(caplog) -> None:
         sd.get_time_drift(BrokenUpdater(), None)
         matching = [r for r in caplog.records if "Error getting time drift" in r.message]
         assert matching, "expected a debug log for the caught exception"
-        assert matching[0].exc_info  # truthy tuple only when exc_info=True was passed
+        assert matching[0].exc_info is None
+        assert "RuntimeError" in matching[0].message
+        assert "TOKEN-SENTINEL" not in caplog.text
 
 
 # --- spec wiring: Time Drift replaces System Time ---

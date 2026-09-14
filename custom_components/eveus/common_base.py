@@ -345,8 +345,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
             _LOGGER.debug(
                 "Could not restore state for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,
-                err,
-                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                type(err).__name__,
             )
 
     async def _async_restore_state(self, state: State) -> None:
@@ -594,8 +593,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
                 _LOGGER.debug(
                     "Error getting sensor value for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                     self.unique_id,
-                    err,
-                    exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                    type(err).__name__,
                 )
             value = None
         if value is None and self._in_availability_grace:

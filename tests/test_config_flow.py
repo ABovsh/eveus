@@ -2524,3 +2524,95 @@ def test_options_flow_aborts_when_the_reload_fails() -> None:
     # The data change is committed either way — only the success claim is gated.
     assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
     assert result == {"type": "abort", "reason": "reload_failed"}
+
+
+_LEAK_HOST = "leak-host-sentinel.lan"
+_LEAK_PASSWORD = "PASSWORD-SENTINEL"  # NOSONAR(python:S2068) - test sentinel
+_LEAK_TOKEN = "TOKEN-SENTINEL"
+
+
+def _assert_no_sentinel(caplog: pytest.LogCaptureFixture, *extra: str) -> None:
+    text = caplog.text + "".join(extra)
+    for sentinel in (_LEAK_HOST, _LEAK_PASSWORD, _LEAK_TOKEN):
+        assert sentinel not in text
+
+
+class _SecretError(RuntimeError):
+    pass
+
+
+def _leaky_response(kind: str) -> _Response:
+    if kind == "non_json_body":
+        return _Response(payload=f"<html>{_LEAK_TOKEN}</html>")
+    if kind == "foreign_json_keys":
+        return _Response(payload={f"{_LEAK_TOKEN}_key": "x"})
+    response = _Response(payload=f"<html>{_LEAK_TOKEN}</html>")
+    response.headers = {"Content-Type": f"text/html; {_LEAK_TOKEN}"}
+    return response
+
+
+@pytest.mark.parametrize(
+    ("kind", "safe_reason"),
+    [
+        ("non_json_body", "did not return JSON"),
+        ("foreign_json_keys", "not an Eveus /main payload"),
+        ("hostile_content_type", "did not return JSON"),
+    ],
+)
+def test_validate_input_logs_no_response_content_host_or_credentials(
+    caplog: pytest.LogCaptureFixture, kind: str, safe_reason: str
+) -> None:
+    hass = _Hass(_Session(_leaky_response(kind)))
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.config_flow"):
+        with pytest.raises(InvalidResponse) as err:
+            asyncio.run(
+                validate_input(
+                    hass, _input(**{CONF_HOST: _LEAK_HOST, CONF_PASSWORD: _LEAK_PASSWORD})
+                )
+            )
+
+    _assert_no_sentinel(caplog, str(err.value))
+    assert safe_reason in caplog.text
+
+
+def test_validate_input_unexpected_error_logs_only_its_class(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _ExplodingSession:
+        def post(self, url: str, **kwargs: object):
+            try:
+                raise ValueError(f"cause {_LEAK_TOKEN} {_LEAK_PASSWORD}")
+            except ValueError as cause:
+                raise _SecretError(f"{url} {_LEAK_TOKEN}") from cause
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.config_flow"):
+        with pytest.raises(CannotConnect) as err:
+            asyncio.run(
+                validate_input(
+                    _Hass(_ExplodingSession()),
+                    _input(**{CONF_HOST: _LEAK_HOST, CONF_PASSWORD: _LEAK_PASSWORD}),
+                )
+            )
+
+    _assert_no_sentinel(caplog, str(err.value))
+    assert "_SecretError" in caplog.text
+    assert str(err.value) == "Unexpected error: _SecretError"
+
+
+def test_user_flow_unexpected_error_logs_only_its_class(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def fake_validate_input(hass, data):
+        raise _SecretError(f"{_LEAK_HOST} {_LEAK_PASSWORD} {_LEAK_TOKEN}")
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.config_flow"):
+        result = asyncio.run(flow.async_step_user(_input()))
+
+    assert result["errors"] == {"base": "unknown"}
+    _assert_no_sentinel(caplog)
+    assert "_SecretError" in caplog.text

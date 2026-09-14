@@ -378,7 +378,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                 # keeps the toast honest and lets that mechanism do its job.
                 raise
             except Exception as err:
-                _LOGGER.debug("Failed to set current value: %s", err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, err VALUE unchanged
+                _LOGGER.debug("Failed to set current value: %s", type(err).__name__)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, err VALUE unchanged
                 raise HomeAssistantError(
                     f"Failed to set charging current: {err}"  # pragma: no mutate - pure exception-message text, err VALUE unchanged
                 ) from err
@@ -397,7 +397,7 @@ class EveusCurrentNumber(EveusNumberEntity):
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored_value
         except (TypeError, ValueError) as err:
-            _LOGGER.debug("Could not restore number state for %s: %s", self.name, err)  # pragma: no mutate - pure log-message text, arguments unchanged
+            _LOGGER.debug("Could not restore number state for %s: %s", self.name, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
 
 
 class EveusSetpointNumber(EveusNumberEntity):
@@ -510,7 +510,7 @@ class EveusSetpointNumber(EveusNumberEntity):
             except (HomeAssistantError, ConfigEntryAuthFailed):
                 raise
             except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Failed to set %s: %s", self.ENTITY_NAME, err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, arguments unchanged
+                _LOGGER.debug("Failed to set %s: %s", self.ENTITY_NAME, type(err).__name__)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, arguments unchanged
                 raise HomeAssistantError(f"Failed to set {self.ENTITY_NAME}: {err}") from err  # pragma: no mutate - pure exception-message text, ENTITY_NAME/err VALUES unchanged
             finally:
                 self._pending_value = None
@@ -526,7 +526,7 @@ class EveusSetpointNumber(EveusNumberEntity):
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored
         except (TypeError, ValueError) as err:
-            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)  # pragma: no mutate - pure log-message text, arguments unchanged
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
 
 
 class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
@@ -584,7 +584,7 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
                     self._last_successful_read = time.time()
                     self._attr_native_value = restored
         except (TypeError, ValueError) as err:
-            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, err)  # pragma: no mutate - pure log-message text, arguments unchanged
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
 
     def _refresh_min_bound(self) -> None:
         """Set the lower bound to ``minVoltage + 10`` when the charger reports it."""

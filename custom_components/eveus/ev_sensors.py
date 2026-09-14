@@ -112,7 +112,7 @@ class CachedSOCCalculator:
                 self.initial_soc, self.battery_capacity, energy_charged, self._effective_correction()
             )
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)  # pragma: no mutate - log message text is display-only; exc_info kwarg (traceback capture) is not observed by any test
+            _LOGGER.debug("Error calculating SOC kWh: %s", type(err).__name__)  # pragma: no mutate - log message text is display-only; exc_info kwarg (traceback capture) is not observed by any test
             return None
 
     def get_soc_percent(self, energy_charged: float) -> Optional[float]:
@@ -515,8 +515,7 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             _LOGGER.debug(
                 "Error calculating time to target for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,
-                err,
-                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                type(err).__name__,
             )
             # Matches the docstring: drop any stale value on failure instead of
             # freezing it (this class's own inputs-missing branch above does
@@ -686,7 +685,6 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             _LOGGER.debug(
                 "Error calculating finish time for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
                 self.unique_id,
-                err,
-                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                type(err).__name__,
             )
             return None

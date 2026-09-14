@@ -5,6 +5,7 @@ import logging
 import asyncio
 import ipaddress
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -173,6 +174,19 @@ def _warn_if_plaintext(scheme: str | None) -> None:
             "sent in cleartext on every poll. Use HTTPS on a LAN-trusted "
             "network or accept the exposure risk."
         )
+
+
+_MEDIA_TYPE = re.compile(r"[A-Za-z0-9!#$&^_.+-]{1,64}/[A-Za-z0-9!#$&^_.+-]{1,64}")
+
+
+def _safe_media_type(response: Any) -> str:
+    """Return the bare media type, or "unknown" for anything else.
+
+    Header parameters and malformed values are charger-controlled text and
+    never reach the log.
+    """
+    raw = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip()
+    return raw.lower() if _MEDIA_TYPE.fullmatch(raw) else "unknown"
 
 
 def _host_is_valid(host: str) -> bool:
@@ -480,16 +494,18 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             response.raise_for_status()
 
             # Read the raw body ourselves (instead of response.json) so a
-            # misbehaving charger's reply can be logged before we try to decode
-            # it. Older firmware that answers /main with an HTML login page or a
-            # malformed body lands here, and the log makes the cause visible
-            # rather than collapsing into a bare "Failed to connect".
+            # misbehaving charger's reply can be classified before we try to
+            # decode it. Older firmware that answers /main with an HTML login
+            # page or a malformed body lands here, and the log names the cause
+            # rather than collapsing into a bare "Failed to connect". Only the
+            # status and media type are logged: the body, header parameters and
+            # key names are untrusted content, and the host is the user's.
             try:
                 raw_body = await read_body_capped(response)
             except PayloadError as err:
                 _LOGGER.warning(
-                    "Eveus %s returned an oversized /main body (HTTP %s, %s)",
-                    host, response.status, response.headers.get("Content-Type"),
+                    "Eveus charger returned an oversized /main body (HTTP %s, %s)",
+                    response.status, _safe_media_type(response),
                 )
                 raise InvalidResponse("Response body too large") from err
 
@@ -499,17 +515,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                 result = json.loads(decode_body_lenient(raw_body))
             except ValueError as err:
                 # Warning-level on purpose: setup is user-initiated, and this
-                # line is the only evidence of WHAT an incompatible (old-
-                # firmware) charger actually sent — behind the debug flag it
-                # costs a log-config round-trip on every support report. Only
-                # the already-capped first 200 bytes: enough to tell an HTML
-                # login page from malformed JSON without dumping a whole body,
-                # and the /main body carries device telemetry, not credentials.
+                # line is the evidence of what an incompatible (old-firmware)
+                # charger sent — behind the debug flag it costs a log-config
+                # round-trip on every support report. The media type is enough
+                # to tell an HTML login page from malformed JSON.
                 _LOGGER.warning(
-                    "Eveus %s did not return JSON from /main "
-                    "(HTTP %s, Content-Type %s, first 200 bytes: %r)",
-                    host, response.status,
-                    response.headers.get("Content-Type"), raw_body[:200],
+                    "Eveus charger did not return JSON from /main "
+                    "(HTTP %s, Content-Type %s, %d bytes)",
+                    response.status, _safe_media_type(response), len(raw_body),
                 )
                 raise InvalidResponse("Response is not valid JSON") from err
 
@@ -517,10 +530,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                 device_info = validate_device_response(result, normalized_data[CONF_MODEL])
             except InvalidResponse:
                 _LOGGER.warning(
-                    "Eveus %s returned JSON that is not an Eveus /main payload "
-                    "(keys: %s)",
-                    host,
-                    sorted(result)[:20] if isinstance(result, dict) else type(result).__name__,
+                    "Eveus charger returned JSON that is not an Eveus /main payload "
+                    "(%s with %d keys)",
+                    type(result).__name__,
+                    len(result) if isinstance(result, dict) else 0,
                 )
                 raise
 
@@ -533,20 +546,15 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except aiohttp.ClientResponseError as err:
         if err.status == 401:
             raise InvalidAuth from err
-        _LOGGER.debug(
-            "Eveus %s returned HTTP %s for /main", normalized_data[CONF_HOST], err.status
-        )
+        _LOGGER.debug("Eveus charger returned HTTP %s for /main", err.status)
         raise CannotConnect(f"HTTP {err.status}") from err
     except (asyncio.TimeoutError, aiohttp.ClientError) as err:
-        _LOGGER.debug(
-            "Eveus %s is unreachable (%s)",
-            normalized_data[CONF_HOST], type(err).__name__,
-        )
+        _LOGGER.debug("Eveus charger is unreachable (%s)", type(err).__name__)
         raise CannotConnect(f"Connection error: {type(err).__name__}") from err
     except (InvalidAuth, InvalidDevice, InvalidResponse, InvalidInput, CannotConnect):
         raise
     except Exception as err:
-        _LOGGER.exception("Unexpected Eveus setup error")
+        _LOGGER.error("Unexpected Eveus setup error: %s", type(err).__name__)
         raise CannotConnect(f"Unexpected error: {type(err).__name__}") from err
 
 
@@ -615,8 +623,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Exception subclass. Let it propagate so the duplicate charger
                 # aborts with "already_configured" instead of a generic "unknown".
                 raise
-            except Exception:
-                _LOGGER.exception("Unexpected exception")
+            except Exception as err:
+                _LOGGER.error("Unexpected exception: %s", type(err).__name__)
                 errors["base"] = "unknown"
 
         # Re-show with the submitted values as defaults so a validation error
@@ -754,8 +762,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # Duplicate-host abort must reach the user as "already_configured"
                 # rather than being swallowed into a generic "unknown" error.
                 raise
-            except Exception:
-                _LOGGER.exception("Unexpected reconfigure exception")
+            except Exception as err:
+                _LOGGER.error("Unexpected reconfigure exception: %s", type(err).__name__)
                 errors["base"] = "unknown"
 
         return self.async_show_form(
@@ -862,8 +870,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # async_set_unique_id abort; surface that reason instead of
                 # swallowing it into a generic "unknown" error.
                 raise
-            except Exception:
-                _LOGGER.exception("Unexpected reauth exception")
+            except Exception as err:
+                _LOGGER.error("Unexpected reauth exception: %s", type(err).__name__)
                 errors["base"] = "unknown"
 
         return self.async_show_form(

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### 🔒 Privacy
+- **Logs no longer carry what the charger sent back, its address or error text.** A failed setup logs the HTTP status, the media type and the body size instead of the first 200 bytes of the reply, the key names of an unrecognised payload or the charger's host; every other failure logs the error type instead of its message and traceback.
+
 ## 4.22.0 - 2026-09-12
 
 ### ⚠️ Breaking

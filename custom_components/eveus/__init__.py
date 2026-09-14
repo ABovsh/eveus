@@ -775,10 +775,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
     except (ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady):
         raise
     except Exception as ex:
-        # Log the full traceback locally, but keep the host/URL out of the
-        # user-facing setup error string, matching the redaction used on the
+        # Name only the exception class: its text or traceback can carry the
+        # host/URL or response content, matching the redaction used on the
         # poll and config-flow error paths.
-        _LOGGER.exception("Unexpected error setting up Eveus integration")  # pragma: no mutate - log message text, not a logged value
+        _LOGGER.error("Unexpected error setting up Eveus integration: %s", type(ex).__name__)  # pragma: no mutate - log message text, not a logged value
         raise ConfigEntryNotReady(f"Unexpected error: {type(ex).__name__}") from ex
 
 
