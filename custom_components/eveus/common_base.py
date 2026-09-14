@@ -250,15 +250,36 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         return default
 
     def _build_device_info(self) -> dict[str, Any]:
-        """Build device information from the latest available snapshot."""
+        """Build device information from the latest available snapshot.
+
+        Every entity asks on every poll, so the result is kept on the updater
+        for as long as the payload object and the inputs are the same: one build
+        per snapshot instead of one per entity. Callers get their own copy.
+        """
         data = self._updater.data if isinstance(self._updater.data, dict) else None
-        return get_device_info(
+        inputs = (
             self._updater.host,
-            data or {},
             self._device_number,
-            scheme=getattr(self._updater, "scheme", "http"),
-            init_fw_fallback=getattr(self._updater, "_init_fw_fallback", None),
+            getattr(self._updater, "scheme", "http"),
+            getattr(self._updater, "_init_fw_fallback", None),
         )
+        cached = getattr(self._updater, "_device_info_snapshot", None)
+        if (
+            isinstance(cached, tuple)
+            and cached[0] is data
+            and cached[1] == inputs
+        ):
+            return dict(cached[2])
+        info = get_device_info(
+            inputs[0],
+            data or {},
+            inputs[1],
+            scheme=inputs[2],
+            init_fw_fallback=inputs[3],
+        )
+        if data is not None:
+            self._updater._device_info_snapshot = (data, inputs, info)
+        return dict(info)
 
     def _device_info_has_firmware(self) -> bool:
         """Whether the cached device_info already carries real firmware."""

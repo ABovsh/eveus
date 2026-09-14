@@ -1679,3 +1679,43 @@ def test_button_setup_entry_wires_runtime_data_through() -> None:
     }
     for entity in added:
         assert entity._updater is updater
+
+
+def test_device_info_is_built_once_per_snapshot_not_once_per_entity(monkeypatch) -> None:
+    """Every entity re-checks device metadata on every poll; the build must
+    cost one call per payload, not one per entity."""
+    from custom_components.eveus import common_base
+
+    calls: list[int] = []
+    real = common_base.get_device_info
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(common_base, "get_device_info", counting)
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe"
+
+    updater = _Updater()
+    updater.data = {"verFWWifi": "1PGRW001A-R3.05.5", "verFWMain": "GRM070A-R3.05.4", "state": 2}
+    updater.scheme = "http"
+    entities = [Probe(updater) for _ in range(20)]  # construction builds it too
+    for entity in entities:
+        entity._maybe_finalize_device_info()
+    assert len(calls) == 1
+
+    updater.data = {**updater.data, "verFWWifi": "1PGRW001A-R3.05.6"}  # OTA upgrade
+    for entity in entities:
+        entity._maybe_finalize_device_info()
+    assert len(calls) == 2
+    assert all("R3.05.6" in entity._attr_device_info["sw_version"] for entity in entities)
+
+    other = _Updater()  # a second charger never shares the first one's metadata
+    other.data = dict(updater.data)
+    other.scheme = "http"
+    other.host = "192.168.1.51"  # NOSONAR(python:S1313) - RFC 1918 test fixture
+    probe = Probe(other)
+    probe._maybe_finalize_device_info()
+    assert probe._attr_device_info["configuration_url"].endswith("192.168.1.51")
