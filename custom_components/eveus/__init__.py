@@ -7,12 +7,13 @@ import logging
 # NOT `import time`: this package has a `time.py` platform module, and the
 # import system overwrites a package-global named `time` with that submodule
 # the moment HA loads the time platform.
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, CONF_HOST, CONF_USERNAME, CONF_PASSWORD
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
@@ -792,37 +793,25 @@ async def _finish_setup(
     phases_were_invalid: bool,
 ) -> bool:
     """Wire listeners, forward platforms, and prune, after runtime_data is set."""
+    def follow_polls(process: Callable[[], None]) -> None:
+        """Evaluate now and after every poll, until the entry unloads."""
+        entry.async_on_unload(updater.async_add_listener(process))
+        process()
+
     # Keep the OCPP-enabled warning in sync with every poll, so it reflects
     # toggles made from the charger UI or mobile app, not just from HA.
-    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
-    def _refresh_ocpp_issue() -> None:
-        _update_ocpp_issue(hass, entry, updater)
-
-    entry.async_on_unload(updater.async_add_listener(_refresh_ocpp_issue))
-    _refresh_ocpp_issue()
+    follow_polls(lambda: _update_ocpp_issue(hass, entry, updater))
 
     # Track the CR2032 coin cell (vBat) across polls and warn when it is
     # depleted, with debounce/hysteresis held in the tracker.
     battery_tracker = _BatteryLowTracker()
-
-    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
-    def _refresh_battery_issue() -> None:
-        _update_battery_low_issue(hass, entry, updater, battery_tracker)
-
-    entry.async_on_unload(updater.async_add_listener(_refresh_battery_issue))
-    _refresh_battery_issue()
+    follow_polls(lambda: _update_battery_low_issue(hass, entry, updater, battery_tracker))
 
     # Warn when the charger clock has drifted from Home Assistant by more
     # than 10 minutes (schedules/tariffs would mistime). Report-only: the
     # notice walks the user to the Time Zone select + Sync Time button.
     clock_tracker = _ClockDriftTracker()
-
-    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
-    def _refresh_clock_drift_issue() -> None:
-        _update_clock_drift_issue(hass, entry, updater, clock_tracker)
-
-    entry.async_on_unload(updater.async_add_listener(_refresh_clock_drift_issue))
-    _refresh_clock_drift_issue()
+    follow_polls(lambda: _update_clock_drift_issue(hass, entry, updater, clock_tracker))
 
     # Surface dangerous charger conditions (missing ground, leakage,
     # overheat, and firmware safety faults) as Home Assistant Repairs
@@ -838,15 +827,13 @@ async def _finish_setup(
     # Restore persisted recovery memory before the first reconciliation so a
     # dismissed-but-recovered safety issue can re-alert on a fresh fault.
     await safety_manager.async_load()
-    entry.async_on_unload(updater.async_add_listener(safety_manager.process))
-    safety_manager.process()
+    follow_polls(safety_manager.process)
 
-    entry.async_on_unload(updater.async_add_listener(soc_limit.process))
     # Cancel any in-flight SOC Stop on unload so it can't POST after teardown
     # (its task is created via hass.async_create_task, which HA does not bind to
     # this entry's lifecycle).
     entry.async_on_unload(soc_limit.async_shutdown)
-    soc_limit.process()
+    follow_polls(soc_limit.process)
 
     # DataUpdateCoordinator constructed with config_entry already registers
     # async_shutdown on the entry unload lifecycle — no manual registration.
