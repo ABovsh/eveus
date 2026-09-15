@@ -124,7 +124,8 @@ class EveusCard extends HTMLElement {
     const s = this._s("state");
     if (!s) return "--";
     const txt = this._hass.formatEntityState ? this._hass.formatEntityState(s) : s.state;
-    return this._s("stop")?.state === "on" && !this._charging ? `${txt} · ${this._t.paused}` : txt;
+    // Stopped by the user reads as one word, so it fits a phone tile.
+    return this._s("stop")?.state === "on" && !this._charging ? this._t.paused : txt;
   }
 
   _eta() {
@@ -372,6 +373,7 @@ input[type=range]{width:100%;margin:0;accent-color:var(--primary-color);height:2
 .compact{padding:0}
 .compact .cp{border:none;background:none}
 .empty{padding:16px;color:var(--secondary-text-color)}
+@container (max-width: 440px){.st{padding:4px}.sr{gap:1px}.sr button{width:18px;height:18px;line-height:18px;font-size:13px;border-radius:6px}}
 @container (max-width: 350px){.t ha-icon{display:none}.t{padding:5px 7px}.sl .l{display:none}.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.ch{font-size:11px}}
 `;
 
