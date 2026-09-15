@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### ✨ Added
+- **A built-in Eveus card for any dashboard.** Add **Eveus EV Charger** from the card picker — no HACS frontend plugin and no resource to add by hand. One card, four layouts: `compact` (a single status line), `status` (SOC, time to target, current, session, power and state), `control` (adds One Charge, Stop Charging and a Charging Current slider) and `full` (adds Initial SOC, Target SOC, Battery Capacity, SOC Correction and the SOC limit). In Basic mode the SOC tiles are replaced by power and session time. Labels follow your language (English or Ukrainian).
+
 ### 🐛 Fixed
 - **The SOC limit no longer stops a charge after you turn on Disable limits.** A Stop waiting behind another command, or between retries, was still sent when a poll in the meantime showed Disable limits switched on; it is now checked again right before each attempt and dropped.
 - **A system clock change no longer moves a control's hold.** A value you just set, or the last value of a setting the charger briefly stops reporting, was timed on the wall clock, so an NTP correction or a manual clock change could drop it early or keep it too long; both are now timed on elapsed time.

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 # NOT `import time`: this package has a `time.py` platform module, and the
 # import system overwrites a package-global named `time` with that submodule
 # the moment HA loads the time platform.
@@ -11,8 +13,16 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform, CONF_HOST, CONF_USERNAME, CONF_PASSWORD
+from homeassistant.const import (
+    EVENT_HOMEASSISTANT_STARTED,
+    Platform,
+    CONF_HOST,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -85,6 +95,10 @@ PLATFORMS: list[Platform] = [
 ]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# The dashboard card ships with the integration: nothing to add by hand.
+CARD_URL = f"/{DOMAIN}/eveus-card.js"
+CARD_PATH = Path(__file__).parent / "frontend" / "eveus-card.js"
 
 
 @dataclass
@@ -479,9 +493,59 @@ def _prune_unused_entities(
             reg.async_remove(entity_id)
 
 
-async def async_setup(_hass: HomeAssistant, _config: dict[str, Any]) -> bool:
-    """Set up the Eveus component."""
+async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
+    """Set up the Eveus component and register the dashboard card once."""
+
+    async def _register_card(_event=None) -> None:
+        # Lovelace resources exist only once the frontend has set up.
+        try:
+            await _async_register_card(hass)
+        except Exception as err:  # noqa: BLE001 - the card must never block the charger
+            _LOGGER.warning("Eveus card was not registered: %s", type(err).__name__)
+
+    if hass.is_running:
+        await _register_card()
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _register_card)
     return True
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve the card and have every dashboard load it, with a cache-busting hash.
+
+    Storage-mode dashboards get it as a Lovelace resource, exactly like a HACS
+    card: resources load after the frontend is ready, while an extra module
+    loads earlier and its element can be lost to the frontend's own registry
+    setup ("Custom element doesn't exist"). YAML-mode resources cannot be
+    written, so those fall back to the extra module.
+    """
+    if getattr(hass, "http", None) is None or "frontend" not in hass.config.components:
+        return
+    digest = await hass.async_add_executor_job(
+        lambda: hashlib.sha256(CARD_PATH.read_bytes()).hexdigest()[:8]
+    )
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL, str(CARD_PATH), True)]
+    )
+    url = f"{CARD_URL}?v={digest}"
+    lovelace = hass.data.get("lovelace")
+    resources = getattr(lovelace, "resources", None)
+    if getattr(lovelace, "resource_mode", None) != "storage" or not hasattr(
+        resources, "async_create_item"
+    ):
+        add_extra_js_url(hass, url)
+        return
+    await resources.async_get_info()  # loads the collection on first use
+    ours = [
+        item for item in resources.async_items()
+        if str(item.get("url", "")).split("?")[0] == CARD_URL
+    ]
+    if not ours:
+        await resources.async_create_item({"res_type": "module", "url": url})
+    elif ours[0]["url"] != url:
+        await resources.async_update_item(
+            ours[0]["id"], {"res_type": "module", "url": url}
+        )
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

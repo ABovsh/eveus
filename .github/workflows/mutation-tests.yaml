@@ -128,6 +128,7 @@ jobs:
               tests/test_init_firmware_fallback.py
               tests/test_setup_entry.py
               tests/test_transition_events.py
+              tests/test_dashboard_card.py
           - name: control-entities
             paths: "custom_components/eveus/number.py,custom_components/eveus/switch.py,custom_components/eveus/common_command.py"
             tests: >-

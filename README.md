@@ -26,7 +26,7 @@
 
 The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
 
-**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Energy Dashboard](#energy-dashboard) · [Troubleshooting](#troubleshooting)
+**Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Eveus card](#eveus-card) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Energy Dashboard](#energy-dashboard) · [Troubleshooting](#troubleshooting)
 
 ## ✨ Highlights
 
@@ -177,6 +177,45 @@ Dangerous and configuration conditions surface through Home Assistant **Settings
 | OCPP is enabled | OCPP is on, so the OCPP server or mobile app may override HA controls | Turn off the **Connect to OCPP** switch to restore full HA control |
 | Charger clock is off | The charger clock differs from Home Assistant by more than 10 minutes for several polls, so schedules and tariff windows may mistime | Check the **Time Zone** select, then press the **Sync Time** button; the notice clears once the clocks agree |
 | Update SOC cards and automations | Legacy `input_number.ev_*` helpers are still present | Switch dashboards/automations to the native `number.eveus_ev_charger_*` entities |
+
+## Eveus card
+
+The integration ships its own dashboard card: one card, four layouts, from a single status line to full charge control.
+
+<!-- Screenshots: compact, status, control, full -->
+<p>
+  <img alt="Eveus card — compact" src="docs/images/card-compact.png" width="49%">
+  <img alt="Eveus card — status" src="docs/images/card-status.png" width="49%">
+  <img alt="Eveus card — control" src="docs/images/card-control.png" width="49%">
+  <img alt="Eveus card — full" src="docs/images/card-full.png" width="49%">
+</p>
+
+| Layout | Shows |
+|---|---|
+| `compact` | One line: state, SOC bar, SOC · power · time to target |
+| `status` | SOC, time to target, current, session energy and cost, power and voltage, state |
+| `control` | Status plus **One Charge**, **Stop Charging** and a **Charging Current** slider |
+| `full` | Control plus **Initial SOC**, **Target SOC**, **Battery Capacity**, **SOC Correction** and the SOC limit |
+
+In Basic mode the SOC tiles are replaced by power and session time. Tap a value to open its entity.
+
+**Install:** nothing extra. The card comes with the integration (HACS or manual install) and registers itself on every dashboard after Home Assistant starts.
+
+**Add it to a dashboard:**
+1. Open a dashboard and click the **pencil / Edit** button.
+2. Click **+ Add card** and search for **Eveus EV Charger**.
+3. Pick a **Layout** in the card editor and click **Save**.
+
+Or add it through **Add card → Manual**:
+
+```yaml
+type: custom:eveus-card
+layout: control      # compact | status | control | full
+# device_id: ...     # only with several chargers
+# language: uk       # auto (default) | uk | en
+```
+
+If the card shows **Custom element doesn't exist** right after an update, reload the page. In the mobile app use **Settings → Companion app → Debugging → Reset frontend cache**.
 
 ## Entity IDs
 

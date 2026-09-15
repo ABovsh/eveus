@@ -1,6 +1,11 @@
 {
     "domain": "eveus",
     "name": "Eveus EV Charger",
+    "after_dependencies": [
+        "frontend",
+        "http",
+        "lovelace"
+    ],
     "codeowners": [
         "@ABovsh"
     ],
