@@ -114,6 +114,22 @@ def test_mutation_job_has_enough_time_and_no_fail_fast() -> None:
     assert job["strategy"]["fail-fast"] is False
 
 
+def test_sensor_definitions_is_mutated_in_a_leg_of_its_own() -> None:
+    """It generates 737 mutants, more than any other module.
+
+    Sharing a leg with ev_sensors.py and const.py (610 more) took run
+    34912988899 to 103 of the 120-minute cap; a timed-out leg reports nothing.
+    Splitting keeps the same killer tests and runner-minutes, halves the wall time.
+    """
+    legs = [
+        leg
+        for leg in _mutation_matrix_legs()
+        if "custom_components/eveus/sensor_definitions.py" in leg["paths"].split(",")
+    ]
+    assert len(legs) == 1
+    assert legs[0]["paths"] == "custom_components/eveus/sensor_definitions.py"
+
+
 def test_mutation_runner_fails_fast_and_pins_mutmut2() -> None:
     """-x kills mutants on the first failing test; mutmut 3.x dropped the CLI."""
     text = _MUTATION_WORKFLOW.read_text(encoding="utf-8")
