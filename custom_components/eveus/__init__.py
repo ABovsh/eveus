@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 from dataclasses import dataclass
 import logging
+import re
 from pathlib import Path
 # NOT `import time`: this package has a `time.py` platform module, and the
 # import system overwrites a package-global named `time` with that submodule
@@ -13,6 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
+from homeassistant.components import websocket_api
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
@@ -23,7 +25,7 @@ from homeassistant.const import (
     CONF_USERNAME,
     CONF_PASSWORD,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
@@ -99,6 +101,8 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 # The dashboard card ships with the integration: nothing to add by hand.
 CARD_URL = f"/{DOMAIN}/eveus-card.js"
 CARD_PATH = Path(__file__).parent / "frontend" / "eveus-card.js"
+# unique_id is "eveus<device suffix>_<entity key>"; the card needs the key only.
+_UNIQUE_ID_KEY = re.compile(r"^eveus\d*_(.+)$")
 
 
 @dataclass
@@ -503,11 +507,46 @@ async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
         except Exception as err:  # noqa: BLE001 - the card must never block the charger
             _LOGGER.warning("Eveus card was not registered: %s", type(err).__name__)
 
+    websocket_api.async_register_command(hass, _ws_card_entities)
     if hass.is_running:
         await _register_card()
     else:
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _register_card)
     return True
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eveus/card_entities",
+        vol.Optional("device_id"): str,
+    }
+)
+@callback
+def _ws_card_entities(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Map a charger's entity keys to entity_ids through the entity registry.
+
+    Keyed by unique_id, so the card keeps working after a user renames an
+    entity_id. Without a device_id the first charger is used.
+    """
+    registry = er.async_get(hass)
+    wanted = msg.get("device_id")
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        device_id = None
+        entities: dict[str, str] = {}
+        for ent in er.async_entries_for_config_entry(registry, entry.entry_id):
+            match = _UNIQUE_ID_KEY.match(ent.unique_id or "")
+            if ent.platform != DOMAIN or match is None:
+                continue
+            if wanted is not None and ent.device_id != wanted:
+                continue
+            device_id = device_id or ent.device_id
+            entities[match.group(1)] = ent.entity_id
+        if entities:
+            connection.send_result(msg["id"], {"device_id": device_id, "entities": entities})
+            return
+    connection.send_error(msg["id"], "not_found", "No Eveus charger found")
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:

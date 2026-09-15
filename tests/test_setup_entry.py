@@ -237,7 +237,7 @@ def test_update_ocpp_issue_guard_and_dispatch(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_async_setup_returns_true() -> None:
-    hass = SimpleNamespace(is_running=True, http=None, config=SimpleNamespace(components=set()))
+    hass = SimpleNamespace(is_running=True, http=None, data={}, config=SimpleNamespace(components=set()))
     assert asyncio.run(eveus.async_setup(hass, {})) is True
 
 

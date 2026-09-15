@@ -20,18 +20,18 @@ const I18N = {
   },
 };
 
-// Entity keys resolved against the device prefix (sensor.<prefix>_substate anchors it).
+// Card keys → entity keys (the part of unique_id after "eveus<N>_").
 const KEYS = {
-  state: "sensor.state", substate: "sensor.substate", reason: "sensor.not_charging_reason",
-  current: "sensor.current", currentSet: "sensor.current_set", power: "sensor.power", voltage: "sensor.voltage",
-  sessionEnergy: "sensor.session_energy", sessionCost: "sensor.session_cost", sessionTime: "sensor.session_time",
-  soc: "sensor.soc_percent", socEnergy: "sensor.soc_energy", eta: "sensor.time_to_target_soc",
-  finish: "sensor.charging_finish_time", energyToTarget: "sensor.energy_to_target_soc",
-  costToTarget: "sensor.cost_to_target_soc", ground: "sensor.ground", boxTemp: "sensor.box_temperature",
-  plugTemp: "sensor.plug_temperature", adaptiveLimit: "sensor.adaptive_current_limit",
-  oneCharge: "switch.one_charge", stop: "switch.stop_charging", socLimit: "switch.limit_soc_enabled",
-  chargingCurrent: "number.charging_current", initialSoc: "number.initial_soc", targetSoc: "number.target_soc",
-  capacity: "number.battery_capacity", correction: "number.soc_correction",
+  state: "state", substate: "substate", reason: "not_charging_reason",
+  current: "current", currentSet: "current_set", power: "power", voltage: "voltage",
+  sessionEnergy: "session_energy", sessionCost: "session_cost", sessionTime: "session_time",
+  soc: "soc_percent", socEnergy: "soc_energy", eta: "time_to_target_soc",
+  finish: "charging_finish_time", energyToTarget: "energy_to_target_soc",
+  costToTarget: "cost_to_target_soc", ground: "ground", boxTemp: "box_temperature",
+  plugTemp: "plug_temperature", adaptiveLimit: "adaptive_current_limit",
+  oneCharge: "one_charge", stop: "stop_charging", socLimit: "limit_soc_enabled",
+  chargingCurrent: "charging_current", initialSoc: "initial_soc", targetSoc: "target_soc",
+  capacity: "battery_capacity", correction: "soc_correction",
 };
 
 const num = (s) => (s && s.state !== "unknown" && s.state !== "unavailable" && !isNaN(parseFloat(s.state)) ? parseFloat(s.state) : null);
@@ -55,6 +55,7 @@ class EveusCard extends HTMLElement {
     if (!LAYOUTS.includes(this._config.layout)) this._config.layout = "control";
     this._pending = {};
     this._sig = null;
+    this._idsFor = undefined;
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
@@ -73,26 +74,29 @@ class EveusCard extends HTMLElement {
   getCardSize() { return { compact: 1, status: 2, control: 3, full: 5 }[this._config.layout]; }
   getGridOptions() { return { columns: 12, min_columns: 6, rows: "auto" }; }
 
+  // Entities come from the registry by unique_id, so renamed entity_ids still resolve.
   _resolve() {
-    const h = this._hass;
-    const want = this._config.device_id;
-    if (this._ids && this._idsFor === want) return;
-    let prefix = null;
-    for (const [id, e] of Object.entries(h.entities || {})) {
-      if (e.platform !== "eveus" || (want && e.device_id !== want)) continue;
-      const m = id.match(/^sensor\.(.+)_substate$/);
-      if (m) { prefix = m[1]; break; }
-    }
-    if (!prefix) { this._ids = null; return; }
-    this._ids = {};
-    for (const [k, v] of Object.entries(KEYS)) {
-      const [dom, suf] = v.split(".");
-      this._ids[k] = `${dom}.${prefix}_${suf}`;
-    }
-    this._idsFor = want;
+    const want = this._config.device_id || null;
+    if (this._idsFor === want || this._resolving === want) return;
+    this._resolving = want;
+    const msg = { type: "eveus/card_entities" };
+    if (want) msg.device_id = want;
+    this._hass
+      .callWS(msg)
+      .then((res) => {
+        this._ids = {};
+        for (const [k, key] of Object.entries(KEYS)) if (res.entities[key]) this._ids[k] = res.entities[key];
+      })
+      .catch(() => { this._ids = null; })
+      .finally(() => {
+        this._idsFor = want;
+        this._resolving = undefined;
+        this._sig = null;
+        if (this._hass) this.hass = this._hass;
+      });
   }
 
-  _s(k) { return this._hass.states[this._ids[k]]; }
+  _s(k) { return this._ids?.[k] ? this._hass.states[this._ids[k]] : undefined; }
   _v(k) { return k in this._pending ? this._pending[k] : num(this._s(k)); }
   get _t() {
     const l = this._config.language !== "auto" ? this._config.language : this._hass.locale?.language || "en";
@@ -259,6 +263,7 @@ class EveusCard extends HTMLElement {
 
   _render() {
     const root = this.shadowRoot;
+    if (this._idsFor === undefined) { root.innerHTML = "<ha-card></ha-card>"; return; } // still looking up
     if (!this._ids || !this._s("state")) {
       root.innerHTML = `<ha-card><div class="empty">${this._t.noDevice}</div></ha-card>`;
       return;

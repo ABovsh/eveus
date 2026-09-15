@@ -137,3 +137,91 @@ def test_manifest_loads_after_frontend_and_lovelace():
 
     manifest = json.loads((CARD.parents[1] / "manifest.json").read_text())
     assert {"frontend", "http", "lovelace"} <= set(manifest.get("after_dependencies", []))
+
+
+# --- entity lookup by unique_id -------------------------------------------------
+
+def _reg_entry(unique_id, entity_id, device_id="dev1", platform="eveus"):
+    return SimpleNamespace(unique_id=unique_id, entity_id=entity_id, device_id=device_id, platform=platform)
+
+
+def _ws_hass(entries):
+    return SimpleNamespace(
+        config_entries=SimpleNamespace(async_entries=lambda domain: [SimpleNamespace(entry_id=e) for e in entries]),
+    )
+
+
+def _run_ws(hass, registry_entries, **msg):
+    connection = MagicMock()
+    by_entry = registry_entries
+    with patch.object(eveus.er, "async_get", return_value=object()), patch.object(
+        eveus.er, "async_entries_for_config_entry", side_effect=lambda _reg, entry_id: by_entry.get(entry_id, [])
+    ):
+        eveus._ws_card_entities(hass, connection, {"id": 7, "type": "eveus/card_entities", **msg})
+    return connection
+
+
+def test_card_entities_are_keyed_by_unique_id_not_entity_id():
+    """A renamed entity_id still lands on the right tile."""
+    registry = {"e1": [
+        _reg_entry("eveus_state", "sensor.garage_state"),
+        _reg_entry("eveus_soc_percent", "sensor.my_car_battery"),
+        _reg_entry("eveus_charging_current", "number.amps"),
+        _reg_entry("other_state", "sensor.not_ours", platform="other"),
+    ]}
+    connection = _run_ws(_ws_hass(["e1"]), registry)
+    connection.send_error.assert_not_called()
+    msg_id, result = connection.send_result.call_args[0]
+    assert msg_id == 7
+    assert result == {
+        "device_id": "dev1",
+        "entities": {
+            "state": "sensor.garage_state",
+            "soc_percent": "sensor.my_car_battery",
+            "charging_current": "number.amps",
+        },
+    }
+
+
+def test_second_charger_is_selected_by_device_id_and_its_suffix_is_stripped():
+    registry = {
+        "e1": [_reg_entry("eveus_state", "sensor.first_state", device_id="dev1")],
+        "e2": [
+            _reg_entry("eveus2_state", "sensor.second_state", device_id="dev2"),
+            _reg_entry("eveus2_one_charge", "switch.second_one", device_id="dev2"),
+        ],
+    }
+    connection = _run_ws(_ws_hass(["e1", "e2"]), registry, device_id="dev2")
+    _, result = connection.send_result.call_args[0]
+    assert result == {"device_id": "dev2", "entities": {"state": "sensor.second_state", "one_charge": "switch.second_one"}}
+
+
+def test_without_device_id_the_first_charger_is_used():
+    registry = {
+        "e1": [_reg_entry("eveus_state", "sensor.first_state", device_id="dev1")],
+        "e2": [_reg_entry("eveus2_state", "sensor.second_state", device_id="dev2")],
+    }
+    _, result = _run_ws(_ws_hass(["e1", "e2"]), registry).send_result.call_args[0]
+    assert result["device_id"] == "dev1"
+
+
+def test_unknown_device_is_reported_as_not_found():
+    registry = {"e1": [_reg_entry("eveus_state", "sensor.first_state")]}
+    connection = _run_ws(_ws_hass(["e1"]), registry, device_id="nope")
+    connection.send_result.assert_not_called()
+    assert connection.send_error.call_args[0][:2] == (7, "not_found")
+
+
+async def test_setup_registers_the_card_websocket_command_once():
+    hass = _hass(FakeResources())
+    with patch.object(eveus, "_async_register_card", AsyncMock()), patch.object(
+        eveus.websocket_api, "async_register_command"
+    ) as register:
+        assert await eveus.async_setup(hass, {}) is True
+    register.assert_called_once_with(hass, eveus._ws_card_entities)
+
+
+def test_card_looks_entities_up_through_the_websocket_command():
+    source = CARD.read_text(encoding="utf-8")
+    assert 'type: "eveus/card_entities"' in source
+    assert "_substate$" not in source, "no entity_id pattern matching"
