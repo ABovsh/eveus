@@ -12,7 +12,7 @@ from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from conftest import EveusTestUpdater, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
-from custom_components.eveus import binary_sensor, common_base, common_network, config_flow
+from custom_components.eveus import binary_sensor, common_network, config_flow
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.config_flow import normalize_user_input
 from custom_components.eveus.const import (
@@ -191,9 +191,6 @@ def test_binary_sensor_holds_value_during_grace_window(
     `unknown` — when the window closes. Full reasoning in
     `BaseEveusEntity._in_availability_grace`.
     """
-    monkeypatch.setattr(
-        common_base, "async_call_later", lambda *args, **kwargs: (lambda: None)
-    )
     updater = EveusTestUpdater({"state": DEVICE_STATE_CHARGING}, available=True)
     sensor = _car_connected_sensor(updater)
 

@@ -7,6 +7,7 @@ import pytest
 from homeassistant.helpers.entity import EntityCategory
 
 from conftest import SnapshotBackedMock
+from conftest import OutageClock
 from conftest import PayloadUpdater, SnapshotBackedMock, TEST_HOST, snapshot_of
 from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.sensor_definitions import (
@@ -23,9 +24,8 @@ from custom_components.eveus.sensor_definitions import (
 )
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
     data = {"value": "10"}
     model = None
@@ -129,7 +129,7 @@ def test_optimized_sensor_returns_none_when_offline() -> None:
     entity._handle_coordinator_update()
     assert entity.native_value == 10
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._handle_coordinator_update()
     assert entity.native_value is None
 

@@ -45,9 +45,6 @@ def clock(monkeypatch: pytest.MonkeyPatch):
     """Drive the grace window by hand, and swallow its scheduled recheck."""
     now = {"t": _START}
     monkeypatch.setattr(common_base.time, "monotonic", lambda: now["t"])
-    monkeypatch.setattr(
-        common_base, "async_call_later", lambda *_a, **_k: (lambda: None)
-    )
     return now
 
 

@@ -133,20 +133,23 @@ def test_availability_grace_uses_monotonic_not_wall_clock(
     """Regression test for A04-adjacent A03 finding: the grace window is timed
     with time.monotonic(), so a wall-clock jump (NTP correction, DST, manual
     change) in either direction cannot move the outage boundary or reopen /
-    prematurely expire the grace window.
+    prematurely expire the grace window. The clock is the coordinator's.
     """
-    from custom_components.eveus import common_base
-
-    updater = EveusTestUpdater({}, available=False)
-    sensor = _diag_sensor(updater)
+    from custom_components.eveus import common_network
+    from custom_components.eveus.common_network import EveusUpdater
 
     fake_monotonic = 1_000_000.0
-    monkeypatch.setattr(common_base.time, "monotonic", lambda: fake_monotonic)
-    # Wall clock jumps wildly forward; must have zero effect on grace timing.
-    monkeypatch.setattr(common_base.time, "time", lambda: 4_102_444_800.0)
+    monkeypatch.setattr(
+        common_network,
+        "time",
+        SimpleNamespace(monotonic=lambda: fake_monotonic, time=lambda: 4_102_444_800.0),
+    )
+    updater = EveusUpdater("192.0.2.1", "u", "p", SimpleNamespace(loop=None))
+    updater._record_failure(TimeoutError())
+    sensor = _diag_sensor(updater)
+    assert updater.seconds_unavailable == 0.0
 
     sensor._update_availability_state()
-    assert sensor._unavailable_since == fake_monotonic
     assert sensor.available is True
 
     # Still within the grace period per monotonic time.
@@ -577,3 +580,33 @@ def test_wall_clock_jump_neither_expires_nor_extends_missing_field_hold(
 
     mono["t"] += 2
     assert entity._resolve_value() is None
+
+
+def test_entity_visibility_is_read_from_the_coordinator_clock() -> None:
+    """P3.2: no entity keeps its own outage clock or timer.
+
+    Sensors stay visible for the 60 s grace, controls for 30 s, both measured
+    by the coordinator from the first failed poll.
+    """
+    from custom_components.eveus.const import (
+        AVAILABILITY_GRACE_PERIOD,
+        CONTROL_GRACE_PERIOD,
+    )
+    from custom_components.eveus.number import EveusCurrentNumber
+
+    updater = EveusTestUpdater({}, available=False)
+    sensor = _diag_sensor(updater)
+    control = EveusCurrentNumber(updater, "16A")
+
+    updater.seconds_unavailable = CONTROL_GRACE_PERIOD
+    assert sensor.available is True
+    assert control.available is False
+
+    updater.seconds_unavailable = AVAILABILITY_GRACE_PERIOD
+    assert sensor.available is False
+
+    updater.available = True
+    assert sensor.available is True and control.available is True
+
+    for name in ("_unavailable_since", "_schedule_grace_recheck", "_cancel_grace_recheck"):
+        assert not hasattr(sensor, name) and not hasattr(control, name)

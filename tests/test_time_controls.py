@@ -11,6 +11,7 @@ from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 
 from conftest import snapshot_of
+from conftest import OutageClock
 from conftest import TEST_HOST
 from custom_components.eveus.button import EveusSyncTimeButton
 from custom_components.eveus.common_base import BaseEveusEntity
@@ -27,9 +28,8 @@ from custom_components.eveus.time import (
 )
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
 
     def __init__(self, data: dict[str, object] | None = None) -> None:

@@ -10,6 +10,7 @@ from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from conftest import snapshot_of
+from conftest import OutageClock
 from conftest import TEST_BASE_URL, TEST_HOST, EveusTestUpdater
 from custom_components.eveus import common
 from custom_components.eveus import binary_sensor as binary_sensor_mod
@@ -35,9 +36,8 @@ from custom_components.eveus.switch import (
 from custom_components.eveus.const import SESSION_ACTIVE_STATES
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
 
     def __init__(self) -> None:
@@ -196,7 +196,7 @@ def test_base_entity_availability_grace_and_cache_paths() -> None:
     assert entity.device_info["name"] == "Eveus EV Charger"
 
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._update_availability_state()
     assert entity.available is False
 
@@ -217,17 +217,17 @@ def test_base_entity_availability_stays_available_during_grace(
         ),
     )
 
+    entity._grace_period = 10
     updater.available = False
     assert entity._update_availability_state() is False
     assert entity.available is True
-    assert entity._unavailable_since == 100.0
 
     now = 105.0
-    assert entity._update_availability_state(grace_period=10) is False
+    assert entity._update_availability_state() is False
     assert entity.available is True
 
     now = 111.0
-    assert entity._update_availability_state(grace_period=10) is True
+    assert entity._update_availability_state() is True
     assert entity.available is False
 
 
@@ -245,7 +245,7 @@ def test_available_property_is_pure_until_coordinator_update() -> None:
     updater.available = False
 
     assert entity.available is True
-    assert entity._unavailable_since is None
+    assert entity._last_known_available is True
 
 
 def test_sensor_coordinator_update_writes_only_when_state_changes() -> None:
@@ -293,7 +293,7 @@ def test_sensor_coordinator_update_clears_value_after_grace_period() -> None:
     entity._handle_coordinator_update()
 
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._handle_coordinator_update()
 
     assert entity.available is False
@@ -329,7 +329,7 @@ def test_entity_unavailable_transition_is_quiet_at_normal_log_levels(
         ),
     )
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
 
     with caplog.at_level(logging.INFO, logger="custom_components.eveus.common_base"):
         entity._update_availability_state()
@@ -349,12 +349,10 @@ def test_base_entity_availability_restores_after_grace_period() -> None:
             sensor_type=SensorType.MEASUREMENT,
         ),
     )
-    entity._unavailable_since = 0
     entity._last_known_available = False
 
     entity._update_availability_state()
     assert entity.available is True
-    assert entity._unavailable_since is None
     assert entity._last_known_available is True
 
 
@@ -371,13 +369,12 @@ def test_base_entity_availability_restore_log_is_rate_limited(
             sensor_type=SensorType.MEASUREMENT,
         ),
     )
-    entity._unavailable_since = 0
     entity._last_known_available = False
 
     with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.common_base"):
-        entity._update_availability_state(label="Sensor")
-        entity._unavailable_since = 0
-        entity._update_availability_state(label="Sensor")
+        entity._update_availability_state()
+        entity._last_known_available = False
+        entity._update_availability_state()
 
     restore_logs = [
         record
@@ -430,7 +427,7 @@ def test_control_availability_mixin_clears_optimistic_number_state_after_grace()
     entity = EveusCurrentNumber(updater, "16A")
 
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._optimistic_value = 12
     entity._last_known_available = True
 
@@ -444,7 +441,7 @@ def test_control_unavailable_transition_is_quiet_at_normal_log_levels(caplog) ->
     entity = EveusCurrentNumber(updater, "16A")
 
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._optimistic_value = 12
     entity._last_known_available = True
 
@@ -978,12 +975,13 @@ def test_update_native_value_when_unavailable_resets_to_none() -> None:
         def _get_sensor_value(self):
             return 42
 
-    entity = Probe(_Updater())
-    entity._entity_available = True
+    updater = _Updater()
+    entity = Probe(updater)
     assert entity._update_native_value() is True
     assert entity._attr_native_value == 42
 
-    entity._entity_available = False
+    updater.available = False
+    updater.seconds_unavailable = 10_000
     # Transition available -> unavailable: value actually changes (42 -> None).
     assert entity._update_native_value() is True
     assert entity._attr_native_value is None

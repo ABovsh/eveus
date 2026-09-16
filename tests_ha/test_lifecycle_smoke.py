@@ -30,7 +30,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMockResponse,
 )
 
-from custom_components.eveus import common_base
+from custom_components.eveus import common_base, common_network
 from custom_components.eveus.const import (
     AVAILABILITY_GRACE_PERIOD,
     CONF_BATTERY_CAPACITY,
@@ -172,11 +172,13 @@ async def test_failed_polls_hold_through_grace_then_expire_and_recover(
     hass, aioclient_mock, monkeypatch
 ) -> None:
     clock = {"now": time.monotonic()}
-    monkeypatch.setattr(
-        common_base,
-        "time",
-        SimpleNamespace(monotonic=lambda: clock["now"], time=time.time),
-    )
+    # The outage clock is the coordinator's (common_network).
+    for module in (common_base, common_network):
+        monkeypatch.setattr(
+            module,
+            "time",
+            SimpleNamespace(monotonic=lambda: clock["now"], time=time.time),
+        )
     entry = _entry(hass, HOST_A)
     _mock_charger(aioclient_mock, HOST_A)
     await _setup(hass, entry)

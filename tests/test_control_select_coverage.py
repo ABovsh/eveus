@@ -16,6 +16,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 
 from conftest import snapshot_of
+from conftest import OutageClock
 from conftest import TEST_HOST
 from custom_components.eveus import const
 from custom_components.eveus import number as number_module
@@ -25,9 +26,8 @@ from custom_components.eveus.const import CONTROL_GRACE_PERIOD
 from custom_components.eveus.control_base import CommandBackedEntity
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
 
     def __init__(

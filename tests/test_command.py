@@ -9,6 +9,7 @@ import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from conftest import TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import OutageClock
 from custom_components.eveus import common_command
 from custom_components.eveus.common_command import CommandManager
 from custom_components.eveus.const import COMMAND_TIMEOUT
@@ -62,7 +63,7 @@ class _SequencedSession:
         return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
     username = TEST_USERNAME
     password = TEST_PASSWORD

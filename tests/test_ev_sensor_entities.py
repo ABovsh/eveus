@@ -1370,8 +1370,9 @@ def test_available_is_false_when_base_entity_is_unavailable_regardless_of_helper
     """A sensor that doesn't require helpers must still go unavailable when
     the base (connection-level) availability is False."""
     calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
-    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "10"}), 1, calculator)
-    sensor._entity_available = False
+    updater = EveusTestUpdater({"sessionEnergy": "10"}, available=False)
+    updater.seconds_unavailable = 10_000
+    sensor = EVSocKwhSensor(updater, 1, calculator)
 
     assert sensor.available is False
 

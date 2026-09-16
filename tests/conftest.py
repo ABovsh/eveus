@@ -518,7 +518,53 @@ class SnapshotBackedMock(MagicMock):
         return snapshot_of(self)
 
 
-class PayloadUpdater:
+class OutageClock:
+    """The coordinator's outage clock, for updater doubles.
+
+    Mirrors ``EveusUpdater``: flipping ``available`` to False anchors the outage
+    on ``time.monotonic()`` (so a test that patches the clock drives the grace
+    window), flipping it back clears it. A test may instead pin
+    ``seconds_unavailable`` directly.
+    """
+
+    _available = True
+    _first_failure: float | None = None
+    _pinned_seconds_unavailable: float | None = None
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    @available.setter
+    def available(self, value: bool) -> None:
+        import time
+
+        if not value and self._first_failure is None:
+            self._first_failure = time.monotonic()
+        elif value:
+            self._first_failure = None
+            self._pinned_seconds_unavailable = None
+        self._available = value
+
+    @property
+    def seconds_unavailable(self) -> float:
+        import time
+
+        if self._available:
+            return 0.0
+        if self._pinned_seconds_unavailable is not None:
+            return self._pinned_seconds_unavailable
+        return time.monotonic() - self._first_failure
+
+    @seconds_unavailable.setter
+    def seconds_unavailable(self, value: float) -> None:
+        self._pinned_seconds_unavailable = value
+
+    def visible_within(self, grace: int) -> bool:
+        return self.seconds_unavailable < grace
+
+
+class PayloadUpdater(OutageClock):
     """Availability flags plus a payload, with the snapshot derived on read.
 
     For the repair trackers and other listeners, which need nothing from a
@@ -549,11 +595,10 @@ class PayloadUpdater:
         return snapshot_of(self)
 
 
-class EveusTestUpdater:
+class EveusTestUpdater(OutageClock):
     """Reusable coordinator/updater fake for direct entity tests."""
 
     host = TEST_HOST
-    available = True
     last_update_success = True
     scheme = "http"
 

@@ -35,7 +35,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
-from custom_components.eveus import common_base
+from custom_components.eveus import common_base, common_network
 from custom_components.eveus.const import (
     AVAILABILITY_GRACE_PERIOD,
     CONF_BATTERY_CAPACITY,
@@ -168,11 +168,14 @@ class Scenario:
         self.captures: list[dict] = []
         self._elapsed = 0.0
         self._clock = {"now": time.monotonic()}
-        monkeypatch.setattr(
-            common_base,
-            "time",
-            SimpleNamespace(monotonic=lambda: self._clock["now"], time=time.time),
-        )
+        # The outage clock is the coordinator's (common_network); entities
+        # still stamp optimistic writes on common_base's.
+        for module in (common_base, common_network):
+            monkeypatch.setattr(
+                module,
+                "time",
+                SimpleNamespace(monotonic=lambda: self._clock["now"], time=time.time),
+            )
         self.capture()
 
     @property

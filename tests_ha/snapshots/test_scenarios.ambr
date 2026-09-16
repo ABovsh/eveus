@@ -11425,9 +11425,9 @@
         }),
       ),
       'sensor.eveus_ev_charger_connection_quality': tuple(
-        '25',
+        '20',
         dict({
-          'connection_quality': 25,
+          'connection_quality': 20,
           'friendly_name': 'Eveus EV Charger Connection Quality',
           'icon': 'mdi:connection',
           'latency_avg': 0.0,

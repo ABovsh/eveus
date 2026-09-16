@@ -795,7 +795,6 @@ def test_current_number_serializes_concurrent_commands() -> None:
 
 
 def test_control_pushes_availability_change_while_command_pending() -> None:
-    import time
     from custom_components.eveus.const import CONTROL_GRACE_PERIOD, MODEL_16A
 
     updater = _Updater(data={"currentSet": 16})
@@ -806,7 +805,7 @@ def test_control_pushes_availability_change_while_command_pending() -> None:
 
     number._pending_value = 10.0  # a command is in flight
     updater.available = False  # charger drops offline, past the grace period
-    number._unavailable_since = time.monotonic() - (CONTROL_GRACE_PERIOD + 5)
+    updater.seconds_unavailable = CONTROL_GRACE_PERIOD + 5
 
     number._handle_coordinator_update()
 
@@ -928,22 +927,6 @@ def test_set_current_propagates_auth_failure() -> None:
 
     with pytest.raises(ConfigEntryAuthFailed):
         asyncio.run(entity.async_set_native_value(12))
-
-
-def test_control_mixin_availability_accepts_recheck_kwargs() -> None:
-    from custom_components.eveus.common_base import BaseEveusEntity, ControlEntityMixin
-
-    class _Control(ControlEntityMixin, BaseEveusEntity):
-        ENTITY_NAME = "Probe Control"
-
-    entity = _Control(_Updater({}), 1)
-    entity._updater._available = False
-    # The scheduled grace re-check calls polymorphically with the base kwargs;
-    # the mixin override must accept them instead of raising TypeError.
-    result = entity._update_availability_state(
-        grace_period=30, label="Entity", clear_optimistic_state=True
-    )
-    assert isinstance(result, bool)
 
 
 def test_cancel_pending_refreshes_skips_current_task() -> None:

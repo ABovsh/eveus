@@ -252,6 +252,7 @@ def test_soc_sensors_read_the_typed_snapshot() -> None:
         ),
         connection_quality={},
         async_add_listener=lambda *a, **k: (lambda: None),
+        visible_within=lambda _grace: True,
         config_entry=SimpleNamespace(entry_id="e", data={}),
     )
 

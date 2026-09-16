@@ -10,6 +10,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, Co
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import OutageClock
 import custom_components.eveus as eveus
 from custom_components.eveus.const import (
     CONF_PHASES,
@@ -92,7 +93,7 @@ class _Entry:
         return listener
 
 
-class _Updater:
+class _Updater(OutageClock):
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.args = args
         self.kwargs = kwargs
