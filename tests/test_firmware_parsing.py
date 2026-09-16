@@ -89,7 +89,7 @@ def test_counter_cost_sensors_use_monetary_iso_unit():
     for key in ("counter_a_cost", "counter_b_cost"):
         spec = by_key[key]
         assert spec.device_class == SensorDeviceClass.MONETARY
-        assert spec.unit == "UAH"
+        assert spec.native_unit_of_measurement == "UAH"
         assert spec.state_class == SensorStateClass.TOTAL
 
 
@@ -606,15 +606,13 @@ def test_validate_finite_number_accepts_normal_input(good) -> None:
 def _fw_diag_sensor(updater):
     from custom_components.eveus.sensor_definitions import (
         OptimizedEveusSensor,
-        SensorSpec,
-        SensorType,
+        EveusSensorEntityDescription,
     )
 
-    spec = SensorSpec(
+    spec = EveusSensorEntityDescription(
         key="test_fw_diag",
         name="Test FW Diag",
         value_fn=lambda _updater, _hass: 1,
-        sensor_type=SensorType.DIAGNOSTIC,
     )
     from conftest import disable_state_writes
     sensor = OptimizedEveusSensor(updater, spec)

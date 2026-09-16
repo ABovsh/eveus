@@ -112,15 +112,13 @@ def test_seconds_since_success_inf_before_first_success() -> None:
 def _diag_sensor(updater):
     from custom_components.eveus.sensor_definitions import (
         OptimizedEveusSensor,
-        SensorSpec,
-        SensorType,
+        EveusSensorEntityDescription,
     )
 
-    spec = SensorSpec(
+    spec = EveusSensorEntityDescription(
         key="test_diag",
         name="Test Diag",
         value_fn=lambda _updater, _hass: 1,
-        sensor_type=SensorType.DIAGNOSTIC,
     )
     sensor = OptimizedEveusSensor(updater, spec)
     disable_state_writes(sensor)

@@ -21,7 +21,7 @@ from custom_components.eveus.common_base import (
     WriteOnChangeMixin,
 )
 from custom_components.eveus.number import EveusCurrentNumber
-from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, SensorSpec, SensorType
+from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, EveusSensorEntityDescription
 from custom_components.eveus import button as button_mod
 from custom_components.eveus.button import (
     EveusRefreshButton,
@@ -79,11 +79,10 @@ def _make_binary_sensor(name: str, data: dict, *, available: bool = True):
 
 def test_sensor_uses_fresh_coordinator_data_without_ttl_cache() -> None:
     updater = _Updater()
-    spec = SensorSpec(
+    spec = EveusSensorEntityDescription(
         key="power",
         name="Power",
         value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-        sensor_type=SensorType.MEASUREMENT,
     )
     sensor = OptimizedEveusSensor(updater, spec)
     sensor.hass = object()
@@ -181,11 +180,10 @@ def test_base_entity_availability_grace_and_cache_paths() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -209,11 +207,10 @@ def test_base_entity_availability_stays_available_during_grace(
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -235,11 +232,10 @@ def test_available_property_is_pure_until_coordinator_update() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     updater.available = False
@@ -252,11 +248,10 @@ def test_sensor_coordinator_update_writes_only_when_state_changes() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     writes = 0
@@ -281,11 +276,10 @@ def test_sensor_coordinator_update_clears_value_after_grace_period() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -304,11 +298,10 @@ def test_sensor_value_errors_are_contained() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="bad",
             name="Bad",
             value_fn=lambda updater, hass: (_ for _ in ()).throw(ValueError("boom")),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -321,11 +314,10 @@ def test_entity_unavailable_transition_is_quiet_at_normal_log_levels(
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     updater.available = False
@@ -342,11 +334,10 @@ def test_base_entity_availability_restores_after_grace_period() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity._last_known_available = False
@@ -362,11 +353,10 @@ def test_base_entity_availability_restore_log_is_rate_limited(
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity._last_known_available = False
@@ -388,11 +378,10 @@ def test_base_entity_cached_data_value_uses_default_for_none_payload_value() -> 
     updater = EveusTestUpdater({"powerMeas": None})
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: updater.data["powerMeas"],
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -404,11 +393,10 @@ def test_base_entity_device_info_falls_back_when_payload_is_malformed() -> None:
     updater.data = "not-a-dict"
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -479,11 +467,10 @@ def test_entities_do_not_set_name_attr_so_translation_keys_are_used() -> None:
     updater = _Updater()
     sensor = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="battery_voltage",
             name="Battery Voltage",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     number = EveusCurrentNumber(updater, "16A")
@@ -534,11 +521,10 @@ def test_base_entity_async_added_to_hass_restores_state(monkeypatch: pytest.Monk
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     restored: list[str] = []
@@ -565,11 +551,10 @@ def test_base_entity_async_added_to_hass_contains_restore_errors(
 ) -> None:
     entity = OptimizedEveusSensor(
         _Updater(),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -590,11 +575,10 @@ def test_base_entity_finalize_device_info_paths(monkeypatch: pytest.MonkeyPatch)
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -614,11 +598,10 @@ def test_base_entity_finalize_waits_for_real_firmware(
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     monkeypatch.setattr(entity, "_build_device_info", lambda: {"sw_version": "Unknown"})
@@ -634,11 +617,10 @@ def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.Monkey
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -683,11 +665,10 @@ def test_base_entity_finalize_updates_registry_with_minimal_device_info(
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -736,11 +717,10 @@ def test_base_entity_finalize_skips_missing_registry_device(
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -765,11 +745,10 @@ def test_base_entity_finalize_skips_registry_update_without_identifiers(
     updater = EveusTestUpdater({})
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()

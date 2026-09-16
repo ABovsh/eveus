@@ -33,8 +33,7 @@ from custom_components.eveus.binary_sensor import EveusCarConnectedBinarySensor
 from custom_components.eveus.const import AVAILABILITY_GRACE_PERIOD
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
-    SensorSpec,
-    SensorType,
+    EveusSensorEntityDescription,
 )
 
 _START = 1_000_000.0
@@ -48,24 +47,23 @@ def clock(monkeypatch: pytest.MonkeyPatch):
     return now
 
 
-def _spec(value_fn, *, offline: bool = False, attributes_fn=None) -> SensorSpec:
-    return SensorSpec(
+def _spec(value_fn, *, offline: bool = False, attributes_fn=None) -> EveusSensorEntityDescription:
+    return EveusSensorEntityDescription(
         key="test_sensor",
         name="Test Sensor",
         value_fn=value_fn,
-        sensor_type=SensorType.MEASUREMENT,
         icon="mdi:test-tube",
         device_class="energy",
         state_class="total_increasing",
-        unit="kWh",
-        precision=2,
-        category=EntityCategory.DIAGNOSTIC,
+        native_unit_of_measurement="kWh",
+        suggested_display_precision=2,
+        entity_category=EntityCategory.DIAGNOSTIC,
         attributes_fn=attributes_fn,
         available_when_offline=offline,
     )
 
 
-def _sensor(updater, spec: SensorSpec) -> OptimizedEveusSensor:
+def _sensor(updater, spec: EveusSensorEntityDescription) -> OptimizedEveusSensor:
     entity = OptimizedEveusSensor(updater, spec)
     entity.hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kiev"))
     disable_state_writes(entity)

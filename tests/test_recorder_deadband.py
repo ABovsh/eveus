@@ -57,7 +57,7 @@ def _push(calculator: CachedSOCCalculator) -> CachedSOCCalculator:
     return calculator
 
 
-def _spec(key: str, phases: int = 1) -> sd.SensorSpec:
+def _spec(key: str, phases: int = 1) -> sd.EveusSensorEntityDescription:
     return next(s for s in sd.create_sensor_specifications(phases=phases) if s.key == key)
 
 
@@ -68,7 +68,7 @@ def _read(spec_key: str, updater, key: str, values, phases: int = 1) -> list:
     so it now takes an entity instance across the whole series, not a bare
     getter function — a fresh call no longer starts from a clean anchor.
     """
-    sensor = _spec(spec_key, phases=phases).create_sensor(updater, 1)
+    sensor = sd.create_sensor(_spec(spec_key, phases=phases), updater, 1)
     out = []
     for value in values:
         updater.data[key] = value
@@ -130,8 +130,8 @@ def test_deadband_always_publishes_an_exact_zero() -> None:
 def test_deadband_does_not_leak_between_chargers() -> None:
     """Two config entries poll two different chargers; state is per entity."""
     first, second = _updater({"voltMeas1": 230}), _updater({"voltMeas1": 245})
-    first_sensor = _spec("voltage").create_sensor(first, 1)
-    second_sensor = _spec("voltage").create_sensor(second, 1)
+    first_sensor = sd.create_sensor(_spec("voltage"), first, 1)
+    second_sensor = sd.create_sensor(_spec("voltage"), second, 1)
 
     first_sensor._update_native_value()
     second_sensor._update_native_value()
@@ -143,7 +143,7 @@ def test_deadband_does_not_leak_between_chargers() -> None:
 def test_offline_reading_keeps_the_last_value_as_the_reference() -> None:
     """A missed poll holds through the grace window without resetting the anchor."""
     updater = _updater({"voltMeas1": 230})
-    sensor = _spec("voltage").create_sensor(updater, 1)
+    sensor = sd.create_sensor(_spec("voltage"), updater, 1)
     sensor._update_native_value()
     assert sensor._attr_native_value == 230
 
@@ -167,7 +167,7 @@ def test_connection_quality_attribute_reuses_the_damped_rssi() -> None:
     as it would be by `_handle_coordinator_update`.
     """
     updater = _updater({"RSSI": -66}, connection_quality={"success_rate": 100})
-    wifi_signal = _spec("wifi_signal").create_sensor(updater, 1)
+    wifi_signal = sd.create_sensor(_spec("wifi_signal"), updater, 1)
     wifi_signal._update_native_value()
     assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -66
 
@@ -478,7 +478,7 @@ def _session_time_sensor(updater):
         for s in sd.create_sensor_specifications(phases=1)
         if s.key == "session_time"
     )
-    return spec.create_sensor(updater)
+    return sd.create_sensor(spec, updater)
 
 
 def _restored(updater, attributes: dict | None, state: str = "5d 21h 24m"):

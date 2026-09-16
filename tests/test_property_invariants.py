@@ -31,7 +31,7 @@ from custom_components.eveus.binary_sensor import (
     EveusOcppConnectedBinarySensor,
     EveusSessionActiveBinarySensor,
 )
-from custom_components.eveus.sensor_definitions import create_sensor_specifications
+from custom_components.eveus.sensor_definitions import create_sensor, create_sensor_specifications
 from custom_components.eveus.utils import (
     calculate_remaining_seconds,
     calculate_soc_kwh,
@@ -227,9 +227,7 @@ def test_remaining_seconds_is_none_or_finite_non_negative(
 def test_current_set_sensor_factory_uses_model_bound(phases, model, current_set) -> None:
     specs = create_sensor_specifications(phases=phases)
     spec = next(item for item in specs if item.key == "current_set")
-    sensor = spec.create_sensor(
-        EveusTestUpdater({"currentSet": current_set}, model=model), 1
-    )
+    sensor = create_sensor(spec, EveusTestUpdater({"currentSet": current_set}, model=model), 1)
     disable_state_writes(sensor)
 
     expected = current_set if current_set <= MODEL_MAX_CURRENT[model] else None
@@ -243,7 +241,7 @@ def test_current_set_sensor_factory_uses_model_bound(phases, model, current_set)
 def test_sensor_factory_unique_ids_are_stable_and_unique(phases, model) -> None:
     specs = create_sensor_specifications(phases=phases)
     sensors = [
-        spec.create_sensor(EveusTestUpdater({}, model=model), device_number=2)
+        create_sensor(spec, EveusTestUpdater({}, model=model), device_number=2)
         for spec in specs
     ]
     unique_ids = [sensor.unique_id for sensor in sensors]

@@ -72,13 +72,13 @@ def _feed_seconds(monkeypatch, first: float) -> dict:
     return poll
 
 
-def _spec(key: str, phases: int = 1) -> sd.SensorSpec:
+def _spec(key: str, phases: int = 1) -> sd.EveusSensorEntityDescription:
     return next(s for s in sd.create_sensor_specifications(phases=phases) if s.key == key)
 
 
 def _read(spec_key: str, updater, key: str, values, phases: int = 1) -> list:
     """Feed successive payload values through one entity's own deadband."""
-    sensor = _spec(spec_key, phases=phases).create_sensor(updater, 1)
+    sensor = sd.create_sensor(_spec(spec_key, phases=phases), updater, 1)
     out = []
     for value in values:
         updater.data[key] = value

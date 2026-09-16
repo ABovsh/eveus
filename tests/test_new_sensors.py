@@ -115,8 +115,8 @@ class TestSessionCost:
         specs = {s.name: s for s in sensors.get_sensor_specifications()}
         assert "Session Cost" in specs
         spec = specs["Session Cost"]
-        assert spec.unit == "UAH"
-        assert spec.precision == 2
+        assert spec.native_unit_of_measurement == "UAH"
+        assert spec.suggested_display_precision == 2
         assert spec.state_class == SensorStateClass.TOTAL
         assert spec.device_class == SensorDeviceClass.MONETARY
 

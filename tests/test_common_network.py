@@ -795,7 +795,7 @@ def test_connection_quality_reports_during_failures() -> None:
         connection_quality={"success_rate": 40, "latency_avg": 1.2},
         async_add_listener=lambda *a, **k: (lambda: None),
     )
-    entity = spec.create_sensor(updater)
+    entity = sd.create_sensor(spec, updater)
     assert entity.available is True
     assert entity._get_sensor_value() == 40
 
@@ -829,7 +829,7 @@ def _wifi_signal_sensor(updater):
     from custom_components.eveus import sensor_definitions as sd
 
     spec = next(s for s in sd.create_sensor_specifications() if s.key == "wifi_signal")
-    return spec.create_sensor(updater, 1)
+    return sd.create_sensor(spec, updater, 1)
 
 
 def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:

@@ -197,7 +197,7 @@ def test_time_drift_spec_replaces_system_time() -> None:
     assert "system_time" not in specs
     drift = specs["time_drift"]
     assert drift.name == "Time Drift"
-    assert drift.unit == "s"
+    assert drift.native_unit_of_measurement == "s"
     assert drift.value_fn is sd.get_time_drift
     assert not hasattr(sd, "get_system_time")
 

@@ -5,12 +5,11 @@ import logging
 import math
 from typing import Any, Callable, Dict, Final, Optional
 from datetime import datetime
-from dataclasses import dataclass
-from enum import Enum
 from functools import lru_cache
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
+    SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.const import (
@@ -73,33 +72,19 @@ def _should_log_error(function_name: str) -> bool:
     return _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, function_name)
 
 
-class SensorType(Enum):
-    """Sensor type enumeration."""
-    MEASUREMENT = "measurement"  # pragma: no mutate - .value is never read; members used only by identity
-    ENERGY = "energy"  # pragma: no mutate - .value is never read; members used only by identity
-    DIAGNOSTIC = "diagnostic"  # pragma: no mutate - .value is never read; members used only by identity
-    CALCULATED = "calculated"  # pragma: no mutate - .value is never read; members used only by identity
-    STATE = "state"  # pragma: no mutate - .value is never read; members used only by identity
+class EveusSensorEntityDescription(SensorEntityDescription, frozen_or_thawed=True):
+    """Sensor description for factory-built Eveus sensors.
 
+    Extends the standard HA fields (icon/device_class/state_class/
+    native_unit_of_measurement/suggested_display_precision/entity_category/
+    options) with what the factory needs beyond them: how to compute a
+    reading, an optional attributes function, and the handful of per-sensor
+    behavioural flags below.
+    """
 
-@dataclass(frozen=True)
-class SensorSpec:
-    """Immutable sensor specification for efficient sensor creation."""
-    key: str
-    name: str
-    value_fn: Callable
-    sensor_type: SensorType
-    icon: Optional[str] = None  # pragma: no mutate - default only reached via `if spec.icon:`; None/"" both falsy
-    device_class: Optional[str] = None  # pragma: no mutate - default only reached via `if spec.device_class:`; None/"" both falsy
-    state_class: Optional[SensorStateClass | str] = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
-    unit: Optional[str] = None
-    precision: Optional[int] = None
-    category: Optional[EntityCategory] = None  # pragma: no mutate - default only reached via `if spec.category:`; None/"" both falsy
+    value_fn: Callable = None
     attributes_fn: Optional[Callable] = None  # pragma: no mutate - default only reached via `if not self._spec.attributes_fn:`; None/"" both falsy
     tracks_reset: bool = False  # pragma: no mutate - default only reached via `if self.tracks_reset`; False/None both falsy
-    # ENUM sensors: the full closed set of states the value_fn can return, so
-    # the automation UI offers a dropdown instead of free text.
-    options: Optional[tuple] = None  # pragma: no mutate - default only reached via `if spec.options:`; None/"" both falsy
     # Sensors whose value DESCRIBES connectivity must stay readable while the
     # poll is failing — that is exactly when their data matters.
     available_when_offline: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
@@ -112,37 +97,22 @@ class SensorSpec:
     # `_make_value_getter`'s docstring for why the getter itself stays pure.
     deadband: Optional[float] = None  # pragma: no mutate - default only reached via `if self._deadband is not None`; None/0 both leave every reading published verbatim
 
-    def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
-        """Create sensor instance from specification."""
-        cls = MonetaryCostSensor if self.tracks_reset else OptimizedEveusSensor
-        return cls(updater, self, device_number)
-
 
 class OptimizedEveusSensor(EveusSensorBase):
     """High-performance templated sensor."""
 
-    def __init__(self, updater, spec: SensorSpec, device_number: int = 1):
+    def __init__(self, updater, spec: EveusSensorEntityDescription, device_number: int = 1):
         """Initialize sensor from spec."""
         self.ENTITY_NAME = spec.name
         super().__init__(updater, device_number)
 
         self._spec = spec
+        # icon/device_class/state_class/native_unit_of_measurement/
+        # suggested_display_precision/entity_category/options all resolve
+        # through this — HA's own Entity/SensorEntity properties fall back to
+        # entity_description when the matching _attr_* is absent.
+        self.entity_description = spec
         self._error_log = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
-
-        if spec.icon:
-            self._attr_icon = spec.icon
-        if spec.device_class:
-            self._attr_device_class = spec.device_class
-        if spec.state_class:
-            self._attr_state_class = spec.state_class
-        if spec.unit:
-            self._attr_native_unit_of_measurement = spec.unit
-        if spec.precision is not None:
-            self._attr_suggested_display_precision = spec.precision
-        if spec.category:
-            self._attr_entity_category = spec.category
-        if spec.options:
-            self._attr_options = list(spec.options)
         self._deadband = spec.deadband
         self._attr_extra_state_attributes = {}
 
@@ -266,7 +236,7 @@ class MonetaryCostSensor(OptimizedEveusSensor):
     accumulation window instead of subtracting the pre-reset total.
     """
 
-    def __init__(self, updater, spec: "SensorSpec", device_number: int = 1) -> None:  # pragma: no mutate - default unreachable: create_sensor always passes device_number explicitly
+    def __init__(self, updater, spec: "EveusSensorEntityDescription", device_number: int = 1) -> None:  # pragma: no mutate - default unreachable: create_sensor always passes device_number explicitly
         """Initialize the cost sensor with reset tracking state."""
         super().__init__(updater, spec, device_number)
         self._prev_cost_value: Optional[float] = None  # pragma: no mutate - unreachable: first _update_native_value always short-circuits on `_attr_last_reset is None` before reading this default
@@ -311,6 +281,21 @@ class MonetaryCostSensor(OptimizedEveusSensor):
         )
 
 
+def create_sensor(
+    spec: EveusSensorEntityDescription, updater, device_number: int = 1
+) -> OptimizedEveusSensor:
+    """Create the sensor entity a spec describes.
+
+    A plain function, not a method on the spec: `frozen_or_thawed=True`
+    descriptions are instantiated as a separate generated dataclass behind
+    the scenes (see `EveusSwitchEntityDescription` and its siblings), so a
+    method defined in the class body is never reachable on the actual
+    instance.
+    """
+    cls = MonetaryCostSensor if spec.tracks_reset else OptimizedEveusSensor
+    return cls(updater, spec, device_number)
+
+
 # =============================================================================
 # Value helper
 # =============================================================================
@@ -346,7 +331,7 @@ def _make_value_getter(
     that is absent, corrupt or impossible arrives here as ``None``. What is
     left is presentation — an optional unit ``transform`` and a rounding
     ``precision``. Churn damping is NOT the getter's job: it lives on the
-    entity (`EveusSensorBase._deadband`, set from `SensorSpec.deadband`), the
+    entity (`EveusSensorBase._deadband`, set from `EveusSensorEntityDescription.deadband`), the
     one place that already holds a per-entity "last published value" to damp
     against.
     """
@@ -1020,7 +1005,7 @@ def get_connection_attrs(updater, hass) -> dict:
 # Sensor specification factory
 # =============================================================================
 
-def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
+def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDescription, ...]:
     """Create all sensor specifications using factory pattern.
 
     ``phases`` toggles per-phase voltage/current sensors for 3-phase chargers.
@@ -1057,17 +1042,16 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
     ]
 
     measurement_specs = [
-        SensorSpec(
+        EveusSensorEntityDescription(
             key=name.lower().replace(" ", "_"),
             name=name,
             value_fn=fn,
-            sensor_type=SensorType.MEASUREMENT,
             icon=icon,
             device_class=device_class,
             state_class=SensorStateClass.MEASUREMENT,
-            unit=unit,
-            precision=precision,
-            category=category,
+            native_unit_of_measurement=unit,
+            suggested_display_precision=precision,
+            entity_category=category,
             deadband=deadband,
         )
         for name, fn, icon, device_class, unit, precision, category, deadband in measurements
@@ -1086,80 +1070,77 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
     ]
 
     energy_specs = [
-        SensorSpec(
+        EveusSensorEntityDescription(
             key=name.lower().replace(" ", "_"),
             name=name,
             value_fn=fn,
-            sensor_type=SensorType.ENERGY,
             icon=icon,
             device_class=device_class,
             state_class=state_class,
-            unit=UnitOfEnergy.KILO_WATT_HOUR,
-            precision=2,
+            native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            suggested_display_precision=2,
         )
         for name, fn, icon, state_class, device_class in energy_sensors
     ]
 
     # Diagnostic sensors
     diagnostic_specs = [
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="state", name="State", value_fn=get_charger_state,
             attributes_fn=get_charger_state_attributes,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:state-machine",
-            category=EntityCategory.DIAGNOSTIC,
+            icon="mdi:state-machine",
+            entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
-            options=tuple(CHARGING_STATES.values()) + ("Unknown",),
+            options=list(CHARGING_STATES.values()) + ["Unknown"],
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="substate", name="Substate", value_fn=get_charger_substate,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:information-variant",
-            category=EntityCategory.DIAGNOSTIC,
+            icon="mdi:information-variant",
+            entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
-            options=tuple(NORMAL_SUBSTATES.values())
-            + tuple(v for v in ERROR_STATES.values() if v != "No Error")
-            + ("Unknown State", "Unknown Error"),
+            options=list(NORMAL_SUBSTATES.values())
+            + [v for v in ERROR_STATES.values() if v != "No Error"]
+            + ["Unknown State", "Unknown Error"],
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="not_charging_reason", name="Not Charging Reason",
             value_fn=get_not_charging_reason,
             attributes_fn=get_not_charging_reason_attrs,
-            sensor_type=SensorType.DIAGNOSTIC,
             icon="mdi:help-circle-outline",
-            category=EntityCategory.DIAGNOSTIC,
+            entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
-            options=NOT_CHARGING_REASON_OPTIONS,
+            options=list(NOT_CHARGING_REASON_OPTIONS),
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="ground", name="Ground", value_fn=get_ground_status,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:electric-switch",
-            category=EntityCategory.DIAGNOSTIC,
+            icon="mdi:electric-switch",
+            entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
-            options=get_ground_status.options,
+            options=list(get_ground_status.options),
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="time_drift", name="Time Drift", value_fn=get_time_drift,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:clock-alert-outline",
-            unit=UnitOfTime.SECONDS,
-            category=EntityCategory.DIAGNOSTIC,
+            icon="mdi:clock-alert-outline",
+            native_unit_of_measurement=UnitOfTime.SECONDS,
+            entity_category=EntityCategory.DIAGNOSTIC,
         ),
         # Same tuple+comprehension idiom as `measurements` above: these six
         # differ only in name/getter/icon/device class/unit/precision, so
         # spelling out the three shared fields six times was pure repetition.
         *(
-            SensorSpec(
+            EveusSensorEntityDescription(
                 key=key,
                 name=name,
                 value_fn=fn,
-                sensor_type=SensorType.DIAGNOSTIC,
                 icon=icon,
                 device_class=device_class,
                 # Per-entry, not blanket: `state_class` is what turns on the
                 # forever-kept 5-minute and hourly statistics, so only a
                 # reading whose long-term trend is worth that cost declares it.
                 state_class=state_class,
-                unit=unit,
-                precision=precision,
-                category=EntityCategory.DIAGNOSTIC,
+                native_unit_of_measurement=unit,
+                suggested_display_precision=precision,
+                entity_category=EntityCategory.DIAGNOSTIC,
                 deadband=deadband,
             )
             for key, name, fn, icon, device_class, unit, precision, state_class, deadband in (
@@ -1212,129 +1193,129 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
         ):
             for phase, getter in zip((2, 3), getters):
                 diagnostic_specs.append(
-                    SensorSpec(
+                    EveusSensorEntityDescription(
                         key=f"{kind}_phase_{phase}", name=f"{kind.title()} Phase {phase}",
                         value_fn=getter,
-                        sensor_type=SensorType.MEASUREMENT, icon=icon,
+                        icon=icon,
                         device_class=device_class,
                         state_class=SensorStateClass.MEASUREMENT,
-                        unit=unit, precision=precision,
+                        native_unit_of_measurement=unit, suggested_display_precision=precision,
                         deadband=deadband,
                     )
                 )
 
     # Special sensors
     special_specs = [
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="session_time", name="Session Time", value_fn=get_session_time,
-            sensor_type=SensorType.STATE, icon="mdi:timer",
+            icon="mdi:timer",
             attributes_fn=get_session_time_attrs,
             restores_session_hold=True,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="counter_a_cost", name="Counter A Cost", value_fn=get_counter_a_cost,
-            sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
+            icon=ICON_CURRENCY_UAH,
             device_class=SensorDeviceClass.MONETARY,
-            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="counter_b_cost", name="Counter B Cost", value_fn=get_counter_b_cost,
-            sensor_type=SensorType.ENERGY, icon=ICON_CURRENCY_UAH,
+            icon=ICON_CURRENCY_UAH,
             device_class=SensorDeviceClass.MONETARY,
-            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
             # not a measurement: no state_class, so it writes no statistics.
             key="primary_rate_cost", name="Primary Rate Cost", value_fn=get_primary_rate_cost,
-            sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            unit=UNIT_UAH_PER_KWH, precision=2,
+            icon=ICON_CURRENCY_UAH,
+            native_unit_of_measurement=UNIT_UAH_PER_KWH, suggested_display_precision=2,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="active_rate_cost", name="Active Rate Cost", value_fn=get_active_rate_cost,
-            sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, unit=UNIT_UAH_PER_KWH, precision=2,
+            icon=ICON_CURRENCY_UAH,
+            state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=UNIT_UAH_PER_KWH, suggested_display_precision=2,
             attributes_fn=get_active_rate_attrs,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
             # not a measurement: no state_class, so it writes no statistics.
             key="rate_2_cost", name="Rate 2 Cost", value_fn=get_rate2_cost,
-            sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            unit=UNIT_UAH_PER_KWH, precision=2,
+            icon=ICON_CURRENCY_UAH,
+            native_unit_of_measurement=UNIT_UAH_PER_KWH, suggested_display_precision=2,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
             # not a measurement: no state_class, so it writes no statistics.
             key="rate_3_cost", name="Rate 3 Cost", value_fn=get_rate3_cost,
-            sensor_type=SensorType.STATE, icon=ICON_CURRENCY_UAH,
-            unit=UNIT_UAH_PER_KWH, precision=2,
+            icon=ICON_CURRENCY_UAH,
+            native_unit_of_measurement=UNIT_UAH_PER_KWH, suggested_display_precision=2,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="rate_2_status", name="Rate 2 Status",
-            value_fn=_rate_2_status, sensor_type=SensorType.STATE,
+            value_fn=_rate_2_status,
             icon="mdi:clock-check",
             device_class=SensorDeviceClass.ENUM,
-            options=_rate_2_status.options,
+            options=list(_rate_2_status.options),
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="rate_3_status", name="Rate 3 Status",
-            value_fn=_rate_3_status, sensor_type=SensorType.STATE,
+            value_fn=_rate_3_status,
             icon="mdi:clock-check",
             device_class=SensorDeviceClass.ENUM,
-            options=_rate_3_status.options,
+            options=list(_rate_3_status.options),
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="session_cost", name="Session Cost", value_fn=get_session_cost,
-            sensor_type=SensorType.STATE, icon="mdi:cash",
+            icon="mdi:cash",
             device_class=SensorDeviceClass.MONETARY,
-            state_class=SensorStateClass.TOTAL, unit=UNIT_UAH, precision=2,
+            state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="adaptive_charging", name="Adaptive Charging",
             value_fn=get_adaptive_charging_state,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:auto-mode",
-            category=EntityCategory.DIAGNOSTIC,
+            icon="mdi:auto-mode",
+            entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
-            options=get_adaptive_charging_state.options,
+            options=list(get_adaptive_charging_state.options),
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="adaptive_current_limit", name="Adaptive Current Limit",
             value_fn=adaptive_current_getter,
-            sensor_type=SensorType.DIAGNOSTIC, icon=ICON_CURRENT_AC,
+            icon=ICON_CURRENT_AC,
             device_class=SensorDeviceClass.CURRENT,
             state_class=SensorStateClass.MEASUREMENT,
-            unit=UnitOfElectricCurrent.AMPERE, precision=0,
-            category=EntityCategory.DIAGNOSTIC,
+            native_unit_of_measurement=UnitOfElectricCurrent.AMPERE, suggested_display_precision=0,
+            entity_category=EntityCategory.DIAGNOSTIC,
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="schedule_1", name="Schedule 1",
             value_fn=_schedule_1_state,
             attributes_fn=_make_schedule_attrs(1),
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
-            category=EntityCategory.DIAGNOSTIC,
+            icon="mdi:calendar-clock",
+            entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
-            options=_schedule_1_state.options,
+            options=list(_schedule_1_state.options),
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="schedule_2", name="Schedule 2",
             value_fn=_schedule_2_state,
             attributes_fn=_make_schedule_attrs(2),
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
-            category=EntityCategory.DIAGNOSTIC,
+            icon="mdi:calendar-clock",
+            entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
-            options=_schedule_2_state.options,
+            options=list(_schedule_2_state.options),
         ),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="connection_quality", name="Connection Quality",
             available_when_offline=True,
             value_fn=get_connection_quality,
-            sensor_type=SensorType.DIAGNOSTIC, icon="mdi:connection",
-            state_class=SensorStateClass.MEASUREMENT, unit=PERCENTAGE, precision=0,
-            category=EntityCategory.DIAGNOSTIC, attributes_fn=get_connection_attrs,
+            icon="mdi:connection",
+            state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0,
+            entity_category=EntityCategory.DIAGNOSTIC, attributes_fn=get_connection_attrs,
         ),
     ]
 
@@ -1347,6 +1328,6 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
 
 
 @lru_cache(maxsize=8)
-def get_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
+def get_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDescription, ...]:
     """Get sensor specifications for the given phase count (cached)."""
     return create_sensor_specifications(phases=phases)

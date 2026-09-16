@@ -12,8 +12,8 @@ from conftest import PayloadUpdater, SnapshotBackedMock, TEST_HOST, snapshot_of
 from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
-    SensorSpec,
-    SensorType,
+    EveusSensorEntityDescription,
+    create_sensor,
     get_charger_substate,
     get_connection_attrs,
     get_connection_quality,
@@ -43,18 +43,17 @@ class _Updater(OutageClock):
         return lambda: None
 
 
-def _sensor(value_fn, *, sensor_type: SensorType = SensorType.MEASUREMENT):
-    spec = SensorSpec(
+def _sensor(value_fn):
+    spec = EveusSensorEntityDescription(
         key="test_sensor",
         name="Test Sensor",
         value_fn=value_fn,
-        sensor_type=sensor_type,
         icon="mdi:test-tube",
         device_class="power",
         state_class="measurement",
-        unit="W",
-        precision=1,
-        category=EntityCategory.DIAGNOSTIC,
+        native_unit_of_measurement="W",
+        suggested_display_precision=1,
+        entity_category=EntityCategory.DIAGNOSTIC,
         attributes_fn=lambda updater, hass: {"ok": True},
     )
     entity = OptimizedEveusSensor(_Updater(), spec)
@@ -104,7 +103,7 @@ def test_optimized_sensor_recalculates_calculated_values() -> None:
         calls += 1
         return calls
 
-    entity = _sensor(value_fn, sensor_type=SensorType.CALCULATED)
+    entity = _sensor(value_fn)
 
     entity._handle_coordinator_update()
     assert entity.native_value == 1
@@ -116,11 +115,10 @@ def test_optimized_sensor_returns_none_when_offline() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="value",
             name="Value",
             value_fn=lambda updater, hass: float(updater.data["value"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -147,11 +145,10 @@ def test_optimized_sensor_default_device_number_has_no_suffix() -> None:
     second-device unique_id the moment a caller omits the argument."""
     entity = OptimizedEveusSensor(
         _Updater(),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="device_default_probe",
             name="Device Default Probe",
             value_fn=lambda updater, hass: 1,
-            sensor_type=SensorType.DIAGNOSTIC,
         ),
     )
     assert entity.unique_id == "eveus_device_default_probe"
@@ -171,11 +168,10 @@ def test_available_when_offline_short_circuits_to_true() -> None:
     updater.available = False
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="offline_ok_probe",
             name="Offline Ok Probe",
             value_fn=lambda updater, hass: 1,
-            sensor_type=SensorType.DIAGNOSTIC,
             available_when_offline=True,
         ),
     )
@@ -192,11 +188,10 @@ def test_attributes_error_uses_expected_rate_limit_key() -> None:
     entity = _sensor(
         lambda updater, hass: 1,
     )
-    entity._spec = SensorSpec(
+    entity._spec = EveusSensorEntityDescription(
         key="test_sensor",
         name="Test Sensor",
         value_fn=lambda updater, hass: 1,
-        sensor_type=SensorType.MEASUREMENT,
         attributes_fn=lambda updater, hass: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     entity._update_extra_state_attributes()
@@ -205,11 +200,10 @@ def test_attributes_error_uses_expected_rate_limit_key() -> None:
 
 def test_update_extra_state_attributes_false_without_attributes_fn() -> None:
     entity = _sensor(lambda updater, hass: 1)
-    entity._spec = SensorSpec(
+    entity._spec = EveusSensorEntityDescription(
         key="no_attrs_probe",
         name="No Attrs Probe",
         value_fn=lambda updater, hass: 1,
-        sensor_type=SensorType.MEASUREMENT,
         attributes_fn=None,
     )
     assert entity._update_extra_state_attributes() is False
@@ -301,7 +295,7 @@ def _make_cost_sensor(updater):
 
     for spec in create_sensor_specifications():
         if spec.key == "session_cost":
-            entity = spec.create_sensor(updater, 1)
+            entity = create_sensor(spec, updater, 1)
             disable_state_writes(entity)
             entity.hass = None
             return entity
@@ -450,7 +444,7 @@ def test_cost_sensors_are_monetary_iso(key: str) -> None:
     by_key = {s.key: s for s in get_sensor_specifications(1)}
     spec = by_key[key]
     assert spec.device_class == SensorDeviceClass.MONETARY
-    assert spec.unit == "UAH"
+    assert spec.native_unit_of_measurement == "UAH"
     assert spec.state_class == SensorStateClass.TOTAL
 
 
@@ -646,7 +640,7 @@ def _rc10_cost_sensor():
 
     for spec in create_sensor_specifications():
         if spec.key == "session_cost":
-            entity = spec.create_sensor(EveusTestUpdater(data={}), 1)
+            entity = create_sensor(spec, EveusTestUpdater(data={}), 1)
             disable_state_writes(entity)
             entity.hass = None
             return entity
@@ -991,7 +985,7 @@ def test_current_set_sensor_rejects_value_above_model_maximum() -> None:
 
     spec = next(s for s in create_sensor_specifications(phases=1) if s.key == "current_set")
     updater = EveusTestUpdater({"currentSet": 40}, model="16A")  # impossible there
-    entity = spec.create_sensor(updater, 1)
+    entity = create_sensor(spec, updater, 1)
     disable_state_writes(entity)
     entity.hass = None
 
@@ -1004,7 +998,7 @@ def test_current_set_sensor_accepts_value_within_model_maximum() -> None:
 
     spec = next(s for s in create_sensor_specifications(phases=1) if s.key == "current_set")
     updater = EveusTestUpdater({"currentSet": 14}, model="16A")
-    entity = spec.create_sensor(updater, 1)
+    entity = create_sensor(spec, updater, 1)
     disable_state_writes(entity)
     entity.hass = None
 
@@ -1017,28 +1011,28 @@ def test_cost_sensors_use_monetary_iso_unit() -> None:
 
     by_key = {s.key: s for s in get_sensor_specifications(1)}
     for key in ("counter_a_cost", "counter_b_cost", "session_cost"):
-        assert by_key[key].unit == "UAH"
+        assert by_key[key].native_unit_of_measurement == "UAH"
         assert by_key[key].device_class == SensorDeviceClass.MONETARY
 
 
 def test_measurement_spec_names_and_display_precisions() -> None:
-    """The measurement-list entries feed SensorSpec.name (unique_id-adjacent
-    display name) and SensorSpec.precision (suggested_display_precision on
+    """The measurement-list entries feed EveusSensorEntityDescription.name (unique_id-adjacent
+    display name) and EveusSensorEntityDescription.suggested_display_precision (suggested_display_precision on
     the real entity) directly. A name typo silently drops the entity from
     lookups; a precision drift changes what HA rounds the displayed value
     to."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
     specs = {s.name: s for s in create_sensor_specifications(phases=1)}
-    assert specs["Voltage"].precision == 0
-    assert specs["Current"].precision == 1
-    assert specs["Power"].precision == 1
-    assert specs["Current Set"].precision == 0
+    assert specs["Voltage"].suggested_display_precision == 0
+    assert specs["Current"].suggested_display_precision == 1
+    assert specs["Power"].suggested_display_precision == 1
+    assert specs["Current Set"].suggested_display_precision == 0
 
 
 def test_energy_spec_keys_and_display_precision() -> None:
     """energy_specs derives `key` from `name.lower().replace(" ", "_")` — a
-    mutated needle/replacement silently breaks the unique_id. precision=2 is
+    mutated needle/replacement silently breaks the unique_id. suggested_display_precision=2 is
     the display precision shown on the entity."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
@@ -1050,7 +1044,7 @@ def test_energy_spec_keys_and_display_precision() -> None:
         ("Counter B Energy", "counter_b_energy"),
     ):
         assert specs[name].key == expected_key
-        assert specs[name].precision == 2
+        assert specs[name].suggested_display_precision == 2
 
 
 def test_diagnostic_spec_keys_and_names() -> None:
@@ -1073,31 +1067,31 @@ def test_diagnostic_spec_keys_and_names() -> None:
 
 
 def test_diagnostic_spec_display_precisions() -> None:
-    """Each of these diagnostic SensorSpec entries carries its own display
+    """Each of these diagnostic EveusSensorEntityDescription entries carries its own display
     precision, independent of the getter's internal rounding."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
     by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
-    assert by_key["box_temperature"].precision == 0
-    assert by_key["plug_temperature"].precision == 0
-    assert by_key["battery_voltage"].precision == 2
-    assert by_key["leak_current"].precision == 0
+    assert by_key["box_temperature"].suggested_display_precision == 0
+    assert by_key["plug_temperature"].suggested_display_precision == 0
+    assert by_key["battery_voltage"].suggested_display_precision == 2
+    assert by_key["leak_current"].suggested_display_precision == 0
 
 
 def test_tail_diagnostic_spec_keys_and_precisions() -> None:
-    """key= drives unique_id/lookups; precision= is the entity's suggested
+    """key= drives unique_id/lookups; suggested_display_precision= is the entity's suggested
     display precision — both load-bearing, not cosmetic."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
     by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     assert by_key["leak_current_peak"].key == "leak_current_peak"
-    assert by_key["leak_current_peak"].precision == 0
+    assert by_key["leak_current_peak"].suggested_display_precision == 0
     assert by_key["wifi_signal"].key == "wifi_signal"
-    assert by_key["wifi_signal"].precision == 0
+    assert by_key["wifi_signal"].suggested_display_precision == 0
 
 
 def test_phase3_extension_spec_keys_and_precisions() -> None:
-    """The `phases == 3` extension sensors: key= for lookup, precision= for
+    """The `phases == 3` extension sensors: key= for lookup, suggested_display_precision= for
     display rounding."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
@@ -1109,10 +1103,10 @@ def test_phase3_extension_spec_keys_and_precisions() -> None:
         "voltage_phase_2",
         "voltage_phase_3",
     } <= set(by_key)
-    assert by_key["current_phase_2"].precision == 1
-    assert by_key["current_phase_3"].precision == 1
-    assert by_key["voltage_phase_2"].precision == 0
-    assert by_key["voltage_phase_3"].precision == 0
+    assert by_key["current_phase_2"].suggested_display_precision == 1
+    assert by_key["current_phase_3"].suggested_display_precision == 1
+    assert by_key["voltage_phase_2"].suggested_display_precision == 0
+    assert by_key["voltage_phase_3"].suggested_display_precision == 0
 
 
 def test_special_spec_keys_and_names() -> None:
@@ -1149,20 +1143,20 @@ def test_special_spec_precisions() -> None:
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
     by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
-    assert by_key["counter_a_cost"].precision == 2
-    assert by_key["counter_b_cost"].precision == 2
-    assert by_key["primary_rate_cost"].precision == 2
-    assert by_key["active_rate_cost"].precision == 2
-    assert by_key["rate_2_cost"].precision == 2
-    assert by_key["rate_3_cost"].precision == 2
-    assert by_key["adaptive_current_limit"].precision == 0
-    assert by_key["connection_quality"].precision == 0
+    assert by_key["counter_a_cost"].suggested_display_precision == 2
+    assert by_key["counter_b_cost"].suggested_display_precision == 2
+    assert by_key["primary_rate_cost"].suggested_display_precision == 2
+    assert by_key["active_rate_cost"].suggested_display_precision == 2
+    assert by_key["rate_2_cost"].suggested_display_precision == 2
+    assert by_key["rate_3_cost"].suggested_display_precision == 2
+    assert by_key["adaptive_current_limit"].suggested_display_precision == 0
+    assert by_key["connection_quality"].suggested_display_precision == 0
 
 
 def test_counter_cost_specs_track_reset_for_monetary_sensor() -> None:
-    """tracks_reset=True routes SensorSpec.create_sensor() to
-    MonetaryCostSensor (last_reset tracking); False silently downgrades a
-    monotonic-until-reset cost sensor to a plain sensor."""
+    """tracks_reset=True routes create_sensor() to MonetaryCostSensor
+    (last_reset tracking); False silently downgrades a monotonic-until-reset
+    cost sensor to a plain sensor."""
     from custom_components.eveus.sensor_definitions import (
         MonetaryCostSensor,
         create_sensor_specifications,
@@ -1171,9 +1165,9 @@ def test_counter_cost_specs_track_reset_for_monetary_sensor() -> None:
     by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     updater = _Updater()
     assert by_key["counter_a_cost"].tracks_reset is True
-    assert isinstance(by_key["counter_a_cost"].create_sensor(updater), MonetaryCostSensor)
+    assert isinstance(create_sensor(by_key["counter_a_cost"], updater), MonetaryCostSensor)
     assert by_key["counter_b_cost"].tracks_reset is True
-    assert isinstance(by_key["counter_b_cost"].create_sensor(updater), MonetaryCostSensor)
+    assert isinstance(create_sensor(by_key["counter_b_cost"], updater), MonetaryCostSensor)
 
 
 def test_connection_quality_spec_is_available_when_offline() -> None:
