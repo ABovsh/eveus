@@ -7,7 +7,6 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.core import HomeAssistant, State, callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -248,6 +247,10 @@ class BaseSwitchEntity(
         """Return the pending switch command sentinel."""
         return self._pending_command
 
+    def _set_pending(self, value: bool | None) -> None:
+        """Store the pending switch command sentinel."""
+        self._pending_command = value
+
     async def async_added_to_hass(self) -> None:
         """Resolve the initial state after restore/coordinator data is available."""
         await super().async_added_to_hass()
@@ -265,43 +268,31 @@ class BaseSwitchEntity(
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
-        await self._async_send_command_or_raise(1)
+        await self._async_send_switch_command(1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        await self._async_send_command_or_raise(0)
+        await self._async_send_switch_command(0)
 
-    async def _async_send_command(self, command_value: int) -> bool:
-        """Send command with optimistic state."""
+    async def _async_send_switch_command(self, command_value: int) -> None:
+        """Send the on/off command through the shared pinned-command lifecycle."""
         async with self._command_lock:
-            self._pending_command = bool(command_value)
-            self._attr_is_on = self._pending_command
-            self._write_if_changed(self._attr_is_on)
-
-            try:
-                extra = (
-                    dict.fromkeys(self._command_extra, command_value)
-                    if self._command_extra
-                    else None
-                )
-                success = await self._updater.send_command(
-                    self._command, command_value, extra=extra
-                )
-                if success:
-                    self._set_optimistic_value(bool(command_value))
-                return success
-            finally:
-                self._pending_command = None
-                self._attr_is_on = self._resolve_state()
-                self._write_if_changed(self._attr_is_on)
-
-    async def _async_send_command_or_raise(self, command_value: int) -> None:
-        """Send command and raise HomeAssistantError on failure so HA shows a toast."""
-        success = await self._async_send_command(command_value)
-        if not success:
-            raise HomeAssistantError(
-                f"Eveus charger did not accept '{self.name}' "  # pragma: no mutate - pure exception-message text, self.name VALUE unchanged
-                f"{'on' if command_value else 'off'} command"  # pragma: no mutate - pure exception-message text, command_value VALUE unchanged
+            extra = (
+                dict.fromkeys(self._command_extra, command_value)
+                if self._command_extra
+                else None
+            )
+            await self._send_pinned_command(
+                device_value=command_value,
+                pending=bool(command_value),
+                shown=bool(command_value),
+                accepted=bool(command_value),
+                rejected_message=(
+                    f"Eveus charger did not accept '{self.name}' "  # pragma: no mutate - pure exception-message text, self.name VALUE unchanged
+                    f"{'on' if command_value else 'off'} command"  # pragma: no mutate - pure exception-message text, command_value VALUE unchanged
+                ),
+                failure_prefix=f"Failed to set '{self.name}'",  # pragma: no mutate - pure exception-message text, self.name VALUE unchanged
+                extra=extra,
             )
 
     async def _async_restore_state(self, state: State) -> None:

@@ -123,6 +123,7 @@ jobs:
               tests/test_recorder_deadband.py
               tests/test_hardening_rc_2026_07_30.py
               tests/test_hardening_rc_2026_09_07.py
+              tests/test_control_lifecycle_dedup.py
           - name: init
             paths: "custom_components/eveus/__init__.py"
             tests: >-
@@ -151,6 +152,7 @@ jobs:
               tests/test_hardening_rc_2026_08_25.py
               tests/test_hardening_rc_2026_09_05.py
               tests/test_fw151_missing_fields_audit.py
+              tests/test_control_lifecycle_dedup.py
           - name: minor-entities
             paths: "custom_components/eveus/select.py,custom_components/eveus/time.py,custom_components/eveus/binary_sensor.py,custom_components/eveus/button.py,custom_components/eveus/session_history.py"
             tests: >-
@@ -166,6 +168,7 @@ jobs:
               tests/test_hardening_rc_2026_07_24.py
               tests/test_hardening_rc_2026_07_30.py
               tests/test_fw151_missing_fields_audit.py
+              tests/test_control_lifecycle_dedup.py
           # sensor_definitions.py alone generates 737 mutants; sharing a leg with
           # ev_sensors.py + const.py (610) reached 103 of the 120-minute cap.
           # Both legs keep the identical killer list.

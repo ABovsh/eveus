@@ -40,118 +40,6 @@ ADAPTIVE_OPTIONS = {0: "Off", 1: "Voltage", 2: "Auto", 3: "Power"}
 ADAPTIVE_TO_DEVICE = {option: value for value, option in ADAPTIVE_OPTIONS.items()}
 
 
-class EveusTimeZoneSelect(
-    WriteOnChangeMixin,
-    OptimisticControlMixin[int],
-    ControlEntityMixin,
-    BaseEveusEntity,
-    SelectEntity,
-):
-    """Time-zone offset reported by and sent to the charger's `timeZone` field."""
-
-    ENTITY_NAME = "Time Zone"
-    _attr_icon = "mdi:map-clock-outline"
-    _attr_entity_category = EntityCategory.CONFIG
-    _attr_options = list(TIMEZONE_OPTIONS)
-    _control_entity_label = "Select"
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        super().__init__(updater, device_number)
-        self._init_optimistic_control()
-        self._init_write_on_change()
-        self._command_pending = False
-
-    def _device_value(self) -> int | None:
-        """The charger's offset, only when it is one of the offered options.
-
-        Gated on availability like the other controls: the coordinator retains
-        the last payload after failed polls, so without this gate an offline
-        charger would reconcile against a stale `timeZone` and revert the choice.
-        """
-        if not self._updater.available:
-            return None
-        value = self._updater.snapshot.get_int("timeZone")
-        if value is None or _format_tz(value) not in TIMEZONE_OPTIONS:
-            return None
-        return value
-
-    @property
-    def current_option(self) -> str | None:
-        """Return optimistic value while pending; else device value; else the
-        last good value through the grace window (restored across restarts)."""
-        offset = self._resolve_held_value(self._device_value())
-        return None if offset is None else _format_tz(offset)
-
-    async def _async_restore_state(self, state: State) -> None:
-        """Seed the last device value from the restored HA state.
-
-        Lets the select show its previous offset through the grace window after a
-        restart while the charger is still offline, instead of dropping to
-        `unknown` until the first successful poll.
-        """
-        if state is None or state.state in UNUSABLE_RESTORED_STATES:
-            return
-        if state.state in TIMEZONE_OPTIONS:
-            try:
-                self._last_device_value = int(state.state)
-                self._last_successful_read = time.monotonic()
-            except (TypeError, ValueError):
-                pass
-
-    async def async_select_option(self, option: str) -> None:
-        """Send `timeZone=<int>` to the charger with optimistic UI."""
-        if option not in TIMEZONE_OPTIONS:
-            raise HomeAssistantError(f"Unsupported time zone: {option}")
-        offset = int(option)
-        async with self._command_lock:
-            self._set_optimistic_value(offset)
-            # Suppress reconciliation while the command is in flight: the charger
-            # can take longer than the optimistic mismatch TTL to reflect the new
-            # zone, so a routine poll mid-command must not expire our value.
-            self._command_pending = True
-            self._write_if_changed(option)
-            try:
-                success = await self._updater.send_command("timeZone", offset)
-            except Exception:
-                self._optimistic_value = None
-                self._write_if_changed(self.current_option)
-                raise
-            finally:
-                self._command_pending = False
-            if not success:
-                self._optimistic_value = None
-                self._write_if_changed(self.current_option)
-                raise HomeAssistantError(
-                    f"Eveus charger did not accept timeZone={option}"
-                )
-            # Re-stamp optimistic on success so a stale poll arriving right after
-            # the command can't immediately expire it before the charger reports
-            # the new zone.
-            self._set_optimistic_value(offset)
-        _LOGGER.debug("Time zone changed to %s", option)  # pragma: no mutate - log-message text only, argument (option) unchanged
-
-    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
-    def _handle_coordinator_update(self) -> None:
-        """Push HA state only when the visible option or availability changes."""
-        self._maybe_finalize_device_info()
-        self._update_availability_state()
-        if self._command_pending:
-            # Mirror the other controls: don't reconcile against device data
-            # while our own command is still in flight.
-            self._write_if_changed(self.current_option)
-            return
-        current_time = time.monotonic()
-        device_value = self._device_value()
-        if device_value is not None:
-            self._reconcile_with_device(
-                device_value,
-                current_time,
-                lambda optimistic, device: optimistic == device,
-            )
-        self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
-        self._write_if_changed(self.current_option)
-
-
 class _EveusIntegerSelect(
     WriteOnChangeMixin,
     OptimisticControlMixin[int],
@@ -239,6 +127,19 @@ class _EveusIntegerSelect(
             )
         self._expire_optimistic_value(current_time, OPTIMISTIC_CONTROL_TTL)
         self._write_if_changed(self.current_option)
+
+
+class EveusTimeZoneSelect(_EveusIntegerSelect):
+    """Time-zone offset reported by and sent to the charger's `timeZone` field."""
+
+    ENTITY_NAME = "Time Zone"
+    READ_KEY = "timeZone"
+    WRITE_KEY = "timeZone"
+    DEVICE_TO_OPTION = {i: _format_tz(i) for i in range(-12, 15)}
+    OPTION_TO_DEVICE = {option: offset for offset, option in DEVICE_TO_OPTION.items()}
+    _attr_icon = "mdi:map-clock-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = list(TIMEZONE_OPTIONS)
 
 
 class EveusAdaptiveModeSelect(_EveusIntegerSelect):

@@ -62,6 +62,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         accepted: T,
         rejected_message: str,
         failure_prefix: str,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         """Send one write while the display is pinned to the requested value.
 
@@ -70,12 +71,23 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         becomes a ``failure_prefix`` error. However the write ends — accepted,
         rejected, raised or cancelled — the pin is released and the display
         re-resolved, so an older write can never leave its value behind.
+        ``extra`` rides along as sibling form fields (e.g. OCPP's `ocppVendor`).
         """
         self._set_pending(pending)
         self._set_display_value(shown)
         self._write_if_changed(shown)  # type: ignore[attr-defined]
         try:
-            if not await self._updater.send_command(self._command, device_value):  # type: ignore[attr-defined]
+            # Only widen the call when a caller actually has sibling fields to
+            # send: existing tests pin the two-argument call shape for the
+            # (far more common) plain writes, and an explicit `extra=None`
+            # is behaviourally identical but a different call signature.
+            if extra is not None:
+                success = await self._updater.send_command(  # type: ignore[attr-defined]
+                    self._command, device_value, extra=extra
+                )
+            else:
+                success = await self._updater.send_command(self._command, device_value)  # type: ignore[attr-defined]
+            if not success:
                 raise HomeAssistantError(rejected_message)
             self._set_optimistic_value(accepted)
         except (HomeAssistantError, ConfigEntryAuthFailed):

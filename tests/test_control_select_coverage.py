@@ -379,7 +379,7 @@ def test_timezone_select_rejects_unknown_option_exact_message() -> None:
     _mute(select)
     with pytest.raises(HomeAssistantError) as exc_info:
         asyncio.run(select.async_select_option("+99"))
-    assert str(exc_info.value) == "Unsupported time zone: +99"
+    assert str(exc_info.value) == "Unsupported Time Zone: +99"
 
 
 def test_timezone_select_command_failure_exact_message() -> None:
@@ -388,7 +388,7 @@ def test_timezone_select_command_failure_exact_message() -> None:
     _mute(select)
     with pytest.raises(HomeAssistantError) as exc_info:
         asyncio.run(select.async_select_option("+3"))
-    assert str(exc_info.value) == "Eveus charger did not accept timeZone=+3"
+    assert str(exc_info.value) == "Eveus charger did not accept timeZone=3"
 
 
 def test_min_voltage_select_rejects_unknown_option_exact_message() -> None:
