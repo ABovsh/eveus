@@ -686,9 +686,12 @@ def test_restore_accepts_datetime_last_reset() -> None:
 def test_session_active_unknown_in_error_state() -> None:
     from custom_components.eveus.binary_sensor import _session_active_is_on
 
-    assert _session_active_is_on({"state": 7}) is None
-    assert _session_active_is_on({"state": 4}) is True
-    assert _session_active_is_on({"state": 2}) is False
+    def _at(state):
+        return _session_active_is_on(EveusSnapshot.parse({"state": state}, None))
+
+    assert _at(7) is None
+    assert _at(4) is True
+    assert _at(2) is False
 
 
 def test_switch_rejects_out_of_domain_state_value() -> None:

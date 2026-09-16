@@ -1511,13 +1511,16 @@ def test_binary_sensor_plug_state_sets_come_from_const() -> None:
     binary_sensor.py used to re-declare frozenset({3, 4, 5, 6}) and
     frozenset({7}) locally, duplicating const.CONNECTED_STATES /
     const.PLUG_UNKNOWN_STATES. A firmware state added to const would then
-    silently fail to reach Car Connected and Session Active.
+    silently fail to reach Car Connected and Session Active. The sets are now
+    read in exactly one place — EveusSnapshot's plug views — so the check
+    follows them there.
     """
-    from custom_components.eveus import binary_sensor as bs
     from custom_components.eveus import const
+    from custom_components.eveus import snapshot as snap
 
-    assert bs.CONNECTED_STATES is const.CONNECTED_STATES
-    assert bs.PLUG_UNKNOWN_STATES is const.PLUG_UNKNOWN_STATES
+    assert snap.CONNECTED_STATES is const.CONNECTED_STATES
+    assert snap.PLUG_UNKNOWN_STATES is const.PLUG_UNKNOWN_STATES
+    assert snap.SESSION_ACTIVE_STATES is const.SESSION_ACTIVE_STATES
 
 
 def test_optimistic_value_survives_the_ten_second_confirmation_poll() -> None:

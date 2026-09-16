@@ -16,13 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, WriteOnChangeMixin
-from .const import (
-    CHARGING_STATES,
-    CONNECTED_STATES,
-    PLUG_UNKNOWN_STATES,
-    SESSION_ACTIVE_STATES,
-)
-from .utils import get_safe_value
+from .snapshot import EveusSnapshot
 
 _LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
 
@@ -34,35 +28,32 @@ class EveusBinaryDescription:
     name: str
     device_class: BinarySensorDeviceClass
     icon: str
-    is_on_fn: Callable[[dict], bool | None]
+    is_on_fn: Callable[[EveusSnapshot], bool | None]
     entity_category: EntityCategory | None = None  # pragma: no mutate - annotation only (PEP 563 postponed eval); default value unchanged by this mutation
 
 
-def _car_connected_is_on(data: dict) -> bool | None:
-    """Return whether a car is connected, or None if state is unknown."""
-    state = get_safe_value(data, "state", int)
-    if state is None or state not in CHARGING_STATES:
-        return None
-    if state in PLUG_UNKNOWN_STATES:
-        return None
-    return state in CONNECTED_STATES
+def _car_connected_is_on(snapshot: EveusSnapshot) -> bool | None:
+    """Whether a car is connected, or None when the state cannot say.
+
+    Unknown for an unmapped firmware code and for the Error state, where the
+    firmware cannot tell whether the plug is still seated. Both rules live on
+    the snapshot, so Session Active below cannot answer them differently.
+    """
+    return snapshot.plugged_in
 
 
-def _session_active_is_on(data: dict) -> bool | None:
-    state = get_safe_value(data, "state", int)
-    if state is None or state not in CHARGING_STATES:
-        return None
-    if state in PLUG_UNKNOWN_STATES:
-        # In the error state the firmware cannot tell whether a session is
-        # still active; reporting a definite "off" would falsely trigger
-        # session-ended automations. Mirrors Car Connected.
-        return None
-    return state in SESSION_ACTIVE_STATES
+def _session_active_is_on(snapshot: EveusSnapshot) -> bool | None:
+    """Whether a charging session is running, or None when indeterminate.
+
+    In the Error state a definite "off" would falsely trigger session-ended
+    automations. Mirrors Car Connected.
+    """
+    return snapshot.session_active
 
 
-def _ocpp_connected_is_on(data: dict) -> bool | None:
+def _ocpp_connected_is_on(snapshot: EveusSnapshot) -> bool | None:
     """Return whether the OCPP backend link is up, or None if unknown."""
-    value = get_safe_value(data, "ocppconnected", int)
+    value = snapshot.get_int("ocppconnected")
     if value not in (0, 1):
         return None
     return value == 1
@@ -130,7 +121,7 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
             # the window closes — is skipped. Same rule as the ordinary
             # sensors; see `BaseEveusEntity._in_availability_grace`.
             return self._last_known_is_on
-        self._last_known_is_on = self._description.is_on_fn(self._updater.data)
+        self._last_known_is_on = self._description.is_on_fn(self._updater.snapshot)
         return self._last_known_is_on
 
     @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests

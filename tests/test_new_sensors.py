@@ -301,3 +301,44 @@ class TestCarConnectedBinarySensor:
         # No-op update: no extra write.
         sensor._handle_coordinator_update()
         assert writes == [True, False]
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_binary_sensors_read_the_typed_snapshot() -> None:
+    """Car Connected / Session Active / OCPP Connected answer from the shared
+    parse, so "is the car plugged in" is decided in one place rather than
+    re-derived from the raw payload per sensor."""
+    from types import SimpleNamespace
+
+    from custom_components.eveus.binary_sensor import (
+        EveusCarConnectedBinarySensor,
+        EveusOcppConnectedBinarySensor,
+        EveusSessionActiveBinarySensor,
+    )
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    def _updater(payload):
+        return SimpleNamespace(
+            available=True,
+            last_update_success=True,
+            host="h",
+            scheme="http",
+            data=None,  # only the snapshot carries the reading
+            snapshot=EveusSnapshot.parse(payload, None),
+            connection_quality={},
+            async_add_listener=lambda *a, **k: (lambda: None),
+            config_entry=SimpleNamespace(entry_id="e", data={}),
+        )
+
+    charging = _updater({"state": 4, "currentSet": 16, "ocppconnected": 1})
+    assert EveusCarConnectedBinarySensor(charging).is_on is True
+    assert EveusSessionActiveBinarySensor(charging).is_on is True
+    assert EveusOcppConnectedBinarySensor(charging).is_on is True
+
+    # The Error state hides the plug status; a definite "off" there would
+    # falsely trigger session-ended automations.
+    faulted = _updater({"state": 7, "currentSet": 16})
+    assert EveusCarConnectedBinarySensor(faulted).is_on is None
+    assert EveusSessionActiveBinarySensor(faulted).is_on is None
