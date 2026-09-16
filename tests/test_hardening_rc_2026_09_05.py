@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
+
+from conftest import PayloadUpdater
 from conftest import EV_HELPERS, EveusTestUpdater
 from types import SimpleNamespace
 
@@ -31,13 +33,12 @@ from custom_components.eveus.ev_sensors import (
 
 def _updater(data: dict[str, object], **extra) -> SimpleNamespace:
     fields: dict[str, object] = {
-        "data": data,
         "available": True,
         "connection_quality": {},
         "host": "192.168.1.50",
     }
     fields.update(extra)
-    return SimpleNamespace(**fields)
+    return PayloadUpdater(data, **fields)
 
 
 def _push(calculator: CachedSOCCalculator) -> CachedSOCCalculator:

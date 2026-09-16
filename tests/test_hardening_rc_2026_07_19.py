@@ -7,6 +7,7 @@ from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.const import EVENT_ERROR
 from custom_components.eveus.sensor_definitions import _make_schedule_attrs
 
+from conftest import PayloadUpdater
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 
 
@@ -78,21 +79,17 @@ def test_error_substate_memory_survives_no_offline_gap_rule() -> None:
 def test_schedule_attrs_show_sub_minimum_current() -> None:
     """Firmware reports sub-7A schedule setpoints verbatim; the sensor
     attribute must display them like the Number entity does."""
-    updater = Mock()
-    updater.available = True
-    updater.data = {
+    updater = PayloadUpdater({
         "sh1Start": 60,
         "sh1Stop": 120,
         "sh1CurrentEnable": 1,
         "sh1CurrentValue": 6,
-    }
+    })
     attrs = _make_schedule_attrs(1)(updater, None)
     assert attrs["current_limit_a"] == 6
 
 
 def test_schedule_attrs_still_reject_negative_current() -> None:
-    updater = Mock()
-    updater.available = True
-    updater.data = {"sh1CurrentEnable": 1, "sh1CurrentValue": -3}
+    updater = PayloadUpdater({"sh1CurrentEnable": 1, "sh1CurrentValue": -3})
     attrs = _make_schedule_attrs(1)(updater, None)
     assert "current_limit_a" not in attrs

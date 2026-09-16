@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import PayloadUpdater
 from custom_components.eveus import sensor_definitions as sd
 
 from test_soc_autofill import _build, _poll  # noqa: F401  (fixtures come along)
@@ -17,7 +18,7 @@ from test_soc_autofill import _no_dispatcher  # noqa: F401
 
 
 def _updater(data: dict[str, object]) -> SimpleNamespace:
-    return SimpleNamespace(data=data, available=True, host="192.168.1.50")
+    return PayloadUpdater(data, host="192.168.1.50")
 
 
 def _read(getter, updater, key: str, values) -> list:

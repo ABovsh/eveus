@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from conftest import PayloadUpdater
 from conftest import EveusTestUpdater as _Updater
 import custom_components.eveus as eveus_init
 from custom_components.eveus import (
@@ -220,13 +221,13 @@ import pytest
 
 @pytest.mark.parametrize("bad", [0, 5.01, 12.5, 100, 500])
 def test_v09_battery_voltage_rejects_implausible(bad):
-    upd = SimpleNamespace(available=True, data={"vBat": bad})
+    upd = PayloadUpdater({"vBat": bad})
     from custom_components.eveus import sensor_definitions as sd
     assert sd.get_battery_voltage(upd, None) is None
 
 
 def test_v09_battery_voltage_accepts_plausible():
-    upd = SimpleNamespace(available=True, data={"vBat": 3.0})
+    upd = PayloadUpdater({"vBat": 3.0})
     from custom_components.eveus import sensor_definitions as sd
     assert sd.get_battery_voltage(upd, None) == 3.0
 

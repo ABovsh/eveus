@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.helpers.entity import EntityCategory
 
-from conftest import PayloadUpdater, SnapshotBackedMock, TEST_HOST
+from conftest import PayloadUpdater, SnapshotBackedMock, TEST_HOST, snapshot_of
 from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
@@ -27,10 +27,16 @@ class _Updater:
     available = True
     last_update_success = True
     data = {"value": "10"}
+    model = None
     connection_quality = {
         "success_rate": 75,
         "latency_avg": 0.42,
     }
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the entity by assigning `data`.
+        return snapshot_of(self)
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
@@ -549,22 +555,29 @@ def test_adaptive_current_limit_bounded_to_model_max() -> None:
     from conftest import EveusTestUpdater
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    spec = next(s for s in create_sensor_specifications(max_current=16) if s.key == "adaptive_current_limit")
-    assert spec.value_fn(EveusTestUpdater(data={"aiModecurrent": 48}), None) is None
-    assert spec.value_fn(EveusTestUpdater(data={"aiModecurrent": 10}), None) == 10
+    spec = next(s for s in create_sensor_specifications() if s.key == "adaptive_current_limit")
+    assert (
+        spec.value_fn(EveusTestUpdater({"aiModecurrent": 48}, model="16A"), None)
+        is None
+    )
+    assert (
+        spec.value_fn(EveusTestUpdater({"aiModecurrent": 10}, model="16A"), None) == 10
+    )
 
 
 def test_schedule_current_limit_bounded_to_model_max() -> None:
     from conftest import EveusTestUpdater
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    spec = next(s for s in create_sensor_specifications(max_current=16) if s.key == "schedule_1")
+    spec = next(s for s in create_sensor_specifications() if s.key == "schedule_1")
     bad = spec.attributes_fn(
-        EveusTestUpdater(data={"sh1CurrentEnable": 1, "sh1CurrentValue": 48}), None
+        EveusTestUpdater({"sh1CurrentEnable": 1, "sh1CurrentValue": 48}, model="16A"),
+        None,
     )
     assert "current_limit_a" not in bad
     ok = spec.attributes_fn(
-        EveusTestUpdater(data={"sh1CurrentEnable": 1, "sh1CurrentValue": 12}), None
+        EveusTestUpdater({"sh1CurrentEnable": 1, "sh1CurrentValue": 12}, model="16A"),
+        None,
     )
     assert ok["current_limit_a"] == 12
 
@@ -598,18 +611,21 @@ def test_active_rate_cost_returns_value_when_positive() -> None:
 
 
 def test_v12_error_state_zero_substate_is_unknown() -> None:
-    upd = SimpleNamespace(available=True, data={"state": 7, "subState": 0})
-    assert get_charger_substate(upd, None) is None
+    assert get_charger_substate(PayloadUpdater({"state": 7, "subState": 0}), None) is None
 
 
 def test_v12_normal_state_zero_substate_still_maps() -> None:
-    upd = SimpleNamespace(available=True, data={"state": 2, "subState": 0})
-    assert get_charger_substate(upd, None) == "No Limits"
+    assert (
+        get_charger_substate(PayloadUpdater({"state": 2, "subState": 0}), None)
+        == "No Limits"
+    )
 
 
 def test_v12_error_state_real_fault_still_maps() -> None:
-    upd = SimpleNamespace(available=True, data={"state": 7, "subState": 10})
-    assert get_charger_substate(upd, None) == "Overcurrent"
+    assert (
+        get_charger_substate(PayloadUpdater({"state": 7, "subState": 10}), None)
+        == "Overcurrent"
+    )
 
 
 def test_v21_schedule_energy_has_display_precision() -> None:
@@ -805,10 +821,9 @@ def test_v08_normal_power_still_returns_eta() -> None:
 def test_v07_current_set_sensor_displays_sub_7() -> None:
     from custom_components.eveus import sensor_definitions as sd
 
-    specs = {s.name: s for s in sd.create_sensor_specifications(phases=1, max_current=16)}
+    specs = {s.name: s for s in sd.create_sensor_specifications(phases=1)}
     getter = specs["Current Set"].value_fn
-    upd = SimpleNamespace(available=True, data={"currentSet": 6})
-    assert getter(upd, None) == 6
+    assert getter(PayloadUpdater({"currentSet": 6}), None) == 6
 
 
 def test_v07_current_number_displays_sub7_but_writes_floor() -> None:
@@ -973,8 +988,8 @@ def test_current_set_sensor_rejects_value_above_model_maximum() -> None:
     from conftest import EveusTestUpdater, disable_state_writes
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    spec = next(s for s in create_sensor_specifications(phases=1, max_current=16) if s.key == "current_set")
-    updater = EveusTestUpdater(data={"currentSet": 40})  # impossible on a 16 A unit
+    spec = next(s for s in create_sensor_specifications(phases=1) if s.key == "current_set")
+    updater = EveusTestUpdater({"currentSet": 40}, model="16A")  # impossible there
     entity = spec.create_sensor(updater, 1)
     disable_state_writes(entity)
     entity.hass = None
@@ -986,8 +1001,8 @@ def test_current_set_sensor_accepts_value_within_model_maximum() -> None:
     from conftest import EveusTestUpdater, disable_state_writes
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    spec = next(s for s in create_sensor_specifications(phases=1, max_current=16) if s.key == "current_set")
-    updater = EveusTestUpdater(data={"currentSet": 14})
+    spec = next(s for s in create_sensor_specifications(phases=1) if s.key == "current_set")
+    updater = EveusTestUpdater({"currentSet": 14}, model="16A")
     entity = spec.create_sensor(updater, 1)
     disable_state_writes(entity)
     entity.hass = None
@@ -1013,7 +1028,7 @@ def test_measurement_spec_names_and_display_precisions() -> None:
     to."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    specs = {s.name: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    specs = {s.name: s for s in create_sensor_specifications(phases=1)}
     assert specs["Voltage"].precision == 0
     assert specs["Current"].precision == 1
     assert specs["Power"].precision == 1
@@ -1026,7 +1041,7 @@ def test_energy_spec_keys_and_display_precision() -> None:
     the display precision shown on the entity."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    specs = {s.name: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    specs = {s.name: s for s in create_sensor_specifications(phases=1)}
     for name, expected_key in (
         ("Session Energy", "session_energy"),
         ("Total Energy", "total_energy"),
@@ -1043,7 +1058,7 @@ def test_diagnostic_spec_keys_and_names() -> None:
     strings, not cosmetic."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     assert by_key["substate"].name == "Substate"
     assert by_key["ground"].key == "ground"
     assert by_key["ground"].name == "Ground"
@@ -1061,7 +1076,7 @@ def test_diagnostic_spec_display_precisions() -> None:
     precision, independent of the getter's internal rounding."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     assert by_key["box_temperature"].precision == 0
     assert by_key["plug_temperature"].precision == 0
     assert by_key["battery_voltage"].precision == 2
@@ -1073,7 +1088,7 @@ def test_tail_diagnostic_spec_keys_and_precisions() -> None:
     display precision — both load-bearing, not cosmetic."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     assert by_key["leak_current_peak"].key == "leak_current_peak"
     assert by_key["leak_current_peak"].precision == 0
     assert by_key["wifi_signal"].key == "wifi_signal"
@@ -1085,7 +1100,7 @@ def test_phase3_extension_spec_keys_and_precisions() -> None:
     display rounding."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=3, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=3)}
     # Membership is the real assertion — a renamed key drops out of the mapping.
     assert {
         "current_phase_2",
@@ -1104,7 +1119,7 @@ def test_special_spec_keys_and_names() -> None:
     sensors block — both real, user/lookup-facing strings."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     assert by_key["session_time"].key == "session_time"
     assert by_key["session_time"].name == "Session Time"
     assert by_key["counter_a_cost"].name == "Counter A Cost"
@@ -1132,7 +1147,7 @@ def test_special_spec_precisions() -> None:
     """Display precision for the special sensors' numeric entries."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     assert by_key["counter_a_cost"].precision == 2
     assert by_key["counter_b_cost"].precision == 2
     assert by_key["primary_rate_cost"].precision == 2
@@ -1152,7 +1167,7 @@ def test_counter_cost_specs_track_reset_for_monetary_sensor() -> None:
         create_sensor_specifications,
     )
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     updater = _Updater()
     assert by_key["counter_a_cost"].tracks_reset is True
     assert isinstance(by_key["counter_a_cost"].create_sensor(updater), MonetaryCostSensor)
@@ -1165,7 +1180,7 @@ def test_connection_quality_spec_is_available_when_offline() -> None:
     that's the whole point of the diagnostic."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     assert by_key["connection_quality"].available_when_offline is True
 
 
@@ -1174,7 +1189,7 @@ def test_rate_status_getters_read_their_own_tarif_field() -> None:
     swapped/typo'd field names would silently read the wrong tariff flag."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     updater_a_only = _Updater()
     updater_a_only.data = {"tarifAEnable": "1", "tarifBEnable": "0"}
     assert by_key["rate_2_status"].value_fn(updater_a_only, None) == "Enabled"
@@ -1192,7 +1207,7 @@ def test_schedule_specs_bind_to_their_own_slot() -> None:
     Schedule 1 entity or vice versa."""
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1, max_current=16)}
+    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
 
     updater = _Updater()
     updater.data = {"sh1Enabled": "1", "sh2Enabled": "0"}
@@ -1208,3 +1223,59 @@ def test_schedule_specs_bind_to_their_own_slot() -> None:
     attrs_updater.data = {"sh2Start": "60", "sh2Stop": "120", "sh3Start": "600"}
     attrs = by_key["schedule_2"].attributes_fn(attrs_updater, None)
     assert attrs["window"] == "01:00–02:00"
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_sensor_getters_read_the_typed_snapshot() -> None:
+    """Every value getter reads the shared parse. The physical ceilings that
+    used to be re-declared on each getter are the snapshot's, so a sensor and
+    a safety policy reading one field can no longer disagree about it."""
+    from types import SimpleNamespace
+
+    from custom_components.eveus import sensor_definitions as sdm
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    payload = {
+        "state": 4,
+        "subState": 0,
+        "currentSet": 16,
+        "voltMeas1": 230,
+        "curMeas1": 15.2,
+        "powerMeas": 3500,
+        "sessionEnergy": 10.5,
+        "temperature1": 33,
+        "RSSI": -64,
+        "ground": 1,
+    }
+    updater = SimpleNamespace(
+        available=True,
+        last_update_success=True,
+        data=None,  # only the snapshot carries the reading
+        snapshot=EveusSnapshot.parse(payload, None),
+        connection_quality={"success_rate": 100, "latency_avg": 0.1},
+    )
+
+    assert sdm.get_voltage(updater, None) == 230
+    assert sdm.get_current(updater, None) == 15.2
+    assert sdm.get_power(updater, None) == 3500
+    assert sdm.get_session_energy(updater, None) == 10.5
+    assert sdm.get_box_temperature(updater, None) == 33
+    assert sdm.get_wifi_rssi(updater, None) == -64
+    assert sdm.get_charger_state(updater, None) == "Charging"
+    assert sdm.get_ground_status(updater, None) == "Connected"
+    assert sdm.get_not_charging_reason(updater, None) == "Charging"
+
+
+def test_model_bound_on_a_setpoint_comes_from_the_charger_not_the_spec() -> None:
+    """A setpoint above THIS charger's design current is corrupt, and which
+    charger it is belongs to the coordinator — so the bound travels with the
+    poll rather than being re-declared when the sensor specs are built."""
+    from conftest import EveusTestUpdater
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
+
+    spec = next(s for s in create_sensor_specifications() if s.key == "current_set")
+    assert spec.value_fn(EveusTestUpdater({"currentSet": 32}, model="16A"), None) is None
+    assert spec.value_fn(EveusTestUpdater({"currentSet": 14}, model="16A"), None) == 14
+    assert spec.value_fn(EveusTestUpdater({"currentSet": 32}, model="32A"), None) == 32

@@ -225,12 +225,11 @@ def test_remaining_seconds_is_none_or_finite_non_negative(
     current_set=st.integers(min_value=0, max_value=max(MODEL_MAX_CURRENT.values()) + 5),
 )
 def test_current_set_sensor_factory_uses_model_bound(phases, model, current_set) -> None:
-    specs = create_sensor_specifications(
-        phases=phases,
-        max_current=MODEL_MAX_CURRENT[model],
-    )
+    specs = create_sensor_specifications(phases=phases)
     spec = next(item for item in specs if item.key == "current_set")
-    sensor = spec.create_sensor(EveusTestUpdater({"currentSet": current_set}), 1)
+    sensor = spec.create_sensor(
+        EveusTestUpdater({"currentSet": current_set}, model=model), 1
+    )
     disable_state_writes(sensor)
 
     expected = current_set if current_set <= MODEL_MAX_CURRENT[model] else None
@@ -242,12 +241,9 @@ def test_current_set_sensor_factory_uses_model_bound(phases, model, current_set)
     model=st.sampled_from(MODELS),
 )
 def test_sensor_factory_unique_ids_are_stable_and_unique(phases, model) -> None:
-    specs = create_sensor_specifications(
-        phases=phases,
-        max_current=MODEL_MAX_CURRENT[model],
-    )
+    specs = create_sensor_specifications(phases=phases)
     sensors = [
-        spec.create_sensor(EveusTestUpdater({}), device_number=2)
+        spec.create_sensor(EveusTestUpdater({}, model=model), device_number=2)
         for spec in specs
     ]
     unique_ids = [sensor.unique_id for sensor in sensors]

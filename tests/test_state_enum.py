@@ -1,13 +1,13 @@
 """State/Substate sensors expose the ENUM device class with a full options list."""
 from __future__ import annotations
 
-from types import SimpleNamespace
 
 import pytest
 
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.helpers.entity import EntityCategory
 
+from conftest import PayloadUpdater
 from custom_components.eveus.const import (
     CHARGING_STATES,
     ERROR_STATES,
@@ -107,7 +107,7 @@ def test_closed_set_getters_never_leave_their_option_list(key: str) -> None:
     """An ENUM value outside the options list is dropped by HA — the sensor
     would silently read `unknown` instead of its real state."""
     spec = _spec(key)
-    updater = SimpleNamespace(data={}, available=True, connection_quality={})
+    updater = PayloadUpdater({})
     produced = set()
     for raw in list(range(-1, 12)) + ["1", "0", None, "junk"]:
         updater.data = {k: raw for k in _PAYLOAD_KEYS[key]}

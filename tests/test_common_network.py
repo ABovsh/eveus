@@ -13,6 +13,7 @@ import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
+from conftest import PayloadUpdater
 from conftest import StreamReaderStub, TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
@@ -825,23 +826,21 @@ def test_ev_sensor_skips_value_recompute_on_failed_poll() -> None:
 
 
 def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:
-    from types import SimpleNamespace
     from custom_components.eveus import sensor_definitions as sd
 
-    offline = SimpleNamespace(
+    offline = PayloadUpdater(
+        {"RSSI": -50},
         available=False,
         connection_quality={"success_rate": 42, "latency_avg": 1.0},
-        data={"RSSI": -50},
     )
     attrs = sd.get_connection_attrs(offline, None)
     assert attrs["connection_quality"] == 42
     assert attrs["status"] == "Poor"
     assert "wifi_rssi" not in attrs  # stale payload value suppressed offline
 
-    online = SimpleNamespace(
-        available=True,
+    online = PayloadUpdater(
+        {"RSSI": -50},
         connection_quality={"success_rate": 99, "latency_avg": 0.2},
-        data={"RSSI": -50},
     )
     online_attrs = sd.get_connection_attrs(online, None)
     assert online_attrs["status"] == "Excellent"

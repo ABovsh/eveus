@@ -14,6 +14,8 @@ statistics.
 from __future__ import annotations
 
 import pytest
+
+from conftest import PayloadUpdater
 from conftest import EV_HELPERS, EveusTestUpdater
 from datetime import datetime
 from types import SimpleNamespace
@@ -36,13 +38,12 @@ from custom_components.eveus.ev_sensors import (
 
 def _updater(data: dict[str, object], **extra) -> SimpleNamespace:
     fields: dict[str, object] = {
-        "data": data,
         "available": True,
         "connection_quality": {},
         "host": "192.168.1.50",
     }
     fields.update(extra)
-    return SimpleNamespace(**fields)
+    return PayloadUpdater(data, **fields)
 
 
 def _push(calculator: CachedSOCCalculator) -> CachedSOCCalculator:
@@ -449,7 +450,7 @@ def test_estimate_still_follows_a_real_decline() -> None:
 def _session_time_sensor(updater):
     spec = next(
         s
-        for s in sd.create_sensor_specifications(phases=1, max_current=16)
+        for s in sd.create_sensor_specifications(phases=1)
         if s.key == "session_time"
     )
     return spec.create_sensor(updater)
@@ -472,7 +473,7 @@ def test_only_session_time_declares_a_hold_to_restore() -> None:
     """
     declared = {
         spec.key
-        for spec in sd.create_sensor_specifications(phases=1, max_current=16)
+        for spec in sd.create_sensor_specifications(phases=1)
         if spec.restores_session_hold
     }
     assert declared == {"session_time"}

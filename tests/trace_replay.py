@@ -118,7 +118,7 @@ def replay(trace: dict[str, Any], monkeypatch, *, sensors: bool = False) -> Repl
     if sensors:
         from custom_components.eveus.sensor_definitions import get_sensor_specifications
 
-        for spec in get_sensor_specifications(phases=1, max_current=16):
+        for spec in get_sensor_specifications(phases=1):
             sensor = spec.create_sensor(updater, 1)
             sensor.async_write_ha_state = lambda: None
             result.sensors[spec.key] = sensor

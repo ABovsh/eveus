@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+
+from conftest import PayloadUpdater
 from conftest import spec_value_fn
 from homeassistant.helpers.entity import EntityCategory
 
@@ -13,12 +15,14 @@ from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus import sensor_definitions as sensors
 
 
-def _updater(data: dict[str, object], *, available: bool = True) -> SimpleNamespace:
-    return SimpleNamespace(
-        data=data,
+def _updater(
+    data: dict[str, object], *, available: bool = True, model: str | None = None
+) -> PayloadUpdater:
+    return PayloadUpdater(
+        data,
         available=available,
-        connection_quality={},
         host="192.168.1.50",
+        model=model,
     )
 
 
@@ -134,11 +138,7 @@ def test_value_getters_reject_nan_and_inf() -> None:
     They must be filtered to None so HA doesn't store nonsense in long-term
     statistics or compute downstream cost/finish-time off bad inputs.
     """
-    updater = SimpleNamespace(
-        data={"voltMeas1": "nan", "powerMeas": "inf", "sessionEnergy": "-inf"},
-        available=True,
-        connection_quality={},
-    )
+    updater = _updater({"voltMeas1": "nan", "powerMeas": "inf", "sessionEnergy": "-inf"})
     assert sensors.get_voltage(updater, None) is None
     assert sensors.get_power(updater, None) is None
     assert sensors.get_session_energy(updater, None) is None
@@ -224,8 +224,8 @@ def test_get_sensor_specifications_is_cached_by_arguments() -> None:
     tuple object, not merely an equal one — that's what `@lru_cache` buys
     us and what removing the decorator would silently break."""
     sensors.get_sensor_specifications.cache_clear()
-    first = sensors.get_sensor_specifications(phases=1, max_current=16)
-    second = sensors.get_sensor_specifications(phases=1, max_current=16)
+    first = sensors.get_sensor_specifications(phases=1)
+    second = sensors.get_sensor_specifications(phases=1)
     assert first is second
 
 
@@ -236,24 +236,23 @@ def test_get_sensor_specifications_phases_default_is_one() -> None:
     assert default == 1
 
 
-def test_get_sensor_specifications_falls_back_to_model_max_only_when_falsy() -> None:
-    """`max_current or _MAX_MODEL_CURRENT`: an explicit truthy max_current
-    must be used as-is (not replaced by the global ceiling), and only a
-    falsy value (None/0) should fall back. Regression guard for an
-    `or`/`and` flip that would silently widen every model's Schedule
-    current-limit clamp to the global 48 A ceiling."""
+def test_schedule_current_limit_uses_this_chargers_model_max() -> None:
+    """A schedule amp cap above THIS charger's design current must be dropped,
+    not widened to the global 48 A ceiling. Which charger it is comes from the
+    coordinator, so the clamp follows the poll rather than the spec factory."""
     sensors.get_sensor_specifications.cache_clear()
-    specs = {
-        s.key: s
-        for s in sensors.get_sensor_specifications(phases=1, max_current=16)
-    }
-    updater = _updater(
-        {"sh1CurrentEnable": "1", "sh1CurrentValue": "20"}
+    specs = {s.key: s for s in sensors.get_sensor_specifications(phases=1)}
+    attrs = specs["schedule_1"].attributes_fn(
+        _updater({"sh1CurrentEnable": "1", "sh1CurrentValue": "20"}, model="16A"),
+        None,
     )
-    attrs = specs["schedule_1"].attributes_fn(updater, None)
-    # 20 A exceeds the explicit max_current=16 clamp, so it must be dropped —
-    # not silently accepted because the ceiling widened to _MAX_MODEL_CURRENT.
     assert "current_limit_a" not in attrs
+    # The same payload on a 32 A unit is a perfectly ordinary setting.
+    attrs32 = specs["schedule_1"].attributes_fn(
+        _updater({"sh1CurrentEnable": "1", "sh1CurrentValue": "20"}, model="32A"),
+        None,
+    )
+    assert attrs32["current_limit_a"] == 20
     sensors.get_sensor_specifications.cache_clear()
 
 
@@ -678,9 +677,8 @@ def test_create_sensor_default_device_number_has_no_suffix() -> None:
 
 def test_make_value_getter_default_precision_rounds_to_int() -> None:
     """precision defaults to 0 in the factory itself."""
-    getter = sensors._make_value_getter("probeKey")
-    updater = _updater({"probeKey": "12.6"})
-    assert getter(updater, None) == 13
+    getter = sensors._make_value_getter("voltMeas1")
+    assert getter(_updater({"voltMeas1": "12.6"}), None) == 13
 
 
 def test_battery_voltage_rejects_reading_of_exactly_zero() -> None:
@@ -691,11 +689,17 @@ def test_battery_voltage_rejects_reading_of_exactly_zero() -> None:
     assert sensors.get_battery_voltage(updater, None) is None
 
 
-def test_get_data_value_short_circuits_on_either_offline_or_missing_data() -> None:
-    """`not available or not data` must reject on EITHER condition, not only
-    when both are true."""
-    updater = _updater({}, available=True)  # available but data is empty
-    assert sensors._get_data_value(updater, "missing_key", default="sentinel") is None
+def test_field_read_rejects_on_either_offline_or_missing_data() -> None:
+    """A field read answers None on EITHER condition, not only when both hold:
+    the charger never reported it, or the poll is currently failing."""
+    # Available, but the charger did not report the field.
+    assert sensors._read_int(_updater({}, available=True), "sh1Enabled") is None
+    assert sensors.get_voltage(_updater({}, available=True), None) is None
+    # Reported, but the poll is failing — the entity layer holds the last
+    # reading through its grace window instead.
+    offline = _updater({"sh1Enabled": 1, "voltMeas1": 230}, available=False)
+    assert sensors._read_int(offline, "sh1Enabled") is None
+    assert sensors.get_voltage(offline, None) is None
 
 
 def test_voltage_and_power_getters_accept_reading_of_exactly_zero() -> None:
@@ -803,7 +807,10 @@ def test_charger_state_logs_warning_only_for_unmapped_states(caplog) -> None:
         assert not any("unrecognized device state" in r.message for r in caplog.records)
 
         caplog.clear()
-        sensors.get_charger_state(_updater({"state": "9999"}), None)
+        # 20 is firmware 1.x's idle code: a real state byte the modern map has
+        # no name for. (A value outside 0-255 never reaches a sensor — the
+        # payload validator fails the whole poll on it.)
+        sensors.get_charger_state(_updater({"state": "20"}), None)
         assert any("unrecognized device state" in r.message for r in caplog.records)
 
 
@@ -828,7 +835,7 @@ def test_session_time_getters_accept_zero_and_exact_max_boundary() -> None:
 def test_active_rate_cost_accepts_zero_and_exact_ceiling_boundary() -> None:
     """get_active_rate_cost: `value < 0` (0 must pass) and `value >
     _MAX_RATE_HUNDREDTHS` (exactly the ceiling must still pass)."""
-    from custom_components.eveus.sensor_definitions import _MAX_RATE_HUNDREDTHS
+    from custom_components.eveus.const import MAX_RATE_HUNDREDTHS as _MAX_RATE_HUNDREDTHS
 
     assert sensors.get_active_rate_cost(
         _updater({"activeTarif": "0", "tarif": "0"}), None
@@ -894,10 +901,11 @@ def test_schedule_attrs_current_and_energy_zero_are_inclusive() -> None:
 
 def test_schedule_attrs_current_limit_boundary_at_max_current() -> None:
     """The current cap upper bound is inclusive: a reading exactly equal to
-    max_current must be kept, not dropped as "above the model maximum"."""
-    attrs_fn = sensors._make_schedule_attrs(1, max_current=16)
+    the model maximum must be kept, not dropped as "above the model maximum"."""
+    attrs_fn = sensors._make_schedule_attrs(1)
     at_max = attrs_fn(
-        _updater({"sh1CurrentEnable": "1", "sh1CurrentValue": "16"}), None
+        _updater({"sh1CurrentEnable": "1", "sh1CurrentValue": "16"}, model="16A"),
+        None,
     )
     assert at_max["current_limit_a"] == 16
 
@@ -905,8 +913,7 @@ def test_schedule_attrs_current_limit_boundary_at_max_current() -> None:
 def test_connection_quality_missing_success_rate_defaults_to_zero() -> None:
     """`metrics.get("success_rate", 0)` must default to 0 (unknown/no data
     reads as 0% quality), not silently default to something else."""
-    updater = SimpleNamespace(available=True, data={}, connection_quality={})
-    assert sensors.get_connection_quality(updater, None) == 0
+    assert sensors.get_connection_quality(PayloadUpdater({}), None) == 0
 
 
 @pytest.mark.parametrize(
@@ -947,11 +954,11 @@ def test_current_set_and_adaptive_current_getters_precision_and_minimum() -> Non
     """Both current_set_getter and adaptive_current_getter are built with
     precision=0 and minimum=0 (inclusive): a fractional reading must round
     to a whole amp, and exactly 0 must pass through as 0, not be rejected."""
-    specs = {s.name: s for s in sensors.create_sensor_specifications(max_current=16)}
+    specs = {s.name: s for s in sensors.create_sensor_specifications()}
     current_set_fn = specs["Current Set"].value_fn
     adaptive_fn = next(
         s.value_fn
-        for s in sensors.create_sensor_specifications(max_current=16)
+        for s in sensors.create_sensor_specifications()
         if s.key == "adaptive_current_limit"
     )
     assert current_set_fn(_updater({"currentSet": "14.6"}), None) == 15

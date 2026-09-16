@@ -505,7 +505,9 @@ def snapshot_of(updater: object) -> Any:
     from custom_components.eveus.snapshot import EveusSnapshot
 
     data = getattr(updater, "data", None)
-    return EveusSnapshot.parse(data if isinstance(data, dict) else {}, None)
+    return EveusSnapshot.parse(
+        data if isinstance(data, dict) else {}, getattr(updater, "model", None)
+    )
 
 
 class SnapshotBackedMock(MagicMock):
@@ -530,11 +532,17 @@ class PayloadUpdater:
         available: bool = True,
         last_update_success: bool = True,
         connection_quality: dict | None = None,
+        **extra: object,
     ) -> None:
         self.data = data
         self.available = available
         self.last_update_success = last_update_success
         self.connection_quality = connection_quality or {}
+        # Drop-in for the SimpleNamespace doubles these tests used to build,
+        # so any other attribute a caller sets (host, _session_time_seconds,
+        # model, ...) still lands on the object.
+        for name, value in extra.items():
+            setattr(self, name, value)
 
     @property
     def snapshot(self) -> Any:
@@ -557,10 +565,14 @@ class EveusTestUpdater:
         available: bool = True,
         scheme: str = "http",
         quality: dict[str, object] | None = None,
+        model: str | None = None,
     ) -> None:
         self.host = host
         self.available = available
         self.scheme = scheme
+        # Which charger this is: the snapshot bounds amp setpoints by the
+        # model's design current, exactly as the real coordinator does.
+        self.model = model
         self.data = data or {}
         self.connection_quality = quality or {}
         self.commands: list[tuple[str, object]] = []
@@ -596,16 +608,18 @@ def disable_state_writes(entity: object) -> None:
     entity.async_write_ha_state = lambda: None
 
 
-def spec_value_fn(key: str, *, phases: int = 1, max_current: int | None = None):
-    """Return the production value_fn registered for a sensor spec key."""
+def spec_value_fn(key: str, *, phases: int = 1):
+    """Return the production value_fn registered for a sensor spec key.
+
+    No model maximum: a setpoint's model bound travels with the poll now (the
+    coordinator knows which charger it is), so it is set on the updater double,
+    not when the specs are built.
+    """
     from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
-    kwargs: dict[str, object] = {"phases": phases}
-    if max_current is not None:
-        kwargs["max_current"] = max_current
     return next(
         spec.value_fn
-        for spec in create_sensor_specifications(**kwargs)
+        for spec in create_sensor_specifications(phases=phases)
         if spec.key == key
     )
 

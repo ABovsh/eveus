@@ -31,7 +31,6 @@ from .const import (
     get_charging_state,
     get_error_state,
     get_normal_substate,
-    is_modern_firmware_payload,
     CHARGING_STATES,
     DEVICE_STATE_CHARGING,
     DEVICE_STATE_ERROR,
@@ -42,24 +41,16 @@ from .const import (
     SESSION_ACTIVE_STATES,
     ERROR_LOG_RATE_LIMIT,
     LEGACY_RAW_STATE_KEY,
-    MODEL_MAX_CURRENT,
-    MAX_POWER_W,
-    MAX_COST_VALUE,
-    MAX_ENERGY_KWH,
+    MAX_SCHEDULE_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
-    MIN_VALID_TEMPERATURE_C,
-    MAX_VALID_TEMPERATURE_C,
-    MAX_VALID_LEAKAGE_CURRENT_MA,
     TIME_DRIFT_TOLERANCE_SECONDS,
     TIME_DRIFT_QUANTUM_SECONDS,
-    BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
 )
 from .utils import (
     RateLog,
     apply_deadband,
     format_duration,
     get_local_wall_clock_seconds,
-    get_safe_value,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,30 +61,11 @@ ICON_CURRENT_AC = "mdi:current-ac"
 ICON_CURRENCY_UAH = "mdi:currency-uah"
 UNIT_UAH_PER_KWH = "₴/kWh"
 UNIT_UAH = "UAH"
-_MAX_MODEL_CURRENT = max(MODEL_MAX_CURRENT.values())
-# Upper sanity ceilings for live telemetry. Real readings sit far below these;
-# the bounds exist only to reject corrupt payload outliers (e.g. powerMeas
-# 999999) before they reach HA long-term statistics. Generous on purpose.
-_MAX_VOLTAGE = 500
-_MAX_CURRENT = 200
-_MAX_POWER = MAX_POWER_W
-# Generous ceilings for the cumulative energy/cost sensors that feed HA
-# long-term statistics. Real lifetime totals sit far below these; the bounds
-# exist purely to reject corrupt finite outliers (e.g. 1e100) that would
-# otherwise be recorded permanently and poison the statistics history.
-_MAX_ENERGY_KWH = MAX_ENERGY_KWH
-_MAX_COST = MAX_COST_VALUE
-# Largest plausible per-slot schedule energy cap (kWh).
-_MAX_SCHEDULE_KWH = 200
-# Sanity ceilings for the remaining MEASUREMENT sensors that feed HA long-term
-# statistics. Without an upper bound a corrupt-but-finite firmware outlier (e.g.
-# temperature1 1e9, tarif 1e100) is recorded permanently and poisons history.
-# Generous on purpose — real readings sit far below these. Temperature and
-# leakage bounds are shared with safety.py (via const) so the display sensors
-# and the safety detector apply identical physical-sanity limits.
-# `tarif*` fields are reported in hundredths; bound the raw value (checked before
-# the /100 transform) so the published per-kWh rate cannot exceed ~100k.
-_MAX_RATE_HUNDREDTHS = 10_000_000
+# Upper sanity ceilings for live telemetry no longer live here: every one of
+# them is now a bound in snapshot._FIELDS, applied once when the payload is
+# parsed. A getter below states presentation only — precision, a unit
+# transform, a display deadband.
+_MAX_SCHEDULE_KWH = MAX_SCHEDULE_ENERGY_KWH
 _RATE_COST_KEYS: Final = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
 
 
@@ -327,15 +299,6 @@ class MonetaryCostSensor(OptimizedEveusSensor):
 # Value helper
 # =============================================================================
 
-def _get_data_value(updater, key: str, converter=float, default=None):
-    """Get value from updater data. Returns None when offline."""
-    if not updater.available or not updater.data:
-        return None
-    if key in updater.data:
-        return get_safe_value(updater.data, key, converter, default)
-    return default
-
-
 # =============================================================================
 # Value getter factories — replace ~20 identical functions
 # =============================================================================
@@ -361,12 +324,14 @@ def _make_value_getter(
     key: str,
     precision: int = 0,
     transform: Callable = None,
-    minimum: Optional[float] = None,
-    maximum: Optional[float] = None,
-    exclusive_min: bool = False,
     deadband: Optional[float] = None,
 ):
     """Factory for simple data getter functions.
+
+    Conversion and the physical bounds happen once, in the snapshot: a reading
+    that is absent, corrupt or impossible arrives here as ``None``. What is
+    left is presentation — an optional unit ``transform``, a rounding
+    ``precision``, and a display ``deadband``.
 
     ``deadband`` damps a reading that dithers between polls: the getter keeps
     returning the last value it emitted until the payload moves by at least
@@ -376,20 +341,12 @@ def _make_value_getter(
     is per updater, so two chargers never share one.
     """
     def getter(updater, hass):
-        if not updater.available or not updater.data:
+        # Availability, not validity: a failing poll publishes nothing and the
+        # entity layer holds the last reading through its grace window.
+        if not updater.available:
             return None
-        raw = updater.data.get(key)
-        if raw is None or isinstance(raw, bool):
-            return None
-        try:
-            value = float(raw)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        if not math.isfinite(value):
-            return None
-        if minimum is not None and (value <= minimum if exclusive_min else value < minimum):
-            return None
-        if maximum is not None and value > maximum:
+        value = updater.snapshot.get(key)
+        if value is None:
             return None
         if transform:
             value = transform(value)
@@ -403,6 +360,13 @@ def _make_value_getter(
     return getter
 
 
+def _read_int(updater, key: str) -> Optional[int]:
+    """A whole-number field from the latest good poll, or None when offline."""
+    if not updater.available:
+        return None
+    return updater.snapshot.get_int(key)
+
+
 def _make_enum_getter(key: str, mapping: dict[int, str]):
     """Read an int key and map it to a label, else None.
 
@@ -412,35 +376,30 @@ def _make_enum_getter(key: str, mapping: dict[int, str]):
     silently rejected by Home Assistant at write time.
     """
     def getter(updater, hass) -> Optional[str]:
-        value = _get_data_value(updater, key, int)
-        return mapping.get(value)
+        return mapping.get(_read_int(updater, key))
     getter.options = tuple(dict.fromkeys(mapping.values()))
     return getter
 
 
 # Measurement getters
 get_voltage = _make_value_getter(
-    "voltMeas1", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+    "voltMeas1", precision=0, deadband=2
 )
 get_current = _make_value_getter(
-    "curMeas1", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+    "curMeas1", precision=1, deadband=0.2
 )
 get_power = _make_value_getter(
-    "powerMeas", precision=1, minimum=0, maximum=_MAX_POWER, deadband=50
+    "powerMeas", precision=1, deadband=50
 )
 # Energy getters
 get_session_energy = _make_value_getter(
-    "sessionEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
-)
+    "sessionEnergy", precision=2)
 get_total_energy = _make_value_getter(
-    "totalEnergy", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
-)
+    "totalEnergy", precision=2)
 get_counter_a_energy = _make_value_getter(
-    "IEM1", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
-)
+    "IEM1", precision=2)
 get_counter_b_energy = _make_value_getter(
-    "IEM2", precision=2, minimum=0, maximum=_MAX_ENERGY_KWH
-)
+    "IEM2", precision=2)
 
 # Cost getters.
 # Firmware contract:
@@ -450,20 +409,15 @@ get_counter_b_energy = _make_value_getter(
 #     units — DO NOT divide. Verified against R3.05.2 firmware.
 _div100 = lambda v: v / 100
 get_counter_a_cost = _make_value_getter(
-    "IEM1_money", precision=2, minimum=0, maximum=_MAX_COST
-)
+    "IEM1_money", precision=2)
 get_counter_b_cost = _make_value_getter(
-    "IEM2_money", precision=2, minimum=0, maximum=_MAX_COST
-)
+    "IEM2_money", precision=2)
 get_primary_rate_cost = _make_value_getter(
-    "tarif", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
-)
+    "tarif", precision=2, transform=_div100)
 get_rate2_cost = _make_value_getter(
-    "tarifAValue", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
-)
+    "tarifAValue", precision=2, transform=_div100)
 get_rate3_cost = _make_value_getter(
-    "tarifBValue", precision=2, transform=_div100, minimum=0, maximum=_MAX_RATE_HUNDREDTHS
-)
+    "tarifBValue", precision=2, transform=_div100)
 
 # Temperature getters
 # 2 degrees, not 1: these are whole-degree readings that alternate between two
@@ -472,15 +426,11 @@ get_rate3_cost = _make_value_getter(
 get_box_temperature = _make_value_getter(
     "temperature1",
     precision=0,
-    minimum=MIN_VALID_TEMPERATURE_C,
-    maximum=MAX_VALID_TEMPERATURE_C,
     deadband=2,
 )
 get_plug_temperature = _make_value_getter(
     "temperature2",
     precision=0,
-    minimum=MIN_VALID_TEMPERATURE_C,
-    maximum=MAX_VALID_TEMPERATURE_C,
     deadband=2,
 )
 
@@ -491,39 +441,34 @@ get_plug_temperature = _make_value_getter(
 get_battery_voltage = _make_value_getter(
     "vBat",
     precision=2,
-    minimum=0,
-    maximum=BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
-    exclusive_min=True,
 )
 get_leak_current = _make_value_getter(
-    "leakValue", precision=0, minimum=0, maximum=MAX_VALID_LEAKAGE_CURRENT_MA
-)
+    "leakValue", precision=0)
 get_leak_current_peak = _make_value_getter(
-    "leakValueH", precision=0, minimum=0, maximum=MAX_VALID_LEAKAGE_CURRENT_MA
-)
+    "leakValueH", precision=0)
 # RSSI is reported in dBm — physically always ≤ 0 (typical floor ~ −120 dBm).
 # 5 dBm: measured on the live charger, RSSI wanders across ~7 dBm with the link
 # unchanged, so a 3 dBm band still published one reading in seven — and this
 # value is mirrored into the Connection Quality attributes, which made it the
 # single largest source of recorder rows this integration produced.
 get_wifi_rssi = _make_value_getter(
-    "RSSI", precision=0, minimum=-120, maximum=0, deadband=5
+    "RSSI", precision=0, deadband=5
 )
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
 # Same telemetry as phase 1, so the same damping — otherwise a 3-phase entry
 # keeps the per-poll churn the single-phase one just lost.
 get_current_phase_2 = _make_value_getter(
-    "curMeas2", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+    "curMeas2", precision=1, deadband=0.2
 )
 get_current_phase_3 = _make_value_getter(
-    "curMeas3", precision=1, minimum=0, maximum=_MAX_CURRENT, deadband=0.2
+    "curMeas3", precision=1, deadband=0.2
 )
 get_voltage_phase_2 = _make_value_getter(
-    "voltMeas2", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+    "voltMeas2", precision=0, deadband=2
 )
 get_voltage_phase_3 = _make_value_getter(
-    "voltMeas3", precision=0, minimum=0, maximum=_MAX_VOLTAGE, deadband=2
+    "voltMeas3", precision=0, deadband=2
 )
 
 
@@ -543,7 +488,7 @@ def get_charger_state(updater, hass) -> Optional[str]:
     attribute (see ``get_charger_state_attributes``) and logged once per
     distinct value (RateLog), not once per poll.
     """
-    state_value = _get_data_value(updater, "state", int)
+    state_value = _read_int(updater, "state")
     if state_value is None:
         return None
     if state_value not in CHARGING_STATES:
@@ -560,11 +505,12 @@ def get_charger_state_attributes(updater, hass) -> dict:
     modern equivalent by the coordinator (original kept under
     LEGACY_RAW_STATE_KEY). A plain mapped state adds no attribute.
     """
-    data = updater.data or {}
-    raw_legacy = data.get(LEGACY_RAW_STATE_KEY)
+    # Synthetic key, written by the coordinator's legacy translation — it is
+    # not a charger field, so it is read from the raw payload, not the parse.
+    raw_legacy = updater.snapshot.raw.get(LEGACY_RAW_STATE_KEY)
     if raw_legacy is not None:
         return {"raw_state": raw_legacy}
-    state_value = _get_data_value(updater, "state", int)
+    state_value = _read_int(updater, "state")
     if state_value is not None and state_value not in CHARGING_STATES:
         return {"raw_state": state_value}
     return {}
@@ -577,8 +523,8 @@ def get_charger_substate(updater, hass) -> Optional[str]:
     otherwise a stray firmware state would be labelled with normal-mode substate
     text and look like a plausible diagnostic reason.
     """
-    state = _get_data_value(updater, "state", int)
-    substate = _get_data_value(updater, "subState", int)
+    state = _read_int(updater, "state")
+    substate = _read_int(updater, "subState")
     if None in (state, substate):
         return None
     if state not in CHARGING_STATES:
@@ -648,7 +594,7 @@ def _reads_modern_codes(updater) -> bool:
     sticky = getattr(updater, "is_modern_firmware", None)
     if sticky is not None:
         return bool(sticky)
-    return is_modern_firmware_payload(updater.data or {})
+    return updater.snapshot.modern_firmware
 
 
 def get_not_charging_reason(updater, hass) -> Optional[str]:
@@ -658,7 +604,7 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
     knowing which substate texts apply in which state. This folds both into a
     single closed set of reasons an automation can match on directly.
     """
-    state = _get_data_value(updater, "state", int)
+    state = _read_int(updater, "state")
     if state is None:
         return None
     # Same closed-ENUM constraint as get_charger_state: an unmapped firmware
@@ -678,11 +624,11 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
     # can be what is holding the session back — nothing HA does will start one
     # until it is switched off. Named ahead of those limits because it is the
     # only reason here that points at a setting the user has to change.
-    if _get_data_value(updater, "ocppEnabled", int):
+    if _read_int(updater, "ocppEnabled"):
         return "Controlled by OCPP"
     # Firmware keeps subState alive in state 5, so 9 there is not a finished
     # session — it is the charger holding for an external start command.
-    if _reads_modern_codes(updater) and _get_data_value(updater, "subState", int) == 9:
+    if _reads_modern_codes(updater) and _read_int(updater, "subState") == 9:
         return _SUBSTATE_REASONS[9]
     if state == 5:
         return "Charge Complete"
@@ -691,7 +637,7 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
     # confident but arbitrary reason; fall through to the state-derived answer,
     # which the coordinator's legacy translation already made correct.
     if _reads_modern_codes(updater):
-        substate = _get_data_value(updater, "subState", int)
+        substate = _read_int(updater, "subState")
         reason = _SUBSTATE_REASONS.get(substate)
         if reason is not None:
             return reason
@@ -710,8 +656,8 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
 def get_not_charging_reason_attrs(updater, hass) -> dict:
     """Expose the fault name in the Error state plus the raw suspend word."""
     attrs: dict = {}
-    state = _get_data_value(updater, "state", int)
-    substate = _get_data_value(updater, "subState", int)
+    state = _read_int(updater, "state")
+    substate = _read_int(updater, "subState")
     # subState 0 in the Error state is the contradictory "no fault code with an
     # error" case get_charger_substate already blanks — no name to report. A
     # firmware-1.x fault code is not an ERROR_STATES index at all, so it gets
@@ -722,7 +668,7 @@ def get_not_charging_reason_attrs(updater, hass) -> dict:
         and _reads_modern_codes(updater)
     ):
         attrs["error"] = get_error_state(substate)
-    suspend = _get_data_value(updater, "suspendErrors", int)
+    suspend = _read_int(updater, "suspendErrors")
     if suspend:
         attrs["suspend_errors"] = suspend
     return attrs
@@ -747,13 +693,13 @@ def _get_session_seconds(updater) -> Optional[int]:
     Shared by the state and its mirroring attribute so the two grids cannot
     drift apart — an attribute writes a recorder row exactly like a state does.
     """
-    seconds = _get_data_value(updater, "sessionTime", int)
-    # A negative duration is physically impossible; an absurd one (corrupt RTC /
-    # counter) would render an overlong state string. Surface `unknown` for both
-    # instead of a plausible-but-wrong value.
-    if seconds is None or seconds < 0 or seconds > MAX_SESSION_TIME_SECONDS:
+    # A negative duration is physically impossible and an absurd one (corrupt
+    # RTC / counter) would render an overlong state string; the snapshot
+    # rejects both, so an unusable duration arrives here as None.
+    seconds = _read_int(updater, "sessionTime")
+    if seconds is None:
         return None
-    state = _get_data_value(updater, "state", int)
+    state = _read_int(updater, "state")
     step = (
         _SESSION_TIME_STEP_CHARGING_SECONDS
         if state in SESSION_ACTIVE_STATES
@@ -852,14 +798,16 @@ def get_time_drift(updater, hass) -> Optional[int]:
 
 def get_active_rate_cost(updater, hass) -> Optional[float]:
     """Get active rate cost."""
-    active_rate = _get_data_value(updater, "activeTarif", int)
+    active_rate = _read_int(updater, "activeTarif")
     if active_rate is None:
         return None
     key = _RATE_COST_KEYS.get(active_rate)
     if not key:
         return None
-    value = _get_data_value(updater, key, float)
-    if value is None or value < 0 or value > _MAX_RATE_HUNDREDTHS:
+    # Already bounded by the shared parse (raw hundredths), so a corrupt rate
+    # is None rather than an absurd per-kWh price.
+    value = updater.snapshot.get(key) if updater.available else None
+    if value is None:
         return None
     return round(value / 100, 2)
 
@@ -868,7 +816,7 @@ def get_active_rate_attrs(updater, hass) -> dict:
     """Get active rate attributes."""
     if not updater.available:
         return {}
-    active_rate = _get_data_value(updater, "activeTarif", int)
+    active_rate = _read_int(updater, "activeTarif")
     return {"rate_name": RATE_STATES.get(active_rate, "Unknown")} if active_rate is not None else {}
 
 
@@ -886,8 +834,7 @@ def _make_rate_status_getter(rate_key: str):
 # =============================================================================
 
 get_session_cost = _make_value_getter(
-    "sessionMoney", precision=2, minimum=0, maximum=_MAX_COST
-)
+    "sessionMoney", precision=2)
 
 
 # =============================================================================
@@ -918,27 +865,33 @@ _schedule_1_state = _make_schedule_getter(1)
 _schedule_2_state = _make_schedule_getter(2)
 
 
-def _make_schedule_attrs(slot: int, max_current: int = _MAX_MODEL_CURRENT):
-    """Slot details: window, optional current/energy caps."""
+def _make_schedule_attrs(slot: int):
+    """Slot details: window, optional current/energy caps.
+
+    The caps are bounded by the shared parse — the amp value by THIS charger's
+    design current, the energy value by the largest plausible slot cap — so an
+    impossible figure is absent rather than shown. Firmware stores and reports
+    sub-minimum setpoints verbatim (probe-verified, see the Number's
+    read_min_value=0.0), so the floor is 0 A, not 7 A.
+    """
     def getter(updater, hass) -> dict:
         if not updater.available:
             return {}
-        start = _format_minutes(_get_data_value(updater, f"sh{slot}Start", int))
-        stop = _format_minutes(_get_data_value(updater, f"sh{slot}Stop", int))
+        snapshot = updater.snapshot
+        start = _format_minutes(snapshot.get_int(f"sh{slot}Start"))
+        stop = _format_minutes(snapshot.get_int(f"sh{slot}Stop"))
         attrs: Dict[str, Any] = {}
         if start and stop:
             attrs["window"] = f"{start}–{stop}"
             attrs["start"] = start
             attrs["stop"] = stop
-        if _get_data_value(updater, f"sh{slot}CurrentEnable", int) == 1:
-            cur = _get_data_value(updater, f"sh{slot}CurrentValue", int)
-            # Firmware stores/report sub-minimum setpoints verbatim (probe-
-            # verified, see Number read_min_value=0.0) — floor at 0, not 7 A.
-            if cur is not None and 0 <= cur <= max_current:
+        if snapshot.get_int(f"sh{slot}CurrentEnable") == 1:
+            cur = snapshot.get_int(f"sh{slot}CurrentValue")
+            if cur is not None:
                 attrs["current_limit_a"] = cur
-        if _get_data_value(updater, f"sh{slot}EnergyEnable", int) == 1:
-            energy = _get_data_value(updater, f"sh{slot}EnergyValue", float)
-            if energy is not None and 0 <= energy <= _MAX_SCHEDULE_KWH:
+        if snapshot.get_int(f"sh{slot}EnergyEnable") == 1:
+            energy = snapshot.get(f"sh{slot}EnergyValue")
+            if energy is not None:
                 attrs["energy_limit_kwh"] = energy
         return attrs
     return getter
@@ -1072,32 +1025,24 @@ def get_connection_attrs(updater, hass) -> dict:
 # Sensor specification factory
 # =============================================================================
 
-def create_sensor_specifications(
-    phases: int = 1, max_current: int = _MAX_MODEL_CURRENT  # pragma: no mutate - default unreachable: get_sensor_specifications always passes phases explicitly, and phases is only ever compared with `== 3` below
-) -> tuple[SensorSpec, ...]:
+def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
     """Create all sensor specifications using factory pattern.
 
     ``phases`` toggles per-phase voltage/current sensors for 3-phase chargers.
-    ``max_current`` bounds the Current Set diagnostic sensor to the configured
-    model's maximum, so a corrupt ``currentSet`` above the charger's capability
-    (e.g. 48 A reported by a 16 A unit) reads as ``unknown`` instead of a
-    plausible-but-impossible value.
+
+    The model maximum is no longer a parameter here: which charger this is
+    belongs to the coordinator, so ``currentSet``, ``aiModecurrent`` and the
+    schedule amp caps are bounded by it when the payload is parsed. A corrupt
+    setpoint above the charger's capability (48 A reported by a 16 A unit)
+    still reads ``unknown``; the specs no longer carry a second copy of the
+    rule that decides it. The lower bound stays 0, NOT MIN_CURRENT — the
+    firmware legitimately reports a setpoint below 7 A when one is configured
+    directly on the charger, and that real value must be shown (HA writes are
+    still floored at 7 A by the number).
     """
 
-    # Bound Current Set to this charger's model maximum rather than the global
-    # ceiling shared by all models. The lower bound is 0, NOT MIN_CURRENT: the
-    # firmware legitimately reports a setpoint below 7 A when one is configured
-    # directly on the charger, and that real value must be shown rather than
-    # hidden as `unknown` (HA writes are still floored at 7 A by the number).
-    current_set_getter = _make_value_getter(
-        "currentSet", precision=0, minimum=0, maximum=max_current
-    )
-
-    # Bound the adaptive throttle's reported limit to this model too — like
-    # Current Set, an aiModecurrent above the charger's capability is corrupt.
-    adaptive_current_getter = _make_value_getter(
-        "aiModecurrent", precision=0, minimum=0, maximum=max_current
-    )
+    current_set_getter = _make_value_getter("currentSet", precision=0)
+    adaptive_current_getter = _make_value_getter("aiModecurrent", precision=0)
 
     # Measurement sensors
     measurements = [
@@ -1361,7 +1306,7 @@ def create_sensor_specifications(
         SensorSpec(
             key="schedule_1", name="Schedule 1",
             value_fn=_schedule_1_state,
-            attributes_fn=_make_schedule_attrs(1, max_current),
+            attributes_fn=_make_schedule_attrs(1),
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
             category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
@@ -1370,7 +1315,7 @@ def create_sensor_specifications(
         SensorSpec(
             key="schedule_2", name="Schedule 2",
             value_fn=_schedule_2_state,
-            attributes_fn=_make_schedule_attrs(2, max_current),
+            attributes_fn=_make_schedule_attrs(2),
             sensor_type=SensorType.DIAGNOSTIC, icon="mdi:calendar-clock",
             category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
@@ -1395,10 +1340,6 @@ def create_sensor_specifications(
 
 
 @lru_cache(maxsize=8)
-def get_sensor_specifications(
-    phases: int = 1, max_current: Optional[int] = None
-) -> tuple[SensorSpec, ...]:
-    """Get sensor specifications for the given phase count and model max (cached)."""
-    return create_sensor_specifications(
-        phases=phases, max_current=max_current or _MAX_MODEL_CURRENT
-    )
+def get_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
+    """Get sensor specifications for the given phase count (cached)."""
+    return create_sensor_specifications(phases=phases)

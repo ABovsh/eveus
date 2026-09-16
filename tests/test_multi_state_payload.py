@@ -14,17 +14,15 @@ field-overlay on the real schema, which still exercises the state-gated paths.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
 
+from conftest import PayloadUpdater
 from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus.const import CHARGING_STATES
 
 
-def _updater(data: dict) -> SimpleNamespace:
-    return SimpleNamespace(
-        data=data,
-        available=True,
-        connection_quality={"success_rate": 100, "latency_avg": 0.1},
+def _updater(data: dict) -> PayloadUpdater:
+    return PayloadUpdater(
+        data, connection_quality={"success_rate": 100, "latency_avg": 0.1}
     )
 
 
