@@ -451,3 +451,28 @@ def test_leak_guard_denies_every_internal_doc_class_gitignore_lists() -> None:
             f"guard would let {sample!r} through — add it to INTERNAL_RE in "
             "/opt/scripts/git-hooks/leak-guard.sh and re-run sync-leak-guard.sh"
         )
+
+
+def test_mutmut_config_skips_log_and_annotation_lines() -> None:
+    """mutmut_config.pre_mutation must skip log lines, bare strings/comments,
+    lines already marked `pragma: no mutate`, and annotation-only lines (dead
+    under PEP 563) -- but must NOT skip a real comparison/call line."""
+    import types
+
+    import mutmut_config
+
+    def _skip(line: str) -> bool:
+        context = types.SimpleNamespace(current_source_line=line, skip=False)
+        mutmut_config.pre_mutation(context)
+        return context.skip
+
+    assert _skip('    _LOGGER.debug("Eveus poll failed: %s", err)')
+    assert _skip('    """Docstring line."""')
+    assert _skip("    # a comment")
+    assert _skip("    x = 1  # pragma: no mutate - reason")
+    assert _skip("    raw_version: int | None")
+    assert _skip("    phases: int = DEFAULT_PHASES")
+
+    # A real comparison/call line must still be mutated.
+    assert not _skip("    if value > threshold:")
+    assert not _skip("    return get_safe_value(data, 'state', int)")
