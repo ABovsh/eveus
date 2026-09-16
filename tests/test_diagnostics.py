@@ -284,7 +284,7 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
             lambda hass, domain, issue_id, **kw: created.append(kw),
         )
         entry = SimpleNamespace(entry_id="e1")
-        tracker = eveus._ClockDriftTracker()
+        tracker = eveus.ClockDriftTracker()
         updater = PayloadUpdater(None)
 
         def _drift_payload(drift_seconds: int) -> dict:
@@ -295,12 +295,12 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
 
         for _ in range(3):
             updater.data = _drift_payload(900)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert created[-1]["translation_key"] == "clock_drift"
 
         for _ in range(3):
             updater.data = _drift_payload(-3600)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert created[-1]["translation_key"] == "clock_drift_timezone"
         assert created[-1]["translation_placeholders"] == {"hours": "1"}
     finally:
@@ -322,7 +322,7 @@ def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
         lambda hass, domain, issue_id, **kw: created.append(kw),
     )
     entry = SimpleNamespace(entry_id="e1")
-    tracker = eveus._ClockDriftTracker()
+    tracker = eveus.ClockDriftTracker()
     updater = PayloadUpdater(None)
 
     for _ in range(4):
@@ -330,7 +330,7 @@ def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
             "systemTime": str(int(time.time()) + 5 * 3600),
             "timeZone": "5",
         }
-        eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+        eveus.update_clock_drift_issue(object(), entry, updater, tracker)
 
     # Restore original timezone
     from homeassistant.util import dt as dt_util2
@@ -357,7 +357,7 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
             lambda hass, domain, issue_id, **kw: created.append(kw),
         )
         entry = SimpleNamespace(entry_id="e1")
-        tracker = eveus._ClockDriftTracker()
+        tracker = eveus.ClockDriftTracker()
         updater = PayloadUpdater(None)
 
         def _drift_payload(drift_seconds: int) -> dict:
@@ -368,17 +368,17 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
 
         for _ in range(3):
             updater.data = _drift_payload(900)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         base_count = len(created)
 
         for offset in (3300, 3299, 3300, 3299):
             updater.data = _drift_payload(offset)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert len(created) == base_count
 
         for _ in range(3):
             updater.data = _drift_payload(3600)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert len(created) == base_count + 1
         assert created[-1]["translation_key"] == "clock_drift_timezone"
     finally:

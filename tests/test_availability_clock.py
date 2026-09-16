@@ -357,7 +357,7 @@ def test_recovery_needs_two_successes_before_fast_cadence():
 
 
 def test_fires_after_three_polls_above_ten_minutes() -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
     def _p(drift: float, tz: int = 3) -> "EveusSnapshot":
         # The tracker reads the shared parse, so state the poll as one.
@@ -365,7 +365,7 @@ def test_fires_after_three_polls_above_ten_minutes() -> None:
             {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
         )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     assert tracker.evaluate(_p(900)) is None
     assert tracker.evaluate(_p(900)) is None
     assert tracker.evaluate(_p(900)) is True
@@ -408,7 +408,7 @@ def _ha_local_clock_utc_plus_3_avail():
 
 
 def test_clock_drift_does_not_clear_while_still_minutes_wrong(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
     def _payload(drift: float, tz: int = 3) -> "EveusSnapshot":
         # The tracker reads the shared parse, so state the poll as one.
@@ -416,7 +416,7 @@ def test_clock_drift_does_not_clear_while_still_minutes_wrong(_ha_local_clock_ut
             {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
         )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     for _ in range(2):
         tracker.evaluate(_payload(900))
     assert tracker.evaluate(_payload(900)) is True
@@ -429,7 +429,7 @@ def test_clock_drift_does_not_clear_while_still_minutes_wrong(_ha_local_clock_ut
 
 
 def test_clock_drift_hover_then_resync_needs_consecutive_in_sync_polls(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
     def _payload(drift: float, tz: int = 3) -> "EveusSnapshot":
         # The tracker reads the shared parse, so state the poll as one.
@@ -437,7 +437,7 @@ def test_clock_drift_hover_then_resync_needs_consecutive_in_sync_polls(_ha_local
             {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
         )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     for _ in range(3):
         tracker.evaluate(_payload(900))
     assert tracker.evaluate(_payload(10)) is None
@@ -479,7 +479,7 @@ def test_single_blip_does_not_enter_probation():
 
 
 def test_negative_drift_also_fires(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
     def _p(drift: float, tz: int = 3) -> "EveusSnapshot":
         # The tracker reads the shared parse, so state the poll as one.
@@ -487,14 +487,14 @@ def test_negative_drift_also_fires(_ha_local_clock_utc_plus_3_avail) -> None:
             {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
         )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     for _ in range(2):
         tracker.evaluate(_p(-900))
     assert tracker.evaluate(_p(-900)) is True
 
 
 def test_small_drift_never_fires_and_clears_after_two_polls(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
     def _p(drift: float, tz: int = 3) -> "EveusSnapshot":
         # The tracker reads the shared parse, so state the poll as one.
@@ -502,7 +502,7 @@ def test_small_drift_never_fires_and_clears_after_two_polls(_ha_local_clock_utc_
             {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
         )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     for _ in range(3):
         tracker.evaluate(_p(900))
     assert tracker.evaluate(_p(30)) is None
@@ -510,7 +510,7 @@ def test_small_drift_never_fires_and_clears_after_two_polls(_ha_local_clock_utc_
 
 
 def test_one_in_sync_poll_resets_debounce(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
     def _p(drift: float, tz: int = 3) -> "EveusSnapshot":
         # The tracker reads the shared parse, so state the poll as one.
@@ -518,7 +518,7 @@ def test_one_in_sync_poll_resets_debounce(_ha_local_clock_utc_plus_3_avail) -> N
             {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
         )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     tracker.evaluate(_p(900))
     tracker.evaluate(_p(900))
     tracker.evaluate(_p(0))

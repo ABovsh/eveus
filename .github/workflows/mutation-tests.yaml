@@ -125,13 +125,19 @@ jobs:
               tests/test_hardening_rc_2026_09_07.py
               tests/test_control_lifecycle_dedup.py
           - name: init
-            paths: "custom_components/eveus/__init__.py"
+            paths: "custom_components/eveus/__init__.py,custom_components/eveus/issues.py"
             tests: >-
               tests/test_init_migration.py
               tests/test_init_firmware_fallback.py
               tests/test_setup_entry.py
               tests/test_transition_events.py
               tests/test_dashboard_card.py
+              tests/test_battery_low.py
+              tests/test_ocpp.py
+              tests/test_time_drift.py
+              tests/test_availability_clock.py
+              tests/test_diagnostics.py
+              tests/test_sensor_definition_entities.py
           - name: control-entities
             paths: "custom_components/eveus/number.py,custom_components/eveus/switch.py,custom_components/eveus/common_command.py"
             tests: >-

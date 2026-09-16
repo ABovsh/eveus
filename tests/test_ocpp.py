@@ -9,8 +9,8 @@ from conftest import EveusTestUpdater as _Updater
 from conftest import disable_state_writes as _disable_state_writes
 import custom_components.eveus as eveus_init
 from custom_components.eveus import (
-    _ocpp_issue_id,
-    _update_ocpp_issue,
+    ocpp_issue_id,
+    update_ocpp_issue,
 )
 from custom_components.eveus.binary_sensor import EveusOcppConnectedBinarySensor
 from custom_components.eveus.switch import BaseSwitchEntity, SWITCH_DESCRIPTIONS
@@ -80,10 +80,10 @@ def test_ocpp_issue_created_when_enabled(monkeypatch: pytest.MonkeyPatch) -> Non
     entry = type("E", (), {"entry_id": "abc"})()
     updater = _Updater({"ocppEnabled": 1})
 
-    _update_ocpp_issue(object(), entry, updater)
+    update_ocpp_issue(object(), entry, updater)
 
     assert created
-    assert created[0]["issue_id"] == _ocpp_issue_id(entry)
+    assert created[0]["issue_id"] == ocpp_issue_id(entry)
     assert created[0]["translation_key"] == "ocpp_enabled"
     assert created[0]["is_fixable"] is False
     assert not deleted
@@ -106,14 +106,14 @@ def test_ocpp_issue_cleared_when_disabled(monkeypatch: pytest.MonkeyPatch) -> No
     entry = type("E", (), {"entry_id": "abc"})()
 
     # An explicit 0 clears the warning.
-    _update_ocpp_issue(object(), entry, _Updater({"ocppEnabled": 0}))
-    assert deleted == [_ocpp_issue_id(entry)]
+    update_ocpp_issue(object(), entry, _Updater({"ocppEnabled": 0}))
+    assert deleted == [ocpp_issue_id(entry)]
 
     # A missing/None/out-of-domain field must NOT clear it — that means the
     # firmware dropped/garbled the field, not that the user disabled OCPP.
     deleted.clear()
     for payload in ({}, {"ocppEnabled": None}, {"ocppEnabled": "bad"}):
-        _update_ocpp_issue(object(), entry, _Updater(payload))
+        update_ocpp_issue(object(), entry, _Updater(payload))
 
     assert not created
     assert not deleted
@@ -145,11 +145,11 @@ def test_ocpp_issue_ignores_failed_or_unavailable_polls(
 
     for payload in ({"ocppEnabled": 1}, {"ocppEnabled": 0}):
         offline = _Updater(payload, available=False)
-        _update_ocpp_issue(object(), entry, offline)
+        update_ocpp_issue(object(), entry, offline)
 
         failed = _Updater(payload)
         failed.last_update_success = False
-        _update_ocpp_issue(object(), entry, failed)
+        update_ocpp_issue(object(), entry, failed)
 
     assert not created
     assert not deleted
@@ -178,6 +178,6 @@ def test_ocpp_notice_reads_the_updater_snapshot(monkeypatch) -> None:
         snapshot=EveusSnapshot.parse({"state": 2, "ocppEnabled": 1}, None),
     )
 
-    _update_ocpp_issue(object(), entry, updater)
+    update_ocpp_issue(object(), entry, updater)
 
-    assert created == [_ocpp_issue_id(entry)]
+    assert created == [ocpp_issue_id(entry)]

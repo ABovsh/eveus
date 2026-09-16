@@ -330,9 +330,9 @@ def _drift_payload(drift_seconds: int) -> dict:
 
 
 def _fired_tracker(drift_seconds: int):
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     decision = None
     for _ in range(3):
         decision = tracker.evaluate(
@@ -346,9 +346,9 @@ def test_tracker_missing_time_fields_reset_rekey_state() -> None:
     # A successful poll that omits the time fields can't classify drift; it must
     # not advance the re-key streak on stale state or leave `still_drifted` set,
     # or two such polls could re-publish a stale clock-drift message.
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     tracker.still_drifted = True
     tracker.rekey_streak = 2
 
@@ -388,11 +388,11 @@ def test_clock_drift_issue_uses_kind_specific_translation_key(monkeypatch) -> No
     entry = NS(entry_id="e1")
 
     for drift, key in ((-3600, "clock_drift_timezone"), (900, "clock_drift")):
-        tracker = eveus._ClockDriftTracker()
+        tracker = eveus.ClockDriftTracker()
         updater = _snapshot_updater(None)
         for _ in range(3):
             updater.data = _drift_payload(drift)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert created[-1]["translation_key"] == key
     assert created[0]["translation_placeholders"] == {"hours": "1"}
 

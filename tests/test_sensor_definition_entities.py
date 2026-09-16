@@ -747,7 +747,7 @@ def test_soc_number_survives_corrupt_restore_value(monkeypatch) -> None:
 
 
 def test_missing_or_corrupt_fields_leave_state_unchanged() -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
     import time
 
     def _p(drift, tz=3):
@@ -756,7 +756,7 @@ def test_missing_or_corrupt_fields_leave_state_unchanged() -> None:
     def _snap(payload):
         return EveusSnapshot.parse(payload, None)
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     tracker.evaluate(_p(900))
     tracker.evaluate(_p(900))
     assert tracker.evaluate(EveusSnapshot.empty()) is None

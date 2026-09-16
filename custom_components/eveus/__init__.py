@@ -57,19 +57,19 @@ from .const import (
     DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
-    BATTERY_LOW_THRESHOLD_VOLTS,
-    BATTERY_OK_THRESHOLD_VOLTS,
-    BATTERY_LOW_DEBOUNCE_POLLS,
-    CLOCK_DRIFT_THRESHOLD_SECONDS,
-    CLOCK_DRIFT_TRIGGER_POLLS,
-    CLOCK_DRIFT_CLEAR_POLLS,
-    CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS,
-    CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS,
 )
 from .common_network import EveusUpdater
+from .issues import (
+    BatteryLowTracker,
+    ClockDriftTracker,
+    battery_low_issue_id,
+    clock_drift_issue_id,
+    ocpp_issue_id,
+    update_battery_low_issue,
+    update_clock_drift_issue,
+    update_ocpp_issue,
+)
 from .utils import (
-    get_local_utc_offset_seconds,
-    get_local_wall_clock_seconds,
     get_device_suffix,
     get_next_device_number,
     is_device_number_taken,
@@ -154,272 +154,6 @@ def _legacy_helpers_present(hass: HomeAssistant) -> bool:
         reg.async_get("input_number.ev_initial_soc")
         and reg.async_get("input_number.ev_battery_capacity")
     )
-
-
-def _ocpp_issue_id(entry: ConfigEntry) -> str:
-    """Return the repair issue id flagging that OCPP is enabled."""
-    return f"ocpp_enabled_{entry.entry_id}"
-
-
-def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None:
-    """Raise or clear the OCPP-enabled warning based on the latest poll.
-
-    When OCPP is enabled the charger is driven by the OCPP backend / mobile
-    app, which can override Charging Current, limits, and schedule, so those
-    Home Assistant controls may not take effect. Surfaced as a non-fixable
-    warning that auto-clears the moment OCPP is turned off — even if that
-    happens from the mobile app rather than from HA.
-    """
-    # Skip failed/unavailable polls: the coordinator notifies listeners on
-    # failed refreshes too while retaining the previous payload (same guard as
-    # the battery and clock-drift trackers).
-    if not updater.available or not updater.last_update_success:
-        return
-    value = updater.snapshot.get_int("ocppEnabled")
-    if value == 1:
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _ocpp_issue_id(entry),
-            is_fixable=False,
-            is_persistent=False,
-            issue_domain=DOMAIN,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key="ocpp_enabled",
-        )
-    elif value == 0:
-        # Only an explicit "off" clears the warning. A missing or out-of-domain
-        # ocppEnabled (None) means the firmware dropped/garbled the field — leave
-        # the prior issue state untouched rather than falsely dismissing it.
-        ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
-
-
-def _battery_low_issue_id(entry: ConfigEntry) -> str:
-    """Return the repair issue id for a depleted CR2032 coin cell."""
-    return f"battery_low_{entry.entry_id}"
-
-
-class _BatteryLowTracker:
-    """Decide when to raise/clear the low RTC-battery warning.
-
-    Applies hysteresis (fire below the low threshold, clear only above the
-    higher OK threshold) and debounce (only fire after several consecutive low
-    readings), so a battery hovering at the edge or a single glitchy ADC read
-    can't make the warning flap or raise a false alarm.
-    """
-
-    def __init__(self) -> None:
-        self._low_streak = 0
-        self._active = False
-
-    def evaluate(self, value: float | None) -> bool | None:
-        """Return True to raise, False to clear, or None to leave unchanged.
-
-        An unusable reading (offline, or a `vBat` the snapshot rejected as
-        outside the coin cell's plausible window) is treated as "not low": it
-        neither advances the debounce streak nor clears an active warning,
-        mirroring how the OCPP warning ignores dropped fields.
-        """
-        if value is None:
-            return None
-        if value < BATTERY_LOW_THRESHOLD_VOLTS:
-            self._low_streak += 1
-            if self._low_streak >= BATTERY_LOW_DEBOUNCE_POLLS and not self._active:
-                self._active = True
-                return True
-            return None
-        # value >= low threshold: a healthy-enough reading restarts the debounce.
-        self._low_streak = 0
-        if value >= BATTERY_OK_THRESHOLD_VOLTS and self._active:
-            self._active = False
-            return False
-        return None
-
-
-def _update_battery_low_issue(
-    hass: HomeAssistant, entry: ConfigEntry, updater, tracker: _BatteryLowTracker
-) -> None:
-    """Raise or clear the low coin-cell warning based on the latest poll.
-
-    Non-fixable informational warning (the fix is a physical battery swap) that
-    auto-clears once the replacement reads healthy.
-
-    A failed or unavailable poll is skipped entirely: the coordinator notifies
-    listeners on failed refreshes too while retaining the previous payload, so
-    without this guard one genuine low reading followed by an outage would
-    replay the stale sample into the debounce and raise a false warning.
-    """
-    if not updater.available or not updater.last_update_success:
-        return
-    decision = tracker.evaluate(updater.snapshot.get("vBat"))
-    if decision is True:
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _battery_low_issue_id(entry),
-            is_fixable=False,
-            is_persistent=False,
-            issue_domain=DOMAIN,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key="battery_low",
-        )
-    elif decision is False:
-        ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
-
-
-def _clock_drift_issue_id(entry: ConfigEntry) -> str:
-    """Return the repair issue id for a drifted charger clock."""
-    return f"clock_drift_{entry.entry_id}"
-
-
-class _ClockDriftTracker:
-    """Decide when to raise/clear the charger clock-drift notice.
-
-    Compares the charger's wall clock (``systemTime``, local-encoded epoch
-    seconds) against Home Assistant's local wall clock — not UTC to UTC, which
-    would cancel the ``timeZone`` select out and miss a wrong timezone or a
-    DST mismatch entirely.
-    Fires only after several consecutive polls more than the threshold away
-    from Home Assistant's clock; clears only after consecutive in-sync polls.
-    Missing/corrupt time fields neither advance nor reset either streak,
-    mirroring the other notice trackers. This tracker only reports — fixing
-    the clock stays a user action (Sync Time button).
-    """
-
-    def __init__(self) -> None:
-        self._drift_streak = 0
-        self._ok_streak = 0
-        self._active = False
-        # Classification of the most recent drifted reading, used to pick the
-        # repair message: "timezone" when the drift sits at a non-zero whole
-        # hour (wrong Time Zone select or DST mismatch — Sync Time won't fix
-        # it), "sync" for any other offset (the RTC itself is off).
-        self.kind = "sync"
-        self.hours = 0
-        # (kind, hours) the repair was last published with, owned by
-        # _update_clock_drift_issue; None while no issue is active.
-        self.published: tuple[str, int] | None = None
-        self.still_drifted = False
-        # Consecutive polls the live classification has differed from the
-        # published one; re-keying waits for a stable streak so a drift
-        # oscillating across a classification boundary can't rewrite the
-        # issue on every poll.
-        self.rekey_streak = 0
-
-    def evaluate(self, snapshot) -> bool | None:
-        """Return True to raise, False to clear, or None to leave unchanged."""
-        charger_wall = snapshot.charger_wall_clock_s
-        if charger_wall is None:
-            # A successful poll that simply omits/corrupts the time fields tells
-            # us nothing about the drift. Don't let it advance the re-key streak
-            # on stale classification state, and don't leave `still_drifted` set
-            # from an earlier sample (which would let two such polls re-publish a
-            # stale message).
-            self.still_drifted = False
-            self.rekey_streak = 0
-            return None
-        signed_drift = charger_wall - get_local_wall_clock_seconds()
-        whole_hours = round(signed_drift / 3600)
-        # A fractional local offset (India +5:30, Nepal +5:45) is one the
-        # charger's whole-hour Time Zone select can never represent: the best
-        # achievable wall clocks sit at -residue or +(3600-residue) from HA
-        # local. Drift matching either is the hardware limit, not a fixable
-        # sync/timezone fault — it needs its own guidance.
-        residue = get_local_utc_offset_seconds() % 3600
-        if residue and any(
-            abs(signed_drift - candidate) <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
-            for candidate in (-residue, 3600 - residue)
-        ):
-            self.kind = "fractional"
-            self.hours = 0
-        elif (
-            whole_hours != 0
-            and abs(signed_drift - whole_hours * 3600)
-            <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
-        ):
-            self.kind = "timezone"
-            self.hours = abs(whole_hours)
-        else:
-            self.kind = "sync"
-            self.hours = 0
-        drift = abs(signed_drift)
-        self.still_drifted = drift > CLOCK_DRIFT_THRESHOLD_SECONDS
-        if drift > CLOCK_DRIFT_THRESHOLD_SECONDS:
-            self._ok_streak = 0
-            self._drift_streak += 1
-            if self._drift_streak >= CLOCK_DRIFT_TRIGGER_POLLS and not self._active:
-                self._active = True
-                return True
-            return None
-        self._drift_streak = 0
-        if self._active and drift > CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS:
-            # Hysteresis band: under the trigger threshold but still minutes
-            # wrong — not "recovered". Clearing requires consecutive polls
-            # genuinely back in sync, so reset the streak.
-            self._ok_streak = 0
-            return None
-        self._ok_streak += 1
-        if self._active and self._ok_streak >= CLOCK_DRIFT_CLEAR_POLLS:
-            self._active = False
-            return False
-        return None
-
-
-def _update_clock_drift_issue(
-    hass: HomeAssistant, entry: ConfigEntry, updater, tracker: _ClockDriftTracker
-) -> None:
-    """Raise or clear the clock-drift notice based on the latest poll.
-
-    Non-fixable warning: the guided fix is the Time Zone select plus the Sync
-    Time button — the integration deliberately never rewrites the charger
-    clock on its own. Skips failed/unavailable polls so stale data is never
-    replayed into the debounce (same guard as the battery notice).
-    """
-    if not updater.available or not updater.last_update_success:
-        return
-    decision = tracker.evaluate(updater.snapshot)
-    # Re-key an ACTIVE issue when the drift's classification changes (sync
-    # <-> whole-hour timezone, or a different hour count) so the repair never
-    # keeps recommending the wrong fix. Only while still drifted, and only
-    # after the new classification has held for a full debounce streak — a
-    # drift oscillating across a classification boundary must not rewrite the
-    # issue on every poll.
-    rekey = False  # pragma: no mutate - `rekey` is only ever consumed in a boolean `or` context below; None and False are equally falsy there
-    if (
-        decision is None
-        and tracker.published is not None
-        and tracker.still_drifted
-        and (tracker.kind, tracker.hours) != tracker.published
-    ):
-        tracker.rekey_streak += 1
-        rekey = tracker.rekey_streak >= CLOCK_DRIFT_TRIGGER_POLLS
-    else:
-        tracker.rekey_streak = 0
-
-    if decision is True or rekey:
-        translation_key = {
-            "timezone": "clock_drift_timezone",
-            "fractional": "clock_drift_fractional_timezone",
-        }.get(tracker.kind, "clock_drift")
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _clock_drift_issue_id(entry),
-            is_fixable=False,
-            is_persistent=False,
-            issue_domain=DOMAIN,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=translation_key,
-            translation_placeholders=(
-                {"hours": str(tracker.hours)} if tracker.kind == "timezone" else None
-            ),
-        )
-        tracker.published = (tracker.kind, tracker.hours)
-        tracker.rekey_streak = 0
-    elif decision is False:
-        ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
-        tracker.published = None
-        tracker.rekey_streak = 0
 
 
 # SOC entities created only in Advanced mode, and per-phase sensors created only
@@ -968,18 +702,18 @@ async def _finish_setup(
 
     # Keep the OCPP-enabled warning in sync with every poll, so it reflects
     # toggles made from the charger UI or mobile app, not just from HA.
-    follow_polls(lambda: _update_ocpp_issue(hass, entry, updater))
+    follow_polls(lambda: update_ocpp_issue(hass, entry, updater))
 
     # Track the CR2032 coin cell (vBat) across polls and warn when it is
     # depleted, with debounce/hysteresis held in the tracker.
-    battery_tracker = _BatteryLowTracker()
-    follow_polls(lambda: _update_battery_low_issue(hass, entry, updater, battery_tracker))
+    battery_tracker = BatteryLowTracker()
+    follow_polls(lambda: update_battery_low_issue(hass, entry, updater, battery_tracker))
 
     # Warn when the charger clock has drifted from Home Assistant by more
     # than 10 minutes (schedules/tariffs would mistime). Report-only: the
     # notice walks the user to the Time Zone select + Sync Time button.
-    clock_tracker = _ClockDriftTracker()
-    follow_polls(lambda: _update_clock_drift_issue(hass, entry, updater, clock_tracker))
+    clock_tracker = ClockDriftTracker()
+    follow_polls(lambda: update_clock_drift_issue(hass, entry, updater, clock_tracker))
 
     # Surface dangerous charger conditions (missing ground, leakage,
     # overheat, and firmware safety faults) as Home Assistant Repairs
@@ -1047,9 +781,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from homeassistant.helpers.storage import Store
 
     ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
-    ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
-    ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
-    ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, battery_low_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, f"soc_dashboard_update_{entry.entry_id}")
     for policy in POLICIES:
         ir.async_delete_issue(hass, DOMAIN, safety_issue_id(entry, policy.key))
@@ -1071,7 +805,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bo
     # prematurely deleted issue could not be recreated until full recovery.
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
-        ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
-        ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, battery_low_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))
     return unloaded
