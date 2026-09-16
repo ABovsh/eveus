@@ -408,23 +408,30 @@ def test_get_local_wall_clock_seconds_adds_offset(
     assert utils.get_local_wall_clock_seconds() == 1000 + 3600
 
 
+def _wall_clock(data) -> int | None:
+    """The charger wall clock, now a view on the shared snapshot parse."""
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    return EveusSnapshot.parse(data, None).charger_wall_clock_s
+
+
 def test_charger_wall_clock_seconds_boundaries() -> None:
-    assert utils.get_charger_wall_clock_seconds({"systemTime": 0, "timeZone": 0}) is None
-    assert utils.get_charger_wall_clock_seconds({"systemTime": 1, "timeZone": 0}) == 1
+    assert _wall_clock({"systemTime": 0, "timeZone": 0}) is None
+    assert _wall_clock({"systemTime": 1, "timeZone": 0}) == 1
     assert (
-        utils.get_charger_wall_clock_seconds(
+        _wall_clock(
             {"systemTime": MAX_VALID_SYSTEM_TIME, "timeZone": 0}
         )
         == MAX_VALID_SYSTEM_TIME
     )
     assert (
-        utils.get_charger_wall_clock_seconds(
+        _wall_clock(
             {"systemTime": 100, "timeZone": MIN_VALID_TIMEZONE_H}
         )
         == 100
     )
     assert (
-        utils.get_charger_wall_clock_seconds(
+        _wall_clock(
             {"systemTime": 100, "timeZone": MAX_VALID_TIMEZONE_H}
         )
         == 100
@@ -434,8 +441,8 @@ def test_charger_wall_clock_seconds_boundaries() -> None:
 def test_charger_wall_clock_seconds_missing_one_field_returns_none_not_raises() -> None:
     # Only one of the two required fields present must return None -- not raise
     # (guards an `and` where the None-checks need `or`).
-    assert utils.get_charger_wall_clock_seconds({"systemTime": 100}) is None
-    assert utils.get_charger_wall_clock_seconds({"timeZone": 3}) is None
+    assert _wall_clock({"systemTime": 100}) is None
+    assert _wall_clock({"timeZone": 3}) is None
 
 
 def test_max_remaining_seconds_constant_is_30_days() -> None:

@@ -516,6 +516,31 @@ class SnapshotBackedMock(MagicMock):
         return snapshot_of(self)
 
 
+class PayloadUpdater:
+    """Availability flags plus a payload, with the snapshot derived on read.
+
+    For the repair trackers and other listeners, which need nothing from a
+    coordinator but "was this poll good" and "what did the charger say".
+    """
+
+    def __init__(
+        self,
+        data: object = None,
+        *,
+        available: bool = True,
+        last_update_success: bool = True,
+        connection_quality: dict | None = None,
+    ) -> None:
+        self.data = data
+        self.available = available
+        self.last_update_success = last_update_success
+        self.connection_quality = connection_quality or {}
+
+    @property
+    def snapshot(self) -> Any:
+        return snapshot_of(self)
+
+
 class EveusTestUpdater:
     """Reusable coordinator/updater fake for direct entity tests."""
 

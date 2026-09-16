@@ -58,7 +58,6 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
     BATTERY_LOW_THRESHOLD_VOLTS,
-    BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
     BATTERY_OK_THRESHOLD_VOLTS,
     BATTERY_LOW_DEBOUNCE_POLLS,
     CLOCK_DRIFT_THRESHOLD_SECONDS,
@@ -69,12 +68,10 @@ from .const import (
 )
 from .common_network import EveusUpdater
 from .utils import (
-    get_charger_wall_clock_seconds,
     get_local_utc_offset_seconds,
     get_local_wall_clock_seconds,
     get_device_suffix,
     get_next_device_number,
-    get_safe_value,
     is_device_number_taken,
     normalize_soc_input,
 )
@@ -178,7 +175,7 @@ def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None
     # the battery and clock-drift trackers).
     if not updater.available or not updater.last_update_success:
         return
-    value = get_safe_value(updater.data, "ocppEnabled", int) if updater.data else None
+    value = updater.snapshot.get_int("ocppEnabled")
     if value == 1:
         ir.async_create_issue(
             hass,
@@ -218,11 +215,12 @@ class _BatteryLowTracker:
     def evaluate(self, value: float | None) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged.
 
-        A missing/non-positive reading (offline or garbled `vBat`) is treated as
-        "not low": it neither advances the debounce streak nor clears an active
-        warning, mirroring how the OCPP warning ignores dropped fields.
+        An unusable reading (offline, or a `vBat` the snapshot rejected as
+        outside the coin cell's plausible window) is treated as "not low": it
+        neither advances the debounce streak nor clears an active warning,
+        mirroring how the OCPP warning ignores dropped fields.
         """
-        if value is None or value <= 0 or value > BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS:
+        if value is None:
             return None
         if value < BATTERY_LOW_THRESHOLD_VOLTS:
             self._low_streak += 1
@@ -253,8 +251,7 @@ def _update_battery_low_issue(
     """
     if not updater.available or not updater.last_update_success:
         return
-    value = get_safe_value(updater.data, "vBat", float) if updater.data else None
-    decision = tracker.evaluate(value)
+    decision = tracker.evaluate(updater.snapshot.get("vBat"))
     if decision is True:
         ir.async_create_issue(
             hass,
@@ -309,9 +306,9 @@ class _ClockDriftTracker:
         # issue on every poll.
         self.rekey_streak = 0
 
-    def evaluate(self, data: dict[str, Any] | None) -> bool | None:
+    def evaluate(self, snapshot) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged."""
-        charger_wall = get_charger_wall_clock_seconds(data)
+        charger_wall = snapshot.charger_wall_clock_s
         if charger_wall is None:
             # A successful poll that simply omits/corrupts the time fields tells
             # us nothing about the drift. Don't let it advance the re-key streak
@@ -380,7 +377,7 @@ def _update_clock_drift_issue(
     """
     if not updater.available or not updater.last_update_success:
         return
-    decision = tracker.evaluate(updater.data if isinstance(updater.data, dict) else None)
+    decision = tracker.evaluate(updater.snapshot)
     # Re-key an ACTIVE issue when the drift's classification changes (sync
     # <-> whole-hour timezone, or a different hour count) so the repair never
     # keeps recommending the wrong fix. Only while still drifted, and only

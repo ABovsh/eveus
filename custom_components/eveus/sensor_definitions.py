@@ -58,7 +58,6 @@ from .utils import (
     RateLog,
     apply_deadband,
     format_duration,
-    get_charger_wall_clock_seconds,
     get_local_wall_clock_seconds,
     get_safe_value,
 )
@@ -813,7 +812,7 @@ def get_time_drift(updater, hass) -> Optional[int]:
     flooding this sensor exists to avoid.
     """
     try:
-        charger_wall = get_charger_wall_clock_seconds(updater.data)
+        charger_wall = updater.snapshot.charger_wall_clock_s
         if charger_wall is None:
             return None
         drift = charger_wall - get_local_wall_clock_seconds()

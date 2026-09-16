@@ -153,3 +153,31 @@ def test_ocpp_issue_ignores_failed_or_unavailable_polls(
 
     assert not created
     assert not deleted
+
+
+def test_ocpp_notice_reads_the_updater_snapshot(monkeypatch) -> None:
+    """The OCPP warning takes ocppEnabled from the shared parse."""
+    from types import SimpleNamespace as _NS
+
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    created: list[str] = []
+    monkeypatch.setattr(
+        eveus_init.ir,
+        "async_create_issue",
+        lambda hass, domain, issue_id, **kw: created.append(issue_id),
+    )
+    monkeypatch.setattr(
+        eveus_init.ir, "async_delete_issue", lambda hass, domain, issue_id: None
+    )
+    entry = type("E", (), {"entry_id": "abc"})()
+    updater = _NS(
+        available=True,
+        last_update_success=True,
+        data=None,
+        snapshot=EveusSnapshot.parse({"state": 2, "ocppEnabled": 1}, None),
+    )
+
+    _update_ocpp_issue(object(), entry, updater)
+
+    assert created == [_ocpp_issue_id(entry)]

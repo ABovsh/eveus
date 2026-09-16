@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+from conftest import PayloadUpdater
 from conftest import spec_value_fn
 
 from custom_components.eveus._payload import PayloadError, validate_main_payload
@@ -31,8 +31,10 @@ def real_payload() -> dict:
     return json.loads(FIXTURE.read_text())
 
 
-def _updater(data: dict) -> SimpleNamespace:
-    return SimpleNamespace(data=data, available=True, connection_quality={"success_rate": 100, "latency_avg": 0.1})
+def _updater(data: dict) -> PayloadUpdater:
+    return PayloadUpdater(
+        data, connection_quality={"success_rate": 100, "latency_avg": 0.1}
+    )
 
 
 # Every value getter and the field it reads from. If the field is dropped or

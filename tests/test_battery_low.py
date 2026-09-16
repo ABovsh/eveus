@@ -61,14 +61,19 @@ def test_tracker_resets_streak_on_recovery() -> None:
 
 
 def test_tracker_ignores_invalid_readings() -> None:
+    """An unusable reading is not "low": it neither fires nor resets.
+
+    The tracker sees `None` for both cases now — offline, and a `vBat` the
+    shared parse rejected (0 V, or above the coin cell's plausible ceiling);
+    test_battery_notice_reads_the_updater_snapshot covers the parse side.
+    """
     t = _BatteryLowTracker()
     low = BATTERY_LOW_THRESHOLD_VOLTS - 0.1
     # Build up part of the streak.
     for _ in range(BATTERY_LOW_DEBOUNCE_POLLS - 1):
         t.evaluate(low)
-    # None / 0 (offline or garbled) are not "low" — they neither fire nor reset.
     assert t.evaluate(None) is None
-    assert t.evaluate(0.0) is None
+    assert t.evaluate(None) is None
     # The next genuine low reading completes the original streak.
     assert t.evaluate(low) is True
 
@@ -197,9 +202,16 @@ def test_corrupt_high_vbat_does_not_clear_active_warning() -> None:
     decisions = [tracker.evaluate(low) for _ in range(3)]
     assert decisions[-1] is True  # warning raised
 
-    # An implausible finite spike must neither clear nor restart anything.
+    # An implausible finite spike reaches the tracker as None (the shared parse
+    # dropped it) and must neither clear nor restart anything.
     from custom_components.eveus.const import BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS
-    assert tracker.evaluate(BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS + 100.0) is None
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    spike = EveusSnapshot.parse(
+        {"vBat": BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS + 100.0}, None
+    ).get("vBat")
+    assert spike is None
+    assert tracker.evaluate(spike) is None
     assert tracker._active is True
 
 
@@ -223,3 +235,47 @@ def test_battery_voltage_rejects_negative() -> None:
     from custom_components.eveus import sensor_definitions as sd
 
     assert sd.get_battery_voltage(_Updater({"vBat": -2.5}), None) is None
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_battery_notice_reads_the_updater_snapshot(monkeypatch) -> None:
+    """The coin-cell plausibility window is applied once, in the shared parse:
+    the tracker is handed a value that is already usable or None."""
+    from types import SimpleNamespace as _NS
+
+    from custom_components.eveus.const import BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    created: list[str] = []
+    monkeypatch.setattr(
+        eveus_init.ir,
+        "async_create_issue",
+        lambda hass, domain, issue_id, **kw: created.append(issue_id),
+    )
+    monkeypatch.setattr(
+        eveus_init.ir, "async_delete_issue", lambda hass, domain, issue_id: None
+    )
+    entry = type("E", (), {"entry_id": "abc"})()
+    tracker = _BatteryLowTracker()
+
+    def _poll(vbat):
+        updater = _NS(
+            available=True,
+            last_update_success=True,
+            data=None,  # only the snapshot carries the reading
+            snapshot=EveusSnapshot.parse({"state": 2, "vBat": vbat}, None),
+        )
+        _update_battery_low_issue(object(), entry, updater, tracker)
+
+    low = BATTERY_LOW_THRESHOLD_VOLTS - 0.1
+    for _ in range(BATTERY_LOW_DEBOUNCE_POLLS):
+        _poll(low)
+    assert created == [_battery_low_issue_id(entry)]
+
+    # A corrupt spike above the plausible window is filtered by the snapshot,
+    # so it can neither clear the warning nor restart the debounce.
+    _poll(BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS + 100.0)
+    _poll(0)
+    assert tracker._active is True

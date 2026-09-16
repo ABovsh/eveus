@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.helpers.entity import EntityCategory
 
-from conftest import SnapshotBackedMock, TEST_HOST
+from conftest import PayloadUpdater, SnapshotBackedMock, TEST_HOST
+from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
     SensorSpec,
@@ -209,9 +210,8 @@ def test_update_extra_state_attributes_false_without_attributes_fn() -> None:
 
 def test_session_ground_time_drift_and_connection_helpers() -> None:
     hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kiev"))
-    updater = SimpleNamespace(
-        available=True,
-        data={
+    updater = PayloadUpdater(
+        {
             "sessionTime": "3660",
             "state": 4,
             "ground": "0",
@@ -731,14 +731,17 @@ def test_missing_or_corrupt_fields_leave_state_unchanged() -> None:
     import time
 
     def _p(drift, tz=3):
-        return {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}
+        return _snap({"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz})
+
+    def _snap(payload):
+        return EveusSnapshot.parse(payload, None)
 
     tracker = _ClockDriftTracker()
     tracker.evaluate(_p(900))
     tracker.evaluate(_p(900))
-    assert tracker.evaluate({}) is None
-    assert tracker.evaluate({"systemTime": -5, "timeZone": 3}) is None
-    assert tracker.evaluate({"systemTime": "x", "timeZone": 99}) is None
+    assert tracker.evaluate(EveusSnapshot.empty()) is None
+    assert tracker.evaluate(_snap({"systemTime": -5, "timeZone": 3})) is None
+    assert tracker.evaluate(_snap({"systemTime": "x", "timeZone": 99})) is None
     # Streak survived the garbage: the next valid drifted poll fires.
     assert tracker.evaluate(_p(900)) is True
 
@@ -899,9 +902,8 @@ def test_v10_drift_clears_after_sync() -> None:
     dt_util.set_default_time_zone(_tz(timedelta(hours=3)))
     try:
         shift = 3 * 3600
-        updater = SimpleNamespace(
-            available=True,
-            data={"timeZone": "3", "systemTime": str(int(time.time()) + shift + 30)},
+        updater = PayloadUpdater(
+            {"timeZone": "3", "systemTime": str(int(time.time()) + shift + 30)}
         )
         assert get_time_drift(updater, None) == 30
         updater.data["systemTime"] = str(int(time.time()) + shift)

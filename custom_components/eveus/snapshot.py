@@ -36,10 +36,13 @@ from .const import (
     MAX_SESSION_TIME_SECONDS,
     MAX_VALID_LEAKAGE_CURRENT_MA,
     MAX_VALID_RSSI_DBM,
+    MAX_VALID_SYSTEM_TIME,
     MAX_VALID_TEMPERATURE_C,
+    MAX_VALID_TIMEZONE_H,
     MAX_VOLTAGE_V,
     MIN_VALID_RSSI_DBM,
     MIN_VALID_TEMPERATURE_C,
+    MIN_VALID_TIMEZONE_H,
     MODEL_MAX_CURRENT,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
@@ -116,8 +119,10 @@ _FIELDS: Final[dict[str, _Field]] = {
     "RSSI": _f(MIN_VALID_RSSI_DBM, MAX_VALID_RSSI_DBM),
     "ground": _i(),
     "groundCtrl": _i(),
-    "systemTime": _i(),
-    "timeZone": _i(),
+    # The charger's RTC, encoded as epoch seconds shifted by `timeZone`. A
+    # zero or negative stamp is an unset/garbled clock, not midnight 1970.
+    "systemTime": _Field(int, 0, MAX_VALID_SYSTEM_TIME, exclusive_min=True),
+    "timeZone": _i(MIN_VALID_TIMEZONE_H, MAX_VALID_TIMEZONE_H),
     # --- setpoints and flags the controls write -----------------------------
     "currentSet": _f(0, MODEL_MAX),
     "evseEnabled": _i(),
@@ -294,6 +299,24 @@ class EveusSnapshot:
     @property
     def session_money(self) -> float | None:
         return self.values.get("sessionMoney")
+
+    @property
+    def charger_wall_clock_s(self) -> int | None:
+        """The charger's LOCAL wall clock in epoch-style seconds.
+
+        ``systemTime`` is stored UTC shifted by the ``timeZone`` select, and the
+        wall clock — not the decoded UTC — is what schedules and tariff windows
+        run on. So a drift check compares it against Home Assistant's local wall
+        clock; comparing UTC to UTC cancels ``timeZone`` out and goes blind to a
+        wrong timezone or a DST mismatch.
+
+        ``None`` unless BOTH fields are present and inside their sanity windows
+        (the snapshot applied those), so the Time Drift sensor and the
+        clock-drift notice cannot read the clock two different ways.
+        """
+        if self.values.get("timeZone") is None:
+            return None
+        return self.values.get("systemTime")
 
     @property
     def known_state(self) -> int | None:

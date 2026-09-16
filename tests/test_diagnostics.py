@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 from types import SimpleNamespace
 
+from conftest import PayloadUpdater
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus.diagnostics import async_get_config_entry_diagnostics
 
@@ -284,7 +285,7 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
         )
         entry = SimpleNamespace(entry_id="e1")
         tracker = eveus._ClockDriftTracker()
-        updater = SimpleNamespace(available=True, last_update_success=True, data=None)
+        updater = PayloadUpdater(None)
 
         def _drift_payload(drift_seconds: int) -> dict:
             return {
@@ -322,7 +323,7 @@ def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
     )
     entry = SimpleNamespace(entry_id="e1")
     tracker = eveus._ClockDriftTracker()
-    updater = SimpleNamespace(available=True, last_update_success=True, data=None)
+    updater = PayloadUpdater(None)
 
     for _ in range(4):
         updater.data = {
@@ -357,7 +358,7 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
         )
         entry = SimpleNamespace(entry_id="e1")
         tracker = eveus._ClockDriftTracker()
-        updater = SimpleNamespace(available=True, last_update_success=True, data=None)
+        updater = PayloadUpdater(None)
 
         def _drift_payload(drift_seconds: int) -> dict:
             return {
