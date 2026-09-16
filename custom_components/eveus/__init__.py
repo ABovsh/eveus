@@ -30,6 +30,7 @@ from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
     ConfigEntryNotReady,
+    HomeAssistantError,
 )
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
@@ -587,14 +588,21 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         )
 
 
-async def _async_unregister_card(hass: HomeAssistant) -> None:
+async def _async_unregister_card(hass: HomeAssistant, entry_id: str) -> None:
     """Remove the dashboard-card Lovelace resource once the last entry goes.
 
     Best effort: a storage or lovelace-data hiccup must not block entry
     removal, and other eveus entries must keep the resource they still use.
+    Compared by entry_id, not list length: HA versions disagree on whether
+    the entry being removed is still present in `async_entries()` at this
+    point (2025.1 calls this before deleting it from the registry; current
+    HA deletes it first), so only *other* entries may block removal.
     """
     try:
-        if hass.config_entries.async_entries(DOMAIN):
+        others = [
+            e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry_id
+        ]
+        if others:
             return
         lovelace = hass.data.get("lovelace")
         resources = getattr(lovelace, "resources", None)
@@ -603,8 +611,11 @@ async def _async_unregister_card(hass: HomeAssistant) -> None:
         for item in resources.async_items():
             if str(item.get("url", "")).split("?")[0] == CARD_URL:
                 await resources.async_delete_item(item["id"])
-    except Exception:  # noqa: BLE001
-        _LOGGER.debug("Could not remove eveus dashboard card resource")  # pragma: no mutate - log message text, not a logged value
+    except (AttributeError, HomeAssistantError) as err:
+        _LOGGER.debug(
+            "Could not remove eveus dashboard card resource: %s",
+            type(err).__name__,
+        )  # pragma: no mutate - log message text, not a logged value
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -1053,7 +1064,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Could not remove safety store for removed entry")  # pragma: no mutate - log message text, not a logged value
 
-    await _async_unregister_card(hass)
+    await _async_unregister_card(hass, entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:

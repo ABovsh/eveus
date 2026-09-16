@@ -227,14 +227,30 @@ def _teardown_hass(resources, remaining_entries=()):
 
 async def test_card_resource_is_removed_when_last_entry_goes():
     resources = FakeResources([{"id": "x", "res_type": "module", "url": f"{eveus.CARD_URL}?v=abc"}])
-    await eveus._async_unregister_card(_teardown_hass(resources))
+    await eveus._async_unregister_card(_teardown_hass(resources), "e1")
     assert resources.items == []
 
 
 async def test_card_resource_is_kept_while_other_entries_remain():
     resources = FakeResources([{"id": "x", "res_type": "module", "url": f"{eveus.CARD_URL}?v=abc"}])
-    await eveus._async_unregister_card(_teardown_hass(resources, remaining_entries=[object()]))
+    other_entry = SimpleNamespace(entry_id="e2")
+    await eveus._async_unregister_card(
+        _teardown_hass(resources, remaining_entries=[other_entry]), "e1"
+    )
     assert len(resources.items) == 1
+
+
+async def test_card_resource_is_removed_even_when_the_removed_entry_still_lists_itself():
+    """HA 2025.1's ConfigEntries._async_remove calls entry.async_remove()
+    (which reaches this function) before deleting the entry from
+    self._entries, so async_entries(DOMAIN) still contains the entry being
+    removed. Only *other* entries should block removal."""
+    resources = FakeResources([{"id": "x", "res_type": "module", "url": f"{eveus.CARD_URL}?v=abc"}])
+    self_entry = SimpleNamespace(entry_id="e1")
+    await eveus._async_unregister_card(
+        _teardown_hass(resources, remaining_entries=[self_entry]), "e1"
+    )
+    assert resources.items == []
 
 
 async def test_card_resource_removal_never_raises_without_a_lovelace_resource_collection():
@@ -242,12 +258,12 @@ async def test_card_resource_removal_never_raises_without_a_lovelace_resource_co
         data={},
         config_entries=SimpleNamespace(async_entries=lambda domain: []),
     )
-    await eveus._async_unregister_card(hass)  # must not raise
+    await eveus._async_unregister_card(hass, "e1")  # must not raise
 
 
 async def test_card_resource_removal_swallows_errors():
     hass = object()  # missing every attribute the function touches
-    await eveus._async_unregister_card(hass)  # must not raise
+    await eveus._async_unregister_card(hass, "e1")  # must not raise
 
 
 async def test_setup_registers_the_card_websocket_command_once():
