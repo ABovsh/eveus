@@ -23,6 +23,7 @@ from custom_components.eveus.const import (
 )
 from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
 from custom_components.eveus.sensor import async_setup_entry as async_setup_sensor_entry
+from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.ev_sensors import (
     ChargingFinishTimeSensor,
     EVSocKwhSensor,
@@ -98,6 +99,9 @@ class _Updater:
         self.available = True
         self.last_update_success = True
         self.data = {"currentSet": "16"}
+        # Kept in step with `data`, as the real coordinator does: the safety
+        # manager and the repair trackers read values through the snapshot.
+        self.snapshot = EveusSnapshot.parse(self.data, None)
         self.listeners: list[object] = []
 
     def async_add_listener(self, update_callback: object, *args: object, **kwargs: object):

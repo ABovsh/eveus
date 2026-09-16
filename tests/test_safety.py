@@ -24,9 +24,11 @@ from custom_components.eveus.const import (
     GROUND_TRIGGER_POLLS,
     LEAKAGE_RECOVERED_MA,
     MAX_VALID_TEMPERATURE_C,
+    TEMPERATURE_HIGH_C,
     TEMPERATURE_RECOVERY_POLLS,
     TEMPERATURE_TRIGGER_POLLS,
 )
+from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.safety import (
     POLICIES,
     EveusSafetyManager,
@@ -39,9 +41,37 @@ from custom_components.eveus.safety import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _snap(payload: dict[str, object] | None) -> EveusSnapshot:
+    """Parse a payload the way the coordinator does before handing it to safety."""
+    return EveusSnapshot.parse(payload if isinstance(payload, dict) else {}, None)
+
+
 def _signals(key: str, payload: dict[str, object]) -> tuple[bool | None, bool | None]:
     policy = next(policy for policy in POLICIES if policy.key == key)
-    return evaluate_policy_signals(policy, payload)
+    return evaluate_policy_signals(policy, _snap(payload))
+
+
+class _FakeUpdater:
+    """Coordinator double whose `snapshot` follows `data`, as the real one does.
+
+    The tests drive safety by assigning a fresh payload to `.data`; keeping the
+    parse on the setter means a test can never hand the manager a snapshot that
+    disagrees with the payload it is supposed to describe.
+    """
+
+    def __init__(self, data=None, *, available=True, last_update_success=True) -> None:
+        self.available = available
+        self.last_update_success = last_update_success
+        self.data = data
+
+    @property
+    def data(self):
+        return self._data
+
+    @data.setter
+    def data(self, value) -> None:
+        self._data = {} if value is None else value
+        self.snapshot = _snap(value)
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +221,7 @@ def test_real_safe_payload_has_no_dangerous_trigger() -> None:
     triggered = {
         policy.key
         for policy in POLICIES
-        if evaluate_policy_signals(policy, payload)[0] is True
+        if evaluate_policy_signals(policy, _snap(payload))[0] is True
     }
     # Nothing at all: the charger this fixture was captured from reports
     # groundCtrl=1 on GRM070A-R3.05.4. The earlier R3.05.2 capture had
@@ -366,11 +396,7 @@ def test_matching_firmware_fault_triggers_immediately() -> None:
 def _manager(payload: dict[str, object] | None = None):
     hass = SimpleNamespace()
     entry = SimpleNamespace(entry_id="entry")
-    updater = SimpleNamespace(
-        data={} if payload is None else payload,
-        available=True,
-        last_update_success=True,
-    )
+    updater = _FakeUpdater(payload)
     return hass, entry, updater, EveusSafetyManager(hass, entry, updater)
 
 
@@ -710,9 +736,7 @@ def test_v05_persisted_recovery_lets_dismissed_issue_realert_after_reload() -> N
     must re-alert — the recovery memory survives manager recreation."""
     hass = SimpleNamespace()
     entry = SimpleNamespace(entry_id="entry")
-    updater = SimpleNamespace(
-        data={"state": 2, "temperature1": 80}, available=True, last_update_success=True
-    )
+    updater = _FakeUpdater({"state": 2, "temperature1": 80})
     m1 = EveusSafetyManager(hass, entry, updater)
     for _ in range(TEMPERATURE_TRIGGER_POLLS):
         m1.process()
@@ -746,9 +770,7 @@ def test_v05_without_persisted_recovery_dismissed_issue_stays_hidden() -> None:
     (the pre-fix behavior) — confirming the persistence is what re-alerts."""
     hass = SimpleNamespace()
     entry = SimpleNamespace(entry_id="entry")
-    updater = SimpleNamespace(
-        data={"state": 2, "temperature1": 80}, available=True, last_update_success=True
-    )
+    updater = _FakeUpdater({"state": 2, "temperature1": 80})
     ir.async_create_issue(
         hass, DOMAIN, safety_issue_id(entry, "box_overheat"),
         is_fixable=False, is_persistent=True,
@@ -802,3 +824,44 @@ def test_async_load_degrades_to_in_memory_only_on_store_failure(
     asyncio.run(manager.async_load())
 
     assert manager._store is None
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_policies_evaluate_from_the_typed_snapshot() -> None:
+    """Safety reads the shared parse, not its own copy of the payload rules."""
+    snapshot = EveusSnapshot.parse({"state": 2, "currentSet": 16, "ground": 0}, None)
+    policy = next(p for p in POLICIES if p.key == "ground_missing")
+    assert evaluate_policy_signals(policy, snapshot) == (True, False)
+
+
+def test_the_physical_bound_is_the_snapshots_not_a_second_copy() -> None:
+    """A real overheat still fires, a corrupt one still moves no streak — but
+    the ceiling that separates them is applied once, in the snapshot, so it
+    cannot drift from the Box Temperature sensor's."""
+    policy = next(p for p in POLICIES if p.key == "box_overheat")
+
+    def signals(temperature):
+        payload = {"state": 2, "currentSet": 16, "temperature1": temperature}
+        return evaluate_policy_signals(policy, EveusSnapshot.parse(payload, None))
+
+    assert signals(TEMPERATURE_HIGH_C) == (True, False)
+    assert signals(MAX_VALID_TEMPERATURE_C + 1) == (None, None)
+
+
+def test_manager_processes_the_updater_snapshot() -> None:
+    """process() must take its values from updater.snapshot, so it cannot see
+    a reading the shared parse has already rejected."""
+    hass = SimpleNamespace(data={})
+    entry = SimpleNamespace(entry_id="snapshot-entry")
+    updater = SimpleNamespace(
+        available=True,
+        last_update_success=True,
+        data=None,
+        snapshot=_snap({"state": 2, "currentSet": 16, "ground": 0}),
+    )
+    manager = EveusSafetyManager(hass, entry, updater)
+    for _ in range(GROUND_TRIGGER_POLLS):
+        manager.process()
+    assert manager._states["ground_missing"].trigger_streak >= GROUND_TRIGGER_POLLS
