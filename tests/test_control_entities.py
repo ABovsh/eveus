@@ -10,6 +10,7 @@ from homeassistant.core import State
 
 from conftest import EveusTestUpdater as _Updater
 from conftest import disable_state_writes as _disable_state_writes
+from conftest import SnapshotBackedMock
 from custom_components.eveus.number import EveusCurrentNumber
 from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
 from custom_components.eveus.button import (
@@ -1048,7 +1049,7 @@ def test_v15_pending_token_does_not_cross_hidden_session_reset():
         return c
 
     def _soc_updater(**data):
-        u = MagicMock()
+        u = SnapshotBackedMock()
         u.available = True
         u.last_update_success = True
         u.device_number = 1

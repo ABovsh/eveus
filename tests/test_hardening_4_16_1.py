@@ -13,6 +13,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import SnapshotBackedMock
 
 from custom_components import eveus
 from custom_components.eveus import _payload
@@ -172,7 +173,7 @@ def _calc(target=80, initial=20, cap=50, corr=0):
 
 
 def _updater(session_energy=30.0, session_time=3600):
-    u = MagicMock()
+    u = SnapshotBackedMock()
     u.available = True
     u.last_update_success = True
     u.device_number = 1

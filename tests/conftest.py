@@ -9,6 +9,7 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -493,6 +494,28 @@ class StreamReaderStub:
             yield self._raw[i : i + size]
 
 
+def snapshot_of(updater: object) -> Any:
+    """Parse a double's current payload the way the real coordinator does.
+
+    The production coordinator parses once per successful poll and stores the
+    result; a double is driven by assigning (or mutating) ``data``, so deriving
+    the snapshot on each read is what keeps the two from ever disagreeing in a
+    test the way they cannot disagree in production.
+    """
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    data = getattr(updater, "data", None)
+    return EveusSnapshot.parse(data if isinstance(data, dict) else {}, None)
+
+
+class SnapshotBackedMock(MagicMock):
+    """MagicMock coordinator double whose ``snapshot`` follows ``data``."""
+
+    @property
+    def snapshot(self) -> Any:
+        return snapshot_of(self)
+
+
 class EveusTestUpdater:
     """Reusable coordinator/updater fake for direct entity tests."""
 
@@ -519,6 +542,11 @@ class EveusTestUpdater:
         self.command_extras: list[dict[str, object] | None] = []
         self.command_result = True
         self.config_entry = SimpleNamespace(entry_id="entry-id", data={})
+
+    @property
+    def snapshot(self) -> Any:
+        """Derived on read, so a test that mutates ``data`` stays consistent."""
+        return snapshot_of(self)
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None

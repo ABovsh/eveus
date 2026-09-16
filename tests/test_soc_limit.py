@@ -1,8 +1,19 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from conftest import SnapshotBackedMock as _MockUpdater
+from conftest import snapshot_of as _snapshot_of
 from custom_components.eveus.ev_sensors import CachedSOCCalculator
+from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.soc_limit import EVENT_SOC_LIMIT_REACHED, SocLimitController
+
+
+class _SnapshotFromData:
+    """Mixin for the hand-written doubles below: `snapshot` follows `data`."""
+
+    @property
+    def snapshot(self) -> EveusSnapshot:
+        return _snapshot_of(self)
 
 
 def _calc(target=80, initial=20, cap=50, corr=0):
@@ -17,7 +28,7 @@ def _calc(target=80, initial=20, cap=50, corr=0):
 def _updater(state=4, session_energy=30.0, ok=True, stop_ok=True, ev=0):
     # evseEnabled polarity matches the firmware: 0 = charging (go), 1 = stopped.
     # An active charge therefore defaults to evseEnabled=0.
-    u = MagicMock()
+    u = _MockUpdater()
     u.available = ok
     u.last_update_success = ok
     u.device_number = 1
@@ -314,7 +325,7 @@ def test_confirmation_during_inflight_stop_is_not_lost():
             await gate.wait()
             return True
 
-        updater = MagicMock()
+        updater = _MockUpdater()
         updater.available = True
         updater.last_update_success = True
         updater.device_number = 1
@@ -353,7 +364,7 @@ def test_inflight_stop_superseded_by_toggle_fires_nothing():
             await gate.wait()
             return True
 
-        updater = MagicMock()
+        updater = _MockUpdater()
         updater.available = True
         updater.last_update_success = True
         updater.device_number = 1
@@ -560,7 +571,7 @@ def test_inflight_stop_task_not_yet_started_still_counts_at_boundary():
             await asyncio.sleep(100)
             return True
 
-        updater = MagicMock()
+        updater = _MockUpdater()
         updater.available = True
         updater.last_update_success = True
         updater.device_number = 1
@@ -594,7 +605,7 @@ def test_second_poll_does_not_spawn_concurrent_stop_while_one_is_inflight():
             await gate.wait()
             return True
 
-        updater = MagicMock()
+        updater = _MockUpdater()
         updater.available = True
         updater.last_update_success = True
         updater.device_number = 1
@@ -621,7 +632,7 @@ def test_second_poll_does_not_spawn_concurrent_stop_while_one_is_inflight():
 
 
 def test_missing_device_number_defaults_to_one_in_emitted_event():
-    class _NoDeviceNumberUpdater:
+    class _NoDeviceNumberUpdater(_SnapshotFromData):
         available = True
         last_update_success = True
         data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
@@ -722,24 +733,26 @@ def test_auth_failure_after_generation_bump_does_not_clobber_new_generations_pen
 
 def test_suspendlimits_enabled_mid_flight_clears_pending_token():
     # process() reads suspendLimits=0 and schedules _stop(); by the time _stop()
-    # re-reads the latest data (its own stand-down re-check), suspendLimits has
+    # re-reads the latest poll (its own stand-down re-check), suspendLimits has
     # flipped to 1 — the aborted attempt must not leave a stale pending token.
-    # process() itself reads `.data` twice (the isinstance guard, then the main
-    # fetch) before _stop() re-reads it a third time, so the flip must happen
-    # on the THIRD access, not the second.
+    # process() consults the snapshot once; _stop() consults it again, so the
+    # flip belongs on the SECOND read.
     class _TogglingUpdater:
         available = True
         last_update_success = True
         device_number = 1
+        data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
 
         def __init__(self):
-            self._calls = 0
+            self._reads = 0
 
         @property
-        def data(self):
-            self._calls += 1
-            suspend = 0 if self._calls <= 2 else 1
-            return {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": suspend}
+        def snapshot(self):
+            self._reads += 1
+            suspend = 0 if self._reads < 2 else 1
+            return EveusSnapshot.parse(
+                {**self.data, "suspendLimits": suspend}, None
+            )
 
         async def send_command(self, cmd, val, **_kwargs):
             return True
@@ -782,7 +795,7 @@ import pytest
 
 def _threshold_entity(data):
     import custom_components.eveus.number as number_mod
-    updater = MagicMock()
+    updater = _MockUpdater()
     updater.available = True
     updater.data = data
     updater.send_command = AsyncMock(return_value=True)
@@ -812,7 +825,7 @@ def test_v02_supported_minvoltage_still_tracks():
 
 @pytest.mark.parametrize("suspend", [None, "bad", 2, -1])
 def test_v03_does_not_enforce_when_suspendlimits_unknown(suspend):
-    updater = MagicMock()
+    updater = _MockUpdater()
     updater.available = True
     updater.last_update_success = True
     updater.device_number = 1
@@ -836,7 +849,7 @@ def test_v03_does_not_enforce_when_suspendlimits_unknown(suspend):
 
 
 def test_v03_enforces_only_when_suspendlimits_zero():
-    updater = MagicMock()
+    updater = _MockUpdater()
     updater.available = True
     updater.last_update_success = True
     updater.device_number = 1
@@ -908,6 +921,17 @@ class _RecordingSession:
         return _RecordingResponse(status)
 
 
+def _seed(updater, payload: dict) -> None:
+    """Publish a payload on a REAL coordinator, snapshot included.
+
+    `_async_update_data` parses the snapshot as it publishes `data`; a test
+    that assigns `data` by hand has to do both, or the controller reads a
+    snapshot from the previous payload.
+    """
+    updater.data = payload
+    updater._snapshot = EveusSnapshot.parse(payload, None)
+
+
 def _real_stack(monkeypatch, session):
     """A real EveusUpdater + CommandManager under a SOC controller, loop-scheduled."""
     from custom_components.eveus import common_network
@@ -918,7 +942,7 @@ def _real_stack(monkeypatch, session):
     updater._device_available = True
     updater.last_update_success = True
     updater._schedule_post_command_refresh = lambda: None
-    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
+    _seed(updater, {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0})
     hass = MagicMock()
     events: list = []
     hass.async_create_task = lambda coro: asyncio.get_running_loop().create_task(coro)
@@ -949,7 +973,7 @@ def test_stop_queued_behind_the_command_lock_is_dropped_when_limits_are_suspende
         ctrl.process()
         await _settle()
         # A poll lands while the Stop waits its turn: "Disable limits" is on.
-        updater.data = {**updater.data, "suspendLimits": 1}
+        _seed(updater, {**updater.data, "suspendLimits": 1})
         ctrl.process()
         lock.release()
         await ctrl._stop_task
@@ -976,7 +1000,7 @@ def test_stop_retry_after_backoff_is_dropped_when_limits_are_suspended(monkeypat
         updater._command_manager._sleep_backoff = controlled_backoff
         ctrl.process()
         await asyncio.wait_for(in_backoff.wait(), 2)
-        updater.data = {**updater.data, "suspendLimits": 1}
+        _seed(updater, {**updater.data, "suspendLimits": 1})
         release.set()
         await ctrl._stop_task
 
@@ -1014,10 +1038,52 @@ def test_eligible_stop_posts_once_and_waits_for_confirmation(monkeypatch) -> Non
         ctrl.process()
         await ctrl._stop_task
         assert events == []
-        updater.data = {**updater.data, "evseEnabled": 1}
+        _seed(updater, {**updater.data, "evseEnabled": 1})
         ctrl.process()
 
     asyncio.run(scenario())
 
     assert len(_stop_posts(session)) == 1
     assert [etype for etype, _ in events] == [EVENT_SOC_LIMIT_REACHED]
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_controller_evaluates_the_updater_snapshot():
+    """The SOC limit is the one stop Home Assistant enforces itself, so it must
+    read the same parsed values every other consumer reads — not its own
+    conversion of the raw payload."""
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    class _SnapshotOnlyUpdater:
+        available = True
+        last_update_success = True
+        device_number = 1
+        data = None
+        snapshot = EveusSnapshot.parse(
+            {
+                "state": 4,
+                "currentSet": 16,
+                "sessionEnergy": 30.0,
+                "evseEnabled": 0,
+                "suspendLimits": 0,
+            },
+            None,
+        )
+
+        def __init__(self):
+            self.sent = []
+
+        async def send_command(self, cmd, val, **_kwargs):
+            self.sent.append((cmd, val))
+            return True
+
+    updater = _SnapshotOnlyUpdater()
+    ctrl, _scheduled, _events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+
+    assert updater.sent == [("evseEnabled", 1)]

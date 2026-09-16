@@ -17,8 +17,7 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from .const import MAX_ENERGY_KWH, SESSION_ACTIVE_STATES
-from .utils import get_safe_value
+from .snapshot import EveusSnapshot
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +29,19 @@ EVENT_SOC_LIMIT_REACHED = "eveus_soc_limit_reached"
 # A drop in ``sessionEnergy`` larger than this (kWh) means the session counter
 # reset — i.e. a new charging session — rather than in-session jitter.
 _SESSION_RESET_EPS_KWH = 0.5
+
+
+def _limits_suspended(snapshot: EveusSnapshot) -> bool | None:
+    """Tri-state read of the charger's master "Disable limits" switch.
+
+    ``None`` means the field is missing or unusable, i.e. the master state is
+    unknown — and the conservative contract is to stand down there rather than
+    risk stopping a charge while the master may actually be active. Spelled
+    once so the three places that consult it (the poll, the pre-lock re-read
+    and the at-the-wire re-check) cannot answer it differently.
+    """
+    value = snapshot.get_int("suspendLimits")
+    return None if value is None else value != 0
 
 
 class SocLimitController:
@@ -117,10 +129,9 @@ class SocLimitController:
             not self._enabled
             or not self._updater.available
             or not self._updater.last_update_success
-            or not isinstance(self._updater.data, dict)
         ):
             return
-        data = self._updater.data
+        snapshot = self._updater.snapshot
         # The charger's master switch ("Disable limits", ``suspendLimits``)
         # overrides every limit, including this HA-enforced one; stand down before
         # confirming or issuing a Stop. This mirrors how the charger treats its
@@ -136,12 +147,15 @@ class SocLimitController:
         # suspendLimits means the master state is unknown, and the conservative
         # safety contract is to stand down rather than risk stopping while the
         # master may actually be active.
-        if get_safe_value(data, "suspendLimits", int) != 0:
+        if _limits_suspended(snapshot) is not False:
             return
-        state = get_safe_value(data, "state", int)
-        evse_enabled = get_safe_value(data, "evseEnabled", int)
-        energy = get_safe_value(data, "sessionEnergy", float)
-        session_time = get_safe_value(data, "sessionTime", int)
+        # `session_active is True` is exactly the old `state in
+        # SESSION_ACTIVE_STATES`: the Error state and an unmapped firmware code
+        # both answer None there, which is not an active session either.
+        active = snapshot.session_active is True
+        evse_enabled = snapshot.get_int("evseEnabled")
+        energy = snapshot.session_energy_kwh
+        session_time = snapshot.session_time_s
         # Session-identity guard for an UNCONFIRMED attempt whose boundary was
         # HIDDEN by failed polls: a pending token belongs to the session whose
         # counters we recorded. Both ``sessionEnergy`` and ``sessionTime`` only
@@ -159,7 +173,7 @@ class SocLimitController:
         # already self-limits SOC). A session that begins entirely between polls
         # is intentionally skipped rather than stopped, so the limit never
         # re-fires off a boundary it never saw.
-        if state in SESSION_ACTIVE_STATES and self._pending is not None:
+        if active and self._pending is not None:
             energy_reset = (
                 self._pending_energy is not None
                 and energy is not None
@@ -179,7 +193,7 @@ class SocLimitController:
         # the session in the same poll is still confirmed.
         if self._pending is not None and not self._fired and evse_enabled == 1:
             self._emit_reached(*self._pending)
-        if state not in SESSION_ACTIVE_STATES:
+        if not active:
             # Session boundary — derived from ``state`` alone, so a payload missing
             # the optional ``evseEnabled`` still re-arms here. Confirmation above
             # only fires on a present 1; an unconfirmable attempt is DISCARDED at
@@ -212,7 +226,9 @@ class SocLimitController:
         # rather than stopping the charge the instant the session starts.
         if target is None or target <= 0:
             return
-        if energy is None or not 0 <= energy <= MAX_ENERGY_KWH:
+        if energy is None:
+            # The snapshot already rejected a negative or impossible reading,
+            # so "absent" and "unusable" are the same answer here.
             return
         # Use the EXACT SOC percent for the target comparison, not the rounded
         # display percent: on a large battery a rounded-up percent reaches the
@@ -236,12 +252,10 @@ class SocLimitController:
         down, it does not cancel), and a cancellation can lose the race with the
         lock hand-off. Re-read everything against the latest poll.
         """
-        data = self._updater.data
         return (
             # Disabling or unloading re-arms, so the generation covers both.
             generation == self._generation
-            and isinstance(data, dict)
-            and get_safe_value(data, "suspendLimits", int) == 0
+            and _limits_suspended(self._updater.snapshot) is False
         )
 
     def _emit_reached(self, soc: int, target: int) -> None:
@@ -289,8 +303,7 @@ class SocLimitController:
         # would otherwise never be re-consulted, and the command below would
         # violate the same stand-down contract process() enforces on every
         # other poll. Re-read the latest data right before POSTing.
-        data = self._updater.data
-        if isinstance(data, dict) and get_safe_value(data, "suspendLimits", int) != 0:
+        if _limits_suspended(self._updater.snapshot) is True:
             if not self._fired:
                 self._pending = None
                 self._pending_energy = None

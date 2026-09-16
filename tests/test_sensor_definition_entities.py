@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.helpers.entity import EntityCategory
 
-from conftest import TEST_HOST
+from conftest import SnapshotBackedMock, TEST_HOST
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
     SensorSpec,
@@ -863,7 +863,7 @@ def test_v16_soc_stop_auth_failure_starts_reauth_and_withdraws_token() -> None:
         return c
 
     calc = _calc(target=80, initial=20, cap=50, corr=0)
-    updater = MagicMock()
+    updater = SnapshotBackedMock()
     updater.available = True
     updater.last_update_success = True
     updater.device_number = 1
