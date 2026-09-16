@@ -199,6 +199,21 @@ MIN_VOLTAGE_OPTIONS: Final[List[str]] = [
 # (a finite but impossible value like 1e100) instead of only the display side.
 MAX_POWER_W: Final[int] = 100_000
 MAX_ENERGY_KWH: Final[int] = 1_000_000
+# Generous on purpose — real readings sit far below these. They exist only to
+# reject corrupt finite outliers (e.g. voltMeas1 = 1e100) before they reach a
+# sensor, a safety policy, or HA long-term statistics.
+MAX_VOLTAGE_V: Final[int] = 500
+MAX_CURRENT_A: Final[int] = 200
+# Largest plausible per-slot schedule energy cap (kWh).
+MAX_SCHEDULE_ENERGY_KWH: Final[int] = 200
+# `tarif*` fields are reported in hundredths of a currency unit; this bounds the
+# RAW value (checked before the /100 transform), so the published per-kWh rate
+# cannot exceed ~100k.
+MAX_RATE_HUNDREDTHS: Final[int] = 10_000_000
+# RSSI is reported in dBm — physically always <= 0, with a typical floor
+# around -120 dBm.
+MIN_VALID_RSSI_DBM: Final[int] = -120
+MAX_VALID_RSSI_DBM: Final[int] = 0
 # Upper sanity cap for session duration (seconds). A charging session never runs
 # anywhere near a year; the bound only rejects corrupt outliers that would
 # otherwise render an overlong HA state string.

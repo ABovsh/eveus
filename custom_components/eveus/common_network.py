@@ -51,6 +51,7 @@ from ._payload import (
     read_json_capped,
     validate_main_payload,
 )
+from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
 
 _UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
@@ -245,6 +246,20 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # so one degraded reply that omits it must not demote a modern charger
         # to the 1.x code translation for that poll.
         self._modern_firmware_seen = False
+        # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
+        # failed poll, exactly like `self.data`, so an entity inside its
+        # availability grace window keeps republishing the reading behind it.
+        self._snapshot = EveusSnapshot.empty()
+
+    @property
+    def snapshot(self) -> EveusSnapshot:
+        """The last good payload, converted and bounded once.
+
+        Sits next to `self.data`: the raw dict stays the source for diagnostics,
+        the dashboard card and the device-registry strings, while everything
+        that reads a VALUE reads it from here.
+        """
+        return self._snapshot
 
     @property
     def is_modern_firmware(self) -> bool:
@@ -865,6 +880,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # rather than being published as healthy.
                 new_data = validate_main_payload(new_data, self._model)
                 new_data = self._normalize_legacy_device_state(new_data)
+                # Parse AFTER the legacy translation (this coordinator owns the
+                # fw-1.x latch), and BEFORE _record_success, which notifies the
+                # listeners that read the snapshot.
+                self._snapshot = EveusSnapshot.parse(new_data, self._model)
 
                 self._record_success(time.monotonic() - start_monotonic, new_data)
                 return new_data

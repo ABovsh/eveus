@@ -79,6 +79,7 @@ jobs:
               tests/test_recorder_deadband.py
               tests/test_hardening_rc_2026_09_05.py
               tests/test_issue11_fw151_unknown_state.py
+              tests/test_snapshot.py
           - name: coordinator
             paths: "custom_components/eveus/common_network.py"
             tests: >-

@@ -1729,3 +1729,78 @@ def test_init_firmware_fetch_rejects_a_redirect(
 
     assert updater._init_fw_fallback is None
     assert [call["allow_redirects"] for call in session.calls] == [False]
+
+
+# --- Typed snapshot (P2.1) --------------------------------------------------
+
+
+def test_updater_exposes_an_empty_snapshot_before_the_first_poll(
+    updater: EveusUpdater,
+) -> None:
+    """Entities read the snapshot at add time, before any poll has landed."""
+    assert updater.snapshot.raw == {}
+    assert updater.snapshot.state is None
+
+
+def test_successful_poll_publishes_a_parsed_snapshot(
+    coordinator: tuple[EveusUpdater, _Session],
+) -> None:
+    updater, _session = coordinator
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.state == 4
+    assert updater.snapshot.power_w == 7200
+    # The same dict the coordinator publishes, not a copy: diagnostics and the
+    # card keep reading `data` while every value read goes through the snapshot.
+    assert updater.snapshot.raw is data
+
+
+def test_snapshot_is_bounded_by_the_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 16 A charger reporting 12 A is fine; the model bound comes from here."""
+    session = _Session(_Response(payload={"state": 4, "currentSet": 12}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+
+    asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.current_set == 12
+    assert updater.snapshot.model == "16A"
+
+
+def test_failed_poll_keeps_the_last_good_snapshot(
+    coordinator: tuple[EveusUpdater, _Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sensors hold their last reading through the grace window, so the
+    snapshot behind it must survive a failed poll exactly like `data` does."""
+    updater, _session = coordinator
+    asyncio.run(updater._async_update_data())
+
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.state == 4
+
+
+def test_snapshot_sees_the_legacy_state_translation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The coordinator owns the fw-1.x latch, so it must translate BEFORE the
+    parse — otherwise every snapshot consumer gets the untranslated code."""
+    session = _Session(
+        _Response(payload={"state": 3, "currentSet": 16, "powerMeas": 3500})
+    )
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.state == 4
+    assert updater.snapshot.session_active is True

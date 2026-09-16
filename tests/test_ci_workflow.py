@@ -322,6 +322,13 @@ _UNMUTATED_MODULES = frozenset({
     # fails the job on any increase — so it needs a mutmut run to re-baseline
     # .github/mutation-baseline.json in the same commit. Excused until then.
     "custom_components/eveus/sensor.py",
+    # The typed /main parse. Its natural home is the payload-utils leg (it sits
+    # next to _payload.py and is covered by tests/test_snapshot.py, which IS
+    # wired there), but adding a module to a leg grows that leg's mutant count
+    # and the survivor ratchet fails the job on any increase — which needs an
+    # observed mutmut run to re-baseline, never a predicted number. Same
+    # position as sensor.py above: excused until that run happens.
+    "custom_components/eveus/snapshot.py",
 })
 
 
