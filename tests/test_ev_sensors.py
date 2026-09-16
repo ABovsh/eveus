@@ -213,3 +213,49 @@ def test_last_seed_starts_as_an_empty_dict_not_none() -> None:
 
     assert calculator.last_seed == {}
     assert isinstance(calculator.last_seed, dict)
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_soc_sensors_read_the_typed_snapshot() -> None:
+    """SOC, ETA and finish time are built on sessionEnergy, powerMeas and the
+    session state — all three taken from the shared parse, so their sanity
+    ceilings cannot drift from the Session Energy / Power sensors'."""
+    from types import SimpleNamespace
+
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        ChargingFinishTimeSensor,
+        EVSocKwhSensor,
+    )
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    calculator = CachedSOCCalculator()
+    for key, value in (
+        ("initial_soc", 20.0),
+        ("battery_capacity", 50.0),
+        ("soc_correction", 0.0),
+        ("target_soc", 80.0),
+    ):
+        calculator.set_value(key, value)
+
+    updater = SimpleNamespace(
+        available=True,
+        last_update_success=True,
+        host="h",
+        scheme="http",
+        data=None,  # only the snapshot carries the reading
+        snapshot=EveusSnapshot.parse(
+            {"state": 4, "currentSet": 16, "sessionEnergy": 10.0, "powerMeas": 3500},
+            None,
+        ),
+        connection_quality={},
+        async_add_listener=lambda *a, **k: (lambda: None),
+        config_entry=SimpleNamespace(entry_id="e", data={}),
+    )
+
+    # 20 % of 50 kWh + 10 kWh delivered = 20 kWh in the pack.
+    assert EVSocKwhSensor(updater, 1, calculator)._get_sensor_value() == 20.0
+    # An active session has a finish time; the gate reads the same state view.
+    assert ChargingFinishTimeSensor(updater, 1, calculator).available is True

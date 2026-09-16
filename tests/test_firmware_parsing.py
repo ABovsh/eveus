@@ -95,7 +95,14 @@ def test_counter_cost_sensors_use_monetary_iso_unit():
 
 class _SessionEnergyHolder:
     def __init__(self, value):
-        self._updater = type("U", (), {"data": {"sessionEnergy": value}})()
+        from custom_components.eveus.snapshot import EveusSnapshot
+
+        payload = {"sessionEnergy": value}
+        self._updater = type(
+            "U",
+            (),
+            {"data": payload, "snapshot": EveusSnapshot.parse(payload, None)},
+        )()
 
 
 def test_ev_energy_charged_rejects_negative():

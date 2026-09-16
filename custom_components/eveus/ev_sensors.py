@@ -20,13 +20,9 @@ from .utils import (
     calculate_remaining_time,
     calculate_soc_kwh,
     calculate_soc_percent,
-    get_safe_value,
 )
 from .const import (
     DEFAULT_SOC_CORRECTION,
-    MAX_ENERGY_KWH,
-    MAX_POWER_W,
-    SESSION_ACTIVE_STATES,
     soc_update_signal,
 )
 
@@ -221,19 +217,19 @@ class BaseEVHelperSensor(EveusSensorBase):
         # standby power in Connected/Complete/Error states would otherwise
         # produce an absurd-but-plausible time-to-target and finish timestamp,
         # so outside an active session the power is treated as zero and the
-        # sensors resolve to their "Not charging" / unknown states.
-        state = get_safe_value(self._updater.data, "state", int)
-        if state not in SESSION_ACTIVE_STATES:
+        # sensors resolve to their "Not charging" / unknown states. `is not
+        # True` keeps the Error state and an unmapped firmware code on the
+        # inactive side, exactly as the old state-set test did.
+        snapshot = self._updater.snapshot
+        if snapshot.session_active is not True:
             power_meas: float | None = 0.0  # pragma: no mutate - PEP 563 postponed evaluation: local-variable annotation is never evaluated at runtime, only the `= 0.0` assignment executes
         else:
-            power_meas = get_safe_value(self._updater.data, "powerMeas", float)
+            # Already bounded by the shared parse, so a finite-but-impossible
+            # outlier (1e100) arrives as None instead of collapsing the ETA to
+            # "< 1m" — the same ceiling the Power sensor reads.
+            power_meas = snapshot.power_w
         energy_charged = self._get_energy_charged()
         if power_meas is None or energy_charged is None:
-            return None
-        # Reject a finite-but-impossible power outlier (e.g. 1e100) so a corrupt
-        # payload can't make the ETA collapse to "< 1m" — the same ceiling the
-        # Power sensor applies.
-        if not 0 <= power_meas <= MAX_POWER_W:
             return None
         battery_capacity = self._soc_calculator.battery_capacity
         target_soc = self._soc_calculator.target_soc
@@ -334,14 +330,12 @@ class BaseEVHelperSensor(EveusSensorBase):
         Trade-off: split charging across plug-in/out cycles requires the user
         to update ``number.eveus_ev_charger_initial_soc`` before unplugging, since the
         charger starts a fresh session count on the next plug-in.
+
+        Already bounded by the shared parse, so a finite-but-impossible outlier
+        (e.g. 1e100) arrives as None and cannot drive SOC %/kWh to a false
+        full-battery reading — the same ceiling the Session Energy sensor reads.
         """
-        value = get_safe_value(self._updater.data, "sessionEnergy", float)
-        # Reject a finite-but-impossible session-energy outlier (e.g. 1e100) so a
-        # corrupt payload can't drive SOC %/kWh to a false full-battery reading;
-        # matches the ceiling the Session Energy sensor applies.
-        if value is None or not 0 <= value <= MAX_ENERGY_KWH:
-            return None
-        return value
+        return self._updater.snapshot.session_energy_kwh
 
     def _session_energy_is_invalid(self) -> bool:
         """True when sessionEnergy is reported but not a usable value.
@@ -350,8 +344,8 @@ class BaseEVHelperSensor(EveusSensorBase):
         field simply not being reported yet, so callers don't silently treat a
         bad reading as 0 kWh delivered (which would mimic the initial SOC).
         """
-        data = self._updater.data or {}
-        return "sessionEnergy" in data and self._get_energy_charged() is None
+        snapshot = self._updater.snapshot
+        return snapshot.has("sessionEnergy") and snapshot.session_energy_kwh is None
 
     def _session_energy_or_zero(self) -> float | None:
         """Session kWh delivered, 0.0 before a session, None when unusable.
@@ -365,8 +359,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             return None
         energy_charged = self._get_energy_charged()
         if energy_charged is None:
-            state = get_safe_value(self._updater.data, "state", int)
-            if state in SESSION_ACTIVE_STATES:
+            if self._updater.snapshot.session_active is True:
                 return None
             energy_charged = 0.0
         return energy_charged
@@ -651,9 +644,7 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
         # poll writes a row on the way down and another on the way back up.
         if self._in_availability_grace:
             return True
-        return (
-            get_safe_value(self._updater.data, "state", int) in SESSION_ACTIVE_STATES
-        )
+        return self._updater.snapshot.session_active is True
 
     def _get_sensor_value(self) -> Optional[datetime]:
         """Compute the finish-time stamp."""
