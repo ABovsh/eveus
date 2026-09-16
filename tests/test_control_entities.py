@@ -892,11 +892,18 @@ def test_force_refresh_bypass_survives_interleaved_poll(monkeypatch) -> None:
     from conftest import TEST_PASSWORD, TEST_USERNAME, TEST_HOST
     from custom_components.eveus import common_network
     from custom_components.eveus.common_network import EveusUpdater
+    from custom_components.eveus.const import RETRY_DELAY
+    from homeassistant.helpers.update_coordinator import UpdateFailed
 
     session = _PollSession({"state": 2, "currentSet": 16})
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _PollHass())
-    updater._next_poll_attempt = time.time() + 9999  # deep in offline backoff
+    updater._next_poll_attempt = time.monotonic() + RETRY_DELAY  # in offline backoff
+
+    # Without a force-refresh window open, a poll during backoff must skip.
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+    assert len(session.calls) == 0
 
     updater._force_refresh_requests = 1  # a force refresh window is open
     asyncio.run(updater._async_update_data())  # an interleaved scheduled poll
