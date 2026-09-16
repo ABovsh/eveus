@@ -30,7 +30,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMockResponse,
 )
 
-from custom_components.eveus import common_base, common_network
+from custom_components.eveus import common_base
 from custom_components.eveus.const import (
     AVAILABILITY_GRACE_PERIOD,
     CONF_BATTERY_CAPACITY,
@@ -44,8 +44,9 @@ from custom_components.eveus.const import (
     DOMAIN,
     MODEL_16A,
     SOC_MODE_ADVANCED,
-    SOC_MODE_BASIC,
 )
+
+from .conftest import _entry, _mock_charger, _setup
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -74,76 +75,12 @@ CURRENT = "number.eveus_ev_charger_charging_current"
 VOLTAGE = "sensor.eveus_ev_charger_voltage"
 
 
-class _MockedSession:
-    """Routes the integration's POSTs to the mocker without a real ClientSession.
-
-    The `aioclient_mock` fixture builds a real session whose DNS resolver,
-    closed at teardown on older Home Assistant releases, leaves a shutdown
-    thread behind that the plugin's cleanup check rejects.
-    """
-
-    def __init__(self, mocker: AiohttpClientMocker) -> None:
-        self._mocker = mocker
-
-    def post(self, url: str, **kwargs: object) -> _MockedRequest:
-        return _MockedRequest(self._mocker.match_request("post", url, **kwargs))
-
-
-class _MockedRequest:
-    def __init__(self, pending) -> None:
-        self._pending = pending
-
-    async def __aenter__(self) -> AiohttpClientMockResponse:
-        return await self._pending
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        return None
-
-
-@pytest.fixture
-def aioclient_mock(monkeypatch: pytest.MonkeyPatch) -> AiohttpClientMocker:
-    mocker = AiohttpClientMocker()
-    session = _MockedSession(mocker)
-    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
-    return mocker
-
-
-def _entry(hass: HomeAssistant, host: str) -> MockConfigEntry:
-    config_entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id=host,
-        data={
-            CONF_HOST: host,
-            CONF_USERNAME: "test_user",  # NOSONAR(python:S2068) - test fixture
-            CONF_PASSWORD: "test_password",  # NOSONAR(python:S2068) - test fixture
-            CONF_MODEL: MODEL_16A,
-            CONF_SCHEME: "http",
-            CONF_PHASES: 1,
-            CONF_SOC_MODE: SOC_MODE_BASIC,
-        },
-        options={},
-    )
-    config_entry.add_to_hass(hass)
-    return config_entry
-
-
-def _mock_charger(aioclient_mock: AiohttpClientMocker, host: str, **main: object) -> None:
-    aioclient_mock.post(f"http://{host}/main", **(main or {"json": REAL_MAIN}))
-    aioclient_mock.post(f"http://{host}/pageEvent", text="ok")
-
-
 def _calls(aioclient_mock: AiohttpClientMocker, host: str, path: str) -> list:
     return [
         call
         for call in aioclient_mock.mock_calls
         if call[1].host == host and call[1].path == path
     ]
-
-
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    assert entry.state is ConfigEntryState.LOADED
 
 
 async def _set_current(hass: HomeAssistant, entity_id: str, value: float) -> None:
