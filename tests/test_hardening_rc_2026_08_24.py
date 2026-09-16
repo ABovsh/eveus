@@ -21,11 +21,18 @@ def _updater(data: dict[str, object]) -> SimpleNamespace:
     return PayloadUpdater(data, host="192.168.1.50")
 
 
-def _read(getter, updater, key: str, values) -> list:
+def _spec(key: str, phases: int = 1) -> sd.SensorSpec:
+    return next(s for s in sd.create_sensor_specifications(phases=phases) if s.key == key)
+
+
+def _read(spec_key: str, updater, key: str, values, phases: int = 1) -> list:
+    """Feed successive payload values through one entity's own deadband."""
+    sensor = _spec(spec_key, phases=phases).create_sensor(updater, 1)
     out = []
     for value in values:
         updater.data[key] = value
-        out.append(getter(updater, None))
+        sensor._update_native_value()
+        out.append(sensor._attr_native_value)
     return out
 
 
@@ -34,25 +41,25 @@ def _read(getter, updater, key: str, values) -> list:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
-    ("getter", "key", "feed", "expected"),
+    ("spec_key", "key", "feed", "expected", "phases"),
     [
         # Phases 2 and 3 are the same telemetry as phase 1 on a 3-phase entry,
         # so they dither the same way and take the same step.
-        (sd.get_voltage_phase_2, "voltMeas2", [230, 231, 229, 232], [230, 230, 230, 232]),
-        (sd.get_voltage_phase_3, "voltMeas3", [230, 231, 229, 232], [230, 230, 230, 232]),
-        (sd.get_current_phase_2, "curMeas2", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3]),
-        (sd.get_current_phase_3, "curMeas3", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3]),
+        ("voltage_phase_2", "voltMeas2", [230, 231, 229, 232], [230, 230, 230, 232], 3),
+        ("voltage_phase_3", "voltMeas3", [230, 231, 229, 232], [230, 230, 230, 232], 3),
+        ("current_phase_2", "curMeas2", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3], 3),
+        ("current_phase_3", "curMeas3", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3], 3),
         # Whole-degree enclosure temperatures alternate between two adjacent
         # readings for hours; a 1 degree band would be no band at all, because
         # the next distinct value is already 1 away.
-        (sd.get_box_temperature, "temperature1", [30, 31, 30, 32], [30, 30, 30, 32]),
-        (sd.get_plug_temperature, "temperature2", [30, 31, 30, 32], [30, 30, 30, 32]),
+        ("box_temperature", "temperature1", [30, 31, 30, 32], [30, 30, 30, 32], 1),
+        ("plug_temperature", "temperature2", [30, 31, 30, 32], [30, 30, 30, 32], 1),
     ],
 )
 def test_dithering_getters_hold_until_the_deadband_is_crossed(
-    getter, key, feed, expected
+    spec_key, key, feed, expected, phases
 ) -> None:
-    assert _read(getter, _updater({}), key, feed) == pytest.approx(expected)
+    assert _read(spec_key, _updater({}), key, feed, phases=phases) == pytest.approx(expected)
 
 
 def test_wifi_rssi_holds_a_swing_the_link_quality_does_not_notice() -> None:
@@ -61,7 +68,7 @@ def test_wifi_rssi_holds_a_swing_the_link_quality_does_not_notice() -> None:
     A 3 dBm band still published one reading in seven; the link is "Excellent"
     across the whole swing, so the rows carried nothing.
     """
-    assert _read(sd.get_wifi_rssi, _updater({}), "RSSI", [-66, -70, -69, -73]) == [
+    assert _read("wifi_signal", _updater({}), "RSSI", [-66, -70, -69, -73]) == [
         -66,
         -66,
         -66,

@@ -48,7 +48,6 @@ from .const import (
 )
 from .utils import (
     RateLog,
-    apply_deadband,
     format_duration,
     get_local_wall_clock_seconds,
 )
@@ -108,6 +107,10 @@ class SensorSpec:
     # throws away — so it has to be seeded from the restored state or the sensor
     # counts backwards after a restart. See `_seed_session_hold`.
     restores_session_hold: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
+    # Churn damping for a reading that dithers between polls, applied by the
+    # entity (`EveusSensorBase._deadband`) rather than here — see
+    # `_make_value_getter`'s docstring for why the getter itself stays pure.
+    deadband: Optional[float] = None  # pragma: no mutate - default only reached via `if self._deadband is not None`; None/0 both leave every reading published verbatim
 
     def create_sensor(self, updater, device_number: int = 1) -> "OptimizedEveusSensor":
         """Create sensor instance from specification."""
@@ -140,6 +143,7 @@ class OptimizedEveusSensor(EveusSensorBase):
             self._attr_entity_category = spec.category
         if spec.options:
             self._attr_options = list(spec.options)
+        self._deadband = spec.deadband
         self._attr_extra_state_attributes = {}
 
     @property
@@ -148,6 +152,18 @@ class OptimizedEveusSensor(EveusSensorBase):
         if self._spec.available_when_offline:
             return True
         return super().available
+
+    def _update_native_value(self) -> bool:
+        """Refresh the value, mirroring WiFi Signal's damped reading.
+
+        The Connection Quality attribute reads this mirror instead of
+        recomputing RSSI itself, so the two can never publish a different
+        damped value for the same underlying reading.
+        """
+        changed = super()._update_native_value()
+        if self._spec.key == "wifi_signal":
+            self._updater._wifi_rssi_damped = self._attr_native_value
+        return changed
 
     async def async_added_to_hass(self) -> None:
         """Restore the updater-side hold this sensor's value is built on.
@@ -304,14 +320,13 @@ class MonetaryCostSensor(OptimizedEveusSensor):
 # =============================================================================
 
 def _deadband_anchor_store(updater) -> dict:
-    """The per-updater store of last-published values, created on first use.
+    """The per-updater store `_held_latency` anchors its display grid on.
 
-    Every damped reading anchors here, so a field read by more than one
-    consumer is damped once and the two cannot drift apart. The type guard is
-    load-bearing rather than decorative: anything that is not the store (an
-    absent attribute, or a stand-in that answers every attribute) must be
-    replaced with a real dict, because the alternative is arithmetic against a
-    non-number, which the callers would report as a failed reading.
+    The type guard is load-bearing rather than decorative: anything that is
+    not the store (an absent attribute, or a stand-in that answers every
+    attribute) must be replaced with a real dict, because the alternative is
+    arithmetic against a non-number, which the caller would report as a
+    failed reading.
     """
     anchors = getattr(updater, "_deadband_anchors", None)
     if not isinstance(anchors, dict):
@@ -324,21 +339,16 @@ def _make_value_getter(
     key: str,
     precision: int = 0,
     transform: Callable = None,
-    deadband: Optional[float] = None,
 ):
     """Factory for simple data getter functions.
 
     Conversion and the physical bounds happen once, in the snapshot: a reading
     that is absent, corrupt or impossible arrives here as ``None``. What is
-    left is presentation — an optional unit ``transform``, a rounding
-    ``precision``, and a display ``deadband``.
-
-    ``deadband`` damps a reading that dithers between polls: the getter keeps
-    returning the last value it emitted until the payload moves by at least
-    that much. It lives here, on the shared factory, so a field read by more
-    than one consumer (RSSI: the WiFi Signal sensor AND the Connection Quality
-    `wifi_rssi` attribute) is damped once and cannot drift apart — the anchor
-    is per updater, so two chargers never share one.
+    left is presentation — an optional unit ``transform`` and a rounding
+    ``precision``. Churn damping is NOT the getter's job: it lives on the
+    entity (`EveusSensorBase._deadband`, set from `SensorSpec.deadband`), the
+    one place that already holds a per-entity "last published value" to damp
+    against.
     """
     def getter(updater, hass):
         # Availability, not validity: a failing poll publishes nothing and the
@@ -350,13 +360,7 @@ def _make_value_getter(
             return None
         if transform:
             value = transform(value)
-        value = round(value, precision)
-        if deadband is None:
-            return value
-        anchors = _deadband_anchor_store(updater)
-        value = apply_deadband(anchors.get(key), value, deadband)
-        anchors[key] = value
-        return value
+        return round(value, precision)
     return getter
 
 
@@ -383,13 +387,13 @@ def _make_enum_getter(key: str, mapping: dict[int, str]):
 
 # Measurement getters
 get_voltage = _make_value_getter(
-    "voltMeas1", precision=0, deadband=2
+    "voltMeas1", precision=0
 )
 get_current = _make_value_getter(
-    "curMeas1", precision=1, deadband=0.2
+    "curMeas1", precision=1
 )
 get_power = _make_value_getter(
-    "powerMeas", precision=1, deadband=50
+    "powerMeas", precision=1
 )
 # Energy getters
 get_session_energy = _make_value_getter(
@@ -426,12 +430,10 @@ get_rate3_cost = _make_value_getter(
 get_box_temperature = _make_value_getter(
     "temperature1",
     precision=0,
-    deadband=2,
 )
 get_plug_temperature = _make_value_getter(
     "temperature2",
     precision=0,
-    deadband=2,
 )
 
 # Other diagnostic getters
@@ -452,23 +454,23 @@ get_leak_current_peak = _make_value_getter(
 # value is mirrored into the Connection Quality attributes, which made it the
 # single largest source of recorder rows this integration produced.
 get_wifi_rssi = _make_value_getter(
-    "RSSI", precision=0, deadband=5
+    "RSSI", precision=0
 )
 
 # 3-phase per-phase getters (only registered when entry is configured for 3 phases)
 # Same telemetry as phase 1, so the same damping — otherwise a 3-phase entry
 # keeps the per-poll churn the single-phase one just lost.
 get_current_phase_2 = _make_value_getter(
-    "curMeas2", precision=1, deadband=0.2
+    "curMeas2", precision=1
 )
 get_current_phase_3 = _make_value_getter(
-    "curMeas3", precision=1, deadband=0.2
+    "curMeas3", precision=1
 )
 get_voltage_phase_2 = _make_value_getter(
-    "voltMeas2", precision=0, deadband=2
+    "voltMeas2", precision=0
 )
 get_voltage_phase_3 = _make_value_getter(
-    "voltMeas3", precision=0, deadband=2
+    "voltMeas3", precision=0
 )
 
 
@@ -1000,18 +1002,11 @@ def get_connection_attrs(updater, hass) -> dict:
             "status": status,
         }
         if updater.available:
-            # Isolated from the attrs already computed above: a failure here
-            # must only drop the optional wifi_rssi field, not replace the
-            # whole (already-valid) connection_quality/latency_avg/status dict.
-            try:
-                rssi = get_wifi_rssi(updater, hass)
-            except Exception as err:
-                if _should_log_error("get_connection_attrs_rssi"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
-                    _LOGGER.debug(
-                        "Error getting wifi_rssi for connection attrs: %s",  # pragma: no mutate - log message TEXT only
-                        type(err).__name__,
-                    )
-                rssi = None
+            # The WiFi Signal sensor mirrors its own damped reading here
+            # (`OptimizedEveusSensor._update_native_value`) on every poll, so
+            # this reads the SAME value it publishes rather than damping RSSI
+            # a second, independent time.
+            rssi = getattr(updater, "_wifi_rssi_damped", None)
             if rssi is not None:
                 attrs["wifi_rssi"] = rssi
         return attrs
@@ -1046,9 +1041,9 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
 
     # Measurement sensors
     measurements = [
-        ("Voltage", get_voltage, ICON_FLASH, SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, None),
-        ("Current", get_current, ICON_CURRENT_AC, SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, None),
-        ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None),
+        ("Voltage", get_voltage, ICON_FLASH, SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, None, 2),
+        ("Current", get_current, ICON_CURRENT_AC, SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, None, 0.2),
+        ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None, 50),
         (
             "Current Set",
             current_set_getter,
@@ -1057,6 +1052,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             UnitOfElectricCurrent.AMPERE,
             0,
             EntityCategory.DIAGNOSTIC,
+            None,
         ),
     ]
 
@@ -1072,8 +1068,9 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
             unit=unit,
             precision=precision,
             category=category,
+            deadband=deadband,
         )
-        for name, fn, icon, device_class, unit, precision, category in measurements
+        for name, fn, icon, device_class, unit, precision, category, deadband in measurements
     ]
 
     # Energy sensors.
@@ -1163,21 +1160,22 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
                 unit=unit,
                 precision=precision,
                 category=EntityCategory.DIAGNOSTIC,
+                deadband=deadband,
             )
-            for key, name, fn, icon, device_class, unit, precision, state_class in (
+            for key, name, fn, icon, device_class, unit, precision, state_class, deadband in (
                 ("box_temperature", "Box Temperature", get_box_temperature,
                  "mdi:thermometer", SensorDeviceClass.TEMPERATURE,
-                 UnitOfTemperature.CELSIUS, 0, SensorStateClass.MEASUREMENT),
+                 UnitOfTemperature.CELSIUS, 0, SensorStateClass.MEASUREMENT, 2),
                 ("plug_temperature", "Plug Temperature", get_plug_temperature,
                  "mdi:thermometer-high", SensorDeviceClass.TEMPERATURE,
-                 UnitOfTemperature.CELSIUS, 0, SensorStateClass.MEASUREMENT),
+                 UnitOfTemperature.CELSIUS, 0, SensorStateClass.MEASUREMENT, 2),
                 # The CR2032 clock cell drains over YEARS, and the recorder
                 # keeps states for days — statistics is the only place that
                 # slope exists, and it is what says to replace the cell before
                 # the clock resets. Slow is not the same as static.
                 ("battery_voltage", "Battery Voltage", get_battery_voltage,
                  "mdi:battery", SensorDeviceClass.VOLTAGE,
-                 UnitOfElectricPotential.VOLT, 2, SensorStateClass.MEASUREMENT),
+                 UnitOfElectricPotential.VOLT, 2, SensorStateClass.MEASUREMENT, None),
                 # Leakage is an EVENT, not a trend: above the charger's 30 mA
                 # threshold it trips and reports the fault itself, and
                 # `leakValueH` is the charger's own peak-ever counter, so the
@@ -1185,24 +1183,32 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
                 # healthy 0 mA every five minutes forever buys nothing.
                 ("leak_current", "Leakage Current", get_leak_current,
                  "mdi:current-dc", SensorDeviceClass.CURRENT,
-                 UnitOfElectricCurrent.MILLIAMPERE, 0, None),
+                 UnitOfElectricCurrent.MILLIAMPERE, 0, None, None),
                 ("leak_current_peak", "Leakage Current Peak", get_leak_current_peak,
                  "mdi:current-dc", SensorDeviceClass.CURRENT,
-                 UnitOfElectricCurrent.MILLIAMPERE, 0, None),
+                 UnitOfElectricCurrent.MILLIAMPERE, 0, None, None),
+                # 5 dBm: measured on the live charger, RSSI wanders across ~7
+                # dBm with the link unchanged — see get_wifi_rssi's comment.
+                # Mirrored onto the updater for the Connection Quality
+                # attribute (`get_connection_attrs`), so the single largest
+                # source of recorder rows this integration produced is damped
+                # once, not twice.
                 ("wifi_signal", "WiFi Signal", get_wifi_rssi,
                  "mdi:wifi", SensorDeviceClass.SIGNAL_STRENGTH,
-                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, SensorStateClass.MEASUREMENT),
+                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, SensorStateClass.MEASUREMENT, 5),
             )
         ),
     ]
 
     if phases == 3:
         # Phases 2 and 3 repeat phase 1's metadata; current first, then voltage.
-        for kind, getters, icon, device_class, unit, precision in (
+        # Same telemetry as phase 1, so the same damping — otherwise a 3-phase
+        # entry keeps the per-poll churn the single-phase one just lost.
+        for kind, getters, icon, device_class, unit, precision, deadband in (
             ("current", (get_current_phase_2, get_current_phase_3), ICON_CURRENT_AC,
-             SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1),
+             SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, 0.2),
             ("voltage", (get_voltage_phase_2, get_voltage_phase_3), ICON_FLASH,
-             SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0),
+             SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, 2),
         ):
             for phase, getter in zip((2, 3), getters):
                 diagnostic_specs.append(
@@ -1213,6 +1219,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[SensorSpec, ...]:
                         device_class=device_class,
                         state_class=SensorStateClass.MEASUREMENT,
                         unit=unit, precision=precision,
+                        deadband=deadband,
                     )
                 )
 

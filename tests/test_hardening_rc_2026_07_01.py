@@ -328,21 +328,24 @@ def test_value_getter_rejects_overflow_error():
     assert getter(updater, None) is None
 
 
-def test_connection_attrs_isolates_wifi_rssi_failure(monkeypatch: pytest.MonkeyPatch):
+def test_connection_attrs_isolates_wifi_rssi_failure():
     """Regression test for B02: a failure fetching the optional wifi_rssi must
     only drop that one field, not replace the whole (already-valid)
     connection_quality/latency_avg/status dict with {"status": "Error"}.
+
+    RSSI now comes from a mirror the WiFi Signal sensor writes on its own poll
+    (P4.2's shared-deadband consolidation), so "computing wifi_rssi raises" no
+    longer exists as a failure mode — the equivalent case is the mirror never
+    having been written (the sensor hasn't polled yet), which must be just as
+    harmless to the rest of the dict.
     """
+    from types import SimpleNamespace
+
     from custom_components.eveus import sensor_definitions as sd
 
-    updater = MagicMock()
-    updater.available = True
-    updater.connection_quality = {"success_rate": 75, "latency_avg": 0.42}
-
-    def boom(updater, hass):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(sd, "get_wifi_rssi", boom)
+    updater = SimpleNamespace(
+        available=True, connection_quality={"success_rate": 75, "latency_avg": 0.42}
+    )
 
     attrs = sd.get_connection_attrs(updater, None)
 

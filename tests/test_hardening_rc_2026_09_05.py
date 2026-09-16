@@ -72,11 +72,18 @@ def _feed_seconds(monkeypatch, first: float) -> dict:
     return poll
 
 
-def _read(getter, updater, key: str, values) -> list:
+def _spec(key: str, phases: int = 1) -> sd.SensorSpec:
+    return next(s for s in sd.create_sensor_specifications(phases=phases) if s.key == key)
+
+
+def _read(spec_key: str, updater, key: str, values, phases: int = 1) -> list:
+    """Feed successive payload values through one entity's own deadband."""
+    sensor = _spec(spec_key, phases=phases).create_sensor(updater, 1)
     out = []
     for value in values:
         updater.data[key] = value
-        out.append(getter(updater, None))
+        sensor._update_native_value()
+        out.append(sensor._attr_native_value)
     return out
 
 
@@ -133,13 +140,13 @@ def test_both_estimates_take_the_same_band_for_the_same_remaining_time(
 
 
 @pytest.mark.parametrize(
-    ("getter", "key"),
+    ("spec_key", "key"),
     [
-        (sd.get_current_phase_2, "curMeas2"),
-        (sd.get_current_phase_3, "curMeas3"),
+        ("current_phase_2", "curMeas2"),
+        ("current_phase_3", "curMeas3"),
     ],
 )
-def test_current_phases_take_the_same_step_as_phase_one(getter, key) -> None:
+def test_current_phases_take_the_same_step_as_phase_one(spec_key, key) -> None:
     """Phases 2 and 3 are the same telemetry, so they take the same step.
 
     Compared against phase 1 on the same feed rather than against a hardcoded
@@ -149,8 +156,8 @@ def test_current_phases_take_the_same_step_as_phase_one(getter, key) -> None:
     """
     feed = [15.7, 15.9, 15.6, 15.8, 16.1, 15.9, 12.0]
 
-    assert _read(getter, _updater({}), key, feed) == pytest.approx(
-        _read(sd.get_current, _updater({}), "curMeas1", feed)
+    assert _read(spec_key, _updater({}), key, feed, phases=3) == pytest.approx(
+        _read("current", _updater({}), "curMeas1", feed)
     )
 
 

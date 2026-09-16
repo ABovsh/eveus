@@ -446,6 +446,12 @@ def test_connection_attrs_handles_offline_and_includes_wifi_rssi() -> None:
         available=True,
     )
     updater.connection_quality = {"success_rate": 90, "latency_avg": 0.25}
+    # The WiFi Signal sensor writes the mirror get_connection_attrs reads, the
+    # same way the coordinator drives it on every real poll.
+    wifi_signal_spec = next(
+        s for s in sensors.create_sensor_specifications() if s.key == "wifi_signal"
+    )
+    wifi_signal_spec.create_sensor(updater, 1)._update_native_value()
 
     assert sensors.get_connection_attrs(updater, None) == {
         "connection_quality": 90,

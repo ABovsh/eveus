@@ -825,14 +825,27 @@ def test_ev_sensor_skips_value_recompute_on_failed_poll() -> None:
     assert calls == ["value"]
 
 
+def _wifi_signal_sensor(updater):
+    from custom_components.eveus import sensor_definitions as sd
+
+    spec = next(s for s in sd.create_sensor_specifications() if s.key == "wifi_signal")
+    return spec.create_sensor(updater, 1)
+
+
 def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:
+    """The coordinator drives every entity on every poll, so the WiFi Signal
+    sensor's own `_update_native_value` is exercised here exactly as
+    `_handle_coordinator_update` would — that is what writes the mirror
+    `get_connection_attrs` now reads instead of computing RSSI itself."""
     from custom_components.eveus import sensor_definitions as sd
 
     offline = PayloadUpdater(
         {"RSSI": -50},
         available=False,
         connection_quality={"success_rate": 42, "latency_avg": 1.0},
+        host=TEST_HOST,
     )
+    _wifi_signal_sensor(offline)._update_native_value()
     attrs = sd.get_connection_attrs(offline, None)
     assert attrs["connection_quality"] == 42
     assert attrs["status"] == "Poor"
@@ -841,7 +854,9 @@ def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:
     online = PayloadUpdater(
         {"RSSI": -50},
         connection_quality={"success_rate": 99, "latency_avg": 0.2},
+        host=TEST_HOST,
     )
+    _wifi_signal_sensor(online)._update_native_value()
     online_attrs = sd.get_connection_attrs(online, None)
     assert online_attrs["status"] == "Excellent"
     assert online_attrs["wifi_rssi"] == -50
