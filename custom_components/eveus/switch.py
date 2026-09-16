@@ -23,7 +23,6 @@ from .const import (
     SOC_MODE_ADVANCED,
     get_soc_mode,
 )
-from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -219,14 +218,16 @@ class BaseSwitchEntity(
         return self._attr_is_on
 
     def _read_device_value(self) -> bool | None:
-        """Return the latest valid switch state from coordinator data."""
-        if not (
-            self._updater.available
-            and self._updater.data
-            and self._state_key in self._updater.data
-        ):
+        """Return the latest valid switch state from coordinator data.
+
+        "The charger stopped sending this flag" and "it sent something
+        unusable" are different answers to the optimistic-write lifecycle, so
+        presence is asked of the raw payload and the value of the parse.
+        """
+        snapshot = self._updater.snapshot
+        if not (self._updater.available and snapshot.has(self._state_key)):
             return None
-        device_value = get_safe_value(self._updater.data, self._state_key, int)
+        device_value = snapshot.get_int(self._state_key)
         if device_value in (0, 1):
             return bool(device_value)
         return None
@@ -345,12 +346,7 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
         # can still flip it back on while suspended (the controller ignores the
         # limit meanwhile), and turning the master back off never changes this
         # switch by itself — it stays where you left it (no auto-enable).
-        data = self._updater.data
-        raw = (
-            get_safe_value(data, "suspendLimits", int)
-            if isinstance(data, dict)
-            else None
-        )
+        raw = self._updater.snapshot.get_int("suspendLimits")
         if raw not in (0, 1):
             # Unknown/malformed master state — leave the transition memory
             # untouched (tri-state). Collapsing it to False here would make the
@@ -373,12 +369,7 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
         # first post-reload poll that still reports suspendLimits==1 looks like a
         # fresh off->on edge and silently flips a restored "on" back off — losing
         # a SOC limit the user deliberately re-enabled while limits were disabled.
-        data = self._updater.data
-        raw = (
-            get_safe_value(data, "suspendLimits", int)
-            if isinstance(data, dict)
-            else None
-        )
+        raw = self._updater.snapshot.get_int("suspendLimits")
         if raw in (0, 1):
             self._was_suspended = raw == 1
         last = await self.async_get_last_state()

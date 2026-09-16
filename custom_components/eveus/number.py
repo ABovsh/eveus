@@ -45,7 +45,6 @@ from .const import (
     CONF_SOC_CORRECTION,
     CONF_EXTERNAL_SOC_ENTITY,
     CONNECTED_STATES,
-    MAX_ENERGY_KWH,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
 )
@@ -55,7 +54,7 @@ from .common_base import (
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
-from .utils import get_safe_value, normalize_soc_input
+from .utils import normalize_soc_input
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -314,11 +313,18 @@ class EveusSetpointNumber(EveusNumberEntity):
         return self._state_key_value
 
     def _read_device_value(self) -> float | None:
-        if not (self._updater.available and self._updater.data):
+        """The charger's setpoint in HA units, or None when it cannot be read.
+
+        Presence comes from the raw payload and the value from the shared
+        parse: "the charger stopped sending this setpoint" and "it sent
+        something unusable" are different answers to the optimistic-write
+        lifecycle. The range check that remains is this ENTITY's, not a
+        physical one — the writable/readable span of the control.
+        """
+        snapshot = self._updater.snapshot
+        if not (self._updater.available and snapshot.has(self._state_key_value)):
             return None
-        if self._state_key_value not in self._updater.data:
-            return None
-        raw = get_safe_value(self._updater.data, self._state_key_value, float)
+        raw = snapshot.get(self._state_key_value)
         if raw is None:
             return None
         value = raw * self._device_to_ha
@@ -449,11 +455,10 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
         firmware can report an ``aiVoltage`` below ``minVoltage + 10``, and
         rejecting it would blank the entity for a perfectly valid device value.
         """
-        if not (self._updater.available and self._updater.data):
+        snapshot = self._updater.snapshot
+        if not (self._updater.available and snapshot.has(self._state_key_value)):
             return None
-        if self._state_key_value not in self._updater.data:
-            return None
-        raw = get_safe_value(self._updater.data, self._state_key_value, float)
+        raw = snapshot.get(self._state_key_value)
         if raw is None:
             return None
         value = raw * self._device_to_ha
@@ -476,8 +481,8 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
     def _refresh_min_bound(self) -> None:
         """Set the lower bound to ``minVoltage + 10`` when the charger reports it."""
         dynamic: float | None = None  # pragma: no mutate - annotation only: local annotation in a function body is never evaluated (PEP 526)
-        if self._updater.available and self._updater.data:
-            raw = get_safe_value(self._updater.data, self._MIN_VOLTAGE_KEY, float)
+        if self._updater.available:
+            raw = self._updater.snapshot.get(self._MIN_VOLTAGE_KEY)
             # Only trust a firmware-supported minVoltage. A malformed or off-list
             # value (negative, or outside the curated option set) must not derive
             # a writable floor below the safe static minimum.
@@ -658,7 +663,7 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             # against the other would skew the anchor. Nothing is forgotten —
             # the next successful poll retries.
             return
-        state = get_safe_value(self._updater.data, "state", int)
+        state = self._updater.snapshot.state
         if state is None:
             return
         if state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES:
@@ -722,17 +727,17 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         external = self._read_external_soc(entity_id)
         if isinstance(external, str):
             return external
-        data = self._updater.data or {}
-        if "sessionEnergy" not in data:
+        snapshot = self._updater.snapshot
+        if not snapshot.has("sessionEnergy"):
             # This runs only once a session is already active, where an absent
             # field is anomalous telemetry rather than "nothing delivered yet" —
             # the same rule the SOC sensors follow. Reading it as zero would
             # copy the car's SOC in un-rebased and overstate every SOC figure
             # for the rest of the session.
             return "the charger did not report session energy"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
-        delivered = get_safe_value(data, "sessionEnergy", float)
-        if delivered is None or not 0 <= delivered <= MAX_ENERGY_KWH:
-            return f"the charger reported an unusable session energy ({data['sessionEnergy']!r})"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+        delivered = snapshot.session_energy_kwh
+        if delivered is None:
+            return f"the charger reported an unusable session energy ({snapshot.raw['sessionEnergy']!r})"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
         if delivered:
             capacity = self._soc_calculator.battery_capacity
             correction = self._soc_calculator.soc_correction

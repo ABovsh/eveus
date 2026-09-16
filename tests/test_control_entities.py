@@ -1610,3 +1610,55 @@ def test_cancelled_write_releases_the_pin_and_shows_the_device_value(factory) ->
     assert entity._optimistic_value is None
     assert entity._resolve_display_value() == device_display
     assert (getattr(entity, "_attr_native_value", None)) == device_display
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_controls_read_the_typed_snapshot() -> None:
+    """Every charger-backed control reconciles its optimistic write against the
+    shared parse, so a setpoint the coordinator judged unusable is unusable for
+    the control too — and for a 16 A charger that includes a 32 A currentSet."""
+    from types import SimpleNamespace
+
+    from custom_components.eveus.number import EveusCurrentNumber
+    from custom_components.eveus.select import EveusTimeZoneSelect
+    from custom_components.eveus.snapshot import EveusSnapshot
+    from custom_components.eveus.switch import BaseSwitchEntity, SWITCH_DESCRIPTIONS
+    from custom_components.eveus.time import TIME_DESCRIPTIONS, EveusScheduleTimeEntity
+
+    payload = {
+        "state": 2,
+        "currentSet": 12,
+        "evseEnabled": 1,
+        "timeZone": 3,
+        "sh1Start": 1380,
+    }
+
+    def _updater(model=None, **overrides):
+        return SimpleNamespace(
+            available=True,
+            last_update_success=True,
+            host="h",
+            scheme="http",
+            data=None,  # only the snapshot carries the reading
+            model=model,
+            snapshot=EveusSnapshot.parse({**payload, **overrides}, model),
+            async_add_listener=lambda *a, **k: (lambda: None),
+            config_entry=SimpleNamespace(entry_id="e", data={}),
+        )
+
+    stop = next(d for d in SWITCH_DESCRIPTIONS if d.state_key == "evseEnabled")
+    assert BaseSwitchEntity(_updater(), stop)._read_device_value() is True
+
+    start = next(d for d in TIME_DESCRIPTIONS if d.state_key == "sh1Start")
+    assert EveusScheduleTimeEntity(_updater(), start)._read_device_value() == 1380
+
+    assert EveusTimeZoneSelect(_updater()).current_option == "+3"
+
+    assert EveusCurrentNumber(_updater("16A"), "16A")._read_device_value() == 12
+    # 32 A is an impossible setpoint on a 16 A unit, and which unit it is comes
+    # from the coordinator — so the control sees no usable device value at all
+    # and keeps whatever it last held rather than snapping to a bogus number.
+    stale = EveusCurrentNumber(_updater("16A", currentSet=32), "16A")
+    assert stale._read_device_value() is None

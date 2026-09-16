@@ -6,6 +6,7 @@ import pytest
 from homeassistant.components.number import NumberMode
 from homeassistant.core import State
 
+from conftest import SnapshotBackedMock
 from custom_components.eveus import number as number_mod
 from custom_components.eveus.number import (
     EveusSetpointNumber,
@@ -40,7 +41,7 @@ TIME = EveusSetpointNumberDescription(
 
 
 def _make(description):
-    updater = MagicMock()
+    updater = SnapshotBackedMock()
     updater.available = True
     updater.data = {description.state_key: 0}
     updater.send_command = AsyncMock(return_value=True)
@@ -122,7 +123,7 @@ def test_time_read_rounds_to_whole_minutes():
 
 
 def _make_threshold(data):
-    updater = MagicMock()
+    updater = SnapshotBackedMock()
     updater.available = True
     updater.data = data
     updater.send_command = AsyncMock(return_value=True)

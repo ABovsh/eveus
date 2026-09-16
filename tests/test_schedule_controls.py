@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 
+from conftest import snapshot_of
 from conftest import TEST_HOST
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
@@ -26,6 +27,11 @@ class _Updater:
         self.data = data or {}
         self.commands: list[tuple[str, object]] = []
         self.command_result = True
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the control by assigning `data`.
+        return snapshot_of(self)
 
     def async_add_listener(self, *args, **kwargs):
         return lambda: None

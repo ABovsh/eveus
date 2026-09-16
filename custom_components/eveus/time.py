@@ -18,7 +18,6 @@ from .common_base import (
 )
 from .control_base import CommandBackedEntity
 from .const import UNUSABLE_RESTORED_STATES
-from .utils import get_safe_value
 
 
 @dataclass(frozen=True)
@@ -121,16 +120,18 @@ class EveusScheduleTimeEntity(
         return self._attr_native_value
 
     def _read_device_value(self) -> int | None:
-        """Return the latest valid schedule minutes from coordinator data."""
-        if not (
-            self._updater.available
-            and self._updater.data
-            and self._state_key in self._updater.data
-        ):
+        """Return the latest valid schedule minutes from coordinator data.
+
+        "The charger stopped sending this field" and "it sent something
+        unusable" are different answers to the optimistic-write lifecycle, so
+        presence is asked of the raw payload and the value of the parse.
+        """
+        snapshot = self._updater.snapshot
+        if not (self._updater.available and snapshot.has(self._state_key)):
             return None
-        device_value = get_safe_value(self._updater.data, self._state_key, int)
+        device_value = snapshot.get_int(self._state_key)
         if device_value is not None and 0 <= device_value < 1440:
-            return int(device_value)
+            return device_value
         return None
 
     def _values_equal(self, optimistic: int, device: int) -> bool:

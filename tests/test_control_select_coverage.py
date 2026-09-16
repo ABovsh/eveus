@@ -15,6 +15,7 @@ from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 
+from conftest import snapshot_of
 from conftest import TEST_HOST
 from custom_components.eveus import const
 from custom_components.eveus import number as number_module
@@ -42,6 +43,11 @@ class _Updater:
         self.commands: list[tuple[str, object]] = []
         self._result = result
         self._raises = raises
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the control by assigning `data`.
+        return snapshot_of(self)
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None

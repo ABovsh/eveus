@@ -10,6 +10,7 @@ import pytest
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 
+from conftest import snapshot_of
 from conftest import TEST_HOST
 from custom_components.eveus.button import EveusSyncTimeButton
 from custom_components.eveus.common_base import BaseEveusEntity
@@ -38,6 +39,11 @@ class _Updater:
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the control by assigning `data`.
+        return snapshot_of(self)
 
     async def send_command(self, command: str, value: object, *, retry: bool = True) -> bool:
         # Mirror CommandManager: a deferred (callable) value is resolved at

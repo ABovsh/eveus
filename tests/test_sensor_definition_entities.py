@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from homeassistant.helpers.entity import EntityCategory
 
+from conftest import SnapshotBackedMock
 from conftest import PayloadUpdater, SnapshotBackedMock, TEST_HOST, snapshot_of
 from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.sensor_definitions import (
@@ -831,7 +832,7 @@ def test_v07_current_number_displays_sub7_but_writes_floor() -> None:
     from unittest.mock import AsyncMock, MagicMock
     from custom_components.eveus import number as number_mod
 
-    upd = MagicMock()
+    upd = SnapshotBackedMock()
     upd.available = True
     upd.data = {"currentSet": 6, "state": 4}
     upd.config_entry = MagicMock()
@@ -850,7 +851,7 @@ def test_v14_charger_number_prefers_fresh_device_over_restored(monkeypatch) -> N
     from unittest.mock import AsyncMock, MagicMock
     from custom_components.eveus import number as number_mod
 
-    upd = MagicMock()
+    upd = SnapshotBackedMock()
     upd.available = True
     upd.data = {"currentSet": 14, "state": 4}
     upd.config_entry = MagicMock()

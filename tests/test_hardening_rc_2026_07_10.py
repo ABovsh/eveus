@@ -14,6 +14,7 @@ from custom_components.eveus.const import EVENT_CHARGING_FINISHED, SOC_MODE_BASI
 from custom_components.eveus.number import EveusSetpointNumber, SCHEDULE_LIMIT_NUMBERS
 from custom_components.eveus.session_history import LastSessionEnergySensor
 
+from conftest import SnapshotBackedMock
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 
 CONF_SOC_MODE = "soc_mode"
@@ -145,7 +146,7 @@ _SCHEDULE_CURRENT = next(
 
 
 def _schedule_number() -> tuple[EveusSetpointNumber, MagicMock]:
-    updater = MagicMock()
+    updater = SnapshotBackedMock()
     updater.available = True
     updater.data = {"sh1CurrentValue": 6}
     updater.config_entry = MagicMock()

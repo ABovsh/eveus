@@ -23,7 +23,6 @@ from .const import (
     OPTIMISTIC_CONTROL_TTL,
     UNUSABLE_RESTORED_STATES,
 )
-from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ class EveusTimeZoneSelect(
         """
         if not self._updater.available:
             return None
-        value = get_safe_value(self._updater.data or {}, "timeZone", int, None)
+        value = self._updater.snapshot.get_int("timeZone")
         if value is None or _format_tz(value) not in TIMEZONE_OPTIONS:
             return None
         return value
@@ -178,7 +177,7 @@ class _EveusIntegerSelect(
         """The charger's setting, only when it maps to an offered option."""
         if not self._updater.available:
             return None
-        value = get_safe_value(self._updater.data or {}, self.READ_KEY, int, None)
+        value = self._updater.snapshot.get_int(self.READ_KEY)
         return value if value in self.DEVICE_TO_OPTION else None
 
     @property

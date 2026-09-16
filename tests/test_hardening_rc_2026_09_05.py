@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from conftest import SnapshotBackedMock
 from conftest import PayloadUpdater
 from conftest import EV_HELPERS, EveusTestUpdater
 from types import SimpleNamespace
@@ -186,7 +187,7 @@ def test_setpoint_number_optimistic_value_outranks_a_stale_device_reading() -> N
         native_step=1.0,
         native_unit_of_measurement="kWh",
     )
-    updater = MagicMock()
+    updater = SnapshotBackedMock()
     updater.available = True
     updater.data = {"energyLimit": 10}
     updater.send_command = AsyncMock(return_value=True)

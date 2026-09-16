@@ -6,6 +6,7 @@ import asyncio
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 
+from conftest import snapshot_of
 from conftest import TEST_HOST
 from custom_components.eveus import select as select_module
 
@@ -18,6 +19,11 @@ class _Updater:
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self.data = data or {}
         self.commands: list[tuple[str, object]] = []
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the control by assigning `data`.
+        return snapshot_of(self)
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None

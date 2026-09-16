@@ -1,12 +1,13 @@
 from unittest.mock import MagicMock
 import asyncio
 
+from conftest import SnapshotBackedMock
 from custom_components.eveus.switch import EveusSocLimitSwitch
 
 
 def _make():
     controller = MagicMock()
-    updater = MagicMock()
+    updater = SnapshotBackedMock()
     updater.config_entry = MagicMock()
     sw = EveusSocLimitSwitch(updater, controller, device_number=1)
     sw.hass = MagicMock()

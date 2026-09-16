@@ -9,6 +9,7 @@ import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
+from conftest import snapshot_of
 from conftest import TEST_BASE_URL, TEST_HOST, EveusTestUpdater
 from custom_components.eveus import common
 from custom_components.eveus import binary_sensor as binary_sensor_mod
@@ -49,6 +50,11 @@ class _Updater:
             "IEM1": "5.5",
             "powerMeas": "7200",
         }
+
+    @property
+    def snapshot(self):
+        # Derived on read, as the real coordinator's is per poll.
+        return snapshot_of(self)
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
