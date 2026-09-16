@@ -33,12 +33,17 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
 from custom_components.eveus import common_base, common_network
 from custom_components.eveus.const import (
     AVAILABILITY_GRACE_PERIOD,
+    CONF_BATTERY_CAPACITY,
+    CONF_INITIAL_SOC,
     CONF_MODEL,
     CONF_PHASES,
     CONF_SCHEME,
+    CONF_SOC_CORRECTION,
     CONF_SOC_MODE,
+    CONF_TARGET_SOC,
     DOMAIN,
     MODEL_16A,
+    SOC_MODE_ADVANCED,
     SOC_MODE_BASIC,
 )
 
@@ -344,3 +349,55 @@ async def test_removing_the_last_entry_deletes_the_dashboard_card_resource(
     await hass.async_block_till_done()
 
     assert resources.items == []
+
+
+async def test_disabled_soc_correction_entity_does_not_blank_soc_percent(
+    hass, aioclient_mock
+) -> None:
+    """A disabled number entity never gets async_added_to_hass, so SOC
+    Percent must come from a calculator seeded at setup time, not solely
+    from the entity pushing its value."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=HOST_A,
+        data={
+            CONF_HOST: HOST_A,
+            CONF_USERNAME: "test_user",  # NOSONAR(python:S2068) - test fixture
+            CONF_PASSWORD: "test_password",  # NOSONAR(python:S2068) - test fixture
+            CONF_MODEL: MODEL_16A,
+            CONF_SCHEME: "http",
+            CONF_PHASES: 1,
+            CONF_SOC_MODE: SOC_MODE_ADVANCED,
+            CONF_INITIAL_SOC: 50,
+            CONF_TARGET_SOC: 80,
+            CONF_BATTERY_CAPACITY: 60,
+            CONF_SOC_CORRECTION: 5,
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+    _mock_charger(aioclient_mock, HOST_A)
+    await _setup(hass, entry)
+
+    registry = er.async_get(hass)
+    correction_entity_id = next(
+        item.entity_id
+        for item in er.async_entries_for_config_entry(registry, entry.entry_id)
+        if item.unique_id.endswith("soc_correction")
+    )
+    registry.async_update_entity(
+        correction_entity_id, disabled_by=er.RegistryEntryDisabler.USER
+    )
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    soc_percent_entity_id = next(
+        item.entity_id
+        for item in er.async_entries_for_config_entry(registry, entry.entry_id)
+        if item.unique_id.endswith("soc_percent")
+    )
+    state = hass.states.get(soc_percent_entity_id)
+    assert state is not None
+    assert state.state not in (None, "unknown", "unavailable")
+    float(state.state)

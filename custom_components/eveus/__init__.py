@@ -839,6 +839,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         from .soc_limit import SocLimitController
 
         soc_calculator = CachedSOCCalculator()
+        # Seed from stored config data so a disabled SOC-input number entity
+        # (whose async_added_to_hass never runs) can't blank SOC Percent, the
+        # ETA sensors, or the SOC limit. The entity still overrides this the
+        # moment it is added, restoring any newer/restored value.
+        if get_soc_mode(entry) == SOC_MODE_ADVANCED:
+            soc_calculator.set_value(
+                "initial_soc",
+                normalize_soc_input(
+                    "initial_soc",
+                    entry.data.get(CONF_INITIAL_SOC),
+                    DEFAULT_INITIAL_SOC,
+                ),
+            )
+            soc_calculator.set_value(
+                "target_soc",
+                normalize_soc_input(
+                    "target_soc",
+                    entry.data.get(CONF_TARGET_SOC),
+                    DEFAULT_TARGET_SOC,
+                ),
+            )
+            soc_calculator.set_value(
+                "battery_capacity",
+                normalize_soc_input(
+                    "battery_capacity",
+                    entry.data.get(CONF_BATTERY_CAPACITY),
+                    DEFAULT_BATTERY_CAPACITY,
+                ),
+            )
+            soc_calculator.set_value(
+                "soc_correction",
+                normalize_soc_input(
+                    "soc_correction",
+                    entry.data.get(CONF_SOC_CORRECTION),
+                    DEFAULT_SOC_CORRECTION,
+                ),
+            )
         soc_limit = SocLimitController(hass, updater, soc_calculator)
 
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)

@@ -288,6 +288,55 @@ def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatc
     # config_entry= constructor argument); we no longer hook it manually.
 
 
+def test_async_setup_entry_seeds_soc_calculator_from_entry_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disabling a SOC number entity must not blank the calculator: seed it
+    from stored config data before platforms are forwarded, so it never
+    depends solely on a (possibly-disabled) entity's async_added_to_hass."""
+    from custom_components.eveus.const import (
+        CONF_INITIAL_SOC,
+        CONF_TARGET_SOC,
+        CONF_BATTERY_CAPACITY,
+        CONF_SOC_CORRECTION,
+    )
+
+    hass = _hass()
+    entry = _Entry(
+        _data(
+            **{
+                CONF_INITIAL_SOC: 55,
+                CONF_TARGET_SOC: 90,
+                CONF_BATTERY_CAPACITY: 64,
+                CONF_SOC_CORRECTION: 3,
+            }
+        )
+    )
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    calc = entry.runtime_data.soc_calculator
+    assert calc.initial_soc == 55
+    assert calc.target_soc == 90
+    assert calc.battery_capacity == 64
+    assert calc.soc_correction_raw == 3
+
+
+def test_async_setup_entry_does_not_seed_soc_calculator_in_basic_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.eveus.const import CONF_SOC_MODE, SOC_MODE_BASIC, CONF_INITIAL_SOC
+
+    hass = _hass()
+    entry = _Entry(_data(**{CONF_SOC_MODE: SOC_MODE_BASIC, CONF_INITIAL_SOC: 55}))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert entry.runtime_data.soc_calculator.initial_soc is None
+
+
 def test_async_setup_entry_accepts_already_normalized_device_number(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
