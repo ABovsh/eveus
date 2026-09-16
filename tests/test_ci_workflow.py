@@ -260,6 +260,11 @@ _NON_KILLER_TESTS = frozenset({
     # Asserts on the shipped blueprint YAML, not on integration code, so there
     # is no mutant for it to kill.
     "tests/test_blueprints.py",
+    # Pins the unique_id inventory across all seven platform modules at once
+    # (P4.0). A single-leg wiring would only reflect one module's mutants and
+    # sensor.py is already excused from the matrix, so it cannot map cleanly
+    # onto one leg's survivor count.
+    "tests/test_entity_inventory.py",
 })
 
 
