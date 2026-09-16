@@ -47,6 +47,21 @@ def test_ha_smoke_tests_emit_stack_traces_on_timeout() -> None:
     assert "tests_ha" in workflow
 
 
+def test_tests_do_not_do_boundary_math_on_a_real_clock() -> None:
+    """Reading a real time.monotonic() stamp and asserting on `stamp + ttl`
+    is flaky: float rounding can make `(s + 10.0) - s != 10.0` when `s` sits
+    just under a power of two. Boundary tests must seed an explicit literal
+    clock value instead."""
+
+    marker = re.compile(r"stamp\s*\+\s*\d")
+    offenders = [
+        str(path.relative_to(ROOT))
+        for path, text in _test_sources().items()
+        if marker.search(text)
+    ]
+    assert offenders == []
+
+
 def test_mutation_workflow_targets_hostile_firmware_layer() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "mutation-tests.yaml"

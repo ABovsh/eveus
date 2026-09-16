@@ -1297,13 +1297,13 @@ def test_reconcile_with_device_default_mismatch_ttl_is_exactly_sixteen() -> None
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
     # age = 16.5s > the true 16.0 default -> must clear even though confirm_fn
     # says "not confirmed" and the clock never went backward.
     control._reconcile_with_device(
         99,
-        stamp + 16.5,
+        1016.5,
         lambda optimistic, device: False,
     )
     assert control._optimistic_value is None
@@ -1316,11 +1316,11 @@ def test_reconcile_with_device_mismatch_ttl_boundary_is_strict_greater() -> None
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
     control._reconcile_with_device(
         99,
-        stamp + 10.0,  # age == mismatch_ttl exactly
+        1010.0,  # age == mismatch_ttl exactly
         lambda optimistic, device: False,
         mismatch_ttl=10.0,
     )
@@ -1334,11 +1334,11 @@ def test_reconcile_with_device_backward_clock_boundary_is_strict_less_than() -> 
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
     control._reconcile_with_device(
         99,
-        stamp,  # age == 0 exactly
+        1000.0,  # age == 0 exactly
         lambda optimistic, device: False,
         mismatch_ttl=1000.0,
     )
@@ -1352,9 +1352,9 @@ def test_optimistic_value_valid_boundary_age_zero_is_valid() -> None:
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
-    assert control._optimistic_value_is_valid(stamp, 10.0) is True
+    assert control._optimistic_value_is_valid(1000.0, 10.0) is True
 
 
 def test_optimistic_value_valid_boundary_age_equals_ttl_is_invalid() -> None:
@@ -1364,9 +1364,9 @@ def test_optimistic_value_valid_boundary_age_equals_ttl_is_invalid() -> None:
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
-    assert control._optimistic_value_is_valid(stamp + 10.0, 10.0) is False
+    assert control._optimistic_value_is_valid(1010.0, 10.0) is False
 
 
 def test_expire_optimistic_value_boundary_age_zero_survives() -> None:
@@ -1376,9 +1376,9 @@ def test_expire_optimistic_value_boundary_age_zero_survives() -> None:
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
-    control._expire_optimistic_value(stamp, 10.0)
+    control._expire_optimistic_value(1000.0, 10.0)
     assert control._optimistic_value == 5
 
 
@@ -1389,9 +1389,9 @@ def test_expire_optimistic_value_boundary_age_equals_ttl_expires() -> None:
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
-    control._expire_optimistic_value(stamp + 10.0, 10.0)
+    control._expire_optimistic_value(1010.0, 10.0)
     assert control._optimistic_value is None
 
 

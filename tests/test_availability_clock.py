@@ -59,8 +59,8 @@ def test_optimistic_value_valid_within_ttl() -> None:
     ctrl = OptimisticControlMixin()
     ctrl._init_optimistic_control()
     ctrl._set_optimistic_value(7)
-    stamp = ctrl._optimistic_value_time
-    assert ctrl._optimistic_value_is_valid(stamp + 5, 120) is True
+    ctrl._optimistic_value_time = 1000.0
+    assert ctrl._optimistic_value_is_valid(1005.0, 120) is True
 
 
 def _real_updater():
