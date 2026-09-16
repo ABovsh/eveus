@@ -54,19 +54,22 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
     SOC_INPUT_LIMITS,
-    UPDATE_TIMEOUT,
     get_soc_mode,
 )
 from ._payload import (
     PayloadError,
     decode_json_body,
-    raise_for_redirect,
     read_body_capped,
 )
+from .client import UPDATE_TIMEOUT_OBJ, charger_post
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
+
+# The same object the coordinator polls with (see client.py), so setup can
+# never be stricter than steady-state polling.
+_UPDATE_TIMEOUT_OBJ = UPDATE_TIMEOUT_OBJ
 
 _INVALID_HOST_MSG = "Invalid IP address or hostname"
 # Bound on reauth re-validations when a concurrent reconfigure keeps changing the
@@ -479,26 +482,25 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     try:
         session = aiohttp_client.async_get_clientsession(hass)
-        # Same budget as the coordinator's regular poll (UPDATE_TIMEOUT): setup
-        # is the one moment a struggling charger most needs patience, so it
-        # must not be stricter than steady-state polling ever is.
-        timeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
 
-        async with session.post(
+        def _reject_credentials() -> None:
+            raise InvalidAuth("Invalid credentials")
+
+        # The request itself — redirect refusal, HTTP-error handling and the
+        # timeout — comes from client.py, so setup cannot end up on a stricter
+        # budget than steady-state polling. Setup is the one moment a struggling
+        # charger most needs patience.
+        async with charger_post(
+            session,
             f"{normalized_data[CONF_SCHEME]}://{normalized_data[CONF_HOST]}/main",
             auth=aiohttp.BasicAuth(
                 normalized_data[CONF_USERNAME],
                 normalized_data[CONF_PASSWORD],
             ),
-            timeout=timeout,
-            allow_redirects=False,
+            timeout=_UPDATE_TIMEOUT_OBJ,
+            on_unauthorized=_reject_credentials,
         ) as response:
             host = normalized_data[CONF_HOST]
-            if response.status == 401:
-                raise InvalidAuth("Invalid credentials")
-            raise_for_redirect(response)
-            response.raise_for_status()
-
             # Read the raw body ourselves (instead of response.json) so a
             # misbehaving charger's reply can be classified before we try to
             # decode it. Older firmware that answers /main with an HTML login

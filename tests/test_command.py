@@ -10,10 +10,8 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from conftest import TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import common_command
-from custom_components.eveus.common_command import (
-    COMMAND_TIMEOUT,
-    CommandManager,
-)
+from custom_components.eveus.common_command import CommandManager
+from custom_components.eveus.const import COMMAND_TIMEOUT
 
 
 class _Response:

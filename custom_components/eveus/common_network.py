@@ -43,18 +43,15 @@ from .const import (
     OFFLINE_UPDATE_INTERVAL,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
-    UPDATE_TIMEOUT,
 )
-from ._payload import (
-    PayloadError,
-    raise_for_redirect,
-    read_json_capped,
-    validate_main_payload,
-)
+from ._payload import PayloadError, validate_main_payload
+from .client import UPDATE_TIMEOUT_OBJ, fetch_json
 from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
 
-_UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
+# Shared with the config flow so setup and polling can never run on two
+# different budgets (see client.py).
+_UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = UPDATE_TIMEOUT_OBJ
 
 # Sequence of refreshes after a successful command. Covers both fast
 # commits (e.g. Charging Current — applied immediately, visible at 3 s)
@@ -803,15 +800,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._init_fw_fetch_done = True
         try:
-            async with self.get_session().post(
+            init_data = await fetch_json(
+                self.get_session(),
                 self.url_for("/init"),
                 auth=self._basic_auth,
                 timeout=_UPDATE_TIMEOUT_OBJ,
-                allow_redirects=False,
-            ) as response:
-                raise_for_redirect(response)
-                response.raise_for_status()
-                init_data = await read_json_capped(response)
+            )
         except (
             aiohttp.ClientResponseError,
             aiohttp.ClientConnectorError,
@@ -836,6 +830,22 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
 
+    def _reject_credentials(self) -> None:
+        """What a 401 means to the poll: reauth, not a connectivity failure.
+
+        Don't feed the offline-backoff counters or the connection-quality
+        stats, or reauth recovery gets misattributed/deferred as "device
+        offline". Just mark unavailable and hand off to HA's reauth flow.
+        """
+        self._connection_quality_cache = None
+        self._device_available = False
+        self._last_error = "ConfigEntryAuthFailed"
+        # The event stream still has a hole here: polling stops until reauth or
+        # a manual refresh, so a transition that happens meanwhile must not be
+        # reconstructed from the pre-401 payload once the charger answers again.
+        self._forget_poll_gap_state()
+        raise ConfigEntryAuthFailed("Invalid authentication")
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
         # Every deadline here is on the monotonic clock, so a wall-clock step
@@ -848,45 +858,27 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed("Skipping Eveus poll during offline backoff")
 
         try:
-            async with self.get_session().post(
+            new_data = await fetch_json(
+                self.get_session(),
                 self.url_for("/main"),
                 auth=self._basic_auth,
                 timeout=_UPDATE_TIMEOUT_OBJ,
-                allow_redirects=False,
-            ) as response:
-                if response.status == 401:
-                    # An auth rejection is not a connectivity failure: don't
-                    # feed the offline-backoff counters or connection-quality
-                    # stats, or reauth recovery gets misattributed/deferred as
-                    # "device offline". Just mark unavailable and hand off to
-                    # HA's reauth flow.
-                    self._connection_quality_cache = None
-                    self._device_available = False
-                    self._last_error = "ConfigEntryAuthFailed"
-                    # The event stream still has a hole here: polling stops
-                    # until reauth or a manual refresh, so a transition that
-                    # happens meanwhile must not be reconstructed from the
-                    # pre-401 payload once the charger answers again.
-                    self._forget_poll_gap_state()
-                    raise ConfigEntryAuthFailed("Invalid authentication")
-                raise_for_redirect(response)
-                response.raise_for_status()
+                on_unauthorized=self._reject_credentials,
+            )
+            # Shared validator retains the historical common-network guards:
+            # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
+            # Passing the configured model bounds currentSet to this charger's
+            # maximum, so a wrong-device or corrupt payload fails the poll
+            # rather than being published as healthy.
+            new_data = validate_main_payload(new_data, self._model)
+            new_data = self._normalize_legacy_device_state(new_data)
+            # Parse AFTER the legacy translation (this coordinator owns the
+            # fw-1.x latch), and BEFORE _record_success, which notifies the
+            # listeners that read the snapshot.
+            self._snapshot = EveusSnapshot.parse(new_data, self._model)
 
-                new_data = await read_json_capped(response)
-                # Shared validator retains the historical common-network guards:
-                # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
-                # Passing the configured model bounds currentSet to this charger's
-                # maximum, so a wrong-device or corrupt payload fails the poll
-                # rather than being published as healthy.
-                new_data = validate_main_payload(new_data, self._model)
-                new_data = self._normalize_legacy_device_state(new_data)
-                # Parse AFTER the legacy translation (this coordinator owns the
-                # fw-1.x latch), and BEFORE _record_success, which notifies the
-                # listeners that read the snapshot.
-                self._snapshot = EveusSnapshot.parse(new_data, self._model)
-
-                self._record_success(time.monotonic() - start_monotonic, new_data)
-                return new_data
+            self._record_success(time.monotonic() - start_monotonic, new_data)
+            return new_data
 
         except ConfigEntryAuthFailed:
             raise

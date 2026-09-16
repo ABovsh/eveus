@@ -5,16 +5,15 @@ import random
 import time
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlencode
 
 import aiohttp
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from .const import COMMAND_TIMEOUT, ERROR_LOG_RATE_LIMIT
-from ._payload import raise_for_redirect
+from .const import ERROR_LOG_RATE_LIMIT
+from .client import COMMAND_TIMEOUT_OBJ, post_page_event
 from .utils import RateLog
 
-_COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
+_COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = COMMAND_TIMEOUT_OBJ
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -172,16 +171,14 @@ class CommandManager:
         fields = {"pageevent": command, command: value}
         if extra:
             fields.update(extra)
-        payload = urlencode(fields)
-        async with session.post(
+        # No on_unauthorized: a command has no reauth path of its own, so the
+        # 401 surfaces as a ClientResponseError and send_command maps it.
+        await post_page_event(
+            session,
             self._updater.url_for("/pageEvent"),
             auth=self._updater.basic_auth,
-            headers={"Content-type": "application/x-www-form-urlencoded"},
-            data=payload,
             timeout=_COMMAND_TIMEOUT_OBJ,
-            allow_redirects=False,
-        ) as response:
-            raise_for_redirect(response)
-            response.raise_for_status()
-            self._consecutive_failures = 0
-            return True
+            fields=fields,
+        )
+        self._consecutive_failures = 0
+        return True

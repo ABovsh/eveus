@@ -94,6 +94,7 @@ jobs:
               tests/test_hardening_rc_2026_08_21.py
               tests/test_issue11_fw151_state_semantics.py
               tests/test_issue11_fw151_unknown_state.py
+              tests/test_client.py
           - name: soc-limit
             paths: "custom_components/eveus/soc_limit.py"
             tests: >-

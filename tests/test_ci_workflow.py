@@ -329,6 +329,11 @@ _UNMUTATED_MODULES = frozenset({
     # observed mutmut run to re-baseline, never a predicted number. Same
     # position as sensor.py above: excused until that run happens.
     "custom_components/eveus/snapshot.py",
+    # The single charger HTTP path. Same position as snapshot.py: its natural
+    # leg is `coordinator` (tests/test_client.py is wired there), but adding
+    # the module grows that leg's mutant count and the ratchet fails on any
+    # increase without an observed re-baseline.
+    "custom_components/eveus/client.py",
 })
 
 
