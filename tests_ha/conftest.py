@@ -13,10 +13,12 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.syrupy import HomeAssistantSnapshotExtension
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMocker,
     AiohttpClientMockResponse,
 )
+from syrupy.assertion import SnapshotAssertion
 
 from custom_components.eveus import common_network
 from custom_components.eveus.const import (
@@ -59,6 +61,12 @@ class _MockedRequest:
 
     async def __aexit__(self, *exc_info: object) -> None:
         return None
+
+
+@pytest.fixture
+def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
+    """Snapshot assertion using the Home Assistant serializer (State, etc.)."""
+    return snapshot.use_extension(HomeAssistantSnapshotExtension)
 
 
 @pytest.fixture
