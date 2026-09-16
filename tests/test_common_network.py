@@ -1803,3 +1803,107 @@ def test_snapshot_sees_the_legacy_state_translation(
 
     assert updater.snapshot.state == 4
     assert updater.snapshot.session_active is True
+
+
+def test_coordinator_owns_one_grace_clock_per_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P3.1: the outage clock lives in the coordinator, one timer per grace period.
+
+    Anchored to the FIRST failed poll; a repeated failure neither re-anchors it
+    nor schedules more timers (HA does not re-notify listeners on a repeated
+    failure, so the timer is what lets entities leave their grace window).
+    """
+    from custom_components.eveus.const import (
+        AVAILABILITY_GRACE_PERIOD,
+        CONTROL_GRACE_PERIOD,
+    )
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        common_network,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock["now"], time=time.time),
+    )
+    timers: list[tuple[float, object, Mock]] = []
+
+    def fake_call_later(hass, delay, action):
+        unsub = Mock()
+        timers.append((delay, action, unsub))
+        return unsub
+
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    notified: list[bool] = []
+    updater.async_update_listeners = lambda: notified.append(True)
+
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
+    assert updater.seconds_unavailable == 0.0
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+    clock["now"] = 1020.0
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+    assert sorted(delay for delay, _, _ in timers) == [
+        CONTROL_GRACE_PERIOD + 0.5,
+        AVAILABILITY_GRACE_PERIOD + 0.5,
+    ]
+    assert updater.seconds_unavailable == 20.0
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
+
+    clock["now"] = 1000.0 + CONTROL_GRACE_PERIOD
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is False
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD) is True
+    clock["now"] = 1000.0 + AVAILABILITY_GRACE_PERIOD
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD) is False
+
+    for _, action, _ in timers:
+        action(None)
+    assert notified == [True, True]
+
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater._next_poll_attempt = 0.0
+    asyncio.run(updater._async_update_data())
+
+    assert updater.seconds_unavailable == 0.0
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
+
+
+def test_recovery_and_shutdown_cancel_pending_grace_timers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timers: list[Mock] = []
+
+    def fake_call_later(hass, delay, action):
+        unsub = Mock()
+        timers.append(unsub)
+        return unsub
+
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+    assert len(timers) == 2 and not any(t.called for t in timers)
+
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    asyncio.run(updater._async_update_data())
+    assert all(t.called for t in timers)
+
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+    assert len(timers) == 4
+    asyncio.run(updater.async_shutdown())
+    assert all(t.called for t in timers)

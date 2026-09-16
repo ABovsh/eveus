@@ -746,3 +746,24 @@ def serialize_schema(schema):
             schema, custom_serializer=cv.custom_serializer
         )
     return to_field_list(schema, custom_serializer=cv.custom_serializer)
+
+
+@pytest.fixture(autouse=True)
+def _loopless_hass_grace_timers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let loop-less hass stubs drive a failed poll.
+
+    The coordinator schedules its outage wake-ups with ``async_call_later`` on
+    the first failed poll. Unit tests build ``EveusUpdater`` on ``_Hass`` stubs
+    whose ``loop`` is None; for those alone the timer becomes a no-op. A real
+    hass, or a test that installs its own fake, is unaffected.
+    """
+    from custom_components.eveus import common_network
+
+    real_call_later = common_network.async_call_later
+
+    def _call_later(hass, delay, action):
+        if getattr(hass, "loop", None) is None:
+            return lambda: None
+        return real_call_later(hass, delay, action)
+
+    monkeypatch.setattr(common_network, "async_call_later", _call_later)

@@ -11,7 +11,7 @@ from typing import Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
@@ -22,6 +22,8 @@ from .const import (
     CHARGING_STATES,
     CHARGING_UPDATE_INTERVAL,
     CONNECTED_STATES,
+    AVAILABILITY_GRACE_PERIOD,
+    CONTROL_GRACE_PERIOD,
     DEFAULT_SCHEME,
     DEVICE_STATE_CHARGING,
     DEVICE_STATE_STANDBY,
@@ -218,6 +220,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._force_refresh_requests = 0
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
+        # The one outage clock. Anchored to the FIRST failed poll and cleared by
+        # the next good one; every entity reads its visibility from here instead
+        # of running its own timer. One wake-up per distinct grace period tells
+        # the listeners a window closed, because HA notifies them only on the
+        # success -> failure edge, never on a repeated failure.
+        self._first_failure_monotonic: float | None = None
+        self._grace_timer_unsubs: list = []
         # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
         # that completes mid-unload from scheduling fresh refresh timers, and a
         # just-fired timer from starting a refresh on a torn-down coordinator.
@@ -348,6 +357,40 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         of this in `BaseEveusEntity`.
         """
         return self._device_available
+
+    def visible_within(self, grace: int) -> bool:
+        """Whether an entity with this grace period is still visible."""
+        return self.seconds_unavailable < grace
+
+    @property
+    def seconds_unavailable(self) -> float:
+        """Monotonic seconds since the first failed poll of the current outage."""
+        if self._first_failure_monotonic is None:
+            return 0.0
+        return time.monotonic() - self._first_failure_monotonic
+
+    def _start_outage_clock(self) -> None:
+        if self._first_failure_monotonic is not None:
+            return
+        self._first_failure_monotonic = time.monotonic()
+        if self.hass is None:
+            return
+
+        @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+        def _grace_closed(_now) -> None:
+            self.async_update_listeners()
+
+        for grace in sorted({CONTROL_GRACE_PERIOD, AVAILABILITY_GRACE_PERIOD}):
+            # +0.5 s so the wake-up lands just past the boundary, never on it.
+            self._grace_timer_unsubs.append(
+                async_call_later(self.hass, grace + 0.5, _grace_closed)
+            )
+
+    def _stop_outage_clock(self) -> None:
+        self._first_failure_monotonic = None
+        unsubs, self._grace_timer_unsubs = self._grace_timer_unsubs, []
+        for unsub in unsubs:
+            unsub()
 
     @property
     def connection_quality(self) -> dict[str, Any]:
@@ -521,6 +564,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
         self._cancel_pending_refreshes()
+        self._stop_outage_clock()
         pending = list(self._post_command_refresh_tasks)
         self._post_command_refresh_tasks.clear()
         if pending:
@@ -538,6 +582,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._poll_results.append(True)
         self._consecutive_failures = 0
         self._device_available = True
+        self._stop_outage_clock()
         self._next_poll_attempt = 0.0
         self._last_success_time = time.time()
         self._last_success_monotonic = time.monotonic()
@@ -694,6 +739,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False
+        self._start_outage_clock()
         # Same reasoning as the UpdateFailed message below: a PayloadError's
         # text is ours, names the rule that rejected the poll, and carries no
         # credentials, host, or body content. Diagnostics is the artifact users
