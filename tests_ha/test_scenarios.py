@@ -100,10 +100,22 @@ def _capture_states(hass: HomeAssistant) -> dict[str, tuple[object, dict]]:
     for entity in sorted(registry.entities.values(), key=lambda e: e.entity_id):
         if entity.platform != DOMAIN:
             continue
+        # A just-unloaded entry's entities linger in the registry with a
+        # stale cached state; how HA renders that leftover state (e.g.
+        # friendly_name composition) is an HA-version implementation detail,
+        # not eveus behaviour worth pinning, so skip them entirely.
+        owning_entry = hass.config_entries.async_get_entry(entity.config_entry_id)
+        if owning_entry is not None and owning_entry.state is not ConfigEntryState.LOADED:
+            continue
         state = hass.states.get(entity.entity_id)
         if state is None:
             continue
-        attrs = {key: _scrub(value) for key, value in state.attributes.items()}
+        # HA's attribute dict keys are plain str on some versions and a
+        # StrEnum (EntityStateAttribute et al) on others; normalize so the
+        # snapshot text doesn't move between HA releases for the same data.
+        attrs = {
+            getattr(key, "value", key): _scrub(value) for key, value in state.attributes.items()
+        }
         if entity.unique_id.endswith(_VOLATILE_STATE_SUFFIXES):
             value = "<DRIFT>"
         else:
