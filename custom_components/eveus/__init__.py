@@ -587,6 +587,26 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         )
 
 
+async def _async_unregister_card(hass: HomeAssistant) -> None:
+    """Remove the dashboard-card Lovelace resource once the last entry goes.
+
+    Best effort: a storage or lovelace-data hiccup must not block entry
+    removal, and other eveus entries must keep the resource they still use.
+    """
+    try:
+        if hass.config_entries.async_entries(DOMAIN):
+            return
+        lovelace = hass.data.get("lovelace")
+        resources = getattr(lovelace, "resources", None)
+        if not hasattr(resources, "async_items"):
+            return
+        for item in resources.async_items():
+            if str(item.get("url", "")).split("?")[0] == CARD_URL:
+                await resources.async_delete_item(item["id"])
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not remove eveus dashboard card resource")  # pragma: no mutate - log message text, not a logged value
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old config entry data."""
     new_data = dict(entry.data)
@@ -995,6 +1015,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await Store(hass, _SAFETY_STORE_VERSION, safety_store_key(entry)).async_remove()
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Could not remove safety store for removed entry")  # pragma: no mutate - log message text, not a logged value
+
+    await _async_unregister_card(hass)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:

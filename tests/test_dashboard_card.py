@@ -32,6 +32,9 @@ class FakeResources:
             if item["id"] == item_id:
                 item.update(data)
 
+    async def async_delete_item(self, item_id):
+        self.items = [item for item in self.items if item["id"] != item_id]
+
 
 def _hass(resources, mode="storage", frontend=True):
     async def _executor(func, *args):
@@ -210,6 +213,41 @@ def test_unknown_device_is_reported_as_not_found():
     connection = _run_ws(_ws_hass(["e1"]), registry, device_id="nope")
     connection.send_result.assert_not_called()
     assert connection.send_error.call_args[0][:2] == (7, "not_found")
+
+
+# --- card resource removal on last-entry teardown -------------------------
+
+
+def _teardown_hass(resources, remaining_entries=()):
+    return SimpleNamespace(
+        data={"lovelace": SimpleNamespace(resources=resources, resource_mode="storage")},
+        config_entries=SimpleNamespace(async_entries=lambda domain: list(remaining_entries)),
+    )
+
+
+async def test_card_resource_is_removed_when_last_entry_goes():
+    resources = FakeResources([{"id": "x", "res_type": "module", "url": f"{eveus.CARD_URL}?v=abc"}])
+    await eveus._async_unregister_card(_teardown_hass(resources))
+    assert resources.items == []
+
+
+async def test_card_resource_is_kept_while_other_entries_remain():
+    resources = FakeResources([{"id": "x", "res_type": "module", "url": f"{eveus.CARD_URL}?v=abc"}])
+    await eveus._async_unregister_card(_teardown_hass(resources, remaining_entries=[object()]))
+    assert len(resources.items) == 1
+
+
+async def test_card_resource_removal_never_raises_without_a_lovelace_resource_collection():
+    hass = SimpleNamespace(
+        data={},
+        config_entries=SimpleNamespace(async_entries=lambda domain: []),
+    )
+    await eveus._async_unregister_card(hass)  # must not raise
+
+
+async def test_card_resource_removal_swallows_errors():
+    hass = object()  # missing every attribute the function touches
+    await eveus._async_unregister_card(hass)  # must not raise
 
 
 async def test_setup_registers_the_card_websocket_command_once():

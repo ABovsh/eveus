@@ -311,3 +311,36 @@ async def test_two_chargers_stay_isolated(hass, aioclient_mock) -> None:
     await hass.async_block_till_done()
     assert entry_b.state is ConfigEntryState.LOADED
     assert hass.states.get(current_b).state != STATE_UNAVAILABLE
+
+
+class _FakeLovelaceResources:
+    """Minimal storage-mode Lovelace resource collection for the removal test."""
+
+    def __init__(self, items):
+        self.items = [dict(item) for item in items]
+
+    def async_items(self):
+        return list(self.items)
+
+    async def async_delete_item(self, item_id):
+        self.items = [item for item in self.items if item["id"] != item_id]
+
+
+async def test_removing_the_last_entry_deletes_the_dashboard_card_resource(
+    hass, aioclient_mock
+) -> None:
+    from custom_components.eveus import CARD_URL
+
+    entry = _entry(hass, HOST_A)
+    _mock_charger(aioclient_mock, HOST_A)
+    await _setup(hass, entry)
+
+    resources = _FakeLovelaceResources(
+        [{"id": "card1", "res_type": "module", "url": f"{CARD_URL}?v=abc123"}]
+    )
+    hass.data["lovelace"] = SimpleNamespace(resources=resources, resource_mode="storage")
+
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert resources.items == []
