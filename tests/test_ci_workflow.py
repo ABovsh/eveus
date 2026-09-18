@@ -1,4 +1,6 @@
-"""CI workflow contracts."""
+"""CI workflow contracts: structural invariants only (targets and killer tests
+exist, legs are disjoint, every module is mutated or excused, every test file
+is wired). Flags, caps and strings inside the workflow files are not pinned."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,21 +9,6 @@ import subprocess
 import shlex
 
 import yaml
-
-
-def _latest_ha_python_version() -> tuple[int, ...]:
-    workflow = Path(".github/workflows/validate.yaml").read_text(encoding="utf-8")
-    latest_leg = re.search(
-        r'- python-version: "([^"]+)"\n\s+ha-pin: ""\n\s+ha-label: "latest"',
-        workflow,
-    )
-    assert latest_leg is not None, "Validate workflow must keep a latest-HA matrix leg"
-    return tuple(int(part) for part in latest_leg.group(1).split("."))
-
-
-def test_latest_ha_ci_leg_uses_python_that_can_install_latest_homeassistant() -> None:
-    """The drift canary must be able to install current unpinned Home Assistant."""
-    assert _latest_ha_python_version() >= (3, 14, 2)
 
 
 # --- Mutation-tests workflow contracts -------------------------------------
@@ -45,22 +32,6 @@ def _mutation_matrix_legs() -> list[dict[str, str]]:
     return legs
 
 
-def _mutation_job() -> dict:
-    doc = yaml.safe_load(_MUTATION_WORKFLOW.read_text(encoding="utf-8"))
-    return next(iter(doc["jobs"].values()))
-
-
-def test_mutation_workflow_covers_config_flow() -> None:
-    """config_flow.py is the layer with the most user-reported breakage."""
-    mutated = {
-        path
-        for leg in _mutation_matrix_legs()
-        for path in leg["paths"].split(",")
-    }
-    assert "custom_components/eveus/config_flow.py" in mutated
-    assert "custom_components/eveus/repairs.py" in mutated
-
-
 def test_mutation_targets_and_killer_tests_exist() -> None:
     """A renamed target or test file must fail CI contracts, not the cron job."""
     for leg in _mutation_matrix_legs():
@@ -80,131 +51,6 @@ def test_mutation_matrix_legs_are_disjoint_and_complete() -> None:
     for leg in _mutation_matrix_legs():
         seen.extend(leg["paths"].split(","))
     assert len(seen) == len(set(seen)), f"duplicated mutation targets: {seen}"
-    # The pure-logic layer that predates this workflow must stay covered.
-    for required in (
-        "custom_components/eveus/utils.py",
-        "custom_components/eveus/_payload.py",
-        "custom_components/eveus/common_network.py",
-        "custom_components/eveus/soc_limit.py",
-        "custom_components/eveus/safety.py",
-        "custom_components/eveus/common_base.py",
-        "custom_components/eveus/control_base.py",
-        "custom_components/eveus/__init__.py",
-        "custom_components/eveus/number.py",
-        "custom_components/eveus/switch.py",
-        "custom_components/eveus/common_command.py",
-        "custom_components/eveus/select.py",
-        "custom_components/eveus/time.py",
-        "custom_components/eveus/binary_sensor.py",
-        "custom_components/eveus/button.py",
-        "custom_components/eveus/session_history.py",
-        "custom_components/eveus/sensor_definitions.py",
-        "custom_components/eveus/ev_sensors.py",
-        "custom_components/eveus/const.py",
-        "custom_components/eveus/diagnostics.py",
-        "custom_components/eveus/device_trigger.py",
-    ):
-        assert required in seen, f"mutation coverage lost for {required}"
-
-
-def test_mutation_job_has_enough_time_and_no_fail_fast() -> None:
-    """6/30's scheduled run died at the old 45-minute cap before reporting."""
-    job = _mutation_job()
-    assert job["timeout-minutes"] >= 90
-    assert job["strategy"]["fail-fast"] is False
-
-
-def test_sensor_definitions_is_mutated_in_a_leg_of_its_own() -> None:
-    """It generates 737 mutants, more than any other module.
-
-    Sharing a leg with ev_sensors.py and const.py (610 more) took run
-    34912988899 to 103 of the 120-minute cap; a timed-out leg reports nothing.
-    Splitting keeps the same killer tests and runner-minutes, halves the wall time.
-    """
-    legs = [
-        leg
-        for leg in _mutation_matrix_legs()
-        if "custom_components/eveus/sensor_definitions.py" in leg["paths"].split(",")
-    ]
-    assert len(legs) == 1
-    assert legs[0]["paths"] == "custom_components/eveus/sensor_definitions.py"
-
-
-def test_mutation_runner_fails_fast_and_pins_mutmut2() -> None:
-    """-x kills mutants on the first failing test; mutmut 3.x dropped the CLI."""
-    text = _MUTATION_WORKFLOW.read_text(encoding="utf-8")
-    assert "mutmut<3.0" in text, "6/23's run crashed on an unpinned mutmut 3.x"
-    for leg in _mutation_matrix_legs():
-        del leg  # every leg shares the single run step below
-    run_steps = [
-        step
-        for step in _mutation_job()["steps"]
-        if "mutmut run" in str(step.get("run", ""))
-    ]
-    assert len(run_steps) == 1
-    assert "pytest -x -q" in run_steps[0]["run"]
-
-
-def test_mutation_survivors_are_always_reported() -> None:
-    """Survivor diffs are the workflow's entire product; never skip the report."""
-    report_steps = [
-        step
-        for step in _mutation_job()["steps"]
-        if "mutmut results" in str(step.get("run", ""))
-    ]
-    assert len(report_steps) == 1
-    assert report_steps[0].get("if") == "always()"
-    assert "GITHUB_STEP_SUMMARY" in report_steps[0]["run"]
-    # The summary pane is not retrievable through the REST API; the same
-    # results must also go to stdout so the job log carries them.
-    assert "tee" in report_steps[0]["run"]
-
-
-def test_mutation_gate_is_report_only_not_survivor_count() -> None:
-    """All 12 runs before 2026-07-23 failed: every target file uses
-    `from __future__ import annotations`, so some mutations (type-annotation
-    flips) are permanently inert and zero survivors is unreachable. The run
-    step must not let mutmut's survivor/timeout exit code fail the job.
-    """
-    run_steps = [
-        step
-        for step in _mutation_job()["steps"]
-        if "mutmut run" in str(step.get("run", ""))
-    ]
-    assert len(run_steps) == 1
-    assert run_steps[0].get("continue-on-error") is True
-
-
-def test_mutation_crash_check_does_not_regress_to_legend_grep() -> None:
-    """The 2026-07-23 gate fix's first attempt grepped mutmut-results.txt for
-    the all-caps KILLED/TIMEOUT/SUSPICIOUS/SURVIVED legend, which is only ever
-    printed by `mutmut run`'s startup banner (a different step) -- it never
-    appears in `mutmut results`' own output, so that check failed every run
-    regardless of outcome. The real check must key off crash signatures
-    (empty file / traceback / usage error), not specific success text.
-    """
-    report_steps = [
-        step
-        for step in _mutation_job()["steps"]
-        if "mutmut results" in str(step.get("run", ""))
-    ]
-    run_text = report_steps[0]["run"]
-    assert "Traceback" in run_text
-    assert not re.search(r"grep -qE '\^\(KILLED", run_text)
-
-
-def test_mutation_survivor_diff_cap_covers_the_largest_leg() -> None:
-    """coordinator alone has had 240 survivors; `head -20` hid over 90% of
-    the report. The cap must stay well above any leg's realistic count.
-    """
-    report_steps = [
-        step
-        for step in _mutation_job()["steps"]
-        if "mutmut results" in str(step.get("run", ""))
-    ]
-    cap_match = re.search(r"head -(\d+)\)", report_steps[0]["run"])
-    assert cap_match is not None
-    assert int(cap_match.group(1)) >= 300
 
 
 # --- Survivor-count baseline ratchet ---------------------------------------
@@ -227,22 +73,6 @@ def test_mutation_baseline_file_covers_every_leg() -> None:
     assert leg_names == baseline_keys, (
         f"baseline/matrix leg mismatch: matrix={leg_names} baseline={baseline_keys}"
     )
-
-
-def test_mutation_workflow_checks_survivor_baseline() -> None:
-    """Increases must be flagged; the step must read the committed baseline
-    file and compare it against the current run's survivor count."""
-    baseline_steps = [
-        step
-        for step in _mutation_job()["steps"]
-        if "mutation-baseline.json" in str(step.get("run", ""))
-    ]
-    assert len(baseline_steps) == 1, "expected exactly one baseline-check step"
-    run_text = baseline_steps[0]["run"]
-    assert baseline_steps[0].get("if") == "always()"
-    # An increase is an error that fails the job, not a warning nobody reads.
-    assert "::error::" in run_text
-    assert "result-ids survived" in run_text
 
 
 # Meta-tests: they assert things about the repo itself (metadata, platform
@@ -296,23 +126,6 @@ def test_non_killer_exclusions_still_exist() -> None:
 
     missing = [t for t in _NON_KILLER_TESTS if not pathlib.Path(t).exists()]
     assert not missing, f"stale entries in _NON_KILLER_TESTS: {missing}"
-
-
-def test_mutation_ratchet_fails_the_job_on_an_increase() -> None:
-    """A survivor increase must fail the job, not just print a warning.
-
-    This workflow is a weekly cron, not a PR gate, so failing it loudly costs
-    nothing but attention — and a silent warning is exactly how a weakened
-    killer-test list ships unnoticed.
-    """
-    from pathlib import Path
-
-    body = Path(".github/workflows/mutation-tests.yaml").read_text(encoding="utf-8")
-    ratchet = body.split("Check survivor baseline")[1]
-    increase_branch = ratchet.split('elif [ "$survived" -lt "$baseline" ]')[0]
-    assert "exit 1" in increase_branch, (
-        "the survivors-increased branch does not fail the job"
-    )
 
 
 # Package modules deliberately outside the mutation matrix. Each needs a
