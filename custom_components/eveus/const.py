@@ -11,8 +11,13 @@ IDLE_UPDATE_INTERVAL: Final[int] = 60
 # one offline cycle (worst case 60 s). A refused LAN request once a minute
 # is negligible load.
 OFFLINE_UPDATE_INTERVAL: Final[int] = 60
-UPDATE_TIMEOUT: Final[int] = 20
-COMMAND_TIMEOUT: Final[int] = 25
+# Request timeouts, from measured /main latency (p99 0.36 s, max 0.41 s over 200
+# polls; the charger answers in 45-410 ms): max(5, ceil(p99 * 10)) seconds, and
+# two more for a command. A stalled charger holds the command lock for three
+# timeouts plus backoff, so these keep a queued SOC-limit Stop from waiting
+# behind a dead request for more than a minute.
+UPDATE_TIMEOUT: Final[int] = 5
+COMMAND_TIMEOUT: Final[int] = 7
 
 # Charger device-state value that means "idle/standby" (CHARGING_STATES[2]).
 DEVICE_STATE_STANDBY: Final[int] = 2

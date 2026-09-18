@@ -422,7 +422,7 @@ def test_validate_input_preserves_https_scheme_and_port() -> None:
 
 def test_validate_input_uses_same_timeout_budget_as_the_runtime_poll() -> None:
     # Setup previously hardcoded a 10s budget while the coordinator's regular
-    # poll uses UPDATE_TIMEOUT (20s) -- a charger slow enough to answer the
+    # poll uses UPDATE_TIMEOUT -- a charger slow enough to answer the
     # live poll every cycle could still never be added. Setup must give the
     # charger at least as much time as normal operation does.
     response = _Response(payload={"state": 2, "currentSet": "12", "verFWMain": "3.0.3"})
