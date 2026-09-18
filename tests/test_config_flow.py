@@ -811,10 +811,6 @@ def test_reauth_schema_prefills_username_from_stored_defaults() -> None:
     assert username_key.default() == TEST_USERNAME
 
 
-def test_reauth_max_revalidations_constant() -> None:
-    assert config_flow._REAUTH_MAX_REVALIDATIONS == 3
-
-
 def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_validate_input(hass, data):
         return {
@@ -1544,9 +1540,12 @@ def test_v20_reauth_aborts_when_host_keeps_changing(monkeypatch: pytest.MonkeyPa
     assert result["errors"] == {"base": "cannot_connect"}
 
 
-def test_v20_reauth_commits_after_host_stabilizes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """One mid-flight host change then stability: credentials commit against the
-    final, validated host."""
+def test_v20_reauth_refuses_when_host_changes_mid_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One mid-flight host change: nothing is committed against the address that
+    was validated, and the user is told to retry. The retry, now that the host
+    is stable, commits against the final host."""
     entry = type(
         "Entry", (), {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST}
     )()
@@ -1570,13 +1569,15 @@ def test_v20_reauth_commits_after_host_stabilizes(monkeypatch: pytest.MonkeyPatc
     captured = {}
     wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+    user_input = {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
 
-    result = asyncio.run(
-        flow.async_step_reauth_confirm(
-            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
-        )
-    )
-    assert result["reason"] == "reauth_successful"
+    first = asyncio.run(flow.async_step_reauth_confirm(user_input))
+    assert first["errors"] == {"base": "cannot_connect"}
+    assert calls["n"] == 1
+    assert captured == {}
+
+    second = asyncio.run(flow.async_step_reauth_confirm(user_input))
+    assert second["reason"] == "reauth_successful"
     assert captured["data"][CONF_HOST] == TEST_HOST_ALT
 
 
@@ -2031,54 +2032,6 @@ def test_resolve_phases_rejects_boolean() -> None:
     # drive the destructive phase prune.
     assert _resolve_phases(True) == (1, True)
     assert _resolve_phases(False) == (1, True)
-
-
-def test_reauth_revalidates_when_host_changes_mid_flight(monkeypatch) -> None:
-    from custom_components.eveus import config_flow as cf
-    from custom_components.eveus.const import MODEL_16A
-
-    calls: list[str] = []
-
-    entry = SimpleNamespace(
-        data={
-            "host": TEST_HOST,
-            "username": "old",
-            "password": "old",
-            "model": MODEL_16A,
-        },
-        unique_id=TEST_HOST,
-        title="Eveus",
-    )
-
-    async def fake_validate_input(hass, data):
-        calls.append(data["host"])
-        if len(calls) == 1:
-            # a concurrent reconfigure commits a host change mid-validation
-            entry.data = {**entry.data, "host": "newhost.local"}
-            entry.unique_id = "newhost.local"
-        return {
-            "title": f"Eveus Charger ({data['host']})",
-            "data": cf.normalize_user_input(data),
-            "device_info": {"current_set": 16},
-        }
-
-    flow = cf.ConfigFlow()
-    flow.hass = object()
-    flow._get_reauth_entry = lambda: entry
-    flow.async_set_unique_id = lambda unique_id: _asyncio.sleep(0)
-    captured = {}
-    wire_flow_reload_success(flow, entry, captured)
-    monkeypatch.setattr(cf, "validate_input", fake_validate_input)
-
-    _asyncio.run(
-        flow.async_step_reauth_confirm(
-            {"username": TEST_USERNAME, "password": TEST_PASSWORD}
-        )
-    )
-    # credentials were re-validated against the live (new) host before commit
-    assert calls == [TEST_HOST, "newhost.local"]
-    assert captured["data"]["host"] == "newhost.local"
-    assert captured["data"]["username"] == TEST_USERNAME
 
 
 def test_reconfigure_migrates_device_identifiers(monkeypatch) -> None:
