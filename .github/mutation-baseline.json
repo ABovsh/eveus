@@ -1,15 +1,4 @@
 {
-  "_comment": "Per-leg mutmut survivor-count ratchet. Increases are a real signal (new code shipped without a killer test) and are flagged via ::warning:: in the mutation-tests job. Decreases should be committed here to tighten the ratchet. Every number below is from workflow run 32563\u2026 on 2026-08-22, the first run after fourteen test files were wired into the legs whose targets they exercise -- before that, several legs were mutating code while running none of its killer tests. Changes that run made visible: coordinator 66->55 and minor-entities 10->6 purely from the wiring; control-entities 2->4 and sensor-values 1->5 are the residue of the external car-SOC feature (equivalent mutants: falsy-flag assignments, a multi-line log string, an unused default argument, and a module-level block deletion mutmut misreports as survived); diagnostics-triggers is new at 14 (8 pre-existing in device_trigger.py, 6 in diagnostics.py that _SENSITIVE_NAME_RE already backstops, documented at TO_REDACT). sensor-values keeps the get_time_drift <= tolerance boundary plus a pre-existing substate check in sensor_definitions.py, neither from this feature. sensor-values is recorded at its MEASURED 5, not the 3 expected once the CONF_EXTERNAL_SOC_ENTITY storage-key literal added to test_const_soc_modes.py takes effect -- baselines are only ever tightened on an observed decrease, never on a prediction, or the ratchet fires false warnings. Tightened 2026-09-15 from workflow run 34912988899 (rc 678a3ed, all 11 legs completed, no timeouts), decreases only: config-flow 74->58, payload-utils 87->80, coordinator 55->53, minor-entities 6->1, sensor-values 5->2; the other six legs measured exactly at baseline and stay. Remaining survivors in the tightened and unchanged legs are equivalent: type-annotation operator swaps (`X | None` -> `X & None`), falsy-initialiser swaps, an unused default argument, `//` -> `/` inside int() on a positive timestamp, the estimate-hold boundary `stepped < last` -> `<=` (equal values hold the same number), plus the documented device_trigger/TO_REDACT set. Split 2026-09-15: sensor_definitions.py moved to its own sensor-definitions leg (same killer tests) because the shared leg reached 103 of 120 minutes. The two measured sensor-values survivors are split by identity, one per file: sensor_definitions `stepped < last` -> `<=` and ev_sensors `//` -> `/`.",
-  "config-flow": 58,
-  "payload-utils": 80,
-  "coordinator": 53,
-  "soc-limit": 11,
-  "safety": 36,
-  "entity-base": 0,
-  "init": 2,
-  "control-entities": 4,
-  "minor-entities": 1,
-  "sensor-definitions": 1,
-  "sensor-values": 1,
-  "diagnostics-triggers": 14
+  "_comment": "Survivor-count ratchet for the single mutmut 3 run: an increase fails the job (new code shipped without a test that kills its mutants), a decrease is a prompt to tighten. The number is OBSERVED, never predicted: 888 from a local py3.12 / HA 2025.1.4 run of `mutmut run` over the whole package on rc 55430f5 (7502 mutants, 6606 killed, 3 timeouts, 5 without tests, ~15 min). Replace it with the figure from the first workflow_dispatch run in CI.",
+  "survivors": 888
 }

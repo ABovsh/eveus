@@ -26,4 +26,6 @@ SONAR_HARDENING_PLAN.md
 .coverage
 coverage.xml
 .mutmut-cache
+# mutmut 3 working copy and results
+mutants/
 .claude/
