@@ -90,6 +90,12 @@ def safety_store_key(entry) -> str:
 _safety_store_key = safety_store_key
 
 
+# `_policy` and the signal factories below (`_equals`, `_at_least`, `_at_most`,
+# `_below`) run once, at import, to build POLICIES. mutmut activates a mutant only
+# after the import, so it cannot take effect there and every mutant of these
+# functions is reported as surviving. Applied to the source by hand, the suite
+# kills them: the policy table is pinned through POLICIES, not through the
+# factories.
 def _policy(
     key: str,
     *fault_codes: int,
@@ -390,9 +396,7 @@ class EveusSafetyManager:
         for key, state in self._states.items():
             entry = data.get(key)
             if isinstance(entry, Mapping):
-                state.recovered_since_raised = bool(
-                    entry.get("recovered_since_raised", False)
-                )
+                state.recovered_since_raised = bool(entry.get("recovered_since_raised"))
 
     def _persisted_snapshot(self) -> dict[str, dict[str, bool]]:
         """The recovery memory to persist (kept tiny and forward-compatible)."""

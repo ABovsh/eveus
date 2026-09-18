@@ -334,7 +334,7 @@ class SocLimitController:
             _LOGGER.debug("SOC-limit Stop hit auth failure; started reauth")
             return
         except Exception as err:  # noqa: BLE001 - retry on any command failure
-            stopped = False
+            stopped = False  # pragma: no mutate - only read as `not stopped`; None is falsy too
             _LOGGER.debug("SOC-limit Stop failed (%s)", type(err).__name__)
         if generation != self._generation:
             # Superseded by a re-arm; do not disturb the current epoch.
