@@ -1123,3 +1123,89 @@ def test_stands_down_unless_both_reachability_signals_are_healthy(
     assert scheduled == []
     updater.send_command.assert_not_awaited()
     assert events == []
+
+
+# --- Defaults and re-reads the survivors of the mutation run pinned (F1) ----
+
+
+@pytest.mark.parametrize("target", [0, None])
+def test_unset_or_zero_target_never_stops_the_charge(target):
+    # Every real reading is already "at or above" 0 %, so a 0 target would stop
+    # the charge the instant the session starts.
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    ctrl, scheduled, events = _make(_calc(target=target), updater)
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert scheduled == []
+    updater.send_command.assert_not_awaited()
+
+
+def test_event_carries_the_updaters_device_number():
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    updater.device_number = 2
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    _confirm(updater)
+    ctrl.process()
+    assert events[0][1]["device_number"] == 2
+
+
+def test_auth_failure_without_a_config_entry_does_not_raise_out_of_the_task():
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    class _NoConfigEntryUpdater(_SnapshotFromData):
+        available = True
+        last_update_success = True
+        device_number = 1
+        data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
+
+        async def send_command(self, cmd, val, **_kwargs):
+            raise ConfigEntryAuthFailed("bad creds")
+
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), _NoConfigEntryUpdater()
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()  # would raise AttributeError out of the task if unguarded
+    assert ctrl._pending is None
+    assert events == []
+
+
+def test_unknown_master_switch_at_the_pre_lock_read_is_left_to_the_wire_check():
+    # suspendLimits is readable (0) when process() schedules the Stop and missing
+    # by the time _stop() re-reads it. Unknown is not "suspended": only a clean 1
+    # aborts before the command lock; unknown goes on to the command, whose
+    # at-the-wire preflight then refuses it (it requires a clean 0).
+    class _MissingOnSecondReadUpdater:
+        available = True
+        last_update_success = True
+        device_number = 1
+        data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0, "suspendLimits": 0}
+
+        def __init__(self):
+            self._reads = 0
+            self.sent = []
+
+        @property
+        def snapshot(self):
+            self._reads += 1
+            data = dict(self.data)
+            if self._reads >= 2:
+                del data["suspendLimits"]
+            return EveusSnapshot.parse(data, None)
+
+        async def send_command(self, cmd, val, **kwargs):
+            self.sent.append((cmd, val, kwargs.get("preflight")))
+            return True
+
+    updater = _MissingOnSecondReadUpdater()
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert [(cmd, val) for cmd, val, _ in updater.sent] == [("evseEnabled", 1)]
+    assert updater.sent[0][2]() is False

@@ -727,6 +727,7 @@ def test_issue_creation_metadata_and_no_active_poll_churn(
     assert issue_id == safety_issue_id(entry, key)
     assert kwargs["is_fixable"] is False
     assert kwargs["is_persistent"] is True
+    assert kwargs["issue_domain"] == DOMAIN
     assert kwargs["severity"] is expected_severity
     assert kwargs["translation_key"] == f"safety_{key}"
 
@@ -795,9 +796,11 @@ def test_apply_persisted_defaults_missing_flag_to_false() -> None:
 def test_async_load_restores_recovered_since_raised_from_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    built: list[tuple[Any, int, str]] = []
+
     class _FakeStore:
         def __init__(self, hass_: Any, version: int, key: str) -> None:
-            pass
+            built.append((hass_, version, key))
 
         async def async_load(self) -> dict[str, Any]:
             return {"box_overheat": {"recovered_since_raised": True}}
@@ -807,6 +810,7 @@ def test_async_load_restores_recovered_since_raised_from_store(
 
     asyncio.run(manager.async_load())
 
+    assert built == [(hass, safety._SAFETY_STORE_VERSION, safety.safety_store_key(entry))]
     assert manager._store is not None
     assert manager._states["box_overheat"].recovered_since_raised is True
 
@@ -865,3 +869,122 @@ def test_manager_processes_the_updater_snapshot() -> None:
     for _ in range(GROUND_TRIGGER_POLLS):
         manager.process()
     assert manager._states["ground_missing"].trigger_streak >= GROUND_TRIGGER_POLLS
+
+
+# --- Survivors of the mutation run (F1) -------------------------------------
+
+
+def test_recovery_memory_is_scheduled_as_a_debounced_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saves: list[Any] = []
+
+    class _RecordingStore:
+        def __init__(self, *args: Any) -> None:
+            pass
+
+        async def async_load(self) -> None:
+            return None
+
+        def async_delay_save(self, data_func: Any, delay: float = 0) -> None:
+            saves.append(data_func)
+
+    monkeypatch.setattr(safety, "Store", _RecordingStore)
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    asyncio.run(manager.async_load())
+    manager.process()
+    updater.data = {"state": 2, "temperature1": 70}
+    for _ in range(TEMPERATURE_RECOVERY_POLLS):
+        manager.process()
+
+    # One write, on the rising edge of "recovered since raised"; the callable is
+    # evaluated when the delayed save fires, not when it is scheduled.
+    assert len(saves) == 1
+    assert saves[0]() == manager._persisted_snapshot()
+    assert saves[0]()["box_overheat"] == {"recovered_since_raised": True}
+
+
+def test_firmware_only_policies_fire_on_the_first_poll() -> None:
+    # A policy without a raw signal has nothing to debounce: the firmware fault
+    # code is authoritative.
+    firmware_only = [policy for policy in POLICIES if policy.raw_trigger is None]
+    assert firmware_only
+    assert {policy.trigger_polls for policy in firmware_only} == {1}
+
+
+def test_policy_with_no_fault_code_and_no_raw_signal_can_never_fire() -> None:
+    # Documented on evaluate_policy_signals: a policy with no raw trigger cannot
+    # fire from raw telemetry. "Cannot fire" is False, not unknown — and a
+    # malformed `state` must not turn it into unknown either, because such a
+    # policy does not read the firmware state at all.
+    policy = safety.SafetyPolicy(
+        key="degenerate", fault_codes=frozenset(), lifecycle=SafetyLifecycle.LATCHED
+    )
+    assert evaluate_policy_signals(policy, _snap({"state": 2})) == (False, True)
+    assert evaluate_policy_signals(policy, _snap({})) == (False, True)
+
+
+_OVERHEAT = {"state": 7, "subState": 5}
+_COOL = {"state": 2, "temperature1": 70}
+_BAND = {"state": 2, "temperature1": 78}  # neither triggered nor recovered
+_GROUND_LOST = {"state": 2, "ground": 0}
+_GROUND_OK = {"state": 2, "ground": 1}
+_GROUND_UNREADABLE = {"state": 2}  # no ground field: unknown, moves nothing
+
+
+def _assert_counters_are_well_formed(hass, entry, manager) -> None:
+    for policy in POLICIES:
+        state = manager._states[policy.key]
+        assert type(state.trigger_streak) is int
+        assert type(state.recovery_streak) is int
+        assert type(state.recovered) is bool
+        assert type(state.recovered_since_raised) is bool
+        if _issue(hass, entry, policy.key) is None:
+            # No notice: no recovery credit, and no memory of a recovery that
+            # belonged to a notice that is gone, may be left behind.
+            assert state.recovery_streak == 0
+            assert state.recovered is False
+            assert state.recovered_since_raised is False
+
+
+def test_counters_stay_well_formed_through_every_transition() -> None:
+    """Drive both lifecycles through raise, unknown, band, recovery, dismissal,
+    re-alert and deletion; after every poll the counters keep their types and a
+    deleted notice leaves nothing behind."""
+    hass, entry, updater, manager = _manager()
+
+    def poll(payload, times=1) -> None:
+        updater.data = payload
+        for _ in range(times):
+            manager.process()
+            _assert_counters_are_well_formed(hass, entry, manager)
+
+    def dismiss(key: str) -> None:
+        ir.async_ignore_issue(hass, DOMAIN, safety_issue_id(entry, key), True)
+
+    # Auto-clear notice: debounced raise, an unreadable poll, confirmed recovery
+    # that deletes it, then quiet polls with no notice.
+    poll(_GROUND_LOST, GROUND_TRIGGER_POLLS)
+    assert _issue(hass, entry, "ground_missing") is not None
+    poll(_GROUND_UNREADABLE)
+    poll(_GROUND_OK, GROUND_CLEAR_POLLS)
+    assert _issue(hass, entry, "ground_missing") is None
+    poll(_GROUND_OK, 2)
+
+    # Latched notice: raise, a reading in the hysteresis band, confirmed recovery
+    # (stays, not dismissed), dismissal, immediate re-alert.
+    poll(_OVERHEAT)
+    assert _issue(hass, entry, "box_overheat") is not None
+    poll(_BAND)
+    poll(_COOL, TEMPERATURE_RECOVERY_POLLS)
+    assert _issue(hass, entry, "box_overheat") is not None
+    dismiss("box_overheat")
+    poll(_OVERHEAT)
+    assert _issue(hass, entry, "box_overheat").dismissed_version is None
+
+    # The fresh notice recovers, is dismissed, and is then deleted.
+    poll(_COOL, TEMPERATURE_RECOVERY_POLLS)
+    dismiss("box_overheat")
+    poll(_COOL)
+    assert _issue(hass, entry, "box_overheat") is None
+    poll(_COOL, 2)
