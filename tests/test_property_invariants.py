@@ -27,9 +27,10 @@ from custom_components.eveus.const import (
     PHASE_OPTIONS,
 )
 from custom_components.eveus.binary_sensor import (
-    EveusCarConnectedBinarySensor,
-    EveusOcppConnectedBinarySensor,
-    EveusSessionActiveBinarySensor,
+    CAR_CONNECTED_DESCRIPTION,
+    OCPP_CONNECTED_DESCRIPTION,
+    SESSION_ACTIVE_DESCRIPTION,
+    EveusBinarySensor,
 )
 from custom_components.eveus.sensor_definitions import create_sensor, create_sensor_specifications
 from custom_components.eveus.utils import (
@@ -259,9 +260,9 @@ def test_binary_sensor_factories_never_coerce_unknown_state_to_false(
 ) -> None:
     updater = EveusTestUpdater({"state": state, "ocppconnected": ocpp_connected})
     entities = (
-        EveusCarConnectedBinarySensor(updater),
-        EveusSessionActiveBinarySensor(updater),
-        EveusOcppConnectedBinarySensor(updater),
+        EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION),
+        EveusBinarySensor(updater, SESSION_ACTIVE_DESCRIPTION),
+        EveusBinarySensor(updater, OCPP_CONNECTED_DESCRIPTION),
     )
 
     for entity in entities:

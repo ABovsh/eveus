@@ -81,9 +81,9 @@ BINARY_SENSORS: Final[tuple[EveusBinaryDescription, ...]] = (
     ),
 )
 
-_CAR_CONNECTED_DESCRIPTION = BINARY_SENSORS[0]
-_SESSION_ACTIVE_DESCRIPTION = BINARY_SENSORS[1]
-_OCPP_CONNECTED_DESCRIPTION = BINARY_SENSORS[2]
+CAR_CONNECTED_DESCRIPTION = BINARY_SENSORS[0]
+SESSION_ACTIVE_DESCRIPTION = BINARY_SENSORS[1]
+OCPP_CONNECTED_DESCRIPTION = BINARY_SENSORS[2]
 
 
 class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
@@ -131,44 +131,6 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
         self._write_if_changed(self.is_on)
 
 
-class EveusCarConnectedBinarySensor(EveusBinarySensor):
-    """Backward-compatible constructor for the car-connected binary sensor."""
-
-    _attr_device_class = BinarySensorDeviceClass.PLUG  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
-    _attr_icon = "mdi:ev-plug-type2"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        super().__init__(updater, _CAR_CONNECTED_DESCRIPTION, device_number)
-
-
-class EveusSessionActiveBinarySensor(EveusBinarySensor):
-    """Backward-compatible constructor for the session-active binary sensor."""
-
-    _attr_device_class = BinarySensorDeviceClass.RUNNING  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
-    _attr_icon = "mdi:ev-station"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        super().__init__(updater, _SESSION_ACTIVE_DESCRIPTION, device_number)
-
-
-class EveusOcppConnectedBinarySensor(EveusBinarySensor):
-    """Backward-compatible constructor for the OCPP-connected binary sensor."""
-
-    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
-    _attr_entity_category = EntityCategory.DIAGNOSTIC  # pragma: no mutate - dead: __init__ always overwrites self._attr_entity_category from the description
-    _attr_icon = "mdi:cloud-check"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        super().__init__(updater, _OCPP_CONNECTED_DESCRIPTION, device_number)
-
-
-_BINARY_SENSOR_CLASSES: Final[dict[str, type[EveusBinarySensor]]] = {
-    _CAR_CONNECTED_DESCRIPTION.name: EveusCarConnectedBinarySensor,
-    _SESSION_ACTIVE_DESCRIPTION.name: EveusSessionActiveBinarySensor,
-    _OCPP_CONNECTED_DESCRIPTION.name: EveusOcppConnectedBinarySensor,
-}
-
-
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -180,7 +142,7 @@ async def async_setup_entry(
     device_number = runtime_data.device_number
     async_add_entities(
         [
-            _BINARY_SENSOR_CLASSES[description.name](updater, device_number)
+            EveusBinarySensor(updater, description, device_number)
             for description in BINARY_SENSORS
         ]
     )

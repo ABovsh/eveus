@@ -11,7 +11,6 @@ IDLE_UPDATE_INTERVAL: Final[int] = 60
 # one offline cycle (worst case 60 s). A refused LAN request once a minute
 # is negligible load.
 OFFLINE_UPDATE_INTERVAL: Final[int] = 60
-RETRY_DELAY: Final[int] = 15
 UPDATE_TIMEOUT: Final[int] = 20
 COMMAND_TIMEOUT: Final[int] = 25
 
@@ -84,7 +83,6 @@ DEFAULT_SOC_CORRECTION: Final[float] = 7.5
 AVAILABILITY_GRACE_PERIOD: Final[int] = 60
 CONTROL_GRACE_PERIOD: Final[int] = 30
 ERROR_LOG_RATE_LIMIT: Final[int] = 300
-STATE_CACHE_TTL: Final[int] = 60
 OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 
 # What Home Assistant hands back when it has no usable value to restore. Every

@@ -12,7 +12,10 @@ from custom_components.eveus import (
     ocpp_issue_id,
     update_ocpp_issue,
 )
-from custom_components.eveus.binary_sensor import EveusOcppConnectedBinarySensor
+from custom_components.eveus.binary_sensor import (
+    OCPP_CONNECTED_DESCRIPTION,
+    EveusBinarySensor,
+)
 from custom_components.eveus.switch import BaseSwitchEntity, SWITCH_DESCRIPTIONS
 
 
@@ -49,7 +52,7 @@ def test_ocpp_switch_off_sends_zero_vendor() -> None:
 
 def test_ocpp_connected_binary_sensor_reflects_field() -> None:
     updater = _Updater({"ocppconnected": 1})
-    entity = EveusOcppConnectedBinarySensor(updater, 1)
+    entity = EveusBinarySensor(updater, OCPP_CONNECTED_DESCRIPTION, 1)
     assert entity.is_on is True
 
     updater.data = {"ocppconnected": 0}
@@ -58,7 +61,7 @@ def test_ocpp_connected_binary_sensor_reflects_field() -> None:
 
 def test_ocpp_connected_binary_sensor_unknown_when_unavailable() -> None:
     updater = _Updater({"ocppconnected": 1}, available=False)
-    entity = EveusOcppConnectedBinarySensor(updater, 1)
+    entity = EveusBinarySensor(updater, OCPP_CONNECTED_DESCRIPTION, 1)
     entity._entity_available = False
     assert entity.is_on is None
 

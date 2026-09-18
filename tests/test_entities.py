@@ -62,17 +62,10 @@ class _Updater(OutageClock):
 
 def _make_binary_sensor(name: str, data: dict, *, available: bool = True):
     updater = EveusTestUpdater(data, available=available)
-    descriptions = getattr(binary_sensor_mod, "BINARY_SENSORS", None)
-    if descriptions is not None:
-        description = next(item for item in descriptions if item.name == name)
-        entity = binary_sensor_mod.EveusBinarySensor(updater, description, 1)
-    else:
-        class_name = {
-            "Car Connected": "EveusCarConnectedBinarySensor",
-            "Session Active": "EveusSessionActiveBinarySensor",
-            "OCPP Connected": "EveusOcppConnectedBinarySensor",
-        }[name]
-        entity = getattr(binary_sensor_mod, class_name)(updater, 1)
+    description = next(
+        item for item in binary_sensor_mod.BINARY_SENSORS if item.name == name
+    )
+    entity = binary_sensor_mod.EveusBinarySensor(updater, description, 1)
     entity._entity_available = available
     return entity
 
@@ -491,7 +484,7 @@ def test_control_state_properties_do_not_mutate_cached_device_state() -> None:
     assert number.native_value == 16
     assert number._last_device_value is None
     assert switch.is_on is None
-    assert switch._last_device_state is None
+    assert switch._last_device_value is None
 
 
 def test_common_module_exports_backward_compatible_symbols() -> None:
@@ -1423,64 +1416,12 @@ def test_binary_description_is_frozen_and_kw_only() -> None:
 
 
 def test_module_description_constants_point_at_the_right_tuple_slots() -> None:
-    """_CAR_CONNECTED_DESCRIPTION/_SESSION_ACTIVE_DESCRIPTION/
-    _OCPP_CONNECTED_DESCRIPTION must each resolve to their own named
-    BINARY_SENSORS entry - verified through the actual backward-compatible
-    subclasses (EveusCarConnectedBinarySensor etc.), which are the only
-    thing in the codebase that dereferences these module constants."""
-    assert binary_sensor_mod._CAR_CONNECTED_DESCRIPTION.name == "Car Connected"
-    assert binary_sensor_mod._SESSION_ACTIVE_DESCRIPTION.name == "Session Active"
-    assert binary_sensor_mod._OCPP_CONNECTED_DESCRIPTION.name == "OCPP Connected"
-
-
-@pytest.mark.parametrize(
-    "class_name,expected_device_class,expected_icon,expected_category,expected_is_on_data",
-    [
-        (
-            "EveusCarConnectedBinarySensor",
-            BinarySensorDeviceClass.PLUG,
-            "mdi:ev-plug-type2",
-            None,
-            ({"state": 4}, True),
-        ),
-        (
-            "EveusSessionActiveBinarySensor",
-            BinarySensorDeviceClass.RUNNING,
-            "mdi:ev-station",
-            None,
-            ({"state": next(iter(SESSION_ACTIVE_STATES))}, True),
-        ),
-        (
-            "EveusOcppConnectedBinarySensor",
-            BinarySensorDeviceClass.CONNECTIVITY,
-            "mdi:cloud-check",
-            EntityCategory.DIAGNOSTIC,
-            ({"ocppconnected": 1}, True),
-        ),
-    ],
-)
-def test_backward_compatible_binary_sensor_subclasses_wire_correct_description(
-    class_name: str,
-    expected_device_class: BinarySensorDeviceClass,
-    expected_icon: str,
-    expected_category: EntityCategory | None,
-    expected_is_on_data: tuple[dict, bool | None],
-) -> None:
-    """Directly instantiate each backward-compatible subclass (bypassing the
-    description-driven helper) to pin its own class-level metadata AND that
-    it was wired to the correctly-named module-level description constant
-    (a wrong index there would silently swap in another sensor's is_on_fn)."""
-    updater = EveusTestUpdater({})
-    entity = getattr(binary_sensor_mod, class_name)(updater)
-    entity._entity_available = True
-
-    assert entity.device_class == expected_device_class
-    assert entity.icon == expected_icon
-    assert entity.entity_category == expected_category
-
-    data, expected_is_on = expected_is_on_data
-    updater.data = data
-    assert entity.is_on is expected_is_on
+    """CAR_CONNECTED_DESCRIPTION/SESSION_ACTIVE_DESCRIPTION/
+    OCPP_CONNECTED_DESCRIPTION must each resolve to their own named
+    BINARY_SENSORS entry."""
+    assert binary_sensor_mod.CAR_CONNECTED_DESCRIPTION.name == "Car Connected"
+    assert binary_sensor_mod.SESSION_ACTIVE_DESCRIPTION.name == "Session Active"
+    assert binary_sensor_mod.OCPP_CONNECTED_DESCRIPTION.name == "OCPP Connected"
 
 
 def test_binary_sensor_base_device_number_default_is_one() -> None:
@@ -1491,21 +1432,6 @@ def test_binary_sensor_base_device_number_default_is_one() -> None:
     )
     entity = binary_sensor_mod.EveusBinarySensor(EveusTestUpdater({}), description)
     assert entity.unique_id == "eveus_car_connected"
-
-
-@pytest.mark.parametrize(
-    "class_name,expected_unique_id",
-    [
-        ("EveusCarConnectedBinarySensor", "eveus_car_connected"),
-        ("EveusSessionActiveBinarySensor", "eveus_session_active"),
-        ("EveusOcppConnectedBinarySensor", "eveus_ocpp_connected"),
-    ],
-)
-def test_backward_compatible_binary_sensor_subclass_device_number_default_is_one(
-    class_name: str, expected_unique_id: str
-) -> None:
-    entity = getattr(binary_sensor_mod, class_name)(EveusTestUpdater({}))
-    assert entity.unique_id == expected_unique_id
 
 
 def test_binary_sensor_setup_entry_wires_updater_and_device_number() -> None:

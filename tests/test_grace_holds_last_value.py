@@ -29,7 +29,10 @@ from homeassistant.helpers.entity import EntityCategory
 
 from conftest import EveusTestUpdater, disable_state_writes
 from custom_components.eveus import common_base
-from custom_components.eveus.binary_sensor import EveusCarConnectedBinarySensor
+from custom_components.eveus.binary_sensor import (
+    CAR_CONNECTED_DESCRIPTION,
+    EveusBinarySensor,
+)
 from custom_components.eveus.const import AVAILABILITY_GRACE_PERIOD
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
@@ -205,7 +208,7 @@ def test_an_offline_capable_sensor_keeps_updating_during_the_grace_window(clock)
 
 def test_binary_sensor_holds_its_reading_through_the_grace_window(clock) -> None:
     updater = EveusTestUpdater({"state": 4})
-    entity = EveusCarConnectedBinarySensor(updater)
+    entity = EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION)
     disable_state_writes(entity)
     entity._handle_coordinator_update()
     assert entity.is_on is True
@@ -218,7 +221,7 @@ def test_binary_sensor_holds_its_reading_through_the_grace_window(clock) -> None
 
 def test_binary_sensor_goes_unavailable_rather_than_blank(clock) -> None:
     updater = EveusTestUpdater({"state": 4})
-    entity = EveusCarConnectedBinarySensor(updater)
+    entity = EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION)
     disable_state_writes(entity)
     entity._handle_coordinator_update()
     _go_offline(entity, updater)
@@ -361,7 +364,7 @@ def test_binary_sensor_answers_before_it_has_ever_read_the_charger(clock) -> Non
     it this path raises AttributeError inside the entity's first state write.
     """
     updater = EveusTestUpdater({"state": 4}, available=False)
-    entity = EveusCarConnectedBinarySensor(updater)
+    entity = EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION)
     disable_state_writes(entity)
 
     entity._handle_coordinator_update()

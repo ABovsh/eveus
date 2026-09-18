@@ -49,7 +49,6 @@ def test_update_interval_constants():
     assert const.CHARGING_UPDATE_INTERVAL == 30
     assert const.IDLE_UPDATE_INTERVAL == 60
     assert const.OFFLINE_UPDATE_INTERVAL == 60
-    assert const.RETRY_DELAY == 15
     assert const.UPDATE_TIMEOUT == 20
     assert const.COMMAND_TIMEOUT == 25
 
@@ -92,7 +91,6 @@ def test_availability_and_resilience_constants():
     assert const.AVAILABILITY_GRACE_PERIOD == 60
     assert const.CONTROL_GRACE_PERIOD == 30
     assert const.ERROR_LOG_RATE_LIMIT == 300
-    assert const.STATE_CACHE_TTL == 60
     assert const.OPTIMISTIC_CONTROL_TTL == 120
 
 

@@ -269,18 +269,18 @@ def test_switch_state_precedence_restore_and_commands() -> None:
     assert entity._resolve_state() is False
 
     entity._pending_command = None
-    entity._optimistic_state = True
-    entity._optimistic_state_time = time.monotonic()
+    entity._optimistic_value = True
+    entity._optimistic_value_time = time.monotonic()
     assert entity.is_on is None
     assert entity._resolve_state() is True
 
-    entity._optimistic_state_time = time.monotonic() - 10_000
+    entity._optimistic_value_time = time.monotonic() - 10_000
     updater.data = {"oneCharge": "1"}
     assert entity.is_on is None
     assert entity._resolve_state() is True
 
     asyncio.run(entity._async_restore_state(State("switch.one", "off")))
-    assert entity._last_device_state is False
+    assert entity._last_device_value is False
 
     asyncio.run(entity.async_turn_on())
     asyncio.run(entity.async_turn_off())
@@ -291,26 +291,26 @@ def test_switch_update_reconciles_optimistic_state() -> None:
     updater = _Updater({"oneCharge": "1"})
     entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
-    entity._optimistic_state = True
-    entity._optimistic_state_time = time.monotonic()
+    entity._optimistic_value = True
+    entity._optimistic_value_time = time.monotonic()
 
     entity._handle_coordinator_update()
 
-    assert entity._optimistic_state is None
-    assert entity._last_device_state is True
+    assert entity._optimistic_value is None
+    assert entity._last_device_value is True
 
 
 def test_switch_update_clears_stale_mismatched_optimistic_state() -> None:
     updater = _Updater({"oneCharge": "0"})
     entity = _one_charge_switch(updater)
     _disable_state_writes(entity)
-    entity._optimistic_state = True
-    entity._optimistic_state_time = time.monotonic() - 10_000
+    entity._optimistic_value = True
+    entity._optimistic_value_time = time.monotonic() - 10_000
 
     entity._handle_coordinator_update()
 
-    assert entity._optimistic_state is None
-    assert entity._last_device_state is False
+    assert entity._optimistic_value is None
+    assert entity._last_device_value is False
 
 
 def test_switch_ignores_stale_coordinator_update_while_command_pending() -> None:
@@ -323,7 +323,7 @@ def test_switch_ignores_stale_coordinator_update_while_command_pending() -> None
     entity._handle_coordinator_update()
 
     assert entity.is_on is True
-    assert entity._last_device_state is None
+    assert entity._last_device_value is None
 
 
 def test_switch_failed_command_does_not_set_optimistic_state() -> None:
@@ -339,7 +339,7 @@ def test_switch_failed_command_does_not_set_optimistic_state() -> None:
         asyncio.run(entity.async_turn_on())
 
     assert updater.commands == [("oneCharge", 1)]
-    assert entity._optimistic_state is None
+    assert entity._optimistic_value is None
 
 
 def test_stop_charging_switch_preserves_existing_semantics() -> None:
@@ -412,7 +412,7 @@ def test_switch_optimistic_state_survives_until_device_confirms() -> None:
 
     asyncio.run(entity.async_turn_on())
     assert entity.is_on is True
-    assert entity._optimistic_state is True
+    assert entity._optimistic_value is True
 
     # Coordinator returns stale OFF — optimistic must hold ON within TTL window.
     entity._handle_coordinator_update()
@@ -421,7 +421,7 @@ def test_switch_optimistic_state_survives_until_device_confirms() -> None:
     # Device finally confirms ON — optimistic clears, state stays ON.
     updater.data = {"evseEnabled": "1"}
     entity._handle_coordinator_update()
-    assert entity._optimistic_state is None
+    assert entity._optimistic_value is None
     assert entity.is_on is True
 
 
@@ -434,7 +434,7 @@ def test_switch_rapid_toggle_does_not_flicker_back() -> None:
     asyncio.run(entity.async_turn_on())
     asyncio.run(entity.async_turn_off())
     assert entity.is_on is False
-    assert entity._optimistic_state is False
+    assert entity._optimistic_value is False
 
     # Stale read still shows ON — optimistic OFF wins inside TTL.
     updater.data = {"evseEnabled": "1"}
@@ -445,22 +445,22 @@ def test_switch_rapid_toggle_does_not_flicker_back() -> None:
     updater.data = {"evseEnabled": "0"}
     entity._handle_coordinator_update()
     assert entity.is_on is False
-    assert entity._optimistic_state is None
+    assert entity._optimistic_value is None
 
 
 def test_switch_test_alias_properties_round_trip() -> None:
     entity = _one_charge_switch(_Updater({}))
 
-    entity._optimistic_state_time = 123.0
-    entity._last_device_state = True
+    entity._optimistic_value_time = 123.0
+    entity._last_device_value = True
 
-    assert entity._optimistic_state_time == 123.0
-    assert entity._last_device_state is True
+    assert entity._optimistic_value_time == 123.0
+    assert entity._last_device_value is True
 
 
 def test_switch_resolves_recent_restored_state_when_payload_missing() -> None:
     entity = _one_charge_switch(_Updater({}))
-    entity._last_device_state = True
+    entity._last_device_value = True
     entity._last_successful_read = time.monotonic()
 
     assert entity._resolve_state() is True
@@ -490,7 +490,7 @@ def test_switch_restore_ignores_invalid_state() -> None:
 
     asyncio.run(entity._async_restore_state(State("switch.one", "unknown")))
 
-    assert entity._last_device_state is None
+    assert entity._last_device_value is None
     assert entity.is_on is None
 
 
@@ -892,13 +892,12 @@ def test_force_refresh_bypass_survives_interleaved_poll(monkeypatch) -> None:
     from conftest import TEST_PASSWORD, TEST_USERNAME, TEST_HOST
     from custom_components.eveus import common_network
     from custom_components.eveus.common_network import EveusUpdater
-    from custom_components.eveus.const import RETRY_DELAY
     from homeassistant.helpers.update_coordinator import UpdateFailed
 
     session = _PollSession({"state": 2, "currentSet": 16})
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _PollHass())
-    updater._next_poll_attempt = time.monotonic() + RETRY_DELAY  # in offline backoff
+    updater._next_poll_attempt = time.monotonic() + 15  # in offline backoff
 
     # Without a force-refresh window open, a poll during backoff must skip.
     with pytest.raises(UpdateFailed):
@@ -1072,7 +1071,7 @@ def test_car_connected_unknown_state_returns_none() -> None:
     from custom_components.eveus import binary_sensor as bs
 
     updater = EveusTestUpdater({"state": 99})
-    sensor = bs.EveusCarConnectedBinarySensor(updater, 1)
+    sensor = bs.EveusBinarySensor(updater, bs.CAR_CONNECTED_DESCRIPTION, 1)
     assert sensor.is_on is None
 
 
@@ -1081,7 +1080,7 @@ def test_car_connected_charging_state_returns_true() -> None:
     from custom_components.eveus import binary_sensor as bs
 
     updater = EveusTestUpdater({"state": 4})
-    sensor = bs.EveusCarConnectedBinarySensor(updater, 1)
+    sensor = bs.EveusBinarySensor(updater, bs.CAR_CONNECTED_DESCRIPTION, 1)
     assert sensor.is_on is True
 
 
@@ -1094,7 +1093,7 @@ def test_session_active_mapping(state: int, expected) -> None:
     from custom_components.eveus import binary_sensor as bs
 
     updater = EveusTestUpdater({"state": state})
-    sensor = bs.EveusSessionActiveBinarySensor(updater, 1)
+    sensor = bs.EveusBinarySensor(updater, bs.SESSION_ACTIVE_DESCRIPTION, 1)
     assert sensor.is_on is expected
 
 
@@ -1103,7 +1102,7 @@ def test_session_active_coordinator_update_writes_only_on_change() -> None:
     from custom_components.eveus import binary_sensor as bs
 
     updater = EveusTestUpdater({"state": 4})
-    sensor = bs.EveusSessionActiveBinarySensor(updater, 1)
+    sensor = bs.EveusBinarySensor(updater, bs.SESSION_ACTIVE_DESCRIPTION, 1)
     sensor._entity_available = True
     sensor.hass = object()
     writes: list = []
@@ -1124,7 +1123,7 @@ def test_session_active_returns_unknown_when_unavailable() -> None:
     from custom_components.eveus import binary_sensor as bs
 
     updater = EveusTestUpdater({"state": 4}, available=False)
-    sensor = bs.EveusSessionActiveBinarySensor(updater, 1)
+    sensor = bs.EveusBinarySensor(updater, bs.SESSION_ACTIVE_DESCRIPTION, 1)
     sensor._entity_available = False
 
     assert sensor.is_on is None
@@ -1135,7 +1134,7 @@ def test_ocpp_connected_coordinator_update_writes_only_on_change() -> None:
     from custom_components.eveus import binary_sensor as bs
 
     updater = EveusTestUpdater({"ocppconnected": 1})
-    sensor = bs.EveusOcppConnectedBinarySensor(updater, 1)
+    sensor = bs.EveusBinarySensor(updater, bs.OCPP_CONNECTED_DESCRIPTION, 1)
     sensor._entity_available = True
     sensor.hass = object()
     writes: list = []
@@ -1156,7 +1155,7 @@ def test_ocpp_connected_rejects_out_of_domain_value() -> None:
     from custom_components.eveus import binary_sensor as bs
 
     updater = EveusTestUpdater({"ocppconnected": 2})
-    sensor = bs.EveusOcppConnectedBinarySensor(updater, 1)
+    sensor = bs.EveusBinarySensor(updater, bs.OCPP_CONNECTED_DESCRIPTION, 1)
 
     assert sensor.is_on is None
 
@@ -1177,10 +1176,11 @@ def test_binary_sensor_setup_entry_adds_all_status_entities() -> None:
 
     asyncio.run(bs.async_setup_entry(None, entry, lambda entities: added.extend(entities)))
 
-    assert [type(entity) for entity in added] == [
-        bs.EveusCarConnectedBinarySensor,
-        bs.EveusSessionActiveBinarySensor,
-        bs.EveusOcppConnectedBinarySensor,
+    assert [type(entity) for entity in added] == [bs.EveusBinarySensor] * 3
+    assert [entity.ENTITY_NAME for entity in added] == [
+        "Car Connected",
+        "Session Active",
+        "OCPP Connected",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_car_connected",

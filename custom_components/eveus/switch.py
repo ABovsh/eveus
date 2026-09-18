@@ -185,33 +185,6 @@ class BaseSwitchEntity(
         self._init_write_on_change()
 
     @property
-    def _optimistic_state(self) -> bool | None:
-        """Test-facing alias for the canonical _optimistic_value attribute."""
-        return self._optimistic_value
-
-    @_optimistic_state.setter
-    def _optimistic_state(self, value: bool | None) -> None:
-        self._optimistic_value = value
-
-    @property
-    def _optimistic_state_time(self) -> float:
-        """Test-facing alias for the canonical _optimistic_value_time attribute."""
-        return self._optimistic_value_time
-
-    @_optimistic_state_time.setter
-    def _optimistic_state_time(self, value: float) -> None:
-        self._optimistic_value_time = value
-
-    @property
-    def _last_device_state(self) -> bool | None:
-        """Test-facing alias for the canonical _last_device_value attribute."""
-        return self._last_device_value
-
-    @_last_device_state.setter
-    def _last_device_state(self, value: bool | None) -> None:
-        self._last_device_value = value
-
-    @property
     def is_on(self) -> bool | None:
         """Return cached switch state without side effects (None = unknown)."""
         return self._attr_is_on
