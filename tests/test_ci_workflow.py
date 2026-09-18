@@ -3,6 +3,7 @@ config in one place, every module mutated or excused, one survivor ratchet).
 Flags, caps and strings inside the workflow files are not pinned."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -75,6 +76,74 @@ def test_mutation_baseline_is_one_survivor_ratchet() -> None:
     keys = {k for k in baseline if not k.startswith("_")}
     assert keys == {"survivors"}, f"unexpected baseline keys: {sorted(keys)}"
     assert isinstance(baseline["survivors"], int) and baseline["survivors"] >= 0
+
+
+# The weekly schedule only fires on the default branch, so without this step the
+# run would measure `main` while the tests evolve on `rc`.
+_BRANCH_STEP = "Pick the branch the tests live on"
+
+
+def _branch_step_script() -> str:
+    doc = yaml.safe_load(_MUTATION_WORKFLOW.read_text(encoding="utf-8"))
+    steps = next(iter(doc["jobs"].values()))["steps"]
+    matches = [k for k, step in enumerate(steps) if step.get("name") == _BRANCH_STEP]
+    assert len(matches) == 1, f"expected one {_BRANCH_STEP!r} step"
+    first_use = next(
+        k for k, step in enumerate(steps) if "mutmut" in step.get("run", "")
+    )
+    assert matches[0] < first_use, "the branch must be chosen before mutmut installs or runs"
+    assert "checkout" in steps[matches[0] - 1].get("uses", ""), (
+        "the branch is chosen right after the default checkout"
+    )
+    return steps[matches[0]]["run"]
+
+
+def _run_branch_step(tmp_path: Path, *, with_rc: bool) -> dict[str, str]:
+    """Run the workflow's own script in a clone of a real (local) remote."""
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path),
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+
+    def git(cwd: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    origin, seed, work = tmp_path / "origin.git", tmp_path / "seed", tmp_path / "work"
+    origin.mkdir()
+    git(origin, "init", "-q", "--bare", "-b", "main")
+    seed.mkdir()
+    git(seed, "init", "-q", "-b", "main")
+    git(seed, "remote", "add", "origin", str(origin))
+    (seed / "f").write_text("main\n")
+    git(seed, "add", "f")
+    git(seed, "commit", "-q", "-m", "main")
+    git(seed, "push", "-q", "origin", "main")
+    shas = {"main": git(seed, "rev-parse", "HEAD"), "rc": ""}
+    if with_rc:
+        git(seed, "checkout", "-q", "-b", "rc")
+        (seed / "f").write_text("rc\n")
+        git(seed, "commit", "-q", "-am", "rc")
+        git(seed, "push", "-q", "origin", "rc")
+        shas["rc"] = git(seed, "rev-parse", "HEAD")
+    # The runner's checkout: default branch, shallow, no stored credentials.
+    git(tmp_path, "clone", "-q", "--depth=1", "--branch", "main", f"file://{origin}", "work")
+    subprocess.run(["bash", "-e", "-c", _branch_step_script()], cwd=work, env=env, check=True)
+    shas["head"] = git(work, "rev-parse", "HEAD")
+    return shas
+
+
+def test_mutation_run_uses_rc_when_it_exists(tmp_path: Path) -> None:
+    shas = _run_branch_step(tmp_path, with_rc=True)
+    assert shas["head"] == shas["rc"] != shas["main"]
+
+
+def test_mutation_run_falls_back_to_the_default_branch_without_rc(tmp_path: Path) -> None:
+    shas = _run_branch_step(tmp_path, with_rc=False)
+    assert shas["head"] == shas["main"]
 
 
 def _internal_doc_patterns_from_gitignore() -> list[str]:

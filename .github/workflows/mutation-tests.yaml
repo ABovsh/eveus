@@ -38,6 +38,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Pick the branch the tests live on
+        # The schedule only fires on the default branch, but the tests evolve
+        # on rc; measure rc while it exists (it is deleted after each merge).
+        run: |
+          if git ls-remote --exit-code --heads origin rc > /dev/null; then
+            git fetch --depth=1 origin rc
+            git checkout --detach FETCH_HEAD
+          else
+            echo "No rc branch; mutating the default branch."
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
