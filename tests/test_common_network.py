@@ -323,6 +323,71 @@ def test_force_refresh_bypasses_offline_backoff_once(
     assert len(session.calls) == 1
 
 
+class _GatedResponse(_Response):
+    """A reply that does not arrive until the test opens the gate."""
+
+    def __init__(self, gate: asyncio.Event, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._gate = gate
+
+    async def __aenter__(self) -> "_GatedResponse":
+        await self._gate.wait()
+        return self
+
+
+def test_overlapping_poll_reuses_the_data_instead_of_a_second_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HA serialises coordinator refreshes only from 2025.11 and the manifest
+    floor is 2025.1, so a post-command burst can reach _async_update_data while
+    a scheduled poll is still waiting for the charger. A second request could
+    finish first and then be overwritten by the older reply, reversing the
+    transition events; the overlapping call must return what is held."""
+
+    async def scenario() -> None:
+        gate = asyncio.Event()
+        session = _Session(_GatedResponse(gate, payload={"state": 4, "currentSet": 16}))
+        monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        held = {"state": 2, "currentSet": 10}
+        updater.data = held
+
+        first = asyncio.ensure_future(updater._async_update_data())
+        await asyncio.sleep(0)
+        assert len(session.calls) == 1
+
+        # Bounded: without the lock this call would wait on the gate too.
+        overlapping = await asyncio.wait_for(updater._async_update_data(), 1)
+
+        assert overlapping is held
+        assert len(session.calls) == 1
+
+        gate.set()
+        assert await first == {"state": 4, "currentSet": 16}
+
+        # The lock is released once the request ends: the next poll goes out.
+        await updater._async_update_data()
+        assert len(session.calls) == 2
+
+    asyncio.run(scenario())
+
+
+def test_poll_lock_is_released_when_the_request_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            common_network, "async_get_clientsession", lambda hass: _FailingSession()
+        )
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        for _ in range(2):
+            with pytest.raises(UpdateFailed):
+                await updater._async_update_data()
+            updater._next_poll_attempt = 0.0
+
+    asyncio.run(scenario())
+
+
 def test_send_command_schedules_post_command_refresh_only_after_success() -> None:
     """Successful command must schedule one timer per refresh delay; rapid
     re-commands cancel the previous timers; failures schedule nothing."""

@@ -10,6 +10,7 @@
 - **A system clock change no longer moves a control's hold.** A value you just set, or the last value of a setting the charger briefly stops reporting, was timed on the wall clock, so an NTP correction or a manual clock change could drop it early or keep it too long; both are now timed on elapsed time.
 - **Setup reports a deeply nested reply as an invalid response.** A reply nested too deeply to decode was shown as a failure to connect with an unexpected error; setup now rejects it the same way polling does.
 - **A command to an unreachable charger no longer holds up the ones behind it.** A request waited up to 25 s for an answer and a command is tried three times, so a stalled charger kept a queued SOC-limit Stop waiting for more than a minute. The charger answers in under half a second, so polls now wait 5 s and commands 7 s.
+- **A slow reply can no longer overwrite a newer one.** Home Assistant serialises an integration's refreshes only from 2025.11, so on 2025.1 to 2025.10 the polls that follow a command could overlap a scheduled poll, and an older reply arriving last published stale readings and could report a charge starting or finishing in the wrong order. Only one request to the charger is now in flight at a time.
 
 ### 🔒 Privacy
 - **Requests to the charger no longer follow redirects.** A reply redirecting elsewhere is rejected as an HTTP error, so your credentials and commands are never sent to another address; a command answered with a redirect is not retried.

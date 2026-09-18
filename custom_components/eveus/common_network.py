@@ -218,6 +218,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # preceding state.
         self._event_charging_payload: dict[str, Any] | None = None
         self._force_refresh_requests = 0
+        self._poll_lock = asyncio.Lock()
         self._pending_refresh_unsubs: list = []
         self._post_command_refresh_tasks: list = []
         # The one outage clock. Anchored to the FIRST failed poll and cleared by
@@ -903,6 +904,19 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if 0 < backoff_remaining <= _MAX_OFFLINE_BACKOFF and not bypass_backoff:
             raise UpdateFailed("Skipping Eveus poll during offline backoff")
 
+        # Home Assistant serialises coordinator refreshes only from 2025.11 and
+        # the manifest floor is 2025.1, so a post-command burst can arrive while
+        # a scheduled poll is still waiting for the charger. A second request
+        # could be answered first and then overwritten by the older reply,
+        # reversing the transition events: hand back what is held instead. With
+        # nothing held yet there is nothing to hand back, so wait for the lock.
+        if self._poll_lock.locked() and self.data is not None:
+            return self.data
+        async with self._poll_lock:
+            return await self._poll_charger(start_monotonic)
+
+    async def _poll_charger(self, start_monotonic: float) -> dict[str, Any]:
+        """Request /main, validate it and record the outcome (one poll at a time)."""
         try:
             new_data = await fetch_json(
                 self.get_session(),
