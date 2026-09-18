@@ -1087,3 +1087,39 @@ def test_controller_evaluates_the_updater_snapshot():
     ctrl.process()
 
     assert updater.sent == [("evseEnabled", 1)]
+
+
+# --- Entry guard (F1) --------------------------------------------------------
+# `not available or not last_update_success` has two operands and each carries a
+# case the other cannot see. This is the one stop Home Assistant enforces itself,
+# so a poll that either signal calls unhealthy must never reach the charger.
+
+
+import pytest  # noqa: E402  (grouped with the F1 tests it serves)
+
+
+@pytest.mark.parametrize(
+    ("available", "last_update_success"),
+    [
+        # An unexpected exception in the poll fails the coordinator's refresh
+        # without touching the charger-reachability flag.
+        (True, False),
+        # A refresh that hands back the held data (a second poll while one is
+        # in flight) reports success while the outage flag is still set.
+        (False, True),
+    ],
+)
+def test_stands_down_unless_both_reachability_signals_are_healthy(
+    available, last_update_success
+):
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    updater.available = available
+    updater.last_update_success = last_update_success
+    ctrl, scheduled, events = _make(
+        _calc(target=80, initial=20, cap=50, corr=0), updater
+    )
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert scheduled == []
+    updater.send_command.assert_not_awaited()
+    assert events == []
