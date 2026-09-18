@@ -928,38 +928,6 @@ def test_set_current_propagates_auth_failure() -> None:
         asyncio.run(entity.async_set_native_value(12))
 
 
-def test_cancel_pending_refreshes_skips_current_task() -> None:
-    import asyncio
-    from custom_components.eveus.common_network import EveusUpdater
-
-    updater = EveusUpdater.__new__(EveusUpdater)
-    updater._pending_refresh_unsubs = []
-
-    async def _scenario() -> bool:
-        cancelled_self = False
-
-        async def _tracked() -> None:
-            nonlocal cancelled_self
-            try:
-                # Simulate the refresh observing a transition and rescheduling
-                # the burst from inside its own tracked task.
-                updater._cancel_pending_refreshes()
-                await asyncio.sleep(0)
-            except asyncio.CancelledError:
-                cancelled_self = True
-                raise
-
-        task = asyncio.ensure_future(_tracked())
-        updater._post_command_refresh_tasks = [task]
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        return cancelled_self
-
-    assert asyncio.run(_scenario()) is False
-
-
 def test_v18_command_manager_resolves_callable_value_at_post_time():
     import asyncio, aiohttp
     from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME

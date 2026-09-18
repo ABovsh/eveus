@@ -220,7 +220,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._force_refresh_requests = 0
         self._poll_lock = asyncio.Lock()
         self._pending_refresh_unsubs: list = []
-        self._post_command_refresh_tasks: list = []
         # The one outage clock. Anchored to the FIRST failed poll and cleared by
         # the next good one; every entity reads its visibility from here instead
         # of running its own timer. One wake-up per distinct grace period tells
@@ -514,30 +513,24 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
         always fire relative to the most recent command. A timer that has not
-        fired yet is cancelled via its async_call_later unsub; a refresh that
-        has already fired and is still in flight is run as a tracked task so it
-        too can be cancelled on reschedule or shutdown -- otherwise a slow /main
-        poll could complete after a newer command and publish stale data, or
-        outlive async_shutdown. Combined with the entity-level optimistic state
-        TTL this prevents stale-read flicker.
+        fired yet is cancelled via its async_call_later unsub. A refresh that
+        has already fired is not tracked: the poll lock lets only one request
+        run at a time and the request timeout bounds it, so the entity-level
+        optimistic state TTL covers the few seconds it can still publish.
         """
         self._cancel_pending_refreshes()
-        for delay in POST_COMMAND_REFRESH_DELAYS:
-            async def _run(_now, _delay=delay):
-                if self._shutting_down or self.hass is None or self.hass.is_stopping:
-                    return
-                task = asyncio.ensure_future(self.async_refresh())
-                self._post_command_refresh_tasks.append(task)
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    raise
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.debug("Post-command refresh failed: %s", type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
-                finally:
-                    if task in self._post_command_refresh_tasks:
-                        self._post_command_refresh_tasks.remove(task)
 
+        async def _run(_now) -> None:
+            if self._shutting_down or self.hass is None or self.hass.is_stopping:
+                return
+            try:
+                await self.async_refresh()
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Post-command refresh failed: %s", type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
+
+        for delay in POST_COMMAND_REFRESH_DELAYS:
             self._pending_refresh_unsubs.append(async_call_later(self.hass, delay, _run))
 
     def _pop_pending_refreshes(self) -> list:
@@ -547,29 +540,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _cancel_pending_refreshes(self) -> None:
         for unsub in self._pop_pending_refreshes():
             unsub()
-        # task.cancel() schedules each task's done-callback via the event loop,
-        # so _post_command_refresh_tasks is not mutated during this loop —
-        # iterate it directly rather than over a throwaway snapshot.
-        # Never cancel the task this call is running inside: a tracked refresh
-        # that observes a state transition reschedules the burst synchronously,
-        # and cancelling itself would discard the payload it just fetched.
-        try:
-            current = asyncio.current_task()
-        except RuntimeError:  # not inside a running event loop
-            current = None
-        for task in self._post_command_refresh_tasks:
-            if task is not current and not task.done():
-                task.cancel()
 
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
-        pending = list(self._post_command_refresh_tasks)
-        self._post_command_refresh_tasks.clear()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
         await super().async_shutdown()
 
     def _should_log(self) -> bool:
