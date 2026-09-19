@@ -81,6 +81,12 @@ class EveusCard extends HTMLElement {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
+      this.shadowRoot.addEventListener("pointerdown", (e) => this._holdStart(e));
+      for (const ev of ["pointerup", "pointercancel", "pointerleave"]) this.shadowRoot.addEventListener(ev, () => clearTimeout(this._holdTimer));
+      this.shadowRoot.addEventListener("pointermove", (e) => {
+        if (this._holdAt && Math.hypot(e.clientX - this._holdAt[0], e.clientY - this._holdAt[1]) > 10) clearTimeout(this._holdTimer);
+      });
+      this.shadowRoot.addEventListener("contextmenu", (e) => { if (e.target.closest("[data-hold]")) e.preventDefault(); });
       this.shadowRoot.addEventListener("input", (e) => this._onSlide(e, false));
       this.shadowRoot.addEventListener("change", (e) => this._onSlide(e, true));
     }
@@ -163,8 +169,9 @@ class EveusCard extends HTMLElement {
   }
 
   // ---------- building blocks ----------
-  _tile({ icon, label, value, color = C.grey, more, toggle, cls = "" }) {
-    const data = toggle ? `data-toggle="${toggle}"` : more ? `data-more="${more}"` : "";
+  // `hold`: the setting a long press opens (SOC → Initial SOC, Time to SOC → Target SOC, Current → Charging Current).
+  _tile({ icon, label, value, color = C.grey, more, toggle, hold, cls = "" }) {
+    const data = (toggle ? `data-toggle="${toggle}"` : more ? `data-more="${more}"` : "") + (hold ? ` data-hold="${hold}"` : "");
     const active = color !== C.grey;
     return `<div class="t ${active ? "act" : ""} ${cls}" style="--c:${color}" ${data}>
       <ha-icon icon="${icon}"></ha-icon><div class="tx"><span class="l">${label}</span><span class="v">${value}</span></div></div>`;
@@ -206,14 +213,14 @@ class EveusCard extends HTMLElement {
     const e = num(this._s("sessionEnergy")), cost = num(this._s("sessionCost"));
     const tiles = [];
     if (this._advanced) {
-      tiles.push(this._tile({ icon: this._batteryIcon(), label: t.soc, value: this._pair(`${fmt(ini)}%`, `${fmt(socV)}%`, col), color: col, more: this._ids.soc }));
-      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.eta, value: this._pair(`${fmt(tgt)}%`, this._eta(), col), color: col, more: this._ids.eta }));
+      tiles.push(this._tile({ icon: this._batteryIcon(), label: t.soc, value: this._pair(`${fmt(ini)}%`, `${fmt(socV)}%`, col), color: col, more: this._ids.soc, hold: this._ids.initialSoc }));
+      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.eta, value: this._pair(`${fmt(tgt)}%`, this._eta(), col), color: col, more: this._ids.eta, hold: this._ids.targetSoc }));
     } else {
       const p = num(this._s("power"));
       tiles.push(this._tile({ icon: this._batteryIcon(), label: t.power, value: `<b style="color:${col}">${p === null ? "--" : (p / 1000).toFixed(1)} kW</b>`, color: col, more: this._ids.power }));
       tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.session, value: `<b style="color:${col}">${this._s("sessionTime")?.state ?? "--"}</b>`, color: col, more: this._ids.sessionTime }));
     }
-    tiles.push(this._tile({ icon: this._charging ? "mdi:flash" : "mdi:flash-outline", label: t.current, value: this._pair(`${fmt(set)}A`, `${fmt(cur)}A`, col), color: col, more: this._ids.current }));
+    tiles.push(this._tile({ icon: this._charging ? "mdi:flash" : "mdi:flash-outline", label: t.current, value: this._pair(`${fmt(set)}A`, `${fmt(cur)}A`, col), color: col, more: this._ids.current, hold: this._ids.chargingCurrent }));
     return { tiles, col, sess: this._tile({ icon: "mdi:battery-charging", label: t.session, value: `<b style="color:${col}">${e === null ? "--" : e < 10 ? e.toFixed(1) : Math.round(e)}kWh</b><i class="ar">·</i><b style="color:${col}">₴${fmt(cost)}</b>`, color: col, more: this._ids.sessionEnergy }) };
   }
 
@@ -304,7 +311,17 @@ class EveusCard extends HTMLElement {
     this.dispatchEvent(ev);
   }
 
+  _holdStart(e) {
+    this._held = false;
+    clearTimeout(this._holdTimer);
+    const el = e.target.closest("[data-hold]");
+    if (!el) return;
+    this._holdAt = [e.clientX, e.clientY];
+    this._holdTimer = setTimeout(() => { this._held = true; this._more(el.dataset.hold); }, 500);
+  }
+
   _onClick(e) {
+    if (this._held) { this._held = false; e.stopPropagation(); return; }
     const step = e.target.closest("[data-step]");
     if (step) { e.stopPropagation(); return this._step(step.dataset.step, Number(step.dataset.dir)); }
     const tog = e.target.closest("[data-toggle]");
@@ -360,6 +377,7 @@ ha-card.chg{animation:bp 3s ease-in-out infinite}
 .t.act{background:linear-gradient(145deg,color-mix(in srgb,var(--c) 14%,transparent),color-mix(in srgb,var(--c) 3%,transparent));
   border-color:color-mix(in srgb,var(--c) 30%,transparent)}
 .t{display:flex;align-items:center;gap:6px}
+[data-hold]{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .t ha-icon{--mdc-icon-size:22px;color:var(--c);flex:none}
 .tx{flex:1;display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
 .chg .t.act ha-icon{animation:ig 2s ease-in-out infinite}

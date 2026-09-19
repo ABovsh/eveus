@@ -364,3 +364,21 @@ def test_compact_soc_bar_spans_the_card_below_the_row():
     compact = _card_function(source, "_compact")
     assert 'class="cs"' not in compact
     assert compact.rstrip().endswith("${this._bar()}</div>`;")
+
+
+def test_long_press_on_a_reading_opens_the_setting_behind_it():
+    """SOC → Initial SOC, Time to SOC → Target SOC, Current → Charging Current."""
+    source = CARD.read_text(encoding="utf-8")
+    metrics = _card_function(source, "_metrics")
+    for label, setting in (("t.soc", "initialSoc"), ("t.eta", "targetSoc"), ("t.current", "chargingCurrent")):
+        line = next(ln for ln in metrics.splitlines() if f"label: {label}," in ln)
+        assert f"hold: this._ids.{setting}" in line, label
+    assert 'data-hold="${hold}"' in _card_function(source, "_tile")
+
+
+def test_long_press_does_not_also_fire_the_tap():
+    """The click that ends a long press must not toggle or open the reading's own dialog."""
+    source = CARD.read_text(encoding="utf-8")
+    assert '"pointerdown"' in source and '"contextmenu"' in source
+    click = _card_function(source, "_onClick")
+    assert "this._held" in click.split("\n", 2)[1], "the hold check comes first"
