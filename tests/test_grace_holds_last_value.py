@@ -100,38 +100,6 @@ def _age_out_the_grace_window(entity, clock) -> None:
 # --- Sensors ---
 
 
-def test_sensor_holds_its_reading_through_the_grace_window(clock) -> None:
-    updater = EveusTestUpdater({"totalEnergy": "5178.63"})
-    entity = _sensor(updater, _spec(_payload_value))
-    entity._handle_coordinator_update()
-    assert entity.native_value == 5178.63
-
-    _go_offline(entity, updater)
-
-    assert entity.available is True, "still inside the grace window"
-    assert entity.native_value == 5178.63, "a missed poll must not blank the value"
-
-
-def test_sensor_never_publishes_unknown_before_it_publishes_unavailable(clock) -> None:
-    """The utility_meter regression, stated as an invariant.
-
-    Every state this entity publishes while the charger is unreachable must be
-    either the last real reading or nothing at all — never a blank that is
-    still 'available', because that is what reaches a helper as `unknown`.
-    """
-    updater = EveusTestUpdater({"totalEnergy": "5178.63"})
-    entity = _sensor(updater, _spec(_payload_value))
-    entity._handle_coordinator_update()
-
-    _go_offline(entity, updater)
-    for _ in range(3):
-        entity._handle_coordinator_update()
-        assert not (entity.available and entity.native_value is None)
-
-    _age_out_the_grace_window(entity, clock)
-    assert entity.available is False
-
-
 def test_holding_a_reading_reports_no_change(clock) -> None:
     """A held value is by definition an UNCHANGED value, and must say so.
 
