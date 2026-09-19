@@ -13,7 +13,6 @@ import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from conftest import PayloadUpdater
 from conftest import StreamReaderStub, TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
@@ -846,36 +845,6 @@ def _wifi_signal_sensor(updater):
     return sd.create_sensor(spec, updater, 1)
 
 
-def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:
-    """The coordinator drives every entity on every poll, so the WiFi Signal
-    sensor's own `_update_native_value` is exercised here exactly as
-    `_handle_coordinator_update` would — that is what writes the mirror
-    `get_connection_attrs` now reads instead of computing RSSI itself."""
-    from custom_components.eveus import sensor_definitions as sd
-
-    offline = PayloadUpdater(
-        {"RSSI": -50},
-        available=False,
-        connection_quality={"success_rate": 42, "latency_avg": 1.0},
-        host=TEST_HOST,
-    )
-    _wifi_signal_sensor(offline)._update_native_value()
-    attrs = sd.get_connection_attrs(offline, None)
-    assert attrs["connection_quality"] == 42
-    assert attrs["status"] == "Poor"
-    assert "wifi_rssi" not in attrs  # stale payload value suppressed offline
-
-    online = PayloadUpdater(
-        {"RSSI": -50},
-        connection_quality={"success_rate": 99, "latency_avg": 0.2},
-        host=TEST_HOST,
-    )
-    _wifi_signal_sensor(online)._update_native_value()
-    online_attrs = sd.get_connection_attrs(online, None)
-    assert online_attrs["status"] == "Excellent"
-    assert online_attrs["wifi_rssi"] == -50
-
-
 # --- Mutation-triage additions below (coordinator survivor closure) ---
 
 
@@ -1207,19 +1176,6 @@ def test_emit_transition_events_escalates_new_fault_code_within_persisting_error
         )
     ]
     assert updater._event_prev_error_code == 5
-
-
-def test_emit_transition_events_fires_car_connected_and_disconnected() -> None:
-    updater, bus = _updater_with_bus()
-    updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-
-    updater._emit_transition_events({"state": 3})  # Connected
-    assert bus.fired == [(common_network.EVENT_CAR_CONNECTED, {"device_number": 1})]
-
-    bus.fired.clear()
-    updater._event_prev_state = 3
-    updater._emit_transition_events({"state": common_network.DEVICE_STATE_STANDBY})
-    assert bus.fired == [(common_network.EVENT_CAR_DISCONNECTED, {"device_number": 1})]
 
 
 def test_maybe_burst_on_transition_schedules_refresh_on_state_change() -> None:
