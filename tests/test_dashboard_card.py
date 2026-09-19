@@ -422,3 +422,10 @@ def test_basic_control_groups_session_and_shows_temperature():
     line = next(ln for ln in metrics.splitlines() if "label: t.session, value: extended" in ln)
     assert "cls: tall" in line and "sessionEnergy" in metrics
     assert "label: t.temp" in metrics
+
+
+def test_basic_session_tile_shows_voltage_on_its_third_line():
+    source = CARD.read_text(encoding="utf-8")
+    metrics = _card_function(source, "_metrics")
+    assert 'num(this._s("voltage"))' in metrics
+    assert "t.voltage" not in _card_function(source, "_full"), "no second Voltage tile in Full"

@@ -225,7 +225,7 @@ class EveusCard extends HTMLElement {
     } else {
       const p = num(this._s("power")), time = `<b style="--value-color:${col}">${this._s("sessionTime")?.state ?? "--"}</b>`;
       tiles.push(this._tile({ icon: this._batteryIcon(), label: t.power, value: `<b style="--value-color:${col}">${p === null ? "--" : (p / 1000).toFixed(1)} kW</b>`, color: col, more: this._ids.power }));
-      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.session, value: extended ? `${time}<span class="nl"></span>${money}` : time, color: col, more: this._ids.sessionTime, cls: tall }));
+      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.session, value: extended ? `${time}<span class="nl"></span>${money}<span class="nl"></span><i><ha-icon icon="mdi:sine-wave"></ha-icon> ${fmt(num(this._s("voltage")))}V</i>` : time, color: col, more: this._ids.sessionTime, cls: tall }));
       if (extended) {
         const bt = num(this._s("boxTemp")), pt = num(this._s("plugTemp"));
         sess = this._tile({ icon: "mdi:thermometer", label: t.temp, value: `<i>${fmt(bt)}° · ${fmt(pt)}°</i>`, more: this._ids.boxTemp });
@@ -297,10 +297,7 @@ class EveusCard extends HTMLElement {
         ${this._tile({ icon: "mdi:thermometer", label: t.temp, value: `<i>${fmt(bt)}° · ${fmt(pt)}°</i>`, more: this._ids.boxTemp })}
         ${this._tile({ icon: "mdi:battery-lock", label: t.socLimit, value: lim ? t.on : t.off, color: lim ? C.green : C.grey, toggle: "socLimit" })}</div>`;
     } else {
-      const v = num(this._s("voltage"));
-      extra = `<div class="g3">
-        ${this._tile({ icon: "mdi:sine-wave", label: t.voltage, value: `<i>${fmt(v)} V</i>`, more: this._ids.voltage })}
-        ${this._tile({ icon: "mdi:ev-station", label: t.state, value: `<i>${this._stateText()}</i>`, more: this._ids.state, cls: "w2" })}</div>`;
+      extra = `<div class="g3">${this._tile({ icon: "mdi:ev-station", label: t.state, value: `<i>${this._stateText()}</i>`, more: this._ids.state, cls: "w3" })}</div>`;
     }
     return this._controls() + extra;
   }
@@ -421,6 +418,7 @@ ha-card.chg{animation:bp 2.4s ease-in-out infinite}
 .ar{opacity:.65;margin:0 1px}
 .t.tall{grid-row:span 2}
 .t.w2{grid-column:span 2}
+.t.w3{grid-column:1/-1}
 .nl{flex-basis:100%;height:0}
 .v i ha-icon{--mdc-icon-size:12px;color:var(--secondary-text-color);transform:none;animation:none}
 .bt{display:grid;grid-template-columns:1fr 1fr;gap:4px;min-width:0}
