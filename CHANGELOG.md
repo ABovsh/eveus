@@ -7,6 +7,7 @@
 
 ### 🐛 Fixed
 - **Hiding or disabling a SOC setting no longer breaks the SOC readings.** Initial SOC, Target SOC, Battery Capacity and SOC Correction are read from their entities, and Home Assistant never loads a disabled one, so disabling any of them left SOC Percent, SOC Energy and Time to Target `unknown`, Charging Finish Time `unavailable` and the SOC limit unable to stop a charge. The values are now taken from the integration's saved settings when it starts, and a change you make to an entity still applies at once.
+- **Charging Finish Time no longer reads `unknown` when the charger drops off between charges.** With no charge running it stays `unavailable` through a missed poll instead of turning blank for the first minute of the outage.
 - **The SOC limit no longer stops a charge after you turn on Disable limits.** A Stop waiting behind another command, or between retries, was still sent when a poll in the meantime showed Disable limits switched on; it is now checked again right before each attempt and dropped.
 - **A system clock change no longer moves a control's hold.** A value you just set, or the last value of a setting the charger briefly stops reporting, was timed on the wall clock, so an NTP correction or a manual clock change could drop it early or keep it too long; both are now timed on elapsed time.
 - **Setup reports a deeply nested reply as an invalid response.** A reply nested too deeply to decode was shown as a failure to connect with an unexpected error; setup now rejects it the same way polling does.
