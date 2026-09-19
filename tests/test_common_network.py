@@ -13,12 +13,13 @@ import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from conftest import TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import StreamReaderStub, TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.const import (
+    AVAILABILITY_GRACE_PERIOD,
     CHARGING_UPDATE_INTERVAL,
-    RETRY_DELAY,
+    CONTROL_GRACE_PERIOD,
 )
 
 
@@ -58,20 +59,9 @@ class _Response:
         return len(body.encode())
 
     @property
-    def content(self) -> "_StreamReader":
+    def content(self) -> "StreamReaderStub":
         body = self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
-        return _StreamReader(body.encode())
-
-
-class _StreamReader:
-    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
-
-    def __init__(self, raw: bytes) -> None:
-        self._raw = raw
-
-    async def iter_chunked(self, size: int):
-        for i in range(0, len(self._raw), size):
-            yield self._raw[i : i + size]
+        return StreamReaderStub(body.encode())
 
 
 class _Session:
@@ -227,6 +217,36 @@ def test_update_data_raises_auth_failed_on_unauthorized(
     assert updater.connection_quality["last_error"] == "ConfigEntryAuthFailed"
 
 
+def test_unauthorized_poll_starts_the_outage_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 401 stops polling until reauth, so entities must still leave view.
+
+    Entity availability reads only the coordinator's outage clock. If the
+    rejection does not start it, every entity stays "available" on the last
+    pre-401 reading for as long as reauth is pending.
+    """
+    session = _Session(_Response(status=401))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    scheduled: list[float] = []
+    monkeypatch.setattr(
+        common_network,
+        "async_call_later",
+        lambda hass, delay, action: scheduled.append(delay) or Mock(),
+    )
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        asyncio.run(updater._async_update_data())
+
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1061.0)
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD) is False
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is False
+    # Polling stops on a 401, so only the grace timers can wake the entities.
+    assert sorted(scheduled) == [CONTROL_GRACE_PERIOD + 0.5, AVAILABILITY_GRACE_PERIOD + 0.5]
+
+
 def test_update_data_raises_update_failed_for_bad_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -313,7 +333,7 @@ def test_initial_network_failure_raises_update_failed(
 def test_offline_backoff_skip_raises_even_without_prior_data() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater.data = None
-    updater._next_poll_attempt = time.monotonic() + RETRY_DELAY
+    updater._next_poll_attempt = time.monotonic() + 15
 
     with pytest.raises(UpdateFailed):
         asyncio.run(updater._async_update_data())
@@ -325,13 +345,78 @@ def test_force_refresh_bypasses_offline_backoff_once(
     session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
-    updater._next_poll_attempt = time.monotonic() + RETRY_DELAY
+    updater._next_poll_attempt = time.monotonic() + 15
     updater._force_refresh_requests = 1
 
     data = asyncio.run(updater._async_update_data())
 
     assert data == {"state": 2, "currentSet": 16}
     assert len(session.calls) == 1
+
+
+class _GatedResponse(_Response):
+    """A reply that does not arrive until the test opens the gate."""
+
+    def __init__(self, gate: asyncio.Event, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._gate = gate
+
+    async def __aenter__(self) -> "_GatedResponse":
+        await self._gate.wait()
+        return self
+
+
+def test_overlapping_poll_reuses_the_data_instead_of_a_second_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HA serialises coordinator refreshes only from 2025.11 and the manifest
+    floor is 2025.1, so a post-command burst can reach _async_update_data while
+    a scheduled poll is still waiting for the charger. A second request could
+    finish first and then be overwritten by the older reply, reversing the
+    transition events; the overlapping call must return what is held."""
+
+    async def scenario() -> None:
+        gate = asyncio.Event()
+        session = _Session(_GatedResponse(gate, payload={"state": 4, "currentSet": 16}))
+        monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        held = {"state": 2, "currentSet": 10}
+        updater.data = held
+
+        first = asyncio.ensure_future(updater._async_update_data())
+        await asyncio.sleep(0)
+        assert len(session.calls) == 1
+
+        # Bounded: without the lock this call would wait on the gate too.
+        overlapping = await asyncio.wait_for(updater._async_update_data(), 1)
+
+        assert overlapping is held
+        assert len(session.calls) == 1
+
+        gate.set()
+        assert await first == {"state": 4, "currentSet": 16}
+
+        # The lock is released once the request ends: the next poll goes out.
+        await updater._async_update_data()
+        assert len(session.calls) == 2
+
+    asyncio.run(scenario())
+
+
+def test_poll_lock_is_released_when_the_request_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            common_network, "async_get_clientsession", lambda hass: _FailingSession()
+        )
+        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+        for _ in range(2):
+            with pytest.raises(UpdateFailed):
+                await updater._async_update_data()
+            updater._next_poll_attempt = 0.0
+
+    asyncio.run(scenario())
 
 
 def test_send_command_schedules_post_command_refresh_only_after_success() -> None:
@@ -572,56 +657,6 @@ def test_async_shutdown_cancels_pending_refresh_unsubs() -> None:
     asyncio.run(scenario())
 
 
-def test_inflight_post_command_refresh_is_cancelled_on_shutdown() -> None:
-    """Regression: a fired post-command refresh that is still running must be
-    cancellable on shutdown, not run to completion uncancelled.
-
-    The async_call_later unsub only cancels a timer that has not fired yet.
-    Once the timer fires and the refresh is in flight, shutdown (and a rapid
-    reschedule) must still be able to cancel the running refresh so a slow
-    /main poll cannot publish stale data after teardown.
-    """
-
-    async def scenario() -> None:
-        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
-        updater.hass.is_stopping = False
-        started = asyncio.Event()
-        cancelled = False
-
-        async def slow_refresh() -> None:
-            nonlocal cancelled
-            started.set()
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                cancelled = True
-                raise
-
-        updater.async_refresh = slow_refresh
-        callbacks: list = []
-
-        def fake_call_later(hass, delay, action):
-            callbacks.append(action)
-            return Mock()
-
-        with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(common_network, "async_call_later", fake_call_later)
-            updater._schedule_post_command_refresh()
-
-            # Fire the first timer: this starts the in-flight refresh task.
-            run_task = asyncio.ensure_future(callbacks[0](None))
-            await started.wait()
-            assert len(updater._post_command_refresh_tasks) == 1
-
-            await updater.async_shutdown()
-
-        assert cancelled is True
-        assert updater._post_command_refresh_tasks == []
-        await asyncio.gather(run_task, return_exceptions=True)
-
-    asyncio.run(scenario())
-
-
 def test_updater_caches_basic_auth_object() -> None:
     """BasicAuth must be cached on the updater, not rebuilt per poll."""
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
@@ -805,7 +840,7 @@ def test_connection_quality_reports_during_failures() -> None:
         connection_quality={"success_rate": 40, "latency_avg": 1.2},
         async_add_listener=lambda *a, **k: (lambda: None),
     )
-    entity = spec.create_sensor(updater)
+    entity = sd.create_sensor(spec, updater)
     assert entity.available is True
     assert entity._get_sensor_value() == 40
 
@@ -835,28 +870,11 @@ def test_ev_sensor_skips_value_recompute_on_failed_poll() -> None:
     assert calls == ["value"]
 
 
-def test_connection_attrs_stay_visible_offline_without_stale_rssi() -> None:
-    from types import SimpleNamespace
+def _wifi_signal_sensor(updater):
     from custom_components.eveus import sensor_definitions as sd
 
-    offline = SimpleNamespace(
-        available=False,
-        connection_quality={"success_rate": 42, "latency_avg": 1.0},
-        data={"RSSI": -50},
-    )
-    attrs = sd.get_connection_attrs(offline, None)
-    assert attrs["connection_quality"] == 42
-    assert attrs["status"] == "Poor"
-    assert "wifi_rssi" not in attrs  # stale payload value suppressed offline
-
-    online = SimpleNamespace(
-        available=True,
-        connection_quality={"success_rate": 99, "latency_avg": 0.2},
-        data={"RSSI": -50},
-    )
-    online_attrs = sd.get_connection_attrs(online, None)
-    assert online_attrs["status"] == "Excellent"
-    assert online_attrs["wifi_rssi"] == -50
+    spec = next(s for s in sd.create_sensor_specifications() if s.key == "wifi_signal")
+    return sd.create_sensor(spec, updater, 1)
 
 
 # --- Mutation-triage additions below (coordinator survivor closure) ---
@@ -922,6 +940,10 @@ def test_bounded_clamps_out_of_range_and_none_values() -> None:
     assert bounded(0, 100) == 0
     assert bounded(100, 100) == 100
     assert bounded(101, 100) is None
+    # Two decimals, like the live Session Energy/Cost specs; ints keep their type.
+    assert bounded(27.9899997711182, 100) == 27.99
+    assert bounded(1.23456, 100) == 1.23
+    assert bounded(7, 100) == 7 and isinstance(bounded(7, 100), int)
 
 
 def test_looks_charging_from_measurements_detects_power_or_current() -> None:
@@ -1188,19 +1210,6 @@ def test_emit_transition_events_escalates_new_fault_code_within_persisting_error
     assert updater._event_prev_error_code == 5
 
 
-def test_emit_transition_events_fires_car_connected_and_disconnected() -> None:
-    updater, bus = _updater_with_bus()
-    updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
-
-    updater._emit_transition_events({"state": 3})  # Connected
-    assert bus.fired == [(common_network.EVENT_CAR_CONNECTED, {"device_number": 1})]
-
-    bus.fired.clear()
-    updater._event_prev_state = 3
-    updater._emit_transition_events({"state": common_network.DEVICE_STATE_STANDBY})
-    assert bus.fired == [(common_network.EVENT_CAR_DISCONNECTED, {"device_number": 1})]
-
-
 def test_maybe_burst_on_transition_schedules_refresh_on_state_change() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._last_observed_state = common_network.DEVICE_STATE_STANDBY
@@ -1275,6 +1284,7 @@ def test_connection_quality_computes_average_latency() -> None:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater._latency_samples.extend([0.2, 0.4])
     assert updater.connection_quality["latency_avg"] == pytest.approx(0.3)
+    assert updater.connection_quality["latency_samples"] == 2
 
     empty_updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     assert empty_updater.connection_quality["latency_avg"] == 0.0
@@ -1348,7 +1358,7 @@ def test_send_command_defaults_to_retry_enabled(
         updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
         received: dict[str, object] = {}
 
-        async def fake_send(command, value, *, retry=None, extra=None):
+        async def fake_send(command, value, *, retry=None, extra=None, preflight=None):
             received["retry"] = retry
             return True
 
@@ -1381,23 +1391,6 @@ def test_async_force_refresh_increments_and_restores_counter() -> None:
     asyncio.run(scenario())
 
 
-def test_cancel_pending_refreshes_skips_the_currently_running_task(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
-    current_task = Mock()
-    other_task = Mock()
-    current_task.done.return_value = False
-    other_task.done.return_value = False
-    updater._post_command_refresh_tasks = [current_task, other_task]
-    monkeypatch.setattr(common_network.asyncio, "current_task", lambda: current_task)
-
-    updater._cancel_pending_refreshes()
-
-    current_task.cancel.assert_not_called()
-    other_task.cancel.assert_called_once()
-
-
 def test_scheduled_refresh_exits_when_shutting_down_before_hass_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1422,33 +1415,6 @@ def test_scheduled_refresh_exits_when_shutting_down_before_hass_check(
     asyncio.run(callbacks[0](None))
 
     assert refreshed is False
-
-
-def test_scheduled_refresh_removes_task_from_tracking_list_after_completion(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def scenario() -> None:
-        updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
-        updater.hass = SimpleNamespace(is_stopping=False)
-
-        async def refresh() -> None:
-            return None
-
-        updater.async_refresh = refresh
-        callbacks = []
-
-        def fake_call_later(hass, delay, action):
-            callbacks.append(action)
-            return Mock()
-
-        with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(common_network, "async_call_later", fake_call_later)
-            updater._schedule_post_command_refresh()
-            await callbacks[0](None)
-
-        assert updater._post_command_refresh_tasks == []
-
-    asyncio.run(scenario())
 
 
 def test_offline_backoff_skip_boundary_below_one_second(
@@ -1700,3 +1666,250 @@ def test_offline_backoff_deadline_is_monotonic(monkeypatch: pytest.MonkeyPatch) 
 
     # The deadline must be expressed on the monotonic clock, not the wall clock.
     assert 1000.0 < stamped <= 1000.0 + common_network._MAX_OFFLINE_BACKOFF
+
+
+_REDIRECTS = [301, 302, 303, 307, 308]
+
+
+@pytest.mark.parametrize("status", _REDIRECTS)
+def test_poll_rejects_a_redirect_without_following_it(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A redirect could send the Basic Auth header or read telemetry from
+    another origin; aiohttp follows it by default and raise_for_status() does
+    not reject 3xx, so the poll must refuse both explicitly."""
+    session = _Session(_Response(status=status, payload={"state": 4, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+    assert [call["allow_redirects"] for call in session.calls] == [False]
+    assert updater.connection_quality["consecutive_failures"] == 1
+
+
+@pytest.mark.parametrize("status", _REDIRECTS)
+def test_init_firmware_fetch_rejects_a_redirect(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    session = _Session(_Response(status=status, payload={"ESP_SW_version": 151}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fallback is None
+    assert [call["allow_redirects"] for call in session.calls] == [False]
+
+
+# --- Typed snapshot (P2.1) --------------------------------------------------
+
+
+def test_updater_exposes_an_empty_snapshot_before_the_first_poll(
+    updater: EveusUpdater,
+) -> None:
+    """Entities read the snapshot at add time, before any poll has landed."""
+    assert updater.snapshot.raw == {}
+    assert updater.snapshot.state is None
+
+
+def test_successful_poll_publishes_a_parsed_snapshot(
+    coordinator: tuple[EveusUpdater, _Session],
+) -> None:
+    updater, _session = coordinator
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.state == 4
+    assert updater.snapshot.power_w == 7200
+    # The same dict the coordinator publishes, not a copy: diagnostics and the
+    # card keep reading `data` while every value read goes through the snapshot.
+    assert updater.snapshot.raw is data
+
+
+def test_snapshot_is_bounded_by_the_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 16 A charger reporting 12 A is fine; the model bound comes from here."""
+    session = _Session(_Response(payload={"state": 4, "currentSet": 12}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(
+        TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A"
+    )
+
+    asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.current_set == 12
+    assert updater.snapshot.model == "16A"
+
+
+def test_failed_poll_keeps_the_last_good_snapshot(
+    coordinator: tuple[EveusUpdater, _Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sensors hold their last reading through the grace window, so the
+    snapshot behind it must survive a failed poll exactly like `data` does."""
+    updater, _session = coordinator
+    asyncio.run(updater._async_update_data())
+
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.state == 4
+
+
+def test_snapshot_sees_the_legacy_state_translation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The coordinator owns the fw-1.x latch, so it must translate BEFORE the
+    parse — otherwise every snapshot consumer gets the untranslated code."""
+    session = _Session(
+        _Response(payload={"state": 3, "currentSet": 16, "powerMeas": 3500})
+    )
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.state == 4
+    assert updater.snapshot.session_active is True
+
+
+def test_coordinator_owns_one_grace_clock_per_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P3.1: the outage clock lives in the coordinator, one timer per grace period.
+
+    Anchored to the FIRST failed poll; a repeated failure neither re-anchors it
+    nor schedules more timers (HA does not re-notify listeners on a repeated
+    failure, so the timer is what lets entities leave their grace window).
+    """
+    from custom_components.eveus.const import (
+        AVAILABILITY_GRACE_PERIOD,
+        CONTROL_GRACE_PERIOD,
+    )
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        common_network,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock["now"], time=time.time),
+    )
+    timers: list[tuple[float, object, Mock]] = []
+
+    def fake_call_later(hass, delay, action):
+        unsub = Mock()
+        timers.append((delay, action, unsub))
+        return unsub
+
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    notified: list[bool] = []
+    updater.async_update_listeners = lambda: notified.append(True)
+
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
+    assert updater.seconds_unavailable == 0.0
+
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+    clock["now"] = 1020.0
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+
+    assert sorted(delay for delay, _, _ in timers) == [
+        CONTROL_GRACE_PERIOD + 0.5,
+        AVAILABILITY_GRACE_PERIOD + 0.5,
+    ]
+    assert updater.seconds_unavailable == 20.0
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
+
+    clock["now"] = 1000.0 + CONTROL_GRACE_PERIOD
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is False
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD) is True
+    clock["now"] = 1000.0 + AVAILABILITY_GRACE_PERIOD
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD) is False
+
+    for _, action, _ in timers:
+        action(None)
+    assert notified == [True, True]
+
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater._next_poll_attempt = 0.0
+    asyncio.run(updater._async_update_data())
+
+    assert updater.seconds_unavailable == 0.0
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
+
+
+def test_recovery_and_shutdown_cancel_pending_grace_timers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timers: list[Mock] = []
+
+    def fake_call_later(hass, delay, action):
+        unsub = Mock()
+        timers.append(unsub)
+        return unsub
+
+    monkeypatch.setattr(common_network, "async_call_later", fake_call_later)
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+    assert len(timers) == 2 and not any(t.called for t in timers)
+
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    asyncio.run(updater._async_update_data())
+    assert all(t.called for t in timers)
+
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    with pytest.raises(UpdateFailed):
+        asyncio.run(updater._async_update_data())
+    assert len(timers) == 4
+    asyncio.run(updater.async_shutdown())
+    assert all(t.called for t in timers)
+
+
+def test_every_failed_poll_is_announced_to_the_link_sensors(
+    updater: EveusUpdater, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HA notifies listeners only on the first failure; Connection Quality needs each one."""
+    from custom_components.eveus.const import poll_failure_signal
+
+    sent: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        common_network, "async_dispatcher_send", lambda hass, signal: sent.append((hass, signal))
+    )
+    updater.config_entry = SimpleNamespace(entry_id="entry-1")
+
+    updater._record_failure(asyncio.TimeoutError())
+    updater._record_failure(asyncio.TimeoutError())
+
+    assert sent == [(updater.hass, poll_failure_signal("entry-1"))] * 2
+
+
+def test_failed_poll_without_an_entry_announces_nothing(
+    updater: EveusUpdater, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setup-time updaters have no entry yet; a failure there must not raise."""
+    sent: list[str] = []
+    monkeypatch.setattr(
+        common_network, "async_dispatcher_send", lambda hass, signal: sent.append(signal)
+    )
+    updater.config_entry = None
+
+    updater._record_failure(asyncio.TimeoutError())
+
+    assert sent == []

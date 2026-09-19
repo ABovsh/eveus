@@ -1,34 +1,20 @@
 name: Mutation Tests
 
-# Weekly proof that the test suite catches real bugs (not just runs lines) in
-# the layers users actually report issues against. Every user-facing failure so
-# far has been in the config flow (issues #4, #5, #8, and the old-firmware
-# setup reports), so config_flow.py + repairs.py are first-class targets next
-# to the pure logic layer this workflow originally covered. safety.py (ground
-# fault / leak / overheat threshold and fault-recovery logic) was added
-# 2026-07-23 as the highest-stakes previously-untested layer -- its name says
-# what's at risk if a boundary or and/or mutation there ever went unnoticed.
-# entity-base (common_base.py + control_base.py) was added the same day: the
-# shared availability grace-period state machine and optimistic-control
-# reconcile/expire lifecycle used by every switch/number entity -- the
-# highest blast-radius-per-line gap in the repo (control_base.py had 100%
-# line coverage and zero mutation exposure before this).
+# Weekly proof that the test suite catches real bugs (not just runs lines).
 #
-# One matrix leg per target group, and each leg gets its own full time budget —
-# the 2026-06-30 single-job run died at a 45-minute cap before reporting
-# anything. Killer test lists are curated per target and kept honest by the
-# contracts in tests/test_ci_workflow.py (a renamed target or test file fails
-# fast in Validate instead of silently weakening the cron job).
+# One mutmut 3 job over the whole package. mutmut 3 imports pytest once, forks
+# per mutant and runs only the tests that reach the mutated function, so the
+# whole suite is the killer list and a full run takes minutes, not the six
+# runner-hours the twelve hand-curated mutmut 2 legs needed. What is mutated,
+# which tests are left out and which lines are excused lives in
+# `[tool.mutmut]` in pyproject.toml; tests/test_ci_workflow.py keeps it honest.
 #
-# Report-only gate: every target file uses `from __future__ import
-# annotations` (PEP 563), so mutmut's type-annotation mutations are inert at
-# runtime — no test can ever kill them. Literal zero survivors is therefore
-# structurally unreachable, so a leg is NOT failed just because mutmut's exit
-# code says some mutants survived or timed out (`continue-on-error` on the
-# run step below). The job only fails for real when mutmut itself doesn't
-# produce a usable report (crash, bad install, bad --paths-to-mutate) — see
-# the sanity check in "Report results". The survivor/timeout report is still
-# published in full on every run; that's this workflow's actual product.
+# Report-only gate: a leg is NOT failed just because mutmut's exit code says
+# some mutants survived (`continue-on-error` on the run step below). The job
+# fails for real only when mutmut produced no usable report (crash, bad
+# install) or the survivor count went up against the committed baseline. The
+# survivor report is published in full on every run; that is this workflow's
+# actual product.
 
 on:
   workflow_dispatch:
@@ -44,167 +30,28 @@ concurrency:
 
 jobs:
   mutate:
-    name: Mutate ${{ matrix.name }}
+    name: Mutate
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: config-flow
-            paths: "custom_components/eveus/config_flow.py,custom_components/eveus/repairs.py"
-            tests: >-
-              tests/test_config_flow.py
-              tests/test_config_flow_phase_string.py
-              tests/test_config_flow_schema_serializable.py
-              tests/test_config_flow_host_properties.py
-              tests/test_translation_contract.py
-              tests/test_repairs.py
-              tests/test_issue_regressions.py
-              tests/test_hardening_4_16_1.py
-              tests/test_hardening_rc_2026_07_01.py
-              tests/test_hardening_rc_2026_07_10.py
-              tests/test_hardening_rc_2026_07_14.py
-              tests/test_hardening_rc_2026_07_30.py
-              tests/test_soc_autofill.py
-          - name: payload-utils
-            paths: "custom_components/eveus/utils.py,custom_components/eveus/_payload.py"
-            tests: >-
-              tests/test_utils.py
-              tests/test_property_invariants.py
-              tests/test_firmware_parsing.py
-              tests/test_real_payload_schema.py
-              tests/test_multi_state_payload.py
-              tests/test_normalize_soc_input.py
-              tests/test_recorder_deadband.py
-              tests/test_hardening_rc_2026_09_05.py
-              tests/test_issue11_fw151_unknown_state.py
-          - name: coordinator
-            paths: "custom_components/eveus/common_network.py"
-            tests: >-
-              tests/test_common_network.py
-              tests/test_command.py
-              tests/test_availability_clock.py
-              tests/test_property_invariants.py
-              tests/test_hardening_rc_2026_07_10.py
-              tests/test_hardening_rc_2026_07_14.py
-              tests/test_hardening_rc_2026_07_19.py
-              tests/test_hardening_rc_2026_07_30.py
-              tests/test_hardening_rc_2026_08_21.py
-              tests/test_issue11_fw151_state_semantics.py
-              tests/test_issue11_fw151_unknown_state.py
-          - name: soc-limit
-            paths: "custom_components/eveus/soc_limit.py"
-            tests: >-
-              tests/test_soc_limit.py
-              tests/test_soc_limit_switch.py
-              tests/test_hardening_rc_2026_07_01.py
-              tests/test_hardening_4_16_1.py
-          - name: safety
-            paths: "custom_components/eveus/safety.py"
-            tests: >-
-              tests/test_safety.py
-              tests/test_safety_unknown_error.py
-          - name: entity-base
-            paths: "custom_components/eveus/common_base.py,custom_components/eveus/control_base.py"
-            tests: >-
-              tests/test_availability_clock.py
-              tests/test_grace_recheck_recovery.py
-              tests/test_control_entities.py
-              tests/test_control_select_coverage.py
-              tests/test_entities.py
-              tests/test_grace_holds_last_value.py
-              tests/test_sensor_definition_entities.py
-              tests/test_time_controls.py
-              tests/test_firmware_parsing.py
-              tests/test_hardening_4_16_1.py
-              tests/test_recorder_deadband.py
-              tests/test_hardening_rc_2026_07_30.py
-              tests/test_hardening_rc_2026_09_07.py
-          - name: init
-            paths: "custom_components/eveus/__init__.py"
-            tests: >-
-              tests/test_init_migration.py
-              tests/test_init_firmware_fallback.py
-              tests/test_setup_entry.py
-              tests/test_transition_events.py
-          - name: control-entities
-            paths: "custom_components/eveus/number.py,custom_components/eveus/switch.py,custom_components/eveus/common_command.py"
-            tests: >-
-              tests/test_limit_numbers.py
-              tests/test_limit_switches.py
-              tests/test_setpoint_number.py
-              tests/test_schedule_limit_numbers.py
-              tests/test_schedule_controls.py
-              tests/test_soc_number_entities.py
-              tests/test_soc_limit_switch.py
-              tests/test_ground_protection.py
-              tests/test_control_entities.py
-              tests/test_grace_holds_last_value.py
-              tests/test_command.py
-              tests/test_soc_autofill.py
-              tests/test_hardening_rc_2026_07_10.py
-              tests/test_hardening_rc_2026_08_24.py
-              tests/test_hardening_rc_2026_08_25.py
-              tests/test_hardening_rc_2026_09_05.py
-              tests/test_fw151_missing_fields_audit.py
-          - name: minor-entities
-            paths: "custom_components/eveus/select.py,custom_components/eveus/time.py,custom_components/eveus/binary_sensor.py,custom_components/eveus/button.py,custom_components/eveus/session_history.py"
-            tests: >-
-              tests/test_hardening_rc_2026_09_07.py
-              tests/test_adaptive_minvoltage_select.py
-              tests/test_control_select_coverage.py
-              tests/test_battery_low.py
-              tests/test_last_session.py
-              tests/test_time_controls.py
-              tests/test_entities.py
-              tests/test_grace_holds_last_value.py
-              tests/test_ocpp.py
-              tests/test_hardening_rc_2026_07_24.py
-              tests/test_hardening_rc_2026_07_30.py
-              tests/test_fw151_missing_fields_audit.py
-          - name: sensor-values
-            paths: "custom_components/eveus/sensor_definitions.py,custom_components/eveus/ev_sensors.py,custom_components/eveus/const.py"
-            tests: >-
-              tests/test_sensor_definitions.py
-              tests/test_sensor_definition_entities.py
-              tests/test_grace_holds_last_value.py
-              tests/test_one_estimate_anchor.py
-              tests/test_recorder_deadband.py
-              tests/test_ev_sensors.py
-              tests/test_ev_sensor_entities.py
-              tests/test_new_sensors.py
-              tests/test_multi_state_payload.py
-              tests/test_soc_calculator_push.py
-              tests/test_phase_support.py
-              tests/test_state_enum.py
-              tests/test_time_drift.py
-              tests/test_const_soc_modes.py
-              tests/test_soc_autofill.py
-              tests/test_not_charging_reason.py
-              tests/test_hardening_rc_2026_07_19.py
-              tests/test_hardening_rc_2026_08_21.py
-              tests/test_hardening_rc_2026_08_24.py
-              tests/test_hardening_rc_2026_09_05.py
-              tests/test_issue11_fw151_state_semantics.py
-              tests/test_issue11_fw151_unknown_state.py
-          - name: diagnostics-triggers
-            paths: "custom_components/eveus/diagnostics.py,custom_components/eveus/device_trigger.py"
-            tests: >-
-              tests/test_diagnostics.py
-              tests/test_device_trigger.py
-              tests/test_soc_autofill.py
-              tests/test_hardening_rc_2026_07_14.py
-              tests/test_hardening_rc_2026_07_24.py
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Pick the branch the tests live on
+        # The schedule only fires on the default branch, but the tests evolve
+        # on rc; measure rc while it exists (it is deleted after each merge).
+        run: |
+          if git ls-remote --exit-code --heads origin rc > /dev/null; then
+            git fetch --depth=1 origin rc
+            git checkout --detach FETCH_HEAD
+          else
+            echo "No rc branch; mutating the default branch."
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # mutmut 2.x crashes on newer Pythons (itertools.count pickling);
           # 3.12 is the supported-floor interpreter Validate already tests.
           python-version: "3.12"
           cache: "pip"
@@ -212,50 +59,40 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install -r requirements_test.txt
-          # 3.x dropped --paths-to-mutate and broke the 2026-06-23 run; stay on 2.x.
-          python -m pip install "mutmut<3.0"
+          python -m pip install "mutmut>=3,<4"
 
       - name: Run mutation tests
         env:
           PYTHONFAULTHANDLER: "1"
         # continue-on-error: mutmut's exit code encodes survived/timeout
         # counts, not crashes — see the report-only-gate note above. A real
-        # crash is caught below instead, in "Report results".
+        # crash is caught in "Check survivor baseline" instead.
         continue-on-error: true
-        # -x: kill a mutant on its first failing test instead of finishing the
-        # whole killer suite — the dominant cost is (mutant count x runner time).
-        run: >-
-          python -m mutmut run
-          --paths-to-mutate "${{ matrix.paths }}"
-          --tests-dir tests
-          --runner "python -m pytest -x -q ${{ matrix.tests }}"
-          --simple-output
-          --no-progress
+        run: python -m mutmut run
 
       - name: Report results
-        # Survivor diffs are this workflow's entire product; publish them to the
-        # run summary AND to stdout whether the run step passed, failed, or
+        # Survivor diffs are this workflow's entire product; publish them to
+        # the run summary AND to stdout whether the run step passed, failed or
         # timed out. The summary pane is not retrievable through the REST API,
-        # so the job log (which is) must carry the same information. This step
-        # also owns the job's actual pass/fail signal now (see the report-only
-        # gate note at the top of the file): it fails the job only when mutmut
-        # produced no usable report at all, not when it found survivors.
+        # so the job log (which is) must carry the same information.
         if: always()
         run: |
+          python -m mutmut export-cicd-stats || true
           python -m mutmut results 2>&1 | tee mutmut-results.txt || true
           {
-            echo "## Mutation results — ${{ matrix.name }}"
+            echo "## Mutation results"
             echo '```'
-            cat mutmut-results.txt
+            cat mutants/mutmut-cicd-stats.json 2>/dev/null || echo "no stats file"
+            echo
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          ids=$(python -m mutmut result-ids survived 2>/dev/null || true)
+          ids=$(sed -n 's/^ *\(.*\): survived$/\1/p' mutmut-results.txt | head -500)
           if [ -n "$ids" ]; then
-            for id in $(echo "$ids" | tr ' ' '\n' | head -500); do
+            for id in $ids; do
               python -m mutmut show "$id" 2>&1 || true
             done | tee mutmut-survivors.txt
             {
-              echo "<details><summary>Surviving mutant diffs</summary>"
+              echo "<details><summary>Surviving mutant diffs (first 500)</summary>"
               echo ""
               echo '```diff'
               cat mutmut-survivors.txt
@@ -263,38 +100,34 @@ jobs:
               echo "</details>"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-          # Real failure signal: an empty results file, or one containing a
-          # Python traceback / argparse usage error, means mutmut crashed or
-          # never ran at all (bad install, bad --paths-to-mutate) rather than
-          # just finding survivors — that's the one case this workflow still
-          # needs to fail loudly on. `mutmut results` only lists categories
-          # worth attention (Survived/Timed out/Suspicious — not every run has
-          # any of those, and a fully-killed leg prints none of them), so this
-          # checks for crash signatures rather than requiring specific text.
-          if [ ! -s mutmut-results.txt ] || grep -qE 'Traceback \(most recent call last\)|^usage: mutmut' mutmut-results.txt; then
-            echo "::error::mutmut produced no usable report for ${{ matrix.name }} — treating as a real CI failure, not a survivor count."
-            exit 1
-          fi
 
       - name: Check survivor baseline (regression ratchet)
-        # The report-only gate above never fails on survivor count (by
-        # design — see the note at the top of this file). That means an
-        # increase in real survivors from newly-shipped, untested code
-        # looked identical to expected noise. This step diffs against a
-        # committed baseline: an increase FAILS this job, a decrease is a
-        # prompt to tighten .github/mutation-baseline.json. Failing is safe
-        # here — this workflow is a weekly cron, never a PR gate — and a
-        # warning nobody reads is how a weakened killer-test list ships.
+        # The report-only gate above never fails on survivor count, so an
+        # increase from newly-shipped, untested code would look identical to
+        # noise. This step diffs against the committed baseline: an increase
+        # FAILS the job, a decrease is a prompt to tighten
+        # .github/mutation-baseline.json. An absent or empty stats file means
+        # mutmut itself broke, which is also a failure. Failing is safe: this
+        # workflow is a weekly cron, never a PR gate.
         if: always()
-        env:
-          LEG_NAME: ${{ matrix.name }}
         run: |
-          survived=$(python -m mutmut result-ids survived 2>/dev/null | tr ' ' '\n' | grep -c . || true)
-          baseline=$(python3 -c "import json,os; print(json.load(open('.github/mutation-baseline.json')).get(os.environ['LEG_NAME'], 0))")
-          echo "Leg $LEG_NAME: survivors=$survived baseline=$baseline"
-          if [ "$survived" -gt "$baseline" ]; then
-            echo "::error::$LEG_NAME: survivors increased ($baseline -> $survived) — likely new code shipped without a killer test."
-            exit 1
-          elif [ "$survived" -lt "$baseline" ]; then
-            echo "::notice::$LEG_NAME: survivors decreased ($baseline -> $survived) — update .github/mutation-baseline.json to tighten the ratchet."
-          fi
+          python3 - <<'PY'
+          import json
+          import sys
+
+          try:
+              stats = json.load(open("mutants/mutmut-cicd-stats.json"))
+          except (OSError, ValueError):
+              stats = {}
+          if not stats.get("total"):
+              print("::error::mutmut produced no usable report — treating as a real CI failure, not a survivor count.")
+              sys.exit(1)
+          survived = stats["survived"]
+          baseline = json.load(open(".github/mutation-baseline.json"))["survivors"]
+          print(f"survivors={survived} baseline={baseline} (of {stats['total']} mutants; timeouts={stats.get('timeout', 0)})")
+          if survived > baseline:
+              print(f"::error::survivors increased ({baseline} -> {survived}) — likely new code shipped without a killer test.")
+              sys.exit(1)
+          if survived < baseline:
+              print(f"::notice::survivors decreased ({baseline} -> {survived}) — update .github/mutation-baseline.json to tighten the ratchet.")
+          PY

@@ -13,9 +13,6 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DEFAULT_SOC_CORRECTION,
     DOMAIN,
-    MAX_VALID_SYSTEM_TIME,
-    MAX_VALID_TIMEZONE_H,
-    MIN_VALID_TIMEZONE_H,
     SOC_INPUT_LIMITS,
 )
 
@@ -185,29 +182,6 @@ def get_safe_value(
 # =============================================================================
 # Device Information
 # =============================================================================
-
-
-def get_charger_wall_clock_seconds(data: Any) -> Optional[int]:
-    """Return the charger's wall clock from a /main payload, validated.
-
-    ``systemTime`` is the charger's local wall clock encoded as epoch seconds
-    (stored UTC shifted by the ``timeZone`` select). The wall clock — not the
-    decoded UTC — is what schedules and tariff windows run on, so drift checks
-    must compare it against Home Assistant's local wall clock: comparing UTC
-    to UTC cancels the ``timeZone`` select out and goes blind to a wrong
-    timezone or a DST mismatch. Returns None when either field is missing,
-    corrupt, or outside the plausible RTC / timezone windows.
-    """
-    system_time = get_safe_value(data, "systemTime", int)
-    tz_hours = get_safe_value(data, "timeZone", int)
-    if (
-        system_time is None
-        or tz_hours is None
-        or not 0 < system_time <= MAX_VALID_SYSTEM_TIME
-        or not MIN_VALID_TIMEZONE_H <= tz_hours <= MAX_VALID_TIMEZONE_H
-    ):
-        return None
-    return system_time
 
 
 def get_local_utc_offset_seconds() -> int:
@@ -495,7 +469,7 @@ def _remaining_seconds_or_state(
         return seconds
 
     except Exception as err:
-        _LOGGER.debug("Error computing remaining seconds: %s", err, exc_info=True)
+        _LOGGER.debug("Error computing remaining seconds: %s", type(err).__name__)
         return _REMAINING_UNAVAILABLE
 
 

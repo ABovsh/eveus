@@ -2,21 +2,35 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 import logging
+import re
+from pathlib import Path
 # NOT `import time`: this package has a `time.py` platform module, and the
 # import system overwrites a package-global named `time` with that submodule
 # the moment HA loads the time platform.
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
+from homeassistant.components import websocket_api
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform, CONF_HOST, CONF_USERNAME, CONF_PASSWORD
+from homeassistant.const import (
+    EVENT_HOMEASSISTANT_STARTED,
+    Platform,
+    CONF_HOST,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
     ConfigEntryNotReady,
+    HomeAssistantError,
 )
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
@@ -43,24 +57,21 @@ from .const import (
     DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
-    BATTERY_LOW_THRESHOLD_VOLTS,
-    BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
-    BATTERY_OK_THRESHOLD_VOLTS,
-    BATTERY_LOW_DEBOUNCE_POLLS,
-    CLOCK_DRIFT_THRESHOLD_SECONDS,
-    CLOCK_DRIFT_TRIGGER_POLLS,
-    CLOCK_DRIFT_CLEAR_POLLS,
-    CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS,
-    CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS,
 )
 from .common_network import EveusUpdater
+from .issues import (
+    BatteryLowTracker,
+    ClockDriftTracker,
+    battery_low_issue_id,
+    clock_drift_issue_id,
+    ocpp_issue_id,
+    update_battery_low_issue,
+    update_clock_drift_issue,
+    update_ocpp_issue,
+)
 from .utils import (
-    get_charger_wall_clock_seconds,
-    get_local_utc_offset_seconds,
-    get_local_wall_clock_seconds,
     get_device_suffix,
     get_next_device_number,
-    get_safe_value,
     is_device_number_taken,
     normalize_soc_input,
 )
@@ -85,6 +96,12 @@ PLATFORMS: list[Platform] = [
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+# The dashboard card ships with the integration: nothing to add by hand.
+CARD_URL = f"/{DOMAIN}/eveus-card.js"
+CARD_PATH = Path(__file__).parent / "frontend" / "eveus-card.js"
+# unique_id is "eveus<device suffix>_<entity key>"; the card needs the key only.
+_UNIQUE_ID_KEY = re.compile(r"^eveus\d*_(.+)$")
+
 
 @dataclass
 class EveusRuntimeData:
@@ -98,7 +115,7 @@ class EveusRuntimeData:
     phases: int = DEFAULT_PHASES
 
 
-EveusConfigEntry = ConfigEntry[EveusRuntimeData]  # pragma: no mutate - pure type alias, only ever consumed as a (PEP 563, never-evaluated) annotation elsewhere
+EveusConfigEntry = ConfigEntry[EveusRuntimeData]
 
 
 def _invalid_config_issue_id(entry: ConfigEntry) -> str:
@@ -137,272 +154,6 @@ def _legacy_helpers_present(hass: HomeAssistant) -> bool:
         reg.async_get("input_number.ev_initial_soc")
         and reg.async_get("input_number.ev_battery_capacity")
     )
-
-
-def _ocpp_issue_id(entry: ConfigEntry) -> str:
-    """Return the repair issue id flagging that OCPP is enabled."""
-    return f"ocpp_enabled_{entry.entry_id}"
-
-
-def _update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None:
-    """Raise or clear the OCPP-enabled warning based on the latest poll.
-
-    When OCPP is enabled the charger is driven by the OCPP backend / mobile
-    app, which can override Charging Current, limits, and schedule, so those
-    Home Assistant controls may not take effect. Surfaced as a non-fixable
-    warning that auto-clears the moment OCPP is turned off — even if that
-    happens from the mobile app rather than from HA.
-    """
-    # Skip failed/unavailable polls: the coordinator notifies listeners on
-    # failed refreshes too while retaining the previous payload (same guard as
-    # the battery and clock-drift trackers).
-    if not updater.available or not updater.last_update_success:
-        return
-    value = get_safe_value(updater.data, "ocppEnabled", int) if updater.data else None
-    if value == 1:
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _ocpp_issue_id(entry),
-            is_fixable=False,
-            is_persistent=False,
-            issue_domain=DOMAIN,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key="ocpp_enabled",
-        )
-    elif value == 0:
-        # Only an explicit "off" clears the warning. A missing or out-of-domain
-        # ocppEnabled (None) means the firmware dropped/garbled the field — leave
-        # the prior issue state untouched rather than falsely dismissing it.
-        ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
-
-
-def _battery_low_issue_id(entry: ConfigEntry) -> str:
-    """Return the repair issue id for a depleted CR2032 coin cell."""
-    return f"battery_low_{entry.entry_id}"
-
-
-class _BatteryLowTracker:
-    """Decide when to raise/clear the low RTC-battery warning.
-
-    Applies hysteresis (fire below the low threshold, clear only above the
-    higher OK threshold) and debounce (only fire after several consecutive low
-    readings), so a battery hovering at the edge or a single glitchy ADC read
-    can't make the warning flap or raise a false alarm.
-    """
-
-    def __init__(self) -> None:
-        self._low_streak = 0
-        self._active = False
-
-    def evaluate(self, value: float | None) -> bool | None:
-        """Return True to raise, False to clear, or None to leave unchanged.
-
-        A missing/non-positive reading (offline or garbled `vBat`) is treated as
-        "not low": it neither advances the debounce streak nor clears an active
-        warning, mirroring how the OCPP warning ignores dropped fields.
-        """
-        if value is None or value <= 0 or value > BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS:
-            return None
-        if value < BATTERY_LOW_THRESHOLD_VOLTS:
-            self._low_streak += 1
-            if self._low_streak >= BATTERY_LOW_DEBOUNCE_POLLS and not self._active:
-                self._active = True
-                return True
-            return None
-        # value >= low threshold: a healthy-enough reading restarts the debounce.
-        self._low_streak = 0
-        if value >= BATTERY_OK_THRESHOLD_VOLTS and self._active:
-            self._active = False
-            return False
-        return None
-
-
-def _update_battery_low_issue(
-    hass: HomeAssistant, entry: ConfigEntry, updater, tracker: _BatteryLowTracker
-) -> None:
-    """Raise or clear the low coin-cell warning based on the latest poll.
-
-    Non-fixable informational warning (the fix is a physical battery swap) that
-    auto-clears once the replacement reads healthy.
-
-    A failed or unavailable poll is skipped entirely: the coordinator notifies
-    listeners on failed refreshes too while retaining the previous payload, so
-    without this guard one genuine low reading followed by an outage would
-    replay the stale sample into the debounce and raise a false warning.
-    """
-    if not updater.available or not updater.last_update_success:
-        return
-    value = get_safe_value(updater.data, "vBat", float) if updater.data else None
-    decision = tracker.evaluate(value)
-    if decision is True:
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _battery_low_issue_id(entry),
-            is_fixable=False,
-            is_persistent=False,
-            issue_domain=DOMAIN,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key="battery_low",
-        )
-    elif decision is False:
-        ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
-
-
-def _clock_drift_issue_id(entry: ConfigEntry) -> str:
-    """Return the repair issue id for a drifted charger clock."""
-    return f"clock_drift_{entry.entry_id}"
-
-
-class _ClockDriftTracker:
-    """Decide when to raise/clear the charger clock-drift notice.
-
-    Compares the charger's wall clock (``systemTime``, local-encoded epoch
-    seconds) against Home Assistant's local wall clock — not UTC to UTC, which
-    would cancel the ``timeZone`` select out and miss a wrong timezone or a
-    DST mismatch entirely.
-    Fires only after several consecutive polls more than the threshold away
-    from Home Assistant's clock; clears only after consecutive in-sync polls.
-    Missing/corrupt time fields neither advance nor reset either streak,
-    mirroring the other notice trackers. This tracker only reports — fixing
-    the clock stays a user action (Sync Time button).
-    """
-
-    def __init__(self) -> None:
-        self._drift_streak = 0
-        self._ok_streak = 0
-        self._active = False
-        # Classification of the most recent drifted reading, used to pick the
-        # repair message: "timezone" when the drift sits at a non-zero whole
-        # hour (wrong Time Zone select or DST mismatch — Sync Time won't fix
-        # it), "sync" for any other offset (the RTC itself is off).
-        self.kind = "sync"
-        self.hours = 0
-        # (kind, hours) the repair was last published with, owned by
-        # _update_clock_drift_issue; None while no issue is active.
-        self.published: tuple[str, int] | None = None
-        self.still_drifted = False
-        # Consecutive polls the live classification has differed from the
-        # published one; re-keying waits for a stable streak so a drift
-        # oscillating across a classification boundary can't rewrite the
-        # issue on every poll.
-        self.rekey_streak = 0
-
-    def evaluate(self, data: dict[str, Any] | None) -> bool | None:
-        """Return True to raise, False to clear, or None to leave unchanged."""
-        charger_wall = get_charger_wall_clock_seconds(data)
-        if charger_wall is None:
-            # A successful poll that simply omits/corrupts the time fields tells
-            # us nothing about the drift. Don't let it advance the re-key streak
-            # on stale classification state, and don't leave `still_drifted` set
-            # from an earlier sample (which would let two such polls re-publish a
-            # stale message).
-            self.still_drifted = False
-            self.rekey_streak = 0
-            return None
-        signed_drift = charger_wall - get_local_wall_clock_seconds()
-        whole_hours = round(signed_drift / 3600)
-        # A fractional local offset (India +5:30, Nepal +5:45) is one the
-        # charger's whole-hour Time Zone select can never represent: the best
-        # achievable wall clocks sit at -residue or +(3600-residue) from HA
-        # local. Drift matching either is the hardware limit, not a fixable
-        # sync/timezone fault — it needs its own guidance.
-        residue = get_local_utc_offset_seconds() % 3600
-        if residue and any(
-            abs(signed_drift - candidate) <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
-            for candidate in (-residue, 3600 - residue)
-        ):
-            self.kind = "fractional"
-            self.hours = 0
-        elif (
-            whole_hours != 0
-            and abs(signed_drift - whole_hours * 3600)
-            <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
-        ):
-            self.kind = "timezone"
-            self.hours = abs(whole_hours)
-        else:
-            self.kind = "sync"
-            self.hours = 0
-        drift = abs(signed_drift)
-        self.still_drifted = drift > CLOCK_DRIFT_THRESHOLD_SECONDS
-        if drift > CLOCK_DRIFT_THRESHOLD_SECONDS:
-            self._ok_streak = 0
-            self._drift_streak += 1
-            if self._drift_streak >= CLOCK_DRIFT_TRIGGER_POLLS and not self._active:
-                self._active = True
-                return True
-            return None
-        self._drift_streak = 0
-        if self._active and drift > CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS:
-            # Hysteresis band: under the trigger threshold but still minutes
-            # wrong — not "recovered". Clearing requires consecutive polls
-            # genuinely back in sync, so reset the streak.
-            self._ok_streak = 0
-            return None
-        self._ok_streak += 1
-        if self._active and self._ok_streak >= CLOCK_DRIFT_CLEAR_POLLS:
-            self._active = False
-            return False
-        return None
-
-
-def _update_clock_drift_issue(
-    hass: HomeAssistant, entry: ConfigEntry, updater, tracker: _ClockDriftTracker
-) -> None:
-    """Raise or clear the clock-drift notice based on the latest poll.
-
-    Non-fixable warning: the guided fix is the Time Zone select plus the Sync
-    Time button — the integration deliberately never rewrites the charger
-    clock on its own. Skips failed/unavailable polls so stale data is never
-    replayed into the debounce (same guard as the battery notice).
-    """
-    if not updater.available or not updater.last_update_success:
-        return
-    decision = tracker.evaluate(updater.data if isinstance(updater.data, dict) else None)
-    # Re-key an ACTIVE issue when the drift's classification changes (sync
-    # <-> whole-hour timezone, or a different hour count) so the repair never
-    # keeps recommending the wrong fix. Only while still drifted, and only
-    # after the new classification has held for a full debounce streak — a
-    # drift oscillating across a classification boundary must not rewrite the
-    # issue on every poll.
-    rekey = False  # pragma: no mutate - `rekey` is only ever consumed in a boolean `or` context below; None and False are equally falsy there
-    if (
-        decision is None
-        and tracker.published is not None
-        and tracker.still_drifted
-        and (tracker.kind, tracker.hours) != tracker.published
-    ):
-        tracker.rekey_streak += 1
-        rekey = tracker.rekey_streak >= CLOCK_DRIFT_TRIGGER_POLLS
-    else:
-        tracker.rekey_streak = 0
-
-    if decision is True or rekey:
-        translation_key = {
-            "timezone": "clock_drift_timezone",
-            "fractional": "clock_drift_fractional_timezone",
-        }.get(tracker.kind, "clock_drift")
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _clock_drift_issue_id(entry),
-            is_fixable=False,
-            is_persistent=False,
-            issue_domain=DOMAIN,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=translation_key,
-            translation_placeholders=(
-                {"hours": str(tracker.hours)} if tracker.kind == "timezone" else None
-            ),
-        )
-        tracker.published = (tracker.kind, tracker.hours)
-        tracker.rekey_streak = 0
-    elif decision is False:
-        ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
-        tracker.published = None
-        tracker.rekey_streak = 0
 
 
 # SOC entities created only in Advanced mode, and per-phase sensors created only
@@ -478,9 +229,124 @@ def _prune_unused_entities(
             reg.async_remove(entity_id)
 
 
-async def async_setup(_hass: HomeAssistant, _config: dict[str, Any]) -> bool:
-    """Set up the Eveus component."""
+async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
+    """Set up the Eveus component and register the dashboard card once."""
+
+    async def _register_card(_event=None) -> None:
+        # Lovelace resources exist only once the frontend has set up.
+        try:
+            await _async_register_card(hass)
+        except Exception as err:  # noqa: BLE001 - the card must never block the charger
+            _LOGGER.warning("Eveus card was not registered: %s", type(err).__name__)
+
+    websocket_api.async_register_command(hass, _ws_card_entities)
+    if hass.is_running:
+        await _register_card()
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _register_card)
     return True
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eveus/card_entities",
+        vol.Optional("device_id"): str,
+    }
+)
+@callback
+def _ws_card_entities(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Map a charger's entity keys to entity_ids through the entity registry.
+
+    Keyed by unique_id, so the card keeps working after a user renames an
+    entity_id. Without a device_id the first charger is used.
+    """
+    registry = er.async_get(hass)
+    wanted = msg.get("device_id")
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        device_id = None
+        entities: dict[str, str] = {}
+        for ent in er.async_entries_for_config_entry(registry, entry.entry_id):
+            match = _UNIQUE_ID_KEY.match(ent.unique_id or "")
+            if ent.platform != DOMAIN or match is None:
+                continue
+            if wanted is not None and ent.device_id != wanted:
+                continue
+            device_id = device_id or ent.device_id
+            entities[match.group(1)] = ent.entity_id
+        if entities:
+            connection.send_result(msg["id"], {"device_id": device_id, "entities": entities})
+            return
+    connection.send_error(msg["id"], "not_found", "No Eveus charger found")
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve the card and have every dashboard load it, with a cache-busting hash.
+
+    Storage-mode dashboards get it as a Lovelace resource, exactly like a HACS
+    card: resources load after the frontend is ready, while an extra module
+    loads earlier and its element can be lost to the frontend's own registry
+    setup ("Custom element doesn't exist"). YAML-mode resources cannot be
+    written, so those fall back to the extra module.
+    """
+    if getattr(hass, "http", None) is None or "frontend" not in hass.config.components:
+        return
+    digest = await hass.async_add_executor_job(
+        lambda: hashlib.sha256(CARD_PATH.read_bytes()).hexdigest()[:8]
+    )
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL, str(CARD_PATH), True)]
+    )
+    url = f"{CARD_URL}?v={digest}"
+    lovelace = hass.data.get("lovelace")
+    resources = getattr(lovelace, "resources", None)
+    if getattr(lovelace, "resource_mode", None) != "storage" or not hasattr(
+        resources, "async_create_item"
+    ):
+        add_extra_js_url(hass, url)
+        return
+    await resources.async_get_info()  # loads the collection on first use
+    ours = [
+        item for item in resources.async_items()
+        if str(item.get("url", "")).split("?")[0] == CARD_URL
+    ]
+    if not ours:
+        await resources.async_create_item({"res_type": "module", "url": url})
+    elif ours[0]["url"] != url:
+        await resources.async_update_item(
+            ours[0]["id"], {"res_type": "module", "url": url}
+        )
+
+
+async def _async_unregister_card(hass: HomeAssistant, entry_id: str) -> None:
+    """Remove the dashboard-card Lovelace resource once the last entry goes.
+
+    Best effort: a storage or lovelace-data hiccup must not block entry
+    removal, and other eveus entries must keep the resource they still use.
+    Compared by entry_id, not list length: HA versions disagree on whether
+    the entry being removed is still present in `async_entries()` at this
+    point (2025.1 calls this before deleting it from the registry; current
+    HA deletes it first), so only *other* entries may block removal.
+    """
+    try:
+        others = [
+            e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry_id
+        ]
+        if others:
+            return
+        lovelace = hass.data.get("lovelace")
+        resources = getattr(lovelace, "resources", None)
+        if not hasattr(resources, "async_items"):
+            return
+        for item in resources.async_items():
+            if str(item.get("url", "")).split("?")[0] == CARD_URL:
+                await resources.async_delete_item(item["id"])
+    except (AttributeError, HomeAssistantError) as err:
+        _LOGGER.debug(
+            "Could not remove eveus dashboard card resource: %s",
+            type(err).__name__,
+        )
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -523,7 +389,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         except vol.Invalid:
             _LOGGER.warning(
-                "Could not normalize stored Eveus host for entry %s",  # pragma: no mutate - log message text, not a logged value
+                "Could not normalize stored Eveus host for entry %s",
                 getattr(entry, "entry_id", "<unknown>"),
             )
 
@@ -573,8 +439,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # would give them the same identity. Keep the old unique_id and
                 # let the user resolve the duplicate explicitly.
                 _LOGGER.warning(
-                    "Skipping unique_id canonicalization for entry %s: "  # pragma: no mutate - log message text, not a logged value
-                    "another entry already uses the canonical id",  # pragma: no mutate - log message text, not a logged value
+                    "Skipping unique_id canonicalization for entry %s: "
+                    "another entry already uses the canonical id",
                     entry.entry_id,
                 )
             else:
@@ -666,12 +532,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.debug("Assigned Eveus device number %d", device_number)  # pragma: no mutate - log message text, not a logged value
+            _LOGGER.debug("Assigned Eveus device number %d", device_number)
         elif raw_device_number != device_number:
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.debug("Normalized Eveus device number %d", device_number)  # pragma: no mutate - log message text, not a logged value
+            _LOGGER.debug("Normalized Eveus device number %d", device_number)
 
         # Purge the retired "Input Entities Status" sensor from the entity
         # registry so it does not linger as an unavailable/orphan entity after
@@ -715,6 +581,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         from .soc_limit import SocLimitController
 
         soc_calculator = CachedSOCCalculator()
+        # Seed from stored config data so a disabled SOC-input number entity
+        # (whose async_added_to_hass never runs) can't blank SOC Percent, the
+        # ETA sensors, or the SOC limit. The entity still overrides this the
+        # moment it is added, restoring any newer/restored value.
+        if get_soc_mode(entry) == SOC_MODE_ADVANCED:
+            soc_calculator.set_value(
+                "initial_soc",
+                normalize_soc_input(
+                    "initial_soc",
+                    entry.data.get(CONF_INITIAL_SOC),
+                    DEFAULT_INITIAL_SOC,
+                ),
+            )
+            soc_calculator.set_value(
+                "target_soc",
+                normalize_soc_input(
+                    "target_soc",
+                    entry.data.get(CONF_TARGET_SOC),
+                    DEFAULT_TARGET_SOC,
+                ),
+            )
+            soc_calculator.set_value(
+                "battery_capacity",
+                normalize_soc_input(
+                    "battery_capacity",
+                    entry.data.get(CONF_BATTERY_CAPACITY),
+                    DEFAULT_BATTERY_CAPACITY,
+                ),
+            )
+            soc_calculator.set_value(
+                "soc_correction",
+                normalize_soc_input(
+                    "soc_correction",
+                    entry.data.get(CONF_SOC_CORRECTION),
+                    DEFAULT_SOC_CORRECTION,
+                ),
+            )
         soc_limit = SocLimitController(hass, updater, soc_calculator)
 
         raw_phases = entry.data.get(CONF_PHASES, DEFAULT_PHASES)
@@ -725,7 +628,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             # phases_were_invalid signal that protects the phase 2/3 registry
             # rows from _prune_unused_entities below (see its 3-phase fallback).
             _LOGGER.warning(
-                "Eveus phase count %r was invalid; using %d phase(s) for this session",  # pragma: no mutate - log message text, not a logged value
+                "Eveus phase count %r was invalid; using %d phase(s) for this session",
                 raw_phases,
                 phases,
             )
@@ -775,10 +678,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
     except (ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady):
         raise
     except Exception as ex:
-        # Log the full traceback locally, but keep the host/URL out of the
-        # user-facing setup error string, matching the redaction used on the
+        # Name only the exception class: its text or traceback can carry the
+        # host/URL or response content, matching the redaction used on the
         # poll and config-flow error paths.
-        _LOGGER.exception("Unexpected error setting up Eveus integration")  # pragma: no mutate - log message text, not a logged value
+        _LOGGER.error("Unexpected error setting up Eveus integration: %s", type(ex).__name__)
         raise ConfigEntryNotReady(f"Unexpected error: {type(ex).__name__}") from ex
 
 
@@ -792,37 +695,25 @@ async def _finish_setup(
     phases_were_invalid: bool,
 ) -> bool:
     """Wire listeners, forward platforms, and prune, after runtime_data is set."""
+    def follow_polls(process: Callable[[], None]) -> None:
+        """Evaluate now and after every poll, until the entry unloads."""
+        entry.async_on_unload(updater.async_add_listener(process))
+        process()
+
     # Keep the OCPP-enabled warning in sync with every poll, so it reflects
     # toggles made from the charger UI or mobile app, not just from HA.
-    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
-    def _refresh_ocpp_issue() -> None:
-        _update_ocpp_issue(hass, entry, updater)
-
-    entry.async_on_unload(updater.async_add_listener(_refresh_ocpp_issue))
-    _refresh_ocpp_issue()
+    follow_polls(lambda: update_ocpp_issue(hass, entry, updater))
 
     # Track the CR2032 coin cell (vBat) across polls and warn when it is
     # depleted, with debounce/hysteresis held in the tracker.
-    battery_tracker = _BatteryLowTracker()
-
-    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
-    def _refresh_battery_issue() -> None:
-        _update_battery_low_issue(hass, entry, updater, battery_tracker)
-
-    entry.async_on_unload(updater.async_add_listener(_refresh_battery_issue))
-    _refresh_battery_issue()
+    battery_tracker = BatteryLowTracker()
+    follow_polls(lambda: update_battery_low_issue(hass, entry, updater, battery_tracker))
 
     # Warn when the charger clock has drifted from Home Assistant by more
     # than 10 minutes (schedules/tariffs would mistime). Report-only: the
     # notice walks the user to the Time Zone select + Sync Time button.
-    clock_tracker = _ClockDriftTracker()
-
-    @callback  # pragma: no mutate - HA scheduling-hint decorator, no observable effect on the wrapped callable
-    def _refresh_clock_drift_issue() -> None:
-        _update_clock_drift_issue(hass, entry, updater, clock_tracker)
-
-    entry.async_on_unload(updater.async_add_listener(_refresh_clock_drift_issue))
-    _refresh_clock_drift_issue()
+    clock_tracker = ClockDriftTracker()
+    follow_polls(lambda: update_clock_drift_issue(hass, entry, updater, clock_tracker))
 
     # Surface dangerous charger conditions (missing ground, leakage,
     # overheat, and firmware safety faults) as Home Assistant Repairs
@@ -838,15 +729,13 @@ async def _finish_setup(
     # Restore persisted recovery memory before the first reconciliation so a
     # dismissed-but-recovered safety issue can re-alert on a fresh fault.
     await safety_manager.async_load()
-    entry.async_on_unload(updater.async_add_listener(safety_manager.process))
-    safety_manager.process()
+    follow_polls(safety_manager.process)
 
-    entry.async_on_unload(updater.async_add_listener(soc_limit.process))
     # Cancel any in-flight SOC Stop on unload so it can't POST after teardown
     # (its task is created via hass.async_create_task, which HA does not bind to
     # this entry's lifecycle).
     entry.async_on_unload(soc_limit.async_shutdown)
-    soc_limit.process()
+    follow_polls(soc_limit.process)
 
     # DataUpdateCoordinator constructed with config_entry already registers
     # async_shutdown on the entry unload lifecycle — no manual registration.
@@ -892,9 +781,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from homeassistant.helpers.storage import Store
 
     ir.async_delete_issue(hass, DOMAIN, _invalid_config_issue_id(entry))
-    ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
-    ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
-    ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, battery_low_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, f"soc_dashboard_update_{entry.entry_id}")
     for policy in POLICIES:
         ir.async_delete_issue(hass, DOMAIN, safety_issue_id(entry, policy.key))
@@ -904,7 +793,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     try:
         await Store(hass, _SAFETY_STORE_VERSION, safety_store_key(entry)).async_remove()
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("Could not remove safety store for removed entry")  # pragma: no mutate - log message text, not a logged value
+        _LOGGER.debug("Could not remove safety store for removed entry")
+
+    await _async_unregister_card(hass, entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bool:
@@ -914,7 +805,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bo
     # prematurely deleted issue could not be recreated until full recovery.
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        ir.async_delete_issue(hass, DOMAIN, _ocpp_issue_id(entry))
-        ir.async_delete_issue(hass, DOMAIN, _battery_low_issue_id(entry))
-        ir.async_delete_issue(hass, DOMAIN, _clock_drift_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, battery_low_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))
     return unloaded

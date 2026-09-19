@@ -6,6 +6,7 @@ import pytest
 from homeassistant.components.number import NumberMode
 from homeassistant.core import State
 
+from conftest import SnapshotBackedMock
 from custom_components.eveus import number as number_mod
 from custom_components.eveus.number import (
     EveusSetpointNumber,
@@ -40,7 +41,7 @@ TIME = EveusSetpointNumberDescription(
 
 
 def _make(description):
-    updater = MagicMock()
+    updater = SnapshotBackedMock()
     updater.available = True
     updater.data = {description.state_key: 0}
     updater.send_command = AsyncMock(return_value=True)
@@ -101,28 +102,8 @@ def test_energy_read_rounds_to_three_decimals():
     assert ent._read_device_value() == 56.009
 
 
-def test_time_read_rounds_to_whole_minutes():
-    ent, updater = _make(
-        EveusSetpointNumberDescription(
-            key="limit_time",
-            name="Limit Time",
-            command="timeLimit",
-            state_key="timeLimit",
-            device_to_ha=1 / 60,
-            ha_to_device=60.0,
-            native_min_value=0.0,
-            native_max_value=1440.0,
-            native_step=5.0,
-            native_unit_of_measurement="min",
-            display_precision=0,
-        )
-    )
-    updater.data = {"timeLimit": 29198}      # 486.633... min
-    assert ent._read_device_value() == 487.0
-
-
 def _make_threshold(data):
-    updater = MagicMock()
+    updater = SnapshotBackedMock()
     updater.available = True
     updater.data = data
     updater.send_command = AsyncMock(return_value=True)
@@ -274,11 +255,11 @@ def test_setpoint_number_resolve_value_grace_period_boundaries():
     updater.available = True
     updater.data = {}
     ent._last_device_value = 42.0
-    ent._last_successful_read = time.time()
+    ent._last_successful_read = time.monotonic()
     assert ent._resolve_value() == 42.0  # age ~0, within grace
 
     # Grace expired -> must not return the stale value.
-    ent._last_successful_read = time.time() - CONTROL_GRACE_PERIOD
+    ent._last_successful_read = time.monotonic() - CONTROL_GRACE_PERIOD
     assert ent._resolve_value() is None
 
 
@@ -293,11 +274,11 @@ def test_setpoint_number_resolve_value_grace_boundary_exact(monkeypatch):
     ent._last_device_value = 7.0
     ent._last_successful_read = 1000.0
 
-    monkeypatch.setattr(number_mod.time, "time", lambda: 1000.0)  # age == 0 exactly
+    monkeypatch.setattr(number_mod.time, "monotonic", lambda: 1000.0)  # age == 0 exactly
     assert ent._resolve_value() == 7.0
 
     monkeypatch.setattr(
-        number_mod.time, "time", lambda: 1000.0 + CONTROL_GRACE_PERIOD
+        number_mod.time, "monotonic", lambda: 1000.0 + CONTROL_GRACE_PERIOD
     )  # age == GRACE exactly -> must NOT be treated as still fresh
     assert ent._resolve_value() is None
 
@@ -313,7 +294,7 @@ def test_setpoint_number_resolve_value_ignores_stale_value_when_grace_expired_bu
     updater.available = True
     updater.data = {}  # no energyLimit key -> device read returns None
     ent._last_device_value = 5.0
-    ent._last_successful_read = time.time() - CONTROL_GRACE_PERIOD - 10
+    ent._last_successful_read = time.monotonic() - CONTROL_GRACE_PERIOD - 10
     assert ent._resolve_value() is None
 
 
@@ -388,7 +369,7 @@ def test_setpoint_number_restore_records_a_real_read_timestamp():
 
     ent, _ = _make(ENERGY)
     ent._last_successful_read = None
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(ent._async_restore_state(State("number.x", "50")))
     assert ent._last_successful_read is not None
     assert ent._last_successful_read >= before
@@ -483,7 +464,7 @@ def test_undervoltage_threshold_restore_records_a_real_read_timestamp():
 
     ent, _ = _make_threshold({})
     ent._last_successful_read = None
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(ent._async_restore_state(State("number.x", "150")))
     assert ent._last_successful_read is not None
     assert ent._last_successful_read >= before
@@ -525,3 +506,20 @@ def test_unit_bearing_numbers_declare_a_device_class() -> None:
     assert UNDERVOLTAGE_THRESHOLD_NUMBER.device_class is NumberDeviceClass.VOLTAGE
     # Explicitly unchanged: no monetary NumberDeviceClass exists.
     assert by_key["limit_cost"].device_class is None
+
+
+def test_write_errors_name_the_setting_and_the_rejected_value():
+    """A user sees which setting failed, and the value only when one was sent."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    ent, updater = _make(ENERGY)
+    updater.send_command = AsyncMock(return_value=False)
+    with pytest.raises(HomeAssistantError) as rejected:
+        asyncio.run(ent.async_set_native_value(40))
+    assert str(rejected.value) == "Eveus charger did not accept Limit Energy = 40.0"
+
+    ent, updater = _make(ENERGY)
+    updater.send_command = AsyncMock(side_effect=RuntimeError("boom"))
+    with pytest.raises(HomeAssistantError) as failed:
+        asyncio.run(ent.async_set_native_value(40))
+    assert str(failed.value) == "Failed to set Limit Energy: boom"

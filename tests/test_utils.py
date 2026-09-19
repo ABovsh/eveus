@@ -408,23 +408,30 @@ def test_get_local_wall_clock_seconds_adds_offset(
     assert utils.get_local_wall_clock_seconds() == 1000 + 3600
 
 
+def _wall_clock(data) -> int | None:
+    """The charger wall clock, now a view on the shared snapshot parse."""
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    return EveusSnapshot.parse(data, None).charger_wall_clock_s
+
+
 def test_charger_wall_clock_seconds_boundaries() -> None:
-    assert utils.get_charger_wall_clock_seconds({"systemTime": 0, "timeZone": 0}) is None
-    assert utils.get_charger_wall_clock_seconds({"systemTime": 1, "timeZone": 0}) == 1
+    assert _wall_clock({"systemTime": 0, "timeZone": 0}) is None
+    assert _wall_clock({"systemTime": 1, "timeZone": 0}) == 1
     assert (
-        utils.get_charger_wall_clock_seconds(
+        _wall_clock(
             {"systemTime": MAX_VALID_SYSTEM_TIME, "timeZone": 0}
         )
         == MAX_VALID_SYSTEM_TIME
     )
     assert (
-        utils.get_charger_wall_clock_seconds(
+        _wall_clock(
             {"systemTime": 100, "timeZone": MIN_VALID_TIMEZONE_H}
         )
         == 100
     )
     assert (
-        utils.get_charger_wall_clock_seconds(
+        _wall_clock(
             {"systemTime": 100, "timeZone": MAX_VALID_TIMEZONE_H}
         )
         == 100
@@ -434,8 +441,8 @@ def test_charger_wall_clock_seconds_boundaries() -> None:
 def test_charger_wall_clock_seconds_missing_one_field_returns_none_not_raises() -> None:
     # Only one of the two required fields present must return None -- not raise
     # (guards an `and` where the None-checks need `or`).
-    assert utils.get_charger_wall_clock_seconds({"systemTime": 100}) is None
-    assert utils.get_charger_wall_clock_seconds({"timeZone": 3}) is None
+    assert _wall_clock({"systemTime": 100}) is None
+    assert _wall_clock({"timeZone": 3}) is None
 
 
 def test_max_remaining_seconds_constant_is_30_days() -> None:
@@ -494,3 +501,25 @@ def test_calculate_remaining_time_never_reports_zero_minutes() -> None:
     assert utils.calculate_remaining_time(79.7, 80, 7000, 80, 0) == "5m"
     assert utils.calculate_remaining_time(79.9, 80, 7000, 80, 0) == "5m"
     assert utils.calculate_remaining_time(79.95, 80, 7000, 80, 0) == "< 1m"
+
+
+@pytest.mark.parametrize(
+    ("status", "rejected"), [(200, False), (299, False), (300, True), (302, True), (399, True), (400, False)]
+)
+def test_raise_for_redirect_rejects_exactly_the_3xx_range(status: int, rejected: bool) -> None:
+    """Only 300-399 is a redirect; 4xx stays with raise_for_status and its error mapping."""
+    import aiohttp
+
+    from custom_components.eveus._payload import raise_for_redirect
+
+    request_info = object()
+    response = SimpleNamespace(status=status, request_info=request_info)
+    if not rejected:
+        assert raise_for_redirect(response) is None
+        return
+    with pytest.raises(aiohttp.ClientResponseError) as err:
+        raise_for_redirect(response)
+    assert err.value.status == status
+    assert err.value.message == "Redirect rejected"
+    assert err.value.request_info is request_info
+    assert err.value.history == ()

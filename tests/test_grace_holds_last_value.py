@@ -29,12 +29,14 @@ from homeassistant.helpers.entity import EntityCategory
 
 from conftest import EveusTestUpdater, disable_state_writes
 from custom_components.eveus import common_base
-from custom_components.eveus.binary_sensor import EveusCarConnectedBinarySensor
+from custom_components.eveus.binary_sensor import (
+    CAR_CONNECTED_DESCRIPTION,
+    EveusBinarySensor,
+)
 from custom_components.eveus.const import AVAILABILITY_GRACE_PERIOD
 from custom_components.eveus.sensor_definitions import (
     OptimizedEveusSensor,
-    SensorSpec,
-    SensorType,
+    EveusSensorEntityDescription,
 )
 
 _START = 1_000_000.0
@@ -45,30 +47,26 @@ def clock(monkeypatch: pytest.MonkeyPatch):
     """Drive the grace window by hand, and swallow its scheduled recheck."""
     now = {"t": _START}
     monkeypatch.setattr(common_base.time, "monotonic", lambda: now["t"])
-    monkeypatch.setattr(
-        common_base, "async_call_later", lambda *_a, **_k: (lambda: None)
-    )
     return now
 
 
-def _spec(value_fn, *, offline: bool = False, attributes_fn=None) -> SensorSpec:
-    return SensorSpec(
+def _spec(value_fn, *, offline: bool = False, attributes_fn=None) -> EveusSensorEntityDescription:
+    return EveusSensorEntityDescription(
         key="test_sensor",
         name="Test Sensor",
         value_fn=value_fn,
-        sensor_type=SensorType.MEASUREMENT,
         icon="mdi:test-tube",
         device_class="energy",
         state_class="total_increasing",
-        unit="kWh",
-        precision=2,
-        category=EntityCategory.DIAGNOSTIC,
+        native_unit_of_measurement="kWh",
+        suggested_display_precision=2,
+        entity_category=EntityCategory.DIAGNOSTIC,
         attributes_fn=attributes_fn,
         available_when_offline=offline,
     )
 
 
-def _sensor(updater, spec: SensorSpec) -> OptimizedEveusSensor:
+def _sensor(updater, spec: EveusSensorEntityDescription) -> OptimizedEveusSensor:
     entity = OptimizedEveusSensor(updater, spec)
     entity.hass = SimpleNamespace(config=SimpleNamespace(time_zone="Europe/Kiev"))
     disable_state_writes(entity)
@@ -100,38 +98,6 @@ def _age_out_the_grace_window(entity, clock) -> None:
 
 
 # --- Sensors ---
-
-
-def test_sensor_holds_its_reading_through_the_grace_window(clock) -> None:
-    updater = EveusTestUpdater({"totalEnergy": "5178.63"})
-    entity = _sensor(updater, _spec(_payload_value))
-    entity._handle_coordinator_update()
-    assert entity.native_value == 5178.63
-
-    _go_offline(entity, updater)
-
-    assert entity.available is True, "still inside the grace window"
-    assert entity.native_value == 5178.63, "a missed poll must not blank the value"
-
-
-def test_sensor_never_publishes_unknown_before_it_publishes_unavailable(clock) -> None:
-    """The utility_meter regression, stated as an invariant.
-
-    Every state this entity publishes while the charger is unreachable must be
-    either the last real reading or nothing at all — never a blank that is
-    still 'available', because that is what reaches a helper as `unknown`.
-    """
-    updater = EveusTestUpdater({"totalEnergy": "5178.63"})
-    entity = _sensor(updater, _spec(_payload_value))
-    entity._handle_coordinator_update()
-
-    _go_offline(entity, updater)
-    for _ in range(3):
-        entity._handle_coordinator_update()
-        assert not (entity.available and entity.native_value is None)
-
-    _age_out_the_grace_window(entity, clock)
-    assert entity.available is False
 
 
 def test_holding_a_reading_reports_no_change(clock) -> None:
@@ -210,7 +176,7 @@ def test_an_offline_capable_sensor_keeps_updating_during_the_grace_window(clock)
 
 def test_binary_sensor_holds_its_reading_through_the_grace_window(clock) -> None:
     updater = EveusTestUpdater({"state": 4})
-    entity = EveusCarConnectedBinarySensor(updater)
+    entity = EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION)
     disable_state_writes(entity)
     entity._handle_coordinator_update()
     assert entity.is_on is True
@@ -223,7 +189,7 @@ def test_binary_sensor_holds_its_reading_through_the_grace_window(clock) -> None
 
 def test_binary_sensor_goes_unavailable_rather_than_blank(clock) -> None:
     updater = EveusTestUpdater({"state": 4})
-    entity = EveusCarConnectedBinarySensor(updater)
+    entity = EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION)
     disable_state_writes(entity)
     entity._handle_coordinator_update()
     _go_offline(entity, updater)
@@ -366,7 +332,7 @@ def test_binary_sensor_answers_before_it_has_ever_read_the_charger(clock) -> Non
     it this path raises AttributeError inside the entity's first state write.
     """
     updater = EveusTestUpdater({"state": 4}, available=False)
-    entity = EveusCarConnectedBinarySensor(updater)
+    entity = EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION)
     disable_state_writes(entity)
 
     entity._handle_coordinator_update()

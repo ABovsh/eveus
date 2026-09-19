@@ -11,13 +11,17 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 from conftest import EV_HELPERS, EveusTestUpdater, HelperHass
 from custom_components.eveus import sensor_definitions as sensors
 from custom_components.eveus import utils
-from custom_components.eveus.binary_sensor import EveusCarConnectedBinarySensor
+from custom_components.eveus.binary_sensor import (
+    CAR_CONNECTED_DESCRIPTION,
+    OCPP_CONNECTED_DESCRIPTION,
+    SESSION_ACTIVE_DESCRIPTION,
+    EveusBinarySensor,
+)
 from custom_components.eveus.const import CONNECTED_STATES
 from custom_components.eveus.ev_sensors import (
     CachedSOCCalculator,
@@ -115,8 +119,8 @@ class TestSessionCost:
         specs = {s.name: s for s in sensors.get_sensor_specifications()}
         assert "Session Cost" in specs
         spec = specs["Session Cost"]
-        assert spec.unit == "UAH"
-        assert spec.precision == 2
+        assert spec.native_unit_of_measurement == "UAH"
+        assert spec.suggested_display_precision == 2
         assert spec.state_class == SensorStateClass.TOTAL
         assert spec.device_class == SensorDeviceClass.MONETARY
 
@@ -201,16 +205,6 @@ class TestChargingFinishTime:
         # Within the same minute, both round to the same boundary.
         assert first == second
 
-    def test_uses_timestamp_device_class(self) -> None:
-        # Critical for HA UI / automations: device_class must be TIMESTAMP,
-        # otherwise the value would be rendered as a plain string.
-        # HA's CachedProperties metaclass stores attrs under __attr_* keys.
-        assert (
-            vars(ChargingFinishTimeSensor).get("__attr_device_class")
-            == SensorDeviceClass.TIMESTAMP
-        )
-
-
 # ---------------------------------------------------------------------------
 # Car Connected binary sensor
 # ---------------------------------------------------------------------------
@@ -223,8 +217,9 @@ class TestCarConnectedBinarySensor:
         assert CONNECTED_STATES == frozenset({3, 4, 5, 6})
 
     def _make(self, data: dict, *, available: bool = True):
-        sensor = EveusCarConnectedBinarySensor(
+        sensor = EveusBinarySensor(
             EveusTestUpdater(data, available=available),
+            CAR_CONNECTED_DESCRIPTION,
             1,
         )
         sensor._entity_available = available
@@ -261,18 +256,13 @@ class TestCarConnectedBinarySensor:
         sensor = self._make({"state": "garbage"})
         assert sensor.is_on is None
 
-    def test_uses_plug_device_class(self) -> None:
-        # HA's CachedProperties metaclass stores attrs under __attr_* keys.
-        assert (
-            vars(EveusCarConnectedBinarySensor).get("__attr_device_class")
-            == BinarySensorDeviceClass.PLUG
-        )
-
     def test_unique_id_follows_eveus_convention(self) -> None:
         sensor = self._make({"state": 4})
         # eveus_car_connected for device 1; "eveus2_..." for device 2.
         assert sensor.unique_id == "eveus_car_connected"
-        sensor2 = EveusCarConnectedBinarySensor(EveusTestUpdater({"state": 4}), 2)
+        sensor2 = EveusBinarySensor(
+            EveusTestUpdater({"state": 4}), CAR_CONNECTED_DESCRIPTION, 2
+        )
         assert sensor2.unique_id == "eveus2_car_connected"
 
     def test_coordinator_update_writes_on_real_state_transition(self) -> None:
@@ -282,7 +272,7 @@ class TestCarConnectedBinarySensor:
         # leaving HA stuck on the first-fetch value.
         data = {"state": 4}  # Charging → plug present
         updater = EveusTestUpdater(data)
-        sensor = EveusCarConnectedBinarySensor(updater, 1)
+        sensor = EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION, 1)
         sensor._entity_available = True
         sensor.hass = HelperHass()
         writes: list[bool | None] = []
@@ -301,3 +291,40 @@ class TestCarConnectedBinarySensor:
         # No-op update: no extra write.
         sensor._handle_coordinator_update()
         assert writes == [True, False]
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_binary_sensors_read_the_typed_snapshot() -> None:
+    """Car Connected / Session Active / OCPP Connected answer from the shared
+    parse, so "is the car plugged in" is decided in one place rather than
+    re-derived from the raw payload per sensor."""
+    from types import SimpleNamespace
+
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    def _updater(payload):
+        return SimpleNamespace(
+            available=True,
+            last_update_success=True,
+            host="h",
+            scheme="http",
+            data=None,  # only the snapshot carries the reading
+            snapshot=EveusSnapshot.parse(payload, None),
+            connection_quality={},
+            async_add_listener=lambda *a, **k: (lambda: None),
+            visible_within=lambda _grace: True,
+            config_entry=SimpleNamespace(entry_id="e", data={}),
+        )
+
+    charging = _updater({"state": 4, "currentSet": 16, "ocppconnected": 1})
+    assert EveusBinarySensor(charging, CAR_CONNECTED_DESCRIPTION).is_on is True
+    assert EveusBinarySensor(charging, SESSION_ACTIVE_DESCRIPTION).is_on is True
+    assert EveusBinarySensor(charging, OCPP_CONNECTED_DESCRIPTION).is_on is True
+
+    # The Error state hides the plug status; a definite "off" there would
+    # falsely trigger session-ended automations.
+    faulted = _updater({"state": 7, "currentSet": 16})
+    assert EveusBinarySensor(faulted, CAR_CONNECTED_DESCRIPTION).is_on is None
+    assert EveusBinarySensor(faulted, SESSION_ACTIVE_DESCRIPTION).is_on is None

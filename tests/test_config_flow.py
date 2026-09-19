@@ -11,6 +11,7 @@ import voluptuous as vol
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 
 from conftest import (
+    StreamReaderStub,
     TEST_BASE_URL,
     TEST_HOST,
     TEST_HOST_ALT,
@@ -120,19 +121,8 @@ class _Response:
         return len(self._body_bytes())
 
     @property
-    def content(self) -> "_StreamReader":
-        return _StreamReader(self._body_bytes())
-
-
-class _StreamReader:
-    """Minimal aiohttp StreamReader stand-in for read_json_capped."""
-
-    def __init__(self, raw: bytes) -> None:
-        self._raw = raw
-
-    async def iter_chunked(self, size: int):
-        for i in range(0, len(self._raw), size):
-            yield self._raw[i : i + size]
+    def content(self) -> "StreamReaderStub":
+        return StreamReaderStub(self._body_bytes())
 
 
 class _Session:
@@ -432,7 +422,7 @@ def test_validate_input_preserves_https_scheme_and_port() -> None:
 
 def test_validate_input_uses_same_timeout_budget_as_the_runtime_poll() -> None:
     # Setup previously hardcoded a 10s budget while the coordinator's regular
-    # poll uses UPDATE_TIMEOUT (20s) -- a charger slow enough to answer the
+    # poll uses UPDATE_TIMEOUT -- a charger slow enough to answer the
     # live poll every cycle could still never be added. Setup must give the
     # charger at least as much time as normal operation does.
     response = _Response(payload={"state": 2, "currentSet": "12", "verFWMain": "3.0.3"})
@@ -819,10 +809,6 @@ def test_reauth_schema_prefills_username_from_stored_defaults() -> None:
     username_key = next(key for key in schema.schema if key.schema == CONF_USERNAME)
 
     assert username_key.default() == TEST_USERNAME
-
-
-def test_reauth_max_revalidations_constant() -> None:
-    assert config_flow._REAUTH_MAX_REVALIDATIONS == 3
 
 
 def test_reauth_flow_updates_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1554,9 +1540,12 @@ def test_v20_reauth_aborts_when_host_keeps_changing(monkeypatch: pytest.MonkeyPa
     assert result["errors"] == {"base": "cannot_connect"}
 
 
-def test_v20_reauth_commits_after_host_stabilizes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """One mid-flight host change then stability: credentials commit against the
-    final, validated host."""
+def test_v20_reauth_refuses_when_host_changes_mid_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One mid-flight host change: nothing is committed against the address that
+    was validated, and the user is told to retry. The retry, now that the host
+    is stable, commits against the final host."""
     entry = type(
         "Entry", (), {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST}
     )()
@@ -1580,13 +1569,15 @@ def test_v20_reauth_commits_after_host_stabilizes(monkeypatch: pytest.MonkeyPatc
     captured = {}
     wire_flow_reload_success(flow, entry, captured)
     monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+    user_input = {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
 
-    result = asyncio.run(
-        flow.async_step_reauth_confirm(
-            {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD}
-        )
-    )
-    assert result["reason"] == "reauth_successful"
+    first = asyncio.run(flow.async_step_reauth_confirm(user_input))
+    assert first["errors"] == {"base": "cannot_connect"}
+    assert calls["n"] == 1
+    assert captured == {}
+
+    second = asyncio.run(flow.async_step_reauth_confirm(user_input))
+    assert second["reason"] == "reauth_successful"
     assert captured["data"][CONF_HOST] == TEST_HOST_ALT
 
 
@@ -2043,54 +2034,6 @@ def test_resolve_phases_rejects_boolean() -> None:
     assert _resolve_phases(False) == (1, True)
 
 
-def test_reauth_revalidates_when_host_changes_mid_flight(monkeypatch) -> None:
-    from custom_components.eveus import config_flow as cf
-    from custom_components.eveus.const import MODEL_16A
-
-    calls: list[str] = []
-
-    entry = SimpleNamespace(
-        data={
-            "host": TEST_HOST,
-            "username": "old",
-            "password": "old",
-            "model": MODEL_16A,
-        },
-        unique_id=TEST_HOST,
-        title="Eveus",
-    )
-
-    async def fake_validate_input(hass, data):
-        calls.append(data["host"])
-        if len(calls) == 1:
-            # a concurrent reconfigure commits a host change mid-validation
-            entry.data = {**entry.data, "host": "newhost.local"}
-            entry.unique_id = "newhost.local"
-        return {
-            "title": f"Eveus Charger ({data['host']})",
-            "data": cf.normalize_user_input(data),
-            "device_info": {"current_set": 16},
-        }
-
-    flow = cf.ConfigFlow()
-    flow.hass = object()
-    flow._get_reauth_entry = lambda: entry
-    flow.async_set_unique_id = lambda unique_id: _asyncio.sleep(0)
-    captured = {}
-    wire_flow_reload_success(flow, entry, captured)
-    monkeypatch.setattr(cf, "validate_input", fake_validate_input)
-
-    _asyncio.run(
-        flow.async_step_reauth_confirm(
-            {"username": TEST_USERNAME, "password": TEST_PASSWORD}
-        )
-    )
-    # credentials were re-validated against the live (new) host before commit
-    assert calls == [TEST_HOST, "newhost.local"]
-    assert captured["data"]["host"] == "newhost.local"
-    assert captured["data"]["username"] == TEST_USERNAME
-
-
 def test_reconfigure_migrates_device_identifiers(monkeypatch) -> None:
     from custom_components.eveus import config_flow as cf
     from custom_components.eveus.const import DOMAIN
@@ -2524,3 +2467,195 @@ def test_options_flow_aborts_when_the_reload_fails() -> None:
     # The data change is committed either way — only the success claim is gated.
     assert entry.data[CONF_SOC_MODE] == SOC_MODE_BASIC
     assert result == {"type": "abort", "reason": "reload_failed"}
+
+
+_LEAK_HOST = "leak-host-sentinel.lan"
+_LEAK_PASSWORD = "PASSWORD-SENTINEL"  # NOSONAR(python:S2068) - test sentinel
+_LEAK_TOKEN = "TOKEN-SENTINEL"
+
+
+def _assert_no_sentinel(caplog: pytest.LogCaptureFixture, *extra: str) -> None:
+    text = caplog.text + "".join(extra)
+    for sentinel in (_LEAK_HOST, _LEAK_PASSWORD, _LEAK_TOKEN):
+        assert sentinel not in text
+
+
+class _SecretError(RuntimeError):
+    pass
+
+
+def _leaky_response(kind: str) -> _Response:
+    if kind == "non_json_body":
+        return _Response(payload=f"<html>{_LEAK_TOKEN}</html>")
+    if kind == "foreign_json_keys":
+        return _Response(payload={f"{_LEAK_TOKEN}_key": "x"})
+    response = _Response(payload=f"<html>{_LEAK_TOKEN}</html>")
+    response.headers = {"Content-Type": f"text/html; {_LEAK_TOKEN}"}
+    return response
+
+
+@pytest.mark.parametrize(
+    ("kind", "safe_reason"),
+    [
+        ("non_json_body", "did not return JSON"),
+        ("foreign_json_keys", "not an Eveus /main payload"),
+        ("hostile_content_type", "did not return JSON"),
+    ],
+)
+def test_validate_input_logs_no_response_content_host_or_credentials(
+    caplog: pytest.LogCaptureFixture, kind: str, safe_reason: str
+) -> None:
+    hass = _Hass(_Session(_leaky_response(kind)))
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.config_flow"):
+        with pytest.raises(InvalidResponse) as err:
+            asyncio.run(
+                validate_input(
+                    hass, _input(**{CONF_HOST: _LEAK_HOST, CONF_PASSWORD: _LEAK_PASSWORD})
+                )
+            )
+
+    _assert_no_sentinel(caplog, str(err.value))
+    assert safe_reason in caplog.text
+
+
+def test_validate_input_unexpected_error_logs_only_its_class(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _ExplodingSession:
+        def post(self, url: str, **kwargs: object):
+            try:
+                raise ValueError(f"cause {_LEAK_TOKEN} {_LEAK_PASSWORD}")
+            except ValueError as cause:
+                raise _SecretError(f"{url} {_LEAK_TOKEN}") from cause
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.config_flow"):
+        with pytest.raises(CannotConnect) as err:
+            asyncio.run(
+                validate_input(
+                    _Hass(_ExplodingSession()),
+                    _input(**{CONF_HOST: _LEAK_HOST, CONF_PASSWORD: _LEAK_PASSWORD}),
+                )
+            )
+
+    _assert_no_sentinel(caplog, str(err.value))
+    assert "_SecretError" in caplog.text
+    assert str(err.value) == "Unexpected error: _SecretError"
+
+
+def test_user_flow_unexpected_error_logs_only_its_class(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def fake_validate_input(hass, data):
+        raise _SecretError(f"{_LEAK_HOST} {_LEAK_PASSWORD} {_LEAK_TOKEN}")
+
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.config_flow"):
+        result = asyncio.run(flow.async_step_user(_input()))
+
+    assert result["errors"] == {"base": "unknown"}
+    _assert_no_sentinel(caplog)
+    assert "_SecretError" in caplog.text
+
+
+def test_validate_input_deeply_nested_json_is_an_invalid_response() -> None:
+    """A size-compliant but deeply nested body makes json.loads raise
+    RecursionError, which is not a ValueError; setup must classify it as the
+    same invalid response the runtime poll does, not an unexpected error."""
+    body = "[" * 100_000 + "]" * 100_000
+    hass = _Hass(_Session(_Response(payload=body)))
+
+    with pytest.raises(InvalidResponse):
+        asyncio.run(validate_input(hass, _input()))
+
+
+@pytest.mark.parametrize("payload", [[], [{"state": 2, "currentSet": 16}], "null", "42"])
+def test_validate_input_non_object_json_root_is_an_invalid_response(payload) -> None:
+    hass = _Hass(_Session(_Response(payload=payload if isinstance(payload, str) else json.dumps(payload))))
+
+    with pytest.raises(InvalidResponse):
+        asyncio.run(validate_input(hass, _input()))
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_validate_input_rejects_a_redirect_without_following_it(status: int) -> None:
+    response = _Response(status=status)
+    response.headers = {"Location": "http://leak-host-sentinel.lan/main"}
+    session = _Session(response)
+
+    with pytest.raises(CannotConnect) as err:
+        asyncio.run(validate_input(_Hass(session), _input()))
+
+    assert str(err.value) == f"HTTP {status}"
+    assert [call["allow_redirects"] for call in session.calls] == [False]
+
+
+_FLOW_FAILURES = [
+    (CannotConnect("HTTP 503"), "cannot_connect", {"error_detail": "HTTP 503"}),
+    (InvalidAuth(), "invalid_auth", None),
+    (InvalidInput("bad host"), "invalid_input", None),
+    (InvalidDevice("wrong device"), "invalid_device", None),
+    (InvalidResponse("not JSON"), "invalid_response", None),
+    (RuntimeError("boom"), "unknown", None),
+]
+
+
+def _run_flow_step(step: str, monkeypatch: pytest.MonkeyPatch, failure: Exception):
+    async def fake_validate_input(hass, data):
+        raise failure
+
+    monkeypatch.setattr(config_flow, "validate_input", fake_validate_input)
+    flow = config_flow.ConfigFlow()
+    flow.hass = object()
+    entry = type("Entry", (), {"data": _input(**{CONF_HOST: TEST_HOST}), "unique_id": TEST_HOST})()
+    flow._get_reconfigure_entry = lambda: entry
+    flow._get_reauth_entry = lambda: entry
+    if step == "user":
+        return asyncio.run(flow.async_step_user(_input()))
+    if step == "reconfigure":
+        return asyncio.run(flow.async_step_reconfigure(_input()))
+    return asyncio.run(
+        flow.async_step_reauth_confirm({CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: TEST_PASSWORD})
+    )
+
+
+@pytest.mark.parametrize("step", ["user", "reconfigure", "reauth"])
+@pytest.mark.parametrize(("failure", "base", "placeholders"), _FLOW_FAILURES)
+def test_every_flow_step_maps_a_failure_the_same_way(
+    monkeypatch: pytest.MonkeyPatch, step: str, failure: Exception, base: str, placeholders
+) -> None:
+    result = _run_flow_step(step, monkeypatch, failure)
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": base}
+    assert result["description_placeholders"] == placeholders
+
+
+@pytest.mark.parametrize("step", ["user", "reconfigure", "reauth"])
+def test_every_flow_step_lets_abort_flow_through(monkeypatch: pytest.MonkeyPatch, step: str) -> None:
+    from homeassistant.data_entry_flow import AbortFlow
+
+    with pytest.raises(AbortFlow):
+        _run_flow_step(step, monkeypatch, AbortFlow("already_configured"))
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("text/html; charset=utf-8", "text/html"),
+        ("Application/JSON", "application/json"),
+        (None, "unknown"),
+        ("", "unknown"),
+        ("http://192.168.1.77/login", "unknown"),
+        ("text/html charset=SN20240912345", "unknown"),
+    ],
+)
+def test_logged_media_type_keeps_only_a_bare_type(header, expected) -> None:
+    """Header parameters and malformed values are charger text and never reach the log."""
+    from types import SimpleNamespace
+
+    headers = {} if header is None else {"Content-Type": header}
+    assert config_flow._safe_media_type(SimpleNamespace(headers=headers)) == expected

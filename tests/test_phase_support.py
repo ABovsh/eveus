@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import OutageClock
 from custom_components.eveus.config_flow import (
     build_user_data_schema,
     normalize_user_input,
@@ -24,9 +25,8 @@ from custom_components.eveus import sensor as sensor_module
 from custom_components.eveus.sensor_definitions import get_sensor_specifications
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
     scheme = "http"
     username = TEST_USERNAME

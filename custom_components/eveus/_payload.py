@@ -5,6 +5,8 @@ import json
 import math
 from typing import Any, Literal
 
+import aiohttp
+
 from .const import MODEL_MAX_CURRENT
 
 MessageStyle = Literal["network", "config_flow"]
@@ -13,6 +15,25 @@ MessageStyle = Literal["network", "config_flow"]
 # proxy, captive portal, or wrong endpoint returning a huge (or unbounded
 # chunked) body cannot exhaust memory or stall the event loop.
 MAX_RESPONSE_BODY_BYTES = 1_000_000
+
+
+def raise_for_redirect(response: Any) -> None:
+    """Reject a 3xx reply as an HTTP error.
+
+    Charger requests are sent with ``allow_redirects=False`` so credentials and
+    command forms never follow a redirect to another origin; aiohttp then
+    returns the 3xx itself, which ``raise_for_status()`` accepts. Raising
+    ``ClientResponseError`` routes it through each caller's existing HTTP-error
+    handling, which never retries a 3xx. The Location header is not carried.
+    """
+    status = response.status
+    if 300 <= status < 400:
+        raise aiohttp.ClientResponseError(
+            request_info=getattr(response, "request_info", None),
+            history=(),
+            status=status,
+            message="Redirect rejected",
+        )
 
 
 async def read_body_capped(
@@ -42,14 +63,21 @@ async def read_json_capped(response: Any, *, limit: int = MAX_RESPONSE_BODY_BYTE
     Raises ``ValueError`` (``PayloadError``) on an oversized or malformed body,
     matching the existing JSON-decode failure path.
     """
-    raw = await read_body_capped(response, limit=limit)
+    return decode_json_body(await read_body_capped(response, limit=limit))
+
+
+def decode_json_body(raw: bytes) -> Any:
+    """JSON-decode an already capped body; every malformed body is a ValueError.
+
+    Setup and polling share this so the same body gets the same verdict.
+    """
     try:
         return json.loads(decode_body_lenient(raw))
     except RecursionError as err:
         # A deeply nested (but size-compliant) JSON document makes json.loads
         # raise RecursionError, which is NOT a ValueError — it would escape the
-        # coordinator's ValueError handler and skip failure accounting/backoff.
-        # Normalize it to PayloadError so the poll is recorded as failed.
+        # ValueError handlers of both the coordinator (skipping failure
+        # accounting/backoff) and setup (reported as an unexpected error).
         raise PayloadError("malformed", "Eveus response JSON nesting too deep") from err
 
 

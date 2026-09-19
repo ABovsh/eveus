@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 from types import SimpleNamespace
 
+from conftest import PayloadUpdater
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus.diagnostics import async_get_config_entry_diagnostics
 
@@ -283,8 +284,8 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
             lambda hass, domain, issue_id, **kw: created.append(kw),
         )
         entry = SimpleNamespace(entry_id="e1")
-        tracker = eveus._ClockDriftTracker()
-        updater = SimpleNamespace(available=True, last_update_success=True, data=None)
+        tracker = eveus.ClockDriftTracker()
+        updater = PayloadUpdater(None)
 
         def _drift_payload(drift_seconds: int) -> dict:
             return {
@@ -294,12 +295,12 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
 
         for _ in range(3):
             updater.data = _drift_payload(900)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert created[-1]["translation_key"] == "clock_drift"
 
         for _ in range(3):
             updater.data = _drift_payload(-3600)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert created[-1]["translation_key"] == "clock_drift_timezone"
         assert created[-1]["translation_placeholders"] == {"hours": "1"}
     finally:
@@ -321,15 +322,15 @@ def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
         lambda hass, domain, issue_id, **kw: created.append(kw),
     )
     entry = SimpleNamespace(entry_id="e1")
-    tracker = eveus._ClockDriftTracker()
-    updater = SimpleNamespace(available=True, last_update_success=True, data=None)
+    tracker = eveus.ClockDriftTracker()
+    updater = PayloadUpdater(None)
 
     for _ in range(4):
         updater.data = {
             "systemTime": str(int(time.time()) + 5 * 3600),
             "timeZone": "5",
         }
-        eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+        eveus.update_clock_drift_issue(object(), entry, updater, tracker)
 
     # Restore original timezone
     from homeassistant.util import dt as dt_util2
@@ -356,8 +357,8 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
             lambda hass, domain, issue_id, **kw: created.append(kw),
         )
         entry = SimpleNamespace(entry_id="e1")
-        tracker = eveus._ClockDriftTracker()
-        updater = SimpleNamespace(available=True, last_update_success=True, data=None)
+        tracker = eveus.ClockDriftTracker()
+        updater = PayloadUpdater(None)
 
         def _drift_payload(drift_seconds: int) -> dict:
             return {
@@ -367,17 +368,17 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
 
         for _ in range(3):
             updater.data = _drift_payload(900)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         base_count = len(created)
 
         for offset in (3300, 3299, 3300, 3299):
             updater.data = _drift_payload(offset)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert len(created) == base_count
 
         for _ in range(3):
             updater.data = _drift_payload(3600)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert len(created) == base_count + 1
         assert created[-1]["translation_key"] == "clock_drift_timezone"
     finally:
@@ -653,3 +654,128 @@ def test_a_failed_setup_is_labelled_as_such() -> None:
 
     assert setup["ready"] is False
     assert "note" in setup
+
+
+def test_production_logs_never_carry_raw_exception_text_or_tracebacks() -> None:
+    """Exception text and tracebacks can embed the charger URL, response
+    content or credentials; failure logs name the exception class instead.
+    The integration's own validation errors carry fixed messages and stay."""
+    import ast
+    from pathlib import Path
+
+    owned = {"InvalidInput", "InvalidDevice", "InvalidResponse", "CannotConnect", "InvalidAuth"}
+    package = Path(__file__).parent.parent / "custom_components" / "eveus"
+    offenders: list[str] = []
+
+    def is_logger_call(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "_LOGGER"
+        )
+
+    for path in sorted(package.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if is_logger_call(node):
+                where = f"{path.name}:{node.lineno}"
+                if node.func.attr == "exception":
+                    offenders.append(f"{where} _LOGGER.exception")
+                if any(kw.arg == "exc_info" for kw in node.keywords):
+                    offenders.append(f"{where} exc_info")
+            if not (isinstance(node, ast.ExceptHandler) and node.name):
+                continue
+            if isinstance(node.type, ast.Name) and node.type.id in owned:
+                continue
+            for call in (n for stmt in node.body for n in ast.walk(stmt) if is_logger_call(n)):
+                for arg in call.args[1:]:
+                    raw = arg
+                    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id in {"str", "repr"} and arg.args:
+                        raw = arg.args[0]
+                    if isinstance(raw, ast.Name) and raw.id == node.name:
+                        offenders.append(f"{path.name}:{call.lineno} raw {raw.id}")
+    assert offenders == [], "\n".join(offenders)
+
+
+# I18: raw_main and entry data are allowlists. A field the integration does not
+# know may carry anything a future firmware adds, so only its name and type are
+# reported — never its value, even when the name looks harmless.
+_SENTINEL = "SECRET-SENTINEL-9f3c"
+
+
+def test_an_unknown_main_field_reports_its_type_but_never_its_value() -> None:
+    diagnostics = _diag_with_main(
+        {"state": 2, "cloudBlob": _SENTINEL, "nestedThing": {"inner": _SENTINEL}}
+    )
+
+    assert _SENTINEL not in repr(diagnostics)
+    assert "cloudBlob" not in diagnostics["raw_main"]
+    assert diagnostics["raw_main"]["state"] == 2
+    assert diagnostics["unknown_main_fields"] == {
+        "cloudBlob": "str",
+        "nestedThing": "dict",
+    }
+
+
+def test_a_known_main_field_with_a_nested_value_reports_only_its_type() -> None:
+    diagnostics = _diag_with_main({"model": {"inner": _SENTINEL}})
+
+    assert _SENTINEL not in repr(diagnostics)
+    assert diagnostics["raw_main"]["model"] == "<dict>"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["192.168.1.77", "SN20240912345", "home wifi", "x" * 80, "wifiSSID", "a/b"],
+)
+def test_an_identifying_unknown_field_name_is_not_echoed(name) -> None:
+    diagnostics = _diag_with_main({name: 1})
+
+    assert name not in repr(diagnostics)
+    assert diagnostics["unknown_main_fields_suppressed"] == 1
+
+
+def test_real_firmware_payloads_are_reported_as_known_fields() -> None:
+    """Every field the modern and fw1.51 captures carry stays useful in reports."""
+    import json
+    from pathlib import Path
+
+    fixtures = Path(__file__).parent / "fixtures"
+    for name in ("real_main_response.json", "fw151_unknown_state_main.json"):
+        payload = json.loads((fixtures / name).read_text())
+        diagnostics = _diag_with_main(payload)
+        assert diagnostics["unknown_main_fields"] == {}, name
+        assert set(diagnostics["raw_main"]) == set(payload) | {"verFWMain"}, name
+
+
+def test_an_unknown_entry_data_field_reports_its_type_but_never_its_value() -> None:
+    diagnostics = _diag_with_main(
+        {},
+        entry_data={"phases": 3, "soc_mode": "advanced", "cloud_blob": _SENTINEL},
+    )
+
+    assert _SENTINEL not in repr(diagnostics)
+    assert diagnostics["entry"]["data"]["phases"] == 3
+    assert diagnostics["entry"]["data"]["soc_mode"] == "advanced"
+    assert diagnostics["entry"]["unknown_fields"] == {"cloud_blob": "str"}
+
+
+def test_every_documented_entry_field_is_known_and_unsafe_entry_names_are_counted() -> None:
+    """Entry options land in `data`, never in `unknown_fields`; unsafe names only add to the count."""
+    from custom_components.eveus.const import CONF_EXTERNAL_SOC_ENTITY
+
+    known = {
+        "scheme": "http", "model": "16A", "phases": 1, "device_number": 1,
+        "soc_mode": "basic", "initial_soc": 20, "target_soc": 80,
+        "battery_capacity": 77, "soc_correction": 7.5,
+        CONF_EXTERNAL_SOC_ENTITY: "sensor.car_soc",
+    }
+    diagnostics = _diag_with_main(
+        {}, entry_data={**known, "192.168.1.77": 1, "SN20240912345": 2}
+    )
+
+    entry = diagnostics["entry"]
+    assert entry["unknown_fields"] == {}
+    assert set(known) <= set(entry["data"])
+    assert entry["unknown_fields_suppressed"] == 2

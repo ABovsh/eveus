@@ -49,9 +49,24 @@ def test_update_interval_constants():
     assert const.CHARGING_UPDATE_INTERVAL == 30
     assert const.IDLE_UPDATE_INTERVAL == 60
     assert const.OFFLINE_UPDATE_INTERVAL == 60
-    assert const.RETRY_DELAY == 15
-    assert const.UPDATE_TIMEOUT == 20
-    assert const.COMMAND_TIMEOUT == 25
+    assert const.UPDATE_TIMEOUT == 10
+    assert const.COMMAND_TIMEOUT == 12
+
+
+def test_command_timeout_bounds_how_long_a_stalled_charger_holds_the_lock():
+    # A command retries twice, so the command lock is held for three timeouts
+    # plus both backoffs (and their jitter) before it gives up. Measured /main
+    # latency is 45-410 ms; 77 s of lock time behind a dead charger made a
+    # queued SOC-limit Stop wait more than a minute.
+    from custom_components.eveus import common_command
+
+    worst_case = (
+        (common_command._COMMAND_RETRY_ATTEMPTS + 1) * const.COMMAND_TIMEOUT
+        + sum(common_command._COMMAND_RETRY_BACKOFF)
+        + common_command._COMMAND_RETRY_JITTER * common_command._COMMAND_RETRY_ATTEMPTS
+    )
+    assert worst_case <= 40
+    assert const.COMMAND_TIMEOUT == const.UPDATE_TIMEOUT + 2
 
 
 def test_device_state_value_constants():
@@ -92,7 +107,6 @@ def test_availability_and_resilience_constants():
     assert const.AVAILABILITY_GRACE_PERIOD == 60
     assert const.CONTROL_GRACE_PERIOD == 30
     assert const.ERROR_LOG_RATE_LIMIT == 300
-    assert const.STATE_CACHE_TTL == 60
     assert const.OPTIMISTIC_CONTROL_TTL == 120
 
 
@@ -235,3 +249,10 @@ def test_state_lookup_helpers_return_mapped_and_default_values():
     assert const.get_error_state(999) == "Unknown Error"
     assert const.get_normal_substate(0) == "No Limits"
     assert const.get_normal_substate(999) == "Unknown State"
+
+
+def test_unusable_restored_states_are_exactly_home_assistants_no_value_states():
+    """Every platform's restore rejects these three; a missing one seeds a control from a sentinel."""
+    from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+
+    assert const.UNUSABLE_RESTORED_STATES == (None, STATE_UNKNOWN, STATE_UNAVAILABLE)

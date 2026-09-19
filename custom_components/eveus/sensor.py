@@ -7,8 +7,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
-from .const import CONF_MODEL, MODEL_MAX_CURRENT, get_soc_mode, SOC_MODE_ADVANCED
-from .sensor_definitions import get_sensor_specifications
+from .const import get_soc_mode, SOC_MODE_ADVANCED
+from .sensor_definitions import create_sensor, get_sensor_specifications
 from .ev_sensors import (
     ChargingFinishTimeSensor,
     CostToTargetSocSensor,
@@ -33,11 +33,10 @@ async def async_setup_entry(
     device_number = runtime_data.device_number
     soc_calculator = runtime_data.soc_calculator
 
-    max_current = MODEL_MAX_CURRENT.get(entry.data.get(CONF_MODEL))
-    sensor_specs = get_sensor_specifications(
-        phases=runtime_data.phases, max_current=max_current
-    )
-    standard_sensors = [spec.create_sensor(updater, device_number) for spec in sensor_specs]
+    # The model maximum travels with the poll (the coordinator was built with
+    # this entry's model), so the specs only need the phase count.
+    sensor_specs = get_sensor_specifications(phases=runtime_data.phases)
+    standard_sensors = [create_sensor(spec, updater, device_number) for spec in sensor_specs]
 
     ev_sensors: list[object] = []
     if get_soc_mode(entry) == SOC_MODE_ADVANCED:

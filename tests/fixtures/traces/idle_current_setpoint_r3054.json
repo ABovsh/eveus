@@ -1,0 +1,17 @@
+{
+  "description": "Charging Current 16 -> 15 A through Home Assistant on an idle charger (state 2, stop flag 1, 0 W). Offsets are seconds after the command was accepted; the first poll still reads the old setpoint.",
+  "source": "measured",
+  "firmware": "GRM070A-R3.05.4",
+  "recorded": "2026-09-14",
+  "base_payload": "real_main_response.json",
+  "sanitization": "Only the listed telemetry keys are replayed on top of the public base payload; no identifiers or raw captures.",
+  "steps": [
+    {"at": 0.0, "poll": "ok", "main": {"state": 2, "evseEnabled": 1, "powerMeas": 0, "curMeas1": 0, "currentSet": 16}},
+    {"at": 0.0, "command": {"entity": "charging_current", "value": 15}},
+    {"at": 0.1509, "poll": "ok", "main": {"currentSet": 16}},
+    {"at": 1.161, "poll": "ok", "main": {"currentSet": 15}, "drop": ["logReady"]},
+    {"at": 3.5369, "poll": "ok", "main": {"currentSet": 15}},
+    {"at": 10.3387, "poll": "fail"},
+    {"at": 21.1506, "poll": "ok", "main": {"currentSet": 15, "logReady": 1}}
+  ]
+}

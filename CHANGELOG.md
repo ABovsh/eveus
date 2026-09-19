@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.23.0 - 2026-09-19
+
+### ✨ Added
+- **A built-in Eveus card for any dashboard.** Add **Eveus EV Charger** from the card picker — no HACS frontend plugin and no resource to add by hand. One card, four layouts: `compact` (a single line: state, SOC, power, time to target, session energy and cost, with the SOC bar along the bottom; the bar marks both the Initial and the Target SOC), `status` (SOC, time to target, current, session, power and state), `control` (adds One Charge, Stop Charging and a Charging Current slider) and `full` (adds Initial SOC, Target SOC, Battery Capacity, SOC Correction and the SOC limit). In Basic mode the SOC tiles are replaced by power and session time. A long press on SOC, Time to SOC or Current opens Initial SOC, Target SOC or Charging Current. The card editor names its fields and modes as the integration does (**Integration mode**: Advanced / Basic). Labels follow your language (English or Ukrainian).
+
+  <p>
+    <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced.jpg" width="49%">
+    <img alt="Eveus card — Basic mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-basic.jpg" width="49%">
+  </p>
+
+### 🐛 Fixed
+- **Hiding or disabling a SOC setting no longer breaks the SOC readings.** Initial SOC, Target SOC, Battery Capacity and SOC Correction are read from their entities, and Home Assistant never loads a disabled one, so disabling any of them left SOC Percent, SOC Energy and Time to Target `unknown`, Charging Finish Time `unavailable` and the SOC limit unable to stop a charge. The values are now taken from the integration's saved settings when it starts, and a change you make to an entity still applies at once.
+- **Charging Finish Time no longer reads `unknown` when the charger drops off between charges.** With no charge running it stays `unavailable` through a missed poll instead of turning blank for the first minute of the outage.
+- **Connection Quality now follows an outage as it happens.** It kept the value from the first missed poll until the charger came back; it now drops with each missed poll and settles at 0 %.
+- **The SOC limit no longer stops a charge after you turn on Disable limits.** A Stop waiting behind another command, or between retries, was still sent when a poll in the meantime showed Disable limits switched on; it is now checked again right before each attempt and dropped.
+- **A system clock change no longer moves a control's hold.** A value you just set, or the last value of a setting the charger briefly stops reporting, was timed on the wall clock, so an NTP correction or a manual clock change could drop it early or keep it too long; both are now timed on elapsed time.
+- **Setup reports a deeply nested reply as an invalid response.** A reply nested too deeply to decode was shown as a failure to connect with an unexpected error; setup now rejects it the same way polling does.
+- **A command to an unreachable charger no longer holds up the ones behind it.** A request waited up to 25 s for an answer and a command is tried three times, so a stalled charger kept a queued SOC-limit Stop waiting for more than a minute. Polls now wait 10 s and commands 12 s, so a dead charger releases a queued command after about 40 s instead of 77 s.
+- **A slow reply can no longer overwrite a newer one.** Home Assistant serialises an integration's refreshes only from 2025.11, so on 2025.1 to 2025.10 the polls that follow a command could overlap a scheduled poll, and an older reply arriving last published stale readings and could report a charge starting or finishing in the wrong order. Only one request to the charger is now in flight at a time.
+
+### 🔒 Privacy
+- **Requests to the charger no longer follow redirects.** A reply redirecting elsewhere is rejected as an HTTP error, so your credentials and commands are never sent to another address; a command answered with a redirect is not retried.
+- **Diagnostics report the value of known fields only.** A charger or config field the integration does not recognise appears under `unknown_main_fields` / `unknown_fields` as its name and type, never its value; a name that could itself identify something (an address, a serial-like number, a Wi-Fi name) is only counted.
+- **Logs no longer carry what the charger sent back, its address or error text.** A failed setup logs the HTTP status, the media type and the body size instead of the first 200 bytes of the reply, the key names of an unrecognised payload or the charger's host; every other failure logs the error type instead of its message and traceback.
+
 ## 4.22.0 - 2026-09-12
 
 ### ⚠️ Breaking

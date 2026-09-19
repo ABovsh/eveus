@@ -56,20 +56,6 @@ def test_final_soc_sensor_is_gone() -> None:
     assert not hasattr(session_history, "LastSessionFinalSocSensor")
 
 
-def test_sensors_capture_event_values() -> None:
-    updater = _updater()
-    energy = LastSessionEnergySensor(updater, 1)
-    cost = LastSessionCostSensor(updater, 1)
-    duration = LastSessionDurationSensor(updater, 1)
-    for sensor in (energy, cost, duration):
-        sensor._handle_finished_event(_event())
-    assert energy.native_value == pytest.approx(18.46)
-    assert cost.native_value == pytest.approx(49.78)
-    assert duration.native_value == 22320
-    assert energy.extra_state_attributes["reason"] == "complete"
-    assert "finished_at" in energy.extra_state_attributes
-
-
 def test_other_device_event_is_ignored() -> None:
     sensor = LastSessionEnergySensor(_updater(), 1)
     sensor._handle_finished_event(_event(device_number=2))

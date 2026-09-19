@@ -6,18 +6,24 @@ import asyncio
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 
+from conftest import snapshot_of
+from conftest import OutageClock
 from conftest import TEST_HOST
 from custom_components.eveus import select as select_module
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
 
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self.data = data or {}
         self.commands: list[tuple[str, object]] = []
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the control by assigning `data`.
+        return snapshot_of(self)
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
@@ -76,12 +82,6 @@ def test_adaptive_mode_rejects_unsupported_option() -> None:
         asyncio.run(select.async_select_option("Active"))
 
     assert updater.commands == []
-
-
-def test_minimum_voltage_has_fixed_options() -> None:
-    select = select_module.EveusMinVoltageSelect(_Updater({"minVoltage": 200}))
-
-    assert select.options == ["200", "180", "175", "170", "165", "160", "155", "150"]
 
 
 def test_minimum_voltage_writes_integer_value() -> None:

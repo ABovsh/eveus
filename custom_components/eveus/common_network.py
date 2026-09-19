@@ -6,21 +6,26 @@ from collections import deque
 from datetime import timedelta
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .common_command import CommandManager
 from .const import (
+    poll_failure_signal,
     CHARGING_STATES,
     CHARGING_UPDATE_INTERVAL,
     CONNECTED_STATES,
+    AVAILABILITY_GRACE_PERIOD,
+    CONTROL_GRACE_PERIOD,
     DEFAULT_SCHEME,
     DEVICE_STATE_CHARGING,
     DEVICE_STATE_STANDBY,
@@ -42,12 +47,15 @@ from .const import (
     OFFLINE_UPDATE_INTERVAL,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
-    UPDATE_TIMEOUT,
 )
-from ._payload import PayloadError, read_json_capped, validate_main_payload
+from ._payload import PayloadError, validate_main_payload
+from .client import UPDATE_TIMEOUT_OBJ, fetch_json
+from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
 
-_UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
+# Shared with the config flow so setup and polling can never run on two
+# different budgets (see client.py).
+_UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = UPDATE_TIMEOUT_OBJ
 
 # Sequence of refreshes after a successful command. Covers both fast
 # commits (e.g. Charging Current — applied immediately, visible at 3 s)
@@ -212,8 +220,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # preceding state.
         self._event_charging_payload: dict[str, Any] | None = None
         self._force_refresh_requests = 0
+        self._poll_lock = asyncio.Lock()
         self._pending_refresh_unsubs: list = []
-        self._post_command_refresh_tasks: list = []
+        # The one outage clock. Anchored to the FIRST failed poll and cleared by
+        # the next good one; every entity reads its visibility from here instead
+        # of running its own timer. One wake-up per distinct grace period tells
+        # the listeners a window closed, because HA notifies them only on the
+        # success -> failure edge, never on a repeated failure.
+        self._first_failure_monotonic: float | None = None
+        self._grace_timer_unsubs: list = []
         # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
         # that completes mid-unload from scheduling fresh refresh timers, and a
         # just-fired timer from starting a refresh on a torn-down coordinator.
@@ -239,6 +254,20 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # so one degraded reply that omits it must not demote a modern charger
         # to the 1.x code translation for that poll.
         self._modern_firmware_seen = False
+        # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
+        # failed poll, exactly like `self.data`, so an entity inside its
+        # availability grace window keeps republishing the reading behind it.
+        self._snapshot = EveusSnapshot.empty()
+
+    @property
+    def snapshot(self) -> EveusSnapshot:
+        """The last good payload, converted and bounded once.
+
+        Sits next to `self.data`: the raw dict stays the source for diagnostics,
+        the dashboard card and the device-registry strings, while everything
+        that reads a VALUE reads it from here.
+        """
+        return self._snapshot
 
     @property
     def is_modern_firmware(self) -> bool:
@@ -331,6 +360,40 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """
         return self._device_available
 
+    def visible_within(self, grace: int) -> bool:
+        """Whether an entity with this grace period is still visible."""
+        return self.seconds_unavailable < grace
+
+    @property
+    def seconds_unavailable(self) -> float:
+        """Monotonic seconds since the first failed poll of the current outage."""
+        if self._first_failure_monotonic is None:
+            return 0.0
+        return time.monotonic() - self._first_failure_monotonic
+
+    def _start_outage_clock(self) -> None:
+        if self._first_failure_monotonic is not None:
+            return
+        self._first_failure_monotonic = time.monotonic()
+        if self.hass is None:
+            return
+
+        @callback
+        def _grace_closed(_now) -> None:
+            self.async_update_listeners()
+
+        for grace in sorted({CONTROL_GRACE_PERIOD, AVAILABILITY_GRACE_PERIOD}):
+            # +0.5 s so the wake-up lands just past the boundary, never on it.
+            self._grace_timer_unsubs.append(
+                async_call_later(self.hass, grace + 0.5, _grace_closed)
+            )
+
+    def _stop_outage_clock(self) -> None:
+        self._first_failure_monotonic = None
+        unsubs, self._grace_timer_unsubs = self._grace_timer_unsubs, []
+        for unsub in unsubs:
+            unsub()
+
     @property
     def connection_quality(self) -> dict[str, Any]:
         """Connection metrics exposed for diagnostics and sensors."""
@@ -406,6 +469,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         *,
         retry: bool = True,
         extra: dict[str, Any] | None = None,
+        preflight: Callable[[], bool] | None = None,
     ) -> bool:
         """Send command to the device and schedule a delayed refresh on success."""
         if self._shutting_down:
@@ -414,7 +478,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return False
         try:
             success = await self._command_manager.send_command(
-                command, value, retry=retry, extra=extra
+                command, value, retry=retry, extra=extra, preflight=preflight
             )
         finally:
             # Invalidate even on the raising path (401 -> ConfigEntryAuthFailed)
@@ -451,30 +515,24 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         Rapid toggles cancel ALL pending refreshes and reschedule, so refreshes
         always fire relative to the most recent command. A timer that has not
-        fired yet is cancelled via its async_call_later unsub; a refresh that
-        has already fired and is still in flight is run as a tracked task so it
-        too can be cancelled on reschedule or shutdown -- otherwise a slow /main
-        poll could complete after a newer command and publish stale data, or
-        outlive async_shutdown. Combined with the entity-level optimistic state
-        TTL this prevents stale-read flicker.
+        fired yet is cancelled via its async_call_later unsub. A refresh that
+        has already fired is not tracked: the poll lock lets only one request
+        run at a time and the request timeout bounds it, so the entity-level
+        optimistic state TTL covers the few seconds it can still publish.
         """
         self._cancel_pending_refreshes()
-        for delay in POST_COMMAND_REFRESH_DELAYS:
-            async def _run(_now, _delay=delay):
-                if self._shutting_down or self.hass is None or self.hass.is_stopping:
-                    return
-                task = asyncio.ensure_future(self.async_refresh())
-                self._post_command_refresh_tasks.append(task)
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001
-                    _LOGGER.debug("Post-command refresh failed", exc_info=True)
-                finally:
-                    if task in self._post_command_refresh_tasks:
-                        self._post_command_refresh_tasks.remove(task)
 
+        async def _run(_now) -> None:
+            if self._shutting_down or self.hass is None or self.hass.is_stopping:
+                return
+            try:
+                await self.async_refresh()
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Post-command refresh failed: %s", type(err).__name__)
+
+        for delay in POST_COMMAND_REFRESH_DELAYS:
             self._pending_refresh_unsubs.append(async_call_later(self.hass, delay, _run))
 
     def _pop_pending_refreshes(self) -> list:
@@ -484,28 +542,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _cancel_pending_refreshes(self) -> None:
         for unsub in self._pop_pending_refreshes():
             unsub()
-        # task.cancel() schedules each task's done-callback via the event loop,
-        # so _post_command_refresh_tasks is not mutated during this loop —
-        # iterate it directly rather than over a throwaway snapshot.
-        # Never cancel the task this call is running inside: a tracked refresh
-        # that observes a state transition reschedules the burst synchronously,
-        # and cancelling itself would discard the payload it just fetched.
-        try:
-            current = asyncio.current_task()
-        except RuntimeError:  # not inside a running event loop
-            current = None
-        for task in self._post_command_refresh_tasks:
-            if task is not current and not task.done():
-                task.cancel()
 
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
         self._cancel_pending_refreshes()
-        pending = list(self._post_command_refresh_tasks)
-        self._post_command_refresh_tasks.clear()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        self._stop_outage_clock()
         await super().async_shutdown()
 
     def _should_log(self) -> bool:
@@ -519,6 +561,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._poll_results.append(True)
         self._consecutive_failures = 0
         self._device_available = True
+        self._stop_outage_clock()
         self._next_poll_attempt = 0.0
         self._last_success_time = time.time()
         self._last_success_monotonic = time.monotonic()
@@ -675,6 +718,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._poll_results.append(False)
         self._consecutive_failures += 1
         self._device_available = False
+        self._start_outage_clock()
+        # HA notifies listeners only on the success->failure edge, so without
+        # this Connection Quality froze at its first-failure value for the
+        # whole outage. Only the sensors that describe the link subscribe;
+        # every other entity keeps the edge-only update.
+        if self.hass is not None and self.config_entry is not None:
+            async_dispatcher_send(
+                self.hass, poll_failure_signal(self.config_entry.entry_id)
+            )
         # Same reasoning as the UpdateFailed message below: a PayloadError's
         # text is ours, names the rule that rejected the poll, and carries no
         # credentials, host, or body content. Diagnostics is the artifact users
@@ -781,13 +833,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._init_fw_fetch_done = True
         try:
-            async with self.get_session().post(
+            init_data = await fetch_json(
+                self.get_session(),
                 self.url_for("/init"),
                 auth=self._basic_auth,
                 timeout=_UPDATE_TIMEOUT_OBJ,
-            ) as response:
-                response.raise_for_status()
-                init_data = await read_json_capped(response)
+            )
         except (
             aiohttp.ClientResponseError,
             aiohttp.ClientConnectorError,
@@ -812,6 +863,25 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
 
+    def _reject_credentials(self) -> None:
+        """What a 401 means to the poll: reauth, not a connectivity failure.
+
+        Don't feed the offline-backoff counters or the connection-quality
+        stats, or reauth recovery gets misattributed/deferred as "device
+        offline". Just mark unavailable and hand off to HA's reauth flow.
+        """
+        self._connection_quality_cache = None
+        self._device_available = False
+        # Polling stops until reauth, and entities read only the outage clock:
+        # without it every entity would stay visible on the pre-401 reading.
+        self._start_outage_clock()
+        self._last_error = "ConfigEntryAuthFailed"
+        # The event stream still has a hole here: polling stops until reauth or
+        # a manual refresh, so a transition that happens meanwhile must not be
+        # reconstructed from the pre-401 payload once the charger answers again.
+        self._forget_poll_gap_state()
+        raise ConfigEntryAuthFailed("Invalid authentication")
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
         # Every deadline here is on the monotonic clock, so a wall-clock step
@@ -823,40 +893,41 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if 0 < backoff_remaining <= _MAX_OFFLINE_BACKOFF and not bypass_backoff:
             raise UpdateFailed("Skipping Eveus poll during offline backoff")
 
+        # Home Assistant serialises coordinator refreshes only from 2025.11 and
+        # the manifest floor is 2025.1, so a post-command burst can arrive while
+        # a scheduled poll is still waiting for the charger. A second request
+        # could be answered first and then overwritten by the older reply,
+        # reversing the transition events: hand back what is held instead. With
+        # nothing held yet there is nothing to hand back, so wait for the lock.
+        if self._poll_lock.locked() and self.data is not None:
+            return self.data
+        async with self._poll_lock:
+            return await self._poll_charger(start_monotonic)
+
+    async def _poll_charger(self, start_monotonic: float) -> dict[str, Any]:
+        """Request /main, validate it and record the outcome (one poll at a time)."""
         try:
-            async with self.get_session().post(
+            new_data = await fetch_json(
+                self.get_session(),
                 self.url_for("/main"),
                 auth=self._basic_auth,
                 timeout=_UPDATE_TIMEOUT_OBJ,
-            ) as response:
-                if response.status == 401:
-                    # An auth rejection is not a connectivity failure: don't
-                    # feed the offline-backoff counters or connection-quality
-                    # stats, or reauth recovery gets misattributed/deferred as
-                    # "device offline". Just mark unavailable and hand off to
-                    # HA's reauth flow.
-                    self._connection_quality_cache = None
-                    self._device_available = False
-                    self._last_error = "ConfigEntryAuthFailed"
-                    # The event stream still has a hole here: polling stops
-                    # until reauth or a manual refresh, so a transition that
-                    # happens meanwhile must not be reconstructed from the
-                    # pre-401 payload once the charger answers again.
-                    self._forget_poll_gap_state()
-                    raise ConfigEntryAuthFailed("Invalid authentication")
-                response.raise_for_status()
+                on_unauthorized=self._reject_credentials,
+            )
+            # Shared validator retains the historical common-network guards:
+            # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
+            # Passing the configured model bounds currentSet to this charger's
+            # maximum, so a wrong-device or corrupt payload fails the poll
+            # rather than being published as healthy.
+            new_data = validate_main_payload(new_data, self._model)
+            new_data = self._normalize_legacy_device_state(new_data)
+            # Parse AFTER the legacy translation (this coordinator owns the
+            # fw-1.x latch), and BEFORE _record_success, which notifies the
+            # listeners that read the snapshot.
+            self._snapshot = EveusSnapshot.parse(new_data, self._model)
 
-                new_data = await read_json_capped(response)
-                # Shared validator retains the historical common-network guards:
-                # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
-                # Passing the configured model bounds currentSet to this charger's
-                # maximum, so a wrong-device or corrupt payload fails the poll
-                # rather than being published as healthy.
-                new_data = validate_main_payload(new_data, self._model)
-                new_data = self._normalize_legacy_device_state(new_data)
-
-                self._record_success(time.monotonic() - start_monotonic, new_data)
-                return new_data
+            self._record_success(time.monotonic() - start_monotonic, new_data)
+            return new_data
 
         except ConfigEntryAuthFailed:
             raise

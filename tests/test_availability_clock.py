@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import EveusTestUpdater, disable_state_writes
+from custom_components.eveus.snapshot import EveusSnapshot
 
 
 def test_command_rate_limit_wait_is_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,8 +60,8 @@ def test_optimistic_value_valid_within_ttl() -> None:
     ctrl = OptimisticControlMixin()
     ctrl._init_optimistic_control()
     ctrl._set_optimistic_value(7)
-    stamp = ctrl._optimistic_value_time
-    assert ctrl._optimistic_value_is_valid(stamp + 5, 120) is True
+    ctrl._optimistic_value_time = 1000.0
+    assert ctrl._optimistic_value_is_valid(1005.0, 120) is True
 
 
 def _real_updater():
@@ -111,15 +112,13 @@ def test_seconds_since_success_inf_before_first_success() -> None:
 def _diag_sensor(updater):
     from custom_components.eveus.sensor_definitions import (
         OptimizedEveusSensor,
-        SensorSpec,
-        SensorType,
+        EveusSensorEntityDescription,
     )
 
-    spec = SensorSpec(
+    spec = EveusSensorEntityDescription(
         key="test_diag",
         name="Test Diag",
         value_fn=lambda _updater, _hass: 1,
-        sensor_type=SensorType.DIAGNOSTIC,
     )
     sensor = OptimizedEveusSensor(updater, spec)
     disable_state_writes(sensor)
@@ -132,20 +131,23 @@ def test_availability_grace_uses_monotonic_not_wall_clock(
     """Regression test for A04-adjacent A03 finding: the grace window is timed
     with time.monotonic(), so a wall-clock jump (NTP correction, DST, manual
     change) in either direction cannot move the outage boundary or reopen /
-    prematurely expire the grace window.
+    prematurely expire the grace window. The clock is the coordinator's.
     """
-    from custom_components.eveus import common_base
-
-    updater = EveusTestUpdater({}, available=False)
-    sensor = _diag_sensor(updater)
+    from custom_components.eveus import common_network
+    from custom_components.eveus.common_network import EveusUpdater
 
     fake_monotonic = 1_000_000.0
-    monkeypatch.setattr(common_base.time, "monotonic", lambda: fake_monotonic)
-    # Wall clock jumps wildly forward; must have zero effect on grace timing.
-    monkeypatch.setattr(common_base.time, "time", lambda: 4_102_444_800.0)
+    monkeypatch.setattr(
+        common_network,
+        "time",
+        SimpleNamespace(monotonic=lambda: fake_monotonic, time=lambda: 4_102_444_800.0),
+    )
+    updater = EveusUpdater("192.0.2.1", "u", "p", SimpleNamespace(loop=None))
+    updater._record_failure(TimeoutError())
+    sensor = _diag_sensor(updater)
+    assert updater.seconds_unavailable == 0.0
 
     sensor._update_availability_state()
-    assert sensor._unavailable_since == fake_monotonic
     assert sensor.available is True
 
     # Still within the grace period per monotonic time.
@@ -168,7 +170,7 @@ def test_control_fallback_rejects_future_read_timestamp() -> None:
     # the entity stays visible instead — see test_grace_holds_last_value.py.
     entity = EveusCurrentNumber(EveusTestUpdater({}, available=True), "16A")
     entity._last_device_value = 10.0
-    entity._last_successful_read = time.time() + 10_000  # backward jump
+    entity._last_successful_read = time.monotonic() + 10_000  # stamp ahead of the clock
 
     assert entity._resolve_value() is None
 
@@ -353,12 +355,15 @@ def test_recovery_needs_two_successes_before_fast_cadence():
 
 
 def test_fires_after_three_polls_above_ten_minutes() -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    def _p(drift: float, tz: int = 3) -> dict:
-        return {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}
+    def _p(drift: float, tz: int = 3) -> "EveusSnapshot":
+        # The tracker reads the shared parse, so state the poll as one.
+        return EveusSnapshot.parse(
+            {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
+        )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     assert tracker.evaluate(_p(900)) is None
     assert tracker.evaluate(_p(900)) is None
     assert tracker.evaluate(_p(900)) is True
@@ -381,6 +386,9 @@ def test_failure_during_probation_resets_counter() -> None:
     updater._last_success_monotonic = 0.0
     updater._availability_log = SimpleNamespace(should_log=lambda *_: False)
     updater._offline_probation = 1
+    updater._first_failure_monotonic = None
+    updater._grace_timer_unsubs = []
+    updater.hass = None
 
     updater._record_failure(ValueError("boom"))
     assert updater._offline_probation == 2
@@ -398,12 +406,15 @@ def _ha_local_clock_utc_plus_3_avail():
 
 
 def test_clock_drift_does_not_clear_while_still_minutes_wrong(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    def _payload(drift: float, tz: int = 3) -> dict:
-        return {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}
+    def _payload(drift: float, tz: int = 3) -> "EveusSnapshot":
+        # The tracker reads the shared parse, so state the poll as one.
+        return EveusSnapshot.parse(
+            {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
+        )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     for _ in range(2):
         tracker.evaluate(_payload(900))
     assert tracker.evaluate(_payload(900)) is True
@@ -416,12 +427,15 @@ def test_clock_drift_does_not_clear_while_still_minutes_wrong(_ha_local_clock_ut
 
 
 def test_clock_drift_hover_then_resync_needs_consecutive_in_sync_polls(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    def _payload(drift: float, tz: int = 3) -> dict:
-        return {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}
+    def _payload(drift: float, tz: int = 3) -> "EveusSnapshot":
+        # The tracker reads the shared parse, so state the poll as one.
+        return EveusSnapshot.parse(
+            {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
+        )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     for _ in range(3):
         tracker.evaluate(_payload(900))
     assert tracker.evaluate(_payload(10)) is None
@@ -463,24 +477,30 @@ def test_single_blip_does_not_enter_probation():
 
 
 def test_negative_drift_also_fires(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    def _p(drift: float, tz: int = 3) -> dict:
-        return {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}
+    def _p(drift: float, tz: int = 3) -> "EveusSnapshot":
+        # The tracker reads the shared parse, so state the poll as one.
+        return EveusSnapshot.parse(
+            {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
+        )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     for _ in range(2):
         tracker.evaluate(_p(-900))
     assert tracker.evaluate(_p(-900)) is True
 
 
 def test_small_drift_never_fires_and_clears_after_two_polls(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    def _p(drift: float, tz: int = 3) -> dict:
-        return {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}
+    def _p(drift: float, tz: int = 3) -> "EveusSnapshot":
+        # The tracker reads the shared parse, so state the poll as one.
+        return EveusSnapshot.parse(
+            {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
+        )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     for _ in range(3):
         tracker.evaluate(_p(900))
     assert tracker.evaluate(_p(30)) is None
@@ -488,13 +508,103 @@ def test_small_drift_never_fires_and_clears_after_two_polls(_ha_local_clock_utc_
 
 
 def test_one_in_sync_poll_resets_debounce(_ha_local_clock_utc_plus_3_avail) -> None:
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    def _p(drift: float, tz: int = 3) -> dict:
-        return {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}
+    def _p(drift: float, tz: int = 3) -> "EveusSnapshot":
+        # The tracker reads the shared parse, so state the poll as one.
+        return EveusSnapshot.parse(
+            {"systemTime": int(time.time() + drift + tz * 3600), "timeZone": tz}, None
+        )
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     tracker.evaluate(_p(900))
     tracker.evaluate(_p(900))
     tracker.evaluate(_p(0))
     assert tracker.evaluate(_p(900)) is None
+
+
+def _split_clock(monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict]:
+    """Drive wall-clock and monotonic time independently in every control module."""
+    from custom_components.eveus import common_base, control_base, number, select, switch
+    from custom_components.eveus import time as time_platform
+
+    wall = {"t": 1_000_000.0}
+    mono = {"t": 5_000.0}
+    fake = SimpleNamespace(time=lambda: wall["t"], monotonic=lambda: mono["t"])
+    for module in (common_base, control_base, number, select, switch):
+        monkeypatch.setattr(module, "time", fake)
+    monkeypatch.setattr(time_platform, "_time", fake)
+    return wall, mono
+
+
+@pytest.mark.parametrize("jump", [3600.0, -3600.0])
+def test_wall_clock_jump_neither_expires_nor_extends_pending_control_value(
+    monkeypatch: pytest.MonkeyPatch, jump: float
+) -> None:
+    from custom_components.eveus.number import EveusCurrentNumber
+
+    wall, mono = _split_clock(monkeypatch)
+    entity = EveusCurrentNumber(EveusTestUpdater({"currentSet": "16"}), "16A")
+    disable_state_writes(entity)
+    entity._set_optimistic_value(10.0)
+
+    wall["t"] += jump
+    mono["t"] += 1
+    assert entity._resolve_value() == 10.0
+
+    # Only elapsed monotonic time ends the hold.
+    wall["t"] -= jump
+    mono["t"] += 120
+    assert entity._resolve_value() == 16.0
+
+
+@pytest.mark.parametrize("jump", [3600.0, -3600.0])
+def test_wall_clock_jump_neither_expires_nor_extends_missing_field_hold(
+    monkeypatch: pytest.MonkeyPatch, jump: float
+) -> None:
+    from custom_components.eveus.const import CONTROL_GRACE_PERIOD
+    from custom_components.eveus.number import EveusCurrentNumber
+
+    wall, mono = _split_clock(monkeypatch)
+    updater = EveusTestUpdater({"currentSet": "16"})
+    entity = EveusCurrentNumber(updater, "16A")
+    disable_state_writes(entity)
+    entity._handle_coordinator_update()
+    updater.data = {}
+
+    wall["t"] += jump
+    mono["t"] += CONTROL_GRACE_PERIOD - 1
+    assert entity._resolve_value() == 16.0
+
+    mono["t"] += 2
+    assert entity._resolve_value() is None
+
+
+def test_entity_visibility_is_read_from_the_coordinator_clock() -> None:
+    """P3.2: no entity keeps its own outage clock or timer.
+
+    Sensors stay visible for the 60 s grace, controls for 30 s, both measured
+    by the coordinator from the first failed poll.
+    """
+    from custom_components.eveus.const import (
+        AVAILABILITY_GRACE_PERIOD,
+        CONTROL_GRACE_PERIOD,
+    )
+    from custom_components.eveus.number import EveusCurrentNumber
+
+    updater = EveusTestUpdater({}, available=False)
+    sensor = _diag_sensor(updater)
+    control = EveusCurrentNumber(updater, "16A")
+
+    updater.seconds_unavailable = CONTROL_GRACE_PERIOD
+    assert sensor.available is True
+    assert control.available is False
+
+    updater.seconds_unavailable = AVAILABILITY_GRACE_PERIOD
+    assert sensor.available is False
+
+    updater.available = True
+    assert sensor.available is True and control.available is True
+
+    for name in ("_unavailable_since", "_schedule_grace_recheck", "_cancel_grace_recheck"):
+        assert not hasattr(sensor, name) and not hasattr(control, name)

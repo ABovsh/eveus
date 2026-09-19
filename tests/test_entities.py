@@ -9,6 +9,8 @@ import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
+from conftest import snapshot_of
+from conftest import OutageClock
 from conftest import TEST_BASE_URL, TEST_HOST, EveusTestUpdater
 from custom_components.eveus import common
 from custom_components.eveus import binary_sensor as binary_sensor_mod
@@ -19,7 +21,7 @@ from custom_components.eveus.common_base import (
     WriteOnChangeMixin,
 )
 from custom_components.eveus.number import EveusCurrentNumber
-from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, SensorSpec, SensorType
+from custom_components.eveus.sensor_definitions import OptimizedEveusSensor, EveusSensorEntityDescription
 from custom_components.eveus import button as button_mod
 from custom_components.eveus.button import (
     EveusRefreshButton,
@@ -34,9 +36,8 @@ from custom_components.eveus.switch import (
 from custom_components.eveus.const import SESSION_ACTIVE_STATES
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
 
     def __init__(self) -> None:
@@ -50,34 +51,31 @@ class _Updater:
             "powerMeas": "7200",
         }
 
+    @property
+    def snapshot(self):
+        # Derived on read, as the real coordinator's is per poll.
+        return snapshot_of(self)
+
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
 
 
 def _make_binary_sensor(name: str, data: dict, *, available: bool = True):
     updater = EveusTestUpdater(data, available=available)
-    descriptions = getattr(binary_sensor_mod, "BINARY_SENSORS", None)
-    if descriptions is not None:
-        description = next(item for item in descriptions if item.name == name)
-        entity = binary_sensor_mod.EveusBinarySensor(updater, description, 1)
-    else:
-        class_name = {
-            "Car Connected": "EveusCarConnectedBinarySensor",
-            "Session Active": "EveusSessionActiveBinarySensor",
-            "OCPP Connected": "EveusOcppConnectedBinarySensor",
-        }[name]
-        entity = getattr(binary_sensor_mod, class_name)(updater, 1)
+    description = next(
+        item for item in binary_sensor_mod.BINARY_SENSORS if item.name == name
+    )
+    entity = binary_sensor_mod.EveusBinarySensor(updater, description, 1)
     entity._entity_available = available
     return entity
 
 
 def test_sensor_uses_fresh_coordinator_data_without_ttl_cache() -> None:
     updater = _Updater()
-    spec = SensorSpec(
+    spec = EveusSensorEntityDescription(
         key="power",
         name="Power",
         value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-        sensor_type=SensorType.MEASUREMENT,
     )
     sensor = OptimizedEveusSensor(updater, spec)
     sensor.hass = object()
@@ -175,11 +173,10 @@ def test_base_entity_availability_grace_and_cache_paths() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -190,7 +187,7 @@ def test_base_entity_availability_grace_and_cache_paths() -> None:
     assert entity.device_info["name"] == "Eveus EV Charger"
 
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._update_availability_state()
     assert entity.available is False
 
@@ -203,25 +200,24 @@ def test_base_entity_availability_stays_available_during_grace(
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
+    entity._grace_period = 10
     updater.available = False
     assert entity._update_availability_state() is False
     assert entity.available is True
-    assert entity._unavailable_since == 100.0
 
     now = 105.0
-    assert entity._update_availability_state(grace_period=10) is False
+    assert entity._update_availability_state() is False
     assert entity.available is True
 
     now = 111.0
-    assert entity._update_availability_state(grace_period=10) is True
+    assert entity._update_availability_state() is True
     assert entity.available is False
 
 
@@ -229,28 +225,26 @@ def test_available_property_is_pure_until_coordinator_update() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     updater.available = False
 
     assert entity.available is True
-    assert entity._unavailable_since is None
+    assert entity._last_known_available is True
 
 
 def test_sensor_coordinator_update_writes_only_when_state_changes() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     writes = 0
@@ -275,11 +269,10 @@ def test_sensor_coordinator_update_clears_value_after_grace_period() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -287,7 +280,7 @@ def test_sensor_coordinator_update_clears_value_after_grace_period() -> None:
     entity._handle_coordinator_update()
 
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._handle_coordinator_update()
 
     assert entity.available is False
@@ -298,11 +291,10 @@ def test_sensor_value_errors_are_contained() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="bad",
             name="Bad",
             value_fn=lambda updater, hass: (_ for _ in ()).throw(ValueError("boom")),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -315,15 +307,14 @@ def test_entity_unavailable_transition_is_quiet_at_normal_log_levels(
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
 
     with caplog.at_level(logging.INFO, logger="custom_components.eveus.common_base"):
         entity._update_availability_state()
@@ -336,19 +327,16 @@ def test_base_entity_availability_restores_after_grace_period() -> None:
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
-    entity._unavailable_since = 0
     entity._last_known_available = False
 
     entity._update_availability_state()
     assert entity.available is True
-    assert entity._unavailable_since is None
     assert entity._last_known_available is True
 
 
@@ -358,20 +346,18 @@ def test_base_entity_availability_restore_log_is_rate_limited(
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
-    entity._unavailable_since = 0
     entity._last_known_available = False
 
     with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.common_base"):
-        entity._update_availability_state(label="Sensor")
-        entity._unavailable_since = 0
-        entity._update_availability_state(label="Sensor")
+        entity._update_availability_state()
+        entity._last_known_available = False
+        entity._update_availability_state()
 
     restore_logs = [
         record
@@ -385,11 +371,10 @@ def test_base_entity_cached_data_value_uses_default_for_none_payload_value() -> 
     updater = EveusTestUpdater({"powerMeas": None})
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: updater.data["powerMeas"],
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -401,11 +386,10 @@ def test_base_entity_device_info_falls_back_when_payload_is_malformed() -> None:
     updater.data = "not-a-dict"
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -424,7 +408,7 @@ def test_control_availability_mixin_clears_optimistic_number_state_after_grace()
     entity = EveusCurrentNumber(updater, "16A")
 
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._optimistic_value = 12
     entity._last_known_available = True
 
@@ -438,7 +422,7 @@ def test_control_unavailable_transition_is_quiet_at_normal_log_levels(caplog) ->
     entity = EveusCurrentNumber(updater, "16A")
 
     updater.available = False
-    entity._unavailable_since = 0
+    updater.seconds_unavailable = 10_000
     entity._optimistic_value = 12
     entity._last_known_available = True
 
@@ -476,11 +460,10 @@ def test_entities_do_not_set_name_attr_so_translation_keys_are_used() -> None:
     updater = _Updater()
     sensor = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="battery_voltage",
             name="Battery Voltage",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     number = EveusCurrentNumber(updater, "16A")
@@ -501,7 +484,7 @@ def test_control_state_properties_do_not_mutate_cached_device_state() -> None:
     assert number.native_value == 16
     assert number._last_device_value is None
     assert switch.is_on is None
-    assert switch._last_device_state is None
+    assert switch._last_device_value is None
 
 
 def test_common_module_exports_backward_compatible_symbols() -> None:
@@ -531,11 +514,10 @@ def test_base_entity_async_added_to_hass_restores_state(monkeypatch: pytest.Monk
     updater = _Updater()
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     restored: list[str] = []
@@ -562,11 +544,10 @@ def test_base_entity_async_added_to_hass_contains_restore_errors(
 ) -> None:
     entity = OptimizedEveusSensor(
         _Updater(),
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: float(updater.data["powerMeas"]),
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -587,11 +568,10 @@ def test_base_entity_finalize_device_info_paths(monkeypatch: pytest.MonkeyPatch)
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
 
@@ -611,11 +591,10 @@ def test_base_entity_finalize_waits_for_real_firmware(
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     monkeypatch.setattr(entity, "_build_device_info", lambda: {"sw_version": "Unknown"})
@@ -631,11 +610,10 @@ def test_base_entity_finalize_updates_registry_device(monkeypatch: pytest.Monkey
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -680,11 +658,10 @@ def test_base_entity_finalize_updates_registry_with_minimal_device_info(
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -733,11 +710,10 @@ def test_base_entity_finalize_skips_missing_registry_device(
     updater.data = {}
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -762,11 +738,10 @@ def test_base_entity_finalize_skips_registry_update_without_identifiers(
     updater = EveusTestUpdater({})
     entity = OptimizedEveusSensor(
         updater,
-        SensorSpec(
+        EveusSensorEntityDescription(
             key="power",
             name="Power",
             value_fn=lambda updater, hass: None,
-            sensor_type=SensorType.MEASUREMENT,
         ),
     )
     entity.hass = object()
@@ -795,7 +770,7 @@ def test_optimistic_control_mixin_reconciles_and_expires(monkeypatch: pytest.Mon
 
     control = Optimistic()
     control._init_optimistic_control()
-    monkeypatch.setattr("custom_components.eveus.common_base.time.time", lambda: 10.0)
+    monkeypatch.setattr("custom_components.eveus.common_base.time.monotonic", lambda: 10.0)
     control._set_optimistic_value(7)
 
     assert control._optimistic_value_is_valid(12.0, 5.0) is True
@@ -972,12 +947,13 @@ def test_update_native_value_when_unavailable_resets_to_none() -> None:
         def _get_sensor_value(self):
             return 42
 
-    entity = Probe(_Updater())
-    entity._entity_available = True
+    updater = _Updater()
+    entity = Probe(updater)
     assert entity._update_native_value() is True
     assert entity._attr_native_value == 42
 
-    entity._entity_available = False
+    updater.available = False
+    updater.seconds_unavailable = 10_000
     # Transition available -> unavailable: value actually changes (42 -> None).
     assert entity._update_native_value() is True
     assert entity._attr_native_value is None
@@ -1297,13 +1273,13 @@ def test_reconcile_with_device_default_mismatch_ttl_is_exactly_sixteen() -> None
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
     # age = 16.5s > the true 16.0 default -> must clear even though confirm_fn
     # says "not confirmed" and the clock never went backward.
     control._reconcile_with_device(
         99,
-        stamp + 16.5,
+        1016.5,
         lambda optimistic, device: False,
     )
     assert control._optimistic_value is None
@@ -1316,11 +1292,11 @@ def test_reconcile_with_device_mismatch_ttl_boundary_is_strict_greater() -> None
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
     control._reconcile_with_device(
         99,
-        stamp + 10.0,  # age == mismatch_ttl exactly
+        1010.0,  # age == mismatch_ttl exactly
         lambda optimistic, device: False,
         mismatch_ttl=10.0,
     )
@@ -1334,11 +1310,11 @@ def test_reconcile_with_device_backward_clock_boundary_is_strict_less_than() -> 
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
     control._reconcile_with_device(
         99,
-        stamp,  # age == 0 exactly
+        1000.0,  # age == 0 exactly
         lambda optimistic, device: False,
         mismatch_ttl=1000.0,
     )
@@ -1352,9 +1328,9 @@ def test_optimistic_value_valid_boundary_age_zero_is_valid() -> None:
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
-    assert control._optimistic_value_is_valid(stamp, 10.0) is True
+    assert control._optimistic_value_is_valid(1000.0, 10.0) is True
 
 
 def test_optimistic_value_valid_boundary_age_equals_ttl_is_invalid() -> None:
@@ -1364,9 +1340,9 @@ def test_optimistic_value_valid_boundary_age_equals_ttl_is_invalid() -> None:
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
-    assert control._optimistic_value_is_valid(stamp + 10.0, 10.0) is False
+    assert control._optimistic_value_is_valid(1010.0, 10.0) is False
 
 
 def test_expire_optimistic_value_boundary_age_zero_survives() -> None:
@@ -1376,9 +1352,9 @@ def test_expire_optimistic_value_boundary_age_zero_survives() -> None:
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
-    control._expire_optimistic_value(stamp, 10.0)
+    control._expire_optimistic_value(1000.0, 10.0)
     assert control._optimistic_value == 5
 
 
@@ -1389,9 +1365,9 @@ def test_expire_optimistic_value_boundary_age_equals_ttl_expires() -> None:
     control = OptimisticControlMixin()
     control._init_optimistic_control()
     control._set_optimistic_value(5)
-    stamp = control._optimistic_value_time
+    control._optimistic_value_time = 1000.0
 
-    control._expire_optimistic_value(stamp + 10.0, 10.0)
+    control._expire_optimistic_value(1010.0, 10.0)
     assert control._optimistic_value is None
 
 
@@ -1440,64 +1416,12 @@ def test_binary_description_is_frozen_and_kw_only() -> None:
 
 
 def test_module_description_constants_point_at_the_right_tuple_slots() -> None:
-    """_CAR_CONNECTED_DESCRIPTION/_SESSION_ACTIVE_DESCRIPTION/
-    _OCPP_CONNECTED_DESCRIPTION must each resolve to their own named
-    BINARY_SENSORS entry - verified through the actual backward-compatible
-    subclasses (EveusCarConnectedBinarySensor etc.), which are the only
-    thing in the codebase that dereferences these module constants."""
-    assert binary_sensor_mod._CAR_CONNECTED_DESCRIPTION.name == "Car Connected"
-    assert binary_sensor_mod._SESSION_ACTIVE_DESCRIPTION.name == "Session Active"
-    assert binary_sensor_mod._OCPP_CONNECTED_DESCRIPTION.name == "OCPP Connected"
-
-
-@pytest.mark.parametrize(
-    "class_name,expected_device_class,expected_icon,expected_category,expected_is_on_data",
-    [
-        (
-            "EveusCarConnectedBinarySensor",
-            BinarySensorDeviceClass.PLUG,
-            "mdi:ev-plug-type2",
-            None,
-            ({"state": 4}, True),
-        ),
-        (
-            "EveusSessionActiveBinarySensor",
-            BinarySensorDeviceClass.RUNNING,
-            "mdi:ev-station",
-            None,
-            ({"state": next(iter(SESSION_ACTIVE_STATES))}, True),
-        ),
-        (
-            "EveusOcppConnectedBinarySensor",
-            BinarySensorDeviceClass.CONNECTIVITY,
-            "mdi:cloud-check",
-            EntityCategory.DIAGNOSTIC,
-            ({"ocppconnected": 1}, True),
-        ),
-    ],
-)
-def test_backward_compatible_binary_sensor_subclasses_wire_correct_description(
-    class_name: str,
-    expected_device_class: BinarySensorDeviceClass,
-    expected_icon: str,
-    expected_category: EntityCategory | None,
-    expected_is_on_data: tuple[dict, bool | None],
-) -> None:
-    """Directly instantiate each backward-compatible subclass (bypassing the
-    description-driven helper) to pin its own class-level metadata AND that
-    it was wired to the correctly-named module-level description constant
-    (a wrong index there would silently swap in another sensor's is_on_fn)."""
-    updater = EveusTestUpdater({})
-    entity = getattr(binary_sensor_mod, class_name)(updater)
-    entity._entity_available = True
-
-    assert entity.device_class == expected_device_class
-    assert entity.icon == expected_icon
-    assert entity.entity_category == expected_category
-
-    data, expected_is_on = expected_is_on_data
-    updater.data = data
-    assert entity.is_on is expected_is_on
+    """CAR_CONNECTED_DESCRIPTION/SESSION_ACTIVE_DESCRIPTION/
+    OCPP_CONNECTED_DESCRIPTION must each resolve to their own named
+    BINARY_SENSORS entry."""
+    assert binary_sensor_mod.CAR_CONNECTED_DESCRIPTION.name == "Car Connected"
+    assert binary_sensor_mod.SESSION_ACTIVE_DESCRIPTION.name == "Session Active"
+    assert binary_sensor_mod.OCPP_CONNECTED_DESCRIPTION.name == "OCPP Connected"
 
 
 def test_binary_sensor_base_device_number_default_is_one() -> None:
@@ -1508,21 +1432,6 @@ def test_binary_sensor_base_device_number_default_is_one() -> None:
     )
     entity = binary_sensor_mod.EveusBinarySensor(EveusTestUpdater({}), description)
     assert entity.unique_id == "eveus_car_connected"
-
-
-@pytest.mark.parametrize(
-    "class_name,expected_unique_id",
-    [
-        ("EveusCarConnectedBinarySensor", "eveus_car_connected"),
-        ("EveusSessionActiveBinarySensor", "eveus_session_active"),
-        ("EveusOcppConnectedBinarySensor", "eveus_ocpp_connected"),
-    ],
-)
-def test_backward_compatible_binary_sensor_subclass_device_number_default_is_one(
-    class_name: str, expected_unique_id: str
-) -> None:
-    entity = getattr(binary_sensor_mod, class_name)(EveusTestUpdater({}))
-    assert entity.unique_id == expected_unique_id
 
 
 def test_binary_sensor_setup_entry_wires_updater_and_device_number() -> None:
@@ -1679,3 +1588,65 @@ def test_button_setup_entry_wires_runtime_data_through() -> None:
     }
     for entity in added:
         assert entity._updater is updater
+
+
+def test_device_info_is_built_once_per_snapshot_not_once_per_entity(monkeypatch) -> None:
+    """Every entity re-checks device metadata on every poll; the build must
+    cost one call per payload, not one per entity."""
+    from custom_components.eveus import common_base
+
+    calls: list[int] = []
+    real = common_base.get_device_info
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(common_base, "get_device_info", counting)
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe"
+
+    updater = _Updater()
+    updater.data = {"verFWWifi": "1PGRW001A-R3.05.5", "verFWMain": "GRM070A-R3.05.4", "state": 2}
+    updater.scheme = "http"
+    entities = [Probe(updater) for _ in range(20)]  # construction builds it too
+    for entity in entities:
+        entity._maybe_finalize_device_info()
+    assert len(calls) == 1
+
+    updater.data = {**updater.data, "verFWWifi": "1PGRW001A-R3.05.6"}  # OTA upgrade
+    for entity in entities:
+        entity._maybe_finalize_device_info()
+    assert len(calls) == 2
+    assert all("R3.05.6" in entity._attr_device_info["sw_version"] for entity in entities)
+
+    other = _Updater()  # a second charger never shares the first one's metadata
+    other.data = dict(updater.data)
+    other.scheme = "http"
+    other.host = "192.168.1.51"  # NOSONAR(python:S1313) - RFC 1918 test fixture
+    probe = Probe(other)
+    probe._maybe_finalize_device_info()
+    assert probe._attr_device_info["configuration_url"].endswith("192.168.1.51")
+
+
+def test_device_info_snapshot_picks_up_a_late_init_firmware_fallback() -> None:
+    """Firmware 1.x has no firmware string in /main; its version arrives from
+    /init after the first poll. The per-snapshot metadata must not keep
+    serving "Unknown" for the same payload once the fallback is known."""
+
+    class Probe(BaseEveusEntity):
+        ENTITY_NAME = "Probe"
+
+    updater = _Updater()
+    updater.data = {"state": 20, "currentSet": 7}  # fw1.51: no verFWMain/verFWWifi
+    updater.scheme = "http"
+    updater._init_fw_fallback = None
+    entity = Probe(updater)
+    entity._maybe_finalize_device_info()
+    assert entity._build_device_info()["sw_version"] == "Unknown"
+
+    updater._init_fw_fallback = "1.51"  # same payload object, fallback now resolved
+    entity._maybe_finalize_device_info()
+
+    assert entity._attr_device_info["sw_version"] == "1.51"

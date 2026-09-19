@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from custom_components.eveus.safety import POLICIES, evaluate_policy_signals
+from custom_components.eveus.snapshot import EveusSnapshot
 
 
 def _policy():
@@ -11,7 +12,8 @@ def _policy():
 
 
 def _signals(data):
-    return evaluate_policy_signals(_policy(), data)
+    # Parsed the way the coordinator parses it before safety ever sees it.
+    return evaluate_policy_signals(_policy(), EveusSnapshot.parse(data, None))
 
 
 def test_error_with_zero_substate_triggers() -> None:

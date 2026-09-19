@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+
+from conftest import PayloadUpdater
 from conftest import spec_value_fn
 from homeassistant.helpers.entity import EntityCategory
 
@@ -13,12 +15,14 @@ from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus import sensor_definitions as sensors
 
 
-def _updater(data: dict[str, object], *, available: bool = True) -> SimpleNamespace:
-    return SimpleNamespace(
-        data=data,
+def _updater(
+    data: dict[str, object], *, available: bool = True, model: str | None = None
+) -> PayloadUpdater:
+    return PayloadUpdater(
+        data,
         available=available,
-        connection_quality={},
         host="192.168.1.50",
+        model=model,
     )
 
 
@@ -102,7 +106,7 @@ def test_sensor_specification_factory_exposes_expected_entities() -> None:
     assert "Session Energy" in names
     assert "State" in names
     assert "Connection Quality" in names
-    assert "Session Cost" in names  # back as a SensorSpec in 4.6.0
+    assert "Session Cost" in names  # back as a EveusSensorEntityDescription in 4.6.0
     assert "Leakage Current" in names
     assert "Leakage Current Peak" in names
     # Exact count: catches silent additions/removals; bump on intentional
@@ -134,11 +138,7 @@ def test_value_getters_reject_nan_and_inf() -> None:
     They must be filtered to None so HA doesn't store nonsense in long-term
     statistics or compute downstream cost/finish-time off bad inputs.
     """
-    updater = SimpleNamespace(
-        data={"voltMeas1": "nan", "powerMeas": "inf", "sessionEnergy": "-inf"},
-        available=True,
-        connection_quality={},
-    )
+    updater = _updater({"voltMeas1": "nan", "powerMeas": "inf", "sessionEnergy": "-inf"})
     assert sensors.get_voltage(updater, None) is None
     assert sensors.get_power(updater, None) is None
     assert sensors.get_session_energy(updater, None) is None
@@ -147,9 +147,9 @@ def test_value_getters_reject_nan_and_inf() -> None:
 def test_status_like_entities_are_diagnostic() -> None:
     specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
 
-    assert specs["Current Set"].category == EntityCategory.DIAGNOSTIC
+    assert specs["Current Set"].entity_category == EntityCategory.DIAGNOSTIC
     # Derived from State + Substate, and shown next to them under Diagnostic.
-    assert specs["Not Charging Reason"].category == EntityCategory.DIAGNOSTIC
+    assert specs["Not Charging Reason"].entity_category == EntityCategory.DIAGNOSTIC
 
 
 def test_rate_status_sits_with_its_own_rate_cost() -> None:
@@ -160,7 +160,7 @@ def test_rate_status_sits_with_its_own_rate_cost() -> None:
     """
     specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
     for n in (2, 3):
-        assert specs[f"Rate {n} Status"].category == specs[f"Rate {n} Cost"].category is None
+        assert specs[f"Rate {n} Status"].entity_category == specs[f"Rate {n} Cost"].entity_category is None
 
 
 def test_session_energy_uses_measurement_state_class() -> None:
@@ -179,13 +179,13 @@ def test_sensor_keys_and_names_are_unique() -> None:
 
 
 def test_duplicate_sensor_keys_raise_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    original_spec = sensors.SensorSpec
+    original_spec = sensors.EveusSensorEntityDescription
 
     def duplicate_key_spec(*args, **kwargs):
         kwargs["key"] = "duplicate"
         return original_spec(*args, **kwargs)
 
-    monkeypatch.setattr(sensors, "SensorSpec", duplicate_key_spec)
+    monkeypatch.setattr(sensors, "EveusSensorEntityDescription", duplicate_key_spec)
 
     with pytest.raises(RuntimeError, match="duplicate sensor keys"):
         sensors.create_sensor_specifications()
@@ -198,7 +198,7 @@ def test_duplicate_sensor_keys_error_lists_only_the_actual_duplicates(
     every key (an off-by-one in the `.count(k) > 1` filter), not none of
     them, and not `None`. A silent wrong-message here would let a real
     duplicate slip through code review undiagnosed."""
-    original_spec = sensors.SensorSpec
+    original_spec = sensors.EveusSensorEntityDescription
     calls = {"n": 0}
 
     def duplicate_first_two_spec(*args, **kwargs):
@@ -207,7 +207,7 @@ def test_duplicate_sensor_keys_error_lists_only_the_actual_duplicates(
             kwargs["key"] = "duplicate"
         return original_spec(*args, **kwargs)
 
-    monkeypatch.setattr(sensors, "SensorSpec", duplicate_first_two_spec)
+    monkeypatch.setattr(sensors, "EveusSensorEntityDescription", duplicate_first_two_spec)
 
     with pytest.raises(RuntimeError) as exc_info:
         sensors.create_sensor_specifications()
@@ -224,8 +224,8 @@ def test_get_sensor_specifications_is_cached_by_arguments() -> None:
     tuple object, not merely an equal one — that's what `@lru_cache` buys
     us and what removing the decorator would silently break."""
     sensors.get_sensor_specifications.cache_clear()
-    first = sensors.get_sensor_specifications(phases=1, max_current=16)
-    second = sensors.get_sensor_specifications(phases=1, max_current=16)
+    first = sensors.get_sensor_specifications(phases=1)
+    second = sensors.get_sensor_specifications(phases=1)
     assert first is second
 
 
@@ -236,24 +236,23 @@ def test_get_sensor_specifications_phases_default_is_one() -> None:
     assert default == 1
 
 
-def test_get_sensor_specifications_falls_back_to_model_max_only_when_falsy() -> None:
-    """`max_current or _MAX_MODEL_CURRENT`: an explicit truthy max_current
-    must be used as-is (not replaced by the global ceiling), and only a
-    falsy value (None/0) should fall back. Regression guard for an
-    `or`/`and` flip that would silently widen every model's Schedule
-    current-limit clamp to the global 48 A ceiling."""
+def test_schedule_current_limit_uses_this_chargers_model_max() -> None:
+    """A schedule amp cap above THIS charger's design current must be dropped,
+    not widened to the global 48 A ceiling. Which charger it is comes from the
+    coordinator, so the clamp follows the poll rather than the spec factory."""
     sensors.get_sensor_specifications.cache_clear()
-    specs = {
-        s.key: s
-        for s in sensors.get_sensor_specifications(phases=1, max_current=16)
-    }
-    updater = _updater(
-        {"sh1CurrentEnable": "1", "sh1CurrentValue": "20"}
+    specs = {s.key: s for s in sensors.get_sensor_specifications(phases=1)}
+    attrs = specs["schedule_1"].attributes_fn(
+        _updater({"sh1CurrentEnable": "1", "sh1CurrentValue": "20"}, model="16A"),
+        None,
     )
-    attrs = specs["schedule_1"].attributes_fn(updater, None)
-    # 20 A exceeds the explicit max_current=16 clamp, so it must be dropped —
-    # not silently accepted because the ceiling widened to _MAX_MODEL_CURRENT.
     assert "current_limit_a" not in attrs
+    # The same payload on a 32 A unit is a perfectly ordinary setting.
+    attrs32 = specs["schedule_1"].attributes_fn(
+        _updater({"sh1CurrentEnable": "1", "sh1CurrentValue": "20"}, model="32A"),
+        None,
+    )
+    assert attrs32["current_limit_a"] == 20
     sensors.get_sensor_specifications.cache_clear()
 
 
@@ -447,7 +446,6 @@ def test_connection_attrs_handles_offline_and_includes_wifi_rssi() -> None:
         available=True,
     )
     updater.connection_quality = {"success_rate": 90, "latency_avg": 0.25}
-
     assert sensors.get_connection_attrs(updater, None) == {
         "connection_quality": 90,
         "latency_avg": 0.0,
@@ -464,20 +462,19 @@ def test_time_drift_handles_invalid_timestamp_without_raising() -> None:
 
 def test_optimized_sensor_contract_for_offline_and_attribute_errors() -> None:
     updater = _updater({"value": "1"}, available=False)
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="contract",
         name="Contract",
         value_fn=lambda updater, hass: 1,
-        sensor_type=sensors.SensorType.DIAGNOSTIC,
         icon="mdi:test-tube",
         device_class="custom",
         state_class="measurement",
-        unit="x",
-        precision=1,
-        category=EntityCategory.DIAGNOSTIC,
+        native_unit_of_measurement="x",
+        suggested_display_precision=1,
+        entity_category=EntityCategory.DIAGNOSTIC,
         attributes_fn=lambda updater, hass: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    sensor = spec.create_sensor(updater)
+    sensor = sensors.create_sensor(spec, updater)
 
     assert sensor._get_sensor_value() is None
     assert sensor._update_extra_state_attributes() is False
@@ -495,13 +492,12 @@ def test_optimized_sensor_contract_for_offline_and_attribute_errors() -> None:
 
 def test_optimized_sensor_value_exceptions_are_logged_and_contained() -> None:
     updater = _updater({"value": "1"})
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="broken_value",
         name="Broken Value",
         value_fn=lambda updater, hass: (_ for _ in ()).throw(RuntimeError("boom")),
-        sensor_type=sensors.SensorType.DIAGNOSTIC,
     )
-    sensor = spec.create_sensor(updater)
+    sensor = sensors.create_sensor(spec, updater)
 
     assert sensor._update_native_value() is False
     assert sensor.native_value is None
@@ -509,14 +505,13 @@ def test_optimized_sensor_value_exceptions_are_logged_and_contained() -> None:
 
 def test_optimized_sensor_attribute_exceptions_clear_previous_attributes() -> None:
     updater = _updater({"value": "1"})
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="broken_attrs",
         name="Broken Attributes",
         value_fn=lambda updater, hass: 1,
-        sensor_type=sensors.SensorType.DIAGNOSTIC,
         attributes_fn=lambda updater, hass: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    sensor = spec.create_sensor(updater)
+    sensor = sensors.create_sensor(spec, updater)
     sensor._attr_extra_state_attributes = {"old": "value"}
 
     assert sensor._update_extra_state_attributes() is True
@@ -524,14 +519,13 @@ def test_optimized_sensor_attribute_exceptions_clear_previous_attributes() -> No
 
 
 def test_monetary_cost_sensor_restores_last_reset_and_invalid_state() -> None:
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="session_cost",
         name="Session Cost",
         value_fn=sensors.get_session_cost,
-        sensor_type=sensors.SensorType.ENERGY,
         tracks_reset=True,
     )
-    sensor = spec.create_sensor(_updater({"sessionMoney": "1.23"}))
+    sensor = sensors.create_sensor(spec, _updater({"sessionMoney": "1.23"}))
     restored_at = datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc)
     state = SimpleNamespace(state="bad", attributes={"last_reset": restored_at})
 
@@ -542,14 +536,13 @@ def test_monetary_cost_sensor_restores_last_reset_and_invalid_state() -> None:
 
 
 def test_monetary_cost_sensor_ignores_unparseable_last_reset() -> None:
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="session_cost",
         name="Session Cost",
         value_fn=sensors.get_session_cost,
-        sensor_type=sensors.SensorType.ENERGY,
         tracks_reset=True,
     )
-    sensor = spec.create_sensor(_updater({"sessionMoney": "1.23"}))
+    sensor = sensors.create_sensor(spec, _updater({"sessionMoney": "1.23"}))
     state = SimpleNamespace(state="2.5", attributes={"last_reset": "not-a-date"})
 
     asyncio.run(sensor._async_restore_state(state))
@@ -559,7 +552,7 @@ def test_monetary_cost_sensor_ignores_unparseable_last_reset() -> None:
 
 
 def test_icon_and_unit_display_constants_are_stable() -> None:
-    """Guard the literal mdi:*/unit strings feeding SensorSpec.icon/unit.
+    """Guard the literal mdi:*/unit strings feeding EveusSensorEntityDescription.icon/unit.
 
     A typo here ships a broken icon or a wrong displayed unit to every user —
     these are user-visible, not cosmetic, even though nothing else in the
@@ -627,11 +620,10 @@ def test_active_rate_cost_maps_rate_2_to_tarif_b() -> None:
 def test_sensor_spec_is_frozen() -> None:
     import dataclasses
 
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="frozen_probe",
         name="Frozen Probe",
         value_fn=lambda updater, hass: 1,
-        sensor_type=sensors.SensorType.DIAGNOSTIC,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         spec.name = "Mutated"
@@ -641,24 +633,22 @@ def test_sensor_spec_precision_default_is_not_applied() -> None:
     """precision defaults to None so non-numeric sensors never get a bogus
     suggested_display_precision — only specs that pass precision explicitly
     should end up with one set."""
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="precision_probe",
         name="Precision Probe",
         value_fn=lambda updater, hass: "text",
-        sensor_type=sensors.SensorType.DIAGNOSTIC,
     )
-    sensor = spec.create_sensor(_updater({}))
+    sensor = sensors.create_sensor(spec, _updater({}))
     assert sensor.suggested_display_precision is None
 
 
 def test_sensor_spec_tracks_reset_defaults_to_plain_sensor() -> None:
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="tracks_reset_probe",
         name="Tracks Reset Probe",
         value_fn=lambda updater, hass: 1,
-        sensor_type=sensors.SensorType.DIAGNOSTIC,
     )
-    sensor = spec.create_sensor(_updater({}))
+    sensor = sensors.create_sensor(spec, _updater({}))
     assert type(sensor) is sensors.OptimizedEveusSensor
 
 
@@ -666,21 +656,19 @@ def test_create_sensor_default_device_number_has_no_suffix() -> None:
     """create_sensor's device_number default (1) must not add a device
     suffix to the unique_id — a device-2 default would collide with real
     multi-device unique_ids the moment a caller omits the argument."""
-    spec = sensors.SensorSpec(
+    spec = sensors.EveusSensorEntityDescription(
         key="device_default_probe",
         name="Device Default Probe",
         value_fn=lambda updater, hass: 1,
-        sensor_type=sensors.SensorType.DIAGNOSTIC,
     )
-    sensor = spec.create_sensor(_updater({}))
+    sensor = sensors.create_sensor(spec, _updater({}))
     assert sensor.unique_id == "eveus_device_default_probe"
 
 
 def test_make_value_getter_default_precision_rounds_to_int() -> None:
     """precision defaults to 0 in the factory itself."""
-    getter = sensors._make_value_getter("probeKey")
-    updater = _updater({"probeKey": "12.6"})
-    assert getter(updater, None) == 13
+    getter = sensors._make_value_getter("voltMeas1")
+    assert getter(_updater({"voltMeas1": "12.6"}), None) == 13
 
 
 def test_battery_voltage_rejects_reading_of_exactly_zero() -> None:
@@ -691,11 +679,17 @@ def test_battery_voltage_rejects_reading_of_exactly_zero() -> None:
     assert sensors.get_battery_voltage(updater, None) is None
 
 
-def test_get_data_value_short_circuits_on_either_offline_or_missing_data() -> None:
-    """`not available or not data` must reject on EITHER condition, not only
-    when both are true."""
-    updater = _updater({}, available=True)  # available but data is empty
-    assert sensors._get_data_value(updater, "missing_key", default="sentinel") is None
+def test_field_read_rejects_on_either_offline_or_missing_data() -> None:
+    """A field read answers None on EITHER condition, not only when both hold:
+    the charger never reported it, or the poll is currently failing."""
+    # Available, but the charger did not report the field.
+    assert sensors._read_int(_updater({}, available=True), "sh1Enabled") is None
+    assert sensors.get_voltage(_updater({}, available=True), None) is None
+    # Reported, but the poll is failing — the entity layer holds the last
+    # reading through its grace window instead.
+    offline = _updater({"sh1Enabled": 1, "voltMeas1": 230}, available=False)
+    assert sensors._read_int(offline, "sh1Enabled") is None
+    assert sensors.get_voltage(offline, None) is None
 
 
 def test_voltage_and_power_getters_accept_reading_of_exactly_zero() -> None:
@@ -706,7 +700,7 @@ def test_voltage_and_power_getters_accept_reading_of_exactly_zero() -> None:
 
 
 def test_energy_and_cost_getters_precision_and_minimum_boundary() -> None:
-    """Each of these getters is built with precision=2 and minimum=0 (inclusive).
+    """Each of these getters is built with suggested_display_precision=2 and minimum=0 (inclusive).
     A reading of exactly 0 must pass (kills minimum->1 mutants and, since it
     can only come through if the factory reads the *correct* key, also kills
     key-name mutants); a value with a third decimal digit must round to 2
@@ -739,21 +733,21 @@ def test_rate_cost_getters_precision_and_minimum_boundary() -> None:
 
 
 def test_box_and_plug_temperature_precision_is_whole_degrees() -> None:
-    """Both temperature getters use precision=0; a mutant bumping precision to
+    """Both temperature getters use suggested_display_precision=0; a mutant bumping precision to
     1 would keep the fractional digit instead of rounding to a whole degree."""
     assert sensors.get_box_temperature(_updater({"temperature1": "5.6"}), None) == 6
     assert sensors.get_plug_temperature(_updater({"temperature2": "5.6"}), None) == 6
 
 
 def test_battery_voltage_precision_and_exclusive_minimum_boundary() -> None:
-    """precision=2, and minimum=0 with exclusive_min=True: a tiny positive
+    """suggested_display_precision=2, and minimum=0 with exclusive_min=True: a tiny positive
     reading must still pass (kills a mutant that raises minimum to 1)."""
     assert sensors.get_battery_voltage(_updater({"vBat": "3.456"}), None) == pytest.approx(3.46)
     assert sensors.get_battery_voltage(_updater({"vBat": "0.5"}), None) == pytest.approx(0.5)
 
 
 def test_leak_current_getters_key_precision_and_minimum_boundary() -> None:
-    """get_leak_current/get_leak_current_peak: precision=0, minimum=0
+    """get_leak_current/get_leak_current_peak: suggested_display_precision=0, minimum=0
     (inclusive). Reading 0 at the correct key must pass through as 0."""
     cases = [
         ("leakValue", sensors.get_leak_current),
@@ -766,7 +760,7 @@ def test_leak_current_getters_key_precision_and_minimum_boundary() -> None:
 
 
 def test_wifi_rssi_precision_minimum_and_maximum_boundaries() -> None:
-    """get_wifi_rssi: precision=0, minimum=-120, maximum=0."""
+    """get_wifi_rssi: suggested_display_precision=0, minimum=-120, maximum=0."""
     assert sensors.get_wifi_rssi(_updater({"RSSI": "-5.6"}), None) == -6
     assert sensors.get_wifi_rssi(_updater({"RSSI": "-121"}), None) is None
     assert sensors.get_wifi_rssi(_updater({"RSSI": "1"}), None) is None
@@ -803,7 +797,10 @@ def test_charger_state_logs_warning_only_for_unmapped_states(caplog) -> None:
         assert not any("unrecognized device state" in r.message for r in caplog.records)
 
         caplog.clear()
-        sensors.get_charger_state(_updater({"state": "9999"}), None)
+        # 20 is firmware 1.x's idle code: a real state byte the modern map has
+        # no name for. (A value outside 0-255 never reaches a sensor — the
+        # payload validator fails the whole poll on it.)
+        sensors.get_charger_state(_updater({"state": "20"}), None)
         assert any("unrecognized device state" in r.message for r in caplog.records)
 
 
@@ -828,7 +825,7 @@ def test_session_time_getters_accept_zero_and_exact_max_boundary() -> None:
 def test_active_rate_cost_accepts_zero_and_exact_ceiling_boundary() -> None:
     """get_active_rate_cost: `value < 0` (0 must pass) and `value >
     _MAX_RATE_HUNDREDTHS` (exactly the ceiling must still pass)."""
-    from custom_components.eveus.sensor_definitions import _MAX_RATE_HUNDREDTHS
+    from custom_components.eveus.const import MAX_RATE_HUNDREDTHS as _MAX_RATE_HUNDREDTHS
 
     assert sensors.get_active_rate_cost(
         _updater({"activeTarif": "0", "tarif": "0"}), None
@@ -842,15 +839,15 @@ def test_active_rate_cost_accepts_zero_and_exact_ceiling_boundary() -> None:
 
 
 def test_active_rate_cost_precision_rounds_to_two_places() -> None:
-    """123.45 / 100 = 1.2345, which rounds to 1.23 at precision=2 (not
-    1.234 at precision=3)."""
+    """123.45 / 100 = 1.2345, which rounds to 1.23 at suggested_display_precision=2 (not
+    1.234 at suggested_display_precision=3)."""
     updater = _updater({"activeTarif": "0", "tarif": "123.45"})
     assert sensors.get_active_rate_cost(updater, None) == pytest.approx(1.23)
 
 
 def test_session_cost_precision_rounds_to_two_places() -> None:
-    """get_session_cost is built with precision=2; a third decimal digit
-    must round away, not survive at precision=3."""
+    """get_session_cost is built with suggested_display_precision=2; a third decimal digit
+    must round away, not survive at suggested_display_precision=3."""
     updater = _updater({"sessionMoney": "12.345"})
     assert sensors.get_session_cost(updater, None) == pytest.approx(12.35)
 
@@ -894,10 +891,11 @@ def test_schedule_attrs_current_and_energy_zero_are_inclusive() -> None:
 
 def test_schedule_attrs_current_limit_boundary_at_max_current() -> None:
     """The current cap upper bound is inclusive: a reading exactly equal to
-    max_current must be kept, not dropped as "above the model maximum"."""
-    attrs_fn = sensors._make_schedule_attrs(1, max_current=16)
+    the model maximum must be kept, not dropped as "above the model maximum"."""
+    attrs_fn = sensors._make_schedule_attrs(1)
     at_max = attrs_fn(
-        _updater({"sh1CurrentEnable": "1", "sh1CurrentValue": "16"}), None
+        _updater({"sh1CurrentEnable": "1", "sh1CurrentValue": "16"}, model="16A"),
+        None,
     )
     assert at_max["current_limit_a"] == 16
 
@@ -905,8 +903,7 @@ def test_schedule_attrs_current_limit_boundary_at_max_current() -> None:
 def test_connection_quality_missing_success_rate_defaults_to_zero() -> None:
     """`metrics.get("success_rate", 0)` must default to 0 (unknown/no data
     reads as 0% quality), not silently default to something else."""
-    updater = SimpleNamespace(available=True, data={}, connection_quality={})
-    assert sensors.get_connection_quality(updater, None) == 0
+    assert sensors.get_connection_quality(PayloadUpdater({}), None) == 0
 
 
 @pytest.mark.parametrize(
@@ -945,13 +942,13 @@ def test_connection_attrs_wifi_rssi_failure_excludes_field_entirely() -> None:
 
 def test_current_set_and_adaptive_current_getters_precision_and_minimum() -> None:
     """Both current_set_getter and adaptive_current_getter are built with
-    precision=0 and minimum=0 (inclusive): a fractional reading must round
+    suggested_display_precision=0 and minimum=0 (inclusive): a fractional reading must round
     to a whole amp, and exactly 0 must pass through as 0, not be rejected."""
-    specs = {s.name: s for s in sensors.create_sensor_specifications(max_current=16)}
+    specs = {s.name: s for s in sensors.create_sensor_specifications()}
     current_set_fn = specs["Current Set"].value_fn
     adaptive_fn = next(
         s.value_fn
-        for s in sensors.create_sensor_specifications(max_current=16)
+        for s in sensors.create_sensor_specifications()
         if s.key == "adaptive_current_limit"
     )
     assert current_set_fn(_updater({"currentSet": "14.6"}), None) == 15
@@ -1034,12 +1031,6 @@ class TestChargerStateAttributes:
     the firmware-1.x translated case and the unmapped-code case (issue #11).
     A plain mapped state must stay attribute-free."""
 
-    def test_legacy_translated_state_exposes_original_code(self) -> None:
-        attrs = sensors.get_charger_state_attributes(
-            _updater({"state": 2, "_legacy_raw_state": 20}), None
-        )
-        assert attrs == {"raw_state": 20}
-
     def test_unmapped_state_code_is_exposed(self) -> None:
         attrs = sensors.get_charger_state_attributes(_updater({"state": 20}), None)
         assert attrs == {"raw_state": 20}
@@ -1090,10 +1081,7 @@ def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
     )
     from homeassistant.helpers.entity import EntityCategory
 
-    from custom_components.eveus.sensor_definitions import (
-        SensorType,
-        create_sensor_specifications,
-    )
+    from custom_components.eveus.sensor_definitions import create_sensor_specifications
 
     specs = {s.key: s for s in create_sensor_specifications(phases=1)}
     MEASURED = SensorStateClass.MEASUREMENT
@@ -1119,11 +1107,10 @@ def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
         assert spec.name == name
         assert spec.icon == icon
         assert spec.device_class == device_class
-        assert spec.unit == unit
-        assert spec.precision == precision
-        assert spec.sensor_type == SensorType.DIAGNOSTIC
+        assert spec.native_unit_of_measurement == unit
+        assert spec.suggested_display_precision == precision
         assert spec.state_class == state_class
-        assert spec.category == EntityCategory.DIAGNOSTIC
+        assert spec.entity_category == EntityCategory.DIAGNOSTIC
 
     # Ordering is part of the contract: entity creation walks this list.
     order = [s.key for s in create_sensor_specifications(phases=1)]

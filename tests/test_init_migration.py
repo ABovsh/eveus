@@ -780,7 +780,7 @@ def test_session_cost_spec_is_monetary_uah() -> None:
     by_key = {s.key: s for s in get_sensor_specifications(1)}
     spec = by_key["session_cost"]
     assert spec.device_class == SensorDeviceClass.MONETARY
-    assert spec.unit == "UAH"
+    assert spec.native_unit_of_measurement == "UAH"
     assert spec.state_class == SensorStateClass.TOTAL
 
 

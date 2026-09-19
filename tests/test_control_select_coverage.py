@@ -15,6 +15,8 @@ from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 
+from conftest import snapshot_of
+from conftest import OutageClock
 from conftest import TEST_HOST
 from custom_components.eveus import const
 from custom_components.eveus import number as number_module
@@ -24,9 +26,8 @@ from custom_components.eveus.const import CONTROL_GRACE_PERIOD
 from custom_components.eveus.control_base import CommandBackedEntity
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
 
     def __init__(
@@ -42,6 +43,11 @@ class _Updater:
         self.commands: list[tuple[str, object]] = []
         self._result = result
         self._raises = raises
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the control by assigning `data`.
+        return snapshot_of(self)
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
@@ -105,9 +111,9 @@ def test_min_voltage_handle_update_skips_reconcile_while_pending() -> None:
     select._handle_coordinator_update()  # must return early, no crash
 
 
-def test_min_voltage_device_option_none_when_unavailable() -> None:
+def test_min_voltage_option_none_when_unavailable() -> None:
     select = select_module.EveusMinVoltageSelect(_Updater({"minVoltage": 200}, available=False))
-    assert select._device_option() is None
+    assert select.current_option is None
 
 
 def test_min_voltage_restore_state_seeds_last_device_value() -> None:
@@ -128,7 +134,7 @@ def test_min_voltage_grace_window_shows_restored_option_while_offline() -> None:
     select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
     _mute(select)
     select._last_device_value = 180
-    select._last_successful_read = time.time()
+    select._last_successful_read = time.monotonic()
     assert select.current_option == "180"
 
 
@@ -140,7 +146,7 @@ def test_min_voltage_grace_window_expired_returns_none() -> None:
     select = select_module.EveusMinVoltageSelect(_Updater({}, available=True))
     _mute(select)
     select._last_device_value = 180
-    select._last_successful_read = time.time() - CONTROL_GRACE_PERIOD - 1
+    select._last_successful_read = time.monotonic() - CONTROL_GRACE_PERIOD - 1
     assert select.current_option is None
 
 
@@ -253,7 +259,7 @@ def test_select_command_pending_starts_false(cls) -> None:
 
 def test_timezone_grace_window_boundary_age_zero_is_valid(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.select.time.monotonic", lambda: now)
     select = select_module.EveusTimeZoneSelect(_Updater({}, available=False))
     _mute(select)
     select._last_device_value = 3
@@ -264,7 +270,7 @@ def test_timezone_grace_window_boundary_age_zero_is_valid(monkeypatch) -> None:
 
 def test_timezone_grace_window_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.select.time.monotonic", lambda: now)
     # `available=True` with the key absent: this isolates the window that
     # measures from the last successful read, which is the one this test is
     # about. With the coordinator OFFLINE the value is held for as long as
@@ -279,7 +285,7 @@ def test_timezone_grace_window_boundary_age_equals_grace_period_expires(monkeypa
 
 def test_min_voltage_grace_window_boundary_age_zero_is_valid(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.select.time.monotonic", lambda: now)
     select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
     _mute(select)
     select._last_device_value = 180
@@ -290,7 +296,7 @@ def test_min_voltage_grace_window_boundary_age_zero_is_valid(monkeypatch) -> Non
 
 def test_min_voltage_grace_window_boundary_age_equals_grace_period_expires(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.select.time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.select.time.monotonic", lambda: now)
     # `available=True` with the key absent: this isolates the window that
     # measures from the last successful read, which is the one this test is
     # about. With the coordinator OFFLINE the value is held for as long as
@@ -350,7 +356,7 @@ def test_timezone_restore_state_stamps_a_real_timestamp() -> None:
     on a valid restore, not just get some truthy placeholder."""
     select = select_module.EveusTimeZoneSelect(_Updater({}, available=False))
     _mute(select)
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(select._async_restore_state(State("select.tz", "+2")))
     assert select._last_successful_read is not None
     assert select._last_successful_read >= before
@@ -359,7 +365,7 @@ def test_timezone_restore_state_stamps_a_real_timestamp() -> None:
 def test_min_voltage_restore_state_stamps_a_real_timestamp() -> None:
     select = select_module.EveusMinVoltageSelect(_Updater({}, available=False))
     _mute(select)
-    before = time.time()
+    before = time.monotonic()
     asyncio.run(select._async_restore_state(State("select.mv", "180")))
     assert select._last_successful_read is not None
     assert select._last_successful_read >= before
@@ -373,7 +379,7 @@ def test_timezone_select_rejects_unknown_option_exact_message() -> None:
     _mute(select)
     with pytest.raises(HomeAssistantError) as exc_info:
         asyncio.run(select.async_select_option("+99"))
-    assert str(exc_info.value) == "Unsupported time zone: +99"
+    assert str(exc_info.value) == "Unsupported Time Zone: +99"
 
 
 def test_timezone_select_command_failure_exact_message() -> None:
@@ -382,7 +388,7 @@ def test_timezone_select_command_failure_exact_message() -> None:
     _mute(select)
     with pytest.raises(HomeAssistantError) as exc_info:
         asyncio.run(select.async_select_option("+3"))
-    assert str(exc_info.value) == "Eveus charger did not accept timeZone=+3"
+    assert str(exc_info.value) == "Eveus charger did not accept timeZone=3"
 
 
 def test_min_voltage_select_rejects_unknown_option_exact_message() -> None:
@@ -442,21 +448,20 @@ def test_min_voltage_select_command_pending_true_during_send(monkeypatch) -> Non
 # --- _handle_coordinator_update device-value derivation guards ---
 
 
-def test_timezone_handle_update_value_error_guard_skips_reconcile_not_empty_string(
+def test_timezone_handle_update_skips_reconcile_for_an_offset_it_cannot_offer(
     monkeypatch,
 ) -> None:
-    """When `_device_option()` returns something non-numeric (defensive path),
-    the except-branch must set device_value to None (skipping reconcile), not
-    the empty string (which is not-None and would wrongly trigger reconcile)."""
-    select = select_module.EveusTimeZoneSelect(_Updater({"timeZone": 0}))
+    """An offset outside the offered options is not a device reading: it must
+    neither reconcile the optimistic value nor be shown."""
+    select = select_module.EveusTimeZoneSelect(_Updater({"timeZone": 99}))
     _mute(select)
-    monkeypatch.setattr(select, "_device_option", lambda: "not-an-int")
     calls: list[object] = []
     monkeypatch.setattr(select, "_reconcile_with_device", lambda *a, **k: calls.append(a))
 
     select._handle_coordinator_update()
 
     assert calls == []
+    assert select.current_option is None
 
 
 def test_min_voltage_handle_update_uses_real_device_option_not_forced_none(

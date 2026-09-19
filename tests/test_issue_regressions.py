@@ -28,15 +28,13 @@ from custom_components.eveus.const import CONF_PHASES, PHASE_OPTIONS
 def _diag_sensor(updater):
     from custom_components.eveus.sensor_definitions import (
         OptimizedEveusSensor,
-        SensorSpec,
-        SensorType,
+        EveusSensorEntityDescription,
     )
 
-    spec = SensorSpec(
+    spec = EveusSensorEntityDescription(
         key="test_diag",
         name="Test Diag",
         value_fn=lambda _updater, _hass: 1,
-        sensor_type=SensorType.DIAGNOSTIC,
     )
     sensor = OptimizedEveusSensor(updater, spec)
     disable_state_writes(sensor)

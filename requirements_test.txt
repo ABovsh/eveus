@@ -9,3 +9,4 @@ aiohttp>=3.0.0
 pillow>=10.0.0
 homeassistant>=2025.1.0
 hypothesis>=6.0.0
+syrupy>=4

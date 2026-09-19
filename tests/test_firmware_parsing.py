@@ -89,13 +89,20 @@ def test_counter_cost_sensors_use_monetary_iso_unit():
     for key in ("counter_a_cost", "counter_b_cost"):
         spec = by_key[key]
         assert spec.device_class == SensorDeviceClass.MONETARY
-        assert spec.unit == "UAH"
+        assert spec.native_unit_of_measurement == "UAH"
         assert spec.state_class == SensorStateClass.TOTAL
 
 
 class _SessionEnergyHolder:
     def __init__(self, value):
-        self._updater = type("U", (), {"data": {"sessionEnergy": value}})()
+        from custom_components.eveus.snapshot import EveusSnapshot
+
+        payload = {"sessionEnergy": value}
+        self._updater = type(
+            "U",
+            (),
+            {"data": payload, "snapshot": EveusSnapshot.parse(payload, None)},
+        )()
 
 
 def test_ev_energy_charged_rejects_negative():
@@ -599,15 +606,13 @@ def test_validate_finite_number_accepts_normal_input(good) -> None:
 def _fw_diag_sensor(updater):
     from custom_components.eveus.sensor_definitions import (
         OptimizedEveusSensor,
-        SensorSpec,
-        SensorType,
+        EveusSensorEntityDescription,
     )
 
-    spec = SensorSpec(
+    spec = EveusSensorEntityDescription(
         key="test_fw_diag",
         name="Test FW Diag",
         value_fn=lambda _updater, _hass: 1,
-        sensor_type=SensorType.DIAGNOSTIC,
     )
     from conftest import disable_state_writes
     sensor = OptimizedEveusSensor(updater, spec)
@@ -762,3 +767,24 @@ def test_force_refresh_bypass_counter_untouched():
     _make_offline(updater)
     updater._record_failure(TimeoutError())
     assert updater._force_refresh_requests == 0
+
+
+def test_capped_reader_reports_deep_nesting_as_malformed_payload() -> None:
+    """RecursionError is not a ValueError; the poll's ValueError handler would
+    miss it and skip failure accounting, so it is normalized."""
+    from custom_components.eveus._payload import PayloadError, read_json_capped
+    import asyncio
+
+    body = b"[" * 100_000 + b"]" * 100_000
+
+    class _Content:
+        async def iter_chunked(self, n):
+            yield body
+
+    class _Resp:
+        content_length = len(body)
+        content = _Content()
+
+    with pytest.raises(PayloadError) as err:
+        asyncio.run(read_json_capped(_Resp()))
+    assert err.value.code == "malformed"

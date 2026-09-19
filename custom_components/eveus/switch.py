@@ -7,7 +7,6 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.core import HomeAssistant, State, callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -20,11 +19,9 @@ from .common_base import (
 )
 from .control_base import CommandBackedEntity
 from .const import (
-    OPTIMISTIC_CONTROL_TTL,
     SOC_MODE_ADVANCED,
     get_soc_mode,
 )
-from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +36,7 @@ class EveusSwitchEntityDescription(SwitchEntityDescription, frozen_or_thawed=Tru
     # Sibling form fields written alongside ``command`` in the same request,
     # each set to the same on/off value. Required for settings the firmware
     # only accepts as a bundled "save" form (e.g. OCPP needs ocppVendor).
-    command_extra: tuple[str, ...] = ()  # pragma: no mutate - equivalent: only consumer branches on truthiness (`if self._command_extra else None`), so an empty tuple and None behave identically
+    command_extra: tuple[str, ...] = ()
 
 
 SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
@@ -167,7 +164,7 @@ class BaseSwitchEntity(
 ):
     """Description-driven switch entity with optimistic UI state."""
 
-    _control_entity_label = "Switch"  # pragma: no mutate - only used to format a debug-log message (common_base ControlEntityMixin), pure log text
+    _control_entity_label = "Switch"
 
     def __init__(
         self,
@@ -182,37 +179,10 @@ class BaseSwitchEntity(
         self._command = entity_description.command
         self._state_key = entity_description.state_key
         self._command_extra = entity_description.command_extra
-        self._pending_command: bool | None = None  # pragma: no mutate - annotation only: local/attr annotation in a function body is never evaluated (PEP 526)
+        self._pending_command: bool | None = None
         self._init_optimistic_control()
         self._attr_is_on = None
         self._init_write_on_change()
-
-    @property
-    def _optimistic_state(self) -> bool | None:
-        """Test-facing alias for the canonical _optimistic_value attribute."""
-        return self._optimistic_value
-
-    @_optimistic_state.setter
-    def _optimistic_state(self, value: bool | None) -> None:
-        self._optimistic_value = value
-
-    @property
-    def _optimistic_state_time(self) -> float:
-        """Test-facing alias for the canonical _optimistic_value_time attribute."""
-        return self._optimistic_value_time
-
-    @_optimistic_state_time.setter
-    def _optimistic_state_time(self, value: float) -> None:
-        self._optimistic_value_time = value
-
-    @property
-    def _last_device_state(self) -> bool | None:
-        """Test-facing alias for the canonical _last_device_value attribute."""
-        return self._last_device_value
-
-    @_last_device_state.setter
-    def _last_device_state(self, value: bool | None) -> None:
-        self._last_device_value = value
 
     @property
     def is_on(self) -> bool | None:
@@ -220,14 +190,16 @@ class BaseSwitchEntity(
         return self._attr_is_on
 
     def _read_device_value(self) -> bool | None:
-        """Return the latest valid switch state from coordinator data."""
-        if not (
-            self._updater.available
-            and self._updater.data
-            and self._state_key in self._updater.data
-        ):
+        """Return the latest valid switch state from coordinator data.
+
+        "The charger stopped sending this flag" and "it sent something
+        unusable" are different answers to the optimistic-write lifecycle, so
+        presence is asked of the raw payload and the value of the parse.
+        """
+        snapshot = self._updater.snapshot
+        if not (self._updater.available and snapshot.has(self._state_key)):
             return None
-        device_value = get_safe_value(self._updater.data, self._state_key, int)
+        device_value = snapshot.get_int(self._state_key)
         if device_value in (0, 1):
             return bool(device_value)
         return None
@@ -248,6 +220,10 @@ class BaseSwitchEntity(
         """Return the pending switch command sentinel."""
         return self._pending_command
 
+    def _set_pending(self, value: bool | None) -> None:
+        """Store the pending switch command sentinel."""
+        self._pending_command = value
+
     async def async_added_to_hass(self) -> None:
         """Resolve the initial state after restore/coordinator data is available."""
         await super().async_added_to_hass()
@@ -260,67 +236,43 @@ class BaseSwitchEntity(
         source is available, so a missing/invalid payload field is not exposed
         as a real ``off`` state that automations could act on.
         """
-        current_time = time.time()
-
-        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
-            return bool(self._optimistic_value)
-
-        if self._updater.available and self._updater.data and self._state_key in self._updater.data:
-            device_value = get_safe_value(self._updater.data, self._state_key, int)
-            if device_value in (0, 1):
-                return bool(device_value)
-
-        if self._may_hold_last_device_value(current_time):
-            return self._last_device_value
-
-        return None
+        value = self._resolve_held_value(self._read_device_value())
+        return None if value is None else bool(value)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
-        await self._async_send_command_or_raise(1)
+        await self._async_send_switch_command(1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        await self._async_send_command_or_raise(0)
+        await self._async_send_switch_command(0)
 
-    async def _async_send_command(self, command_value: int) -> bool:
-        """Send command with optimistic state."""
+    async def _async_send_switch_command(self, command_value: int) -> None:
+        """Send the on/off command through the shared pinned-command lifecycle."""
         async with self._command_lock:
-            self._pending_command = bool(command_value)
-            self._attr_is_on = self._pending_command
-            self._write_if_changed(self._attr_is_on)
-
-            try:
-                extra = (
-                    dict.fromkeys(self._command_extra, command_value)
-                    if self._command_extra
-                    else None
-                )
-                success = await self._updater.send_command(
-                    self._command, command_value, extra=extra
-                )
-                if success:
-                    self._set_optimistic_value(bool(command_value))
-                return success
-            finally:
-                self._pending_command = None
-                self._attr_is_on = self._resolve_state()
-                self._write_if_changed(self._attr_is_on)
-
-    async def _async_send_command_or_raise(self, command_value: int) -> None:
-        """Send command and raise HomeAssistantError on failure so HA shows a toast."""
-        success = await self._async_send_command(command_value)
-        if not success:
-            raise HomeAssistantError(
-                f"Eveus charger did not accept '{self.name}' "  # pragma: no mutate - pure exception-message text, self.name VALUE unchanged
-                f"{'on' if command_value else 'off'} command"  # pragma: no mutate - pure exception-message text, command_value VALUE unchanged
+            extra = (
+                dict.fromkeys(self._command_extra, command_value)
+                if self._command_extra
+                else None
+            )
+            await self._send_pinned_command(
+                device_value=command_value,
+                pending=bool(command_value),
+                shown=bool(command_value),
+                accepted=bool(command_value),
+                rejected_message=(
+                    f"Eveus charger did not accept '{self.name}' "
+                    f"{'on' if command_value else 'off'} command"  # pragma: no mutate - pure exception-message text, command_value VALUE unchanged
+                ),
+                failure_prefix=f"Failed to set '{self.name}'",  # pragma: no mutate - pure exception-message text, self.name VALUE unchanged
+                extra=extra,
             )
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display state only; no commands sent on startup."""
         if state and state.state in ("on", "off"):
             self._last_device_value = state.state == "on"
-            self._last_successful_read = time.time()
+            self._last_successful_read = time.monotonic()
             self._attr_is_on = self._last_device_value
 
 
@@ -351,19 +303,14 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
     def is_on(self) -> bool:
         return self._attr_is_on
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         # Turning the master "Disable limits" on switches the SOC limit off too,
         # alongside the charger's own limits. Only on the off->on transition: you
         # can still flip it back on while suspended (the controller ignores the
         # limit meanwhile), and turning the master back off never changes this
         # switch by itself — it stays where you left it (no auto-enable).
-        data = self._updater.data
-        raw = (
-            get_safe_value(data, "suspendLimits", int)
-            if isinstance(data, dict)
-            else None
-        )
+        raw = self._updater.snapshot.get_int("suspendLimits")
         if raw not in (0, 1):
             # Unknown/malformed master state — leave the transition memory
             # untouched (tri-state). Collapsing it to False here would make the
@@ -386,12 +333,7 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
         # first post-reload poll that still reports suspendLimits==1 looks like a
         # fresh off->on edge and silently flips a restored "on" back off — losing
         # a SOC limit the user deliberately re-enabled while limits were disabled.
-        data = self._updater.data
-        raw = (
-            get_safe_value(data, "suspendLimits", int)
-            if isinstance(data, dict)
-            else None
-        )
+        raw = self._updater.snapshot.get_int("suspendLimits")
         if raw in (0, 1):
             self._was_suspended = raw == 1
         last = await self.async_get_last_state()

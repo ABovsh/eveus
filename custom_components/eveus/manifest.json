@@ -1,6 +1,11 @@
 {
     "domain": "eveus",
     "name": "Eveus EV Charger",
+    "after_dependencies": [
+        "frontend",
+        "http",
+        "lovelace"
+    ],
     "codeowners": [
         "@ABovsh"
     ],
@@ -15,5 +20,5 @@
     ],
     "quality_scale": "silver",
     "requirements": [],
-    "version": "4.22.0"
+    "version": "4.23.0"
 }

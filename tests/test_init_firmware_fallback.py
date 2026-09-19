@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import StreamReaderStub, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.utils import get_device_info
@@ -52,8 +52,8 @@ class _Response:
         return len(json.dumps(self.payload).encode())
 
     @property
-    def content(self) -> "_StreamReader":
-        return _StreamReader(json.dumps(self.payload).encode())
+    def content(self) -> "StreamReaderStub":
+        return StreamReaderStub(json.dumps(self.payload).encode())
 
 
 class _NonJSONResponse(_Response):
@@ -62,17 +62,8 @@ class _NonJSONResponse(_Response):
         return len(b"not json")
 
     @property
-    def content(self) -> "_StreamReader":
-        return _StreamReader(b"not json")
-
-
-class _StreamReader:
-    def __init__(self, raw: bytes) -> None:
-        self._raw = raw
-
-    async def iter_chunked(self, size: int):
-        for i in range(0, len(self._raw), size):
-            yield self._raw[i : i + size]
+    def content(self) -> "StreamReaderStub":
+        return StreamReaderStub(b"not json")
 
 
 class _MultiSession:

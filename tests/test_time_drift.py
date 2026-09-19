@@ -3,17 +3,17 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 from homeassistant.util import dt as dt_util
 
+from conftest import snapshot_of
 import custom_components.eveus.sensor_definitions as sd
 from custom_components.eveus.const import (
     TIME_DRIFT_QUANTUM_SECONDS,
     TIME_DRIFT_TOLERANCE_SECONDS,
 )
-from custom_components.eveus.utils import get_charger_wall_clock_seconds
+from custom_components.eveus.snapshot import EveusSnapshot
 
 TZ_HOURS = 3
 TZ_SHIFT = TZ_HOURS * 3600
@@ -34,10 +34,37 @@ def _updater(offset_seconds: int | None = None, **overrides):
     if offset_seconds is not None:
         data["systemTime"] = str(int(time.time()) + TZ_SHIFT + offset_seconds)
     data.update(overrides)
-    return SimpleNamespace(available=True, data=data)
+    return _snapshot_updater(data)
 
 
-# --- get_charger_wall_clock_seconds (shared helper) ---
+class _SnapshotUpdater:
+    """Updater double whose snapshot follows `data`, as the coordinator's does.
+
+    Derived on read so a test can keep mutating the payload in place
+    (`updater.data["systemTime"] = "bad"`) and still be describing one poll.
+    """
+
+    available = True
+    last_update_success = True
+
+    def __init__(self, data) -> None:
+        self.data = data
+
+    @property
+    def snapshot(self) -> EveusSnapshot:
+        return snapshot_of(self)
+
+
+def _snapshot_updater(data) -> _SnapshotUpdater:
+    return _SnapshotUpdater(data)
+
+
+# --- EveusSnapshot.charger_wall_clock_s (shared view) ---
+
+
+def get_charger_wall_clock_seconds(data) -> int | None:
+    """Read the charger wall clock the way every consumer now reads it."""
+    return EveusSnapshot.parse(data, None).charger_wall_clock_s
 
 
 def test_charger_wall_clock_returns_validated_system_time() -> None:
@@ -120,7 +147,7 @@ def test_time_drift_unknown_on_missing_or_corrupt_data() -> None:
     assert sd.get_time_drift(_updater(None), None) is None
     assert sd.get_time_drift(_updater(0, systemTime="bad"), None) is None
     assert sd.get_time_drift(_updater(0, timeZone="bad"), None) is None
-    assert sd.get_time_drift(SimpleNamespace(available=True, data=None), None) is None
+    assert sd.get_time_drift(_snapshot_updater(None), None) is None
 
 
 def test_time_drift_handles_data_access_exception_without_raising() -> None:
@@ -134,17 +161,17 @@ def test_time_drift_handles_data_access_exception_without_raising() -> None:
     assert sd.get_time_drift(BrokenUpdater(), None) is None
 
 
-def test_time_drift_exception_log_includes_traceback(caplog) -> None:
-    """The except-block debug log passes exc_info=True so the traceback is
-    attached to the log record -- not just the bare error text."""
+def test_time_drift_exception_log_names_the_class_without_text_or_traceback(caplog) -> None:
+    """The except-block debug log names the exception class only: its text and
+    traceback can carry charger content, so neither reaches the record."""
     import logging
 
     class BrokenUpdater:
         available = True
 
         @property
-        def data(self):
-            raise RuntimeError("boom")
+        def snapshot(self):
+            raise RuntimeError("TOKEN-SENTINEL")
 
     # The rate limiter is a module-level singleton shared across tests; clear
     # this key so an earlier test's call doesn't suppress ours.
@@ -157,7 +184,9 @@ def test_time_drift_exception_log_includes_traceback(caplog) -> None:
         sd.get_time_drift(BrokenUpdater(), None)
         matching = [r for r in caplog.records if "Error getting time drift" in r.message]
         assert matching, "expected a debug log for the caught exception"
-        assert matching[0].exc_info  # truthy tuple only when exc_info=True was passed
+        assert matching[0].exc_info is None
+        assert "RuntimeError" in matching[0].message
+        assert "TOKEN-SENTINEL" not in caplog.text
 
 
 # --- spec wiring: Time Drift replaces System Time ---
@@ -168,7 +197,7 @@ def test_time_drift_spec_replaces_system_time() -> None:
     assert "system_time" not in specs
     drift = specs["time_drift"]
     assert drift.name == "Time Drift"
-    assert drift.unit == "s"
+    assert drift.native_unit_of_measurement == "s"
     assert drift.value_fn is sd.get_time_drift
     assert not hasattr(sd, "get_system_time")
 
@@ -279,10 +308,7 @@ def test_time_drift_detects_wrong_timezone_select() -> None:
     # while HA runs +3: the charger's wall clock is an hour behind, schedules
     # would mistime, and the sensor must say so.
     now = int(time.time())
-    updater = SimpleNamespace(
-        available=True,
-        data={"systemTime": str(now + 2 * 3600), "timeZone": "2"},
-    )
+    updater = _snapshot_updater({"systemTime": str(now + 2 * 3600), "timeZone": "2"})
     assert sd.get_time_drift(updater, None) == -3600
 
 
@@ -304,12 +330,14 @@ def _drift_payload(drift_seconds: int) -> dict:
 
 
 def _fired_tracker(drift_seconds: int):
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     decision = None
     for _ in range(3):
-        decision = tracker.evaluate(_drift_payload(drift_seconds))
+        decision = tracker.evaluate(
+            EveusSnapshot.parse(_drift_payload(drift_seconds), None)
+        )
     assert decision is True
     return tracker
 
@@ -318,13 +346,13 @@ def test_tracker_missing_time_fields_reset_rekey_state() -> None:
     # A successful poll that omits the time fields can't classify drift; it must
     # not advance the re-key streak on stale state or leave `still_drifted` set,
     # or two such polls could re-publish a stale clock-drift message.
-    from custom_components.eveus import _ClockDriftTracker
+    from custom_components.eveus import ClockDriftTracker
 
-    tracker = _ClockDriftTracker()
+    tracker = ClockDriftTracker()
     tracker.still_drifted = True
     tracker.rekey_streak = 2
 
-    assert tracker.evaluate({}) is None
+    assert tracker.evaluate(EveusSnapshot.empty()) is None
     assert tracker.still_drifted is False
     assert tracker.rekey_streak == 0
 
@@ -360,11 +388,11 @@ def test_clock_drift_issue_uses_kind_specific_translation_key(monkeypatch) -> No
     entry = NS(entry_id="e1")
 
     for drift, key in ((-3600, "clock_drift_timezone"), (900, "clock_drift")):
-        tracker = eveus._ClockDriftTracker()
-        updater = NS(available=True, last_update_success=True, data=None)
+        tracker = eveus.ClockDriftTracker()
+        updater = _snapshot_updater(None)
         for _ in range(3):
             updater.data = _drift_payload(drift)
-            eveus._update_clock_drift_issue(object(), entry, updater, tracker)
+            eveus.update_clock_drift_issue(object(), entry, updater, tracker)
         assert created[-1]["translation_key"] == key
     assert created[0]["translation_placeholders"] == {"hours": "1"}
 
@@ -379,3 +407,28 @@ def test_timezone_repair_text_exists_in_all_locales() -> None:
         desc = issues["clock_drift_timezone"]["description"]
         assert "Time Zone" in desc or "Часовий пояс" in desc, name
         assert "{hours}" in desc, name
+
+
+def test_charger_wall_clock_is_a_snapshot_view() -> None:
+    """The charger's wall clock and its RTC/timezone sanity windows belong to
+    the shared parse, so the Time Drift sensor and the clock-drift notice can
+    never read it two different ways."""
+    from custom_components.eveus.snapshot import EveusSnapshot
+
+    now = int(time.time())
+    assert (
+        EveusSnapshot.parse(
+            {"systemTime": now + TZ_SHIFT, "timeZone": 3}, None
+        ).charger_wall_clock_s
+        == now + TZ_SHIFT
+    )
+    for bad in (
+        {"systemTime": 0, "timeZone": 3},
+        {"systemTime": -1, "timeZone": 3},
+        {"systemTime": 99999999999, "timeZone": 3},
+        {"systemTime": now, "timeZone": 15},
+        {"systemTime": now, "timeZone": -13},
+        {"systemTime": now},
+        {"timeZone": 3},
+    ):
+        assert EveusSnapshot.parse(bad, None).charger_wall_clock_s is None

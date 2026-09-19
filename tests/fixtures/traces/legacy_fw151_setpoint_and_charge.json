@@ -1,0 +1,16 @@
+{
+  "description": "Firmware 1.x (GitHub issue #11) payload: legacy state codes, no logReady/subState/firmware fields. A Charging Current write confirmed late, then a legacy charge (state 3 with power), a missed poll and the return to legacy idle (state 20).",
+  "source": "synthetic",
+  "firmware": "1.51 (captured base payload)",
+  "base_payload": "fw151_unknown_state_main.json",
+  "sanitization": "Only allowlisted telemetry keys are replayed on top of the public fw1.51 capture.",
+  "steps": [
+    {"at": 0.0, "poll": "ok"},
+    {"at": 0.0, "command": {"entity": "charging_current", "value": 10}},
+    {"at": 3.0, "poll": "ok", "main": {"currentSet": 7}},
+    {"at": 10.0, "poll": "ok", "main": {"currentSet": 10}},
+    {"at": 40.0, "poll": "ok", "main": {"state": 3, "powerMeas": 1590, "curMeas1": 7.3}},
+    {"at": 70.0, "poll": "fail"},
+    {"at": 130.0, "poll": "ok", "main": {"state": 20, "powerMeas": 0, "curMeas1": 0}}
+  ]
+}

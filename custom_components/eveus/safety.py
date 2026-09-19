@@ -17,7 +17,6 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.storage import Store
 
 from .const import (
-    CHARGING_STATES,
     DEVICE_STATE_ERROR,
     DOMAIN,
     ERROR_STATES,
@@ -30,21 +29,24 @@ from .const import (
     LEAKAGE_RECOVERED_MA,
     LEAKAGE_RECOVERY_POLLS,
     LEAKAGE_TRIGGER_POLLS,
-    MAX_VALID_LEAKAGE_CURRENT_MA,
-    MAX_VALID_TEMPERATURE_C,
-    MIN_VALID_TEMPERATURE_C,
     TEMPERATURE_HIGH_C,
     TEMPERATURE_RECOVERED_C,
     TEMPERATURE_RECOVERY_POLLS,
     TEMPERATURE_TRIGGER_POLLS,
     UNKNOWN_ERROR_TRIGGER_POLLS,
 )
-from .utils import get_safe_value
+from .snapshot import EveusSnapshot
 
 # A raw-telemetry signal returns True (condition present), False (absent), or
 # None (unknown — missing/corrupt/out-of-domain data that must not move any
 # trigger or recovery counter).
-Signal = Callable[[Mapping[str, Any]], "bool | None"]
+#
+# Every signal reads an ``EveusSnapshot``: the conversion and the physical
+# bounds were applied once when the payload was parsed, so a finite-but-
+# impossible reading (``temperature1`` 1e9) is already ``None`` here and the
+# detector cannot carry a second copy of a ceiling that could drift from the
+# display sensor's.
+Signal = Callable[[EveusSnapshot], "bool | None"]
 
 
 class SafetyLifecycle(Enum):
@@ -88,6 +90,12 @@ def safety_store_key(entry) -> str:
 _safety_store_key = safety_store_key
 
 
+# `_policy` and the signal factories below (`_equals`, `_at_least`, `_at_most`,
+# `_below`) run once, at import, to build POLICIES. mutmut activates a mutant only
+# after the import, so it cannot take effect there and every mutant of these
+# functions is reported as surviving. Applied to the source by hand, the suite
+# kills them: the policy table is pinned through POLICIES, not through the
+# factories.
 def _policy(
     key: str,
     *fault_codes: int,
@@ -114,27 +122,27 @@ def _policy(
 _UNKNOWN = object()
 
 
-def _fault_code(data: Mapping[str, Any]) -> int | None | object:
+def _fault_code(snapshot: EveusSnapshot) -> int | None | object:
     """Return the firmware fault code, ``None`` (no fault), or ``_UNKNOWN``.
 
     ``_UNKNOWN`` covers a missing/out-of-domain ``state`` or, while in the error
     state, a missing/out-of-domain ``subState`` — neither may advance or reset a
     trigger or recovery streak.
     """
-    state = get_safe_value(data, "state", int)
-    if state not in CHARGING_STATES:
+    state = snapshot.known_state
+    if state is None:
         return _UNKNOWN
     if state != DEVICE_STATE_ERROR:
         return None
-    substate = get_safe_value(data, "subState", int)
+    substate = snapshot.substate
     return substate if substate in ERROR_STATES and substate != 0 else _UNKNOWN
 
 
 def _equals(key: str, expected: int, allowed: frozenset[int]) -> Signal:
     """Tri-state equality on an enum field; unknown when value is out of domain."""
 
-    def evaluate(data: Mapping[str, Any]) -> bool | None:
-        value = get_safe_value(data, key, int)
+    def evaluate(snapshot: EveusSnapshot) -> bool | None:
+        value = snapshot.get_int(key)
         if value not in allowed:
             return None
         return value == expected
@@ -142,49 +150,25 @@ def _equals(key: str, expected: int, allowed: frozenset[int]) -> Signal:
     return evaluate
 
 
-def _bounded_float(
-    key: str, *, minimum: float, maximum: float
-) -> Callable[[Mapping[str, Any]], float | None]:
-    """Return a finite reading within physical bounds, else ``None`` (unknown).
-
-    A finite but impossible outlier (e.g. ``temperature1=1e9``) is unknown, not
-    an event — the same physical-sanity bounds the display sensors apply.
-    """
-
-    def evaluate(data: Mapping[str, Any]) -> float | None:
-        value = get_safe_value(data, key, float)
-        if value is None or not minimum <= value <= maximum:
-            return None
-        return value
-
-    return evaluate
-
-
-def _at_least(key: str, threshold: float, *, minimum: float, maximum: float) -> Signal:
-    value_of = _bounded_float(key, minimum=minimum, maximum=maximum)
-
-    def evaluate(data: Mapping[str, Any]) -> bool | None:
-        value = value_of(data)
+def _at_least(key: str, threshold: float) -> Signal:
+    def evaluate(snapshot: EveusSnapshot) -> bool | None:
+        value = snapshot.get(key)
         return None if value is None else value >= threshold
 
     return evaluate
 
 
-def _at_most(key: str, threshold: float, *, minimum: float, maximum: float) -> Signal:
-    value_of = _bounded_float(key, minimum=minimum, maximum=maximum)
-
-    def evaluate(data: Mapping[str, Any]) -> bool | None:
-        value = value_of(data)
+def _at_most(key: str, threshold: float) -> Signal:
+    def evaluate(snapshot: EveusSnapshot) -> bool | None:
+        value = snapshot.get(key)
         return None if value is None else value <= threshold
 
     return evaluate
 
 
-def _below(key: str, threshold: float, *, minimum: float, maximum: float) -> Signal:
-    value_of = _bounded_float(key, minimum=minimum, maximum=maximum)
-
-    def evaluate(data: Mapping[str, Any]) -> bool | None:
-        value = value_of(data)
+def _below(key: str, threshold: float) -> Signal:
+    def evaluate(snapshot: EveusSnapshot) -> bool | None:
+        value = snapshot.get(key)
         return None if value is None else value < threshold
 
     return evaluate
@@ -193,26 +177,26 @@ def _below(key: str, threshold: float, *, minimum: float, maximum: float) -> Sig
 _GROUND_DOMAIN = frozenset({0, 1})
 
 
-def _unknown_error_trigger(data: Mapping[str, Any]) -> bool | None:
+def _unknown_error_trigger(snapshot: EveusSnapshot) -> bool | None:
     """Error state with a fault code no per-code policy recognizes.
 
     Covers subState 0 (firmware reports an error but no cause) and future codes
     outside ERROR_STATES. A missing subState is corrupt data, not an unknown
     code — tri-state None so no streak moves.
     """
-    state = get_safe_value(data, "state", int)
-    if state not in CHARGING_STATES:
+    state = snapshot.known_state
+    if state is None:
         return None
     if state != DEVICE_STATE_ERROR:
         return False
-    substate = get_safe_value(data, "subState", int)
+    substate = snapshot.substate
     if substate is None:
         return None
     return substate == 0 or substate not in ERROR_STATES
 
 
-def _unknown_error_recovered(data: Mapping[str, Any]) -> bool | None:
-    trigger = _unknown_error_trigger(data)
+def _unknown_error_recovered(snapshot: EveusSnapshot) -> bool | None:
+    trigger = _unknown_error_trigger(snapshot)
     if trigger is None:
         return None
     return not trigger
@@ -246,18 +230,8 @@ POLICIES: tuple[SafetyPolicy, ...] = (
         "leakage_detected",
         2,
         4,
-        raw_trigger=_at_least(
-            "leakValue",
-            LEAKAGE_HIGH_MA,
-            minimum=0,
-            maximum=MAX_VALID_LEAKAGE_CURRENT_MA,
-        ),
-        raw_recovered=_below(
-            "leakValue",
-            LEAKAGE_RECOVERED_MA,
-            minimum=0,
-            maximum=MAX_VALID_LEAKAGE_CURRENT_MA,
-        ),
+        raw_trigger=_at_least("leakValue", LEAKAGE_HIGH_MA),
+        raw_recovered=_below("leakValue", LEAKAGE_RECOVERED_MA),
         trigger_polls=LEAKAGE_TRIGGER_POLLS,
         recovery_polls=LEAKAGE_RECOVERY_POLLS,
     ),
@@ -265,36 +239,16 @@ POLICIES: tuple[SafetyPolicy, ...] = (
     _policy(
         "box_overheat",
         5,
-        raw_trigger=_at_least(
-            "temperature1",
-            TEMPERATURE_HIGH_C,
-            minimum=MIN_VALID_TEMPERATURE_C,
-            maximum=MAX_VALID_TEMPERATURE_C,
-        ),
-        raw_recovered=_at_most(
-            "temperature1",
-            TEMPERATURE_RECOVERED_C,
-            minimum=MIN_VALID_TEMPERATURE_C,
-            maximum=MAX_VALID_TEMPERATURE_C,
-        ),
+        raw_trigger=_at_least("temperature1", TEMPERATURE_HIGH_C),
+        raw_recovered=_at_most("temperature1", TEMPERATURE_RECOVERED_C),
         trigger_polls=TEMPERATURE_TRIGGER_POLLS,
         recovery_polls=TEMPERATURE_RECOVERY_POLLS,
     ),
     _policy(
         "plug_overheat",
         6,
-        raw_trigger=_at_least(
-            "temperature2",
-            TEMPERATURE_HIGH_C,
-            minimum=MIN_VALID_TEMPERATURE_C,
-            maximum=MAX_VALID_TEMPERATURE_C,
-        ),
-        raw_recovered=_at_most(
-            "temperature2",
-            TEMPERATURE_RECOVERED_C,
-            minimum=MIN_VALID_TEMPERATURE_C,
-            maximum=MAX_VALID_TEMPERATURE_C,
-        ),
+        raw_trigger=_at_least("temperature2", TEMPERATURE_HIGH_C),
+        raw_recovered=_at_most("temperature2", TEMPERATURE_RECOVERED_C),
         trigger_polls=TEMPERATURE_TRIGGER_POLLS,
         recovery_polls=TEMPERATURE_RECOVERY_POLLS,
     ),
@@ -310,7 +264,7 @@ POLICIES: tuple[SafetyPolicy, ...] = (
 
 
 def evaluate_policy_signals(
-    policy: SafetyPolicy, data: Mapping[str, Any]
+    policy: SafetyPolicy, snapshot: EveusSnapshot
 ) -> tuple[bool | None, bool | None]:
     """Return ``(trigger, recovered)`` tri-state signals for one policy.
 
@@ -329,7 +283,7 @@ def evaluate_policy_signals(
         fault_matches: bool | None = False
         fault_recovered: bool | None = True
     else:
-        fault = _fault_code(data)
+        fault = _fault_code(snapshot)
         if fault is _UNKNOWN:
             fault_matches = None
             fault_recovered = None
@@ -337,8 +291,8 @@ def evaluate_policy_signals(
             fault_matches = fault in policy.fault_codes
             fault_recovered = not fault_matches
 
-    raw_trigger = policy.raw_trigger(data) if policy.raw_trigger else False
-    raw_recovered = policy.raw_recovered(data) if policy.raw_recovered else True
+    raw_trigger = policy.raw_trigger(snapshot) if policy.raw_trigger else False
+    raw_recovered = policy.raw_recovered(snapshot) if policy.raw_recovered else True
 
     if fault_matches is True or raw_trigger is True:
         trigger: bool | None = True
@@ -359,9 +313,9 @@ def evaluate_policy_signals(
     return trigger, recovered
 
 
-def matching_firmware_fault(policy: SafetyPolicy, data: Mapping[str, Any]) -> bool:
+def matching_firmware_fault(policy: SafetyPolicy, snapshot: EveusSnapshot) -> bool:
     """Return whether the current payload carries this policy's firmware fault."""
-    fault = _fault_code(data)
+    fault = _fault_code(snapshot)
     return isinstance(fault, int) and fault in policy.fault_codes
 
 
@@ -442,9 +396,7 @@ class EveusSafetyManager:
         for key, state in self._states.items():
             entry = data.get(key)
             if isinstance(entry, Mapping):
-                state.recovered_since_raised = bool(
-                    entry.get("recovered_since_raised", False)
-                )
+                state.recovered_since_raised = bool(entry.get("recovered_since_raised"))
 
     def _persisted_snapshot(self) -> dict[str, dict[str, bool]]:
         """The recovery memory to persist (kept tiny and forward-compatible)."""
@@ -464,31 +416,27 @@ class EveusSafetyManager:
         A failed or unavailable poll is skipped entirely so stale cached data is
         never replayed into a debounce or recovery streak.
         """
-        if (
-            not self._updater.available
-            or not self._updater.last_update_success
-            or not isinstance(self._updater.data, dict)
-        ):
+        if not self._updater.available or not self._updater.last_update_success:
             return
-        data = self._updater.data
+        snapshot = self._updater.snapshot
         for policy in POLICIES:
-            self._process_policy(policy, self._states[policy.key], data)
+            self._process_policy(policy, self._states[policy.key], snapshot)
 
     def _process_policy(
         self,
         policy: SafetyPolicy,
         state: SafetyPolicyState,
-        data: Mapping[str, Any],
+        snapshot: EveusSnapshot,
     ) -> None:
         """Reconcile one policy against one fresh successful payload."""
-        trigger, recovered = evaluate_policy_signals(policy, data)
+        trigger, recovered = evaluate_policy_signals(policy, snapshot)
         issue_id = safety_issue_id(self._entry, policy.key)
         issue = ir.async_get(self._hass).async_get_issue(DOMAIN, issue_id)
 
         if trigger is True:
             state.recovery_streak = 0
             state.recovered = False
-            if matching_firmware_fault(policy, data):
+            if matching_firmware_fault(policy, snapshot):
                 # An authoritative fault bypasses raw debounce entirely.
                 state.trigger_streak = policy.trigger_polls
             else:

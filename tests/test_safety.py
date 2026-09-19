@@ -24,9 +24,11 @@ from custom_components.eveus.const import (
     GROUND_TRIGGER_POLLS,
     LEAKAGE_RECOVERED_MA,
     MAX_VALID_TEMPERATURE_C,
+    TEMPERATURE_HIGH_C,
     TEMPERATURE_RECOVERY_POLLS,
     TEMPERATURE_TRIGGER_POLLS,
 )
+from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.safety import (
     POLICIES,
     EveusSafetyManager,
@@ -39,9 +41,37 @@ from custom_components.eveus.safety import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _snap(payload: dict[str, object] | None) -> EveusSnapshot:
+    """Parse a payload the way the coordinator does before handing it to safety."""
+    return EveusSnapshot.parse(payload if isinstance(payload, dict) else {}, None)
+
+
 def _signals(key: str, payload: dict[str, object]) -> tuple[bool | None, bool | None]:
     policy = next(policy for policy in POLICIES if policy.key == key)
-    return evaluate_policy_signals(policy, payload)
+    return evaluate_policy_signals(policy, _snap(payload))
+
+
+class _FakeUpdater:
+    """Coordinator double whose `snapshot` follows `data`, as the real one does.
+
+    The tests drive safety by assigning a fresh payload to `.data`; keeping the
+    parse on the setter means a test can never hand the manager a snapshot that
+    disagrees with the payload it is supposed to describe.
+    """
+
+    def __init__(self, data=None, *, available=True, last_update_success=True) -> None:
+        self.available = available
+        self.last_update_success = last_update_success
+        self.data = data
+
+    @property
+    def data(self):
+        return self._data
+
+    @data.setter
+    def data(self, value) -> None:
+        self._data = {} if value is None else value
+        self.snapshot = _snap(value)
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +221,7 @@ def test_real_safe_payload_has_no_dangerous_trigger() -> None:
     triggered = {
         policy.key
         for policy in POLICIES
-        if evaluate_policy_signals(policy, payload)[0] is True
+        if evaluate_policy_signals(policy, _snap(payload))[0] is True
     }
     # Nothing at all: the charger this fixture was captured from reports
     # groundCtrl=1 on GRM070A-R3.05.4. The earlier R3.05.2 capture had
@@ -366,11 +396,7 @@ def test_matching_firmware_fault_triggers_immediately() -> None:
 def _manager(payload: dict[str, object] | None = None):
     hass = SimpleNamespace()
     entry = SimpleNamespace(entry_id="entry")
-    updater = SimpleNamespace(
-        data={} if payload is None else payload,
-        available=True,
-        last_update_success=True,
-    )
+    updater = _FakeUpdater(payload)
     return hass, entry, updater, EveusSafetyManager(hass, entry, updater)
 
 
@@ -701,6 +727,7 @@ def test_issue_creation_metadata_and_no_active_poll_churn(
     assert issue_id == safety_issue_id(entry, key)
     assert kwargs["is_fixable"] is False
     assert kwargs["is_persistent"] is True
+    assert kwargs["issue_domain"] == DOMAIN
     assert kwargs["severity"] is expected_severity
     assert kwargs["translation_key"] == f"safety_{key}"
 
@@ -710,9 +737,7 @@ def test_v05_persisted_recovery_lets_dismissed_issue_realert_after_reload() -> N
     must re-alert — the recovery memory survives manager recreation."""
     hass = SimpleNamespace()
     entry = SimpleNamespace(entry_id="entry")
-    updater = SimpleNamespace(
-        data={"state": 2, "temperature1": 80}, available=True, last_update_success=True
-    )
+    updater = _FakeUpdater({"state": 2, "temperature1": 80})
     m1 = EveusSafetyManager(hass, entry, updater)
     for _ in range(TEMPERATURE_TRIGGER_POLLS):
         m1.process()
@@ -746,9 +771,7 @@ def test_v05_without_persisted_recovery_dismissed_issue_stays_hidden() -> None:
     (the pre-fix behavior) — confirming the persistence is what re-alerts."""
     hass = SimpleNamespace()
     entry = SimpleNamespace(entry_id="entry")
-    updater = SimpleNamespace(
-        data={"state": 2, "temperature1": 80}, available=True, last_update_success=True
-    )
+    updater = _FakeUpdater({"state": 2, "temperature1": 80})
     ir.async_create_issue(
         hass, DOMAIN, safety_issue_id(entry, "box_overheat"),
         is_fixable=False, is_persistent=True,
@@ -773,9 +796,11 @@ def test_apply_persisted_defaults_missing_flag_to_false() -> None:
 def test_async_load_restores_recovered_since_raised_from_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    built: list[tuple[Any, int, str]] = []
+
     class _FakeStore:
         def __init__(self, hass_: Any, version: int, key: str) -> None:
-            pass
+            built.append((hass_, version, key))
 
         async def async_load(self) -> dict[str, Any]:
             return {"box_overheat": {"recovered_since_raised": True}}
@@ -785,6 +810,7 @@ def test_async_load_restores_recovered_since_raised_from_store(
 
     asyncio.run(manager.async_load())
 
+    assert built == [(hass, safety._SAFETY_STORE_VERSION, safety.safety_store_key(entry))]
     assert manager._store is not None
     assert manager._states["box_overheat"].recovered_since_raised is True
 
@@ -802,3 +828,163 @@ def test_async_load_degrades_to_in_memory_only_on_store_failure(
     asyncio.run(manager.async_load())
 
     assert manager._store is None
+
+
+# --- Snapshot migration (P2.2) ---------------------------------------------
+
+
+def test_policies_evaluate_from_the_typed_snapshot() -> None:
+    """Safety reads the shared parse, not its own copy of the payload rules."""
+    snapshot = EveusSnapshot.parse({"state": 2, "currentSet": 16, "ground": 0}, None)
+    policy = next(p for p in POLICIES if p.key == "ground_missing")
+    assert evaluate_policy_signals(policy, snapshot) == (True, False)
+
+
+def test_the_physical_bound_is_the_snapshots_not_a_second_copy() -> None:
+    """A real overheat still fires, a corrupt one still moves no streak — but
+    the ceiling that separates them is applied once, in the snapshot, so it
+    cannot drift from the Box Temperature sensor's."""
+    policy = next(p for p in POLICIES if p.key == "box_overheat")
+
+    def signals(temperature):
+        payload = {"state": 2, "currentSet": 16, "temperature1": temperature}
+        return evaluate_policy_signals(policy, EveusSnapshot.parse(payload, None))
+
+    assert signals(TEMPERATURE_HIGH_C) == (True, False)
+    assert signals(MAX_VALID_TEMPERATURE_C + 1) == (None, None)
+
+
+def test_manager_processes_the_updater_snapshot() -> None:
+    """process() must take its values from updater.snapshot, so it cannot see
+    a reading the shared parse has already rejected."""
+    hass = SimpleNamespace(data={})
+    entry = SimpleNamespace(entry_id="snapshot-entry")
+    updater = SimpleNamespace(
+        available=True,
+        last_update_success=True,
+        data=None,
+        snapshot=_snap({"state": 2, "currentSet": 16, "ground": 0}),
+    )
+    manager = EveusSafetyManager(hass, entry, updater)
+    for _ in range(GROUND_TRIGGER_POLLS):
+        manager.process()
+    assert manager._states["ground_missing"].trigger_streak >= GROUND_TRIGGER_POLLS
+
+
+# --- Survivors of the mutation run (F1) -------------------------------------
+
+
+def test_recovery_memory_is_scheduled_as_a_debounced_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saves: list[Any] = []
+
+    class _RecordingStore:
+        def __init__(self, *args: Any) -> None:
+            pass
+
+        async def async_load(self) -> None:
+            return None
+
+        def async_delay_save(self, data_func: Any, delay: float = 0) -> None:
+            saves.append(data_func)
+
+    monkeypatch.setattr(safety, "Store", _RecordingStore)
+    hass, entry, updater, manager = _manager({"state": 7, "subState": 5})
+    asyncio.run(manager.async_load())
+    manager.process()
+    updater.data = {"state": 2, "temperature1": 70}
+    for _ in range(TEMPERATURE_RECOVERY_POLLS):
+        manager.process()
+
+    # One write, on the rising edge of "recovered since raised"; the callable is
+    # evaluated when the delayed save fires, not when it is scheduled.
+    assert len(saves) == 1
+    assert saves[0]() == manager._persisted_snapshot()
+    assert saves[0]()["box_overheat"] == {"recovered_since_raised": True}
+
+
+def test_firmware_only_policies_fire_on_the_first_poll() -> None:
+    # A policy without a raw signal has nothing to debounce: the firmware fault
+    # code is authoritative.
+    firmware_only = [policy for policy in POLICIES if policy.raw_trigger is None]
+    assert firmware_only
+    assert {policy.trigger_polls for policy in firmware_only} == {1}
+
+
+def test_policy_with_no_fault_code_and_no_raw_signal_can_never_fire() -> None:
+    # Documented on evaluate_policy_signals: a policy with no raw trigger cannot
+    # fire from raw telemetry. "Cannot fire" is False, not unknown — and a
+    # malformed `state` must not turn it into unknown either, because such a
+    # policy does not read the firmware state at all.
+    policy = safety.SafetyPolicy(
+        key="degenerate", fault_codes=frozenset(), lifecycle=SafetyLifecycle.LATCHED
+    )
+    assert evaluate_policy_signals(policy, _snap({"state": 2})) == (False, True)
+    assert evaluate_policy_signals(policy, _snap({})) == (False, True)
+
+
+_OVERHEAT = {"state": 7, "subState": 5}
+_COOL = {"state": 2, "temperature1": 70}
+_BAND = {"state": 2, "temperature1": 78}  # neither triggered nor recovered
+_GROUND_LOST = {"state": 2, "ground": 0}
+_GROUND_OK = {"state": 2, "ground": 1}
+_GROUND_UNREADABLE = {"state": 2}  # no ground field: unknown, moves nothing
+
+
+def _assert_counters_are_well_formed(hass, entry, manager) -> None:
+    for policy in POLICIES:
+        state = manager._states[policy.key]
+        assert type(state.trigger_streak) is int
+        assert type(state.recovery_streak) is int
+        assert type(state.recovered) is bool
+        assert type(state.recovered_since_raised) is bool
+        if _issue(hass, entry, policy.key) is None:
+            # No notice: no recovery credit, and no memory of a recovery that
+            # belonged to a notice that is gone, may be left behind.
+            assert state.recovery_streak == 0
+            assert state.recovered is False
+            assert state.recovered_since_raised is False
+
+
+def test_counters_stay_well_formed_through_every_transition() -> None:
+    """Drive both lifecycles through raise, unknown, band, recovery, dismissal,
+    re-alert and deletion; after every poll the counters keep their types and a
+    deleted notice leaves nothing behind."""
+    hass, entry, updater, manager = _manager()
+
+    def poll(payload, times=1) -> None:
+        updater.data = payload
+        for _ in range(times):
+            manager.process()
+            _assert_counters_are_well_formed(hass, entry, manager)
+
+    def dismiss(key: str) -> None:
+        ir.async_ignore_issue(hass, DOMAIN, safety_issue_id(entry, key), True)
+
+    # Auto-clear notice: debounced raise, an unreadable poll, confirmed recovery
+    # that deletes it, then quiet polls with no notice.
+    poll(_GROUND_LOST, GROUND_TRIGGER_POLLS)
+    assert _issue(hass, entry, "ground_missing") is not None
+    poll(_GROUND_UNREADABLE)
+    poll(_GROUND_OK, GROUND_CLEAR_POLLS)
+    assert _issue(hass, entry, "ground_missing") is None
+    poll(_GROUND_OK, 2)
+
+    # Latched notice: raise, a reading in the hysteresis band, confirmed recovery
+    # (stays, not dismissed), dismissal, immediate re-alert.
+    poll(_OVERHEAT)
+    assert _issue(hass, entry, "box_overheat") is not None
+    poll(_BAND)
+    poll(_COOL, TEMPERATURE_RECOVERY_POLLS)
+    assert _issue(hass, entry, "box_overheat") is not None
+    dismiss("box_overheat")
+    poll(_OVERHEAT)
+    assert _issue(hass, entry, "box_overheat").dismissed_version is None
+
+    # The fresh notice recovers, is dismissed, and is then deleted.
+    poll(_COOL, TEMPERATURE_RECOVERY_POLLS)
+    dismiss("box_overheat")
+    poll(_COOL)
+    assert _issue(hass, entry, "box_overheat") is None
+    poll(_COOL, 2)

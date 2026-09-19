@@ -65,6 +65,78 @@ def _sensitive_keys(data: Mapping[str, Any]) -> set[str]:
     return keys
 
 
+# Allowlists (I18). raw_main and entry data report values only for fields the
+# integration knows; an unknown field may carry anything a future firmware or
+# config migration adds, so it is summarised as name -> type, and its name is
+# echoed only when it cannot itself identify anyone. The redaction above stays
+# as defense in depth for known fields (serialNum, host, ...).
+# /main field names seen on modern firmware and on firmware 1.x (issue #11).
+_KNOWN_MAIN_FIELDS = frozenset({
+    "activeTarif", "adapter", "add_curr", "aiAutoPercent", "aiModecurrent",
+    "aiPatameter", "aiPowerDrop", "aiStatus", "aiVoltage", "aiVoltageDrop",
+    "aiVoltageStart", "broadcastMode", "curDesign", "curMeas1", "curMeas2",
+    "curMeas3", "current_tarif", "currentSchedule1", "currentSchedule2",
+    "currentSet", "delayedLimit", "displayOrientation", "energyLimit",
+    "energyLimitS", "energySchedule1", "energySchedule2", "evseEnabled", "evseType",
+    "fixedMode", "fwCRC32", "gridRange", "ground", "groundCtrl", "IEM1",
+    "IEM1_money", "IEM2", "IEM2_money", "lang", "leakValue", "leakValueH",
+    "led_ctrl", "limitsStatus", "logReady", "manufacturer", "minCurrent",
+    "minVoltage", "model", "moneyLimit", "moneyLimitS", "ocppconnected",
+    "ocppEnabled", "ocppOfflineAva", "ocppVendor", "one_charge", "oneCharge",
+    "pilot", "powerMeas", "restricted_mode", "RSSI", "scanComplete", "serialNum",
+    "serialNumCPU", "sessionEnergy", "sessionMoney", "sessionStart",
+    "sessionStarted", "sessionTime", "sh1CurrentEnable", "sh1CurrentValue",
+    "sh1Enabled", "sh1EnergyEnable", "sh1EnergyValue", "sh1Start", "sh1Stop",
+    "sh2CurrentEnable", "sh2CurrentValue", "sh2Enabled", "sh2EnergyEnable",
+    "sh2EnergyValue", "sh2Start", "sh2Stop", "SNflag", "STA_IP_Addres",
+    "startSchedule1", "startSchedule2", "state", "stationId", "stopSchedule1",
+    "stopSchedule2", "subState", "suspendErrors", "suspendLimits",
+    "suspendSchedules", "switchState", "systemTime", "tarif", "tarif_2",
+    "tarif_2_start", "tarif_2_status", "tarif_2_stop", "tarif_3", "tarif_3_start",
+    "tarif_3_status", "tarif_3_stop", "tarifAEnable", "tarifAStart", "tarifAStop",
+    "tarifAValue", "tarifBEnable", "tarifBStart", "tarifBStop", "tarifBValue",
+    "temperature1", "temperature2", "timeLimit", "timeLimitS", "timeMsg",
+    "timerType", "timeZone", "tmp_ctrl", "tmp_ctrl_val", "totalEnergy", "typeEvse",
+    "typeRelay", "vBat", "verFWMain", "verFWStatus", "verFWWifi", "voltMeas1",
+    "voltMeas2", "voltMeas3",
+})
+_KNOWN_ENTRY_FIELDS = frozenset({
+    "host", "username", "password", "unique_id", "scheme", "model", "phases",
+    "device_number", "soc_mode", "initial_soc", "target_soc", "battery_capacity",
+    "soc_correction", CONF_EXTERNAL_SOC_ENTITY,
+})
+_SCALARS = (str, int, float, bool, type(None))
+_SAFE_FIELD_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")
+_DIGIT_RUN_RE = re.compile(r"\d{3}")
+
+
+def _scalar(value: Any) -> Any:
+    """Return a scalar verbatim; anything nested collapses to its type name."""
+    return value if isinstance(value, _SCALARS) else f"<{type(value).__name__}>"
+
+
+def _split_known(
+    data: Mapping[str, Any], known: frozenset[str]
+) -> tuple[dict[str, Any], dict[str, str], int]:
+    """Split `data` into redacted known scalars, echoable unknown names, suppressed count."""
+    known_values = {k: _scalar(v) for k, v in data.items() if k in known}
+    unknown: dict[str, str] = {}
+    suppressed = 0
+    for key, value in data.items():
+        if key in known:
+            continue
+        name = str(key)
+        if (
+            _SAFE_FIELD_NAME_RE.fullmatch(name)
+            and not _DIGIT_RUN_RE.search(name)
+            and not _SENSITIVE_NAME_RE.search(name)
+        ):
+            unknown[name] = type(value).__name__
+        else:
+            suppressed += 1
+    return async_redact_data(known_values, _sensitive_keys(known_values)), unknown, suppressed
+
+
 def _soc_diagnostics(
     hass: HomeAssistant | None,
     entry: EveusConfigEntry,
@@ -101,10 +173,15 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     runtime_data = getattr(entry, "runtime_data", None)
+    entry_data, entry_unknown, entry_suppressed = _split_known(
+        entry.data, _KNOWN_ENTRY_FIELDS
+    )
     payload: dict[str, Any] = {
         "entry": {
             "title": "Eveus Charger",  # pragma: no mutate - display-only text, no behaviour attached
-            "data": async_redact_data(dict(entry.data), _sensitive_keys(dict(entry.data))),
+            "data": entry_data,
+            "unknown_fields": entry_unknown,
+            "unknown_fields_suppressed": entry_suppressed,
             "device_number": (
                 runtime_data.device_number if runtime_data is not None else None
             ),
@@ -121,6 +198,10 @@ async def async_get_config_entry_diagnostics(
     updater = runtime_data.updater
     soc_calculator = getattr(runtime_data, "soc_calculator", None)
     data = updater.data or {}
+    main_known, main_unknown, main_suppressed = _split_known(
+        {k: v for k, v in data.items() if k != LEGACY_RAW_STATE_KEY},
+        _KNOWN_MAIN_FIELDS,
+    )
     quality = updater.connection_quality
     payload.update(
         {
@@ -139,17 +220,19 @@ async def async_get_config_entry_diagnostics(
             "device": {
                 # Firmware 1.x omits verFWMain from /main; the version is then
                 # resolved once from /init and kept on the updater (issue #11).
-                "firmware": data.get("verFWMain")
-                or getattr(updater, "_init_fw_fallback", None),
-                "wifi_firmware": data.get("verFWWifi"),
-                "state": data.get("state"),
+                "firmware": _scalar(
+                    data.get("verFWMain")
+                    or getattr(updater, "_init_fw_fallback", None)
+                ),
+                "wifi_firmware": _scalar(data.get("verFWWifi")),
+                "state": _scalar(data.get("state")),
                 # Original firmware-1.x state code when the coordinator
                 # translated it to the modern domain; None on modern firmware.
-                "legacy_raw_state": data.get(LEGACY_RAW_STATE_KEY),
-                "substate": data.get("subState"),
-                "current_set": data.get("currentSet"),
-                "model": data.get("model"),
-                "manufacturer": data.get("manufacturer"),
+                "legacy_raw_state": _scalar(data.get(LEGACY_RAW_STATE_KEY)),
+                "substate": _scalar(data.get("subState")),
+                "current_set": _scalar(data.get("currentSet")),
+                "model": _scalar(data.get("model")),
+                "manufacturer": _scalar(data.get("manufacturer")),
             },
             # SOC inputs and the external-sensor seeding outcome. Absent when
             # setup predates the calculator (older entries under test).
@@ -158,17 +241,13 @@ async def async_get_config_entry_diagnostics(
                 if soc_calculator is not None
                 else {}
             ),
-            # Full /main payload with sensitive identifiers removed. Useful for
-            # bug reports — gives the developer the exact field set the device
-            # reported without leaking serials or LAN addresses. Unknown but
-            # identifying-looking firmware fields are redacted too.
-            # Synthetic coordinator keys are stripped so raw_main stays the
-            # exact field set the device reported (the legacy raw state is
-            # surfaced under "device" above instead).
-            "raw_main": async_redact_data(
-                {k: v for k, v in data.items() if k != LEGACY_RAW_STATE_KEY},
-                _sensitive_keys(data),
-            ),
+            # /main fields the integration knows, with identifying ones redacted:
+            # the exact field set the device reported, without serials or LAN
+            # addresses. Synthetic coordinator keys are stripped (the legacy raw
+            # state is surfaced under "device" above). Unknown fields: type only.
+            "raw_main": main_known,
+            "unknown_main_fields": main_unknown,
+            "unknown_main_fields_suppressed": main_suppressed,
         }
     )
     return payload

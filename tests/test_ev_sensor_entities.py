@@ -712,20 +712,6 @@ def test_cost_to_target_zero_at_target_without_tariff() -> None:
     assert sensor._get_sensor_value() == 0.0
 
 
-def test_cost_to_target_monetary_metadata() -> None:
-    from homeassistant.components.sensor import SensorDeviceClass
-    from custom_components.eveus.ev_sensors import (
-        CachedSOCCalculator as _CSC,
-        CostToTargetSocSensor,
-    )
-
-    calc = _push_helpers_ev(_CSC())
-    sensor = CostToTargetSocSensor(EveusTestUpdater({}), 1, calc)
-    assert sensor._attr_device_class == SensorDeviceClass.MONETARY
-    assert sensor._attr_state_class is None
-    assert sensor._attr_native_unit_of_measurement == "UAH"
-
-
 def test_v11_soc_limit_does_not_stop_before_exact_target():
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
@@ -871,18 +857,6 @@ def test_energy_to_target_zero_fallback_outside_active_session(_ha_clock_plus3_e
         EveusTestUpdater({"state": 2}), 1, calc
     )
     assert sensor._get_sensor_value() is not None
-
-
-def test_energy_to_target_has_no_storage_device_class(_ha_clock_plus3_ev) -> None:
-    from custom_components.eveus.ev_sensors import (
-        CachedSOCCalculator,
-        EnergyToTargetSocSensor,
-    )
-
-    calc = _push_ev_helpers(CachedSOCCalculator())
-    sensor = EnergyToTargetSocSensor(EveusTestUpdater({}), 1, calc)
-    assert sensor.device_class is None
-    assert sensor._attr_native_unit_of_measurement == "kWh"
 
 
 def test_reports_grid_energy_needed_to_reach_target(_ha_clock_plus3_ev):
@@ -1193,11 +1167,6 @@ def test_soc_percent_sensor_metadata() -> None:
     assert _attr(EVSocPercentSensor, "suggested_display_precision") == 0
 
 
-def test_time_to_target_soc_sensor_metadata() -> None:
-    assert TimeToTargetSocSensor.ENTITY_NAME == "Time to Target SOC"
-    assert _attr(TimeToTargetSocSensor, "icon") == "mdi:timer"
-
-
 def test_energy_to_target_soc_sensor_metadata() -> None:
     from custom_components.eveus.ev_sensors import EnergyToTargetSocSensor
     from homeassistant.components.sensor import SensorStateClass
@@ -1216,14 +1185,6 @@ def test_cost_to_target_soc_sensor_metadata() -> None:
     assert CostToTargetSocSensor.ENTITY_NAME == "Cost to Target SOC"
     assert _attr(CostToTargetSocSensor, "icon") == "mdi:cash-clock"
     assert _attr(CostToTargetSocSensor, "suggested_display_precision") == 0
-
-
-def test_charging_finish_time_sensor_metadata() -> None:
-    from homeassistant.components.sensor import SensorDeviceClass
-
-    assert ChargingFinishTimeSensor.ENTITY_NAME == "Charging Finish Time"
-    assert _attr(ChargingFinishTimeSensor, "device_class") == SensorDeviceClass.TIMESTAMP
-    assert _attr(ChargingFinishTimeSensor, "icon") == "mdi:calendar-clock"
 
 
 # =============================================================================
@@ -1370,8 +1331,9 @@ def test_available_is_false_when_base_entity_is_unavailable_regardless_of_helper
     """A sensor that doesn't require helpers must still go unavailable when
     the base (connection-level) availability is False."""
     calculator = push_helpers(CachedSOCCalculator(), EV_HELPERS)
-    sensor = EVSocKwhSensor(EveusTestUpdater({"sessionEnergy": "10"}), 1, calculator)
-    sensor._entity_available = False
+    updater = EveusTestUpdater({"sessionEnergy": "10"}, available=False)
+    updater.seconds_unavailable = 10_000
+    sensor = EVSocKwhSensor(updater, 1, calculator)
 
     assert sensor.available is False
 

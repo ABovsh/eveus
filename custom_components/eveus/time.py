@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import datetime as dt
-import logging
 import time as _time
 from dataclasses import dataclass
 
 from homeassistant.components.time import TimeEntity, TimeEntityDescription
 from homeassistant.core import HomeAssistant, State
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as ha_dt
@@ -19,10 +17,7 @@ from .common_base import (
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
-from .const import OPTIMISTIC_CONTROL_TTL, UNUSABLE_RESTORED_STATES
-from .utils import get_safe_value
-
-_LOGGER = logging.getLogger(__name__)
+from .const import UNUSABLE_RESTORED_STATES
 
 
 @dataclass(frozen=True)
@@ -109,10 +104,10 @@ class EveusScheduleTimeEntity(
         super().__init__(updater, device_number)
         self._command = entity_description.command
         self._state_key = entity_description.state_key
-        self._pending_value: int | None = None  # pragma: no mutate - annotation only (PEP 563 postponed eval, local var annotation never evaluated); default value unchanged
+        self._pending_value: int | None = None
         self._init_optimistic_control()
         self._init_write_on_change()
-        self._attr_native_value: dt.time | None = None  # pragma: no mutate - annotation only (PEP 563 postponed eval, local var annotation never evaluated); default value unchanged
+        self._attr_native_value: dt.time | None = None
 
     async def async_added_to_hass(self) -> None:
         """Resolve the initial value once coordinator data is available."""
@@ -125,16 +120,18 @@ class EveusScheduleTimeEntity(
         return self._attr_native_value
 
     def _read_device_value(self) -> int | None:
-        """Return the latest valid schedule minutes from coordinator data."""
-        if not (
-            self._updater.available
-            and self._updater.data
-            and self._state_key in self._updater.data
-        ):
+        """Return the latest valid schedule minutes from coordinator data.
+
+        "The charger stopped sending this field" and "it sent something
+        unusable" are different answers to the optimistic-write lifecycle, so
+        presence is asked of the raw payload and the value of the parse.
+        """
+        snapshot = self._updater.snapshot
+        if not (self._updater.available and snapshot.has(self._state_key)):
             return None
-        device_value = get_safe_value(self._updater.data, self._state_key, int)
+        device_value = snapshot.get_int(self._state_key)
         if device_value is not None and 0 <= device_value < 1440:
-            return int(device_value)
+            return device_value
         return None
 
     def _values_equal(self, optimistic: int, device: int) -> bool:
@@ -153,67 +150,39 @@ class EveusScheduleTimeEntity(
         """Return the pending schedule command sentinel."""
         return self._pending_value
 
+    def _set_pending(self, value: int | None) -> None:
+        self._pending_value = value
+
     def _resolve_minutes(self) -> int | None:
         """Resolve minutes value from optimistic, device, or restore state."""
-        current_time = _time.time()
-
-        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
-            return self._optimistic_value
-
-        if (
-            self._updater.available
-            and self._updater.data
-            and self._state_key in self._updater.data
-        ):
-            device_value = get_safe_value(self._updater.data, self._state_key, int)
-            if device_value is not None and 0 <= device_value < 1440:
-                return int(device_value)
-
-        if self._may_hold_last_device_value(current_time):
-            return self._last_device_value
-
-        return None
+        return self._resolve_held_value(self._read_device_value())
 
     async def async_set_value(self, value: dt.time) -> None:
         """Send the new start/stop value to the charger with optimistic UI."""
         minutes = time_to_minutes(value)
 
+        shown = dt.time(hour=minutes // 60, minute=minutes % 60)
         async with self._command_lock:
-            self._pending_value = minutes
-            self._attr_native_value = dt.time(hour=minutes // 60, minute=minutes % 60)
-            self._write_if_changed(self._attr_native_value)
-
-            try:
-                success = await self._updater.send_command(self._command, minutes)
-                if success:
-                    self._set_optimistic_value(minutes)
-                else:
-                    raise HomeAssistantError(
-                        f"Eveus charger did not accept '{self.name}' = "
-                        f"{self._attr_native_value.strftime('%H:%M')}"
-                    )
-            except (HomeAssistantError, ConfigEntryAuthFailed):
-                # Same contract as number/switch/select: a HomeAssistantError is
-                # already the user-facing toast, and ConfigEntryAuthFailed must
-                # reach Home Assistant untouched.
-                raise
-            except Exception as err:
-                _LOGGER.debug("Failed to set %s: %s", self.name, err, exc_info=True)  # pragma: no mutate - pure log-message text + log-verbosity kwarg only, arguments unchanged
-                raise HomeAssistantError(f"Failed to set '{self.name}': {err}") from err  # pragma: no mutate - pure exception-message text, err VALUE unchanged
-            finally:
-                self._pending_value = None
-                self._attr_native_value = minutes_to_time(self._resolve_minutes())
-                self._write_if_changed(self._attr_native_value)
+            await self._send_pinned_command(
+                device_value=minutes,
+                pending=minutes,
+                shown=shown,
+                accepted=minutes,
+                rejected_message=(
+                    f"Eveus charger did not accept '{self.name}' = {shown.strftime('%H:%M')}"
+                ),
+                failure_prefix=f"Failed to set '{self.name}'",  # pragma: no mutate - pure exception-message text
+            )
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
-        if not state or state.state in UNUSABLE_RESTORED_STATES:  # pragma: no mutate - sentinel-equivalence: "unknown"/"unavailable" never parse via ha_dt.parse_time either, so the subsequent `if restored is None: return` guard already catches them regardless of this literal
+        if not state or state.state in UNUSABLE_RESTORED_STATES:
             return
         restored = ha_dt.parse_time(state.state)
         if restored is None:
             return
         self._last_device_value = time_to_minutes(restored)
-        self._last_successful_read = _time.time()
+        self._last_successful_read = _time.monotonic()
         self._attr_native_value = restored
 
 async def async_setup_entry(

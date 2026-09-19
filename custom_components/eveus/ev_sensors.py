@@ -20,13 +20,9 @@ from .utils import (
     calculate_remaining_time,
     calculate_soc_kwh,
     calculate_soc_percent,
-    get_safe_value,
 )
 from .const import (
     DEFAULT_SOC_CORRECTION,
-    MAX_ENERGY_KWH,
-    MAX_POWER_W,
-    SESSION_ACTIVE_STATES,
     soc_update_signal,
 )
 
@@ -43,7 +39,7 @@ _ESTIMATE_STEP_SECONDS = _ESTIMATE_STEP_MINUTES * 60
 # The single anchor, held on the updater (one per charger). Never read as a
 # literal anywhere, so its spelling is unobservable — a mutation to it is
 # equivalent by construction.
-_ESTIMATE_ANCHOR_KEY = "finish_at"  # pragma: no mutate - private dict key, never compared against a literal
+_ESTIMATE_ANCHOR_KEY = "finish_at"
 
 # Below this, `round(seconds / 60)` is zero and `calculate_remaining_time`
 # states "< 1m". Naming the threshold in SECONDS rather than re-deriving a
@@ -112,7 +108,7 @@ class CachedSOCCalculator:
                 self.initial_soc, self.battery_capacity, energy_charged, self._effective_correction()
             )
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Error calculating SOC kWh: %s", err, exc_info=True)  # pragma: no mutate - log message text is display-only; exc_info kwarg (traceback capture) is not observed by any test
+            _LOGGER.debug("Error calculating SOC kWh: %s", type(err).__name__)
             return None
 
     def get_soc_percent(self, energy_charged: float) -> Optional[float]:
@@ -167,7 +163,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             )
         )
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _on_soc_input_changed(self) -> None:
         """Recompute immediately when a SOC input value is pushed."""
         previous_available = self.available
@@ -190,7 +186,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             return True
         return self._soc_calculator.are_helpers_available()
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         self._maybe_finalize_device_info()
         previous_available = self.available
@@ -221,19 +217,19 @@ class BaseEVHelperSensor(EveusSensorBase):
         # standby power in Connected/Complete/Error states would otherwise
         # produce an absurd-but-plausible time-to-target and finish timestamp,
         # so outside an active session the power is treated as zero and the
-        # sensors resolve to their "Not charging" / unknown states.
-        state = get_safe_value(self._updater.data, "state", int)
-        if state not in SESSION_ACTIVE_STATES:
-            power_meas: float | None = 0.0  # pragma: no mutate - PEP 563 postponed evaluation: local-variable annotation is never evaluated at runtime, only the `= 0.0` assignment executes
+        # sensors resolve to their "Not charging" / unknown states. `is not
+        # True` keeps the Error state and an unmapped firmware code on the
+        # inactive side, exactly as the old state-set test did.
+        snapshot = self._updater.snapshot
+        if snapshot.session_active is not True:
+            power_meas: float | None = 0.0
         else:
-            power_meas = get_safe_value(self._updater.data, "powerMeas", float)
+            # Already bounded by the shared parse, so a finite-but-impossible
+            # outlier (1e100) arrives as None instead of collapsing the ETA to
+            # "< 1m" — the same ceiling the Power sensor reads.
+            power_meas = snapshot.power_w
         energy_charged = self._get_energy_charged()
         if power_meas is None or energy_charged is None:
-            return None
-        # Reject a finite-but-impossible power outlier (e.g. 1e100) so a corrupt
-        # payload can't make the ETA collapse to "< 1m" — the same ceiling the
-        # Power sensor applies.
-        if not 0 <= power_meas <= MAX_POWER_W:
             return None
         battery_capacity = self._soc_calculator.battery_capacity
         target_soc = self._soc_calculator.target_soc
@@ -334,14 +330,12 @@ class BaseEVHelperSensor(EveusSensorBase):
         Trade-off: split charging across plug-in/out cycles requires the user
         to update ``number.eveus_ev_charger_initial_soc`` before unplugging, since the
         charger starts a fresh session count on the next plug-in.
+
+        Already bounded by the shared parse, so a finite-but-impossible outlier
+        (e.g. 1e100) arrives as None and cannot drive SOC %/kWh to a false
+        full-battery reading — the same ceiling the Session Energy sensor reads.
         """
-        value = get_safe_value(self._updater.data, "sessionEnergy", float)
-        # Reject a finite-but-impossible session-energy outlier (e.g. 1e100) so a
-        # corrupt payload can't drive SOC %/kWh to a false full-battery reading;
-        # matches the ceiling the Session Energy sensor applies.
-        if value is None or not 0 <= value <= MAX_ENERGY_KWH:
-            return None
-        return value
+        return self._updater.snapshot.session_energy_kwh
 
     def _session_energy_is_invalid(self) -> bool:
         """True when sessionEnergy is reported but not a usable value.
@@ -350,8 +344,8 @@ class BaseEVHelperSensor(EveusSensorBase):
         field simply not being reported yet, so callers don't silently treat a
         bad reading as 0 kWh delivered (which would mimic the initial SOC).
         """
-        data = self._updater.data or {}
-        return "sessionEnergy" in data and self._get_energy_charged() is None
+        snapshot = self._updater.snapshot
+        return snapshot.has("sessionEnergy") and snapshot.session_energy_kwh is None
 
     def _session_energy_or_zero(self) -> float | None:
         """Session kWh delivered, 0.0 before a session, None when unusable.
@@ -365,8 +359,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             return None
         energy_charged = self._get_energy_charged()
         if energy_charged is None:
-            state = get_safe_value(self._updater.data, "state", int)
-            if state in SESSION_ACTIVE_STATES:
+            if self._updater.snapshot.session_active is True:
                 return None
             energy_charged = 0.0
         return energy_charged
@@ -513,10 +506,9 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             # measured against on the next successful one.
             self._forget_estimate()
             _LOGGER.debug(
-                "Error calculating time to target for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                "Error calculating time to target for %s: %s",
                 self.unique_id,
-                err,
-                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                type(err).__name__,
             )
             # Matches the docstring: drop any stale value on failure instead of
             # freezing it (this class's own inputs-missing branch above does
@@ -647,14 +639,12 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
         """
         if not super().available:
             return False
-        # A held reading stays visible through a missed poll, so availability
-        # must not flap faster than the value it guards — otherwise one missed
-        # poll writes a row on the way down and another on the way back up.
-        if self._in_availability_grace:
-            return True
-        return (
-            get_safe_value(self._updater.data, "state", int) in SESSION_ACTIVE_STATES
-        )
+        # Through a missed poll the snapshot is the last good one, so a charge
+        # that was running stays visible for the grace window and an idle
+        # charger stays unavailable — no blank, no flap either way. A bare
+        # grace short-circuit here made an idle sensor publish `unknown` for
+        # the whole window (live, 2026-09-19).
+        return self._updater.snapshot.session_active is True
 
     def _get_sensor_value(self) -> Optional[datetime]:
         """Compute the finish-time stamp."""
@@ -684,9 +674,8 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             # Same third exit as Time to Target's — see there.
             self._forget_estimate()
             _LOGGER.debug(
-                "Error calculating finish time for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                "Error calculating finish time for %s: %s",
                 self.unique_id,
-                err,
-                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                type(err).__name__,
             )
             return None

@@ -1,15 +1,19 @@
 """Shared lifecycle for command-backed Eveus control entities."""
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Generic, TypeVar
 
 from homeassistant.core import callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 
 from .common_base import BaseEveusEntity, OptimisticControlMixin
 from .const import OPTIMISTIC_CONTROL_TTL
 
-T = TypeVar("T")  # pragma: no mutate - name arg is never introspected (no T.__name__ use)
+_LOGGER = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]):
@@ -20,7 +24,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         """Return the coordinator payload key backing this control."""
         return self.__dict__["_state_key"]
 
-    @_state_key.setter  # pragma: no mutate - equivalent: both getter/setter bypass the descriptor via self.__dict__["_state_key"] directly, so removing the setter decorator (making it a plain non-data-descriptor method) still round-trips correctly through normal instance-attribute assignment/lookup rules
+    @_state_key.setter
     def _state_key(self, value: str) -> None:
         """Store the coordinator payload key backing this control."""
         self.__dict__["_state_key"] = value
@@ -45,7 +49,59 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         """Return the subclass-specific in-flight command sentinel."""
         raise NotImplementedError
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    def _set_pending(self, value: Any) -> None:
+        """Store the subclass-specific in-flight command sentinel."""
+        raise NotImplementedError
+
+    async def _send_pinned_command(
+        self,
+        *,
+        device_value: Any,
+        pending: Any,
+        shown: Any,
+        accepted: T,
+        rejected_message: str,
+        failure_prefix: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Send one write while the display is pinned to the requested value.
+
+        The caller holds ``_command_lock``. A write the charger does not accept
+        raises ``rejected_message``; any other error except an auth rejection
+        becomes a ``failure_prefix`` error. However the write ends — accepted,
+        rejected, raised or cancelled — the pin is released and the display
+        re-resolved, so an older write can never leave its value behind.
+        ``extra`` rides along as sibling form fields (e.g. OCPP's `ocppVendor`).
+        """
+        self._set_pending(pending)
+        self._set_display_value(shown)
+        self._write_if_changed(shown)  # type: ignore[attr-defined]
+        try:
+            # Only widen the call when a caller actually has sibling fields to
+            # send: existing tests pin the two-argument call shape for the
+            # (far more common) plain writes, and an explicit `extra=None`
+            # is behaviourally identical but a different call signature.
+            if extra is not None:
+                success = await self._updater.send_command(  # type: ignore[attr-defined]
+                    self._command, device_value, extra=extra
+                )
+            else:
+                success = await self._updater.send_command(self._command, device_value)  # type: ignore[attr-defined]
+            if not success:
+                raise HomeAssistantError(rejected_message)
+            self._set_optimistic_value(accepted)
+        except (HomeAssistantError, ConfigEntryAuthFailed):
+            raise
+        except Exception as err:
+            _LOGGER.debug("%s: %s", failure_prefix, type(err).__name__)
+            raise HomeAssistantError(f"{failure_prefix}: {err}") from err
+        finally:
+            self._set_pending(None)
+            value = self._resolve_display_value()
+            self._set_display_value(value)
+            self._write_if_changed(value)  # type: ignore[attr-defined]
+
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data and reconcile command state with device state."""
         self._maybe_finalize_device_info()
@@ -58,7 +114,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             self._write_availability_only()  # type: ignore[attr-defined]
             return
 
-        current_time = time.time()
+        current_time = time.monotonic()
         device_value = self._read_device_value()
         if device_value is not None:
             self._reconcile_with_device(

@@ -1,19 +1,19 @@
 """State/Substate sensors expose the ENUM device class with a full options list."""
 from __future__ import annotations
 
-from types import SimpleNamespace
 
 import pytest
 
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.helpers.entity import EntityCategory
 
+from conftest import PayloadUpdater
 from custom_components.eveus.const import (
     CHARGING_STATES,
     ERROR_STATES,
     NORMAL_SUBSTATES,
 )
-from custom_components.eveus.sensor_definitions import create_sensor_specifications
+from custom_components.eveus.sensor_definitions import create_sensor, create_sensor_specifications
 
 
 def _spec(key: str):
@@ -44,7 +44,7 @@ def test_substate_sensor_is_enum_with_all_substates_and_errors() -> None:
 def test_enum_specs_carry_no_unit_or_state_class() -> None:
     for key in ("state", "substate"):
         spec = _spec(key)
-        assert spec.unit is None
+        assert spec.native_unit_of_measurement is None
         assert spec.state_class is None
 
 
@@ -53,9 +53,9 @@ def test_sensor_instance_gets_options_attr() -> None:
 
     updater = MagicMock()
     updater.device_number = 1
-    sensor = _spec("state").create_sensor(updater)
-    assert sensor._attr_device_class == SensorDeviceClass.ENUM
-    assert set(CHARGING_STATES.values()) <= set(sensor._attr_options)
+    sensor = create_sensor(_spec("state"), updater)
+    assert sensor.device_class == SensorDeviceClass.ENUM
+    assert set(CHARGING_STATES.values()) <= set(sensor.options)
 
 
 def test_not_charging_reason_spec_is_fully_wired() -> None:
@@ -74,11 +74,11 @@ def test_not_charging_reason_spec_is_fully_wired() -> None:
 
     spec = _spec("not_charging_reason")
     assert spec.device_class == SensorDeviceClass.ENUM
-    assert spec.options == NOT_CHARGING_REASON_OPTIONS
+    assert spec.options == list(NOT_CHARGING_REASON_OPTIONS)
     assert spec.value_fn is get_not_charging_reason
     assert spec.attributes_fn is get_not_charging_reason_attrs
-    assert spec.category == EntityCategory.DIAGNOSTIC
-    assert spec.unit is None
+    assert spec.entity_category == EntityCategory.DIAGNOSTIC
+    assert spec.native_unit_of_measurement is None
     assert spec.state_class is None
 
 
@@ -107,7 +107,7 @@ def test_closed_set_getters_never_leave_their_option_list(key: str) -> None:
     """An ENUM value outside the options list is dropped by HA — the sensor
     would silently read `unknown` instead of its real state."""
     spec = _spec(key)
-    updater = SimpleNamespace(data={}, available=True, connection_quality={})
+    updater = PayloadUpdater({})
     produced = set()
     for raw in list(range(-1, 12)) + ["1", "0", None, "junk"]:
         updater.data = {k: raw for k in _PAYLOAD_KEYS[key]}

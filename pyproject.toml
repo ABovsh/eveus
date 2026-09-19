@@ -26,3 +26,34 @@ target-version = "py312"
 # F841 catches the leftover of a refactor that stops using a local — the
 # exact residue the monotonic-clock change left behind in common_network.
 select = ["E9", "F401", "F63", "F7", "F82", "F841"]
+
+[tool.mutmut]
+# mutmut 3 forks per mutant and runs only the tests that reach the mutated
+# function, so one run covers the whole package with the whole suite. Mutate
+# the package directory: a module added to it is mutated with no edit here.
+source_paths = ["custom_components/eveus/"]
+do_not_mutate = [
+    # Pure re-export shim: imports and __all__, no branch for a mutant to hide in.
+    "custom_components/eveus/common.py",
+]
+# Log calls and lines already reviewed and marked `pragma: no mutate` are never
+# asserted on, so a mutant there survives by construction.
+do_not_mutate_patterns = ['^\s*_LOGGER\.', "pragma: no mutate"]
+pytest_add_cli_args = [
+    "-q",
+    "-p", "no:cacheprovider",
+    # Meta-tests assert things about the repo itself (metadata, workflows,
+    # blueprints, the unique_id inventory), not about a mutable module: none can
+    # kill a mutant, and they read files the mutants/ copy does not carry.
+    "--ignore=tests/test_metadata.py",
+    "--ignore=tests/test_name_platform_compat.py",
+    "--ignore=tests/test_test_quality_contracts.py",
+    "--ignore=tests/test_ci_workflow.py",
+    "--ignore=tests/test_firmware_drift_live.py",
+    "--ignore=tests/test_blueprints.py",
+    "--ignore=tests/test_entity_inventory.py",
+]
+pytest_add_cli_args_test_selection = ["tests/"]
+# Translations, the dashboard card and other non-Python package data that the
+# tests read from disk.
+also_copy = ["custom_components"]

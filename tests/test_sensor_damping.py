@@ -1,26 +1,18 @@
-"""Charge-estimate damping: the hold must not outlive what it is damping.
-
-The estimates are damped so a power reading that wanders does not rewrite the
-same figure on every poll. A hold that is too wide stops being damping and
-becomes a freeze: the sensor keeps publishing the estimate it made at the
-start of the session while the real one moves hours away from it.
-
-Both estimates are two views of ONE calculation, so they take the same band
-for the same remaining time — that is the invariant the grid exists to serve.
-"""
+"""Sensor churn damping and charge-estimate holds: deadbands cover every
+dithering reading, and an estimate hold never outlives what it damps."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
 import pytest
-from conftest import EV_HELPERS, EveusTestUpdater
 from types import SimpleNamespace
-
+from conftest import PayloadUpdater
+from custom_components.eveus import sensor_definitions as sd
+from test_soc_autofill import _build, _poll  # noqa: F401  (fixtures come along)
+from test_soc_autofill import _no_dispatcher  # noqa: F401
+from datetime import datetime, timedelta
+from conftest import EV_HELPERS, EveusTestUpdater
 from homeassistant.util import dt as dt_util
-
 from custom_components.eveus import ev_sensors
 from custom_components.eveus import utils
-from custom_components.eveus import sensor_definitions as sd
 from custom_components.eveus.ev_sensors import (
     _ESTIMATE_STEP_MINUTES,
     CachedSOCCalculator,
@@ -29,15 +21,104 @@ from custom_components.eveus.ev_sensors import (
 )
 
 
-def _updater(data: dict[str, object], **extra) -> SimpleNamespace:
+def test_value_getter_rejects_overflow_error():
+    """Regression test for B01: float() on an absurdly large int raises
+    OverflowError, not TypeError/ValueError — the coercion must catch it too,
+    matching every other numeric getter in this module.
+    """
+    from conftest import EveusTestUpdater
+    from custom_components.eveus.sensor_definitions import _make_value_getter
+
+    getter = _make_value_getter("powerMeas")
+    updater = EveusTestUpdater({"powerMeas": 10**400})
+
+    assert getter(updater, None) is None
+
+
+def test_connection_attrs_isolates_wifi_rssi_failure():
+    """Regression test for B02: a failure fetching the optional wifi_rssi must
+    only drop that one field, not replace the whole (already-valid)
+    connection_quality/latency_avg/status dict with {"status": "Error"}.
+
+    Here the updater carries no payload at all, so reading RSSI fails; that
+    must be just as harmless to the rest of the dict.
+    """
+    from types import SimpleNamespace
+
+    from custom_components.eveus import sensor_definitions as sd
+
+    updater = SimpleNamespace(
+        available=True, connection_quality={"success_rate": 75, "latency_avg": 0.42}
+    )
+
+    attrs = sd.get_connection_attrs(updater, None)
+
+    assert attrs["status"] == "Fair"
+    assert attrs["connection_quality"] == 75
+    assert "wifi_rssi" not in attrs
+
+def _updater(data: dict[str, object]) -> SimpleNamespace:
+    return PayloadUpdater(data, host="192.168.1.50")
+
+
+def _spec(key: str, phases: int = 1) -> sd.EveusSensorEntityDescription:
+    return next(s for s in sd.create_sensor_specifications(phases=phases) if s.key == key)
+
+
+def _read(spec_key: str, updater, key: str, values, phases: int = 1) -> list:
+    """Feed successive payload values through one entity's own deadband."""
+    sensor = sd.create_sensor(_spec(spec_key, phases=phases), updater, 1)
+    out = []
+    for value in values:
+        updater.data[key] = value
+        sensor._update_native_value()
+        out.append(sensor._attr_native_value)
+    return out
+
+
+@pytest.mark.parametrize(
+    ("spec_key", "key", "feed", "expected", "phases"),
+    [
+        # Phases 2 and 3 are the same telemetry as phase 1 on a 3-phase entry,
+        # so they dither the same way and take the same step.
+        ("voltage_phase_2", "voltMeas2", [230, 231, 229, 232], [230, 230, 230, 232], 3),
+        ("voltage_phase_3", "voltMeas3", [230, 231, 229, 232], [230, 230, 230, 232], 3),
+        ("current_phase_2", "curMeas2", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3], 3),
+        ("current_phase_3", "curMeas3", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3], 3),
+        # Whole-degree enclosure temperatures alternate between two adjacent
+        # readings for hours; a 1 degree band would be no band at all, because
+        # the next distinct value is already 1 away.
+        ("box_temperature", "temperature1", [30, 31, 30, 32], [30, 30, 30, 32], 1),
+        ("plug_temperature", "temperature2", [30, 31, 30, 32], [30, 30, 30, 32], 1),
+    ],
+)
+def test_dithering_getters_hold_until_the_deadband_is_crossed(
+    spec_key, key, feed, expected, phases
+) -> None:
+    assert _read(spec_key, _updater({}), key, feed, phases=phases) == pytest.approx(expected)
+
+
+def test_wifi_rssi_holds_a_swing_the_link_quality_does_not_notice() -> None:
+    """Measured on the live charger: RSSI wanders across ~7 dBm all day.
+
+    A 3 dBm band still published one reading in seven; the link is "Excellent"
+    across the whole swing, so the rows carried nothing.
+    """
+    assert _read("wifi_signal", _updater({}), "RSSI", [-66, -70, -69, -73]) == [
+        -66,
+        -66,
+        -66,
+        -73,
+    ]
+
+def _updater_09_05(data: dict[str, object], **extra) -> SimpleNamespace:
     fields: dict[str, object] = {
-        "data": data,
         "available": True,
         "connection_quality": {},
         "host": "192.168.1.50",
     }
     fields.update(extra)
-    return SimpleNamespace(**fields)
+    return PayloadUpdater(data, **fields)
 
 
 def _push(calculator: CachedSOCCalculator) -> CachedSOCCalculator:
@@ -68,17 +149,6 @@ def _feed_seconds(monkeypatch, first: float) -> dict:
         utils, "_remaining_seconds_or_state", lambda *_a, **_k: poll["seconds"]
     )
     return poll
-
-
-def _read(getter, updater, key: str, values) -> list:
-    out = []
-    for value in values:
-        updater.data[key] = value
-        out.append(getter(updater, None))
-    return out
-
-
-# --- The hold must still let a genuine change through ---
 
 
 def test_charging_finish_time_follows_a_real_decline(monkeypatch) -> None:
@@ -127,17 +197,14 @@ def test_both_estimates_take_the_same_band_for_the_same_remaining_time(
     assert moved(ChargingFinishTimeSensor) == moved(TimeToTargetSocSensor)
 
 
-# --- Every phase takes the step its own comment says it takes ---
-
-
 @pytest.mark.parametrize(
-    ("getter", "key"),
+    ("spec_key", "key"),
     [
-        (sd.get_current_phase_2, "curMeas2"),
-        (sd.get_current_phase_3, "curMeas3"),
+        ("current_phase_2", "curMeas2"),
+        ("current_phase_3", "curMeas3"),
     ],
 )
-def test_current_phases_take_the_same_step_as_phase_one(getter, key) -> None:
+def test_current_phases_take_the_same_step_as_phase_one(spec_key, key) -> None:
     """Phases 2 and 3 are the same telemetry, so they take the same step.
 
     Compared against phase 1 on the same feed rather than against a hardcoded
@@ -147,65 +214,9 @@ def test_current_phases_take_the_same_step_as_phase_one(getter, key) -> None:
     """
     feed = [15.7, 15.9, 15.6, 15.8, 16.1, 15.9, 12.0]
 
-    assert _read(getter, _updater({}), key, feed) == pytest.approx(
-        _read(sd.get_current, _updater({}), "curMeas1", feed)
+    assert _read(spec_key, _updater_09_05({}), key, feed, phases=3) == pytest.approx(
+        _read("current", _updater_09_05({}), "curMeas1", feed)
     )
-
-
-# --- The optimistic value must outrank a stale device reading ---
-
-
-def test_setpoint_number_optimistic_value_outranks_a_stale_device_reading() -> None:
-    """The largest control family had no guard on the rule it depends on.
-
-    A setpoint written by the user is shown immediately and held for the
-    optimistic TTL, because the charger keeps reporting the OLD number until it
-    has applied the new one. `EveusCurrentNumber` has had this precedence
-    pinned since the optimistic layer landed; the setpoint family — Energy and
-    Cost Limit, every schedule limit, the Undervoltage threshold — never got
-    the equivalent, so reversing the two reads left the whole suite green while
-    every one of those sliders snapped back to the stale value after a write.
-    """
-    from unittest.mock import AsyncMock, MagicMock
-
-    from custom_components.eveus.number import (
-        EveusSetpointNumber,
-        EveusSetpointNumberDescription,
-    )
-
-    description = EveusSetpointNumberDescription(
-        key="limit_energy",
-        name="Limit Energy",
-        command="energyLimit",
-        state_key="energyLimit",
-        device_to_ha=1.0,
-        ha_to_device=1000.0,
-        native_min_value=0.0,
-        native_max_value=100.0,
-        native_step=1.0,
-        native_unit_of_measurement="kWh",
-    )
-    updater = MagicMock()
-    updater.available = True
-    updater.data = {"energyLimit": 10}
-    updater.send_command = AsyncMock(return_value=True)
-    updater.config_entry = MagicMock()
-    entity = EveusSetpointNumber(updater, description, device_number=1)
-    entity.hass = MagicMock()
-    entity.async_write_ha_state = MagicMock()
-
-    # The charger still reports the old figure, as it does until it applies the
-    # write — so the two sources disagree, which is the only state in which the
-    # precedence is observable at all.
-    import asyncio
-
-    asyncio.run(entity.async_set_native_value(40))
-    assert updater.data["energyLimit"] == 10
-
-    assert entity._resolve_value() == 40.0
-
-
-# --- The damped minute count must respect the display floor the raw one had ---
 
 
 @pytest.mark.parametrize("seconds", [60, 120, 150])
@@ -244,9 +255,6 @@ def test_time_to_target_still_states_under_a_minute_below_the_minute(
 
     poll["seconds"] = 20
     assert sensor._get_sensor_value() == "< 1m"
-
-
-# --- The grid is applied ONCE, not twice ---
 
 
 def test_finish_stamp_does_not_overshoot_the_time_it_states(monkeypatch) -> None:

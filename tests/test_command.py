@@ -9,11 +9,10 @@ import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from conftest import TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import OutageClock
 from custom_components.eveus import common_command
-from custom_components.eveus.common_command import (
-    COMMAND_TIMEOUT,
-    CommandManager,
-)
+from custom_components.eveus.common_command import CommandManager
+from custom_components.eveus.const import COMMAND_TIMEOUT
 
 
 class _Response:
@@ -25,6 +24,7 @@ class _Response:
     ) -> None:
         self.raise_error = raise_error
         self.response_status = response_status
+        self.status = 200
 
     async def __aenter__(self) -> "_Response":
         return self
@@ -63,7 +63,7 @@ class _SequencedSession:
         return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
     username = TEST_USERNAME
     password = TEST_PASSWORD
@@ -156,6 +156,42 @@ def test_command_manager_applies_rate_limit_after_failure(
 
     assert asyncio.run(manager.send_command("evseEnabled", 0)) is False
     assert manager._last_command_time > 0
+
+
+def test_preflight_rejection_sends_nothing_and_keeps_rate_limit_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A preflight veto is not a command: no POST, no failure, no pacing debt.
+
+    Consuming the 1 s spacing here would delay the next real command (a user's
+    Stop right after a withdrawn SOC-limit Stop) for no network reason.
+    """
+    sleeps: list[float] = []
+
+    async def _spy_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", _spy_sleep)
+    monkeypatch.setattr(
+        "custom_components.eveus.common_command.time.monotonic", lambda: 100.0
+    )
+    session = _Session(_Response())
+    manager = CommandManager(_Updater(session))
+    manager._last_command_time = 50.0
+
+    assert asyncio.run(
+        manager.send_command("evseEnabled", 1, preflight=lambda: False)
+    ) is False
+    assert session.calls == []
+    assert manager._consecutive_failures == 0
+    assert manager._last_command_time == 50.0
+
+    # First-ever command vetoed: the next real command is still unspaced.
+    fresh = CommandManager(_Updater(session))
+    assert asyncio.run(fresh.send_command("evseEnabled", 1, preflight=lambda: False)) is False
+    assert asyncio.run(fresh.send_command("evseEnabled", 1)) is True
+    assert sleeps == []
+    assert len(session.calls) == 1
 
 
 def test_command_manager_recovers_after_transient_retry(
@@ -512,3 +548,39 @@ def test_post_command_short_circuits_while_shutting_down() -> None:
 
     assert asyncio.run(manager._post_command("currentSet", 16)) is False
     assert len(session.calls) == 0
+
+
+def test_command_manager_unexpected_error_logs_only_its_class(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sentinel = "TOKEN-SENTINEL"
+
+    class _SecretError(RuntimeError):
+        pass
+
+    class _ExplodingSession:
+        def post(self, url: str, **kwargs: object):
+            try:
+                raise ValueError(f"cause {sentinel}")
+            except ValueError as cause:
+                raise _SecretError(f"{url} {sentinel}") from cause
+
+    manager = CommandManager(_Updater(_ExplodingSession()))
+    with caplog.at_level(logging.DEBUG, logger="custom_components.eveus.common_command"):
+        assert asyncio.run(manager.send_command("currentSet", 16)) is False
+
+    assert sentinel not in caplog.text
+    assert TEST_HOST not in caplog.text
+    assert "_SecretError" in caplog.text
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_command_rejects_a_redirect_without_following_or_retrying(status: int) -> None:
+    """Following a redirect would re-send the command form to another origin."""
+    response = _Response()
+    response.status = status
+    session = _Session(response)
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("currentSet", 16)) is False
+    assert [call["allow_redirects"] for call in session.calls] == [False]

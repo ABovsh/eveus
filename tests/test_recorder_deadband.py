@@ -14,6 +14,8 @@ statistics.
 from __future__ import annotations
 
 import pytest
+
+from conftest import PayloadUpdater
 from conftest import EV_HELPERS, EveusTestUpdater
 from datetime import datetime
 from types import SimpleNamespace
@@ -36,13 +38,12 @@ from custom_components.eveus.ev_sensors import (
 
 def _updater(data: dict[str, object], **extra) -> SimpleNamespace:
     fields: dict[str, object] = {
-        "data": data,
         "available": True,
         "connection_quality": {},
         "host": "192.168.1.50",
     }
     fields.update(extra)
-    return SimpleNamespace(**fields)
+    return PayloadUpdater(data, **fields)
 
 
 def _push(calculator: CachedSOCCalculator) -> CachedSOCCalculator:
@@ -56,12 +57,23 @@ def _push(calculator: CachedSOCCalculator) -> CachedSOCCalculator:
     return calculator
 
 
-def _read(getter, updater, key: str, values) -> list:
-    """Feed successive payload values through one getter, sharing the updater."""
+def _spec(key: str, phases: int = 1) -> sd.EveusSensorEntityDescription:
+    return next(s for s in sd.create_sensor_specifications(phases=phases) if s.key == key)
+
+
+def _read(spec_key: str, updater, key: str, values, phases: int = 1) -> list:
+    """Feed successive payload values through one entity's own deadband.
+
+    The damping moved from the getter (P4.2) to `EveusSensorBase._deadband`,
+    so it now takes an entity instance across the whole series, not a bare
+    getter function — a fresh call no longer starts from a clean anchor.
+    """
+    sensor = sd.create_sensor(_spec(spec_key, phases=phases), updater, 1)
     out = []
     for value in values:
         updater.data[key] = value
-        out.append(getter(updater, None))
+        sensor._update_native_value()
+        out.append(sensor._attr_native_value)
     return out
 
 
@@ -69,32 +81,32 @@ def _read(getter, updater, key: str, values) -> list:
 
 
 @pytest.mark.parametrize(
-    ("getter", "key", "feed", "expected"),
+    ("spec_key", "key", "feed", "expected"),
     [
         # Voltage dithers ±1 V on a healthy grid; 2 V is the smallest step worth a row.
-        (sd.get_voltage, "voltMeas1", [230, 231, 229, 232], [230, 230, 230, 232]),
+        ("voltage", "voltMeas1", [230, 231, 229, 232], [230, 230, 230, 232]),
         # Current sits on 15.9/16.0/16.1 for a whole session.
-        (sd.get_current, "curMeas1", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3]),
+        ("current", "curMeas1", [16.0, 16.1, 15.9, 16.3], [16.0, 16.0, 16.0, 16.3]),
         # Power wanders by tens of watts under a constant 3.5 kW draw.
-        (sd.get_power, "powerMeas", [3500, 3520, 3480, 3560], [3500, 3500, 3500, 3560]),
+        ("power", "powerMeas", [3500, 3520, 3480, 3560], [3500, 3500, 3500, 3560]),
         # RSSI wanders across several dBm between polls while the link is
         # unchanged; only a swing wide enough to change the verdict is a row.
-        (sd.get_wifi_rssi, "RSSI", [-66, -67, -65, -72], [-66, -66, -66, -72]),
+        ("wifi_signal", "RSSI", [-66, -67, -65, -72], [-66, -66, -66, -72]),
     ],
 )
-def test_dithering_getters_hold_until_the_deadband_is_crossed(
-    getter, key, feed, expected
+def test_dithering_sensors_hold_until_the_deadband_is_crossed(
+    spec_key, key, feed, expected
 ) -> None:
     updater = _updater({})
 
-    assert _read(getter, updater, key, feed) == pytest.approx(expected)
+    assert _read(spec_key, updater, key, feed) == pytest.approx(expected)
 
 
 def test_power_deadband_boundary_is_exactly_fifty_watts() -> None:
     """A 50 W swing publishes; anything smaller holds — pins the exact band."""
     updater = _updater({})
 
-    assert _read(sd.get_power, updater, "powerMeas", [3500, 3549, 3550]) == [
+    assert _read("power", updater, "powerMeas", [3500, 3549, 3550]) == [
         3500,
         3500,
         3550,
@@ -109,47 +121,77 @@ def test_deadband_always_publishes_an_exact_zero() -> None:
     would hold "30 W" on the poll the contactor opens and never publish the 0.
     """
     updater = _updater({})
-    assert _read(sd.get_power, updater, "powerMeas", [3500, 3480, 0]) == [3500, 3500, 0]
+    assert _read("power", updater, "powerMeas", [3500, 3480, 0]) == [3500, 3500, 0]
 
     standby = _updater({})
-    assert _read(sd.get_power, standby, "powerMeas", [30, 0, 20]) == [30, 0, 0]
+    assert _read("power", standby, "powerMeas", [30, 0, 20]) == [30, 0, 0]
 
 
 def test_deadband_does_not_leak_between_chargers() -> None:
-    """Two config entries poll two different chargers; state is per updater."""
+    """Two config entries poll two different chargers; state is per entity."""
     first, second = _updater({"voltMeas1": 230}), _updater({"voltMeas1": 245})
+    first_sensor = sd.create_sensor(_spec("voltage"), first, 1)
+    second_sensor = sd.create_sensor(_spec("voltage"), second, 1)
 
-    assert sd.get_voltage(first, None) == 230
-    assert sd.get_voltage(second, None) == 245
+    first_sensor._update_native_value()
+    second_sensor._update_native_value()
+
+    assert first_sensor._attr_native_value == 230
+    assert second_sensor._attr_native_value == 245
 
 
 def test_offline_reading_keeps_the_last_value_as_the_reference() -> None:
-    """A None (offline) reading is passed through without resetting the anchor."""
+    """A missed poll holds through the grace window without resetting the anchor."""
     updater = _updater({"voltMeas1": 230})
-    assert sd.get_voltage(updater, None) == 230
+    sensor = sd.create_sensor(_spec("voltage"), updater, 1)
+    sensor._update_native_value()
+    assert sensor._attr_native_value == 230
 
     updater.available = False
-    assert sd.get_voltage(updater, None) is None
+    sensor._update_native_value()
+    assert sensor._attr_native_value == 230
 
     updater.available = True
     updater.data["voltMeas1"] = 231
-    assert sd.get_voltage(updater, None) == 230
+    sensor._update_native_value()
+    assert sensor._attr_native_value == 230
 
 
 def test_connection_quality_attribute_reuses_the_damped_rssi() -> None:
     """The wifi_rssi attribute was the single largest source of recorder rows.
 
-    It mirrors the WiFi Signal sensor, so it must mirror its damping too —
-    otherwise Connection Quality writes a row per poll while its own state
-    (poll success rate) sits at 100 % for days.
+    It carries the WiFi Signal sensor's reading, so it must carry its damping
+    too — otherwise Connection Quality writes a row per poll while its own
+    state (poll success rate) sits at 100 % for days. Both are driven on every
+    poll, so both must publish the same held value.
+    """
+    updater = _updater({"RSSI": -66}, connection_quality={"success_rate": 100})
+    wifi_signal = sd.create_sensor(_spec("wifi_signal"), updater, 1)
+    wifi_signal._update_native_value()
+    assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -66
+
+    updater.data["RSSI"] = -67
+    wifi_signal._update_native_value()
+
+    assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -66
+
+
+
+def test_connection_quality_rssi_does_not_need_the_wifi_signal_entity() -> None:
+    """A disabled WiFi Signal sensor is never added, so it never runs.
+
+    4.22.0 damped the attribute on its own; reading a mirror only that entity
+    writes left `wifi_rssi` missing forever for anyone who disabled WiFi
+    Signal. The attribute must still carry the damped reading.
     """
     updater = _updater({"RSSI": -66}, connection_quality={"success_rate": 100})
     assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -66
 
     updater.data["RSSI"] = -67
-
     assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -66
 
+    updater.data["RSSI"] = -72
+    assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -72
 
 # --- SOC / forecast entities ---
 
@@ -311,7 +353,7 @@ def test_current_holds_a_tenth_of_an_amp_from_any_anchor() -> None:
         neighbours = [round(anchor + step, 1) for step in (0.1, -0.1, 0.1)]
         updater = _updater({})
         assert _read(
-            sd.get_current, updater, "curMeas1", [anchor, *neighbours]
+            "current", updater, "curMeas1", [anchor, *neighbours]
         ) == pytest.approx([anchor] * 4), f"0.1 A step published from {anchor}"
 
 
@@ -323,7 +365,7 @@ def test_current_publishes_a_two_tenth_move_by_design() -> None:
     """
     updater = _updater({})
 
-    assert _read(sd.get_current, updater, "curMeas1", [15.7, 15.9]) == pytest.approx(
+    assert _read("current", updater, "curMeas1", [15.7, 15.9]) == pytest.approx(
         [15.7, 15.9]
     )
 
@@ -449,10 +491,10 @@ def test_estimate_still_follows_a_real_decline() -> None:
 def _session_time_sensor(updater):
     spec = next(
         s
-        for s in sd.create_sensor_specifications(phases=1, max_current=16)
+        for s in sd.create_sensor_specifications(phases=1)
         if s.key == "session_time"
     )
-    return spec.create_sensor(updater)
+    return sd.create_sensor(spec, updater)
 
 
 def _restored(updater, attributes: dict | None, state: str = "5d 21h 24m"):
@@ -472,7 +514,7 @@ def test_only_session_time_declares_a_hold_to_restore() -> None:
     """
     declared = {
         spec.key
-        for spec in sd.create_sensor_specifications(phases=1, max_current=16)
+        for spec in sd.create_sensor_specifications(phases=1)
         if spec.restores_session_hold
     }
     assert declared == {"session_time"}
@@ -566,7 +608,7 @@ def test_rssi_deadband_boundary_is_exactly_five_dbm() -> None:
     """
     updater = _updater({})
 
-    assert _read(sd.get_wifi_rssi, updater, "RSSI", [-66, -70, -71]) == [
+    assert _read("wifi_signal", updater, "RSSI", [-66, -70, -71]) == [
         -66,  # anchor
         -66,  # 4 dBm: inside the band, held
         -71,  # 5 dBm: a move EQUAL to the band publishes
@@ -656,6 +698,21 @@ def test_latency_avg_holds_instead_of_flipping_across_its_rounding_boundary() ->
     assert sd.get_connection_attrs(updater, None)["latency_avg"] > first, (
         "a real latency increase must not be swallowed by the hold"
     )
+
+
+def test_latency_avg_hold_is_measured_from_a_nonzero_step_and_opens_at_exactly_one_step() -> None:
+    """The distance is |reading - published|, and a full 0.5 s step re-enters the grid."""
+    quality = {"success_rate": 100, "latency_avg": 1.0}
+    updater = SimpleNamespace(available=True, data={}, connection_quality=quality)
+    assert sd.get_connection_attrs(updater, None)["latency_avg"] == 1.0
+
+    # 0.26 s below the published step would re-round to 0.5; the hold keeps 1.0.
+    quality["latency_avg"] = 0.74
+    assert sd.get_connection_attrs(updater, None)["latency_avg"] == 1.0
+
+    # Exactly one step away is a real move, not a wobble.
+    quality["latency_avg"] = 1.5
+    assert sd.get_connection_attrs(updater, None)["latency_avg"] == 1.5
 
 
 def test_latency_avg_hold_is_per_updater() -> None:
@@ -804,6 +861,27 @@ def test_charging_finish_time_survives_a_missed_poll_while_charging() -> None:
             type(sensor), "_in_availability_grace", property(lambda self: True)
         ):
             assert sensor.available is True, "a held reading must stay visible"
+
+
+def test_charging_finish_time_stays_unavailable_through_a_missed_poll_between_charges() -> None:
+    """The grace window holds a reading; between charges there is none to hold.
+
+    Seen on live hardware 2026-09-19 at 04:10:39 UTC: the charger (Charge
+    Complete) was powered off, and on the first failed poll the sensor went
+    from `unavailable` to `unknown` for the whole 60 s grace window, then back
+    to `unavailable` — a visible blank plus two recorder rows for a charge that
+    was not running.
+    """
+    sensor = _finish_sensor(5)
+    assert sensor.available is False
+
+    sensor._updater.available = False
+    sensor._updater.seconds_unavailable = 10.0  # inside every grace window
+    assert sensor._in_availability_grace is True
+    assert sensor.available is False, (
+        "no charge was running when the charger went silent, so there is no "
+        "finish time to keep visible; the grace window must not publish a blank"
+    )
 
 
 def test_configured_and_event_only_readings_carry_no_state_class() -> None:

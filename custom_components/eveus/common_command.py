@@ -3,16 +3,17 @@ import logging
 import asyncio
 import random
 import time
+from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlencode
 
 import aiohttp
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from .const import COMMAND_TIMEOUT, ERROR_LOG_RATE_LIMIT
+from .const import ERROR_LOG_RATE_LIMIT
+from .client import COMMAND_TIMEOUT_OBJ, post_page_event
 from .utils import RateLog
 
-_COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
+_COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = COMMAND_TIMEOUT_OBJ
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class CommandManager:
         # None = no command sent yet. A 0 sentinel was unsafe once timing moved
         # to the monotonic clock: right after boot monotonic() can be < 1, making
         # the first command sleep up to a second for no reason.
-        self._last_command_time: float | None = None  # pragma: no mutate - annotation only: local/attr annotations in a function body are never evaluated (PEP 526), regardless of __future__ import
+        self._last_command_time: float | None = None
         self._consecutive_failures = 0
         self._error_log = RateLog()
 
@@ -60,12 +61,19 @@ class CommandManager:
         *,
         retry: bool = True,
         extra: dict[str, Any] | None = None,
+        preflight: Callable[[], bool] | None = None,
     ) -> bool:
         """Send command with rate limiting, retry/backoff, and error handling.
 
         ``extra`` adds sibling form fields to the same request. Some firmware
         settings (e.g. OCPP) are only honored when several fields are written
         together as one "save" form, not as a bare single-field write.
+
+        ``preflight`` is re-evaluated inside the command lock immediately before
+        every attempt, including each retry: a command that was valid when
+        queued can stop being so while it waits behind another command or a
+        backoff. A rejection returns False without a POST, a retry or a failure
+        count — nothing went wrong on the network.
         """
         async with self._lock:
             # Rate limit: minimum 1 second between commands. Monotonic clock so a
@@ -79,10 +87,16 @@ class CommandManager:
                 if time_since_last < 1:
                     await asyncio.sleep(max(0.0, min(1.0, 1 - time_since_last)))
 
+            # Only a real attempt paces the next command: a preflight veto
+            # touches no network, so it must not delay a user's next write.
+            attempted = False
             try:
                 last_error: Exception | None = None
                 retry_attempts = _COMMAND_RETRY_ATTEMPTS if retry else 0
                 for attempt in range(retry_attempts + 1):  # pragma: no mutate - equivalent: both break conditions below always fire at attempt<=retry_attempts, so a larger range upper bound is unreachable dead code
+                    if preflight is not None and not preflight():
+                        return False
+                    attempted = True
                     try:
                         return await self._post_command(command, value, extra)
                     except aiohttp.ClientResponseError as err:
@@ -98,7 +112,7 @@ class CommandManager:
                             break
                         last_error = err
                         if attempt >= retry_attempts:
-                            break  # pragma: no mutate - equivalent: this fires only on the loop's final iteration, where break/continue both just end the loop
+                            break
                         await self._sleep_backoff(attempt)
                     except (
                         aiohttp.ClientConnectorError,
@@ -107,7 +121,7 @@ class CommandManager:
                     ) as err:
                         last_error = err
                         if attempt >= retry_attempts:
-                            break  # pragma: no mutate - equivalent: this fires only on the loop's final iteration, where break/continue both just end the loop
+                            break
                         await self._sleep_backoff(attempt)
 
                 self._consecutive_failures += 1
@@ -115,7 +129,7 @@ class CommandManager:
                     # Log only the error type — ClientResponseError.__str__ embeds
                     # the request URL (the charger host), which we scrub elsewhere.
                     _LOGGER.debug(
-                        "Command %s failed: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                        "Command %s failed: %s",
                         command, type(last_error).__name__
                     )
                 return False
@@ -126,14 +140,14 @@ class CommandManager:
                 self._consecutive_failures += 1
                 if self._should_log_error():
                     _LOGGER.debug(
-                        "Command %s unexpected error: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                        "Command %s unexpected error: %s",
                         command,
-                        err,
-                        exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                        type(err).__name__,
                     )
                 return False
             finally:
-                self._last_command_time = time.monotonic()
+                if attempted:
+                    self._last_command_time = time.monotonic()
 
     async def _post_command(
         self, command: str, value: Any, extra: dict[str, Any] | None = None
@@ -157,14 +171,14 @@ class CommandManager:
         fields = {"pageevent": command, command: value}
         if extra:
             fields.update(extra)
-        payload = urlencode(fields)
-        async with session.post(
+        # No on_unauthorized: a command has no reauth path of its own, so the
+        # 401 surfaces as a ClientResponseError and send_command maps it.
+        await post_page_event(
+            session,
             self._updater.url_for("/pageEvent"),
             auth=self._updater.basic_auth,
-            headers={"Content-type": "application/x-www-form-urlencoded"},
-            data=payload,
             timeout=_COMMAND_TIMEOUT_OBJ,
-        ) as response:
-            response.raise_for_status()
-            self._consecutive_failures = 0
-            return True
+            fields=fields,
+        )
+        self._consecutive_failures = 0
+        return True

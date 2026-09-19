@@ -11,9 +11,14 @@ IDLE_UPDATE_INTERVAL: Final[int] = 60
 # one offline cycle (worst case 60 s). A refused LAN request once a minute
 # is negligible load.
 OFFLINE_UPDATE_INTERVAL: Final[int] = 60
-RETRY_DELAY: Final[int] = 15
-UPDATE_TIMEOUT: Final[int] = 20
-COMMAND_TIMEOUT: Final[int] = 25
+# Request timeouts. Measured /main latency is p99 0.36 s, max 0.41 s over 200
+# polls on one charger with good Wi-Fi; 10 s keeps wide headroom for weak links
+# and older firmware, which that sample did not cover, and a command gets two
+# more. A stalled charger holds the command lock for three timeouts plus
+# backoff (~40 s), down from ~77 s at the old 20/25 s, so a queued SOC-limit
+# Stop no longer waits more than a minute behind a dead request.
+UPDATE_TIMEOUT: Final[int] = 10
+COMMAND_TIMEOUT: Final[int] = 12
 
 # Charger device-state value that means "idle/standby" (CHARGING_STATES[2]).
 DEVICE_STATE_STANDBY: Final[int] = 2
@@ -84,7 +89,6 @@ DEFAULT_SOC_CORRECTION: Final[float] = 7.5
 AVAILABILITY_GRACE_PERIOD: Final[int] = 60
 CONTROL_GRACE_PERIOD: Final[int] = 30
 ERROR_LOG_RATE_LIMIT: Final[int] = 300
-STATE_CACHE_TTL: Final[int] = 60
 OPTIMISTIC_CONTROL_TTL: Final[int] = 120
 
 # What Home Assistant hands back when it has no usable value to restore. Every
@@ -199,6 +203,21 @@ MIN_VOLTAGE_OPTIONS: Final[List[str]] = [
 # (a finite but impossible value like 1e100) instead of only the display side.
 MAX_POWER_W: Final[int] = 100_000
 MAX_ENERGY_KWH: Final[int] = 1_000_000
+# Generous on purpose — real readings sit far below these. They exist only to
+# reject corrupt finite outliers (e.g. voltMeas1 = 1e100) before they reach a
+# sensor, a safety policy, or HA long-term statistics.
+MAX_VOLTAGE_V: Final[int] = 500
+MAX_CURRENT_A: Final[int] = 200
+# Largest plausible per-slot schedule energy cap (kWh).
+MAX_SCHEDULE_ENERGY_KWH: Final[int] = 200
+# `tarif*` fields are reported in hundredths of a currency unit; this bounds the
+# RAW value (checked before the /100 transform), so the published per-kWh rate
+# cannot exceed ~100k.
+MAX_RATE_HUNDREDTHS: Final[int] = 10_000_000
+# RSSI is reported in dBm — physically always <= 0, with a typical floor
+# around -120 dBm.
+MIN_VALID_RSSI_DBM: Final[int] = -120
+MAX_VALID_RSSI_DBM: Final[int] = 0
 # Upper sanity cap for session duration (seconds). A charging session never runs
 # anywhere near a year; the bound only rejects corrupt outliers that would
 # otherwise render an overlong HA state string.
@@ -250,6 +269,11 @@ def soc_update_signal(entry_id: str) -> str:
     return f"eveus_soc_update_{entry_id}"
 
 
+def poll_failure_signal(entry_id: str) -> str:
+    """Per-entry dispatcher signal fired on every failed poll."""
+    return f"eveus_poll_failure_{entry_id}"
+
+
 def get_soc_mode(entry) -> str:
     """Return the SOC mode for a config entry.
 
@@ -268,9 +292,9 @@ RATE_STATES: Final[Dict[int, str]] = {
 }
 
 # State Mappings
-DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]  # pragma: no mutate - Literal type-hint only, never enforced/compared at runtime
-ErrorState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # pragma: no mutate - Literal type-hint only, never enforced/compared at runtime
-SubState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # pragma: no mutate - Literal type-hint only, never enforced/compared at runtime
+DeviceState = Literal[0, 1, 2, 3, 4, 5, 6, 7]
+ErrorState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+SubState = Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 CHARGING_STATES: Final[Dict[DeviceState, str]] = {
     0: "Startup",

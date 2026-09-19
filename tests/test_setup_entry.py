@@ -10,6 +10,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, Co
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
+from conftest import OutageClock
 import custom_components.eveus as eveus
 from custom_components.eveus.const import (
     CONF_PHASES,
@@ -23,6 +24,8 @@ from custom_components.eveus.const import (
 )
 from custom_components.eveus.number import async_setup_entry as async_setup_number_entry
 from custom_components.eveus.sensor import async_setup_entry as async_setup_sensor_entry
+from conftest import PayloadUpdater
+from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.ev_sensors import (
     ChargingFinishTimeSensor,
     EVSocKwhSensor,
@@ -90,7 +93,7 @@ class _Entry:
         return listener
 
 
-class _Updater:
+class _Updater(OutageClock):
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.args = args
         self.kwargs = kwargs
@@ -99,6 +102,15 @@ class _Updater:
         self.last_update_success = True
         self.data = {"currentSet": "16"}
         self.listeners: list[object] = []
+
+    @property
+    def snapshot(self):
+        # Derived on read, as the real coordinator's is per poll: subclasses
+        # below replace `data` after __init__, and the safety manager and the
+        # repair trackers must see the payload they actually set.
+        return EveusSnapshot.parse(
+            self.data if isinstance(self.data, dict) else {}, None
+        )
 
     def async_add_listener(self, update_callback: object, *args: object, **kwargs: object):
         self.listeners.append(update_callback)
@@ -203,19 +215,19 @@ def test_update_ocpp_issue_guard_and_dispatch(monkeypatch: pytest.MonkeyPatch) -
     )
     entry = SimpleNamespace(entry_id="e1")
 
-    unavailable = SimpleNamespace(available=False, last_update_success=True, data={"ocppEnabled": 1})
-    eveus._update_ocpp_issue(None, entry, unavailable)
+    unavailable = PayloadUpdater({"ocppEnabled": 1}, available=False, last_update_success=True)
+    eveus.update_ocpp_issue(None, entry, unavailable)
     assert not created
 
-    failed = SimpleNamespace(available=True, last_update_success=False, data={"ocppEnabled": 1})
-    eveus._update_ocpp_issue(None, entry, failed)
+    failed = PayloadUpdater({"ocppEnabled": 1}, available=True, last_update_success=False)
+    eveus.update_ocpp_issue(None, entry, failed)
     assert not created
 
-    enabled = SimpleNamespace(available=True, last_update_success=True, data={"ocppEnabled": 1})
-    eveus._update_ocpp_issue(None, entry, enabled)
+    enabled = PayloadUpdater({"ocppEnabled": 1}, available=True, last_update_success=True)
+    eveus.update_ocpp_issue(None, entry, enabled)
     assert created == [
         (
-            eveus._ocpp_issue_id(entry),
+            eveus.ocpp_issue_id(entry),
             {
                 "is_fixable": False,
                 "is_persistent": False,
@@ -227,17 +239,18 @@ def test_update_ocpp_issue_guard_and_dispatch(monkeypatch: pytest.MonkeyPatch) -
     ]
 
     # A missing/garbled ocppEnabled (None) must NOT clear an existing warning.
-    garbled = SimpleNamespace(available=True, last_update_success=True, data={"ocppEnabled": None})
-    eveus._update_ocpp_issue(None, entry, garbled)
+    garbled = PayloadUpdater({"ocppEnabled": None}, available=True, last_update_success=True)
+    eveus.update_ocpp_issue(None, entry, garbled)
     assert not deleted
 
-    disabled = SimpleNamespace(available=True, last_update_success=True, data={"ocppEnabled": 0})
-    eveus._update_ocpp_issue(None, entry, disabled)
-    assert deleted == [eveus._ocpp_issue_id(entry)]
+    disabled = PayloadUpdater({"ocppEnabled": 0}, available=True, last_update_success=True)
+    eveus.update_ocpp_issue(None, entry, disabled)
+    assert deleted == [eveus.ocpp_issue_id(entry)]
 
 
 def test_async_setup_returns_true() -> None:
-    assert asyncio.run(eveus.async_setup(object(), {})) is True
+    hass = SimpleNamespace(is_running=True, http=None, data={}, config=SimpleNamespace(components=set()))
+    assert asyncio.run(eveus.async_setup(hass, {})) is True
 
 
 def test_config_schema_is_config_entry_only() -> None:
@@ -285,6 +298,55 @@ def test_async_setup_entry_populates_runtime_data(monkeypatch: pytest.MonkeyPatc
     assert hass.config_entries.forwarded
     # async_shutdown is registered by DataUpdateCoordinator itself (via the
     # config_entry= constructor argument); we no longer hook it manually.
+
+
+def test_async_setup_entry_seeds_soc_calculator_from_entry_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disabling a SOC number entity must not blank the calculator: seed it
+    from stored config data before platforms are forwarded, so it never
+    depends solely on a (possibly-disabled) entity's async_added_to_hass."""
+    from custom_components.eveus.const import (
+        CONF_INITIAL_SOC,
+        CONF_TARGET_SOC,
+        CONF_BATTERY_CAPACITY,
+        CONF_SOC_CORRECTION,
+    )
+
+    hass = _hass()
+    entry = _Entry(
+        _data(
+            **{
+                CONF_INITIAL_SOC: 55,
+                CONF_TARGET_SOC: 90,
+                CONF_BATTERY_CAPACITY: 64,
+                CONF_SOC_CORRECTION: 3,
+            }
+        )
+    )
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    calc = entry.runtime_data.soc_calculator
+    assert calc.initial_soc == 55
+    assert calc.target_soc == 90
+    assert calc.battery_capacity == 64
+    assert calc.soc_correction_raw == 3
+
+
+def test_async_setup_entry_does_not_seed_soc_calculator_in_basic_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.eveus.const import CONF_SOC_MODE, SOC_MODE_BASIC, CONF_INITIAL_SOC
+
+    hass = _hass()
+    entry = _Entry(_data(**{CONF_SOC_MODE: SOC_MODE_BASIC, CONF_INITIAL_SOC: 55}))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+
+    assert entry.runtime_data.soc_calculator.initial_soc is None
 
 
 def test_async_setup_entry_accepts_already_normalized_device_number(
@@ -561,6 +623,36 @@ def test_async_setup_entry_raises_ocpp_issue_on_first_refresh(
     ]
 
 
+def test_async_setup_entry_follows_battery_and_clock_issues_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both repairs evaluate at setup and again on each poll, with their own tracker."""
+    calls: list[tuple[str, object, object]] = []
+    hass = _hass()
+    entry = _Entry(_data(device_number=1))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(
+        eveus,
+        "update_battery_low_issue",
+        lambda h, e, u, tracker: calls.append(("battery", e, tracker)),
+    )
+    monkeypatch.setattr(
+        eveus,
+        "update_clock_drift_issue",
+        lambda h, e, u, tracker: calls.append(("clock", e, tracker)),
+    )
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    assert [(kind, e) for kind, e, _ in calls] == [("battery", entry), ("clock", entry)]
+    assert isinstance(calls[0][2], eveus.BatteryLowTracker)
+    assert isinstance(calls[1][2], eveus.ClockDriftTracker)
+
+    calls.clear()
+    for listener in entry.runtime_data.updater.listeners:
+        listener()
+    assert [kind for kind, _, _ in calls] == ["battery", "clock"]
+
+
 def test_async_setup_entry_normalizes_stored_device_number(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -630,27 +722,6 @@ def test_unload_entry_propagates_platform_unload_failure() -> None:
     with pytest.raises(RuntimeError, match="unload failed"):
         asyncio.run(eveus.async_unload_entry(hass, entry))
     assert hass.config_entries.unloaded == []
-
-
-def test_sensor_setup_creates_standard_and_ev_sensors() -> None:
-    added: list[object] = []
-    entry = _Entry(_data())
-    entry.runtime_data = SimpleNamespace(
-        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
-        device_number=1,
-        soc_calculator=object(),
-        phases=1,
-    )
-
-    asyncio.run(
-        async_setup_sensor_entry(
-            object(),
-            entry,
-            lambda entities, update_before_add=False: added.extend(entities),
-        )
-    )
-
-    assert len(added) >= 20
 
 
 def _setup_sensors_for_mode(soc_mode: str | None) -> list[object]:
@@ -1366,11 +1437,11 @@ def test_async_setup_entry_calls_init_firmware_fallback_when_available(
     assert entry.runtime_data.updater.fetch_calls == 1
 
 
-# --- _BatteryLowTracker: default state, guard boundaries, streak/hysteresis ---
+# --- BatteryLowTracker: default state, guard boundaries, streak/hysteresis ---
 
 
 def test_battery_low_tracker_initial_state() -> None:
-    t = eveus._BatteryLowTracker()
+    t = eveus.BatteryLowTracker()
     assert t._low_streak == 0
     assert t._active is False
 
@@ -1382,22 +1453,29 @@ def test_battery_low_tracker_guard_boundaries() -> None:
         BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
     )
 
-    # A reading of exactly 0 V must be treated as invalid/offline on every
-    # poll (never advances the streak), not merely on the first one.
-    t0 = eveus._BatteryLowTracker()
+    # A reading of exactly 0 V is a dropped ADC sample, not a flat cell. The
+    # shared parse rejects it, so the tracker is handed None on every poll and
+    # the streak never advances — checked through the real entry point, which
+    # is where that guarantee now lives.
+    t0 = eveus.BatteryLowTracker()
+    entry0 = SimpleNamespace(entry_id="zero-volt")
     for _ in range(BATTERY_LOW_DEBOUNCE_POLLS + 1):
-        assert t0.evaluate(0.0) is None
+        eveus.update_battery_low_issue(
+            None, entry0, PayloadUpdater({"vBat": 0.0}), t0
+        )
+    assert t0._low_streak == 0
+    assert t0._active is False
 
     # A small positive reading below the low threshold IS a genuine low
     # reading and must fire after exactly the debounce count.
-    t1 = eveus._BatteryLowTracker()
+    t1 = eveus.BatteryLowTracker()
     for _ in range(BATTERY_LOW_DEBOUNCE_POLLS - 1):
         assert t1.evaluate(0.5) is None
     assert t1.evaluate(0.5) is True
 
     # Exactly at the max-plausible ceiling is still a plausible (healthy)
     # reading and must clear an active warning.
-    t2 = eveus._BatteryLowTracker()
+    t2 = eveus.BatteryLowTracker()
     low = BATTERY_LOW_THRESHOLD_VOLTS - 0.1
     for _ in range(BATTERY_LOW_DEBOUNCE_POLLS):
         t2.evaluate(low)
@@ -1405,7 +1483,7 @@ def test_battery_low_tracker_guard_boundaries() -> None:
     assert t2.evaluate(BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS) is False
 
     # A reading exactly at the low threshold is NOT "low" (strict <).
-    t3 = eveus._BatteryLowTracker()
+    t3 = eveus.BatteryLowTracker()
     for _ in range(BATTERY_LOW_DEBOUNCE_POLLS):
         assert t3.evaluate(BATTERY_LOW_THRESHOLD_VOLTS) is None
     assert t3._low_streak == 0
@@ -1417,7 +1495,7 @@ def test_battery_low_tracker_streak_increments_exactly_and_fires_once() -> None:
         BATTERY_LOW_THRESHOLD_VOLTS,
     )
 
-    t = eveus._BatteryLowTracker()
+    t = eveus.BatteryLowTracker()
     low = BATTERY_LOW_THRESHOLD_VOLTS - 0.1
     assert t.evaluate(low) is None
     assert t._low_streak == 1
@@ -1437,7 +1515,7 @@ def test_battery_low_tracker_reset_and_clear_exact_boundaries() -> None:
         BATTERY_OK_THRESHOLD_VOLTS,
     )
 
-    t = eveus._BatteryLowTracker()
+    t = eveus.BatteryLowTracker()
     low = BATTERY_LOW_THRESHOLD_VOLTS - 0.1
     for _ in range(BATTERY_LOW_DEBOUNCE_POLLS - 1):
         t.evaluate(low)
@@ -1482,53 +1560,65 @@ def test_update_battery_low_issue_guard_field_and_dispatch(
         eveus.ir, "async_delete_issue", lambda hass, domain, issue_id: deleted.append(issue_id)
     )
     entry = SimpleNamespace(entry_id="e1")
-    tracker = eveus._BatteryLowTracker()
+    tracker = eveus.BatteryLowTracker()
     low = BATTERY_LOW_THRESHOLD_VOLTS - 0.1
 
-    unavailable = SimpleNamespace(available=False, last_update_success=True, data={"vBat": low})
-    eveus._update_battery_low_issue(None, entry, unavailable, tracker)
+    unavailable = PayloadUpdater({"vBat": low}, available=False, last_update_success=True)
+    eveus.update_battery_low_issue(None, entry, unavailable, tracker)
     assert tracker._low_streak == 0  # guard must skip entirely
 
-    failed = SimpleNamespace(available=True, last_update_success=False, data={"vBat": low})
-    eveus._update_battery_low_issue(None, entry, failed, tracker)
+    failed = PayloadUpdater({"vBat": low}, available=True, last_update_success=False)
+    eveus.update_battery_low_issue(None, entry, failed, tracker)
     assert tracker._low_streak == 0
 
-    normal = SimpleNamespace(available=True, last_update_success=True, data={"vBat": low})
+    normal = PayloadUpdater({"vBat": low}, available=True, last_update_success=True)
     for _ in range(BATTERY_LOW_DEBOUNCE_POLLS):
-        eveus._update_battery_low_issue(None, entry, normal, tracker)
+        eveus.update_battery_low_issue(None, entry, normal, tracker)
 
     assert created
     issue_id, kw = created[-1]
-    assert issue_id == eveus._battery_low_issue_id(entry)
+    assert issue_id == eveus.battery_low_issue_id(entry)
     assert kw["is_fixable"] is False
     assert kw["is_persistent"] is False
     assert kw["translation_key"] == "battery_low"
 
-    clear = SimpleNamespace(
-        available=True, last_update_success=True, data={"vBat": BATTERY_OK_THRESHOLD_VOLTS}
-    )
-    eveus._update_battery_low_issue(None, entry, clear, tracker)
-    assert deleted == [eveus._battery_low_issue_id(entry)]
+    clear = PayloadUpdater({"vBat": BATTERY_OK_THRESHOLD_VOLTS}, available=True, last_update_success=True)
+    eveus.update_battery_low_issue(None, entry, clear, tracker)
+    assert deleted == [eveus.battery_low_issue_id(entry)]
 
 
-# --- _ClockDriftTracker: default state, arithmetic, classification, hysteresis ---
+# --- ClockDriftTracker: default state, arithmetic, classification, hysteresis ---
 
 
 def _clock_env(monkeypatch: pytest.MonkeyPatch, *, local_wall: int, utc_offset: int = 0) -> None:
-    """Pin HA's local wall clock/offset and let the charger wall clock come
-    straight from data["_charger_wall"] (or None), for deterministic drift math
-    without needing real systemTime/timeZone payload encoding."""
-    monkeypatch.setattr(eveus, "get_local_wall_clock_seconds", lambda: local_wall)
-    monkeypatch.setattr(eveus, "get_local_utc_offset_seconds", lambda: utc_offset)
-    monkeypatch.setattr(
-        eveus,
-        "get_charger_wall_clock_seconds",
-        lambda data: data.get("_charger_wall") if data else None,
+    """Pin HA's local wall clock/offset for deterministic drift arithmetic."""
+    from custom_components.eveus import issues as issues_mod
+
+    monkeypatch.setattr(issues_mod, "get_local_wall_clock_seconds", lambda: local_wall)
+    monkeypatch.setattr(issues_mod, "get_local_utc_offset_seconds", lambda: utc_offset)
+
+
+class _WallClock:
+    """Snapshot stand-in carrying only the charger wall clock.
+
+    The tracker reads exactly that one view, so stating it directly keeps the
+    drift arithmetic readable instead of hiding it behind a systemTime/timeZone
+    encoding these tests are not about (EveusSnapshot.charger_wall_clock_s has
+    its own tests).
+    """
+
+    def __init__(self, seconds: int | None) -> None:
+        self.charger_wall_clock_s = seconds
+
+
+def _wall_updater(seconds: int | None, *, available=True, success=True):
+    return SimpleNamespace(
+        available=available, last_update_success=success, snapshot=_WallClock(seconds)
     )
 
 
 def test_clock_drift_tracker_initial_state() -> None:
-    t = eveus._ClockDriftTracker()
+    t = eveus.ClockDriftTracker()
     assert t._drift_streak == 0
     assert t._ok_streak == 0
     assert t._active is False
@@ -1543,10 +1633,10 @@ def test_clock_drift_missing_time_fields_resets_transient_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clock_env(monkeypatch, local_wall=0)
-    t = eveus._ClockDriftTracker()
+    t = eveus.ClockDriftTracker()
     t.still_drifted = True
     t.rekey_streak = 5
-    assert t.evaluate({}) is None
+    assert t.evaluate(_WallClock(None)) is None
     assert t.still_drifted is False
     assert t.rekey_streak == 0
 
@@ -1555,9 +1645,9 @@ def test_clock_drift_uses_real_charger_wall_clock_not_forced_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clock_env(monkeypatch, local_wall=1000, utc_offset=0)
-    t = eveus._ClockDriftTracker()
+    t = eveus.ClockDriftTracker()
     # Charger 5000 s ahead: a real drift, not the "missing time fields" path.
-    result = t.evaluate({"_charger_wall": 1000 + 5000})
+    result = t.evaluate(_WallClock(1000 + 5000))
     assert result is None  # only the first of TRIGGER_POLLS
     assert t.still_drifted is True
     assert t._drift_streak == 1
@@ -1567,8 +1657,8 @@ def test_clock_drift_signed_drift_is_charger_minus_local(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clock_env(monkeypatch, local_wall=100000, utc_offset=0)
-    t = eveus._ClockDriftTracker()
-    t.evaluate({"_charger_wall": 100000 + 7200})  # charger 2h ahead
+    t = eveus.ClockDriftTracker()
+    t.evaluate(_WallClock(100000 + 7200))  # charger 2h ahead
     assert t.kind == "timezone"
     assert t.hours == 2
 
@@ -1577,10 +1667,10 @@ def test_clock_drift_whole_hours_uses_3600_second_divisor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clock_env(monkeypatch, local_wall=0, utc_offset=0)
-    t = eveus._ClockDriftTracker()
+    t = eveus.ClockDriftTracker()
     # Chosen so that round(x/3600) and round(x/3601) diverge cleanly.
     signed_drift = 3600 * 3601
-    t.evaluate({"_charger_wall": signed_drift})
+    t.evaluate(_WallClock(signed_drift))
     assert t.kind == "timezone"
     assert t.hours == 3601
 
@@ -1589,11 +1679,11 @@ def test_clock_drift_timezone_match_boundary_is_inclusive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clock_env(monkeypatch, local_wall=0, utc_offset=0)
-    t = eveus._ClockDriftTracker()
+    t = eveus.ClockDriftTracker()
     # whole_hours=1 (3600s); drift sits exactly CLOCK_DRIFT_TZ_MATCH_TOLERANCE
     # (300s) away from the whole-hour multiple -- must still classify as
     # "timezone" (<=), not fall through to "sync".
-    t.evaluate({"_charger_wall": 3600 + 300})
+    t.evaluate(_WallClock(3600 + 300))
     assert t.kind == "timezone"
     assert t.hours == 1
 
@@ -1605,21 +1695,21 @@ def test_clock_drift_residue_and_fractional_classification(
     _clock_env(monkeypatch, local_wall=0, utc_offset=20700)
 
     # Matches only via the (3600 - residue) candidate, at the tolerance edge.
-    t_a = eveus._ClockDriftTracker()
-    t_a.evaluate({"_charger_wall": 600})
+    t_a = eveus.ClockDriftTracker()
+    t_a.evaluate(_WallClock(600))
     assert t_a.kind == "fractional"
     assert t_a.hours == 0
 
     # Matches only via the (-residue) candidate.
-    t_b = eveus._ClockDriftTracker()
-    t_b.evaluate({"_charger_wall": -2700})
+    t_b = eveus.ClockDriftTracker()
+    t_b.evaluate(_WallClock(-2700))
     assert t_b.kind == "fractional"
 
     # In sync (drift 0): residue is truthy but no candidate matches --
     # must classify as "sync", proving the guard is `and`, not `or`, and
     # that whole_hours == 0 does NOT count as a timezone match.
-    t_c = eveus._ClockDriftTracker()
-    t_c.evaluate({"_charger_wall": 0})
+    t_c = eveus.ClockDriftTracker()
+    t_c.evaluate(_WallClock(0))
     assert t_c.kind == "sync"
     assert t_c.hours == 0
 
@@ -1630,12 +1720,12 @@ def test_clock_drift_threshold_boundary_exact_is_not_drifted(
     from custom_components.eveus.const import CLOCK_DRIFT_THRESHOLD_SECONDS
 
     _clock_env(monkeypatch, local_wall=0, utc_offset=0)
-    t = eveus._ClockDriftTracker()
-    assert t.evaluate({"_charger_wall": CLOCK_DRIFT_THRESHOLD_SECONDS}) is None
+    t = eveus.ClockDriftTracker()
+    assert t.evaluate(_WallClock(CLOCK_DRIFT_THRESHOLD_SECONDS)) is None
     assert t.still_drifted is False
     assert t._drift_streak == 0
     assert t._ok_streak == 1
-    assert t.evaluate({"_charger_wall": 550}) is None
+    assert t.evaluate(_WallClock(550)) is None
     assert t._ok_streak == 2
 
 
@@ -1645,8 +1735,8 @@ def test_clock_drift_streak_increment_and_trigger(
     from custom_components.eveus.const import CLOCK_DRIFT_TRIGGER_POLLS
 
     _clock_env(monkeypatch, local_wall=0, utc_offset=0)
-    t = eveus._ClockDriftTracker()
-    drifted = {"_charger_wall": 1000}
+    t = eveus.ClockDriftTracker()
+    drifted = _WallClock(1000)
 
     assert t.evaluate(drifted) is None
     assert t._ok_streak == 0
@@ -1666,9 +1756,9 @@ def test_clock_drift_hysteresis_band_requires_active_and_strict_clear_threshold(
     from custom_components.eveus.const import CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS
 
     _clock_env(monkeypatch, local_wall=0, utc_offset=0)
-    t = eveus._ClockDriftTracker()
+    t = eveus.ClockDriftTracker()
     t._active = True
-    assert t.evaluate({"_charger_wall": CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS}) is None
+    assert t.evaluate(_WallClock(CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS)) is None
     assert t._ok_streak == 1
 
 
@@ -1678,17 +1768,17 @@ def test_clock_drift_band_reset_and_ok_streak_clear(
     from custom_components.eveus.const import CLOCK_DRIFT_CLEAR_POLLS
 
     _clock_env(monkeypatch, local_wall=0, utc_offset=0)
-    t = eveus._ClockDriftTracker()
+    t = eveus.ClockDriftTracker()
     t._active = True
     t._ok_streak = 5
     # In the hysteresis band (>CLEAR_THRESHOLD, <=THRESHOLD): must reset.
-    assert t.evaluate({"_charger_wall": 200}) is None
+    assert t.evaluate(_WallClock(200)) is None
     assert t._ok_streak == 0
 
-    assert t.evaluate({"_charger_wall": 0}) is None
+    assert t.evaluate(_WallClock(0)) is None
     assert t._ok_streak == 1
     assert t._active is True
-    assert t.evaluate({"_charger_wall": 0}) is False
+    assert t.evaluate(_WallClock(0)) is False
     assert t._ok_streak == CLOCK_DRIFT_CLEAR_POLLS
     assert t._active is False
 
@@ -1696,14 +1786,14 @@ def test_clock_drift_band_reset_and_ok_streak_clear(
 def test_update_clock_drift_issue_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     _clock_env(monkeypatch, local_wall=0, utc_offset=0)
     entry = SimpleNamespace(entry_id="e1")
-    tracker = eveus._ClockDriftTracker()
+    tracker = eveus.ClockDriftTracker()
 
-    unavailable = SimpleNamespace(available=False, last_update_success=True, data={"_charger_wall": 5000})
-    eveus._update_clock_drift_issue(None, entry, unavailable, tracker)
+    unavailable = _wall_updater(5000, available=False, success=True)
+    eveus.update_clock_drift_issue(None, entry, unavailable, tracker)
     assert tracker._drift_streak == 0
 
-    failed = SimpleNamespace(available=True, last_update_success=False, data={"_charger_wall": 5000})
-    eveus._update_clock_drift_issue(None, entry, failed, tracker)
+    failed = _wall_updater(5000, available=True, success=False)
+    eveus.update_clock_drift_issue(None, entry, failed, tracker)
     assert tracker._drift_streak == 0
 
 
@@ -1724,18 +1814,18 @@ def test_update_clock_drift_issue_creates_timezone_issue_and_clears(
         eveus.ir, "async_delete_issue", lambda hass, domain, issue_id: deleted.append(issue_id)
     )
     entry = SimpleNamespace(entry_id="e1")
-    tracker = eveus._ClockDriftTracker()
-    drifted = SimpleNamespace(available=True, last_update_success=True, data={"_charger_wall": 7200})
+    tracker = eveus.ClockDriftTracker()
+    drifted = _wall_updater(7200, available=True, success=True)
 
     for _ in range(CLOCK_DRIFT_TRIGGER_POLLS - 1):
-        eveus._update_clock_drift_issue(None, entry, drifted, tracker)
+        eveus.update_clock_drift_issue(None, entry, drifted, tracker)
     assert not created
     assert tracker.rekey_streak == 0
-    eveus._update_clock_drift_issue(None, entry, drifted, tracker)
+    eveus.update_clock_drift_issue(None, entry, drifted, tracker)
 
     assert len(created) == 1
     issue_id, kw = created[0]
-    assert issue_id == eveus._clock_drift_issue_id(entry)
+    assert issue_id == eveus.clock_drift_issue_id(entry)
     assert kw["is_fixable"] is False
     assert kw["is_persistent"] is False
     assert kw["translation_key"] == "clock_drift_timezone"
@@ -1743,12 +1833,12 @@ def test_update_clock_drift_issue_creates_timezone_issue_and_clears(
     assert tracker.published == ("timezone", 2)
     assert tracker.rekey_streak == 0
 
-    synced = SimpleNamespace(available=True, last_update_success=True, data={"_charger_wall": 0})
+    synced = _wall_updater(0, available=True, success=True)
     for _ in range(CLOCK_DRIFT_CLEAR_POLLS - 1):
-        eveus._update_clock_drift_issue(None, entry, synced, tracker)
+        eveus.update_clock_drift_issue(None, entry, synced, tracker)
     assert not deleted
-    eveus._update_clock_drift_issue(None, entry, synced, tracker)
-    assert deleted == [eveus._clock_drift_issue_id(entry)]
+    eveus.update_clock_drift_issue(None, entry, synced, tracker)
+    assert deleted == [eveus.clock_drift_issue_id(entry)]
     assert tracker.published is None
     assert tracker.rekey_streak == 0
 
@@ -1767,20 +1857,18 @@ def test_update_clock_drift_issue_rekeys_on_reclassification(
     )
     monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *a, **k: None)
     entry = SimpleNamespace(entry_id="e1")
-    tracker = eveus._ClockDriftTracker()
-    tz_drift = SimpleNamespace(available=True, last_update_success=True, data={"_charger_wall": 7200})
+    tracker = eveus.ClockDriftTracker()
+    tz_drift = _wall_updater(7200, available=True, success=True)
     for _ in range(CLOCK_DRIFT_TRIGGER_POLLS):
-        eveus._update_clock_drift_issue(None, entry, tz_drift, tracker)
+        eveus.update_clock_drift_issue(None, entry, tz_drift, tracker)
     assert tracker.published == ("timezone", 2)
     created.clear()
 
-    reclassified = SimpleNamespace(
-        available=True, last_update_success=True, data={"_charger_wall": 1000}
-    )
+    reclassified = _wall_updater(1000, available=True, success=True)
     for _ in range(CLOCK_DRIFT_TRIGGER_POLLS - 1):
-        eveus._update_clock_drift_issue(None, entry, reclassified, tracker)
+        eveus.update_clock_drift_issue(None, entry, reclassified, tracker)
         assert not created
-    eveus._update_clock_drift_issue(None, entry, reclassified, tracker)
+    eveus.update_clock_drift_issue(None, entry, reclassified, tracker)
 
     assert created
     assert created[-1][1]["translation_key"] == "clock_drift"
@@ -1799,11 +1887,11 @@ def test_update_clock_drift_issue_fractional_classification_translation_key(
     )
     monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *a, **k: None)
     entry = SimpleNamespace(entry_id="e1")
-    tracker = eveus._ClockDriftTracker()
-    drifted = SimpleNamespace(available=True, last_update_success=True, data={"_charger_wall": -2700})
+    tracker = eveus.ClockDriftTracker()
+    drifted = _wall_updater(-2700, available=True, success=True)
 
     for _ in range(3):
-        eveus._update_clock_drift_issue(None, entry, drifted, tracker)
+        eveus.update_clock_drift_issue(None, entry, drifted, tracker)
 
     assert created
     assert created[-1][1]["translation_key"] == "clock_drift_fractional_timezone"

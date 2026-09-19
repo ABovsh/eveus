@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import ipaddress
-import json
+import re
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
@@ -54,20 +54,24 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
     SOC_INPUT_LIMITS,
-    UPDATE_TIMEOUT,
     get_soc_mode,
 )
-from ._payload import PayloadError, decode_body_lenient, read_body_capped
+from ._payload import (
+    PayloadError,
+    decode_json_body,
+    read_body_capped,
+)
+from .client import UPDATE_TIMEOUT_OBJ, charger_post
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
+# The same object the coordinator polls with (see client.py), so setup can
+# never be stricter than steady-state polling.
+_UPDATE_TIMEOUT_OBJ = UPDATE_TIMEOUT_OBJ
+
 _INVALID_HOST_MSG = "Invalid IP address or hostname"
-# Bound on reauth re-validations when a concurrent reconfigure keeps changing the
-# host/scheme mid-flight; past this the flow refuses rather than committing
-# credentials validated against a stale address.
-_REAUTH_MAX_REVALIDATIONS = 3
 
 # Keys outside the user-editable form that must survive reconfigure/reauth/repair.
 _PRESERVED_ENTRY_KEYS: tuple[str, ...] = (
@@ -173,6 +177,19 @@ def _warn_if_plaintext(scheme: str | None) -> None:
             "sent in cleartext on every poll. Use HTTPS on a LAN-trusted "
             "network or accept the exposure risk."
         )
+
+
+_MEDIA_TYPE = re.compile(r"[A-Za-z0-9!#$&^_.+-]{1,64}/[A-Za-z0-9!#$&^_.+-]{1,64}")
+
+
+def _safe_media_type(response: Any) -> str:
+    """Return the bare media type, or "unknown" for anything else.
+
+    Header parameters and malformed values are charger-controlled text and
+    never reach the log.
+    """
+    raw = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip()  # pragma: no mutate - equivalent: only [0] is kept (maxsplit is invisible) and any non-empty fallback fails _MEDIA_TYPE exactly like ""
+    return raw.lower() if _MEDIA_TYPE.fullmatch(raw) else "unknown"
 
 
 def _host_is_valid(host: str) -> bool:
@@ -461,55 +478,55 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     try:
         session = aiohttp_client.async_get_clientsession(hass)
-        # Same budget as the coordinator's regular poll (UPDATE_TIMEOUT): setup
-        # is the one moment a struggling charger most needs patience, so it
-        # must not be stricter than steady-state polling ever is.
-        timeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
 
-        async with session.post(
+        def _reject_credentials() -> None:
+            raise InvalidAuth("Invalid credentials")
+
+        # The request itself — redirect refusal, HTTP-error handling and the
+        # timeout — comes from client.py, so setup cannot end up on a stricter
+        # budget than steady-state polling. Setup is the one moment a struggling
+        # charger most needs patience.
+        async with charger_post(
+            session,
             f"{normalized_data[CONF_SCHEME]}://{normalized_data[CONF_HOST]}/main",
             auth=aiohttp.BasicAuth(
                 normalized_data[CONF_USERNAME],
                 normalized_data[CONF_PASSWORD],
             ),
-            timeout=timeout,
+            timeout=_UPDATE_TIMEOUT_OBJ,
+            on_unauthorized=_reject_credentials,
         ) as response:
             host = normalized_data[CONF_HOST]
-            if response.status == 401:
-                raise InvalidAuth("Invalid credentials")
-            response.raise_for_status()
-
             # Read the raw body ourselves (instead of response.json) so a
-            # misbehaving charger's reply can be logged before we try to decode
-            # it. Older firmware that answers /main with an HTML login page or a
-            # malformed body lands here, and the log makes the cause visible
-            # rather than collapsing into a bare "Failed to connect".
+            # misbehaving charger's reply can be classified before we try to
+            # decode it. Older firmware that answers /main with an HTML login
+            # page or a malformed body lands here, and the log names the cause
+            # rather than collapsing into a bare "Failed to connect". Only the
+            # status and media type are logged: the body, header parameters and
+            # key names are untrusted content, and the host is the user's.
             try:
                 raw_body = await read_body_capped(response)
             except PayloadError as err:
                 _LOGGER.warning(
-                    "Eveus %s returned an oversized /main body (HTTP %s, %s)",
-                    host, response.status, response.headers.get("Content-Type"),
+                    "Eveus charger returned an oversized /main body (HTTP %s, %s)",
+                    response.status, _safe_media_type(response),
                 )
                 raise InvalidResponse("Response body too large") from err
 
             try:
                 # Lenient decode: old firmware puts raw non-UTF-8 bytes in an
                 # unset serialNum; a strict decode would fail the whole setup.
-                result = json.loads(decode_body_lenient(raw_body))
+                result = decode_json_body(raw_body)
             except ValueError as err:
                 # Warning-level on purpose: setup is user-initiated, and this
-                # line is the only evidence of WHAT an incompatible (old-
-                # firmware) charger actually sent — behind the debug flag it
-                # costs a log-config round-trip on every support report. Only
-                # the already-capped first 200 bytes: enough to tell an HTML
-                # login page from malformed JSON without dumping a whole body,
-                # and the /main body carries device telemetry, not credentials.
+                # line is the evidence of what an incompatible (old-firmware)
+                # charger sent — behind the debug flag it costs a log-config
+                # round-trip on every support report. The media type is enough
+                # to tell an HTML login page from malformed JSON.
                 _LOGGER.warning(
-                    "Eveus %s did not return JSON from /main "
-                    "(HTTP %s, Content-Type %s, first 200 bytes: %r)",
-                    host, response.status,
-                    response.headers.get("Content-Type"), raw_body[:200],
+                    "Eveus charger did not return JSON from /main "
+                    "(HTTP %s, Content-Type %s, %d bytes)",
+                    response.status, _safe_media_type(response), len(raw_body),
                 )
                 raise InvalidResponse("Response is not valid JSON") from err
 
@@ -517,10 +534,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                 device_info = validate_device_response(result, normalized_data[CONF_MODEL])
             except InvalidResponse:
                 _LOGGER.warning(
-                    "Eveus %s returned JSON that is not an Eveus /main payload "
-                    "(keys: %s)",
-                    host,
-                    sorted(result)[:20] if isinstance(result, dict) else type(result).__name__,
+                    "Eveus charger returned JSON that is not an Eveus /main payload "
+                    "(%s with %d keys)",
+                    type(result).__name__,
+                    len(result) if isinstance(result, dict) else 0,
                 )
                 raise
 
@@ -533,21 +550,39 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except aiohttp.ClientResponseError as err:
         if err.status == 401:
             raise InvalidAuth from err
-        _LOGGER.debug(
-            "Eveus %s returned HTTP %s for /main", normalized_data[CONF_HOST], err.status
-        )
+        _LOGGER.debug("Eveus charger returned HTTP %s for /main", err.status)
         raise CannotConnect(f"HTTP {err.status}") from err
     except (asyncio.TimeoutError, aiohttp.ClientError) as err:
-        _LOGGER.debug(
-            "Eveus %s is unreachable (%s)",
-            normalized_data[CONF_HOST], type(err).__name__,
-        )
+        _LOGGER.debug("Eveus charger is unreachable (%s)", type(err).__name__)
         raise CannotConnect(f"Connection error: {type(err).__name__}") from err
     except (InvalidAuth, InvalidDevice, InvalidResponse, InvalidInput, CannotConnect):
         raise
     except Exception as err:
-        _LOGGER.exception("Unexpected Eveus setup error")
+        _LOGGER.error("Unexpected Eveus setup error: %s", type(err).__name__)
         raise CannotConnect(f"Unexpected error: {type(err).__name__}") from err
+
+
+def _flow_error(err: Exception, step: str) -> tuple[str, dict[str, str]]:
+    """Map a validation failure to its form error key and placeholders.
+
+    Shared by every step that validates a charger, so one failure reads the
+    same in setup, reconfigure and reauth. The integration's own validation
+    errors carry fixed messages; anything else is logged by class only.
+    """
+    if isinstance(err, CannotConnect):
+        return "cannot_connect", _cannot_connect_placeholders(err)
+    if isinstance(err, InvalidAuth):
+        return "invalid_auth", {}
+    for error_type, key in (
+        (InvalidInput, "invalid_input"),
+        (InvalidDevice, "invalid_device"),
+        (InvalidResponse, "invalid_response"),
+    ):
+        if isinstance(err, error_type):
+            _LOGGER.debug("Eveus %s step: %s (%s)", step, key, str(err))
+            return key, {}
+    _LOGGER.error("Unexpected Eveus %s error: %s", step, type(err).__name__)
+    return "unknown", {}
 
 
 def _cannot_connect_placeholders(err: Exception) -> dict[str, str]:
@@ -596,28 +631,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_soc()
                 return self._finish_entry()
 
-            except CannotConnect as err:
-                errors["base"] = "cannot_connect"
-                placeholders = _cannot_connect_placeholders(err)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except InvalidInput as err:
-                errors["base"] = "invalid_input"
-                _LOGGER.debug("Invalid input: %s", str(err))
-            except InvalidDevice as err:
-                errors["base"] = "invalid_device"
-                _LOGGER.debug("Invalid device: %s", str(err))
-            except InvalidResponse as err:
-                errors["base"] = "invalid_response"
-                _LOGGER.debug("Invalid response: %s", str(err))
             except AbortFlow:
                 # `_abort_if_unique_id_configured()` raises AbortFlow, which is an
                 # Exception subclass. Let it propagate so the duplicate charger
                 # aborts with "already_configured" instead of a generic "unknown".
                 raise
-            except Exception:
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
+            except Exception as err:
+                errors["base"], placeholders = _flow_error(err, "user")
 
         # Re-show with the submitted values as defaults so a validation error
         # (wrong password, unreachable host, ...) doesn't wipe the whole form —
@@ -736,27 +756,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_abort(reason="reload_failed")
                 return self.async_abort(reason="reconfigure_successful")
 
-            except CannotConnect as err:
-                errors["base"] = "cannot_connect"
-                placeholders = _cannot_connect_placeholders(err)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except InvalidInput as err:
-                errors["base"] = "invalid_input"
-                _LOGGER.debug("Invalid reconfigure input: %s", str(err))
-            except InvalidDevice as err:
-                errors["base"] = "invalid_device"
-                _LOGGER.debug("Invalid reconfigure device: %s", str(err))
-            except InvalidResponse as err:
-                errors["base"] = "invalid_response"
-                _LOGGER.debug("Invalid reconfigure response: %s", str(err))
             except AbortFlow:
                 # Duplicate-host abort must reach the user as "already_configured"
                 # rather than being swallowed into a generic "unknown" error.
                 raise
-            except Exception:
-                _LOGGER.exception("Unexpected reconfigure exception")
-                errors["base"] = "unknown"
+            except Exception as err:
+                errors["base"], placeholders = _flow_error(err, "reconfigure")
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -783,34 +788,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 # A concurrent reconfigure may change the connection details while
-                # a validation is in flight, leaving credentials proven against an
-                # OLD address. Snapshot host/scheme, validate, and re-validate
-                # until the live details are unchanged across a full validation —
-                # bounded, so even repeated mid-flight changes can't rebase
-                # credentials onto an address that was never validated.
-                info = None
-                for _ in range(_REAUTH_MAX_REVALIDATIONS):
-                    merged_data = dict(entry.data)
-                    merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
-                    merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
-                    # The reauth form only exposes credentials, so a corrupt
-                    # stored soc_mode would otherwise fail validation with no way
-                    # to fix it. Normalize it to a valid mode before validating.
-                    merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
-                    snapshot_host = merged_data.get(CONF_HOST)
-                    snapshot_scheme = merged_data.get(CONF_SCHEME)
+                # the validation is in flight, leaving credentials proven against
+                # an OLD address. Validate once against a snapshot, then re-read
+                # the live entry: if host or scheme moved, refuse (cannot_connect
+                # lets the user retry) rather than commit credentials against an
+                # address that was never validated.
+                merged_data = dict(entry.data)
+                merged_data[CONF_USERNAME] = user_input[CONF_USERNAME]
+                merged_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                # The reauth form only exposes credentials, so a corrupt stored
+                # soc_mode would otherwise fail validation with no way to fix
+                # it. Normalize it to a valid mode before validating.
+                merged_data[CONF_SOC_MODE] = get_soc_mode(entry)
 
-                    info = await validate_input(self.hass, merged_data)
+                info = await validate_input(self.hass, merged_data)
 
-                    live = dict(entry.data)
-                    if (
-                        live.get(CONF_HOST) == snapshot_host
-                        and live.get(CONF_SCHEME) == snapshot_scheme
-                    ):
-                        break
-                else:
-                    # Host/scheme never settled; refuse rather than commit
-                    # unvalidated credentials. cannot_connect lets the user retry.
+                if (
+                    entry.data.get(CONF_HOST) != merged_data.get(CONF_HOST)
+                    or entry.data.get(CONF_SCHEME) != merged_data.get(CONF_SCHEME)
+                ):
                     raise CannotConnect
 
                 # Rebase on LIVE entry data and replace only the credentials:
@@ -843,28 +839,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_abort(reason="reload_failed")
                 return self.async_abort(reason="reauth_successful")
 
-            except CannotConnect as err:
-                errors["base"] = "cannot_connect"
-                placeholders = _cannot_connect_placeholders(err)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except InvalidInput as err:
-                errors["base"] = "invalid_input"
-                _LOGGER.debug("Invalid reauth input: %s", str(err))
-            except InvalidDevice as err:
-                errors["base"] = "invalid_device"
-                _LOGGER.debug("Invalid reauth device: %s", str(err))
-            except InvalidResponse as err:
-                errors["base"] = "invalid_response"
-                _LOGGER.debug("Invalid reauth response: %s", str(err))
             except AbortFlow:
                 # A concurrent user/reconfigure flow on the same host makes
                 # async_set_unique_id abort; surface that reason instead of
                 # swallowing it into a generic "unknown" error.
                 raise
-            except Exception:
-                _LOGGER.exception("Unexpected reauth exception")
-                errors["base"] = "unknown"
+            except Exception as err:
+                errors["base"], placeholders = _flow_error(err, "reauth")
 
         return self.async_show_form(
             step_id="reauth_confirm",

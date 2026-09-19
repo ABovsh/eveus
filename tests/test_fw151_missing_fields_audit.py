@@ -20,6 +20,7 @@ from custom_components.eveus import binary_sensor as binary_sensor_mod
 from custom_components.eveus import number as number_mod
 from custom_components.eveus import select as select_mod
 from custom_components.eveus import sensor_definitions as sd
+from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus import switch as switch_mod
 from custom_components.eveus.const import MODEL_16A
 
@@ -79,7 +80,7 @@ def test_all_sensor_getters_actually_ran() -> None:
     "description", binary_sensor_mod.BINARY_SENSORS, ids=lambda d: d.name
 )
 def test_binary_sensor_getter_never_raises_on_fw151(fw151_payload, description) -> None:
-    description.is_on_fn(fw151_payload)
+    description.is_on_fn(EveusSnapshot.parse(fw151_payload, None))
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ def test_full_sweep_logs_only_the_known_unknown_state_warning(
     for spec in _all_sensor_specs():
         spec.value_fn(updater, None)
     for description in binary_sensor_mod.BINARY_SENSORS:
-        description.is_on_fn(fw151_payload)
+        description.is_on_fn(EveusSnapshot.parse(fw151_payload, None))
     for description in switch_mod.SWITCH_DESCRIPTIONS:
         switch_mod.BaseSwitchEntity(updater, description)._resolve_state()
     number_mod.EveusCurrentNumber(updater, MODEL_16A).native_value

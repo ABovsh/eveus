@@ -16,15 +16,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, WriteOnChangeMixin
-from .const import (
-    CHARGING_STATES,
-    CONNECTED_STATES,
-    PLUG_UNKNOWN_STATES,
-    SESSION_ACTIVE_STATES,
-)
-from .utils import get_safe_value
+from .snapshot import EveusSnapshot
 
-_LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,35 +28,32 @@ class EveusBinaryDescription:
     name: str
     device_class: BinarySensorDeviceClass
     icon: str
-    is_on_fn: Callable[[dict], bool | None]
-    entity_category: EntityCategory | None = None  # pragma: no mutate - annotation only (PEP 563 postponed eval); default value unchanged by this mutation
+    is_on_fn: Callable[[EveusSnapshot], bool | None]
+    entity_category: EntityCategory | None = None
 
 
-def _car_connected_is_on(data: dict) -> bool | None:
-    """Return whether a car is connected, or None if state is unknown."""
-    state = get_safe_value(data, "state", int)
-    if state is None or state not in CHARGING_STATES:
-        return None
-    if state in PLUG_UNKNOWN_STATES:
-        return None
-    return state in CONNECTED_STATES
+def _car_connected_is_on(snapshot: EveusSnapshot) -> bool | None:
+    """Whether a car is connected, or None when the state cannot say.
+
+    Unknown for an unmapped firmware code and for the Error state, where the
+    firmware cannot tell whether the plug is still seated. Both rules live on
+    the snapshot, so Session Active below cannot answer them differently.
+    """
+    return snapshot.plugged_in
 
 
-def _session_active_is_on(data: dict) -> bool | None:
-    state = get_safe_value(data, "state", int)
-    if state is None or state not in CHARGING_STATES:
-        return None
-    if state in PLUG_UNKNOWN_STATES:
-        # In the error state the firmware cannot tell whether a session is
-        # still active; reporting a definite "off" would falsely trigger
-        # session-ended automations. Mirrors Car Connected.
-        return None
-    return state in SESSION_ACTIVE_STATES
+def _session_active_is_on(snapshot: EveusSnapshot) -> bool | None:
+    """Whether a charging session is running, or None when indeterminate.
+
+    In the Error state a definite "off" would falsely trigger session-ended
+    automations. Mirrors Car Connected.
+    """
+    return snapshot.session_active
 
 
-def _ocpp_connected_is_on(data: dict) -> bool | None:
+def _ocpp_connected_is_on(snapshot: EveusSnapshot) -> bool | None:
     """Return whether the OCPP backend link is up, or None if unknown."""
-    value = get_safe_value(data, "ocppconnected", int)
+    value = snapshot.get_int("ocppconnected")
     if value not in (0, 1):
         return None
     return value == 1
@@ -90,9 +81,9 @@ BINARY_SENSORS: Final[tuple[EveusBinaryDescription, ...]] = (
     ),
 )
 
-_CAR_CONNECTED_DESCRIPTION = BINARY_SENSORS[0]
-_SESSION_ACTIVE_DESCRIPTION = BINARY_SENSORS[1]
-_OCPP_CONNECTED_DESCRIPTION = BINARY_SENSORS[2]
+CAR_CONNECTED_DESCRIPTION = BINARY_SENSORS[0]
+SESSION_ACTIVE_DESCRIPTION = BINARY_SENSORS[1]
+OCPP_CONNECTED_DESCRIPTION = BINARY_SENSORS[2]
 
 
 class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
@@ -130,52 +121,14 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
             # the window closes — is skipped. Same rule as the ordinary
             # sensors; see `BaseEveusEntity._in_availability_grace`.
             return self._last_known_is_on
-        self._last_known_is_on = self._description.is_on_fn(self._updater.data)
+        self._last_known_is_on = self._description.is_on_fn(self._updater.snapshot)
         return self._last_known_is_on
 
-    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
+    @callback
     def _handle_coordinator_update(self) -> None:
         self._maybe_finalize_device_info()
         self._update_availability_state()
         self._write_if_changed(self.is_on)
-
-
-class EveusCarConnectedBinarySensor(EveusBinarySensor):
-    """Backward-compatible constructor for the car-connected binary sensor."""
-
-    _attr_device_class = BinarySensorDeviceClass.PLUG  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
-    _attr_icon = "mdi:ev-plug-type2"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        super().__init__(updater, _CAR_CONNECTED_DESCRIPTION, device_number)
-
-
-class EveusSessionActiveBinarySensor(EveusBinarySensor):
-    """Backward-compatible constructor for the session-active binary sensor."""
-
-    _attr_device_class = BinarySensorDeviceClass.RUNNING  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
-    _attr_icon = "mdi:ev-station"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        super().__init__(updater, _SESSION_ACTIVE_DESCRIPTION, device_number)
-
-
-class EveusOcppConnectedBinarySensor(EveusBinarySensor):
-    """Backward-compatible constructor for the OCPP-connected binary sensor."""
-
-    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY  # pragma: no mutate - dead: EveusBinarySensor.__init__ always overwrites self._attr_device_class from the description
-    _attr_entity_category = EntityCategory.DIAGNOSTIC  # pragma: no mutate - dead: __init__ always overwrites self._attr_entity_category from the description
-    _attr_icon = "mdi:cloud-check"  # pragma: no mutate - dead: __init__ always overwrites self._attr_icon from the description
-
-    def __init__(self, updater, device_number: int = 1) -> None:
-        super().__init__(updater, _OCPP_CONNECTED_DESCRIPTION, device_number)
-
-
-_BINARY_SENSOR_CLASSES: Final[dict[str, type[EveusBinarySensor]]] = {
-    _CAR_CONNECTED_DESCRIPTION.name: EveusCarConnectedBinarySensor,
-    _SESSION_ACTIVE_DESCRIPTION.name: EveusSessionActiveBinarySensor,
-    _OCPP_CONNECTED_DESCRIPTION.name: EveusOcppConnectedBinarySensor,
-}
 
 
 async def async_setup_entry(
@@ -189,7 +142,7 @@ async def async_setup_entry(
     device_number = runtime_data.device_number
     async_add_entities(
         [
-            _BINARY_SENSOR_CLASSES[description.name](updater, device_number)
+            EveusBinarySensor(updater, description, device_number)
             for description in BINARY_SENSORS
         ]
     )

@@ -10,6 +10,8 @@ import pytest
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 
+from conftest import snapshot_of
+from conftest import OutageClock
 from conftest import TEST_HOST
 from custom_components.eveus.button import EveusSyncTimeButton
 from custom_components.eveus.common_base import BaseEveusEntity
@@ -26,9 +28,8 @@ from custom_components.eveus.time import (
 )
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
 
     def __init__(self, data: dict[str, object] | None = None) -> None:
@@ -38,6 +39,11 @@ class _Updater:
 
     def async_add_listener(self, *args: object, **kwargs: object):
         return lambda: None
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the control by assigning `data`.
+        return snapshot_of(self)
 
     async def send_command(self, command: str, value: object, *, retry: bool = True) -> bool:
         # Mirror CommandManager: a deferred (callable) value is resolved at
@@ -240,7 +246,7 @@ def test_timezone_select_optimistic_clears_on_device_mismatch() -> None:
     assert select.current_option == "+5"
 
     # Force the optimistic value far enough into the past to expire.
-    select._optimistic_value_time = time.time() - 3600
+    select._optimistic_value_time = time.monotonic() - 3600
     updater.data["timeZone"] = 2
     select._handle_coordinator_update()
     assert select._optimistic_value is None
@@ -279,7 +285,7 @@ def test_schedule_time_resolves_valid_device_minutes() -> None:
 def test_schedule_time_falls_back_to_recent_restored_value() -> None:
     entity = _schedule_entity({"sh1Start": "bad"})
     entity._last_device_value = 90
-    entity._last_successful_read = time.time()
+    entity._last_successful_read = time.monotonic()
 
     assert entity._resolve_minutes() == 90
 
@@ -287,7 +293,7 @@ def test_schedule_time_falls_back_to_recent_restored_value() -> None:
 def test_schedule_time_returns_none_for_expired_restore() -> None:
     entity = _schedule_entity({"sh1Start": "bad"})
     entity._last_device_value = 90
-    entity._last_successful_read = time.time() - 3600
+    entity._last_successful_read = time.monotonic() - 3600
 
     assert entity._resolve_minutes() is None
 
@@ -296,7 +302,7 @@ def test_schedule_time_uses_recent_device_value_when_payload_missing() -> None:
     """A brief missing/invalid payload should not blank a recently read value."""
     entity = _schedule_entity({})
     entity._last_device_value = 345
-    entity._last_successful_read = time.time()
+    entity._last_successful_read = time.monotonic()
 
     assert entity._resolve_minutes() == 345
 
@@ -305,7 +311,7 @@ def test_schedule_time_ignores_recent_device_value_after_grace_period() -> None:
     """Stale restored/device values expire instead of lingering indefinitely."""
     entity = _schedule_entity({})
     entity._last_device_value = 345
-    entity._last_successful_read = time.time() - 3600
+    entity._last_successful_read = time.monotonic() - 3600
 
     assert entity._resolve_minutes() is None
 
@@ -391,7 +397,7 @@ def test_schedule_time_update_tracks_confirmed_device_value() -> None:
 def test_schedule_time_update_uses_recent_last_device_value_for_invalid_payload() -> None:
     entity = _schedule_entity({"sh1Start": "bad"})
     entity._last_device_value = 240
-    entity._last_successful_read = time.time()
+    entity._last_successful_read = time.monotonic()
 
     entity._handle_coordinator_update()
 
@@ -401,7 +407,7 @@ def test_schedule_time_update_uses_recent_last_device_value_for_invalid_payload(
 def test_schedule_time_update_expires_stale_optimistic_mismatch() -> None:
     entity = _schedule_entity({"sh1Start": 120})
     entity._optimistic_value = 390
-    entity._optimistic_value_time = time.time() - 3600
+    entity._optimistic_value_time = time.monotonic() - 3600
 
     entity._handle_coordinator_update()
 
@@ -412,7 +418,7 @@ def test_schedule_time_update_expires_stale_optimistic_mismatch() -> None:
 def test_schedule_time_update_keeps_fresh_optimistic_until_device_confirms() -> None:
     entity = _schedule_entity({"sh1Start": 120})
     entity._optimistic_value = 390
-    entity._optimistic_value_time = time.time()
+    entity._optimistic_value_time = time.monotonic()
 
     entity._handle_coordinator_update()
 
@@ -560,7 +566,7 @@ def test_resolve_minutes_requires_real_and_not_or_gate() -> None:
 
 def test_resolve_minutes_grace_boundary_age_zero_is_valid(monkeypatch) -> None:
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.time._time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.time._time.monotonic", lambda: now)
     entity = _schedule_entity({"sh1Start": "bad"})
     entity._last_device_value = 90
     entity._last_successful_read = now  # age == 0 exactly
@@ -572,7 +578,7 @@ def test_resolve_minutes_grace_boundary_age_equals_grace_period_expires(monkeypa
     from custom_components.eveus.const import CONTROL_GRACE_PERIOD
 
     now = 1_700_000_000.0
-    monkeypatch.setattr("custom_components.eveus.time._time.time", lambda: now)
+    monkeypatch.setattr("custom_components.eveus.time._time.monotonic", lambda: now)
     entity = _schedule_entity({"sh1Start": "bad"})
     entity._last_device_value = 90
     entity._last_successful_read = now - CONTROL_GRACE_PERIOD  # age == grace exactly
@@ -654,7 +660,7 @@ def test_schedule_time_set_value_exact_error_message() -> None:
 
 def test_schedule_time_restore_stamps_a_real_timestamp() -> None:
     entity = _schedule_entity({})
-    before = time.time()
+    before = time.monotonic()
 
     asyncio.run(entity._async_restore_state(State("time.test", "08:45:00")))
 

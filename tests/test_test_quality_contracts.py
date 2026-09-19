@@ -47,16 +47,38 @@ def test_ha_smoke_tests_emit_stack_traces_on_timeout() -> None:
     assert "tests_ha" in workflow
 
 
+def test_tests_do_not_do_boundary_math_on_a_real_clock() -> None:
+    """Reading a real time.monotonic() stamp and asserting on `stamp + ttl`
+    is flaky: float rounding can make `(s + 10.0) - s != 10.0` when `s` sits
+    just under a power of two. Boundary tests must seed an explicit literal
+    clock value instead."""
+
+    marker = re.compile(r"stamp\s*\+\s*\d")
+    offenders = [
+        str(path.relative_to(ROOT))
+        for path, text in _test_sources().items()
+        if marker.search(text)
+    ]
+    assert offenders == []
+
+
 def test_mutation_workflow_targets_hostile_firmware_layer() -> None:
+    import tomllib
+
     workflow = (
         ROOT / ".github" / "workflows" / "mutation-tests.yaml"
     ).read_text(encoding="utf-8")
     assert "schedule:" in workflow
     assert "mutmut" in workflow
+    config = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["tool"]["mutmut"]
+    mutated_dirs = tuple(config["source_paths"])
     for module in (
         "custom_components/eveus/utils.py",
         "custom_components/eveus/_payload.py",
         "custom_components/eveus/common_network.py",
         "custom_components/eveus/soc_limit.py",
     ):
-        assert module in workflow
+        assert module.startswith(mutated_dirs), f"{module} is outside source_paths"
+        assert module not in config.get("do_not_mutate", [])

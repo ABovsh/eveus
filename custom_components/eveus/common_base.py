@@ -10,7 +10,6 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import State, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
@@ -19,6 +18,7 @@ from .const import (
     AVAILABILITY_GRACE_PERIOD,
     CONTROL_GRACE_PERIOD,
     ERROR_LOG_RATE_LIMIT,
+    OPTIMISTIC_CONTROL_TTL,
 )
 from .utils import RateLog, apply_deadband, get_device_info, get_device_suffix
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from .common_network import EveusUpdater
 
 _LOGGER = logging.getLogger(__name__)
-T = TypeVar("T")  # pragma: no mutate - name arg is never introspected (no T.__name__ use)
+T = TypeVar("T")
 
 
 _METADATA_FALLBACKS = {"model": "Eveus EV Charger", "manufacturer": "Eveus"}
@@ -48,12 +48,18 @@ def _preserve_finalized_metadata(old: dict, new: dict) -> dict:
     return merged
 
 
-class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # pragma: no mutate - forward-ref string in the generic subscript is never resolved/inspected at runtime
+class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     """Base implementation for Eveus entities with state persistence."""
 
-    ENTITY_NAME: str | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+    ENTITY_NAME: str | None = None
     _attr_has_entity_name = True
     _attr_should_poll = False
+    # How long this entity stays visible through an outage. The clock itself
+    # belongs to the coordinator; see `EveusUpdater.visible_within`.
+    _grace_period: int = AVAILABILITY_GRACE_PERIOD
+    # Controls drop a pending optimistic value when they go unavailable.
+    _clear_optimistic_on_unavailable = False
+    _availability_label = "Entity"
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the entity."""
@@ -64,9 +70,6 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         self._state_restored = False
         self._availability_log = RateLog()
         self._last_known_available = True
-        self._unavailable_since: float | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
-        self._entity_available = True
-        self._grace_recheck_unsub: Callable[[], None] | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
 
         if self.ENTITY_NAME is None:
             raise NotImplementedError("ENTITY_NAME must be defined in child class")
@@ -83,8 +86,8 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
-        return self._entity_available
+        """Visible while the coordinator's outage is inside this grace period."""
+        return self._updater.visible_within(self._grace_period)
 
     @property
     def name(self) -> str | None:
@@ -116,124 +119,32 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         logged "received an invalid new state ... : unknown" before the entities
         honestly went unavailable.
         """
-        return self._entity_available and not self._updater.available
+        # The base window, not `self.available`: subclasses narrow `available`
+        # (and some read this property to do so).
+        return not self._updater.available and self._updater.visible_within(
+            self._grace_period
+        )
 
-    def _update_availability_state(
-        self,
-        *,
-        grace_period: int = AVAILABILITY_GRACE_PERIOD,
-        label: str = "Entity",
-        clear_optimistic_state: bool = False,
-    ) -> bool:
-        """Update availability state from coordinator data.
+    def _update_availability_state(self) -> bool:
+        """Record the visible availability; True when it changed since last call.
 
-        Returns True when the visible availability changed.
+        The coordinator owns the clock and wakes its listeners when a grace
+        window closes, so this only compares against what was last seen.
         """
-        previous_available = self._entity_available
-        # Monotonic, not wall-clock: _unavailable_since only measures elapsed
-        # grace-period duration, never a real timestamp, so an NTP correction or
-        # DST change must not be able to jump the duration forward (or backward).
-        current_time = time.monotonic()
-
-        if self._updater.available:
-            self._cancel_grace_recheck()
-            if self._unavailable_since is not None:
-                if self._should_log_availability():
-                    _LOGGER.debug("%s %s connection restored", label, self.unique_id)  # pragma: no mutate - pure log-message text, arguments unchanged
-                self._unavailable_since = None
-            self._last_known_available = True
-            self._entity_available = True
-            return previous_available != self._entity_available
-
-        if self._unavailable_since is None:
-            self._unavailable_since = current_time
-            self._entity_available = True
-            self._schedule_grace_recheck(
-                grace_period,
-                grace_period=grace_period,
-                label=label,
-                clear_optimistic_state=clear_optimistic_state,
-            )
-            return previous_available != self._entity_available
-
-        # time.monotonic() is guaranteed non-decreasing within a process, so
-        # unlike time.time() it can't produce a negative duration here.
-        unavailable_duration = current_time - self._unavailable_since
-        if unavailable_duration < grace_period:
-            self._entity_available = True
-            self._schedule_grace_recheck(
-                grace_period - unavailable_duration,
-                grace_period=grace_period,
-                label=label,
-                clear_optimistic_state=clear_optimistic_state,
-            )
-            return previous_available != self._entity_available
-
-        self._cancel_grace_recheck()
-
-        if self._last_known_available and self._should_log_availability():
-            _LOGGER.debug(
-                "%s %s unavailable after grace period (%.0fs)",  # pragma: no mutate - pure log-message text, arguments unchanged
-                label,
-                self.unique_id,
-                unavailable_duration,
-            )
-        self._last_known_available = False
-        if clear_optimistic_state:
+        available_now = self.available
+        if available_now == self._last_known_available:
+            return False
+        self._last_known_available = available_now
+        if self._should_log_availability():
+            if available_now:
+                _LOGGER.debug("%s %s connection restored", self._availability_label, self.unique_id)
+            else:
+                _LOGGER.debug("%s %s unavailable after grace period", self._availability_label, self.unique_id)
+        if not available_now and self._clear_optimistic_on_unavailable:
             clear = getattr(self, "_clear_optimistic_state", None)
             if callable(clear):
                 clear()
-        self._entity_available = False
-        return previous_available != self._entity_available
-
-    def _cancel_grace_recheck(self) -> None:
-        """Cancel a scheduled availability grace re-check, if any."""
-        if self._grace_recheck_unsub is not None:
-            self._grace_recheck_unsub()
-            self._grace_recheck_unsub = None
-
-    def _schedule_grace_recheck(
-        self,
-        delay: float,
-        *,
-        grace_period: int,
-        label: str,
-        clear_optimistic_state: bool,
-    ) -> None:
-        """Re-evaluate availability when the grace window expires.
-
-        Availability is otherwise only recomputed inside coordinator callbacks,
-        so with slow (idle/offline) polling a grace period could stretch by up
-        to a full poll interval past its configured duration.
-        """
-        if self.hass is None:
-            return
-        self._cancel_grace_recheck()
-
-        @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
-        def _recheck(_now) -> None:
-            self._grace_recheck_unsub = None
-            if self._update_availability_state(
-                grace_period=grace_period,
-                label=label,
-                clear_optimistic_state=clear_optimistic_state,
-            ):
-                # Route through WriteOnChangeMixin bookkeeping when present: a
-                # raw async_write_ha_state() here leaves _last_written_available
-                # stale, so the recovery write on the next successful poll gets
-                # suppressed as "unchanged" and the entity sticks at unavailable.
-                write_availability = getattr(self, "_write_availability_only", None)
-                if callable(write_availability):
-                    write_availability()
-                else:
-                    self.async_write_ha_state()
-
-        self._grace_recheck_unsub = async_call_later(self.hass, delay + 0.5, _recheck)
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Clean up scheduled callbacks on removal."""
-        self._cancel_grace_recheck()
-        await super().async_will_remove_from_hass()
+        return True
 
     def _should_log_availability(self) -> bool:
         """Rate limit availability logging."""
@@ -249,15 +160,36 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         return default
 
     def _build_device_info(self) -> dict[str, Any]:
-        """Build device information from the latest available snapshot."""
+        """Build device information from the latest available snapshot.
+
+        Every entity asks on every poll, so the result is kept on the updater
+        for as long as the payload object and the inputs are the same: one build
+        per snapshot instead of one per entity. Callers get their own copy.
+        """
         data = self._updater.data if isinstance(self._updater.data, dict) else None
-        return get_device_info(
+        inputs = (
             self._updater.host,
-            data or {},
             self._device_number,
-            scheme=getattr(self._updater, "scheme", "http"),
-            init_fw_fallback=getattr(self._updater, "_init_fw_fallback", None),
+            getattr(self._updater, "scheme", "http"),
+            getattr(self._updater, "_init_fw_fallback", None),
         )
+        cached = getattr(self._updater, "_device_info_snapshot", None)
+        if (
+            isinstance(cached, tuple)
+            and cached[0] is data
+            and cached[1] == inputs
+        ):
+            return dict(cached[2])
+        info = get_device_info(
+            inputs[0],
+            data or {},
+            inputs[1],
+            scheme=inputs[2],
+            init_fw_fallback=inputs[3],
+        )
+        if data is not None:
+            self._updater._device_info_snapshot = (data, inputs, info)
+        return dict(info)
 
     def _device_info_has_firmware(self) -> bool:
         """Whether the cached device_info already carries real firmware."""
@@ -338,21 +270,20 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         try:
             state = await self.async_get_last_state()
             if state:
-                _LOGGER.debug("Restoring state for %s: %s", self.unique_id, state.state)  # pragma: no mutate - pure log-message text, arguments unchanged
+                _LOGGER.debug("Restoring state for %s: %s", self.unique_id, state.state)
                 await self._async_restore_state(state)
                 self._state_restored = True
         except Exception as err:
             _LOGGER.debug(
-                "Could not restore state for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                "Could not restore state for %s: %s",
                 self.unique_id,
-                err,
-                exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                type(err).__name__,
             )
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous state - overridden by child classes."""
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._maybe_finalize_device_info()
@@ -361,27 +292,15 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
 
 
 class ControlEntityMixin:
-    """Availability behavior for command-capable entities."""
+    """Availability behavior for command-capable entities: a shorter grace."""
 
+    _grace_period = CONTROL_GRACE_PERIOD
+    _clear_optimistic_on_unavailable = True
     _control_entity_label = "Entity"
 
     @property
-    def available(self) -> bool:
-        """Control entities use a shorter grace period for safety."""
-        return self._entity_available
-
-    def _update_availability_state(self, **_kwargs: Any) -> bool:
-        """Update control availability with a shorter grace period.
-
-        Accepts (and overrides) the base keyword arguments so the scheduled
-        grace re-check callback can call it polymorphically: control entities
-        always use their own shorter grace period and optimistic-state reset.
-        """
-        return super()._update_availability_state(
-            grace_period=CONTROL_GRACE_PERIOD,
-            label=self._control_entity_label,
-            clear_optimistic_state=True,
-        )
+    def _availability_label(self) -> str:
+        return self._control_entity_label
 
 
 class OptimisticControlMixin(Generic[T]):
@@ -409,18 +328,35 @@ class OptimisticControlMixin(Generic[T]):
           problem the user should eventually see, so it still times out.
         """
         if self._last_device_value is None:
-            return False
+            return False  # pragma: no mutate - equivalent: the only caller then returns _last_device_value, which is None either way; the guard exists so the elapsed-time arithmetic below never runs without a reading
         if self._in_availability_grace:  # type: ignore[attr-defined]
             return True
-        # 0 <= age: a backward wall-clock jump must not extend the window
-        # indefinitely (mirrors the optimistic-state TTL guard).
+        # Monotonic elapsed time, so a wall-clock step cannot move this window;
+        # 0 <= age still rejects a stamp from a different clock base.
         return 0 <= current_time - self._last_successful_read < CONTROL_GRACE_PERIOD
+
+    def _resolve_held_value(self, device_value: T | None) -> T | None:
+        """The one display precedence every control shares.
+
+        A still-valid optimistic value, else the valid device reading, else the
+        last reading while it may be held (``_may_hold_last_device_value``),
+        else nothing. Callers pass the device value read once for this
+        resolution and format the result for their platform.
+        """
+        current_time = time.monotonic()
+        if self._optimistic_value_is_valid(current_time, OPTIMISTIC_CONTROL_TTL):
+            return self._optimistic_value
+        if device_value is not None:
+            return device_value
+        if self._may_hold_last_device_value(current_time):
+            return self._last_device_value
+        return None
 
     def _init_optimistic_control(self) -> None:
         """Initialize common optimistic-control state."""
-        self._optimistic_value: T | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+        self._optimistic_value: T | None = None
         self._optimistic_value_time = 0.0
-        self._last_device_value: T | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+        self._last_device_value: T | None = None
         self._last_successful_read = 0.0
         # Serialize rapid repeated commands on the SAME control. The command
         # manager serializes HTTP at the coordinator level, but the per-entity
@@ -436,14 +372,14 @@ class OptimisticControlMixin(Generic[T]):
     def _set_optimistic_value(self, value: T) -> None:
         """Store an optimistic value after a successful command."""
         self._optimistic_value = value
-        self._optimistic_value_time = time.time()
+        self._optimistic_value_time = time.monotonic()
 
     def _optimistic_value_is_valid(self, current_time: float, ttl: float) -> bool:
         """Return whether the optimistic value should still be trusted.
 
-        Uses a wall-clock delta, so a backward system-clock step makes the age
-        negative; treat that as expired (untrustworthy timer) instead of
-        "valid forever".
+        Measured on the monotonic clock, so a wall-clock step neither expires
+        nor extends it. A negative age can only come from a stamp on another
+        clock base; treat it as expired instead of "valid forever".
         """
         if self._optimistic_value is None:
             return False
@@ -451,7 +387,7 @@ class OptimisticControlMixin(Generic[T]):
         return 0 <= age < ttl
 
     def _expire_optimistic_value(self, current_time: float, ttl: float) -> None:
-        """Expire optimistic state after its absolute TTL (or a backward clock)."""
+        """Expire optimistic state after its monotonic TTL (or a foreign stamp)."""
         if self._optimistic_value is None:
             return
         age = current_time - self._optimistic_value_time
@@ -546,7 +482,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
     # non-numeric one (mutmut turns None into "") is caught by the deadband
     # tests, and a zero-width band publishes every reading verbatim, which is
     # exactly what None means.
-    _deadband: float | None = None  # pragma: no mutate - see the note above
+    _deadband: float | None = None
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the sensor."""
@@ -592,10 +528,9 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
             if current_time - self._last_error_log > ERROR_LOG_RATE_LIMIT:
                 self._last_error_log = current_time
                 _LOGGER.debug(
-                    "Error getting sensor value for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                    "Error getting sensor value for %s: %s",
                     self.unique_id,
-                    err,
-                    exc_info=True,  # pragma: no mutate - log-verbosity kwarg only (traceback capture); no test observes it
+                    type(err).__name__,
                 )
             value = None
         if value is None and self._in_availability_grace:
@@ -619,7 +554,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
         """Refresh extra attributes. Subclasses may override."""
         return False
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._maybe_finalize_device_info()

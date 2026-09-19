@@ -27,11 +27,12 @@ from custom_components.eveus.const import (
     PHASE_OPTIONS,
 )
 from custom_components.eveus.binary_sensor import (
-    EveusCarConnectedBinarySensor,
-    EveusOcppConnectedBinarySensor,
-    EveusSessionActiveBinarySensor,
+    CAR_CONNECTED_DESCRIPTION,
+    OCPP_CONNECTED_DESCRIPTION,
+    SESSION_ACTIVE_DESCRIPTION,
+    EveusBinarySensor,
 )
-from custom_components.eveus.sensor_definitions import create_sensor_specifications
+from custom_components.eveus.sensor_definitions import create_sensor, create_sensor_specifications
 from custom_components.eveus.utils import (
     calculate_remaining_seconds,
     calculate_soc_kwh,
@@ -225,12 +226,9 @@ def test_remaining_seconds_is_none_or_finite_non_negative(
     current_set=st.integers(min_value=0, max_value=max(MODEL_MAX_CURRENT.values()) + 5),
 )
 def test_current_set_sensor_factory_uses_model_bound(phases, model, current_set) -> None:
-    specs = create_sensor_specifications(
-        phases=phases,
-        max_current=MODEL_MAX_CURRENT[model],
-    )
+    specs = create_sensor_specifications(phases=phases)
     spec = next(item for item in specs if item.key == "current_set")
-    sensor = spec.create_sensor(EveusTestUpdater({"currentSet": current_set}), 1)
+    sensor = create_sensor(spec, EveusTestUpdater({"currentSet": current_set}, model=model), 1)
     disable_state_writes(sensor)
 
     expected = current_set if current_set <= MODEL_MAX_CURRENT[model] else None
@@ -242,12 +240,9 @@ def test_current_set_sensor_factory_uses_model_bound(phases, model, current_set)
     model=st.sampled_from(MODELS),
 )
 def test_sensor_factory_unique_ids_are_stable_and_unique(phases, model) -> None:
-    specs = create_sensor_specifications(
-        phases=phases,
-        max_current=MODEL_MAX_CURRENT[model],
-    )
+    specs = create_sensor_specifications(phases=phases)
     sensors = [
-        spec.create_sensor(EveusTestUpdater({}), device_number=2)
+        create_sensor(spec, EveusTestUpdater({}, model=model), device_number=2)
         for spec in specs
     ]
     unique_ids = [sensor.unique_id for sensor in sensors]
@@ -265,9 +260,9 @@ def test_binary_sensor_factories_never_coerce_unknown_state_to_false(
 ) -> None:
     updater = EveusTestUpdater({"state": state, "ocppconnected": ocpp_connected})
     entities = (
-        EveusCarConnectedBinarySensor(updater),
-        EveusSessionActiveBinarySensor(updater),
-        EveusOcppConnectedBinarySensor(updater),
+        EveusBinarySensor(updater, CAR_CONNECTED_DESCRIPTION),
+        EveusBinarySensor(updater, SESSION_ACTIVE_DESCRIPTION),
+        EveusBinarySensor(updater, OCPP_CONNECTED_DESCRIPTION),
     )
 
     for entity in entities:

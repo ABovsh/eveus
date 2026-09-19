@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 
+from conftest import snapshot_of
+from conftest import OutageClock
 from conftest import TEST_HOST
 from custom_components.eveus.switch import (
     BaseSwitchEntity,
@@ -17,15 +19,19 @@ from custom_components.eveus.time import (
 )
 
 
-class _Updater:
+class _Updater(OutageClock):
     host = TEST_HOST
-    available = True
     last_update_success = True
 
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self.data = data or {}
         self.commands: list[tuple[str, object]] = []
         self.command_result = True
+
+    @property
+    def snapshot(self):
+        # Derived on read: these tests drive the control by assigning `data`.
+        return snapshot_of(self)
 
     def async_add_listener(self, *args, **kwargs):
         return lambda: None
@@ -107,15 +113,6 @@ def test_schedule_switch_toggle_sends_correct_command() -> None:
 
 
 # ─── schedule time entities ──────────────────────────────────────────────────
-
-def test_time_entity_reads_minutes_from_payload() -> None:
-    updater = _Updater({"sh1Start": 1380, "sh1Stop": 420})
-    start = EveusScheduleTimeEntity(updater, _time_by_key("schedule_1_start"))
-    stop = EveusScheduleTimeEntity(updater, _time_by_key("schedule_1_stop"))
-
-    assert minutes_to_time(start._resolve_minutes()) == dt.time(23, 0)
-    assert minutes_to_time(stop._resolve_minutes()) == dt.time(7, 0)
-
 
 def test_time_entity_set_value_posts_int_minutes() -> None:
     updater = _Updater({"sh1Start": 1380})

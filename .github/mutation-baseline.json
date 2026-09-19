@@ -1,14 +1,4 @@
 {
-  "_comment": "Per-leg mutmut survivor-count ratchet. Increases are a real signal (new code shipped without a killer test) and are flagged via ::warning:: in the mutation-tests job. Decreases should be committed here to tighten the ratchet. Every number below is from workflow run 32563\u2026 on 2026-08-22, the first run after fourteen test files were wired into the legs whose targets they exercise -- before that, several legs were mutating code while running none of its killer tests. Changes that run made visible: coordinator 66->55 and minor-entities 10->6 purely from the wiring; control-entities 2->4 and sensor-values 1->5 are the residue of the external car-SOC feature (equivalent mutants: falsy-flag assignments, a multi-line log string, an unused default argument, and a module-level block deletion mutmut misreports as survived); diagnostics-triggers is new at 14 (8 pre-existing in device_trigger.py, 6 in diagnostics.py that _SENSITIVE_NAME_RE already backstops, documented at TO_REDACT). sensor-values keeps the get_time_drift <= tolerance boundary plus a pre-existing substate check in sensor_definitions.py, neither from this feature. sensor-values is recorded at its MEASURED 5, not the 3 expected once the CONF_EXTERNAL_SOC_ENTITY storage-key literal added to test_const_soc_modes.py takes effect -- baselines are only ever tightened on an observed decrease, never on a prediction, or the ratchet fires false warnings.",
-  "config-flow": 74,
-  "payload-utils": 87,
-  "coordinator": 55,
-  "soc-limit": 11,
-  "safety": 36,
-  "entity-base": 0,
-  "init": 2,
-  "control-entities": 4,
-  "minor-entities": 6,
-  "sensor-values": 5,
-  "diagnostics-triggers": 14
+  "_comment": "Survivor-count ratchet for the single mutmut 3 run: an increase fails the job (new code shipped without a test that kills its mutants), a decrease is a prompt to tighten. The number is OBSERVED, never predicted: 860 from a local py3.12 / HA 2025.1.4 run of `mutmut run` over the whole package on rc 3c32936 plus the pragma sweep (7551 mutants, 6683 killed, 3 timeouts, 5 without tests). Replace it with the figure from the first workflow_dispatch run in CI.",
+  "survivors": 860
 }

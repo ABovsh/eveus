@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any
-import logging
 
 from homeassistant import data_entry_flow
 from homeassistant.components.repairs import RepairsFlow
@@ -12,18 +11,13 @@ from homeassistant.helpers import issue_registry as ir
 
 from .config_flow import (
     migrate_device_identifiers,
-    CannotConnect,
-    InvalidAuth,
-    InvalidDevice,
-    InvalidInput,
-    InvalidResponse,
+    _flow_error,
     _merge_entry_data,
     build_user_data_schema,
     validate_input,
 )
 from .const import CONF_SOC_MODE, DOMAIN, get_soc_mode
 
-_LOGGER = logging.getLogger(__name__)
 
 
 class _AlreadyConfigured(Exception):
@@ -112,19 +106,9 @@ class InvalidConfigRepairFlow(RepairsFlow):
 
             except _AlreadyConfigured:
                 pass
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except InvalidInput:
-                errors["base"] = "invalid_input"
-            except InvalidDevice:
-                errors["base"] = "invalid_device"
-            except InvalidResponse:
-                errors["base"] = "invalid_response"
             except Exception as err:
-                _LOGGER.debug("Unexpected Eveus repair flow error: %s", err, exc_info=True)
-                errors["base"] = "unknown"
+                # The repair form states no error detail, so only the key is used.
+                errors["base"], _placeholders = _flow_error(err, "repair")
 
         return self.async_show_form(
             step_id="confirm",

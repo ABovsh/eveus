@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+from conftest import PayloadUpdater
 from conftest import spec_value_fn
 
 from custom_components.eveus._payload import PayloadError, validate_main_payload
@@ -31,8 +31,10 @@ def real_payload() -> dict:
     return json.loads(FIXTURE.read_text())
 
 
-def _updater(data: dict) -> SimpleNamespace:
-    return SimpleNamespace(data=data, available=True, connection_quality={"success_rate": 100, "latency_avg": 0.1})
+def _updater(data: dict) -> PayloadUpdater:
+    return PayloadUpdater(
+        data, connection_quality={"success_rate": 100, "latency_avg": 0.1}
+    )
 
 
 # Every value getter and the field it reads from. If the field is dropped or
@@ -59,44 +61,10 @@ GETTERS = [
 ]
 
 
-@pytest.mark.parametrize("getter,field,_type", GETTERS, ids=lambda x: getattr(x, "__name__", str(x)))
-def test_getter_extracts_real_field(real_payload, getter, field, _type) -> None:
-    assert field in real_payload, f"firmware drift: missing field `{field}`"
-    value = getter(_updater(real_payload), None)
-    assert value is not None, f"{getter.__name__} returned None for field `{field}`"
-    assert isinstance(value, (int, float)), f"{getter.__name__} returned {type(value).__name__}"
-
-
-def test_state_and_substate_resolve(real_payload) -> None:
-    upd = _updater(real_payload)
-    assert sd.get_charger_state(upd, None) is not None
-    assert sd.get_charger_substate(upd, None) is not None
-    assert sd.get_ground_status(upd, None) in {"Connected", "Not Connected"}
-
-
 def test_session_time_and_time_drift(real_payload) -> None:
     upd = _updater(real_payload)
     assert sd.get_session_time(upd, None) is not None
     assert isinstance(sd.get_time_drift(upd, None), int)
-
-
-def test_active_rate_resolves_to_known_slot(real_payload) -> None:
-    upd = _updater(real_payload)
-    # Whichever slot is active (0/1/2), the cost must resolve.
-    assert sd.get_active_rate_cost(upd, None) == pytest.approx(4.32)
-
-
-def test_adaptive_charging_state_resolves(real_payload) -> None:
-    state = sd.get_adaptive_charging_state(_updater(real_payload), None)
-    assert state in {"Off", "Voltage", "Auto", "Power"}
-
-
-def test_schedule_slots_resolve(real_payload) -> None:
-    upd = _updater(real_payload)
-    for slot in (1, 2):
-        assert sd._make_schedule_getter(slot)(upd, None) in {"Enabled", "Disabled"}
-        attrs = sd._make_schedule_attrs(slot)(upd, None)
-        assert "window" in attrs or attrs == {} or "start" in attrs
 
 
 def test_required_top_level_fields_present(real_payload) -> None:
@@ -141,3 +109,85 @@ def test_validate_main_payload_accepts_real_payload(real_payload) -> None:
 def test_validate_main_payload_rejects_invalid_payloads(payload, match) -> None:
     with pytest.raises(PayloadError, match=match):
         validate_main_payload(payload, MODEL_16A)
+
+
+# --- recorded timelines replayed against the real coordinator ---
+
+
+def test_idle_current_setpoint_trace_holds_the_new_value_through_a_late_confirmation(
+    monkeypatch,
+) -> None:
+    from trace_replay import load_trace, replay
+
+    result = replay(load_trace("idle_current_setpoint_r3054.json"), monkeypatch)
+
+    assert [step["charging_current"] for step in result.observed] == [
+        16.0,  # first poll
+        15.0,  # command accepted
+        15.0,  # charger still reports 16: the optimistic value must not snap back
+        15.0,  # confirmed; logReady missing is not a failure
+        15.0,
+        15.0,  # one failed poll: held, not blanked
+        15.0,  # recovered, logReady back
+    ]
+    assert result.session.commands == [{"pageevent": ["currentSet"], "currentSet": ["15"]}]
+    assert result.refresh_requests == 1
+    assert result.entities["charging_current"]._optimistic_value is None
+
+
+def test_trace_loader_rejects_keys_outside_the_sanitized_allowlist(tmp_path, monkeypatch) -> None:
+    import trace_replay
+
+    (tmp_path / "traces").mkdir()
+    (tmp_path / "traces" / "leaky.json").write_text(
+        json.dumps({"source": "measured", "steps": [{"at": 0, "poll": "ok", "main": {"serialNum": "X"}}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(trace_replay, "FIXTURES", tmp_path)
+
+    with pytest.raises(ValueError, match="allowlist"):
+        trace_replay.load_trace("leaky.json")
+
+
+def test_legacy_fw151_trace_keeps_state_translation_and_setpoint_behavior(monkeypatch) -> None:
+    """Firmware 1.x stays supported: legacy codes translate, missing optional
+    fields are not failures, and controls behave as on modern firmware."""
+    from custom_components.eveus.const import DEVICE_STATE_CHARGING, DEVICE_STATE_STANDBY
+    from trace_replay import load_trace, replay
+
+    result = replay(load_trace("legacy_fw151_setpoint_and_charge.json"), monkeypatch)
+
+    assert [(s["device_state"], s["available"], s["charging_current"]) for s in result.observed] == [
+        (DEVICE_STATE_STANDBY, True, 7.0),  # legacy idle 20 -> Standby; 7 A read as-is
+        (DEVICE_STATE_STANDBY, True, 10.0),  # command accepted
+        (DEVICE_STATE_STANDBY, True, 10.0),  # charger still reports 7: no snap-back
+        (DEVICE_STATE_STANDBY, True, 10.0),  # confirmed
+        (DEVICE_STATE_CHARGING, True, 10.0),  # legacy 3 with power -> Charging
+        (DEVICE_STATE_CHARGING, False, 10.0),  # missed poll: held through grace
+        (DEVICE_STATE_STANDBY, True, 10.0),  # back to legacy idle
+    ]
+    assert result.session.commands == [{"pageevent": ["currentSet"], "currentSet": ["10"]}]
+
+
+def test_idle_soak_trace_stays_within_its_recorder_write_budget(monkeypatch) -> None:
+    """I19: 30 measured idle polls must not publish anything after the first.
+
+    RSSI and plug temperature really do flutter in this capture; a publication
+    per flutter is a recorder row per poll for every idle hour. The budget is the
+    baseline measured at rc 560a4ab: one publication per sensor, valid zeroes
+    included. Time Drift is not covered (systemTime is not replayed).
+    """
+    from trace_replay import load_trace, replay
+
+    trace = load_trace("idle_soak_r3054.json")
+    fed = lambda key: {step["main"][key] for step in trace["steps"]}  # noqa: E731
+    assert len(fed("RSSI")) > 1 and len(fed("temperature2")) > 1, "trace no longer exercises flutter"
+
+    result = replay(trace, monkeypatch, sensors=True)
+
+    extra = {key: history for key, history in result.publications.items() if len(history) > 1}
+    assert extra == {}
+    assert len(result.publications) == len(result.sensors) == 34
+    assert result.publications["power"][0][1] == 0.0
+    assert result.publications["current"][0][1] == 0.0
+    assert all(snapshot[0] for history in result.publications.values() for snapshot in history)

@@ -146,3 +146,79 @@ def test_invalid_state_neither_fires_nor_breaks_tracking() -> None:
     _poll(updater, {"state": 99})
     _poll(updater, {"state": 4})
     assert not hass.bus.async_fire.called
+
+
+# --- generated poll sequences: invariants that hold for every ordering ---
+
+from hypothesis import example, given, settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+from custom_components.eveus.const import (  # noqa: E402
+    CHARGING_STATES,
+    DEVICE_STATE_CHARGING,
+    DEVICE_STATE_ERROR,
+)
+
+_VALID_STATES = sorted(int(state) for state in CHARGING_STATES)
+def _ok(states: list) -> st.SearchStrategy:
+    return st.tuples(st.just("ok"), st.sampled_from(states), st.integers(min_value=0, max_value=1))
+
+
+# Mostly valid polls: too many gaps or invalid states hide the transition
+# chains (charge -> end -> another change) where duplicate events live.
+_poll_step = st.one_of(
+    _ok(_VALID_STATES), _ok(_VALID_STATES), _ok([99, None]), st.just(("fail",))
+)
+
+
+@settings(deadline=None, derandomize=True)
+@given(st.lists(_poll_step, max_size=24))
+# Pinned chains the generator must never be trusted to find by chance.
+@example([("ok", 4, 0), ("ok", 5, 0), ("ok", 6, 0)])  # a second change after a finish
+@example([("ok", 4, 0), ("ok", 99, 0), ("ok", 2, 0)])  # an unknown state mid-charge
+@example([("ok", 2, 0), ("fail",), ("ok", 4, 0), ("fail",), ("ok", 2, 0)])  # gaps
+def test_generated_poll_sequences_keep_the_event_contract(steps) -> None:
+    hass = _Hass()
+    updater = _updater(hass)
+    fired = hass.bus.async_fire.call_args_list
+
+    previous_valid: int | None = None  # last valid state since the last gap
+    unfinished_charge = False  # a Charging sample seen since the gap / last finish
+    energy = 0.0
+
+    for step in steps:
+        before = len(fired)
+        if step[0] == "fail":
+            updater._record_failure(TimeoutError())
+            assert len(fired) == before, "a failed poll fired an event"
+            previous_valid, unfinished_charge = None, False
+            continue
+
+        _, state, sub_state = step
+        energy += 0.5
+        payload = {"subState": sub_state, "sessionEnergy": energy}
+        if state is not None:
+            payload["state"] = state
+        _poll(updater, payload)
+        events = [call.args[0] for call in fired[before:]]
+
+        if state not in _VALID_STATES:
+            assert events == [], f"invalid state {state!r} fired {events}"
+            continue
+        if previous_valid is None:
+            assert events == [], f"first poll after a gap fired {events}"
+        if EVENT_CHARGING_STARTED in events:
+            assert state == DEVICE_STATE_CHARGING and previous_valid not in (None, state)
+        if EVENT_CHARGING_FINISHED in events:
+            assert events.count(EVENT_CHARGING_FINISHED) == 1
+            assert unfinished_charge, "finished without a charge observed since the gap"
+            assert state not in (DEVICE_STATE_CHARGING, DEVICE_STATE_ERROR)
+            unfinished_charge = False
+        if EVENT_ERROR in events:
+            assert state == DEVICE_STATE_ERROR
+        if previous_valid is not None and previous_valid == state:
+            assert set(events) <= {EVENT_ERROR}, f"unchanged state fired {events}"
+
+        if state == DEVICE_STATE_CHARGING:
+            unfinished_charge = True
+        previous_valid = state
