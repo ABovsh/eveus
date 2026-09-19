@@ -279,3 +279,22 @@ def test_card_looks_entities_up_through_the_websocket_command():
     source = CARD.read_text(encoding="utf-8")
     assert 'type: "eveus/card_entities"' in source
     assert "_substate$" not in source, "no entity_id pattern matching"
+
+
+def _container_rule(source: str, max_width: int) -> str:
+    marker = f"@container (max-width: {max_width}px){{"
+    assert marker in source, f"missing {marker}"
+    return source.split(marker, 1)[1].split("\n", 1)[0]
+
+
+def test_soc_steppers_go_two_across_before_their_values_clip():
+    """Capacity "100kWh" and Loss "10.5%" need ~46 px; four across leaves 37 px at 360."""
+    source = CARD.read_text(encoding="utf-8")
+    assert ".g4{grid-template-columns:repeat(2" in _container_rule(source, 400)
+
+
+def test_tile_values_shrink_on_phone_widths():
+    """The "100%→17h45m" ETA needs 93 px; a 3-column tile at 360 offers 91 at 12 px."""
+    source = CARD.read_text(encoding="utf-8")
+    assert ".v{font-size:10.5px}" in _container_rule(source, 380)
+    assert ".v{font-size:10px}" in _container_rule(source, 330)
