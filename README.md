@@ -17,8 +17,8 @@ The integration communicates with the charger over its local HTTP API without
 requiring internet access.
 
 <p align="center">
-  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced.jpg" width="49%">
-  <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
+  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="docs/images/card-basic-en.jpg" width="49%">
 </p>
 
 **Contents:** [Installation](#installation) · [Setup](#setup) ·
@@ -173,8 +173,8 @@ available controls. To show several layouts on a dashboard, add the card more
 than once and configure each instance separately.
 
 <p align="center">
-  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced.jpg" width="49%">
-  <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
+  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="docs/images/card-basic-en.jpg" width="49%">
 </p>
 
 *The same card four times — set to `compact`, `status`, `control` and `full`, from top to bottom. Left: Advanced mode. Right: Basic mode.*

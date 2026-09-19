@@ -10,6 +10,11 @@
     <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
   </p>
 
+  <p>
+    <img alt="Eveus card — Advanced mode, English" src="docs/images/card-advanced-en.jpg" width="49%">
+    <img alt="Eveus card — Basic mode, English" src="docs/images/card-basic-en.jpg" width="49%">
+  </p>
+
 ## 4.23.0 - 2026-09-19
 
 ### ✨ Added
