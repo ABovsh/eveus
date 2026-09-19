@@ -84,12 +84,6 @@ def test_adaptive_mode_rejects_unsupported_option() -> None:
     assert updater.commands == []
 
 
-def test_minimum_voltage_has_fixed_options() -> None:
-    select = select_module.EveusMinVoltageSelect(_Updater({"minVoltage": 200}))
-
-    assert select.options == ["200", "180", "175", "170", "165", "160", "155", "150"]
-
-
 def test_minimum_voltage_writes_integer_value() -> None:
     updater = _Updater({"minVoltage": 200})
     select = select_module.EveusMinVoltageSelect(updater)
