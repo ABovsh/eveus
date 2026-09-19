@@ -1,9 +1,14 @@
 # Changelog
 
-## Unreleased
+## 4.23.0 - 2026-09-19
 
 ### ✨ Added
 - **A built-in Eveus card for any dashboard.** Add **Eveus EV Charger** from the card picker — no HACS frontend plugin and no resource to add by hand. One card, four layouts: `compact` (a single line: state, SOC, power, time to target, session energy and cost, with the SOC bar along the bottom; the bar marks both the Initial and the Target SOC), `status` (SOC, time to target, current, session, power and state), `control` (adds One Charge, Stop Charging and a Charging Current slider) and `full` (adds Initial SOC, Target SOC, Battery Capacity, SOC Correction and the SOC limit). In Basic mode the SOC tiles are replaced by power and session time. A long press on SOC, Time to SOC or Current opens Initial SOC, Target SOC or Charging Current. The card editor names its fields and modes as the integration does (**Integration mode**: Advanced / Basic). Labels follow your language (English or Ukrainian).
+
+  <p>
+    <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced.jpg" width="49%">
+    <img alt="Eveus card — Basic mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-basic.jpg" width="49%">
+  </p>
 
 ### 🐛 Fixed
 - **Hiding or disabling a SOC setting no longer breaks the SOC readings.** Initial SOC, Target SOC, Battery Capacity and SOC Correction are read from their entities, and Home Assistant never loads a disabled one, so disabling any of them left SOC Percent, SOC Energy and Time to Target `unknown`, Charging Finish Time `unavailable` and the SOC limit unable to stop a charge. The values are now taken from the integration's saved settings when it starts, and a change you make to an entity still applies at once.
