@@ -85,19 +85,19 @@ class EveusSensorEntityDescription(SensorEntityDescription, frozen_or_thawed=Tru
     """
 
     value_fn: Callable = None
-    attributes_fn: Optional[Callable] = None  # pragma: no mutate - default only reached via `if not self._spec.attributes_fn:`; None/"" both falsy
-    tracks_reset: bool = False  # pragma: no mutate - default only reached via `if self.tracks_reset`; False/None both falsy
+    attributes_fn: Optional[Callable] = None
+    tracks_reset: bool = False
     # Sensors whose value DESCRIBES connectivity must stay readable while the
     # poll is failing — that is exactly when their data matters.
-    available_when_offline: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
+    available_when_offline: bool = False
     # The published value comes from a hold kept on the UPDATER, which a reload
     # throws away — so it has to be seeded from the restored state or the sensor
     # counts backwards after a restart. See `_seed_session_hold`.
-    restores_session_hold: bool = False  # pragma: no mutate - only reached via truthy checks; None/False both falsy
+    restores_session_hold: bool = False
     # Churn damping for a reading that dithers between polls, applied by the
     # entity (`EveusSensorBase._deadband`) rather than here — see
     # `_make_value_getter`'s docstring for why the getter itself stays pure.
-    deadband: Optional[float] = None  # pragma: no mutate - default only reached via `if self._deadband is not None`; None/0 both leave every reading published verbatim
+    deadband: Optional[float] = None
 
 
 class OptimizedEveusSensor(EveusSensorBase):
@@ -203,7 +203,7 @@ class OptimizedEveusSensor(EveusSensorBase):
             return self._spec.value_fn(self._updater, self.hass)
         except Exception as err:
             if self._should_log_error(f"sensor_{self._spec.key}"):
-                _LOGGER.debug("Error getting value for %s: %s", self.name, type(err).__name__)  # pragma: no mutate - log message text/exc_info; nothing asserts on either
+                _LOGGER.debug("Error getting value for %s: %s", self.name, type(err).__name__)
             return None
 
     def _update_extra_state_attributes(self) -> bool:
@@ -229,7 +229,7 @@ class OptimizedEveusSensor(EveusSensorBase):
         except Exception as err:
             if self._should_log_error(f"attributes_{self._spec.key}"):
                 _LOGGER.debug(
-                    "Error getting attributes for %s: %s",  # pragma: no mutate - log message text only
+                    "Error getting attributes for %s: %s",
                     self.name,
                     type(err).__name__,
                 )
@@ -492,8 +492,8 @@ def get_charger_state(updater, hass) -> Optional[str]:
     if state_value is None:
         return None
     if state_value not in CHARGING_STATES:
-        if _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, ("unknown_state", state_value)):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
-            _LOGGER.warning("Eveus reported unrecognized device state: %s", state_value)  # pragma: no mutate - log message TEXT only
+        if _SENSOR_FUNCTION_LOG.should_log(ERROR_LOG_RATE_LIMIT, ("unknown_state", state_value)):
+            _LOGGER.warning("Eveus reported unrecognized device state: %s", state_value)
     return get_charging_state(state_value)
 
 
@@ -791,8 +791,8 @@ def get_time_drift(updater, hass) -> Optional[int]:
         updater._time_drift_last_report = candidate
         return candidate
     except Exception as err:
-        if _should_log_error("get_time_drift"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
-            _LOGGER.debug("Error getting time drift: %s", type(err).__name__)  # pragma: no mutate - log message TEXT only
+        if _should_log_error("get_time_drift"):
+            _LOGGER.debug("Error getting time drift: %s", type(err).__name__)
         return None
 
 
@@ -904,8 +904,8 @@ def _make_schedule_attrs(slot: int):
 # Latency is published on a 0.5 s grid: finer steps are noise on a LAN poll,
 # and the attribute is a diagnostic, not a measurement.
 _LATENCY_STEP: Final[float] = 0.5
-_LATENCY_ANCHOR: Final[str] = "__latency_avg"  # pragma: no mutate - equivalent: an opaque private key in the per-updater anchor store; any distinct value (None, a renamed literal) keys the same hold
-_LATENCY_ANCHOR_SAMPLES: Final[str] = "__latency_avg_samples"  # pragma: no mutate - equivalent: an opaque private key in the per-updater anchor store; any distinct value (None, a renamed literal) keys the same hold
+_LATENCY_ANCHOR: Final[str] = "__latency_avg"
+_LATENCY_ANCHOR_SAMPLES: Final[str] = "__latency_avg_samples"
 
 
 def _held_latency(updater, latency_avg: float, samples: object = None) -> float:
@@ -962,7 +962,7 @@ def get_connection_quality(updater, hass) -> Optional[float]:
         return round(max(0, min(100, rate)))
     except Exception as err:
         if _should_log_error("get_connection_quality"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
-            _LOGGER.debug("Error getting connection quality: %s", type(err).__name__)  # pragma: no mutate - log message TEXT/exc_info; nothing asserts on either
+            _LOGGER.debug("Error getting connection quality: %s", type(err).__name__)
         return None
 
 
@@ -1010,7 +1010,7 @@ def get_connection_attrs(updater, hass) -> dict:
         return attrs
     except Exception as err:
         if _should_log_error("get_connection_attrs"):  # pragma: no mutate - opaque rate-limit cache key text, never surfaced
-            _LOGGER.debug("Error getting connection attributes: %s", type(err).__name__)  # pragma: no mutate - log message TEXT/exc_info; nothing asserts on either
+            _LOGGER.debug("Error getting connection attributes: %s", type(err).__name__)
         return {"status": "Error"}
 
 

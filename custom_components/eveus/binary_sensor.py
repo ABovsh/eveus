@@ -18,7 +18,7 @@ from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, WriteOnChangeMixin
 from .snapshot import EveusSnapshot
 
-_LOGGER = logging.getLogger(__name__)  # pragma: no mutate - module logger is never referenced in this file; assignment is dead/unreachable, not a logged value
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -29,7 +29,7 @@ class EveusBinaryDescription:
     device_class: BinarySensorDeviceClass
     icon: str
     is_on_fn: Callable[[EveusSnapshot], bool | None]
-    entity_category: EntityCategory | None = None  # pragma: no mutate - annotation only (PEP 563 postponed eval); default value unchanged by this mutation
+    entity_category: EntityCategory | None = None
 
 
 def _car_connected_is_on(snapshot: EveusSnapshot) -> bool | None:
@@ -124,7 +124,7 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
         self._last_known_is_on = self._description.is_on_fn(self._updater.snapshot)
         return self._last_known_is_on
 
-    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
+    @callback
     def _handle_coordinator_update(self) -> None:
         self._maybe_finalize_device_info()
         self._update_availability_state()

@@ -39,7 +39,7 @@ _ESTIMATE_STEP_SECONDS = _ESTIMATE_STEP_MINUTES * 60
 # The single anchor, held on the updater (one per charger). Never read as a
 # literal anywhere, so its spelling is unobservable — a mutation to it is
 # equivalent by construction.
-_ESTIMATE_ANCHOR_KEY = "finish_at"  # pragma: no mutate - private dict key, never compared against a literal
+_ESTIMATE_ANCHOR_KEY = "finish_at"
 
 # Below this, `round(seconds / 60)` is zero and `calculate_remaining_time`
 # states "< 1m". Naming the threshold in SECONDS rather than re-deriving a
@@ -108,7 +108,7 @@ class CachedSOCCalculator:
                 self.initial_soc, self.battery_capacity, energy_charged, self._effective_correction()
             )
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Error calculating SOC kWh: %s", type(err).__name__)  # pragma: no mutate - log message text is display-only; exc_info kwarg (traceback capture) is not observed by any test
+            _LOGGER.debug("Error calculating SOC kWh: %s", type(err).__name__)
             return None
 
     def get_soc_percent(self, energy_charged: float) -> Optional[float]:
@@ -163,7 +163,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             )
         )
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _on_soc_input_changed(self) -> None:
         """Recompute immediately when a SOC input value is pushed."""
         previous_available = self.available
@@ -186,7 +186,7 @@ class BaseEVHelperSensor(EveusSensorBase):
             return True
         return self._soc_calculator.are_helpers_available()
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         self._maybe_finalize_device_info()
         previous_available = self.available
@@ -222,7 +222,7 @@ class BaseEVHelperSensor(EveusSensorBase):
         # inactive side, exactly as the old state-set test did.
         snapshot = self._updater.snapshot
         if snapshot.session_active is not True:
-            power_meas: float | None = 0.0  # pragma: no mutate - PEP 563 postponed evaluation: local-variable annotation is never evaluated at runtime, only the `= 0.0` assignment executes
+            power_meas: float | None = 0.0
         else:
             # Already bounded by the shared parse, so a finite-but-impossible
             # outlier (1e100) arrives as None instead of collapsing the ETA to
@@ -506,7 +506,7 @@ class TimeToTargetSocSensor(BaseEVHelperSensor):
             # measured against on the next successful one.
             self._forget_estimate()
             _LOGGER.debug(
-                "Error calculating time to target for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                "Error calculating time to target for %s: %s",
                 self.unique_id,
                 type(err).__name__,
             )
@@ -674,7 +674,7 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
             # Same third exit as Time to Target's — see there.
             self._forget_estimate()
             _LOGGER.debug(
-                "Error calculating finish time for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                "Error calculating finish time for %s: %s",
                 self.unique_id,
                 type(err).__name__,
             )

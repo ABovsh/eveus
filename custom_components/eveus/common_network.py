@@ -378,7 +378,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if self.hass is None:
             return
 
-        @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+        @callback
         def _grace_closed(_now) -> None:
             self.async_update_listeners()
 
@@ -530,7 +530,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             except asyncio.CancelledError:
                 raise
             except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Post-command refresh failed: %s", type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
+                _LOGGER.debug("Post-command refresh failed: %s", type(err).__name__)
 
         for delay in POST_COMMAND_REFRESH_DELAYS:
             self._pending_refresh_unsubs.append(async_call_later(self.hass, delay, _run))

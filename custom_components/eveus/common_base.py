@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from .common_network import EveusUpdater
 
 _LOGGER = logging.getLogger(__name__)
-T = TypeVar("T")  # pragma: no mutate - name arg is never introspected (no T.__name__ use)
+T = TypeVar("T")
 
 
 _METADATA_FALLBACKS = {"model": "Eveus EV Charger", "manufacturer": "Eveus"}
@@ -48,10 +48,10 @@ def _preserve_finalized_metadata(old: dict, new: dict) -> dict:
     return merged
 
 
-class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # pragma: no mutate - forward-ref string in the generic subscript is never resolved/inspected at runtime
+class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     """Base implementation for Eveus entities with state persistence."""
 
-    ENTITY_NAME: str | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+    ENTITY_NAME: str | None = None
     _attr_has_entity_name = True
     _attr_should_poll = False
     # How long this entity stays visible through an outage. The clock itself
@@ -137,9 +137,9 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         self._last_known_available = available_now
         if self._should_log_availability():
             if available_now:
-                _LOGGER.debug("%s %s connection restored", self._availability_label, self.unique_id)  # pragma: no mutate - pure log-message text, arguments unchanged
+                _LOGGER.debug("%s %s connection restored", self._availability_label, self.unique_id)
             else:
-                _LOGGER.debug("%s %s unavailable after grace period", self._availability_label, self.unique_id)  # pragma: no mutate - pure log-message text, arguments unchanged
+                _LOGGER.debug("%s %s unavailable after grace period", self._availability_label, self.unique_id)
         if not available_now and self._clear_optimistic_on_unavailable:
             clear = getattr(self, "_clear_optimistic_state", None)
             if callable(clear):
@@ -270,12 +270,12 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
         try:
             state = await self.async_get_last_state()
             if state:
-                _LOGGER.debug("Restoring state for %s: %s", self.unique_id, state.state)  # pragma: no mutate - pure log-message text, arguments unchanged
+                _LOGGER.debug("Restoring state for %s: %s", self.unique_id, state.state)
                 await self._async_restore_state(state)
                 self._state_restored = True
         except Exception as err:
             _LOGGER.debug(
-                "Could not restore state for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                "Could not restore state for %s: %s",
                 self.unique_id,
                 type(err).__name__,
             )
@@ -283,7 +283,7 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):  # prag
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous state - overridden by child classes."""
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._maybe_finalize_device_info()
@@ -354,9 +354,9 @@ class OptimisticControlMixin(Generic[T]):
 
     def _init_optimistic_control(self) -> None:
         """Initialize common optimistic-control state."""
-        self._optimistic_value: T | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+        self._optimistic_value: T | None = None
         self._optimistic_value_time = 0.0
-        self._last_device_value: T | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+        self._last_device_value: T | None = None
         self._last_successful_read = 0.0
         # Serialize rapid repeated commands on the SAME control. The command
         # manager serializes HTTP at the coordinator level, but the per-entity
@@ -482,7 +482,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
     # non-numeric one (mutmut turns None into "") is caught by the deadband
     # tests, and a zero-width band publishes every reading verbatim, which is
     # exactly what None means.
-    _deadband: float | None = None  # pragma: no mutate - see the note above
+    _deadband: float | None = None
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the sensor."""
@@ -528,7 +528,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
             if current_time - self._last_error_log > ERROR_LOG_RATE_LIMIT:
                 self._last_error_log = current_time
                 _LOGGER.debug(
-                    "Error getting sensor value for %s: %s",  # pragma: no mutate - pure log-message text, arguments unchanged
+                    "Error getting sensor value for %s: %s",
                     self.unique_id,
                     type(err).__name__,
                 )
@@ -554,7 +554,7 @@ class EveusSensorBase(BaseEveusEntity, SensorEntity):
         """Refresh extra attributes. Subclasses may override."""
         return False
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._maybe_finalize_device_info()

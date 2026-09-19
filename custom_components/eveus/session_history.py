@@ -81,7 +81,7 @@ class _LastSessionSensorBase(EveusSensorBase):
             if attr in state.attributes:
                 self._attr_extra_state_attributes[attr] = state.attributes[attr]
 
-    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
+    @callback
     def _handle_finished_event(self, event: Event) -> None:
         if event.data.get("device_number") != self._device_number:
             return

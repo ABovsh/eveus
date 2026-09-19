@@ -107,9 +107,9 @@ class _EveusIntegerSelect(
                     f"Eveus charger did not accept {self.WRITE_KEY}={value}"
                 )
             self._set_optimistic_value(value)
-        _LOGGER.debug("%s changed to %s", self.ENTITY_NAME, option)  # pragma: no mutate - log-message text only, arguments unchanged
+        _LOGGER.debug("%s changed to %s", self.ENTITY_NAME, option)
 
-    @callback  # pragma: no mutate - HA scheduling marker only, behaviorally inert in tests
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Push HA state only when the visible option or availability changes."""
         self._maybe_finalize_device_info()

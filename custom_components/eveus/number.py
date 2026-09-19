@@ -87,13 +87,13 @@ class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=T
     # Decimals to round the displayed value to (None = no rounding). The charger
     # reports float noise (e.g. ``energyLimit`` 56.00899); this trims the tail so
     # HA shows what the charger's own web UI shows.
-    display_precision: int | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+    display_precision: int | None = None
     # Lower bound for ACCEPTING a device-reported/restored value, when it differs
     # from the writable minimum. The firmware accepts current setpoints below its
     # advertised minimum verbatim (delivery floors at the IEC 61851 6 A), so a
     # sub-minimum reading is a legitimate state, not corruption — same contract
     # as EveusCurrentNumber._READ_MIN. None = use native_min_value.
-    read_min_value: float | None = None  # pragma: no mutate - annotation only (PEP 563, never evaluated)
+    read_min_value: float | None = None
 
 
 CHARGING_CURRENT_DESCRIPTION = EveusSetpointNumberDescription(
@@ -244,7 +244,7 @@ class EveusNumberEntity(
 
     _attr_has_entity_name = True
     _attr_should_poll = False
-    _control_entity_label = "Number"  # pragma: no mutate - only used to format a debug-log message (common_base ControlEntityMixin), pure log text
+    _control_entity_label = "Number"
 
     def __init__(
         self,
@@ -257,7 +257,7 @@ class EveusNumberEntity(
         self.ENTITY_NAME = entity_description.name
         super().__init__(updater, device_number)
 
-        self._pending_value: float | None = None  # pragma: no mutate - annotation only: local/attr annotation in a function body is never evaluated (PEP 526)
+        self._pending_value: float | None = None
         self._init_optimistic_control()
         self._init_write_on_change()
 
@@ -384,8 +384,8 @@ class EveusSetpointNumber(EveusNumberEntity):
                 pending=clamped,
                 shown=clamped,
                 accepted=clamped,
-                rejected_message=f"Eveus charger did not accept {self._write_label(clamped)}",  # pragma: no mutate - pure exception-message text
-                failure_prefix=f"Failed to set {self._write_label()}",  # pragma: no mutate - pure exception-message text
+                rejected_message=f"Eveus charger did not accept {self._write_label(clamped)}",
+                failure_prefix=f"Failed to set {self._write_label()}",
             )
 
     async def _async_restore_state(self, state: State) -> None:
@@ -397,7 +397,7 @@ class EveusSetpointNumber(EveusNumberEntity):
                     self._last_successful_read = time.monotonic()
                     self._attr_native_value = restored
         except (TypeError, ValueError) as err:
-            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
+            _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, type(err).__name__)
 
 
 class EveusCurrentNumber(EveusSetpointNumber):
@@ -423,8 +423,8 @@ class EveusCurrentNumber(EveusSetpointNumber):
 
     def _write_label(self, value: float | None = None) -> str:
         if value is None:
-            return "charging current"  # pragma: no mutate - pure exception-message text
-        return f"charging current = {int(value)}A"  # pragma: no mutate - pure exception-message text
+            return "charging current"
+        return f"charging current = {int(value)}A"
 
 
 class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
@@ -449,7 +449,7 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
 
     def _refresh_min_bound(self) -> None:
         """Set the lower bound to ``minVoltage + 10`` when the charger reports it."""
-        dynamic: float | None = None  # pragma: no mutate - annotation only: local annotation in a function body is never evaluated (PEP 526)
+        dynamic: float | None = None
         if self._updater.available:
             raw = self._updater.snapshot.get(self._MIN_VOLTAGE_KEY)
             # Only trust a firmware-supported minVoltage. A malformed or off-list
@@ -491,7 +491,7 @@ class EveusSocConfigNumber(
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.CONFIG
-    _soc_key: str = ""  # pragma: no mutate - equivalent: never instantiated directly, every real subclass overrides this class attribute before __init__ ever reads self._soc_key
+    _soc_key: str = ""
 
     def __init__(self, updater, soc_calculator, seed, device_number: int = 1) -> None:
         """Initialize the SOC-input number entity."""
@@ -614,7 +614,7 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         if stored is not None:
             self._session_seeded = bool(stored.as_dict().get("seeded"))
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         super()._handle_coordinator_update()
         self._maybe_seed_from_external_soc()
@@ -669,9 +669,9 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
                 # recorder row per poll for the rest of the cycle.
                 self._soc_calculator.last_seed = {"seeded": False, "detail": anchor}
                 _LOGGER.warning(
-                    "Initial SOC not seeded from %s: %s. Keeping the value you "  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
-                    "set last and retrying every poll until the reading becomes "  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
-                    "usable; set it by hand if it looks wrong.",  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+                    "Initial SOC not seeded from %s: %s. Keeping the value you "
+                    "set last and retrying every poll until the reading becomes "
+                    "usable; set it by hand if it looks wrong.",
                     entity_id,
                     anchor,
                 )
@@ -680,9 +680,9 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         self._apply_value(anchor)
         self._soc_calculator.last_seed = {
             "seeded": True,
-            "detail": f"{anchor:.1f}% from {entity_id}",  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+            "detail": f"{anchor:.1f}% from {entity_id}",
         }
-        _LOGGER.info("Initial SOC seeded from %s: %.1f%%", entity_id, anchor)  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+        _LOGGER.info("Initial SOC seeded from %s: %.1f%%", entity_id, anchor)
 
     def _external_soc_anchor(self, entity_id: str) -> float | str:
         """Car SOC rebased to the start of this session, or why it is unusable.
@@ -706,14 +706,14 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             return "the charger did not report session energy"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
         delivered = snapshot.session_energy_kwh
         if delivered is None:
-            return f"the charger reported an unusable session energy ({snapshot.raw['sessionEnergy']!r})"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+            return f"the charger reported an unusable session energy ({snapshot.raw['sessionEnergy']!r})"
         if delivered:
             capacity = self._soc_calculator.battery_capacity
             correction = self._soc_calculator.soc_correction
             if not capacity:
                 return "the battery capacity helper is not set"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
             if not 0 <= correction < 100:
-                return f"the SOC correction helper is out of range ({correction})"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+                return f"the SOC correction helper is out of range ({correction})"
             external -= delivered * (1 - correction / 100) / capacity * 100
         # A negative anchor means the rebase produced nonsense (a stale or wrong
         # car reading). Clamping it to 0 would publish a plausible-looking wrong
@@ -722,7 +722,7 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         # rebase only subtracts, so an anchor above 100 cannot occur -- and
         # re-checking it here would mask the cap's own upper bound from tests.
         if external < 0:
-            return f"the rebased anchor {external:.1f}% is below 0%"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+            return f"the rebased anchor {external:.1f}% is below 0%"
         return external
 
     def _read_external_soc(self, entity_id: str) -> float | str:
@@ -735,10 +735,10 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         except (TypeError, ValueError):
             # Covers "unknown", "unavailable", an empty state and any sensor
             # that does not report a bare number.
-            return f"the sensor reads {state.state!r}"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+            return f"the sensor reads {state.state!r}"
         # Rejects NaN and both infinities along with out-of-range readings.
         if not 0 <= value <= 100:
-            return f"the sensor reads {value}, outside 0-100%"  # pragma: no mutate - human-facing diagnostic prose; tests pin the substantive parts (the entity id, the value, the failing field), not the wording
+            return f"the sensor reads {value}, outside 0-100%"
         return value
 
 
@@ -836,7 +836,7 @@ async def async_setup_entry(
                 )
             )
     else:
-        _LOGGER.debug("No model specified in config")  # pragma: no mutate - pure log-message text, no arguments
+        _LOGGER.debug("No model specified in config")
 
     if get_soc_mode(entry) == SOC_MODE_ADVANCED:
         seeds = {

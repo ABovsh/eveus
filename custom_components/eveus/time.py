@@ -104,10 +104,10 @@ class EveusScheduleTimeEntity(
         super().__init__(updater, device_number)
         self._command = entity_description.command
         self._state_key = entity_description.state_key
-        self._pending_value: int | None = None  # pragma: no mutate - annotation only (PEP 563 postponed eval, local var annotation never evaluated); default value unchanged
+        self._pending_value: int | None = None
         self._init_optimistic_control()
         self._init_write_on_change()
-        self._attr_native_value: dt.time | None = None  # pragma: no mutate - annotation only (PEP 563 postponed eval, local var annotation never evaluated); default value unchanged
+        self._attr_native_value: dt.time | None = None
 
     async def async_added_to_hass(self) -> None:
         """Resolve the initial value once coordinator data is available."""
@@ -176,7 +176,7 @@ class EveusScheduleTimeEntity(
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display value only — no commands sent on startup."""
-        if not state or state.state in UNUSABLE_RESTORED_STATES:  # pragma: no mutate - sentinel-equivalence: "unknown"/"unavailable" never parse via ha_dt.parse_time either, so the subsequent `if restored is None: return` guard already catches them regardless of this literal
+        if not state or state.state in UNUSABLE_RESTORED_STATES:
             return
         restored = ha_dt.parse_time(state.state)
         if restored is None:

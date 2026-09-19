@@ -115,7 +115,7 @@ class EveusRuntimeData:
     phases: int = DEFAULT_PHASES
 
 
-EveusConfigEntry = ConfigEntry[EveusRuntimeData]  # pragma: no mutate - pure type alias, only ever consumed as a (PEP 563, never-evaluated) annotation elsewhere
+EveusConfigEntry = ConfigEntry[EveusRuntimeData]
 
 
 def _invalid_config_issue_id(entry: ConfigEntry) -> str:
@@ -346,7 +346,7 @@ async def _async_unregister_card(hass: HomeAssistant, entry_id: str) -> None:
         _LOGGER.debug(
             "Could not remove eveus dashboard card resource: %s",
             type(err).__name__,
-        )  # pragma: no mutate - log message text, not a logged value
+        )
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -389,7 +389,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         except vol.Invalid:
             _LOGGER.warning(
-                "Could not normalize stored Eveus host for entry %s",  # pragma: no mutate - log message text, not a logged value
+                "Could not normalize stored Eveus host for entry %s",
                 getattr(entry, "entry_id", "<unknown>"),
             )
 
@@ -439,8 +439,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # would give them the same identity. Keep the old unique_id and
                 # let the user resolve the duplicate explicitly.
                 _LOGGER.warning(
-                    "Skipping unique_id canonicalization for entry %s: "  # pragma: no mutate - log message text, not a logged value
-                    "another entry already uses the canonical id",  # pragma: no mutate - log message text, not a logged value
+                    "Skipping unique_id canonicalization for entry %s: "
+                    "another entry already uses the canonical id",
                     entry.entry_id,
                 )
             else:
@@ -532,12 +532,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.debug("Assigned Eveus device number %d", device_number)  # pragma: no mutate - log message text, not a logged value
+            _LOGGER.debug("Assigned Eveus device number %d", device_number)
         elif raw_device_number != device_number:
             new_data = dict(entry.data)
             new_data["device_number"] = device_number
             hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.debug("Normalized Eveus device number %d", device_number)  # pragma: no mutate - log message text, not a logged value
+            _LOGGER.debug("Normalized Eveus device number %d", device_number)
 
         # Purge the retired "Input Entities Status" sensor from the entity
         # registry so it does not linger as an unavailable/orphan entity after
@@ -628,7 +628,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             # phases_were_invalid signal that protects the phase 2/3 registry
             # rows from _prune_unused_entities below (see its 3-phase fallback).
             _LOGGER.warning(
-                "Eveus phase count %r was invalid; using %d phase(s) for this session",  # pragma: no mutate - log message text, not a logged value
+                "Eveus phase count %r was invalid; using %d phase(s) for this session",
                 raw_phases,
                 phases,
             )
@@ -681,7 +681,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # Name only the exception class: its text or traceback can carry the
         # host/URL or response content, matching the redaction used on the
         # poll and config-flow error paths.
-        _LOGGER.error("Unexpected error setting up Eveus integration: %s", type(ex).__name__)  # pragma: no mutate - log message text, not a logged value
+        _LOGGER.error("Unexpected error setting up Eveus integration: %s", type(ex).__name__)
         raise ConfigEntryNotReady(f"Unexpected error: {type(ex).__name__}") from ex
 
 
@@ -793,7 +793,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     try:
         await Store(hass, _SAFETY_STORE_VERSION, safety_store_key(entry)).async_remove()
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("Could not remove safety store for removed entry")  # pragma: no mutate - log message text, not a logged value
+        _LOGGER.debug("Could not remove safety store for removed entry")
 
     await _async_unregister_card(hass, entry.entry_id)
 

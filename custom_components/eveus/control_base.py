@@ -13,7 +13,7 @@ from .const import OPTIMISTIC_CONTROL_TTL
 
 _LOGGER = logging.getLogger(__name__)
 
-T = TypeVar("T")  # pragma: no mutate - name arg is never introspected (no T.__name__ use)
+T = TypeVar("T")
 
 
 class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]):
@@ -24,7 +24,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         """Return the coordinator payload key backing this control."""
         return self.__dict__["_state_key"]
 
-    @_state_key.setter  # pragma: no mutate - equivalent: both getter/setter bypass the descriptor via self.__dict__["_state_key"] directly, so removing the setter decorator (making it a plain non-data-descriptor method) still round-trips correctly through normal instance-attribute assignment/lookup rules
+    @_state_key.setter
     def _state_key(self, value: str) -> None:
         """Store the coordinator payload key backing this control."""
         self.__dict__["_state_key"] = value
@@ -93,7 +93,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         except (HomeAssistantError, ConfigEntryAuthFailed):
             raise
         except Exception as err:
-            _LOGGER.debug("%s: %s", failure_prefix, type(err).__name__)  # pragma: no mutate - pure log-message text, arguments unchanged
+            _LOGGER.debug("%s: %s", failure_prefix, type(err).__name__)
             raise HomeAssistantError(f"{failure_prefix}: {err}") from err
         finally:
             self._set_pending(None)
@@ -101,7 +101,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             self._set_display_value(value)
             self._write_if_changed(value)  # type: ignore[attr-defined]
 
-    @callback  # pragma: no mutate - HA callback-marker decorator, only sets _hass_callback for the runtime scheduler; no test observes it
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data and reconcile command state with device state."""
         self._maybe_finalize_device_info()
