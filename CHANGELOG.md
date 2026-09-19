@@ -5,6 +5,11 @@
 ### 🔧 Changed
 - **More readable dashboard cards in less space.** Larger centred labels and values, tighter spacing and wrapping keep every reading visible on narrow cards. Charging adds brighter pulses and moving highlights without restarting the animation as readings update; the SOC bar now distinguishes the charge present at the start from energy added during the session and respects reduced-motion preferences.
 
+  <p>
+    <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced.jpg" width="49%">
+    <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
+  </p>
+
 ## 4.23.0 - 2026-09-19
 
 ### ✨ Added
