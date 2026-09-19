@@ -172,7 +172,12 @@ The card is part of the integration. Its **Layout** setting (`layout`) selects t
 available controls. To show several layouts on a dashboard, add the card more
 than once and configure each instance separately.
 
-*The screenshots at the top show the same card four times — set to `compact`, `status`, `control` and `full`, from top to bottom. Left: Advanced mode. Right: Basic mode.*
+<p align="center">
+  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
+</p>
+
+*The same card four times — set to `compact`, `status`, `control` and `full`, from top to bottom. Left: Advanced mode. Right: Basic mode.*
 
 ### Layouts
 
