@@ -2,8 +2,6 @@
 
 **English** | [🇺🇦 Українська](README.uk.md)
 
-> Full local control and monitoring for Eveus EV chargers: charging controls, current electrical measurements, charging costs, EV battery SOC estimates, schedules, safety notices, and automation-ready entities — no template sensors needed.
-
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
 ![Version](https://img.shields.io/badge/version-4.22.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
@@ -24,26 +22,25 @@
   <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
 </p>
 
-*One dashboard card, four layouts (`compact`, `status`, `control`, `full`) — you pick one when you add it. Left: Advanced mode. Right: Basic mode. [How to add it](#eveus-card).*
+*The Eveus dashboard card. You add one card and pick one of four layouts for it: `compact`, `status`, `control` or `full`. Left: Advanced mode. Right: Basic mode. [How to add the card](#eveus-card).*
 
-
-The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
+An integration for Eveus EV chargers: charging control, electrical measurements, energy and cost tracking, EV battery SOC estimates, schedules, safety notices and entities for automations. It talks to the charger's HTTP API directly on your LAN, so it works without internet access. Everything the charger reports and every setting becomes a regular Home Assistant entity.
 
 **Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Eveus card](#eveus-card) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Energy Dashboard](#energy-dashboard) · [Troubleshooting](#troubleshooting)
 
 ## ✨ Highlights
 
-### ⚡ Live electrical telemetry
+### ⚡ Electrical measurements
 Everything the charger measures, updated on every poll:
 
 - **Voltage, current, power** and the active current-limit setpoint
 - **Per-phase voltage and current** on 3-phase setups
 - **Box and plug temperatures**, ground status, backup-battery voltage
 
-### 💰 Accurate energy & cost
+### 💰 Energy & cost
 Session Energy, Total Energy, and two resettable counters (A/B), each with a running cost. Costs come from the charger's own meter, so **Session Cost stays correct even when the tariff switches mid-session** (e.g. night→day at 07:00). All tariff rates are exposed as sensors.
 
-### 🔋 EV battery SOC estimates
+### 🔋 EV battery SOC
 Pick **Advanced** mode and get battery SOC as native sensors — no helpers to create by hand:
 
 - **SOC %** and **SOC energy (kWh)** — estimated battery level while charging
@@ -66,7 +63,7 @@ Stop a session automatically — every limit the charger supports, set straight 
 The charger can protect weak house wiring by lowering the charging current when mains voltage sags. The integration exposes this fully:
 
 - **Adaptive Mode selector** — pick Off / Voltage / Auto / Power to match the charger's own modes
-- **Adaptive Charging sensor** — see which adaptive mode is active
+- **Adaptive Charging sensor** — which adaptive mode is active right now
 - **Adaptive Current Limit sensor** — the cap the charger chose
 - **Undervoltage threshold** — set the Voltage-mode trigger voltage (210–220 V) from HA
 - **Two on-device schedule slots** — enable switches, native HH:MM time pickers, and summary sensors; charging windows live on the charger, so they survive HA restarts
@@ -83,21 +80,21 @@ The signals automations actually need, as first-class entities:
 ### ☁️ OCPP backend control
 A single switch connects the charger to its OCPP backend (used by the **Grizzl-E Connect** mobile app), and a binary sensor shows the live connection state. While OCPP is on, a Repairs notice reminds you that the backend may override Charging Current, limits, and schedules — and how to switch back to full local control.
 
-### 🌐 Localized UI
-English and Ukrainian translations ship in the box; Home Assistant picks the user's language automatically.
+### 🌐 English and Ukrainian
+The integration ships English and Ukrainian translations. Home Assistant shows entity names and messages in the current user's language.
 
-### 🛰️ Multi-charger
+### 🛰️ Several chargers
 Add as many Eveus chargers as you have; each gets its own device and entities.
 
-### 🩺 Robust on real networks
-- **Adaptive polling** — fast while charging, relaxed when idle, and a quick follow-up burst whenever the charger changes state on its own (a schedule kicks in, a session starts from the charger UI or OCPP)
-- **Quiet offline handling** — a powered-off charger doesn't spam your logs, and it reappears in HA within a minute of being switched back on
-- **Honest controls** — every command is confirmed against the charger; failures raise a visible HA error instead of silently pretending
-- **Guided recovery** — a changed password opens a re-authentication flow (and isn't mislabeled as "charger offline"); broken connection settings surface as a fixable Repairs issue
-- **Safe diagnostics** — downloads redact credentials and identifying fields, so they're safe to attach to a GitHub issue
+### 🩺 Polling and reconnection
+- **Variable polling rate** — more often while charging, less often when idle, and a few extra polls in a row whenever the charger changes state on its own (a schedule starts, a session is started from the charger UI or through OCPP)
+- **Powered-off charger** — does not fill the log with errors, and reappears in Home Assistant within a minute of being switched back on
+- **Confirmed commands** — every command is checked against the charger; if the charger did not apply it, Home Assistant shows an error
+- **Access recovery** — a changed password makes Home Assistant ask for new credentials instead of showing the charger as unavailable; broken connection settings appear in **Repairs** and are fixed there
+- **Diagnostics** — downloads contain no credentials or identifying fields, so you can attach them to a GitHub issue
 
 ### 🛡️ Safety watchdog
-Your charger already protects itself — this integration makes those protections **visible and actionable in Home Assistant**. Each condition raises a clear **Repairs** notice (English and Ukrainian):
+The charger has its own protections. The integration shows when they trip in Home Assistant, each as a separate **Repairs** notice (English and Ukrainian):
 
 - **Missing ground**, or ground protection turned off
 - **Overheating** — early warning at **80 °C**, before the charger shuts down at 85 °C
@@ -105,7 +102,9 @@ Your charger already protects itself — this integration makes those protection
 - **Charger protection faults** (relay, pilot, overcurrent, voltage, GFCI self-test, …)
 - **Low backup battery** (CR2032)
 
-A dedicated **Ground Protection** switch manages the charger's missing-ground shutdown from HA. Confirmation counting and recovery hysteresis make sure one glitchy reading never raises a false alarm.
+The **Ground Protection** switch sets whether the charger shuts down when there is no ground.
+
+A single wrong reading does not raise a notice: the integration confirms a dangerous condition over several readings in a row and clears the notice only after a stable recovery.
 
 See [Safety notices](#-safety-notices) for the full list of conditions and recommended actions.
 
@@ -158,7 +157,7 @@ Changing things later:
 
 ## 🛡️ Safety notices
 
-Dangerous and configuration conditions surface through Home Assistant **Settings → Devices & Services → Repairs**, each with a plain-language message (English and Ukrainian). Recoverable safety notices clear themselves automatically once the condition is resolved; serious incidents stay visible until you press **Ignore**, then reset after recovery so a future separate incident can alert again.
+Dangerous and configuration conditions surface in **Settings → System → Repairs**, each with a plain-language message (English and Ukrainian). Recoverable safety notices clear themselves automatically once the condition is resolved; serious incidents stay visible until you press **Ignore**, then reset after recovery so a future separate incident can alert again.
 
 ### Safety conditions
 
@@ -183,36 +182,36 @@ Dangerous and configuration conditions surface through Home Assistant **Settings
 
 ## Eveus card
 
-The card comes with the integration — there is nothing to install separately. It is **one card** with a **layout** setting: add it to a dashboard once and choose how much it shows. To have two views of the charger, add the card twice and give each its own layout.
+The card is part of the integration; there is nothing to install separately. It is **one card** with a **layout** setting. When you add the card to a dashboard, you pick one layout, which sets the level of detail: from a single line to full charging control. To have both a short and a full card on a dashboard, add the card twice and pick a layout for each.
 
 <p align="center">
   <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced.jpg" width="49%">
   <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
 </p>
 
-*Both screenshots show the same card set to `compact`, `status`, `control` and `full`, from top to bottom. Left: Advanced mode. Right: Basic mode.*
+*Each screenshot shows the same card four times — set to `compact`, `status`, `control` and `full`, from top to bottom. Left: Advanced mode. Right: Basic mode.*
 
 ### Layouts
 
 | Layout | Shows | Controls |
 |---|---|---|
-| `compact` | State and SOC bar; SOC · power · time to target on one line | — |
+| `compact` | One line: state, SOC bar, SOC · power · time to target | — |
 | `status` | SOC, time to target, current, session energy and cost, power and voltage, state | — (read-only) |
 | `control` | SOC, time to target, current, session energy and cost | **One Charge**, **Stop Charging**, **Charging Current** slider |
-| `full` | Everything in `control`, plus energy and cost to target and the finish time | Everything in `control`, plus **Initial SOC**, **Target SOC**, **Battery Capacity**, **SOC Correction** and the **SOC limit** switch |
+| `full` | Everything in `control`, plus energy and cost to target and the finish time | Everything in `control`, plus **Initial SOC**, **Target SOC**, **Battery Capacity**, **SOC Correction** and the **Limit: SOC enabled** switch |
 
-- **Advanced and Basic mode.** The card follows the integration's mode (**Configure**). In Basic mode, power and session time take the place of the SOC tiles, and `full` shows voltage, temperatures and state instead of the SOC settings. Set `mode: basic` to force this view.
-- **Tapping.** A tile opens that entity's details. **One Charge**, **Stop** and **SOC limit** switch on one tap; stopping a running charge asks for confirmation. The slider sends its value when you let go; the − / + buttons send after a short pause, so several taps make one command.
-- **Faults.** An `Error` state or a missing ground adds a red line to `status`, `control` and `full`.
+- **Advanced and Basic mode.** The card uses the mode chosen for the integration (**Configure**). In Basic mode the card shows power and session time instead of SOC and time to target, and `full` shows voltage, temperatures and state instead of the SOC settings. `mode: basic` switches the card to its Basic view regardless of the integration's mode.
+- **Tapping.** Tapping a tile opens that entity's dialog. **One Charge**, **Stop Charging** and **Limit: SOC enabled** toggle with one tap; before stopping a running charge the card asks for confirmation. The slider sends its value when you let go. The − / + buttons send the value after a short pause, so several taps in a row make one command.
+- **Faults.** If the charger is in the `Error` state or has no ground, a red line appears in the `status`, `control` and `full` layouts.
 
 ### How to add the card
 
 1. Install or update the integration and restart Home Assistant. The card registers itself.
-2. Refresh the browser page. In the mobile app: **Settings → Companion app → Debugging → Reset frontend cache**.
-3. Open a dashboard and click the pencil (**Edit**).
-4. Click **+ Add card**, search for **Eveus EV Charger** and pick it.
-5. In the editor, choose the **layout**. The preview changes with it; a new card starts as `control`.
-6. Only if needed: **device_id** (pick the charger when you have several), **mode** and **language**. The defaults work for one charger.
+2. Refresh the browser page. In the Home Assistant mobile app: **Settings → Companion app → Troubleshooting → Reset frontend cache**, then restart the app.
+3. Open a dashboard and click the pencil (**Edit dashboard**).
+4. Click **Add card**, search for **Eveus EV Charger** and pick the card.
+5. In the **layout** field, pick a layout. The preview shows the result straight away; a new card starts as `control`.
+6. Fill in the other fields only if needed: **device_id** — the charger, when you have several; **mode** — the card's Basic view; **language** — the card's language. The defaults work for one charger.
 7. Click **Save**.
 
 ### Card in YAML
@@ -222,10 +221,10 @@ type: custom:eveus-card
 layout: control      # compact | status | control | full
 # device_id: ...     # only with several chargers
 # mode: auto         # auto (default, follows the integration) | basic
-# language: uk       # auto (default) | uk | en
+# language: uk       # auto (default, Home Assistant's language) | uk | en
 ```
 
-If the card shows **Custom element doesn't exist** right after an update, repeat step 2.
+If **Custom element doesn't exist** appears instead of the card right after an update, repeat step 2.
 
 ## Entity IDs
 
@@ -347,7 +346,7 @@ Advanced mode creates four native input numbers. Older `input_number.ev_*` helpe
 
 Migration from old helpers is intentionally simple: replace the prefix `input_number.ev_` with `number.eveus_ev_charger_` in cards and automations. For example, `input_number.ev_initial_soc` becomes `number.eveus_ev_charger_initial_soc`.
 
-SOC uses the charger's native `sessionEnergy` value. The charger resets this value on every new plug-in, so continuous charging sessions survive Home Assistant restarts without a synthetic baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
+SOC is calculated from the charger's own `sessionEnergy` value. The charger resets it on every new plug-in, so after a Home Assistant restart the calculation for the current session continues without any extra baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
 
 </details>
 
@@ -440,7 +439,7 @@ The integration fires events on the Home Assistant event bus for charger state t
 | `eveus_car_connected` | The car is electrically connected | — |
 | `eveus_car_disconnected` | The car is disconnected | — |
 
-`eveus_charging_finished`'s energy/cost/duration fields are a snapshot taken from the last poll while the session was still alive, so the values survive the charger resetting its own counters at session end — they can lag the true final value by up to one poll interval. Transitions that happen while the charger is unreachable, or while Home Assistant is down, are deliberately silent — you won't see a false event after reconnecting or restarting.
+The energy, cost and duration in `eveus_charging_finished` come from the last poll while the session was still running. They are kept even if the charger resets its own counters at the end of the session, but can lag the final values by one poll interval. State changes that happen while the charger is unreachable or Home Assistant is down create no events, so there are no false events after reconnecting or restarting.
 
 Each event also has a matching **device trigger**: in the automation UI, choosing the Eveus device offers "Charging started", "Charging finished", "Error occurred", "Car connected", and "Car disconnected" as ready-made triggers — no YAML needed.
 
@@ -463,26 +462,23 @@ automation:
 
 ## Dashboard
 
-A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus entity** ships at [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.2**).
-**Requirements:** the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) HACS frontend plugin (for the two graph cards). Every other card is built-in.
+A ready-made **Sections** dashboard view with **every Eveus entity** is in [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.2**). The Ukrainian version, with the same layout, is [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml). Home Assistant does not translate dashboard labels, so each file has its own labels; the entity IDs are the same in both, so you can swap files at any time without losing history or automations.
+
+The two graphs need the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) card from HACS. Every other card is a standard Home Assistant card.
+
 <img width="1188" height="477" alt="image" src="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039" />
 <img width="1189" height="386" alt="image" src="https://github.com/user-attachments/assets/48412a75-3368-4215-aa83-43b835b0180f" />
 <img width="1178" height="620" alt="image" src="https://github.com/user-attachments/assets/b96a52db-7d3d-4a43-be09-09324b84f681" />
-**Language:** the view ships in two interchangeable files — [`docs/dashboard.yaml`](docs/dashboard.yaml) (English) and [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) (Ukrainian, identical layout). Home Assistant does not translate dashboard labels automatically, so each file carries its own labels; the entity IDs are identical, so you can switch files anytime without touching history or automations.
-
-
-**3-phase setups:** add `sensor.eveus_ev_charger_current_phase_2`/`_3` and `…_voltage_phase_2`/`_3` to the **Status** section — those sensors exist only when `Phases = 3`.
 
 > [!IMPORTANT]
-> `docs/dashboard.yaml` is a **whole dashboard view**, not a single card. Don't try to add it through **"Add Card → Manual"** — that expects one card and will error on this file. It must go into a dashboard's **raw configuration** under `views:`, as described below.
+> `docs/dashboard.yaml` is a **whole dashboard view**, not a single card. Don't paste it through **Add card → Manual**: that expects one card and will show an error for this file. It goes into the dashboard's raw configuration, under `views:`, as described below.
 
+### How to add the dashboard
 
-**Install (step by step):**
-
-1. Go to **Settings → Dashboards**. Either open an existing dashboard or click **+ Add Dashboard → New dashboard from scratch** to create a fresh one (recommended, so it lives on its own).
-2. Open the dashboard, then click the **pencil / ✏️ Edit** button (top right).
-3. Click the **⋮ (three dots) → Raw configuration editor**.
-4. You'll see YAML that starts with `views:`. Copy the **entire contents** of [`docs/dashboard.yaml`](docs/dashboard.yaml) (or [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) for the Ukrainian version) and paste it as a new list item under `views:`, like this:
+1. Go to **Settings → Dashboards**. Open an existing dashboard, or create a separate one: **Add dashboard → New dashboard from scratch**.
+2. Open the dashboard and click the pencil (**Edit dashboard**).
+3. Click **⋮ → Raw configuration editor**.
+4. The editor shows YAML that starts with `views:`. Copy the **entire contents** of [`docs/dashboard.yaml`](docs/dashboard.yaml) and paste it as a new item in the `views:` list:
 
    ```yaml
    views:
@@ -493,29 +489,31 @@ A complete, ready-to-paste Lovelace **Sections** view that exposes **every Eveus
          - ...
    ```
 
-   If the dashboard is brand new and empty, you can replace everything in the editor with:
+   If the dashboard is new and empty, you can replace everything in the editor with:
 
    ```yaml
    views:
-     - <paste docs/dashboard.yaml here, indented two spaces under the "- ">
+     - <docs/dashboard.yaml, indented two spaces after the "- ">
    ```
 
-5. Click **Save**, then close the editor. The **Eveus** view appears as a new tab.
+5. Click **Save** and close the editor. The dashboard gets an **Eveus** tab.
 
-**If your device slug differs from `eveus_ev_charger`** (e.g. you renamed the charger or have several), find-and-replace `eveus_ev_charger` with your slug, or fix each entity with Home Assistant's entity picker after pasting.
+If your entity IDs don't contain `eveus_ev_charger` (you renamed the charger or have several), replace `eveus_ev_charger` in the file with your own ID fragment — or, after pasting, fix each entity with Home Assistant's entity picker.
+
+For a 3-phase charger, add `sensor.eveus_ev_charger_current_phase_2`/`_3` and `…_voltage_phase_2`/`_3` to the **Status** section — those sensors exist only when `Phases = 3`.
 
 ## Energy Dashboard
 
-Track EV charging in Home Assistant's Energy Dashboard in two minutes:
+To add EV charging to Home Assistant's Energy dashboard:
 
-1. Go to **Settings → Dashboards → Energy**.
+1. Go to **Settings → Energy** (before Home Assistant 2026: **Settings → Dashboards → Energy**).
 2. Under **Individual devices**, click **Add device**.
 3. Pick `sensor.eveus_ev_charger_total_energy` and save.
 
-Charging now shows up as its own bar in the energy views, including
-per-day/month history. Costs are already tracked by the integration itself —
-see `sensor.eveus_ev_charger_session_cost` and the Counter A/B cost sensors,
-which use the tariff configured on the charger (including night rates).
+Charging shows up as its own bar in the energy graphs, with daily and monthly
+history. The integration tracks cost itself — see
+`sensor.eveus_ev_charger_session_cost` and the Counter A and B cost sensors.
+They use the tariffs configured on the charger, including the night rate.
 
 ## Blueprints
 
@@ -526,17 +524,17 @@ URL, then fill in the two or three fields it asks for — no YAML.
 | Blueprint | What it does | URL |
 | --- | --- | --- |
 | Charging session notification | Notifies on start and finish, with the session's energy, cost and duration, through the action of your choice | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
-| Stop charging on low house battery | Stops the car with the charger's own Stop command — not by cutting its power — when your inverter's battery drops below a threshold. Fully local | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
+| Stop charging on low house battery | When your inverter's battery drops below a threshold, stops charging with the charger's own **Stop Charging** switch, not by cutting its power. Fully local | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
 
 ## Troubleshooting
 
 | Problem | What to check |
 | --- | --- |
 | Setup cannot connect | The setup dialog shows the reason in parentheses — e.g. `Failed to connect to charger (HTTP 404)` or `(Connection error: TimeoutError)`. Check the charger is powered on, HA can reach the charger IP/hostname, credentials are correct, and the selected model matches the charger |
-| Controls do not respond | Connection Quality, charger online state, credentials via Reconfigure, then wait one coordinator refresh |
+| Controls do not respond | Check **Connection Quality**, whether the charger is reachable, and the credentials via **Reconfigure**; then wait for the next poll |
 | SOC sensors are missing | Set the integration mode to Advanced under Configure, then restart/reload the integration if just changed |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
-| Charger is powered off | This is normal. Polling backs off and the integration avoids log spam |
+| Charger is powered off | This is normal: the integration polls less often and does not fill the log with errors |
 | A Repairs notice appeared | See [Safety notices](#-safety-notices) for what each one means and what to do |
 | The charger is nowhere in Devices | See [The charger does not appear after installing](#the-charger-does-not-appear-after-installing) |
 
@@ -545,18 +543,18 @@ URL, then fill in the two or three fields it asks for — no YAML.
 Work through these in order — all three are far more common than an actual fault:
 
 1. **Installing from HACS does not add the integration.** HACS only downloads the files, and it creates its own entry named *Eveus EV Charger* holding a single update entity — that entry is HACS, not your charger. After installing, restart Home Assistant, then go to **Settings → Devices & Services → Add Integration** and add **Eveus EV Charger** separately.
-2. **Check the disabled integrations.** A disabled entry vanishes from the device list entirely. On **Settings → Devices & Services**, scroll to the bottom of the **Integrations** tab and expand **Disabled**; re-enable the entry from there.
-3. **Check the Integrations tab, not Devices.** If setup fails, the entry exists but no device or entities are created yet — so it is invisible under Devices while the *Eveus* card on the Integrations tab shows *Retrying setup*. Open that card to see the reason, which also appears once in **Settings → System → Logs**.
+2. **Check the disabled integrations.** A disabled entry vanishes from the device list entirely. On **Settings → Devices & Services**, scroll to the bottom of the **Integrations** tab and click **Show disabled integrations**; re-enable the entry from there.
+3. **Check the Integrations tab, not Devices.** If setup fails, the entry exists but no device or entities are created yet — so it is invisible under Devices while the *Eveus* card on the **Integrations** tab shows **Failed setup, will retry**. Open that card to see the reason, which also appears once in **Settings → System → Logs**.
 
 A working charger creates roughly 85 entities. If you see a single update entity, you are looking at the HACS entry, not the integration.
 
 ### Older charger firmware
 
-Older firmware (R3.01.x has been reported) now sets up and works normally — setup accepts any responding charger, and chargers with an unset serial number that return garbage bytes are handled tolerantly. Updating is still recommended: message **@energy_star** on Telegram for the firmware files, then flash the update from the charger's web interface.
+Older firmware (R3.01.x has been reported) sets up and works: setup accepts any charger that responds, including chargers with no serial number set that return arbitrary bytes in its place. Updating is still recommended: message **@energy_star** on Telegram for the firmware files, then flash the update from the charger's web interface.
 
 Firmware 1.x (EnergyStar V-series) also sets up and works, with some fields degraded: the firmware version is read from the charger's boot info instead of the usual field, and this firmware's own state codes are translated to the standard names (idle shows as Standby; Charging is detected while power is actually flowing). A code the integration doesn't recognize shows as `Unknown`, with the numeric code kept in the State sensor's `raw_state` attribute. Fields the firmware doesn't report at all (such as serial number, Substate, or OCPP status) stay unavailable rather than showing stale or wrong data.
 
-If a charger still fails to set up, note the error shown in the setup dialog, find the integration's warning in the Home Assistant log (Settings → System → Logs — it contains the HTTP status, content type, and the first bytes of the charger's reply; no debug logging needed), and open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version, the dialog error text, and that warning line. Hide anything sensitive first (your IP addresses, serial numbers).
+If a charger still fails to set up, note the error shown in the setup dialog, find the integration's warning in **Settings → System → Logs** (it contains the HTTP status, content type, and the first bytes of the charger's reply; no debug logging needed), and open a [GitHub issue](https://github.com/ABovsh/eveus/issues) with your firmware version, the dialog error text, and that warning line. Hide anything sensitive first (your IP addresses, serial numbers).
 
 ## Privacy And Diagnostics
 
