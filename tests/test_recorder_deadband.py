@@ -847,6 +847,27 @@ def test_charging_finish_time_survives_a_missed_poll_while_charging() -> None:
             assert sensor.available is True, "a held reading must stay visible"
 
 
+def test_charging_finish_time_stays_unavailable_through_a_missed_poll_between_charges() -> None:
+    """The grace window holds a reading; between charges there is none to hold.
+
+    Seen on live hardware 2026-09-19 at 04:10:39 UTC: the charger (Charge
+    Complete) was powered off, and on the first failed poll the sensor went
+    from `unavailable` to `unknown` for the whole 60 s grace window, then back
+    to `unavailable` — a visible blank plus two recorder rows for a charge that
+    was not running.
+    """
+    sensor = _finish_sensor(5)
+    assert sensor.available is False
+
+    sensor._updater.available = False
+    sensor._updater.seconds_unavailable = 10.0  # inside every grace window
+    assert sensor._in_availability_grace is True
+    assert sensor.available is False, (
+        "no charge was running when the charger went silent, so there is no "
+        "finish time to keep visible; the grace window must not publish a blank"
+    )
+
+
 def test_configured_and_event_only_readings_carry_no_state_class() -> None:
     """Long-term statistics are for measured quantities that actually move.
 

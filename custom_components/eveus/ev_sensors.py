@@ -639,11 +639,11 @@ class ChargingFinishTimeSensor(BaseEVHelperSensor):
         """
         if not super().available:
             return False
-        # A held reading stays visible through a missed poll, so availability
-        # must not flap faster than the value it guards — otherwise one missed
-        # poll writes a row on the way down and another on the way back up.
-        if self._in_availability_grace:
-            return True
+        # Through a missed poll the snapshot is the last good one, so a charge
+        # that was running stays visible for the grace window and an idle
+        # charger stays unavailable — no blank, no flap either way. A bare
+        # grace short-circuit here made an idle sensor publish `unknown` for
+        # the whole window (live, 2026-09-19).
         return self._updater.snapshot.session_active is True
 
     def _get_sensor_value(self) -> Optional[datetime]:
