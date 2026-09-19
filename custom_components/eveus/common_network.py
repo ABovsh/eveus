@@ -872,6 +872,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """
         self._connection_quality_cache = None
         self._device_available = False
+        # Polling stops until reauth, and entities read only the outage clock:
+        # without it every entity would stay visible on the pre-401 reading.
+        self._start_outage_clock()
         self._last_error = "ConfigEntryAuthFailed"
         # The event stream still has a hole here: polling stops until reauth or
         # a manual refresh, so a transition that happens meanwhile must not be

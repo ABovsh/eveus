@@ -17,7 +17,9 @@ from conftest import StreamReaderStub, TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, 
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.const import (
+    AVAILABILITY_GRACE_PERIOD,
     CHARGING_UPDATE_INTERVAL,
+    CONTROL_GRACE_PERIOD,
 )
 
 
@@ -213,6 +215,36 @@ def test_update_data_raises_auth_failed_on_unauthorized(
     assert updater._next_poll_attempt == 0.0
     assert updater.available is False
     assert updater.connection_quality["last_error"] == "ConfigEntryAuthFailed"
+
+
+def test_unauthorized_poll_starts_the_outage_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 401 stops polling until reauth, so entities must still leave view.
+
+    Entity availability reads only the coordinator's outage clock. If the
+    rejection does not start it, every entity stays "available" on the last
+    pre-401 reading for as long as reauth is pending.
+    """
+    session = _Session(_Response(status=401))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    scheduled: list[float] = []
+    monkeypatch.setattr(
+        common_network,
+        "async_call_later",
+        lambda hass, delay, action: scheduled.append(delay) or Mock(),
+    )
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        asyncio.run(updater._async_update_data())
+
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1061.0)
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD) is False
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is False
+    # Polling stops on a 401, so only the grace timers can wake the entities.
+    assert sorted(scheduled) == [CONTROL_GRACE_PERIOD + 0.5, AVAILABILITY_GRACE_PERIOD + 0.5]
 
 
 def test_update_data_raises_update_failed_for_bad_json(
