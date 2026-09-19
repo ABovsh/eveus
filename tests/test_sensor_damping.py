@@ -40,11 +40,8 @@ def test_connection_attrs_isolates_wifi_rssi_failure():
     only drop that one field, not replace the whole (already-valid)
     connection_quality/latency_avg/status dict with {"status": "Error"}.
 
-    RSSI now comes from a mirror the WiFi Signal sensor writes on its own poll
-    (P4.2's shared-deadband consolidation), so "computing wifi_rssi raises" no
-    longer exists as a failure mode — the equivalent case is the mirror never
-    having been written (the sensor hasn't polled yet), which must be just as
-    harmless to the rest of the dict.
+    Here the updater carries no payload at all, so reading RSSI fails; that
+    must be just as harmless to the rest of the dict.
     """
     from types import SimpleNamespace
 

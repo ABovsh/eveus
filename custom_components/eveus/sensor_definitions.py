@@ -49,12 +49,15 @@ from .const import (
 )
 from .utils import (
     RateLog,
+    apply_deadband,
     format_duration,
     get_local_wall_clock_seconds,
 )
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ERROR_LOG_KEYS = 64
+# WiFi Signal's band, shared with Connection Quality's wifi_rssi attribute.
+WIFI_RSSI_DEADBAND: Final[int] = 5
 _SENSOR_FUNCTION_LOG = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
 ICON_FLASH = "mdi:flash"
 ICON_CURRENT_AC = "mdi:current-ac"
@@ -124,18 +127,6 @@ class OptimizedEveusSensor(EveusSensorBase):
         if self._spec.available_when_offline:
             return True
         return super().available
-
-    def _update_native_value(self) -> bool:
-        """Refresh the value, mirroring WiFi Signal's damped reading.
-
-        The Connection Quality attribute reads this mirror instead of
-        recomputing RSSI itself, so the two can never publish a different
-        damped value for the same underlying reading.
-        """
-        changed = super()._update_native_value()
-        if self._spec.key == "wifi_signal":
-            self._updater._wifi_rssi_damped = self._attr_native_value
-        return changed
 
     async def async_added_to_hass(self) -> None:
         """Restore the updater-side hold this sensor's value is built on.
@@ -1001,12 +992,19 @@ def get_connection_attrs(updater, hass) -> dict:
             "status": status,
         }
         if updater.available:
-            # The WiFi Signal sensor mirrors its own damped reading here
-            # (`OptimizedEveusSensor._update_native_value`) on every poll, so
-            # this reads the SAME value it publishes rather than damping RSSI
-            # a second, independent time.
-            rssi = getattr(updater, "_wifi_rssi_damped", None)
+            # Damped with the WiFi Signal sensor's band, against an anchor
+            # kept on the updater: that sensor may be disabled, and a disabled
+            # entity never runs, so the attribute cannot read from it.
+            try:
+                rssi = apply_deadband(
+                    getattr(updater, "_connection_rssi_anchor", None),
+                    get_wifi_rssi(updater, hass),
+                    WIFI_RSSI_DEADBAND,
+                )
+            except Exception:  # noqa: BLE001 - an optional field must not void the rest
+                rssi = None
             if rssi is not None:
+                updater._connection_rssi_anchor = rssi
                 attrs["wifi_rssi"] = rssi
         return attrs
     except Exception as err:
@@ -1190,7 +1188,8 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
                 # once, not twice.
                 ("wifi_signal", "WiFi Signal", get_wifi_rssi,
                  "mdi:wifi", SensorDeviceClass.SIGNAL_STRENGTH,
-                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, SensorStateClass.MEASUREMENT, 5),
+                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, SensorStateClass.MEASUREMENT,
+                 WIFI_RSSI_DEADBAND),
             )
         ),
     ]

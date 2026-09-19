@@ -160,11 +160,10 @@ def test_offline_reading_keeps_the_last_value_as_the_reference() -> None:
 def test_connection_quality_attribute_reuses_the_damped_rssi() -> None:
     """The wifi_rssi attribute was the single largest source of recorder rows.
 
-    It mirrors the WiFi Signal sensor, so it must mirror its damping too —
-    otherwise Connection Quality writes a row per poll while its own state
-    (poll success rate) sits at 100 % for days. The coordinator drives every
-    entity on every poll, so the WiFi Signal sensor is re-read here exactly
-    as it would be by `_handle_coordinator_update`.
+    It carries the WiFi Signal sensor's reading, so it must carry its damping
+    too — otherwise Connection Quality writes a row per poll while its own
+    state (poll success rate) sits at 100 % for days. Both are driven on every
+    poll, so both must publish the same held value.
     """
     updater = _updater({"RSSI": -66}, connection_quality={"success_rate": 100})
     wifi_signal = sd.create_sensor(_spec("wifi_signal"), updater, 1)
@@ -176,6 +175,23 @@ def test_connection_quality_attribute_reuses_the_damped_rssi() -> None:
 
     assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -66
 
+
+
+def test_connection_quality_rssi_does_not_need_the_wifi_signal_entity() -> None:
+    """A disabled WiFi Signal sensor is never added, so it never runs.
+
+    4.22.0 damped the attribute on its own; reading a mirror only that entity
+    writes left `wifi_rssi` missing forever for anyone who disabled WiFi
+    Signal. The attribute must still carry the damped reading.
+    """
+    updater = _updater({"RSSI": -66}, connection_quality={"success_rate": 100})
+    assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -66
+
+    updater.data["RSSI"] = -67
+    assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -66
+
+    updater.data["RSSI"] = -72
+    assert sd.get_connection_attrs(updater, None)["wifi_rssi"] == -72
 
 # --- SOC / forecast entities ---
 
