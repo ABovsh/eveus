@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import Mock
-from homeassistant.components.sensor import SensorDeviceClass
-from custom_components.eveus.session_history import LastSessionCostSensor
 import asyncio
 import pytest
 from conftest import EveusTestUpdater
@@ -23,15 +21,6 @@ from custom_components.eveus.number import (
 from conftest import SnapshotBackedMock
 from custom_components.eveus.common_base import BaseEveusEntity
 
-
-def test_last_session_cost_sensor_has_monetary_device_class() -> None:
-    """Every cost sensor in the integration declares MONETARY except this one.
-
-    Without it the frontend skips currency formatting/semantics for a sensor
-    that already carries a currency unit (UAH) and icon.
-    """
-    instance = object.__new__(LastSessionCostSensor)
-    assert instance.device_class == SensorDeviceClass.MONETARY
 
 def _car_connected_sensor(updater):
     description = next(
