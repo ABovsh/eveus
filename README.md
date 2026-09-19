@@ -22,16 +22,15 @@
   <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
 </p>
 
-*The Eveus dashboard card. You add one card and pick one of four layouts for it: `compact`, `status`, `control` or `full`. Left: Advanced mode. Right: Basic mode. [How to add the card](#eveus-card).*
-
-An integration for Eveus EV chargers: charging control, electrical measurements, energy and cost tracking, EV battery SOC estimates, schedules, safety notices and entities for automations. It talks to the charger's HTTP API directly on your LAN, so it works without internet access. Everything the charger reports and every setting becomes a regular Home Assistant entity.
+An integration for Eveus EV chargers: charging control, charger readings, energy and cost tracking, EV battery SOC estimates, schedules, safety notices and entities for automations. It talks to the charger's HTTP API directly on your LAN, so it works without internet access. Supported readings and settings are available as Home Assistant entities.
 
 **Jump to:** [Highlights](#-highlights) · [Installation](#installation) · [Setup](#setup) · [Safety notices](#-safety-notices) · [Eveus card](#eveus-card) · [Entity IDs](#entity-ids) · [Events & Device Triggers](#events--device-triggers) · [Dashboard](#dashboard) · [Energy Dashboard](#energy-dashboard) · [Troubleshooting](#troubleshooting)
 
 ## ✨ Highlights
 
-### ⚡ Electrical measurements
-Everything the charger measures, updated on every poll:
+### ⚡ Charger readings
+
+The integration displays data received from the charger:
 
 - **Voltage, current, power** and the active current-limit setpoint
 - **Per-phase voltage and current** on 3-phase setups
@@ -41,26 +40,26 @@ Everything the charger measures, updated on every poll:
 Session Energy, Total Energy, and two resettable counters (A/B), each with a running cost. Costs come from the charger's own meter, so **Session Cost stays correct even when the tariff switches mid-session** (e.g. night→day at 07:00). All tariff rates are exposed as sensors.
 
 ### 🔋 EV battery SOC
-Pick **Advanced** mode and get battery SOC as native sensors — no helpers to create by hand:
+In **Advanced** mode, you get:
 
 - **SOC %** and **SOC energy (kWh)** — estimated battery level while charging
-- **Time to Target SOC** and **Charging Finish Time** — when charging will be done
-- **Energy / Cost to Target SOC** — what's left to deliver and what it will cost
+- **Time to Target SOC** and **Charging Finish Time** — estimated time to reach the target battery level
+- **Energy / Cost to Target SOC** — grid energy still needed, including charging losses, and its estimated cost at the current tariff
 - Inputs (initial SOC, target SOC, battery capacity, efficiency loss) are plain `number` entities you can set from any dashboard or automation
 - Optionally point the integration at your car's own SOC sensor and Initial SOC fills itself in once per plug-in
 
 Pick **Basic** if you only want charging control. Switch modes anytime via **Configure**.
 
 ### 🛑 Charge limits
-Stop a session automatically — every limit the charger supports, set straight from Home Assistant, each with its own enable switch plus a master **Limit: disable all**:
+Set charging limits in Home Assistant and enable the ones you need:
 
 - **Time, Energy and Cost limits** — stop by session duration, delivered kWh, or session cost
-- **Stop at Target SOC** (Advanced mode) — **Limit: SOC enabled** halts charging when the car reaches your target battery level
+- **Stop at Target SOC** (Advanced mode) — the integration stops charging when the estimated SOC reaches **Target SOC**. Home Assistant must be running and able to reach the charger
 - **Per-schedule caps** — each schedule slot gets its own current and energy limit
 - **One master switch** suspends every limit at once without losing the values
 
 ### 🤖 Adaptive charging & schedules
-The charger can protect weak house wiring by lowering the charging current when mains voltage sags. The integration exposes this fully:
+The charger can lower the charging current when mains voltage sags. The integration exposes this fully:
 
 - **Adaptive Mode selector** — pick Off / Voltage / Auto / Power to match the charger's own modes
 - **Adaptive Charging sensor** — which adaptive mode is active right now
@@ -89,7 +88,7 @@ Add as many Eveus chargers as you have; each gets its own device and entities.
 ### 🩺 Polling and reconnection
 - **Variable polling rate** — more often while charging, less often when idle, and a few extra polls in a row whenever the charger changes state on its own (a schedule starts, a session is started from the charger UI or through OCPP)
 - **Powered-off charger** — does not fill the log with errors, and reappears in Home Assistant within a minute of being switched back on
-- **Confirmed commands** — every command is checked against the charger; if the charger did not apply it, Home Assistant shows an error
+- **Command confirmation** — the integration checks whether the charger accepted a command and verifies setting changes against its reported state. Errors appear in Home Assistant
 - **Access recovery** — a changed password makes Home Assistant ask for new credentials instead of showing the charger as unavailable; broken connection settings appear in **Repairs** and are fixed there
 - **Diagnostics** — downloads contain no credentials or identifying fields, so you can attach them to a GitHub issue
 
@@ -104,7 +103,7 @@ The charger has its own protections. The integration shows when they trip in Hom
 
 The **Ground Protection** switch sets whether the charger shuts down when there is no ground.
 
-A single wrong reading does not raise a notice: the integration confirms a dangerous condition over several readings in a row and clears the notice only after a stable recovery.
+Warnings based on temperature, leakage and ground readings require several consecutive confirmations. Known charger fault codes trigger a notice immediately.
 
 See [Safety notices](#-safety-notices) for the full list of conditions and recommended actions.
 
@@ -277,7 +276,7 @@ automation:
 
 </details>
 
-### Live Electrical Data
+### Charger readings
 
 <details>
 <summary>Show entities</summary>
@@ -318,7 +317,7 @@ automation:
 | `sensor.eveus_ev_charger_rate_3_status` | Sensor | Whether Rate 3 schedule is enabled |
 | `sensor.eveus_ev_charger_last_session_energy` | kWh | Energy delivered by the most recently finished session; keeps its value across restarts and while the charger is offline |
 | `sensor.eveus_ev_charger_last_session_cost` | UAH | Cost of the most recently finished session |
-| `sensor.eveus_ev_charger_last_session_duration` | Sensor | Duration of the most recently finished session |
+| `sensor.eveus_ev_charger_last_session_duration` | s | Duration of the most recently finished session |
 
 Each Last Session sensor is populated when a session finishes and carries `reason` and `finished_at` attributes.
 
@@ -326,7 +325,7 @@ Each Last Session sensor is populated when a session finishes and carries `reaso
 
 ### SOC And ETA, Advanced Mode
 
-Advanced mode creates four native input numbers. Older `input_number.ev_*` helpers are no longer read.
+Advanced mode provides four `number` entities for SOC settings.
 
 <details>
 <summary>Show entities</summary>
@@ -334,7 +333,7 @@ Advanced mode creates four native input numbers. Older `input_number.ev_*` helpe
 | Entity ID | Unit | Range | Default | What it gives you |
 | --- | --- | --- | --- | --- |
 | `number.eveus_ev_charger_initial_soc` | % | 0-100, step 1 | 20 | Battery SOC at the start of the current charging session |
-| `number.eveus_ev_charger_target_soc` | % | 0-100, step 5 | 80 | Target SOC for ETA calculations |
+| `number.eveus_ev_charger_target_soc` | % | 0-100, step 5 | 80 | Target battery level for forecasts and the SOC limit |
 | `number.eveus_ev_charger_battery_capacity` | kWh | 10-160, step 1 | 50 | EV battery capacity |
 | `number.eveus_ev_charger_soc_correction` | % | 0-20, step 0.5 | 7.5 | Charging loss correction |
 | `sensor.eveus_ev_charger_soc_energy` | kWh | - | - | Estimated energy currently in the EV battery |
@@ -346,23 +345,23 @@ Advanced mode creates four native input numbers. Older `input_number.ev_*` helpe
 
 Migration from old helpers is intentionally simple: replace the prefix `input_number.ev_` with `number.eveus_ev_charger_` in cards and automations. For example, `input_number.ev_initial_soc` becomes `number.eveus_ev_charger_initial_soc`.
 
-SOC is calculated from the charger's own `sessionEnergy` value. The charger resets it on every new plug-in, so after a Home Assistant restart the calculation for the current session continues without any extra baseline. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
+SOC is calculated from the charger's own `sessionEnergy` value. The charger resets it on every new plug-in, so after a Home Assistant restart the calculation for the current session continues using the stored SOC settings. If you unplug and later resume charging, update `number.eveus_ev_charger_initial_soc` to the current battery percentage before the next session starts.
 
 </details>
 
 #### Filling Initial SOC from your car (optional)
 
-If another integration exposes your car's battery level, Eveus can read it instead of you moving the Initial SOC slider before every charge. Nothing else changes: SOC Percent, SOC Energy and the target/ETA sensors are still calculated from Initial SOC plus the charger's own energy meter.
+If another integration exposes your car's battery level, Eveus can read it instead of you moving the Initial SOC slider before every charge. SOC and forecasts are calculated from Initial SOC, battery capacity, charging loss correction and the charger’s energy meter.
 
 **Setting it up**
 
-Pick the sensor during setup on the **SOC Monitoring Setup** screen, or later under **Settings → Devices & Services → Eveus EV Charger → Configure**. It has to be a `sensor` with device class `battery` and unit `%` — the picker only lists those, so if yours is missing, it lacks that device class. Advanced mode only. Leave it empty (the default) and nothing changes.
+Pick the sensor during setup on the **SOC Monitoring Setup** screen, or later under **Settings → Devices & Services → Eveus EV Charger → Configure**. It has to be a `sensor` with device class `battery` and unit `%` — the picker filters by the `battery` device class. If yours is missing, check its domain and device class; its value must be a battery percentage from 0 to 100. Advanced mode only. If no sensor is selected, set **Initial SOC** manually.
 
 **When it reads the car**
 
 Once per plug-in, at the start of charging. If the car is asleep then — normal with a departure timer or a cheap-tariff window — it keeps trying on every poll until a reading arrives, subtracting whatever energy has already gone into the car so a late reading gives the same result as an immediate one. Once a reading lands, the sensor is not consulted again until you unplug.
 
-**A plug-in is not a charge.** Pause and resume, stop and restart, let the car finish and top up again, ride out a fault the charger recovers from — to the charger that is all one session and its energy meter keeps running through it. Initial SOC stays put and every SOC figure stays right. Only unplugging starts a new one.
+**SOC during pauses and restarts.** Pause and resume, stop and restart, let the car finish and top up again, ride out a fault the charger recovers from — to the charger that is all one session and its energy meter keeps running through it. Initial SOC is retained and the calculation accounts for accumulated energy. Unplugging and reconnecting requires a new initial value.
 
 **Your own value always wins.** Move the slider by hand and it stays until the next plug-in — including across a Home Assistant restart, or saving the integration's options mid-charge.
 
@@ -462,7 +461,7 @@ automation:
 
 ## Dashboard
 
-A ready-made **Sections** dashboard view with **every Eveus entity** is in [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.2**). The Ukrainian version, with the same layout, is [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml). Home Assistant does not translate dashboard labels, so each file has its own labels; the entity IDs are the same in both, so you can swap files at any time without losing history or automations.
+A ready-made **Sections** dashboard view with the main Eveus readings and controls is in [`docs/dashboard.yaml`](docs/dashboard.yaml) (**v1.2**). The Ukrainian version, with the same layout, is [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml). Home Assistant does not translate dashboard labels, so each file has its own labels; the entity IDs are the same in both, so you can swap files at any time without losing history or automations.
 
 The two graphs need the [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) card from HACS. Every other card is a standard Home Assistant card.
 
@@ -511,7 +510,7 @@ To add EV charging to Home Assistant's Energy dashboard:
 3. Pick `sensor.eveus_ev_charger_total_energy` and save.
 
 Charging shows up as its own bar in the energy graphs, with daily and monthly
-history. The integration tracks cost itself — see
+history. The charger calculates cost and the integration displays it — see
 `sensor.eveus_ev_charger_session_cost` and the Counter A and B cost sensors.
 They use the tariffs configured on the charger, including the night rate.
 
@@ -523,8 +522,8 @@ URL, then fill in the two or three fields it asks for — no YAML.
 
 | Blueprint | What it does | URL |
 | --- | --- | --- |
-| Charging session notification | Notifies on start and finish, with the session's energy, cost and duration, through the action of your choice | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
-| Stop charging on low house battery | When your inverter's battery drops below a threshold, stops charging with the charger's own **Stop Charging** switch, not by cutting its power. Fully local | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
+| Charging session notification | Notifies on start and finish through the action of your choice; the finish message includes session energy, cost and duration | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
+| Stop charging on low house battery | When your inverter's battery stays below a threshold for two minutes, stops charging with the charger's own **Stop Charging** switch, not by cutting its power. Does not automatically resume charging after recovery | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
 
 ## Troubleshooting
 
@@ -532,7 +531,7 @@ URL, then fill in the two or three fields it asks for — no YAML.
 | --- | --- |
 | Setup cannot connect | The setup dialog shows the reason in parentheses — e.g. `Failed to connect to charger (HTTP 404)` or `(Connection error: TimeoutError)`. Check the charger is powered on, HA can reach the charger IP/hostname, credentials are correct, and the selected model matches the charger |
 | Controls do not respond | Check **Connection Quality**, whether the charger is reachable, and the credentials via **Reconfigure**; then wait for the next poll |
-| SOC sensors are missing | Set the integration mode to Advanced under Configure, then restart/reload the integration if just changed |
+| SOC sensors are missing | Set the integration mode to Advanced under Configure, the integration reloads automatically after saving |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal: the integration polls less often and does not fill the log with errors |
 | A Repairs notice appeared | See [Safety notices](#-safety-notices) for what each one means and what to do |
@@ -540,13 +539,13 @@ URL, then fill in the two or three fields it asks for — no YAML.
 
 ### The charger does not appear after installing
 
-Work through these in order — all three are far more common than an actual fault:
+Work through these in order:
 
 1. **Installing from HACS does not add the integration.** HACS only downloads the files, and it creates its own entry named *Eveus EV Charger* holding a single update entity — that entry is HACS, not your charger. After installing, restart Home Assistant, then go to **Settings → Devices & Services → Add Integration** and add **Eveus EV Charger** separately.
 2. **Check the disabled integrations.** A disabled entry vanishes from the device list entirely. On **Settings → Devices & Services**, scroll to the bottom of the **Integrations** tab and click **Show disabled integrations**; re-enable the entry from there.
 3. **Check the Integrations tab, not Devices.** If setup fails, the entry exists but no device or entities are created yet — so it is invisible under Devices while the *Eveus* card on the **Integrations** tab shows **Failed setup, will retry**. Open that card to see the reason, which also appears once in **Settings → System → Logs**.
 
-A working charger creates roughly 85 entities. If you see a single update entity, you are looking at the HACS entry, not the integration.
+The number of entities depends on the integration mode and phase count. If you see a single update entity, you are looking at the HACS entry, not the integration.
 
 ### Older charger firmware
 
@@ -558,7 +557,7 @@ If a charger still fails to set up, note the error shown in the setup dialog, fi
 
 ## Privacy And Diagnostics
 
-The integration stores only the charger connection details needed by Home Assistant. Diagnostics downloads redact credentials and identifying fields before export. Charger communication stays on your LAN.
+Home Assistant stores connection details, SOC settings and the last-session summary. Entity history follows your Recorder settings. Diagnostics downloads redact credentials and identifying fields before export. Charger communication stays on your LAN.
 
 ---
 
