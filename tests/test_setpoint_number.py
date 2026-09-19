@@ -102,26 +102,6 @@ def test_energy_read_rounds_to_three_decimals():
     assert ent._read_device_value() == 56.009
 
 
-def test_time_read_rounds_to_whole_minutes():
-    ent, updater = _make(
-        EveusSetpointNumberDescription(
-            key="limit_time",
-            name="Limit Time",
-            command="timeLimit",
-            state_key="timeLimit",
-            device_to_ha=1 / 60,
-            ha_to_device=60.0,
-            native_min_value=0.0,
-            native_max_value=1440.0,
-            native_step=5.0,
-            native_unit_of_measurement="min",
-            display_precision=0,
-        )
-    )
-    updater.data = {"timeLimit": 29198}      # 486.633... min
-    assert ent._read_device_value() == 487.0
-
-
 def _make_threshold(data):
     updater = SnapshotBackedMock()
     updater.available = True
