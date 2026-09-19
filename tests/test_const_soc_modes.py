@@ -49,14 +49,14 @@ def test_update_interval_constants():
     assert const.CHARGING_UPDATE_INTERVAL == 30
     assert const.IDLE_UPDATE_INTERVAL == 60
     assert const.OFFLINE_UPDATE_INTERVAL == 60
-    assert const.UPDATE_TIMEOUT == 5
-    assert const.COMMAND_TIMEOUT == 7
+    assert const.UPDATE_TIMEOUT == 10
+    assert const.COMMAND_TIMEOUT == 12
 
 
 def test_command_timeout_bounds_how_long_a_stalled_charger_holds_the_lock():
     # A command retries twice, so the command lock is held for three timeouts
     # plus both backoffs (and their jitter) before it gives up. Measured /main
-    # latency is 45-340 ms; 77 s of lock time behind a dead charger made a
+    # latency is 45-410 ms; 77 s of lock time behind a dead charger made a
     # queued SOC-limit Stop wait more than a minute.
     from custom_components.eveus import common_command
 
@@ -65,7 +65,7 @@ def test_command_timeout_bounds_how_long_a_stalled_charger_holds_the_lock():
         + sum(common_command._COMMAND_RETRY_BACKOFF)
         + common_command._COMMAND_RETRY_JITTER * common_command._COMMAND_RETRY_ATTEMPTS
     )
-    assert worst_case <= 30
+    assert worst_case <= 40
     assert const.COMMAND_TIMEOUT == const.UPDATE_TIMEOUT + 2
 
 
