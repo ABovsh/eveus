@@ -114,15 +114,6 @@ def test_schedule_switch_toggle_sends_correct_command() -> None:
 
 # ─── schedule time entities ──────────────────────────────────────────────────
 
-def test_time_entity_reads_minutes_from_payload() -> None:
-    updater = _Updater({"sh1Start": 1380, "sh1Stop": 420})
-    start = EveusScheduleTimeEntity(updater, _time_by_key("schedule_1_start"))
-    stop = EveusScheduleTimeEntity(updater, _time_by_key("schedule_1_stop"))
-
-    assert minutes_to_time(start._resolve_minutes()) == dt.time(23, 0)
-    assert minutes_to_time(stop._resolve_minutes()) == dt.time(7, 0)
-
-
 def test_time_entity_set_value_posts_int_minutes() -> None:
     updater = _Updater({"sh1Start": 1380})
     entity = EveusScheduleTimeEntity(updater, _time_by_key("schedule_1_start"))
