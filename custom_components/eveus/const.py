@@ -268,6 +268,11 @@ def soc_update_signal(entry_id: str) -> str:
     return f"eveus_soc_update_{entry_id}"
 
 
+def poll_failure_signal(entry_id: str) -> str:
+    """Per-entry dispatcher signal fired on every failed poll."""
+    return f"eveus_poll_failure_{entry_id}"
+
+
 def get_soc_mode(entry) -> str:
     """Return the SOC mode for a config entry.
 

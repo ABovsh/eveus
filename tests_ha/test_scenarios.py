@@ -64,6 +64,7 @@ HOST_B = "192.168.1.61"  # NOSONAR(python:S1313) - RFC 1918 test fixture
 
 STATE_SENSOR = "sensor.eveus_ev_charger_state"
 VOLTAGE = "sensor.eveus_ev_charger_voltage"
+QUALITY = "sensor.eveus_ev_charger_connection_quality"
 CURRENT = "number.eveus_ev_charger_charging_current"
 LAST_SESSION_ENERGY = "sensor.eveus_ev_charger_last_session_energy"
 
@@ -323,6 +324,11 @@ async def test_outage(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     await scenario.advance(third)
     await scenario.fail()  # failure 2 (repeated, no re-notify): still held
     assert hass.states.get(VOLTAGE).state == "226.0"
+    # HA re-notifies nothing on a repeated failure, but Connection Quality
+    # describes the failing link itself: 1 success of 3 polls is 33 %, not
+    # the 50 % the first failure left (live 2026-09-19: froze at 95 "Good"
+    # through a five-minute outage).
+    assert hass.states.get(QUALITY).state == "33"
     await scenario.advance(third)
     await scenario.fail()  # failure 3: still held (< grace so far)
     assert hass.states.get(VOLTAGE).state == "226.0"

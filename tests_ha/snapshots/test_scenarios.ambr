@@ -9044,9 +9044,9 @@
         }),
       ),
       'sensor.eveus_ev_charger_connection_quality': tuple(
-        '50',
+        '33',
         dict({
-          'connection_quality': 50,
+          'connection_quality': 33,
           'friendly_name': 'Eveus EV Charger Connection Quality',
           'icon': 'mdi:connection',
           'latency_avg': 0.0,
@@ -10632,14 +10632,14 @@
         }),
       ),
       'sensor.eveus_ev_charger_connection_quality': tuple(
-        '33',
+        '25',
         dict({
-          'connection_quality': 33,
+          'connection_quality': 25,
           'friendly_name': 'Eveus EV Charger Connection Quality',
           'icon': 'mdi:connection',
           'latency_avg': 0.0,
           'state_class': <SensorStateClass.MEASUREMENT: 'measurement'>,
-          'status': 'Poor',
+          'status': 'Critical',
           'unit_of_measurement': '%',
         }),
       ),

@@ -1892,3 +1892,36 @@ def test_recovery_and_shutdown_cancel_pending_grace_timers(
     assert len(timers) == 4
     asyncio.run(updater.async_shutdown())
     assert all(t.called for t in timers)
+
+
+def test_every_failed_poll_is_announced_to_the_link_sensors(
+    updater: EveusUpdater, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HA notifies listeners only on the first failure; Connection Quality needs each one."""
+    from custom_components.eveus.const import poll_failure_signal
+
+    sent: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        common_network, "async_dispatcher_send", lambda hass, signal: sent.append((hass, signal))
+    )
+    updater.config_entry = SimpleNamespace(entry_id="entry-1")
+
+    updater._record_failure(asyncio.TimeoutError())
+    updater._record_failure(asyncio.TimeoutError())
+
+    assert sent == [(updater.hass, poll_failure_signal("entry-1"))] * 2
+
+
+def test_failed_poll_without_an_entry_announces_nothing(
+    updater: EveusUpdater, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setup-time updaters have no entry yet; a failure there must not raise."""
+    sent: list[str] = []
+    monkeypatch.setattr(
+        common_network, "async_dispatcher_send", lambda hass, signal: sent.append(signal)
+    )
+    updater.config_entry = None
+
+    updater._record_failure(asyncio.TimeoutError())
+
+    assert sent == []

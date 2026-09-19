@@ -22,11 +22,13 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
 from .common_base import EveusSensorBase
 from .const import (
+    poll_failure_signal,
     get_charging_state,
     get_error_state,
     get_normal_substate,
@@ -148,6 +150,17 @@ class OptimizedEveusSensor(EveusSensorBase):
         if self._spec.restores_session_hold:
             self._seed_session_hold(await self.async_get_last_state())
         await super().async_added_to_hass()
+        if self._spec.available_when_offline:
+            # The link metric moves on every failed poll, which HA does not
+            # announce; the value is a whole percent of a 20-poll window, so
+            # an outage writes at most 20 rows before it settles at 0.
+            self.async_on_remove(
+                async_dispatcher_connect(
+                    self.hass,
+                    poll_failure_signal(self._updater.config_entry.entry_id),
+                    self._handle_coordinator_update,
+                )
+            )
 
     def _seed_session_hold(self, state) -> None:
         """Re-arm `_session_time_seconds` from the state HA kept for us.

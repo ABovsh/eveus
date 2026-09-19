@@ -14,11 +14,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .common_command import CommandManager
 from .const import (
+    poll_failure_signal,
     CHARGING_STATES,
     CHARGING_UPDATE_INTERVAL,
     CONNECTED_STATES,
@@ -717,6 +719,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._consecutive_failures += 1
         self._device_available = False
         self._start_outage_clock()
+        # HA notifies listeners only on the success->failure edge, so without
+        # this Connection Quality froze at its first-failure value for the
+        # whole outage. Only the sensors that describe the link subscribe;
+        # every other entity keeps the edge-only update.
+        if self.hass is not None and self.config_entry is not None:
+            async_dispatcher_send(
+                self.hass, poll_failure_signal(self.config_entry.entry_id)
+            )
         # Same reasoning as the UpdateFailed message below: a PayloadError's
         # text is ours, names the rule that rejected the poll, and carries no
         # credentials, host, or body content. Diagnostics is the artifact users

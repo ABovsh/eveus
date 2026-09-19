@@ -1274,3 +1274,47 @@ def test_model_bound_on_a_setpoint_comes_from_the_charger_not_the_spec() -> None
     assert spec.value_fn(EveusTestUpdater({"currentSet": 32}, model="16A"), None) is None
     assert spec.value_fn(EveusTestUpdater({"currentSet": 14}, model="16A"), None) == 14
     assert spec.value_fn(EveusTestUpdater({"currentSet": 32}, model="32A"), None) == 32
+
+
+@pytest.mark.parametrize("offline_ok", [True, False])
+async def test_only_link_sensors_follow_every_failed_poll(monkeypatch, offline_ok) -> None:
+    """HA announces only the first failed poll; the link metric moves on each one.
+
+    A sensor that stays visible offline subscribes to the per-entry failure
+    signal and recomputes on it. Every other sensor keeps the edge-only update,
+    so an outage costs no extra work — and no recorder rows — outside the link
+    sensors.
+    """
+    from custom_components.eveus import common_base, sensor_definitions
+    from custom_components.eveus.const import poll_failure_signal
+
+    async def _no_base_setup(self) -> None:
+        return None
+
+    monkeypatch.setattr(common_base.EveusSensorBase, "async_added_to_hass", _no_base_setup)
+    connected: list[tuple[str, object]] = []
+
+    def _connect(hass, signal, target):
+        connected.append((signal, target))
+        return lambda: None
+
+    monkeypatch.setattr(sensor_definitions, "async_dispatcher_connect", _connect)
+    updater = _Updater()
+    updater.config_entry = SimpleNamespace(entry_id="entry-1")
+    entity = OptimizedEveusSensor(
+        updater,
+        EveusSensorEntityDescription(
+            key="link_probe",
+            name="Link Probe",
+            value_fn=lambda updater, hass: 1,
+            available_when_offline=offline_ok,
+        ),
+    )
+    await entity.async_added_to_hass()
+
+    if offline_ok:
+        assert connected == [
+            (poll_failure_signal("entry-1"), entity._handle_coordinator_update)
+        ]
+    else:
+        assert connected == []
