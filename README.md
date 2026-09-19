@@ -28,14 +28,85 @@ requiring internet access.
 
 ## Features
 
-- **Charger readings:** voltage, current, power, temperatures and ground status; per-phase current and voltage on three-phase installations.
-- **Charging control:** current, stop, one-charge mode, two schedules and adaptive charging.
-- **Energy and cost:** current and last sessions, total consumption, counters A/B and charger tariffs.
-- **EV battery estimates:** SOC, time, energy and cost to target; stopping at a target SOC in Advanced mode.
-- **Automations and notices:** device triggers, events, ready-made blueprints and fault notices.
+### 🎛️ Local charging control
 
-You can add several chargers, each with its own device and entities.
-The integration and card are available in English and Ukrainian.
+Control the charger on your local network, even without internet access. Adjust current, stop or allow charging, enable one-charge mode and set time,
+energy and cost limits. Controls are available on dashboards and in automations.
+The integration checks command acceptance and verifies setting changes against
+the charger's response; Home Assistant shows any errors.
+
+### 🔋 SOC estimates, finish time and stopping at your target
+
+In Advanced mode, the integration estimates battery SOC and shows the time,
+energy and cost needed to reach your target. A separate finish-time sensor works
+with countdown cards and time-based automations. Estimates account for initial
+SOC, battery capacity and charging losses.
+
+If Home Assistant already has a car battery sensor, the integration can fill
+**Initial SOC** automatically when charging starts. Pausing or restarting
+Home Assistant preserves the current-session calculation. You can also enable
+stopping at the target SOC; the integration handles this, so Home Assistant
+must be running and able to reach the charger.
+
+### 💰 Charging cost that accounts for tariff changes
+
+See current-session energy and cost, total consumption and two separately
+resettable counters, A/B. Costs come from the charger and account for tariff
+changes during charging, including a switch from night to daytime rates.
+The last-session summary — energy, cost and duration — remains available after
+Home Assistant restarts and while the charger is powered off. Add consumption
+to the Energy dashboard to view its history.
+
+### 📱 A ready-made card for everyday use
+
+The Eveus card is part of the integration and offers four layouts, from a
+compact status row to charging controls and SOC settings. It follows the
+integration's Basic or Advanced mode, displays faults and asks for confirmation
+before stopping an active charge. A ready-made dashboard is also available
+for separate cards and graphs.
+
+### 🧩 Automations for charging and your home energy system
+
+Trigger automations when the car connects, charging starts or finishes, or the
+charger reports an error, using device triggers in the Home Assistant editor.
+The finish event includes session energy, cost and duration; reaching the SOC
+limit has its own event.
+
+Two ready-made blueprints help you set up session notifications and stop
+charging when your home inverter battery is low. Charger entities can also
+be used in your own load-management automations.
+
+### ⚡ Charger readings in one place
+
+View voltage, current, power, box and plug temperatures, ground status and
+leakage current. Three-phase installations have separate phase current and
+voltage readings. **Not Charging Reason** helps explain why the car is not
+charging: the charger may be waiting for the car or a schedule, a limit may
+have been reached, or OCPP may be in control.
+
+### 🕒 Schedules and adaptive charging
+
+Configure two charging windows with their own current and energy limits.
+Schedules are stored on the charger and run independently of Home Assistant.
+Adaptive charging lets the charger reduce current when mains voltage drops;
+Home Assistant exposes the mode selector, undervoltage threshold and the
+current cap selected by the charger.
+
+### 🛡️ Notices for faults and conflicting controls
+
+The integration shows notices for missing ground, disabled ground protection,
+overheating, leakage, charger faults and a low internal battery. Each notice
+in **Repairs** explains the condition and what to do next. Separate notices
+help correct the charger clock and connection settings.
+
+OCPP controls are also available in Home Assistant: a switch allows the server
+connection and a sensor shows its status. While OCPP is enabled, the integration
+warns that the server or mobile app may change current, limits and schedules.
+
+Add **multiple chargers**, each with its own device and entities. The integration
+and card are available in **English and Ukrainian**. Readings resume automatically
+after power and network connectivity return; older firmware is supported with
+capabilities depending on the fields it provides.
 
 ## Requirements
 
