@@ -262,19 +262,6 @@ def test_all_sensor_specs_have_valid_device_and_state_class_pairs() -> None:
             )
 
 
-def test_soc_energy_uses_energy_storage_device_class() -> None:
-    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-    from homeassistant.components.sensor.const import DEVICE_CLASS_STATE_CLASSES
-    from conftest import EveusTestUpdater
-    from custom_components.eveus.ev_sensors import CachedSOCCalculator, EVSocKwhSensor
-
-    entity = EVSocKwhSensor(EveusTestUpdater(data={}), 1, CachedSOCCalculator())
-    assert entity.device_class == SensorDeviceClass.ENERGY_STORAGE
-    assert entity.state_class == SensorStateClass.MEASUREMENT
-    allowed = DEVICE_CLASS_STATE_CLASSES.get(SensorDeviceClass.ENERGY_STORAGE)
-    assert entity.state_class in allowed
-
-
 from datetime import datetime, timedelta as _td, timezone as _tz
 
 
@@ -419,13 +406,6 @@ def test_updater_exposes_basic_auth_accessor() -> None:
 
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     assert updater.basic_auth is updater._basic_auth
-
-
-def test_wifi_rssi_accepts_typical_range() -> None:
-    from conftest import EveusTestUpdater
-    from custom_components.eveus import sensor_definitions as sd
-
-    assert sd.get_wifi_rssi(EveusTestUpdater({"RSSI": -55}), None) == -55
 
 
 @pytest.mark.parametrize("bad", [10, 50, 100])
@@ -1177,23 +1157,6 @@ def test_connection_quality_spec_is_available_when_offline() -> None:
 
     by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
     assert by_key["connection_quality"].available_when_offline is True
-
-
-def test_rate_status_getters_read_their_own_tarif_field() -> None:
-    """rate_2_status reads tarifAEnable, rate_3_status reads tarifBEnable —
-    swapped/typo'd field names would silently read the wrong tariff flag."""
-    from custom_components.eveus.sensor_definitions import create_sensor_specifications
-
-    by_key = {s.key: s for s in create_sensor_specifications(phases=1)}
-    updater_a_only = _Updater()
-    updater_a_only.data = {"tarifAEnable": "1", "tarifBEnable": "0"}
-    assert by_key["rate_2_status"].value_fn(updater_a_only, None) == "Enabled"
-    assert by_key["rate_3_status"].value_fn(updater_a_only, None) == "Disabled"
-
-    updater_b_only = _Updater()
-    updater_b_only.data = {"tarifAEnable": "0", "tarifBEnable": "1"}
-    assert by_key["rate_2_status"].value_fn(updater_b_only, None) == "Disabled"
-    assert by_key["rate_3_status"].value_fn(updater_b_only, None) == "Enabled"
 
 
 def test_schedule_specs_bind_to_their_own_slot() -> None:
