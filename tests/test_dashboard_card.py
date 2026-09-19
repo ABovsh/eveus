@@ -281,12 +281,6 @@ def test_card_looks_entities_up_through_the_websocket_command():
     assert "_substate$" not in source, "no entity_id pattern matching"
 
 
-def _container_rule(source: str, max_width: int) -> str:
-    marker = f"@container (max-width: {max_width}px){{"
-    assert marker in source, f"missing {marker}"
-    return source.split(marker, 1)[1].split("\n", 1)[0]
-
-
 def _card_function(source: str, name: str) -> str:
     start = source.index(f"  {name}(")
     return source[start:source.index("\n  }\n", start)]
@@ -299,14 +293,12 @@ def test_soc_steppers_stay_four_across_on_phone_widths():
     assert ".g4{grid-template-columns:repeat(2" not in source
 
 
-def test_tile_icon_sits_left_and_text_is_centred_beside_it():
-    """A 22 px icon on the left uses the tile's height; label and value centre in the rest."""
+def test_tile_values_have_the_full_width_below_the_icon_and_label():
+    """The icon no longer takes space away from a session's energy and cost."""
     source = CARD.read_text(encoding="utf-8")
-    rule = lambda sel: source.split(f"\n{sel}{{", 1)[1].split("}", 1)[0]
-    assert "flex-direction:column" not in rule(".t")
-    assert "--mdc-icon-size:22px" in rule(".t ha-icon")
-    text = rule(".tx")
-    assert "flex:1" in text and "align-items:center" in text and "text-align:center" in text
+    tile = _card_function(source, "_tile")
+    assert '<div class="th"><ha-icon' in tile
+    assert '${label}</span></div><span class="v">${value}' in tile
 
 
 def test_soc_bar_marks_where_the_session_started():
@@ -326,10 +318,15 @@ def test_soc_limit_toggle_is_not_under_the_initial_soc_stepper():
     assert row.index("t.socLimit") > row.index("t.finish")
 
 
-def test_tile_values_shrink_on_phone_widths():
-    """The "100%→17h45m" ETA needs ~93 px; a 3-column tile at 330 offers less at full size."""
+def test_values_wrap_instead_of_being_hidden_on_phone_widths():
+    """Money and units must remain visible even when they need a second line."""
     source = CARD.read_text(encoding="utf-8")
-    assert ".v{font-size:11px}" in _container_rule(source, 360)
+    assert "text-overflow:ellipsis" not in source
+    for selector in (".v", ".ch"):
+        rule = source.split(f"\n{selector}{{", 1)[1].split("}", 1)[0]
+        assert "flex-wrap:wrap" in rule
+    assert ".ce{display:none}" not in source
+    assert ".ce,.ce+.ar{display:none}" not in source
 
 
 def test_editor_mode_options_match_the_integration_mode_names():

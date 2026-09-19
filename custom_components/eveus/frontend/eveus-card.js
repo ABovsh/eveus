@@ -6,14 +6,14 @@ const LAYOUTS = ["compact", "status", "control", "full"];
 const I18N = {
   en: {
     soc: "SOC", eta: "Time to SOC", current: "Current", session: "Session", power: "Power",
-    state: "State", one: "One charge", stop: "Stop", on: "On", off: "Off", setCurrent: "Charging current",
+    state: "State", one: "One charge", stop: "Stop", on: "On", off: "Off", setCurrent: "Current",
     initial: "Initial", target: "Target", capacity: "Capacity", correction: "Loss", socLimit: "SOC limit",
     toTarget: "To target", finish: "Finish", temp: "Temp", voltage: "Voltage", paused: "Paused",
     stopConfirm: "Stop charging?", noDevice: "No Eveus charger found", ground: "No ground",
   },
   uk: {
     soc: "Заряд", eta: "До цілі", current: "Струм", session: "Сесія", power: "Потужність",
-    state: "Стан", one: "Один заряд", stop: "Стоп", on: "Увімк", off: "Вимк", setCurrent: "Струм заряду",
+    state: "Стан", one: "Один заряд", stop: "Стоп", on: "Увімк", off: "Вимк", setCurrent: "Струм",
     initial: "Початковий", target: "Ціль", capacity: "Ємність", correction: "Втрати", socLimit: "Ліміт SOC",
     toTarget: "До цілі", finish: "Кінець", temp: "Темп.", voltage: "Напруга", paused: "Пауза",
     stopConfirm: "Зупинити заряджання?", noDevice: "Станцію Eveus не знайдено", ground: "Немає заземлення",
@@ -95,7 +95,7 @@ class EveusCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._resolve();
-    const sig = Object.values(this._ids || {}).map((id) => hass.states[id]?.state).join("|") + JSON.stringify(this._pending) + hass.locale?.language;
+    const sig = Object.values(this._ids || {}).map((id) => hass.states[id]?.state).join("|") + JSON.stringify(this._pending) + hass.locale?.language + hass.themes?.darkMode;
     if (sig !== this._sig && !this._sliding) { this._sig = sig; this._render(); }
   }
 
@@ -174,9 +174,9 @@ class EveusCard extends HTMLElement {
     const data = (toggle ? `data-toggle="${toggle}"` : more ? `data-more="${more}"` : "") + (hold ? ` data-hold="${hold}"` : "");
     const active = color !== C.grey;
     return `<div class="t ${active ? "act" : ""} ${cls}" style="--c:${color}" ${data}>
-      <ha-icon icon="${icon}"></ha-icon><div class="tx"><span class="l">${label}</span><span class="v">${value}</span></div></div>`;
+      <div class="th"><ha-icon icon="${icon}"></ha-icon><span class="l">${label}</span></div><span class="v">${value}</span></div>`;
   }
-  _pair(from, to, color) { return `<i>${from}</i><i class="ar">→</i><b style="color:${color}">${to}</b>`; }
+  _pair(from, to, color) { return `<i>${from}</i><i class="ar">→</i><b style="--value-color:${color}">${to}</b>`; }
 
   _stepper(k, label, unit, d = 0) {
     const s = this._s(k);
@@ -217,11 +217,11 @@ class EveusCard extends HTMLElement {
       tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.eta, value: this._pair(`${fmt(tgt)}%`, this._eta(), col), color: col, more: this._ids.eta, hold: this._ids.targetSoc }));
     } else {
       const p = num(this._s("power"));
-      tiles.push(this._tile({ icon: this._batteryIcon(), label: t.power, value: `<b style="color:${col}">${p === null ? "--" : (p / 1000).toFixed(1)} kW</b>`, color: col, more: this._ids.power }));
-      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.session, value: `<b style="color:${col}">${this._s("sessionTime")?.state ?? "--"}</b>`, color: col, more: this._ids.sessionTime }));
+      tiles.push(this._tile({ icon: this._batteryIcon(), label: t.power, value: `<b style="--value-color:${col}">${p === null ? "--" : (p / 1000).toFixed(1)} kW</b>`, color: col, more: this._ids.power }));
+      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.session, value: `<b style="--value-color:${col}">${this._s("sessionTime")?.state ?? "--"}</b>`, color: col, more: this._ids.sessionTime }));
     }
     tiles.push(this._tile({ icon: this._charging ? "mdi:flash" : "mdi:flash-outline", label: t.current, value: this._pair(`${fmt(set)}A`, `${fmt(cur)}A`, col), color: col, more: this._ids.current, hold: this._ids.chargingCurrent }));
-    return { tiles, col, sess: this._tile({ icon: "mdi:battery-charging", label: t.session, value: `<b style="color:${col}">${e === null ? "--" : e < 10 ? e.toFixed(1) : Math.round(e)}kWh</b><i class="ar">·</i><b style="color:${col}">₴${fmt(cost)}</b>`, color: col, more: this._ids.sessionEnergy }) };
+    return { tiles, col, sess: this._tile({ icon: "mdi:battery-charging", label: t.session, value: `<b style="--value-color:${col}">${e === null ? "--" : e < 10 ? e.toFixed(1) : Math.round(e)}kWh</b><i class="ar">·</i><b style="--value-color:${col}">₴${fmt(cost)}</b>`, color: col, more: this._ids.sessionEnergy }) };
   }
 
   _alerts() {
@@ -239,7 +239,7 @@ class EveusCard extends HTMLElement {
     const soc = num(this._s("soc")), p = num(this._s("power"));
     const e = num(this._s("sessionEnergy")), cost = num(this._s("sessionCost"));
     const chips = [];
-    if (this._advanced) chips.push(`<b style="color:${col}">${fmt(soc)}%</b>`);
+    if (this._advanced) chips.push(`<b style="--value-color:${col}">${fmt(soc)}%</b>`);
     chips.push(`<span>${p === null ? "--" : (p / 1000).toFixed(1)}kW</span>`);
     if (this._advanced) { if (this._charging) chips.push(`<span>${this._eta()}</span>`); }
     else chips.push(`<span>${this._s("sessionTime")?.state?.replace(/\s+/g, "") ?? "--"}</span>`);
@@ -247,7 +247,7 @@ class EveusCard extends HTMLElement {
     chips.push(`<span>₴${fmt(cost)}</span>`);
     return `<div class="cp" data-more="${this._ids.state}" style="--c:${col}"><div class="cr">
       <ha-icon icon="${this._batteryIcon()}" style="color:${col}"></ha-icon><span class="v cst">${this._stateText()}</span>
-      <div class="ch">${chips.join('<i class="ar">·</i>')}</div></div>${this._bar()}</div>`;
+      <div class="ch">${chips.join("")}</div></div>${this._bar()}</div>`;
   }
 
   _status() {
@@ -256,7 +256,7 @@ class EveusCard extends HTMLElement {
     const reason = this._charging ? "" : this._s("reason")?.state;
     return `<div class="g3">${tiles.join("")}${sess}
       ${this._advanced
-        ? this._tile({ icon: "mdi:sine-wave", label: t.power, value: `<b style="color:${col}">${p === null ? "--" : (p / 1000).toFixed(1)}kW</b><i class="ar">·</i><i>${fmt(v)}V</i>`, color: col, more: this._ids.power })
+        ? this._tile({ icon: "mdi:sine-wave", label: t.power, value: `<b style="--value-color:${col}">${p === null ? "--" : (p / 1000).toFixed(1)}kW</b><i class="ar">·</i><i>${fmt(v)}V</i>`, color: col, more: this._ids.power })
         : this._tile({ icon: "mdi:sine-wave", label: t.voltage, value: `<i>${fmt(v)} V</i>`, more: this._ids.voltage })}
       ${this._tile({ icon: "mdi:ev-station", label: t.state, value: `<b>${this._stateText()}</b>`, color: col, more: this._ids.state, cls: reason ? "wide" : "" })}
       </div>${this._bar()}${this._alerts()}`;
@@ -301,7 +301,16 @@ class EveusCard extends HTMLElement {
       return;
     }
     const body = this[`_${this._config.layout === "control" ? "controls" : this._config.layout}`]();
-    root.innerHTML = `<style>${STYLE}</style><ha-card class="${this._charging ? "chg" : ""} ${this._config.layout}" style="--c:${this._socColor()}">${body}</ha-card>`;
+    // Keep the charging pulse at its current phase when a reading updates.
+    const phases = new Map();
+    for (const animation of root.getAnimations()) {
+      if (!phases.has(animation.animationName)) phases.set(animation.animationName, animation.currentTime);
+    }
+    root.innerHTML = `<style>${STYLE}</style><ha-card class="${this._charging ? "chg" : ""} ${this._config.layout}" style="--c:${this._socColor()};--value-weight:${this._hass.themes?.darkMode === false ? "60%" : "100%"}">${body}</ha-card>`;
+    for (const animation of root.getAnimations()) {
+      const phase = phases.get(animation.animationName);
+      if (phase !== undefined && phase !== null) animation.currentTime = phase;
+    }
   }
 
   // ---------- actions ----------
@@ -366,62 +375,71 @@ class EveusCard extends HTMLElement {
 }
 
 const STYLE = `
-ha-card{container-type:inline-size;padding:4px;display:flex;flex-direction:column;gap:4px;border-radius:14px;overflow:hidden;
-  transition:box-shadow .4s}
-ha-card.chg{animation:bp 3s ease-in-out infinite}
-@keyframes bp{0%,100%{box-shadow:0 1px 8px color-mix(in srgb,var(--c) 10%,transparent)}50%{box-shadow:0 2px 16px color-mix(in srgb,var(--c) 30%,transparent)}}
+ha-card{container-type:inline-size;box-sizing:border-box;padding:4px;display:flex;flex-direction:column;gap:4px;border-radius:14px;overflow:hidden;
+  line-height:1.2;transition:box-shadow .3s}
+ha-card.chg{animation:bp 2.4s ease-in-out infinite}
+@keyframes bp{0%,100%{box-shadow:0 1px 10px color-mix(in srgb,var(--c) 22%,transparent),inset 0 0 6px color-mix(in srgb,var(--c) 5%,transparent)}50%{box-shadow:0 2px 22px color-mix(in srgb,var(--c) 48%,transparent),inset 0 0 12px color-mix(in srgb,var(--c) 12%,transparent)}}
 .g3,.g4{display:grid;gap:4px;grid-template-columns:repeat(3,minmax(0,1fr))}
 .g4{grid-template-columns:repeat(4,minmax(0,1fr))}
-.t,.st,.sl,.cp{box-sizing:border-box;border-radius:12px;padding:4px 6px;cursor:pointer;min-width:0;
-  background:rgba(127,127,127,.06);border:1px solid rgba(127,127,127,.14);transition:all .3s}
-.t.act{background:linear-gradient(145deg,color-mix(in srgb,var(--c) 14%,transparent),color-mix(in srgb,var(--c) 3%,transparent));
-  border-color:color-mix(in srgb,var(--c) 30%,transparent)}
-.t{display:flex;align-items:center;gap:6px}
+.t,.st,.sl,.cp{box-sizing:border-box;border-radius:10px;padding:3px 5px;cursor:pointer;min-width:0;
+  background:rgba(127,127,127,.05);border:1px solid rgba(127,127,127,.16);transition:background .2s,border-color .2s}
+.t.act{background:linear-gradient(145deg,color-mix(in srgb,var(--c) 23%,transparent),color-mix(in srgb,var(--c) 8%,transparent));
+  border-color:color-mix(in srgb,var(--c) 55%,transparent)}
+.chg .t.act{animation:tile-glow 2.4s ease-in-out infinite}
+@keyframes tile-glow{0%,100%{box-shadow:inset 0 0 5px color-mix(in srgb,var(--c) 8%,transparent)}50%{box-shadow:inset 0 0 13px color-mix(in srgb,var(--c) 25%,transparent);border-color:color-mix(in srgb,var(--c) 80%,transparent)}}
+.t{position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:center;align-items:stretch;gap:1px;text-align:center}
+.chg .t.act::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.16) 50%,transparent 70%);animation:tile-sheen 5s ease-in-out infinite}
+@keyframes tile-sheen{0%,45%{transform:translateX(-130%);opacity:0}55%{opacity:1}85%,100%{transform:translateX(130%);opacity:0}}
+.th{display:flex;align-items:center;justify-content:center;gap:5px;text-align:center;min-width:0}
 [data-hold]{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-.t ha-icon{--mdc-icon-size:22px;color:var(--c);flex:none}
-.tx{flex:1;display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
-.chg .t.act ha-icon{animation:ig 2s ease-in-out infinite}
-@keyframes ig{0%,100%{filter:drop-shadow(0 0 2px color-mix(in srgb,var(--c) 40%,transparent))}50%{filter:drop-shadow(0 0 7px color-mix(in srgb,var(--c) 75%,transparent))}}
-.l{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--secondary-text-color);opacity:.8;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.v,.sr b,.sv{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--primary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.t ha-icon{--mdc-icon-size:13px;color:var(--c);flex:none;transform:translateY(-1px)}
+.chg .t.act ha-icon,.chg .cp ha-icon{animation:ig 2.4s ease-in-out infinite}
+@keyframes ig{0%,100%{filter:drop-shadow(0 0 2px color-mix(in srgb,var(--c) 45%,transparent))}50%{filter:drop-shadow(0 0 8px color-mix(in srgb,var(--c) 90%,transparent))}}
+.l{font-size:14px;line-height:1.2;font-weight:600;letter-spacing:0;color:color-mix(in srgb,var(--primary-text-color) 80%,var(--secondary-text-color));min-width:0;overflow-wrap:anywhere}
+.v,.sr b,.sv{font-size:14px;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums;color:var(--primary-text-color);min-width:0;max-width:100%;overflow-wrap:anywhere}
+.v{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:center;column-gap:2px}
 .v i{font-style:normal;color:var(--secondary-text-color);font-weight:500}
-.ar{opacity:.5;margin:0 2px}
-.st{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 3px}
+.v>b,.v>i{max-width:100%}
+.v b[style],.ch b[style]{color:color-mix(in srgb,var(--value-color) var(--value-weight,100%),var(--primary-text-color))}
+.chg .v b[style]{text-shadow:0 0 10px color-mix(in srgb,var(--value-color) 25%,transparent)}
+.ar{opacity:.65;margin:0 1px}
+.st{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:1px;padding:3px 2px}
+.st .l{font-size:12px}
 .sr{display:flex;align-items:center;justify-content:space-between;gap:1px;width:100%}
-.sr b{text-align:center;flex:1;min-width:0}
-.sr small{font-size:9px;font-weight:500;opacity:.7;margin-left:1px}
-button{all:unset;cursor:pointer;width:20px;height:20px;border-radius:6px;text-align:center;line-height:20px;font-size:14px;
-  background:rgba(127,127,127,.14);color:var(--primary-text-color);flex:none}
+.sr b{text-align:center;flex:1}
+.sr small{font-size:10px;font-weight:500;color:var(--secondary-text-color);margin-left:1px}
+button{all:unset;box-sizing:border-box;cursor:pointer;width:20px;height:24px;border-radius:6px;text-align:center;line-height:24px;font-size:16px;
+  background:rgba(127,127,127,.12);color:var(--primary-text-color);flex:none;touch-action:manipulation}
 button:active{background:var(--primary-color);color:var(--text-primary-color)}
-.sl{display:flex;align-items:center;gap:8px;cursor:default;padding:3px 10px}
-.sl ha-icon{--mdc-icon-size:18px;color:var(--secondary-text-color);flex:none}
-.sl .l{flex:none}
-.rw{position:relative;flex:1;display:flex;align-items:center}
-input[type=range]{width:100%;margin:0;accent-color:var(--primary-color);height:22px;cursor:pointer}
-.mk{position:absolute;top:2px;width:2px;height:18px;background:${C.orange};border-radius:1px;pointer-events:none;transform:translateX(-1px)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
+@media (hover:hover){.t:hover,.st:hover,.cp:hover{border-color:color-mix(in srgb,var(--c) 55%,var(--secondary-text-color))}button:hover{background:rgba(127,127,127,.25)}}
+.sl{display:flex;align-items:center;gap:6px;cursor:default;padding:2px 8px}
+.sl ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color);flex:none}
+.sl .l{font-size:13px;flex:none;white-space:nowrap}
+.rw{position:relative;flex:1;display:flex;align-items:center;min-width:0}
+input[type=range]{width:100%;min-width:0;margin:0;accent-color:var(--primary-color);height:24px;cursor:pointer}
+.mk{position:absolute;top:3px;width:2px;height:18px;background:${C.orange};border-radius:1px;pointer-events:none;transform:translateX(-1px)}
 .sv{min-width:36px;text-align:right}
-.bar{position:relative;height:4px;border-radius:2px;background:rgba(127,127,127,.15);margin:0 6px 2px;overflow:visible}
-.bar .base{position:absolute;left:0;top:0;height:100%;border-radius:2px;background:rgba(127,127,127,.35)}
-.bar .fill{position:absolute;top:0;height:100%;border-radius:2px}
-.bar .tg{position:absolute;top:-2px;width:2px;height:8px;background:var(--primary-text-color);opacity:.6;transform:translateX(-1px)}
-.al{display:flex;align-items:center;gap:6px;font-size:12px;color:${C.red};padding:2px 8px}
-.al ha-icon{--mdc-icon-size:16px}
-.cp{display:flex;flex-direction:column;gap:5px;padding:7px 10px}
-.cr{display:flex;align-items:center;gap:8px;min-width:0}
-.cp ha-icon{--mdc-icon-size:22px;flex:none}
-.cst{flex:none;max-width:40%}
-.ch{flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;
-  white-space:nowrap;overflow:hidden;color:var(--secondary-text-color)}
+.bar{position:relative;height:4px;border-radius:2px;background:rgba(127,127,127,.15);margin:0 5px 2px;overflow:visible}
+.bar .base{position:absolute;left:0;top:0;height:100%;border-radius:2px;background:#A78BFA}
+.bar .fill{position:absolute;top:0;height:100%;border-radius:2px;overflow:hidden}
+.chg .bar .fill::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 15%,rgba(255,255,255,.6) 50%,transparent 85%);animation:flow 3s ease-in-out infinite}
+@keyframes flow{0%{transform:translateX(-100%);opacity:0}20%,80%{opacity:.8}100%{transform:translateX(100%);opacity:0}}
+.bar .tg{position:absolute;top:-2px;width:2px;height:8px;background:var(--primary-text-color);opacity:.65;transform:translateX(-1px)}
+.al{display:flex;align-items:center;gap:6px;font-size:12px;color:${C.red};padding:2px 6px;overflow-wrap:anywhere}
+.al ha-icon{--mdc-icon-size:16px;flex:none}
+.cp{display:flex;flex-direction:column;gap:5px;padding:5px 8px}
+.cr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;min-width:0}
+.cp ha-icon{--mdc-icon-size:18px;flex:none}
+.cst{flex:0 1 auto;font-size:13px;justify-content:flex-start}
+.ch{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:2px 7px;font-size:14px;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums;color:var(--primary-text-color)}
+.ch span,.ch b{max-width:100%;overflow-wrap:anywhere}
 .cp .bar{margin:0}
 .compact{padding:0}
 .compact .cp{border:none;background:none}
 .empty{padding:16px;color:var(--secondary-text-color)}
-@container (max-width: 440px){.sr b{font-size:12px}.sr small{font-size:8px;margin-left:0}.ar{margin:0 1px}.ch{font-size:12px}}
-@container (max-width: 400px){.t{padding:4px 5px;gap:4px}.t ha-icon{--mdc-icon-size:20px}.sr small.lu{display:none}.st{padding:3px 2px}.sr{gap:0}.sr button{width:18px;height:18px;line-height:18px;font-size:13px;border-radius:5px}.l{letter-spacing:.2px}}
-@container (max-width: 360px){.v{font-size:11px}.sr b{font-size:11px}.t{gap:3px;padding:4px}.t ha-icon{--mdc-icon-size:18px}.ch{font-size:11px}.cp ha-icon{--mdc-icon-size:18px}}
-@container (max-width: 350px){.t ha-icon{display:none}}
-@container (max-width: 330px){.sr small{display:none}.t{padding:4px 3px}.v{font-size:10px}.sl .l{display:none}.ce,.ce+.ar{display:none}}
+@container (max-width: 360px){.t{padding:3px}.th{gap:2px}.sr small{display:block;margin:0}.sr b{font-size:13px}.sl{gap:4px;padding:2px 5px}}
+@media (prefers-reduced-motion:reduce){ha-card.chg,.chg .t.act,.chg .t.act::after,.chg .t.act ha-icon,.chg .cp ha-icon,.chg .bar .fill::after{animation:none}.t,.st,.sl,.cp,ha-card{transition:none}.chg .bar .fill::after,.chg .t.act::after{display:none}}
 `;
 
 if (!customElements.get(CARD)) customElements.define(CARD, EveusCard);
