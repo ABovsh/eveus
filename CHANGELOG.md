@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+### ✨ Added
+- **The card's `control` and `full` layouts show more about the charge.** In Advanced mode, Time to SOC takes two rows and adds the energy and cost still needed to reach Target SOC and the charging finish time. In Basic mode, one two-row Session tile shows session time, energy, cost and voltage, and a Temperature tile shows the box and plug temperatures. Both modes show the charger state on one line under the tiles, beside the SOC bar in Advanced mode.
+
 ### 🔧 Changed
+- **One Charge and Stop Charging are icon buttons sharing one tile.** One Charge shows a lightning bolt and Stop Charging a STOP sign; the colour shows whether each is on. Stopping a charge in progress still asks for confirmation.
+- **The SOC bar stays purple up to the reached SOC once charging stops.** Energy added during the session was grey after a charge ended.
+- **`full` no longer repeats readings shown above it.** In Advanced mode, the To target and Finish tiles are replaced by Power · Voltage and the box and plug temperatures. In Basic mode, `full` shows the same as `control`.
 - **More readable dashboard cards in less space.** Larger centred labels and values, tighter spacing and wrapping keep every reading visible on narrow cards. Charging adds brighter pulses and moving highlights without restarting the animation as readings update; the SOC bar now distinguishes the charge present at the start from energy added during the session and respects reduced-motion preferences.
 
   <p>
