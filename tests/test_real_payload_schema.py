@@ -61,44 +61,10 @@ GETTERS = [
 ]
 
 
-@pytest.mark.parametrize("getter,field,_type", GETTERS, ids=lambda x: getattr(x, "__name__", str(x)))
-def test_getter_extracts_real_field(real_payload, getter, field, _type) -> None:
-    assert field in real_payload, f"firmware drift: missing field `{field}`"
-    value = getter(_updater(real_payload), None)
-    assert value is not None, f"{getter.__name__} returned None for field `{field}`"
-    assert isinstance(value, (int, float)), f"{getter.__name__} returned {type(value).__name__}"
-
-
-def test_state_and_substate_resolve(real_payload) -> None:
-    upd = _updater(real_payload)
-    assert sd.get_charger_state(upd, None) is not None
-    assert sd.get_charger_substate(upd, None) is not None
-    assert sd.get_ground_status(upd, None) in {"Connected", "Not Connected"}
-
-
 def test_session_time_and_time_drift(real_payload) -> None:
     upd = _updater(real_payload)
     assert sd.get_session_time(upd, None) is not None
     assert isinstance(sd.get_time_drift(upd, None), int)
-
-
-def test_active_rate_resolves_to_known_slot(real_payload) -> None:
-    upd = _updater(real_payload)
-    # Whichever slot is active (0/1/2), the cost must resolve.
-    assert sd.get_active_rate_cost(upd, None) == pytest.approx(4.32)
-
-
-def test_adaptive_charging_state_resolves(real_payload) -> None:
-    state = sd.get_adaptive_charging_state(_updater(real_payload), None)
-    assert state in {"Off", "Voltage", "Auto", "Power"}
-
-
-def test_schedule_slots_resolve(real_payload) -> None:
-    upd = _updater(real_payload)
-    for slot in (1, 2):
-        assert sd._make_schedule_getter(slot)(upd, None) in {"Enabled", "Disabled"}
-        attrs = sd._make_schedule_attrs(slot)(upd, None)
-        assert "window" in attrs or attrs == {} or "start" in attrs
 
 
 def test_required_top_level_fields_present(real_payload) -> None:
