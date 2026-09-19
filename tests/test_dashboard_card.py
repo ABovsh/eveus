@@ -313,9 +313,9 @@ def test_soc_limit_toggle_is_not_under_the_initial_soc_stepper():
     """Initial SOC is the stepper touched most; a toggle directly below it gets hit by mistake."""
     source = CARD.read_text(encoding="utf-8")
     full = _card_function(source, "_full")
-    row = full.split('<div class="g3">', 1)[1]
-    assert row.index("t.socLimit") > row.index("t.toTarget")
-    assert row.index("t.socLimit") > row.index("t.finish")
+    row = full.split('<div class="g3">', 1)[1].split("</div>`", 1)[0]
+    assert row.count("this._tile(") == 3
+    assert row.index("t.socLimit") > row.rindex("this._tile("), "the toggle is the last tile of the row"
 
 
 def test_values_wrap_instead_of_being_hidden_on_phone_widths():
@@ -379,3 +379,30 @@ def test_long_press_does_not_also_fire_the_tap():
     assert '"pointerdown"' in source and '"contextmenu"' in source
     click = _card_function(source, "_onClick")
     assert "this._held" in click.split("\n", 2)[1], "the hold check comes first"
+
+
+def test_to_goal_tile_spans_two_rows_with_energy_cost_and_finish():
+    """Time to SOC grows into the space the toggles freed: energy, money and finish time."""
+    source = CARD.read_text(encoding="utf-8")
+    metrics = _card_function(source, "_metrics")
+    line = next(ln for ln in metrics.splitlines() if "label: t.eta," in ln)
+    assert 'cls: "tall"' in line
+    for part in ("energyToTarget", "costToTarget", "this._finish()"):
+        assert part in metrics, part
+    assert ".t.tall{grid-row:span 2}" in source
+
+
+def test_one_charge_and_stop_are_icon_only_buttons_sharing_one_cell():
+    source = CARD.read_text(encoding="utf-8")
+    controls = _card_function(source, "_controls")
+    assert "label: t.one" not in controls and "label: t.stop" not in controls
+    assert 'class="bt"' in controls
+    assert "mdi:lightning-bolt-circle" in controls
+    assert "STOP" in source and "<polygon" in source, "a road-style STOP sign"
+    assert 'aria-label="${label}"' in controls and "t.one," in controls and "t.stop," in controls
+
+
+def test_full_layout_does_not_repeat_the_to_goal_readings():
+    source = CARD.read_text(encoding="utf-8")
+    full = _card_function(source, "_full")
+    assert "t.toTarget" not in full and "t.finish" not in full

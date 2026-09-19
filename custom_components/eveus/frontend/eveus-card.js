@@ -8,14 +8,14 @@ const I18N = {
     soc: "SOC", eta: "Time to SOC", current: "Current", session: "Session", power: "Power",
     state: "State", one: "One charge", stop: "Stop", on: "On", off: "Off", setCurrent: "Current",
     initial: "Initial", target: "Target", capacity: "Capacity", correction: "Loss", socLimit: "SOC limit",
-    toTarget: "To target", finish: "Finish", temp: "Temp", voltage: "Voltage", paused: "Paused",
+    temp: "Temp", voltage: "Voltage", paused: "Paused",
     stopConfirm: "Stop charging?", noDevice: "No Eveus charger found", ground: "No ground",
   },
   uk: {
     soc: "Заряд", eta: "До цілі", current: "Струм", session: "Сесія", power: "Потужність",
     state: "Стан", one: "Один заряд", stop: "Стоп", on: "Увімк", off: "Вимк", setCurrent: "Струм",
     initial: "Початковий", target: "Ціль", capacity: "Ємність", correction: "Втрати", socLimit: "Ліміт SOC",
-    toTarget: "До цілі", finish: "Кінець", temp: "Темп.", voltage: "Напруга", paused: "Пауза",
+    temp: "Темп.", voltage: "Напруга", paused: "Пауза",
     stopConfirm: "Зупинити заряджання?", noDevice: "Станцію Eveus не знайдено", ground: "Немає заземлення",
   },
 };
@@ -214,14 +214,17 @@ class EveusCard extends HTMLElement {
     const tiles = [];
     if (this._advanced) {
       tiles.push(this._tile({ icon: this._batteryIcon(), label: t.soc, value: this._pair(`${fmt(ini)}%`, `${fmt(socV)}%`, col), color: col, more: this._ids.soc, hold: this._ids.initialSoc }));
-      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.eta, value: this._pair(`${fmt(tgt)}%`, this._eta(), col), color: col, more: this._ids.eta, hold: this._ids.targetSoc }));
+      const et = num(this._s("energyToTarget")), ct = num(this._s("costToTarget"));
+      const goal = `${this._pair(`${fmt(tgt)}%`, this._eta(), col)}<span class="nl"></span><i>${fmt(et, et !== null && et >= 10 ? 0 : 1)}kWh</i><i class="ar">·</i><i>₴${fmt(ct)}</i>`
+        + `<span class="nl"></span><i><ha-icon icon="mdi:flag-checkered"></ha-icon> ${this._finish()}</i>`;
+      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.eta, value: goal, color: col, more: this._ids.eta, hold: this._ids.targetSoc, cls: "tall" }));
     } else {
       const p = num(this._s("power"));
       tiles.push(this._tile({ icon: this._batteryIcon(), label: t.power, value: `<b style="--value-color:${col}">${p === null ? "--" : (p / 1000).toFixed(1)} kW</b>`, color: col, more: this._ids.power }));
       tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.session, value: `<b style="--value-color:${col}">${this._s("sessionTime")?.state ?? "--"}</b>`, color: col, more: this._ids.sessionTime }));
     }
     tiles.push(this._tile({ icon: this._charging ? "mdi:flash" : "mdi:flash-outline", label: t.current, value: this._pair(`${fmt(set)}A`, `${fmt(cur)}A`, col), color: col, more: this._ids.current, hold: this._ids.chargingCurrent }));
-    return { tiles, col, sess: this._tile({ icon: "mdi:battery-charging", label: t.session, value: `<b style="--value-color:${col}">${e === null ? "--" : e < 10 ? e.toFixed(1) : Math.round(e)}kWh</b><i class="ar">·</i><b style="--value-color:${col}">₴${fmt(cost)}</b>`, color: col, more: this._ids.sessionEnergy }) };
+    return { tiles, col, sess: this._tile({ icon: "mdi:battery-charging", label: t.session, value: `<b style="--value-color:${col}">${e === null ? "--" : e < 10 ? e.toFixed(1) : Math.round(e)}kWh</b><i class="ar">·</i><b style="--value-color:${col}">₴${fmt(cost)}</b>`, color: col, more: this._ids.sessionEnergy, cls: this._advanced ? "" : "w2" }) };
   }
 
   _alerts() {
@@ -262,12 +265,14 @@ class EveusCard extends HTMLElement {
       </div>${this._bar()}${this._alerts()}`;
   }
 
+  // One charge ignores every limit; Stop is a road sign. Colour alone says on or off.
   _controls() {
     const t = this._t, { tiles, sess } = this._metrics();
     const one = this._s("oneCharge")?.state === "on", stop = this._s("stop")?.state === "on";
+    const btn = (k, on, color, label, icon) =>
+      `<div class="t ${on ? "act" : ""}" style="--c:${on ? color : C.grey}" data-toggle="${k}" role="switch" aria-checked="${on}" aria-label="${label}" title="${label}">${icon}</div>`;
     return `<div class="g3">${tiles.join("")}${sess}
-      ${this._tile({ icon: "mdi:ev-station", label: t.one, value: one ? t.on : t.off, color: one ? C.green : C.grey, toggle: "oneCharge" })}
-      ${this._tile({ icon: stop ? "mdi:play-circle" : "mdi:stop-circle", label: t.stop, value: stop ? t.paused : t.off, color: stop ? C.red : C.grey, toggle: "stop" })}
+      <div class="bt">${btn("oneCharge", one, C.green, t.one, '<ha-icon icon="mdi:lightning-bolt-circle"></ha-icon>')}${btn("stop", stop, C.red, t.stop, STOP_SIGN)}</div>
       </div>${this._bar()}${this._slider()}${this._alerts()}`;
   }
 
@@ -276,12 +281,12 @@ class EveusCard extends HTMLElement {
     let extra = "";
     if (this._advanced) {
       const lim = this._s("socLimit")?.state === "on";
-      const et = num(this._s("energyToTarget")), ct = num(this._s("costToTarget"));
+      const v = num(this._s("voltage")), p = num(this._s("power")), bt = num(this._s("boxTemp")), pt = num(this._s("plugTemp"));
       extra = `<div class="g4">${this._stepper("initialSoc", t.initial, "%")}${this._stepper("targetSoc", t.target, "%")}
         ${this._stepper("capacity", t.capacity, "kWh")}${this._stepper("correction", t.correction, "%", 1)}</div>
         <div class="g3">
-        ${this._tile({ icon: "mdi:target", label: t.toTarget, value: `<i>${fmt(et, et !== null && et >= 10 ? 0 : 1)}kWh</i><i class="ar">·</i><i>₴${fmt(ct)}</i>`, more: this._ids.energyToTarget })}
-        ${this._tile({ icon: "mdi:flag-checkered", label: t.finish, value: `<i>${this._finish()}</i>`, more: this._ids.finish })}
+        ${this._tile({ icon: "mdi:sine-wave", label: t.power, value: `<i>${p === null ? "--" : (p / 1000).toFixed(1)}kW · ${fmt(v)}V</i>`, more: this._ids.power })}
+        ${this._tile({ icon: "mdi:thermometer", label: t.temp, value: `<i>${fmt(bt)}° · ${fmt(pt)}°</i>`, more: this._ids.boxTemp })}
         ${this._tile({ icon: "mdi:battery-lock", label: t.socLimit, value: lim ? t.on : t.off, color: lim ? C.green : C.grey, toggle: "socLimit" })}</div>`;
     } else {
       const v = num(this._s("voltage")), bt = num(this._s("boxTemp")), pt = num(this._s("plugTemp"));
@@ -374,6 +379,10 @@ class EveusCard extends HTMLElement {
   }
 }
 
+const STOP_SIGN = `<svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="7,1 17,1 23,7 23,17 17,23 7,23 1,17 1,7" fill="var(--c)"/>`
+  + `<polygon points="7.6,2.4 16.4,2.4 21.6,7.6 21.6,16.4 16.4,21.6 7.6,21.6 2.4,16.4 2.4,7.6" fill="none" stroke="#fff" stroke-width="1"/>`
+  + `<text x="12" y="15" text-anchor="middle" font-size="7.2" font-weight="800" font-family="Arial,sans-serif" fill="#fff">STOP</text></svg>`;
+
 const STYLE = `
 ha-card{container-type:inline-size;box-sizing:border-box;padding:4px;display:flex;flex-direction:column;gap:4px;border-radius:14px;overflow:hidden;
   line-height:1.2;transition:box-shadow .3s}
@@ -403,6 +412,14 @@ ha-card.chg{animation:bp 2.4s ease-in-out infinite}
 .v b[style],.ch b[style]{color:color-mix(in srgb,var(--value-color) var(--value-weight,100%),var(--primary-text-color))}
 .chg .v b[style]{text-shadow:0 0 10px color-mix(in srgb,var(--value-color) 25%,transparent)}
 .ar{opacity:.65;margin:0 1px}
+.t.tall{grid-row:span 2}
+.t.w2{grid-column:span 2}
+.nl{flex-basis:100%;height:0}
+.v i ha-icon{--mdc-icon-size:12px;color:var(--secondary-text-color);transform:none;animation:none}
+.bt{display:grid;grid-template-columns:1fr 1fr;gap:4px;min-width:0}
+.bt .t{align-items:center;padding:3px}
+.bt .t ha-icon{--mdc-icon-size:26px;transform:none}
+.bt svg{width:26px;height:26px;display:block}
 .st{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:1px;padding:3px 2px}
 .st .l{font-size:12px}
 .sr{display:flex;align-items:center;justify-content:space-between;gap:1px;width:100%}
