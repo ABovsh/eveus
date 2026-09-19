@@ -386,7 +386,7 @@ def test_to_goal_tile_spans_two_rows_with_energy_cost_and_finish():
     source = CARD.read_text(encoding="utf-8")
     metrics = _card_function(source, "_metrics")
     line = next(ln for ln in metrics.splitlines() if "label: t.eta," in ln)
-    assert 'cls: "tall"' in line
+    assert 'cls: tall' in line
     for part in ("energyToTarget", "costToTarget", "this._finish()"):
         assert part in metrics, part
     assert ".t.tall{grid-row:span 2}" in source
@@ -406,3 +406,19 @@ def test_full_layout_does_not_repeat_the_to_goal_readings():
     source = CARD.read_text(encoding="utf-8")
     full = _card_function(source, "_full")
     assert "t.toTarget" not in full and "t.finish" not in full
+
+
+def test_status_layout_keeps_one_row_tiles():
+    source = CARD.read_text(encoding="utf-8")
+    assert "this._metrics()" in _card_function(source, "_status")
+    assert "this._metrics(true)" in _card_function(source, "_controls")
+    assert 'const tall = extended ? "tall" : ""' in _card_function(source, "_metrics")
+
+
+def test_basic_control_groups_session_and_shows_temperature():
+    """Basic: Power over Temp on the left, one two-row Session tile (time, energy, money) in the centre."""
+    source = CARD.read_text(encoding="utf-8")
+    metrics = _card_function(source, "_metrics")
+    line = next(ln for ln in metrics.splitlines() if "label: t.session, value: extended" in ln)
+    assert "cls: tall" in line and "sessionEnergy" in metrics
+    assert "label: t.temp" in metrics

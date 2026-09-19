@@ -206,25 +206,33 @@ class EveusCard extends HTMLElement {
       <span class="base" style="width:${ini}%"></span>${ini > 0 ? `<span class="tg" style="left:${ini}%"></span>` : ""}<span class="tg" style="left:${tgt}%"></span></div>`;
   }
 
-  _metrics() {
+  // `extended` (control / full): the middle tile spans two rows — to-goal readings, or the whole session in Basic.
+  _metrics(extended = false) {
     const t = this._t, col = this._socColor();
     const soc = this._s("soc"), socV = num(soc), ini = this._v("initialSoc"), tgt = this._v("targetSoc");
     const cur = num(this._s("current")), set = num(this._s("currentSet"));
     const e = num(this._s("sessionEnergy")), cost = num(this._s("sessionCost"));
+    const tall = extended ? "tall" : "";
+    const money = `<b style="--value-color:${col}">${e === null ? "--" : e < 10 ? e.toFixed(1) : Math.round(e)}kWh</b><i class="ar">·</i><b style="--value-color:${col}">₴${fmt(cost)}</b>`;
     const tiles = [];
+    let sess = this._tile({ icon: "mdi:battery-charging", label: t.session, value: money, color: col, more: this._ids.sessionEnergy });
     if (this._advanced) {
-      tiles.push(this._tile({ icon: this._batteryIcon(), label: t.soc, value: this._pair(`${fmt(ini)}%`, `${fmt(socV)}%`, col), color: col, more: this._ids.soc, hold: this._ids.initialSoc }));
       const et = num(this._s("energyToTarget")), ct = num(this._s("costToTarget"));
-      const goal = `${this._pair(`${fmt(tgt)}%`, this._eta(), col)}<span class="nl"></span><i>${fmt(et, et !== null && et >= 10 ? 0 : 1)}kWh</i><i class="ar">·</i><i>₴${fmt(ct)}</i>`
-        + `<span class="nl"></span><i><ha-icon icon="mdi:flag-checkered"></ha-icon> ${this._finish()}</i>`;
-      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.eta, value: goal, color: col, more: this._ids.eta, hold: this._ids.targetSoc, cls: "tall" }));
+      const goal = this._pair(`${fmt(tgt)}%`, this._eta(), col) + (extended ? `<span class="nl"></span><i>${fmt(et, et !== null && et >= 10 ? 0 : 1)}kWh</i><i class="ar">·</i><i>₴${fmt(ct)}</i>`
+        + `<span class="nl"></span><i><ha-icon icon="mdi:flag-checkered"></ha-icon> ${this._finish()}</i>` : "");
+      tiles.push(this._tile({ icon: this._batteryIcon(), label: t.soc, value: this._pair(`${fmt(ini)}%`, `${fmt(socV)}%`, col), color: col, more: this._ids.soc, hold: this._ids.initialSoc }));
+      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.eta, value: goal, color: col, more: this._ids.eta, hold: this._ids.targetSoc, cls: tall }));
     } else {
-      const p = num(this._s("power"));
+      const p = num(this._s("power")), time = `<b style="--value-color:${col}">${this._s("sessionTime")?.state ?? "--"}</b>`;
       tiles.push(this._tile({ icon: this._batteryIcon(), label: t.power, value: `<b style="--value-color:${col}">${p === null ? "--" : (p / 1000).toFixed(1)} kW</b>`, color: col, more: this._ids.power }));
-      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.session, value: `<b style="--value-color:${col}">${this._s("sessionTime")?.state ?? "--"}</b>`, color: col, more: this._ids.sessionTime }));
+      tiles.push(this._tile({ icon: "mdi:timer-outline", label: t.session, value: extended ? `${time}<span class="nl"></span>${money}` : time, color: col, more: this._ids.sessionTime, cls: tall }));
+      if (extended) {
+        const bt = num(this._s("boxTemp")), pt = num(this._s("plugTemp"));
+        sess = this._tile({ icon: "mdi:thermometer", label: t.temp, value: `<i>${fmt(bt)}° · ${fmt(pt)}°</i>`, more: this._ids.boxTemp });
+      }
     }
     tiles.push(this._tile({ icon: this._charging ? "mdi:flash" : "mdi:flash-outline", label: t.current, value: this._pair(`${fmt(set)}A`, `${fmt(cur)}A`, col), color: col, more: this._ids.current, hold: this._ids.chargingCurrent }));
-    return { tiles, col, sess: this._tile({ icon: "mdi:battery-charging", label: t.session, value: `<b style="--value-color:${col}">${e === null ? "--" : e < 10 ? e.toFixed(1) : Math.round(e)}kWh</b><i class="ar">·</i><b style="--value-color:${col}">₴${fmt(cost)}</b>`, color: col, more: this._ids.sessionEnergy, cls: this._advanced ? "" : "w2" }) };
+    return { tiles, col, sess };
   }
 
   _alerts() {
@@ -267,7 +275,7 @@ class EveusCard extends HTMLElement {
 
   // One charge ignores every limit; Stop is a road sign. Colour alone says on or off.
   _controls() {
-    const t = this._t, { tiles, sess } = this._metrics();
+    const t = this._t, { tiles, sess } = this._metrics(true);
     const one = this._s("oneCharge")?.state === "on", stop = this._s("stop")?.state === "on";
     const btn = (k, on, color, label, icon) =>
       `<div class="t ${on ? "act" : ""}" style="--c:${on ? color : C.grey}" data-toggle="${k}" role="switch" aria-checked="${on}" aria-label="${label}" title="${label}">${icon}</div>`;
@@ -289,11 +297,10 @@ class EveusCard extends HTMLElement {
         ${this._tile({ icon: "mdi:thermometer", label: t.temp, value: `<i>${fmt(bt)}° · ${fmt(pt)}°</i>`, more: this._ids.boxTemp })}
         ${this._tile({ icon: "mdi:battery-lock", label: t.socLimit, value: lim ? t.on : t.off, color: lim ? C.green : C.grey, toggle: "socLimit" })}</div>`;
     } else {
-      const v = num(this._s("voltage")), bt = num(this._s("boxTemp")), pt = num(this._s("plugTemp"));
+      const v = num(this._s("voltage"));
       extra = `<div class="g3">
         ${this._tile({ icon: "mdi:sine-wave", label: t.voltage, value: `<i>${fmt(v)} V</i>`, more: this._ids.voltage })}
-        ${this._tile({ icon: "mdi:thermometer", label: t.temp, value: `<i>${fmt(bt)}° · ${fmt(pt)}°</i>`, more: this._ids.boxTemp })}
-        ${this._tile({ icon: "mdi:ev-station", label: t.state, value: `<i>${this._stateText()}</i>`, more: this._ids.state })}</div>`;
+        ${this._tile({ icon: "mdi:ev-station", label: t.state, value: `<i>${this._stateText()}</i>`, more: this._ids.state, cls: "w2" })}</div>`;
     }
     return this._controls() + extra;
   }
