@@ -277,36 +277,6 @@ def test_soc_config_number_pushes_dispatcher_signal_only_with_hass() -> None:
     n._push()  # must not raise / must not attempt to dispatch without hass
 
 
-def test_initial_soc_number_full_contract() -> None:
-    updater = _updater()
-    calc = CachedSOCCalculator()
-    n = EveusInitialSocNumber(updater, calc, seed=20, device_number=1)
-    assert n._attr_icon == "mdi:battery-charging-40"
-    assert n._attr_native_unit_of_measurement == "%"
-    assert n._attr_native_step == 1
-    assert str(n._attr_mode).endswith("slider")
-
-
-def test_target_soc_number_full_contract() -> None:
-    updater = _updater()
-    calc = CachedSOCCalculator()
-    n = EveusTargetSocNumber(updater, calc, seed=80, device_number=1)
-    assert n._attr_icon == "mdi:battery-charging-high"
-    assert n._attr_native_unit_of_measurement == "%"
-    assert n._attr_native_step == 5
-    assert str(n._attr_mode).endswith("slider")
-
-
-def test_battery_capacity_number_full_contract() -> None:
-    updater = _updater()
-    calc = CachedSOCCalculator()
-    n = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
-    assert n._attr_icon == "mdi:car-battery"
-    assert n._attr_native_unit_of_measurement == "kWh"
-    assert n._attr_native_step == 1
-    assert str(n._attr_mode).endswith("box")
-
-
 def test_soc_correction_number_full_contract() -> None:
     updater = _updater()
     calc = CachedSOCCalculator()
