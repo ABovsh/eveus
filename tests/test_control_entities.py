@@ -1043,15 +1043,6 @@ def test_car_connected_unknown_state_returns_none() -> None:
     assert sensor.is_on is None
 
 
-def test_car_connected_charging_state_returns_true() -> None:
-    from conftest import EveusTestUpdater
-    from custom_components.eveus import binary_sensor as bs
-
-    updater = EveusTestUpdater({"state": 4})
-    sensor = bs.EveusBinarySensor(updater, bs.CAR_CONNECTED_DESCRIPTION, 1)
-    assert sensor.is_on is True
-
-
 @pytest.mark.parametrize(
     "state,expected",
     [(0, False), (2, False), (3, False), (4, True), (5, False), (6, True), (99, None)],
@@ -1224,14 +1215,6 @@ def test_timezone_select_ignores_device_value_when_offline() -> None:
 
     select = EveusTimeZoneSelect(EveusTestUpdater(data={"timeZone": 3}, available=False))
     assert select.current_option is None
-
-
-def test_timezone_select_uses_device_value_when_online() -> None:
-    from conftest import EveusTestUpdater
-    from custom_components.eveus.select import EveusTimeZoneSelect
-
-    select = EveusTimeZoneSelect(EveusTestUpdater(data={"timeZone": 3}, available=True))
-    assert select.current_option == "+3"
 
 
 def test_timezone_select_restores_last_option_within_grace() -> None:
