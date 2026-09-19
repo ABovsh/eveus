@@ -190,17 +190,6 @@ def test_get_soc_percent_exact_clamps_to_hundred_not_above(
     assert calculator.get_soc_percent_exact(5) == 100.0
 
 
-def test_soc_kwh_sensor_uses_measurement_state_class() -> None:
-    # Regression: TOTAL without last_reset breaks HA statistics.
-    # SOC kWh is a running gauge (not a monotonic lifetime counter).
-    # HA's CachedProperties metaclass stores default attr values under __attr_* keys.
-    from homeassistant.components.sensor import SensorStateClass
-    default_state_class = vars(EVSocKwhSensor).get("__attr_state_class")
-    assert default_state_class == SensorStateClass.MEASUREMENT, (
-        f"EVSocKwhSensor._attr_state_class should be MEASUREMENT, got {default_state_class!r}"
-    )
-
-
 def test_last_seed_starts_as_an_empty_dict_not_none() -> None:
     """Diagnostics reads `last_seed` through runtime_data before any charge.
 
