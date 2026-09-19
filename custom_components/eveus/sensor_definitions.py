@@ -805,8 +805,9 @@ def get_active_rate_cost(updater, hass) -> Optional[float]:
     if not key:
         return None
     # Already bounded by the shared parse (raw hundredths), so a corrupt rate
-    # is None rather than an absurd per-kWh price.
-    value = updater.snapshot.get(key) if updater.available else None
+    # is None rather than an absurd per-kWh price. `_read_int` above already
+    # returned None for an unavailable updater, so no second check is needed.
+    value = updater.snapshot.get(key)
     if value is None:
         return None
     return round(value / 100, 2)
