@@ -20,9 +20,11 @@
 - Issues: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues)
 
 <p align="center">
-  <img alt="Eveus card — Advanced mode (SOC tiles)" src="docs/images/card-advanced.jpg" width="49%">
-  <img alt="Eveus card — Basic mode (power and session time)" src="docs/images/card-basic.jpg" width="49%">
+  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
 </p>
+
+*One dashboard card, four layouts (`compact`, `status`, `control`, `full`) — you pick one when you add it. Left: Advanced mode. Right: Basic mode. [How to add it](#eveus-card).*
 
 
 The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
@@ -181,49 +183,49 @@ Dangerous and configuration conditions surface through Home Assistant **Settings
 
 ## Eveus card
 
-The integration ships its own dashboard card: one card, four layouts, from a single status line to full charge control.
+The card comes with the integration — there is nothing to install separately. It is **one card** with a **layout** setting: add it to a dashboard once and choose how much it shows. To have two views of the charger, add the card twice and give each its own layout.
 
 <p align="center">
-  <img alt="Eveus card — Advanced mode (SOC tiles)" src="docs/images/card-advanced.jpg" width="49%">
-  <img alt="Eveus card — Basic mode (power and session time)" src="docs/images/card-basic.jpg" width="49%">
+  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="docs/images/card-basic.jpg" width="49%">
 </p>
 
-*All four layouts on a phone: Advanced mode (left) and Basic mode (right).*
+*Both screenshots show the same card set to `compact`, `status`, `control` and `full`, from top to bottom. Left: Advanced mode. Right: Basic mode.*
 
-<!-- Screenshots: compact, status, control, full -->
-<p>
-  <img alt="Eveus card — compact" src="docs/images/card-compact.png" width="49%">
-  <img alt="Eveus card — status" src="docs/images/card-status.png" width="49%">
-  <img alt="Eveus card — control" src="docs/images/card-control.png" width="49%">
-  <img alt="Eveus card — full" src="docs/images/card-full.png" width="49%">
-</p>
+### Layouts
 
-| Layout | Shows |
-|---|---|
-| `compact` | One line: state, SOC bar, SOC · power · time to target |
-| `status` | SOC, time to target, current, session energy and cost, power and voltage, state |
-| `control` | Status plus **One Charge**, **Stop Charging** and a **Charging Current** slider |
-| `full` | Control plus **Initial SOC**, **Target SOC**, **Battery Capacity**, **SOC Correction** and the SOC limit |
+| Layout | Shows | Controls |
+|---|---|---|
+| `compact` | State and SOC bar; SOC · power · time to target on one line | — |
+| `status` | SOC, time to target, current, session energy and cost, power and voltage, state | — (read-only) |
+| `control` | SOC, time to target, current, session energy and cost | **One Charge**, **Stop Charging**, **Charging Current** slider |
+| `full` | Everything in `control`, plus energy and cost to target and the finish time | Everything in `control`, plus **Initial SOC**, **Target SOC**, **Battery Capacity**, **SOC Correction** and the **SOC limit** switch |
 
-In Basic mode the SOC tiles are replaced by power and session time. Tap a value to open its entity.
+- **Advanced and Basic mode.** The card follows the integration's mode (**Configure**). In Basic mode, power and session time take the place of the SOC tiles, and `full` shows voltage, temperatures and state instead of the SOC settings. Set `mode: basic` to force this view.
+- **Tapping.** A tile opens that entity's details. **One Charge**, **Stop** and **SOC limit** switch on one tap; stopping a running charge asks for confirmation. The slider sends its value when you let go; the − / + buttons send after a short pause, so several taps make one command.
+- **Faults.** An `Error` state or a missing ground adds a red line to `status`, `control` and `full`.
 
-**Install:** nothing extra. The card comes with the integration (HACS or manual install) and registers itself on every dashboard after Home Assistant starts.
+### How to add the card
 
-**Add it to a dashboard:**
-1. Open a dashboard and click the **pencil / Edit** button.
-2. Click **+ Add card** and search for **Eveus EV Charger**.
-3. Pick a **Layout** in the card editor and click **Save**.
+1. Install or update the integration and restart Home Assistant. The card registers itself.
+2. Refresh the browser page. In the mobile app: **Settings → Companion app → Debugging → Reset frontend cache**.
+3. Open a dashboard and click the pencil (**Edit**).
+4. Click **+ Add card**, search for **Eveus EV Charger** and pick it.
+5. In the editor, choose the **layout**. The preview changes with it; a new card starts as `control`.
+6. Only if needed: **device_id** (pick the charger when you have several), **mode** and **language**. The defaults work for one charger.
+7. Click **Save**.
 
-Or add it through **Add card → Manual**:
+### Card in YAML
 
 ```yaml
 type: custom:eveus-card
 layout: control      # compact | status | control | full
 # device_id: ...     # only with several chargers
+# mode: auto         # auto (default, follows the integration) | basic
 # language: uk       # auto (default) | uk | en
 ```
 
-If the card shows **Custom element doesn't exist** right after an update, reload the page. In the mobile app use **Settings → Companion app → Debugging → Reset frontend cache**.
+If the card shows **Custom element doesn't exist** right after an update, repeat step 2.
 
 ## Entity IDs
 
