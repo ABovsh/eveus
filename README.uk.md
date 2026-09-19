@@ -22,9 +22,10 @@
 - Обговорення: [тема в Home Assistant Community](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 - Проблеми та пропозиції: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues)
 
-<img width="1183" height="475" alt="image" src="https://github.com/user-attachments/assets/a0a61b0b-3a2b-41e1-9ad4-ff05e8e94ec2" />
-<img width="1181" height="380" alt="image" src="https://github.com/user-attachments/assets/dea0ad18-852a-4909-9693-237b74ece889" />
-<img width="1173" height="619" alt="image" src="https://github.com/user-attachments/assets/cb1a0ce5-685c-4bdf-9a3f-edb46f620fa2" />
+<p align="center">
+  <img alt="Картка Eveus — режим Advanced (плитки заряду)" src="docs/images/card-advanced.jpg" width="49%">
+  <img alt="Картка Eveus — режим Basic (потужність і тривалість сесії)" src="docs/images/card-basic.jpg" width="49%">
+</p>
 
 
 Інтеграція підключається безпосередньо до зарядної станції через її HTTP API в
@@ -281,6 +282,13 @@
 ## Картка Eveus
 
 Інтеграція містить власну картку для панелі: одна картка, чотири вигляди — від одного рядка стану до повного керування заряджанням.
+
+<p align="center">
+  <img alt="Картка Eveus — режим Advanced (плитки заряду)" src="docs/images/card-advanced.jpg" width="49%">
+  <img alt="Картка Eveus — режим Basic (потужність і тривалість сесії)" src="docs/images/card-basic.jpg" width="49%">
+</p>
+
+*Усі чотири вигляди на телефоні: режим Advanced (ліворуч) і Basic (праворуч).*
 
 <!-- Скриншоти: compact, status, control, full -->
 <p>

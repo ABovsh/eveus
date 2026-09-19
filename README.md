@@ -19,9 +19,10 @@
 - Discussion: [Home Assistant Community thread](https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628)
 - Issues: [github.com/ABovsh/eveus/issues](https://github.com/ABovsh/eveus/issues)
 
-<img width="1188" height="477" alt="image" src="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039" />
-<img width="1189" height="386" alt="image" src="https://github.com/user-attachments/assets/48412a75-3368-4215-aa83-43b835b0180f" />
-<img width="1178" height="620" alt="image" src="https://github.com/user-attachments/assets/b96a52db-7d3d-4a43-be09-09324b84f681" />
+<p align="center">
+  <img alt="Eveus card — Advanced mode (SOC tiles)" src="docs/images/card-advanced.jpg" width="49%">
+  <img alt="Eveus card — Basic mode (power and session time)" src="docs/images/card-basic.jpg" width="49%">
+</p>
 
 
 The integration talks to the charger directly over your LAN via its HTTP API — it works even when the internet is down. Everything the charger knows becomes a native Home Assistant entity.
@@ -181,6 +182,13 @@ Dangerous and configuration conditions surface through Home Assistant **Settings
 ## Eveus card
 
 The integration ships its own dashboard card: one card, four layouts, from a single status line to full charge control.
+
+<p align="center">
+  <img alt="Eveus card — Advanced mode (SOC tiles)" src="docs/images/card-advanced.jpg" width="49%">
+  <img alt="Eveus card — Basic mode (power and session time)" src="docs/images/card-basic.jpg" width="49%">
+</p>
+
+*All four layouts on a phone: Advanced mode (left) and Basic mode (right).*
 
 <!-- Screenshots: compact, status, control, full -->
 <p>
