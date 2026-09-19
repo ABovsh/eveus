@@ -178,12 +178,12 @@ than once and configure each instance separately.
 
 | Layout | Shows | Controls |
 |---|---|---|
-| `compact` | One line: state, SOC bar, SOC · power · time to target | — |
+| `compact` | One line: state, SOC · power · time to target · session energy · cost, with the SOC bar along the bottom | — |
 | `status` | SOC, time to target, current, session energy and cost, power and voltage, state | — (read-only) |
 | `control` | SOC, time to target, current, session energy and cost | **One Charge**, **Stop Charging**, **Charging Current** slider |
 | `full` | Everything in `control`, plus energy and cost to target and the finish time | Everything in `control`, plus **Initial SOC**, **Target SOC**, **Battery Capacity**, **SOC Correction** and the **Limit: SOC enabled** switch |
 
-- **Advanced and Basic mode.** The card uses the mode chosen for the integration (**Configure**). In Basic mode the card shows power and session time instead of SOC and time to target, and `full` shows voltage, temperatures and state instead of the SOC settings. `mode: basic` switches the card to its Basic view regardless of the integration's mode.
+- **Advanced and Basic mode.** The card uses the mode chosen for the integration (**Configure**). In Basic mode the card shows power and session time instead of SOC and time to target, and `compact` shows power · session time · session energy · cost, and `full` shows voltage, temperatures and state instead of the SOC settings. The card's **Integration mode** field (`mode: basic`) switches the card to its Basic view regardless of the integration's mode; `mode: advanced` needs the integration in Advanced mode.
 - **Tapping.** Tapping a tile opens that entity's dialog. **One Charge**, **Stop Charging** and **Limit: SOC enabled** toggle with one tap; before stopping a running charge the card asks for confirmation. The slider sends its value when you let go. The − / + buttons send the value after a short pause, so several taps in a row make one command.
 - **Faults.** If the charger is in the `Error` state or has no ground, a red line appears in the `status`, `control` and `full` layouts.
 
@@ -193,8 +193,8 @@ than once and configure each instance separately.
 2. Refresh the browser page. In the Home Assistant mobile app: **Settings → Companion app → Troubleshooting → Reset frontend cache**, then restart the app.
 3. Open a dashboard and click the pencil (**Edit dashboard**).
 4. Click **Add card**, search for **Eveus EV Charger** and pick the card.
-5. In the **layout** field, pick a layout. The preview shows the result straight away; a new card starts as `control`.
-6. Fill in the other fields only if needed: **device_id** — the charger, when you have several; **mode** — the card's Basic view; **language** — the card's language. The defaults work for one charger.
+5. In the **Layout** field, pick a layout. The preview shows the result straight away; a new card starts as `control`.
+6. Fill in the other fields only if needed: **Charger** — when you have several; **Integration mode** — Advanced or Basic, empty follows the integration; **Language** — the card's language. The defaults work for one charger.
 7. Click **Save**.
 
 ### Card in YAML
@@ -203,7 +203,7 @@ than once and configure each instance separately.
 type: custom:eveus-card
 layout: control      # compact | status | control | full
 # device_id: ...     # only with several chargers
-# mode: auto         # auto (default, follows the integration) | basic
+# mode: basic        # advanced | basic (default: follows the integration)
 # language: uk       # auto (default, Home Assistant's language) | uk | en
 ```
 

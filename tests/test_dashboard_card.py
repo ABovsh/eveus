@@ -287,14 +287,61 @@ def _container_rule(source: str, max_width: int) -> str:
     return source.split(marker, 1)[1].split("\n", 1)[0]
 
 
-def test_soc_steppers_go_two_across_before_their_values_clip():
-    """Capacity "100kWh" and Loss "10.5%" need ~46 px; four across leaves 37 px at 360."""
+def _card_function(source: str, name: str) -> str:
+    start = source.index(f"  {name}(")
+    return source[start:source.index("\n  }\n", start)]
+
+
+def test_soc_steppers_stay_four_across_on_phone_widths():
+    """One row of Initial / Target / Capacity / Loss; the stepper shrinks instead of wrapping."""
     source = CARD.read_text(encoding="utf-8")
-    assert ".g4{grid-template-columns:repeat(2" in _container_rule(source, 400)
+    assert ".g4{grid-template-columns:repeat(4" in source
+    assert ".g4{grid-template-columns:repeat(2" not in source
+
+
+def test_tile_label_and_value_are_centred():
+    source = CARD.read_text(encoding="utf-8")
+    tile = source.split("\n.t{", 1)[1].split("}", 1)[0]
+    assert "flex-direction:column" in tile
+    assert "align-items:center" in tile
+    assert "text-align:center" in tile
 
 
 def test_tile_values_shrink_on_phone_widths():
-    """The "100%→17h45m" ETA needs 93 px; a 3-column tile at 360 offers 91 at 12 px."""
+    """The "100%→17h45m" ETA needs ~93 px; a 3-column tile at 330 offers less at full size."""
     source = CARD.read_text(encoding="utf-8")
-    assert ".v{font-size:10.5px}" in _container_rule(source, 380)
-    assert ".v{font-size:10px}" in _container_rule(source, 330)
+    assert ".v{font-size:11px}" in _container_rule(source, 360)
+
+
+def test_editor_mode_options_match_the_integration_mode_names():
+    """The integration calls its modes Advanced / Basic (Розширений / Базовий) under
+    "Integration mode"; the card editor must use the same words, and no "auto"."""
+    import json
+
+    source = CARD.read_text(encoding="utf-8")
+    form = _card_function(source, "static getConfigForm")
+    assert '"auto", "basic"' not in form
+    assert 'value: "advanced"' in form and 'value: "basic"' in form
+    assert "computeLabel" in form
+    translations = CARD.parents[1] / "translations"
+    for lang in ("en", "uk"):
+        t = json.loads((translations / f"{lang}.json").read_text(encoding="utf-8"))
+        field = t["config"]["step"]["user"]["data"]["soc_mode"]
+        advanced, basic = (t["selector"]["soc_mode"]["options"][m].split(" (")[0] for m in ("advanced", "basic"))
+        for word in (field, advanced, basic):
+            assert f'"{word}"' in source, f"{lang}: {word!r} missing from the card editor"
+
+
+def test_compact_shows_session_cost_and_energy():
+    source = CARD.read_text(encoding="utf-8")
+    compact = _card_function(source, "_compact")
+    assert '"sessionCost"' in compact
+    assert '"sessionEnergy"' in compact
+
+
+def test_compact_soc_bar_spans_the_card_below_the_row():
+    """The bar is the last child of the compact card, not squeezed beside the state text."""
+    source = CARD.read_text(encoding="utf-8")
+    compact = _card_function(source, "_compact")
+    assert 'class="cs"' not in compact
+    assert compact.rstrip().endswith("${this._bar()}</div>`;")

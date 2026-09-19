@@ -20,6 +20,23 @@ const I18N = {
   },
 };
 
+const EDITOR = {
+  en: {
+    fields: { layout: "Layout", device_id: "Charger", mode: "Integration mode", language: "Language" },
+    layouts: { compact: "Compact", status: "Status", control: "Control", full: "Full" },
+    advanced: "Advanced", basic: "Basic",
+    languages: { auto: "Home Assistant language", uk: "Українська", en: "English" },
+    modeHelp: "Empty follows the integration. Advanced needs the integration in Advanced mode.",
+  },
+  uk: {
+    fields: { layout: "Вигляд", device_id: "Станція", mode: "Режим інтеграції", language: "Мова" },
+    layouts: { compact: "Компактний", status: "Стан", control: "Керування", full: "Повний" },
+    advanced: "Розширений", basic: "Базовий",
+    languages: { auto: "Мова Home Assistant", uk: "Українська", en: "English" },
+    modeHelp: "Порожнє поле — як в інтеграції. Розширений працює, лише якщо інтеграція в Розширеному режимі.",
+  },
+};
+
 // Card keys → entity keys (the part of unique_id after "eveus<N>_").
 const KEYS = {
   state: "state", substate: "substate", reason: "not_charging_reason",
@@ -39,19 +56,24 @@ const fmt = (v, d = 0) => (v === null ? "--" : Number(v.toFixed(d)).toString());
 
 class EveusCard extends HTMLElement {
   static getConfigForm() {
+    // Field and mode names are the integration's own ("Integration mode", Advanced / Basic).
+    const e = (document.documentElement.lang || "en").startsWith("uk") ? EDITOR.uk : EDITOR.en;
+    const opts = (o) => Object.entries(o).map(([value, label]) => ({ value, label }));
     return {
       schema: [
-        { name: "layout", selector: { select: { mode: "dropdown", options: LAYOUTS } } },
+        { name: "layout", selector: { select: { mode: "dropdown", options: opts(e.layouts) } } },
         { name: "device_id", selector: { device: { integration: "eveus" } } },
-        { name: "mode", selector: { select: { options: ["auto", "basic"] } } },
-        { name: "language", selector: { select: { options: ["auto", "uk", "en"] } } },
+        { name: "mode", selector: { select: { options: [{ value: "advanced", label: e.advanced }, { value: "basic", label: e.basic }] } } },
+        { name: "language", selector: { select: { options: opts(e.languages) } } },
       ],
+      computeLabel: (f) => e.fields[f.name],
+      computeHelper: (f) => (f.name === "mode" ? e.modeHelp : undefined),
     };
   }
   static getStubConfig() { return { layout: "control" }; }
 
   setConfig(config) {
-    this._config = { layout: "control", mode: "auto", language: "auto", ...config };
+    this._config = { layout: "control", language: "auto", ...config };
     if (!LAYOUTS.includes(this._config.layout)) this._config.layout = "control";
     this._pending = {};
     this._sig = null;
@@ -145,7 +167,7 @@ class EveusCard extends HTMLElement {
     const data = toggle ? `data-toggle="${toggle}"` : more ? `data-more="${more}"` : "";
     const active = color !== C.grey;
     return `<div class="t ${active ? "act" : ""} ${cls}" style="--c:${color}" ${data}>
-      <ha-icon icon="${icon}"></ha-icon><div class="tx"><span class="l">${label}</span><span class="v">${value}</span></div></div>`;
+      <div class="h"><ha-icon icon="${icon}"></ha-icon><span class="l">${label}</span></div><span class="v">${value}</span></div>`;
   }
   _pair(from, to, color) { return `<i>${from}</i><i class="ar">→</i><b style="color:${color}">${to}</b>`; }
 
@@ -154,7 +176,7 @@ class EveusCard extends HTMLElement {
     if (!s) return "";
     const v = this._v(k);
     return `<div class="st" data-more="${this._ids[k]}"><span class="l">${label}</span>
-      <div class="sr"><button data-step="${k}" data-dir="-1">−</button><b>${fmt(v, d)}<small>${unit}</small></b><button data-step="${k}" data-dir="1">+</button></div></div>`;
+      <div class="sr"><button data-step="${k}" data-dir="-1">−</button><b>${fmt(v, d)}<small class="${unit.length > 1 ? "lu" : ""}">${unit}</small></b><button data-step="${k}" data-dir="1">+</button></div></div>`;
   }
 
   _slider() {
@@ -206,17 +228,19 @@ class EveusCard extends HTMLElement {
 
   // ---------- layouts ----------
   _compact() {
-    const t = this._t, col = this._socColor();
+    const col = this._socColor();
     const soc = num(this._s("soc")), p = num(this._s("power"));
+    const e = num(this._s("sessionEnergy")), cost = num(this._s("sessionCost"));
     const chips = [];
     if (this._advanced) chips.push(`<b style="color:${col}">${fmt(soc)}%</b>`);
-    chips.push(`<span>${p === null ? "--" : (p / 1000).toFixed(1)} kW</span>`);
-    if (this._charging) chips.push(`<span>${this._advanced ? this._eta() : this._s("sessionTime")?.state ?? ""}</span>`);
-    else chips.push(`<span>${fmt(num(this._s("sessionEnergy")), 1)} kWh</span>`);
-    return `<div class="cp" data-more="${this._ids.state}" style="--c:${col}">
-      <ha-icon icon="${this._batteryIcon()}" style="color:${col}"></ha-icon>
-      <div class="cs"><span class="v">${this._stateText()}</span>${this._advanced ? this._bar() : ""}</div>
-      <div class="ch">${chips.join('<i class="ar">·</i>')}</div></div>`;
+    chips.push(`<span>${p === null ? "--" : (p / 1000).toFixed(1)}kW</span>`);
+    if (this._advanced) { if (this._charging) chips.push(`<span>${this._eta()}</span>`); }
+    else chips.push(`<span>${this._s("sessionTime")?.state?.replace(/\s+/g, "") ?? "--"}</span>`);
+    chips.push(`<span class="ce">${e === null ? "--" : e < 10 ? e.toFixed(1) : Math.round(e)}kWh</span>`);
+    chips.push(`<span>₴${fmt(cost)}</span>`);
+    return `<div class="cp" data-more="${this._ids.state}" style="--c:${col}"><div class="cr">
+      <ha-icon icon="${this._batteryIcon()}" style="color:${col}"></ha-icon><span class="v cst">${this._stateText()}</span>
+      <div class="ch">${chips.join('<i class="ar">·</i>')}</div></div>${this._bar()}</div>`;
   }
 
   _status() {
@@ -331,29 +355,31 @@ ha-card.chg{animation:bp 3s ease-in-out infinite}
 @keyframes bp{0%,100%{box-shadow:0 1px 8px color-mix(in srgb,var(--c) 10%,transparent)}50%{box-shadow:0 2px 16px color-mix(in srgb,var(--c) 30%,transparent)}}
 .g3,.g4{display:grid;gap:4px;grid-template-columns:repeat(3,minmax(0,1fr))}
 .g4{grid-template-columns:repeat(4,minmax(0,1fr))}
-.t,.st,.sl,.cp{box-sizing:border-box;border-radius:12px;padding:6px 8px;cursor:pointer;min-width:0;
+.t,.st,.sl,.cp{box-sizing:border-box;border-radius:12px;padding:4px 6px;cursor:pointer;min-width:0;
   background:rgba(127,127,127,.06);border:1px solid rgba(127,127,127,.14);transition:all .3s}
 .t.act{background:linear-gradient(145deg,color-mix(in srgb,var(--c) 14%,transparent),color-mix(in srgb,var(--c) 3%,transparent));
   border-color:color-mix(in srgb,var(--c) 30%,transparent)}
-.t{display:flex;align-items:center;gap:6px}
-.t ha-icon{--mdc-icon-size:22px;color:var(--c);flex:none}
+.t{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-align:center}
+.h{display:flex;align-items:center;justify-content:center;gap:3px;max-width:100%;min-width:0}
+/* An empty twin of the icon on the right keeps the label itself on the tile's centre line. */
+.h::after{content:"";width:16px;flex:none}
+.t ha-icon{--mdc-icon-size:16px;width:16px;height:16px;display:flex;color:var(--c);flex:none}
 .chg .t.act ha-icon{animation:ig 2s ease-in-out infinite}
 @keyframes ig{0%,100%{filter:drop-shadow(0 0 2px color-mix(in srgb,var(--c) 40%,transparent))}50%{filter:drop-shadow(0 0 7px color-mix(in srgb,var(--c) 75%,transparent))}}
-.tx{display:flex;flex-direction:column;min-width:0}
 .l{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--secondary-text-color);opacity:.8;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.v,.sr b,.sv{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--primary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.v,.sr b,.sv{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--primary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .v i{font-style:normal;color:var(--secondary-text-color);font-weight:500}
 .ar{opacity:.5;margin:0 2px}
-.st{display:flex;flex-direction:column;gap:2px;padding:5px 6px}
-.sr{display:flex;align-items:center;justify-content:space-between;gap:2px}
+.st{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 3px}
+.sr{display:flex;align-items:center;justify-content:space-between;gap:1px;width:100%}
 .sr b{text-align:center;flex:1;min-width:0}
 .sr small{font-size:9px;font-weight:500;opacity:.7;margin-left:1px}
-button{all:unset;cursor:pointer;width:22px;height:22px;border-radius:7px;text-align:center;line-height:22px;font-size:15px;
+button{all:unset;cursor:pointer;width:20px;height:20px;border-radius:6px;text-align:center;line-height:20px;font-size:14px;
   background:rgba(127,127,127,.14);color:var(--primary-text-color);flex:none}
 button:active{background:var(--primary-color);color:var(--text-primary-color)}
-.sl{display:flex;align-items:center;gap:8px;cursor:default}
-.sl ha-icon{--mdc-icon-size:20px;color:var(--secondary-text-color)}
+.sl{display:flex;align-items:center;gap:8px;cursor:default;padding:3px 10px}
+.sl ha-icon{--mdc-icon-size:18px;color:var(--secondary-text-color);flex:none}
 .sl .l{flex:none}
 .rw{position:relative;flex:1;display:flex;align-items:center}
 input[type=range]{width:100%;margin:0;accent-color:var(--primary-color);height:22px;cursor:pointer}
@@ -365,19 +391,20 @@ input[type=range]{width:100%;margin:0;accent-color:var(--primary-color);height:2
 .bar .tg{position:absolute;top:-2px;width:2px;height:8px;background:var(--primary-text-color);opacity:.6;transform:translateX(-1px)}
 .al{display:flex;align-items:center;gap:6px;font-size:12px;color:${C.red};padding:2px 8px}
 .al ha-icon{--mdc-icon-size:16px}
-.cp{display:flex;align-items:center;gap:8px;padding:6px 10px}
-.cp ha-icon{--mdc-icon-size:24px;flex:none}
-.cs{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
-.cs .bar{margin:0}
-.ch{display:flex;align-items:center;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--secondary-text-color)}
+.cp{display:flex;flex-direction:column;gap:5px;padding:7px 10px}
+.cr{display:flex;align-items:center;gap:8px;min-width:0}
+.cp ha-icon{--mdc-icon-size:22px;flex:none}
+.cst{flex:none;max-width:40%}
+.ch{flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;color:var(--secondary-text-color)}
+.cp .bar{margin:0}
 .compact{padding:0}
 .compact .cp{border:none;background:none}
 .empty{padding:16px;color:var(--secondary-text-color)}
-@container (max-width: 440px){.st{padding:4px}.sr{gap:1px}.sr button{width:18px;height:18px;line-height:18px;font-size:13px;border-radius:6px}.v{font-size:11px}.ar{margin:0 1px}}
-@container (max-width: 400px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@container (max-width: 380px){.v{font-size:10.5px}}
-@container (max-width: 350px){.t ha-icon{display:none}.t{padding:5px 7px}.sl .l{display:none}.ch{font-size:11px}}
-@container (max-width: 330px){.t{padding:5px 4px}.v{font-size:10px}}
+@container (max-width: 440px){.sr b{font-size:12px}.sr small{font-size:8px;margin-left:0}.ar{margin:0 1px}.ch{font-size:12px}}
+@container (max-width: 400px){.sr small.lu{display:none}.st{padding:3px 2px}.sr{gap:0}.sr button{width:18px;height:18px;line-height:18px;font-size:13px;border-radius:5px}.l{letter-spacing:.2px}}
+@container (max-width: 360px){.v{font-size:11px}.sr b{font-size:11px}.h::after{width:0}.ch{font-size:11px}.cp ha-icon{--mdc-icon-size:18px}}
+@container (max-width: 330px){.sr small{display:none}.t ha-icon{display:none}.t{padding:4px 3px}.v{font-size:10px}.sl .l{display:none}.ce,.ce+.ar{display:none}}
 `;
 
 if (!customElements.get(CARD)) customElements.define(CARD, EveusCard);
