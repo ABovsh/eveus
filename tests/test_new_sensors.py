@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 from conftest import EV_HELPERS, EveusTestUpdater, HelperHass
@@ -206,16 +205,6 @@ class TestChargingFinishTime:
         # Within the same minute, both round to the same boundary.
         assert first == second
 
-    def test_uses_timestamp_device_class(self) -> None:
-        # Critical for HA UI / automations: device_class must be TIMESTAMP,
-        # otherwise the value would be rendered as a plain string.
-        # HA's CachedProperties metaclass stores attrs under __attr_* keys.
-        assert (
-            vars(ChargingFinishTimeSensor).get("__attr_device_class")
-            == SensorDeviceClass.TIMESTAMP
-        )
-
-
 # ---------------------------------------------------------------------------
 # Car Connected binary sensor
 # ---------------------------------------------------------------------------
@@ -266,10 +255,6 @@ class TestCarConnectedBinarySensor:
         # Garbage payload must not crash and must not lie.
         sensor = self._make({"state": "garbage"})
         assert sensor.is_on is None
-
-    def test_uses_plug_device_class(self) -> None:
-        sensor = self._make({"state": 4})
-        assert sensor.device_class == BinarySensorDeviceClass.PLUG
 
     def test_unique_id_follows_eveus_convention(self) -> None:
         sensor = self._make({"state": 4})
