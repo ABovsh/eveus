@@ -1,6 +1,6 @@
 // Eveus card — one card, four layouts: compact / status / control / full.
 const CARD = "eveus-card";
-const C = { red: "#E74C3C", orange: "#F39C12", green: "#2ECC71", grey: "#95A5A6", blue: "#3498DB" };
+const C = { red: "#E74C3C", orange: "#F39C12", green: "#2ECC71", grey: "#95A5A6", blue: "#3498DB", purple: "#A78BFA" };
 const LAYOUTS = ["compact", "status", "control", "full"];
 
 const I18N = {
@@ -201,7 +201,7 @@ class EveusCard extends HTMLElement {
   _bar() {
     if (!this._advanced) return "";
     const ini = num(this._s("initialSoc")) ?? 0, soc = num(this._s("soc")) ?? 0, tgt = num(this._s("targetSoc")) ?? 100;
-    const col = this._charging ? this._socColor() : C.grey;
+    const col = this._charging ? this._socColor() : C.purple;
     return `<div class="bar"><span class="fill" style="left:${ini}%;width:${Math.max(0, soc - ini)}%;background:${col}"></span>
       <span class="base" style="width:${ini}%"></span>${ini > 0 ? `<span class="tg" style="left:${ini}%"></span>` : ""}<span class="tg" style="left:${tgt}%"></span></div>`;
   }
@@ -233,6 +233,11 @@ class EveusCard extends HTMLElement {
     }
     tiles.push(this._tile({ icon: this._charging ? "mdi:flash" : "mdi:flash-outline", label: t.current, value: this._pair(`${fmt(set)}A`, `${fmt(cur)}A`, col), color: col, more: this._ids.current, hold: this._ids.chargingCurrent }));
     return { tiles, col, sess };
+  }
+
+  // State on the left, SOC bar filling the rest (Basic has no bar); same line in both modes.
+  _strip() {
+    return `<div class="sb" data-more="${this._ids.state}"><span class="sst">${this._stateText()}</span>${this._bar()}</div>`;
   }
 
   _alerts() {
@@ -281,7 +286,7 @@ class EveusCard extends HTMLElement {
       `<div class="t ${on ? "act" : ""}" style="--c:${on ? color : C.grey}" data-toggle="${k}" role="switch" aria-checked="${on}" aria-label="${label}" title="${label}">${icon}</div>`;
     return `<div class="g3">${tiles.join("")}${sess}
       <div class="bt">${btn("oneCharge", one, C.green, t.one, '<ha-icon icon="mdi:lightning-bolt-circle"></ha-icon>')}${btn("stop", stop, C.red, t.stop, STOP_SIGN)}</div>
-      </div>${this._bar()}${this._slider()}${this._alerts()}`;
+      </div>${this._strip()}${this._slider()}${this._alerts()}`;
   }
 
   _full() {
@@ -296,8 +301,6 @@ class EveusCard extends HTMLElement {
         ${this._tile({ icon: "mdi:sine-wave", label: t.power, value: `<i>${p === null ? "--" : (p / 1000).toFixed(1)}kW · ${fmt(v)}V</i>`, more: this._ids.power })}
         ${this._tile({ icon: "mdi:thermometer", label: t.temp, value: `<i>${fmt(bt)}° · ${fmt(pt)}°</i>`, more: this._ids.boxTemp })}
         ${this._tile({ icon: "mdi:battery-lock", label: t.socLimit, value: lim ? t.on : t.off, color: lim ? C.green : C.grey, toggle: "socLimit" })}</div>`;
-    } else {
-      extra = `<div class="g3">${this._tile({ icon: "mdi:ev-station", label: t.state, value: `<i>${this._stateText()}</i>`, more: this._ids.state, cls: "w3" })}</div>`;
     }
     return this._controls() + extra;
   }
@@ -418,7 +421,6 @@ ha-card.chg{animation:bp 2.4s ease-in-out infinite}
 .ar{opacity:.65;margin:0 1px}
 .t.tall{grid-row:span 2}
 .t.w2{grid-column:span 2}
-.t.w3{grid-column:1/-1}
 .nl{flex-basis:100%;height:0}
 .v i ha-icon{--mdc-icon-size:12px;color:var(--secondary-text-color);transform:none;animation:none}
 .bt{display:grid;grid-template-columns:1fr 1fr;gap:4px;min-width:0}
@@ -443,7 +445,7 @@ input[type=range]{width:100%;min-width:0;margin:0;accent-color:var(--primary-col
 .mk{position:absolute;top:3px;width:2px;height:18px;background:${C.orange};border-radius:1px;pointer-events:none;transform:translateX(-1px)}
 .sv{min-width:36px;text-align:right}
 .bar{position:relative;height:4px;border-radius:2px;background:rgba(127,127,127,.15);margin:0 5px 2px;overflow:visible}
-.bar .base{position:absolute;left:0;top:0;height:100%;border-radius:2px;background:#A78BFA}
+.bar .base{position:absolute;left:0;top:0;height:100%;border-radius:2px;background:${C.purple}}
 .bar .fill{position:absolute;top:0;height:100%;border-radius:2px;overflow:hidden}
 .chg .bar .fill::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 15%,rgba(255,255,255,.6) 50%,transparent 85%);animation:flow 3s ease-in-out infinite}
 @keyframes flow{0%{transform:translateX(-100%);opacity:0}20%,80%{opacity:.8}100%{transform:translateX(100%);opacity:0}}
@@ -457,6 +459,9 @@ input[type=range]{width:100%;min-width:0;margin:0;accent-color:var(--primary-col
 .ch{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:2px 7px;font-size:14px;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums;color:var(--primary-text-color)}
 .ch span,.ch b{max-width:100%;overflow-wrap:anywhere}
 .cp .bar{margin:0}
+.sb{display:flex;align-items:center;gap:8px;padding:0 5px;cursor:pointer;min-width:0}
+.sb .sst{flex:none;font-size:12px;font-weight:600;color:var(--c);white-space:nowrap}
+.sb .bar{flex:1;margin:0}
 .compact{padding:0}
 .compact .cp{border:none;background:none}
 .empty{padding:16px;color:var(--secondary-text-color)}

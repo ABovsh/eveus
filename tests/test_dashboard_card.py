@@ -429,3 +429,19 @@ def test_basic_session_tile_shows_voltage_on_its_third_line():
     metrics = _card_function(source, "_metrics")
     assert 'num(this._s("voltage"))' in metrics
     assert "t.voltage" not in _card_function(source, "_full"), "no second Voltage tile in Full"
+
+
+def test_soc_bar_turns_purple_once_charging_stops():
+    """After Charge complete the charged span reads as reached SOC, like the base before it."""
+    source = CARD.read_text(encoding="utf-8")
+    bar = _card_function(source, "_bar")
+    assert "this._charging ? this._socColor() : C.purple" in bar
+    assert "background:${C.purple}" in source
+
+
+def test_control_shows_the_state_beside_the_soc_bar():
+    source = CARD.read_text(encoding="utf-8")
+    assert "this._strip()" in _card_function(source, "_controls")
+    strip = _card_function(source, "_strip")
+    assert "this._stateText()" in strip and "this._bar()" in strip
+    assert "t.state" not in _card_function(source, "_full"), "Basic full adds nothing to control"
