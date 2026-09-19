@@ -724,27 +724,6 @@ def test_unload_entry_propagates_platform_unload_failure() -> None:
     assert hass.config_entries.unloaded == []
 
 
-def test_sensor_setup_creates_standard_and_ev_sensors() -> None:
-    added: list[object] = []
-    entry = _Entry(_data())
-    entry.runtime_data = SimpleNamespace(
-        updater=_Updater(host=TEST_HOST, username=TEST_USERNAME, password=TEST_PASSWORD),
-        device_number=1,
-        soc_calculator=object(),
-        phases=1,
-    )
-
-    asyncio.run(
-        async_setup_sensor_entry(
-            object(),
-            entry,
-            lambda entities, update_before_add=False: added.extend(entities),
-        )
-    )
-
-    assert len(added) >= 20
-
-
 def _setup_sensors_for_mode(soc_mode: str | None) -> list[object]:
     """Run the sensor platform setup and return the added entities."""
     added: list[object] = []
