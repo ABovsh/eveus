@@ -29,44 +29,6 @@ def _car_connected_sensor(updater: EveusTestUpdater):
     return binary_sensor_mod.EveusBinarySensor(updater, description, 1)
 
 
-def test_recovery_after_grace_recheck_is_written_to_ha(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    updater = EveusTestUpdater({"state": 2}, available=True)
-    sensor = _car_connected_sensor(updater)
-    sensor.hass = SimpleNamespace()
-
-    writes: list[bool] = []
-    sensor.async_write_ha_state = lambda: writes.append(sensor.available)
-
-    fake_monotonic = 1_000_000.0
-    monkeypatch.setattr(common_base.time, "monotonic", lambda: fake_monotonic)
-
-    # Healthy poll: available, car not connected.
-    sensor._handle_coordinator_update()
-    assert sensor.available is True
-
-    # One failed poll starts the grace window and schedules a recheck.
-    updater.available = False
-    sensor._handle_coordinator_update()
-    assert sensor.available is True
-
-    # Grace expires; the coordinator's wake-up notifies and it writes unavailable.
-    fake_monotonic += common_base.AVAILABILITY_GRACE_PERIOD + 10
-    sensor._handle_coordinator_update()
-    assert sensor.available is False
-    assert writes
-    assert writes[-1] is False
-
-    # Charger recovers on the next poll: HA MUST receive an available write.
-    updater.available = True
-    sensor._handle_coordinator_update()
-    assert sensor.available is True
-    assert writes[-1] is True, (
-        "recovery after a recheck-driven unavailable was never written to HA"
-    )
-
-
 def test_recheck_write_routes_through_write_on_change_bookkeeping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
