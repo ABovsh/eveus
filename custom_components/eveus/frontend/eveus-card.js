@@ -167,7 +167,7 @@ class EveusCard extends HTMLElement {
     const data = toggle ? `data-toggle="${toggle}"` : more ? `data-more="${more}"` : "";
     const active = color !== C.grey;
     return `<div class="t ${active ? "act" : ""} ${cls}" style="--c:${color}" ${data}>
-      <div class="h"><ha-icon icon="${icon}"></ha-icon><span class="l">${label}</span></div><span class="v">${value}</span></div>`;
+      <ha-icon icon="${icon}"></ha-icon><div class="tx"><span class="l">${label}</span><span class="v">${value}</span></div></div>`;
   }
   _pair(from, to, color) { return `<i>${from}</i><i class="ar">→</i><b style="color:${color}">${to}</b>`; }
 
@@ -196,7 +196,7 @@ class EveusCard extends HTMLElement {
     const ini = num(this._s("initialSoc")) ?? 0, soc = num(this._s("soc")) ?? 0, tgt = num(this._s("targetSoc")) ?? 100;
     const col = this._charging ? this._socColor() : C.grey;
     return `<div class="bar"><span class="fill" style="left:${ini}%;width:${Math.max(0, soc - ini)}%;background:${col}"></span>
-      <span class="base" style="width:${ini}%"></span><span class="tg" style="left:${tgt}%"></span></div>`;
+      <span class="base" style="width:${ini}%"></span>${ini > 0 ? `<span class="tg" style="left:${ini}%"></span>` : ""}<span class="tg" style="left:${tgt}%"></span></div>`;
   }
 
   _metrics() {
@@ -273,9 +273,9 @@ class EveusCard extends HTMLElement {
       extra = `<div class="g4">${this._stepper("initialSoc", t.initial, "%")}${this._stepper("targetSoc", t.target, "%")}
         ${this._stepper("capacity", t.capacity, "kWh")}${this._stepper("correction", t.correction, "%", 1)}</div>
         <div class="g3">
-        ${this._tile({ icon: "mdi:battery-lock", label: t.socLimit, value: lim ? t.on : t.off, color: lim ? C.green : C.grey, toggle: "socLimit" })}
         ${this._tile({ icon: "mdi:target", label: t.toTarget, value: `<i>${fmt(et, et !== null && et >= 10 ? 0 : 1)}kWh</i><i class="ar">·</i><i>₴${fmt(ct)}</i>`, more: this._ids.energyToTarget })}
-        ${this._tile({ icon: "mdi:flag-checkered", label: t.finish, value: `<i>${this._finish()}</i>`, more: this._ids.finish })}</div>`;
+        ${this._tile({ icon: "mdi:flag-checkered", label: t.finish, value: `<i>${this._finish()}</i>`, more: this._ids.finish })}
+        ${this._tile({ icon: "mdi:battery-lock", label: t.socLimit, value: lim ? t.on : t.off, color: lim ? C.green : C.grey, toggle: "socLimit" })}</div>`;
     } else {
       const v = num(this._s("voltage")), bt = num(this._s("boxTemp")), pt = num(this._s("plugTemp"));
       extra = `<div class="g3">
@@ -359,16 +359,14 @@ ha-card.chg{animation:bp 3s ease-in-out infinite}
   background:rgba(127,127,127,.06);border:1px solid rgba(127,127,127,.14);transition:all .3s}
 .t.act{background:linear-gradient(145deg,color-mix(in srgb,var(--c) 14%,transparent),color-mix(in srgb,var(--c) 3%,transparent));
   border-color:color-mix(in srgb,var(--c) 30%,transparent)}
-.t{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-align:center}
-.h{display:flex;align-items:center;justify-content:center;gap:3px;max-width:100%;min-width:0}
-/* An empty twin of the icon on the right keeps the label itself on the tile's centre line. */
-.h::after{content:"";width:16px;flex:none}
-.t ha-icon{--mdc-icon-size:16px;width:16px;height:16px;display:flex;color:var(--c);flex:none}
+.t{display:flex;align-items:center;gap:6px}
+.t ha-icon{--mdc-icon-size:22px;color:var(--c);flex:none}
+.tx{flex:1;display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
 .chg .t.act ha-icon{animation:ig 2s ease-in-out infinite}
 @keyframes ig{0%,100%{filter:drop-shadow(0 0 2px color-mix(in srgb,var(--c) 40%,transparent))}50%{filter:drop-shadow(0 0 7px color-mix(in srgb,var(--c) 75%,transparent))}}
 .l{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--secondary-text-color);opacity:.8;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.v,.sr b,.sv{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--primary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.v,.sr b,.sv{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--primary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .v i{font-style:normal;color:var(--secondary-text-color);font-weight:500}
 .ar{opacity:.5;margin:0 2px}
 .st{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 3px}
@@ -402,9 +400,10 @@ input[type=range]{width:100%;margin:0;accent-color:var(--primary-color);height:2
 .compact .cp{border:none;background:none}
 .empty{padding:16px;color:var(--secondary-text-color)}
 @container (max-width: 440px){.sr b{font-size:12px}.sr small{font-size:8px;margin-left:0}.ar{margin:0 1px}.ch{font-size:12px}}
-@container (max-width: 400px){.sr small.lu{display:none}.st{padding:3px 2px}.sr{gap:0}.sr button{width:18px;height:18px;line-height:18px;font-size:13px;border-radius:5px}.l{letter-spacing:.2px}}
-@container (max-width: 360px){.v{font-size:11px}.sr b{font-size:11px}.h::after{width:0}.ch{font-size:11px}.cp ha-icon{--mdc-icon-size:18px}}
-@container (max-width: 330px){.sr small{display:none}.t ha-icon{display:none}.t{padding:4px 3px}.v{font-size:10px}.sl .l{display:none}.ce,.ce+.ar{display:none}}
+@container (max-width: 400px){.t{padding:4px 5px;gap:4px}.t ha-icon{--mdc-icon-size:20px}.sr small.lu{display:none}.st{padding:3px 2px}.sr{gap:0}.sr button{width:18px;height:18px;line-height:18px;font-size:13px;border-radius:5px}.l{letter-spacing:.2px}}
+@container (max-width: 360px){.v{font-size:11px}.sr b{font-size:11px}.t{gap:3px;padding:4px}.t ha-icon{--mdc-icon-size:18px}.ch{font-size:11px}.cp ha-icon{--mdc-icon-size:18px}}
+@container (max-width: 350px){.t ha-icon{display:none}}
+@container (max-width: 330px){.sr small{display:none}.t{padding:4px 3px}.v{font-size:10px}.sl .l{display:none}.ce,.ce+.ar{display:none}}
 `;
 
 if (!customElements.get(CARD)) customElements.define(CARD, EveusCard);

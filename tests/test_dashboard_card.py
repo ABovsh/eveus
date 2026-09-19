@@ -299,12 +299,31 @@ def test_soc_steppers_stay_four_across_on_phone_widths():
     assert ".g4{grid-template-columns:repeat(2" not in source
 
 
-def test_tile_label_and_value_are_centred():
+def test_tile_icon_sits_left_and_text_is_centred_beside_it():
+    """A 22 px icon on the left uses the tile's height; label and value centre in the rest."""
     source = CARD.read_text(encoding="utf-8")
-    tile = source.split("\n.t{", 1)[1].split("}", 1)[0]
-    assert "flex-direction:column" in tile
-    assert "align-items:center" in tile
-    assert "text-align:center" in tile
+    rule = lambda sel: source.split(f"\n{sel}{{", 1)[1].split("}", 1)[0]
+    assert "flex-direction:column" not in rule(".t")
+    assert "--mdc-icon-size:22px" in rule(".t ha-icon")
+    text = rule(".tx")
+    assert "flex:1" in text and "align-items:center" in text and "text-align:center" in text
+
+
+def test_soc_bar_marks_where_the_session_started():
+    """The fill runs from Initial SOC, so the bar carries a tick there as well as at Target."""
+    source = CARD.read_text(encoding="utf-8")
+    bar = _card_function(source, "_bar")
+    assert 'class="tg" style="left:${tgt}%"' in bar
+    assert 'class="tg" style="left:${ini}%"' in bar
+
+
+def test_soc_limit_toggle_is_not_under_the_initial_soc_stepper():
+    """Initial SOC is the stepper touched most; a toggle directly below it gets hit by mistake."""
+    source = CARD.read_text(encoding="utf-8")
+    full = _card_function(source, "_full")
+    row = full.split('<div class="g3">', 1)[1]
+    assert row.index("t.socLimit") > row.index("t.toTarget")
+    assert row.index("t.socLimit") > row.index("t.finish")
 
 
 def test_tile_values_shrink_on_phone_widths():
