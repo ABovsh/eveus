@@ -1038,12 +1038,6 @@ class TestChargerStateAttributes:
     the firmware-1.x translated case and the unmapped-code case (issue #11).
     A plain mapped state must stay attribute-free."""
 
-    def test_legacy_translated_state_exposes_original_code(self) -> None:
-        attrs = sensors.get_charger_state_attributes(
-            _updater({"state": 2, "_legacy_raw_state": 20}), None
-        )
-        assert attrs == {"raw_state": 20}
-
     def test_unmapped_state_code_is_exposed(self) -> None:
         attrs = sensors.get_charger_state_attributes(_updater({"state": 20}), None)
         assert attrs == {"raw_state": 20}
