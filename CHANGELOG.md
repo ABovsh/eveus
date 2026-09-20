@@ -10,7 +10,7 @@ Everything below is the **Eveus card**, which arrived in 4.23.0. The integration
 - **The card explains itself when nothing is charging.** It prints the Not Charging Reason under the state — Waiting for Car, Waiting for Schedule, Controlled by OCPP, Charge Complete and the rest — and once the charger stops answering it reads *Offline* with how long ago the last reading arrived, dims the tiles and holds the controls.
 
 ### 🔧 Changed
-- **No reading appears twice, and none is invented.** The State tile is gone, because the state shares its line with the SOC bar; `control` and `full` drop the Current and Power tiles, because the slider is named **Current** and prints the power the charger is producing at its end; Basic mode no longer labels two tiles *Session*, and `full` there renders `control`, since Basic has no SOC settings to add; and a reading the charger cannot supply is left out instead of printed as `--`. Cost follows the currency its entity reports.
+- **No reading appears twice, and none is invented.** The State tile is gone, because the state shares its line with the SOC bar; `control` and `full` drop the Current and Power tiles, because the slider is named **Current** and prints the power the charger is producing at its end; Basic mode no longer labels two tiles *Session*, and the card editor stops offering `full` there, since Basic has no SOC settings to add; and a reading the charger cannot supply is left out instead of printed as `--`. Cost follows the currency its entity reports.
 
   <p>
     <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">

@@ -1,5 +1,6 @@
 // Eveus card — one card, four layouts: compact / status / control / full.
 const CARD = "eveus-card";
+const EDITOR_TAG = "eveus-card-editor";
 const C = { red: "#E74C3C", orange: "#F39C12", green: "#2ECC71", grey: "#95A5A6", blue: "#3498DB", purple: "#A78BFA", off: "#78828F" };
 const LAYOUTS = ["compact", "status", "control", "full"];
 
@@ -63,21 +64,7 @@ const kwh = (v) => (v === null ? null : `${v < 10 ? Number(v.toFixed(1)) : Math.
 const kw = (v) => (v === null ? "--" : `${(v / 1000).toFixed(1)}kW`);
 
 class EveusCard extends HTMLElement {
-  static getConfigForm() {
-    // Field and mode names are the integration's own ("Integration mode", Advanced / Basic).
-    const e = (document.documentElement.lang || "en").startsWith("uk") ? EDITOR.uk : EDITOR.en;
-    const opts = (o) => Object.entries(o).map(([value, label]) => ({ value, label }));
-    return {
-      schema: [
-        { name: "layout", selector: { select: { mode: "dropdown", options: opts(e.layouts) } } },
-        { name: "device_id", selector: { device: { integration: "eveus" } } },
-        { name: "mode", selector: { select: { options: [{ value: "advanced", label: e.advanced }, { value: "basic", label: e.basic }] } } },
-        { name: "language", selector: { select: { options: opts(e.languages) } } },
-      ],
-      computeLabel: (f) => e.fields[f.name],
-      computeHelper: (f) => (f.name === "mode" ? e.modeHelp : undefined),
-    };
-  }
+  static getConfigElement() { return document.createElement(EDITOR_TAG); }
   static getStubConfig() { return { layout: "control" }; }
 
   setConfig(config) {
@@ -621,7 +608,63 @@ input[type=range]:disabled{cursor:not-allowed;opacity:.45}
 @media (prefers-reduced-motion:reduce){ha-card.chg,.chg .t.act,.chg .t.act::after,.chg .t.act ha-icon,.chg .cp ha-icon,.chg .bar .fill::after{animation:none}.t,.st,.sl,.cp,ha-card{transition:none}.chg .bar .fill::after,.chg .t.act::after{display:none}}
 `;
 
+// The layout list depends on the mode, and a static config form is built
+// before the card exists -- it sees neither the config nor hass. Hence an
+// element of our own, which does.
+class EveusCardEditor extends HTMLElement {
+  setConfig(config) { this._config = { ...config }; this._resolve(); this._render(); }
+  set hass(hass) { this._hass = hass; this._resolve(); this._render(); }
+
+  // Only an explicit mode is certain. Otherwise the card follows the
+  // integration, which is Advanced exactly when it publishes an SOC.
+  _resolve() {
+    const want = this._config?.device_id || null;
+    if (!this._hass || this._config?.mode || this._socFor === want) return;
+    this._socFor = want;
+    const msg = { type: "eveus/card_entities" };
+    if (want) msg.device_id = want;
+    this._hass.callWS(msg)
+      .then((res) => { this._hasSoc = !!res.entities?.soc_percent; })
+      .catch(() => { this._hasSoc = true; })
+      .finally(() => this._render());
+  }
+
+  get _advanced() { return this._config?.mode ? this._config.mode !== "basic" : this._hasSoc !== false; }
+
+  _render() {
+    if (!this._config || !this._hass) return;
+    const e = (this._hass.locale?.language || "en").startsWith("uk") ? EDITOR.uk : EDITOR.en;
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.computeLabel = (f) => e.fields[f.name];
+      this._form.computeHelper = (f) => (f.name === "mode" ? e.modeHelp : undefined);
+      this._form.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        this._config = { ...ev.detail.value };
+        this._resolve();
+        this._render();
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: ev.detail.value }, bubbles: true, composed: true }));
+      });
+      this.appendChild(this._form);
+    }
+    const opts = (o) => Object.entries(o).map(([value, label]) => ({ value, label }));
+    // Basic has no SOC settings, so `full` would be `control` under another name.
+    // A card already set to it keeps the entry, or the dropdown would read blank.
+    const layouts = { ...e.layouts };
+    if (!this._advanced && this._config.layout !== "full") delete layouts.full;
+    this._form.hass = this._hass;
+    this._form.data = this._config;
+    this._form.schema = [
+      { name: "layout", selector: { select: { mode: "dropdown", options: opts(layouts) } } },
+      { name: "device_id", selector: { device: { integration: "eveus" } } },
+      { name: "mode", selector: { select: { options: [{ value: "advanced", label: e.advanced }, { value: "basic", label: e.basic }] } } },
+      { name: "language", selector: { select: { options: opts(e.languages) } } },
+    ];
+  }
+}
+
 if (!customElements.get(CARD)) customElements.define(CARD, EveusCard);
+if (!customElements.get(EDITOR_TAG)) customElements.define(EDITOR_TAG, EveusCardEditor);
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === CARD)) {
   window.customCards.push({ type: CARD, name: "Eveus EV Charger", description: "Compact Eveus charger card: compact / status / control / full", preview: true });

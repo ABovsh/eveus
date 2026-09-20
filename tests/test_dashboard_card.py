@@ -131,7 +131,7 @@ def test_card_ships_in_the_package_with_picker_entry_and_four_layouts():
     source = CARD.read_text(encoding="utf-8")
     assert 'customElements.define(CARD' in source
     assert "window.customCards" in source
-    assert "getConfigForm" in source
+    assert "getConfigElement" in source
     assert 'const CARD = "eveus-card"' in source
     assert 'LAYOUTS = ["compact", "status", "control", "full"]' in source
 
@@ -287,6 +287,11 @@ def _card_function(source: str, name: str) -> str:
     return source[start:source.index("\n  }\n", start)]
 
 
+def _editor_function(source: str, name: str) -> str:
+    """Both classes have a _render and a _resolve; this one reads the editor's."""
+    return _card_function(source[source.index("class EveusCardEditor"):], name)
+
+
 def test_soc_steppers_stay_four_across_on_phone_widths():
     """One row of Initial / Target / Capacity / Loss; the stepper shrinks instead of wrapping."""
     source = CARD.read_text(encoding="utf-8")
@@ -336,7 +341,7 @@ def test_editor_mode_options_match_the_integration_mode_names():
     import json
 
     source = CARD.read_text(encoding="utf-8")
-    form = _card_function(source, "static getConfigForm")
+    form = _editor_function(source, "_render")
     assert '"auto", "basic"' not in form
     assert 'value: "advanced"' in form and 'value: "basic"' in form
     assert "computeLabel" in form
@@ -618,3 +623,14 @@ def test_the_compact_row_shrinks_before_it_wraps():
     """A narrow card drops a point of type rather than pushing the readings onto a second line."""
     source = CARD.read_text(encoding="utf-8")
     assert "@container (max-width: 356px){.ch,.cp .sst{font-size:12px}" in source
+
+
+def test_the_editor_offers_full_only_where_it_adds_something():
+    """Basic has no SOC settings, so `full` must not be offered as a layout there."""
+    source = CARD.read_text(encoding="utf-8")
+    render = _editor_function(source, "_render")
+    assert 'if (!this._advanced && this._config.layout !== "full") delete layouts.full;' in render
+    assert "static getConfigElement()" in source
+    assert "static getConfigForm" not in source, "a static form cannot see the mode"
+    editor = _editor_function(source, "_resolve")
+    assert "eveus/card_entities" in editor and "soc_percent" in editor, "an unset mode follows the integration"
