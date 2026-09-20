@@ -59,11 +59,12 @@ to the Energy dashboard to view its history.
 
 ### 📱 A ready-made card for everyday use
 
-The Eveus card is part of the integration and offers four layouts, from a
-compact status row to charging controls and SOC settings. It follows the
-integration's Basic or Advanced mode, displays faults and asks for confirmation
-before stopping an active charge. A ready-made dashboard is also available
-for separate cards and graphs.
+The Eveus card is part of the integration: a compact row of readings, tiles, or
+tiles with the charging controls and the SOC settings. It follows the
+integration's Basic or Advanced mode — Basic has no SOC settings, so it has three
+layouts instead of four — displays faults and asks for confirmation before
+stopping an active charge. A ready-made dashboard is also available for separate
+cards and graphs.
 
 ### 🧩 Automations for charging and your home energy system
 
@@ -168,9 +169,9 @@ Use the [ready-made dashboard](#dashboard) if you want separate cards and graphs
 
 ## Eveus card
 
-The card is part of the integration. Its **Layout** setting (`layout`) selects the view and
-available controls. To show several layouts on a dashboard, add the card more
-than once and configure each instance separately.
+The card is part of the integration. Its **Layout** field (`layout`) selects the
+view and the controls that come with it; to show several layouts on a dashboard,
+add the card more than once.
 
 <p align="center">
   <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
@@ -184,20 +185,34 @@ than once and configure each instance separately.
 | Layout | Shows | Controls |
 |---|---|---|
 | `compact` | One line: state, SOC, power, voltage, time to target, session energy and cost, with the SOC bar below | — (read-only) |
-| `status` | The same readings as tiles: initial → current SOC, the to-target block, set → actual current, session, power | — (read-only) |
-| `control` | SOC, the to-target block and the session, with four switches beside them | **OCPP**, **No limit**, **One Charge**, **Stop Charging**, **Current** slider |
-| `full` | Everything in `control`, plus the SOC settings. Advanced mode only — Basic has no SOC settings, so the editor does not offer this layout there | Everything in `control`, plus **Initial SOC**, **Target SOC**, **Battery Capacity**, **SOC Correction** |
+| `status` | The same readings as tiles: initial → current SOC, To target, set → actual current, session, power | — (read-only) |
+| `control` | SOC, To target and the session, with four switches beside them | **OCPP**, **No limit**, **One**, **Stop**, and a **Current** slider that prints the power the charger is producing at its end |
+| `full` | Everything in `control`, plus the SOC settings. **Advanced mode only** | Everything in `control`, plus **Initial**, **Target**, **Capacity** and **Loss** |
 
-- **Advanced and Basic mode.** The card uses the mode chosen for the integration (**Configure**). Both modes have the same shape; only what the tiles carry changes. In Basic mode `status` shows power, session and current, and `control` keeps the session between the two pairs of switches. The card's **Integration mode** field (`mode: basic`) switches the card to its Basic view regardless of the integration's mode; `mode: advanced` needs the integration in Advanced mode.
-- **To target.** While charging, the tile shows the Target SOC and the time left; when idle it shows the gap from the current SOC to the target. Below that come the energy and cost still needed and the charging finish time. A reading the charger cannot supply is left out rather than printed as `--`.
-- **Voltage and temperature.** In `status`, `control` and `full` the state line carries the mains voltage and both probes — plug first, then box — at its right edge, so they cost no extra height; `compact` carries the voltage on its one line. Voltage turns amber outside 215–245 V and red below 205 V or above 253 V; a temperature turns amber from 60 °C and red from 70 °C. Tapping one opens that sensor.
-- **Current slider.** The slider sets the Charging Current and prints the power the charger is producing at its end, so neither is repeated in a tile. An orange mark on it shows the adaptive current limit when that is below the slider's maximum.
-- **Readability.** Centred labels and values use larger text and wrap when needed. `compact` keeps every reading on one line, dropping a point of type on a narrow card rather than wrapping. Charging adds a brighter pulse and moving highlights; animations respect the device's reduced-motion setting.
-- **SOC bar.** In Advanced mode the dimmer part shows the charge present at the start of the session, while the animated coloured part shows energy added since then; ticks mark the Initial and the Target SOC. The card turns violet once the Target SOC is reached.
-- **Why it is not charging.** Under the state the card prints the `Not Charging Reason` — Waiting for Car, Waiting for Schedule, Controlled by OCPP, Charge Complete and the rest. It takes a line only when there is one to show.
-- **When the charger is unreachable.** Initial SOC and Target SOC are stored in Home Assistant, so they keep their values even when nothing else answers. The card therefore dims its tiles, reads *Offline* with how long ago the last reading arrived, keeps only the Target tick on the SOC bar and stops responding to the controls, instead of drawing a charge that is not there.
-- **Tapping.** Tapping a tile opens that entity's dialog. A long press opens the setting behind the reading instead: **SOC** → Initial SOC, **To target** → Target SOC, **Current** → Charging Current; a dot in the tile's corner marks the readings that have one. **OCPP**, **No limit**, **One Charge** and **Stop Charging** toggle with one tap; stopping a charge in progress asks once in the tile itself, and a second tap within four seconds carries it out. The slider sends its value when you let go. The − / + buttons send the value after a short pause, so several taps in a row make one command. Tab moves between tiles and Enter or Space acts on them.
-- **Faults.** If the charger is in the `Error` state or has no ground, a red line appears in every layout. Readings the card is holding from before an outage raise no alert.
+- **Basic mode has no `full`.** Basic mode has no SOC entities, so there is no
+  settings row to add: the card editor does not offer `full`, and a card already
+  set to it renders `control`. Basic has no SOC tile and no SOC bar either. The
+  card follows the mode chosen for the integration (**Configure**); the
+  **Integration mode** field (`mode: basic`) switches it to the Basic view, and
+  `mode: advanced` works only when the integration is in Advanced mode.
+- **The state line** (`status`, `control`, `full`). The state, the SOC bar and, at
+  the right edge, the mains voltage and both temperature probes — plug first, then
+  box. Voltage turns amber outside 215–245 V and red below 205 V or above 253 V; a
+  temperature turns amber from 60 °C and red from 70 °C. When the charger is not
+  charging, the `Not Charging Reason` appears beside the state in every layout; an
+  `Error` state or a missing ground adds a red line.
+- **SOC bar** (Advanced mode). The dim part is the charge present at the start of
+  the session, the coloured part the energy added since then; ticks mark the
+  Initial and the Target SOC, and the readings turn violet once the Target SOC is
+  reached.
+- **When the charger is unreachable.** The card dims its tiles, reads *Offline*
+  with how long ago the last reading arrived and stops acting on the controls.
+  Initial SOC and Target SOC are stored in Home Assistant, so the bar keeps the
+  Target tick while the charge itself is unknown.
+- **Taps.** A tap opens the reading's entity; a long press opens the setting
+  behind it — **SOC** → Initial SOC, **To target** → Target SOC, **Current** →
+  Charging Current. Stopping a charge in progress asks in the tile itself and
+  needs a second tap within four seconds.
 
 ### How to add the card
 
