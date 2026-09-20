@@ -3,21 +3,25 @@
 ## Unreleased
 
 ### ✨ Added
-- **The card says why the charger is not charging.** Under the state, every layout prints the Not Charging Reason — Waiting for Car, Waiting for Schedule, Controlled by OCPP, Charge Complete and the rest.
+- **Mains voltage and both temperatures in every layout.** They sit at the right edge of the state line — plug first, then box — and take no extra height. Voltage turns amber outside 215–245 V and red below 205 V or above 253 V; a temperature turns amber from 60 °C and red from 70 °C.
+- **OCPP and Disable limits on the card.** `control` and `full` carry four switches in both modes: **OCPP**, **No limit**, **One Charge** and **Stop Charging**.
+- **The card says why the charger is not charging.** Under the state it prints the Not Charging Reason — Waiting for Car, Waiting for Schedule, Controlled by OCPP, Charge Complete and the rest — and takes a line only when there is one to show.
 - **The card marks stale readings as stale.** When the charger stops answering, the state reads *Offline* with how long ago the last reading arrived, the tiles dim, the SOC bar keeps only its Target tick and the controls stop responding. Initial SOC and Target SOC are stored in Home Assistant and keep their values through an outage, so the bar used to draw a charge that was not there.
 - **One to-target block in `status`, `control` and `full`.** In Advanced mode it shows the Target SOC and the time left while charging, the gap from the current SOC to the target while idle, the energy and cost still needed, and the charging finish time. Rows with no value are left out instead of printed as `--`.
-- **`full` in Basic mode has a row of its own:** last charge energy, the adaptive current limit and the **Ground protection** switch. It used to render exactly what `control` renders.
+- **`full` in Basic mode has a row of its own:** energy and cost since the counter was reset, the last charge's energy and the **Ground protection** switch. It used to render exactly what `control` renders.
 - **Tiles work from the keyboard.** Tab moves between them, Enter and Space act on them. A dot in the corner marks a reading whose setting a long press opens.
 
 ### 🔧 Changed
 - **Purple means the Target SOC is reached.** It was used for every state that was not charging, a charger that had gone offline included. The charge present at the start of the session is drawn in the card's current colour instead of a second purple.
-- **State and the SOC bar sit on one line in every layout.** `status` no longer spends a tile on the state; that place shows Power · Voltage in Advanced mode and the last charge's energy in Basic mode.
-- **Basic mode names the session once.** Session time, energy and cost share one two-row tile, voltage moved next to power, and a Temperature tile shows the box and plug temperatures.
-- **One Charge and Stop Charging carry their names under the icons**, and stopping a charge in progress is confirmed in the tile itself rather than in a browser dialog.
-- **The Charging Current slider is named `Set`**, so it is no longer called what the Current tile is called. The English label of the goal tile is **To target** (was *Time to SOC*).
+- **`compact` is one line again:** state, SOC, power, voltage, time to target, session energy and cost, all separated the same way, with the SOC bar below. A narrow card drops a point of type rather than wrapping.
+- **State and the SOC bar sit on one line in every layout.** `status` no longer spends a tile on the state.
+- **The Charging Current slider is named `Current` and prints the live power at its end,** so `control` and `full` no longer repeat either in a tile. The Current tile stays in `status`, which has no slider. The English label of the goal tile is **To target** (was *Time to SOC*).
+- **`full` is `control` plus the settings.** In Advanced mode it adds the four SOC steppers and nothing else; the **Limit: SOC enabled** toggle is no longer on the card. The entity itself is unchanged.
+- **Basic mode names the session once** and keeps it between the two pairs of switches in `control`.
+- **Stopping a charge in progress is confirmed in the tile** rather than in a browser dialog, and One Charge and Stop carry their names under the icons.
 - **Faults show in `compact` too**, and stale readings raise no alert.
-- **One rule for every unit and every duration** in every layout (`1.5kW`, `226V`, `7A`, `0.9kWh`, `3h26m`), and session cost uses the currency its entity reports.
-- **One icon per concept:** a bolt for power, a sine wave for voltage, the AC symbol for current, a chequered flag for the goal, a counter for the session, a timer for duration. Battery icons appear only where there is an SOC reading.
+- **One rule for every unit, separator and duration** in every layout (`1.5kW`, `226V`, `11A`, `5kWh`, `2h31m`), and cost is printed with the sign of the currency its entity reports (`UAH` → `₴`).
+- **One icon per concept:** a bolt for power, the AC symbol for current, a chequered flag for the goal, a counter for the session and the meter, a timer for duration. Battery icons appear only where there is an SOC reading.
 - **More readable dashboard cards in less space.** Larger centred labels and values, tighter spacing and wrapping keep every reading visible on narrow cards. Charging adds brighter pulses and moving highlights without restarting the animation as readings update, and respects reduced-motion preferences.
 
   <p>

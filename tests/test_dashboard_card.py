@@ -310,13 +310,13 @@ def test_soc_bar_marks_where_the_session_started():
     assert 'class="tg" style="left:${ini}%"' in bar
 
 
-def test_soc_limit_toggle_is_not_under_the_initial_soc_stepper():
-    """Initial SOC is the stepper touched most; a toggle directly below it gets hit by mistake."""
+def test_full_only_adds_settings_to_control():
+    """Full is Control plus the settings row -- it never repeats a reading Control already shows."""
     source = CARD.read_text(encoding="utf-8")
     full = _card_function(source, "_full")
-    row = full.split('<div class="g3">', 1)[1].split("</div>`", 1)[0]
-    assert row.count("this._tile(") == 3
-    assert row.index("t.socLimit") > row.rindex("this._tile("), "the toggle is the last tile of the row"
+    assert "this._controls() + extra" in full
+    assert '<div class="g4">' in full, "four steppers, one row"
+    assert "socLimit" not in source, "the SOC-limit toggle was dropped from the card"
 
 
 def test_values_wrap_instead_of_being_hidden_on_phone_widths():
@@ -361,16 +361,14 @@ def test_compact_soc_bar_spans_the_card_below_the_row():
     source = CARD.read_text(encoding="utf-8")
     compact = _card_function(source, "_compact")
     assert 'class="cs"' not in compact
-    assert compact.rstrip().endswith("${this._strip()}${this._alerts()}</div>`;")
+    assert compact.rstrip().endswith("${this._bar()}${this._note()}${this._alerts()}</div>`;")
 
 
 def test_long_press_on_a_reading_opens_the_setting_behind_it():
-    """SOC → Initial SOC, Time to SOC → Target SOC, Current → Charging Current."""
+    """SOC -> Initial SOC, To target -> Target SOC, Current -> Charging Current."""
     source = CARD.read_text(encoding="utf-8")
-    metrics = _card_function(source, "_metrics")
-    for label, setting in (("t.soc", "initialSoc"), ("t.eta", "targetSoc"), ("t.current", "chargingCurrent")):
-        line = next(ln for ln in metrics.splitlines() if f"label: {label}," in ln)
-        assert f"hold: this._ids.{setting}" in line, label
+    for tile, setting in (("_tSoc", "initialSoc"), ("_tGoal", "targetSoc"), ("_tCurrent", "chargingCurrent")):
+        assert f"hold: this._ids.{setting}" in _card_function(source, tile), tile
     assert 'data-hold="${hold}"' in _card_function(source, "_tile")
 
 
@@ -383,25 +381,25 @@ def test_long_press_does_not_also_fire_the_tap():
 
 
 def test_to_goal_tile_spans_two_rows_with_energy_cost_and_finish():
-    """Time to SOC grows into the space the toggles freed: energy, money and finish time."""
+    """To target grows into the space the toggles freed: energy, money and finish time."""
     source = CARD.read_text(encoding="utf-8")
-    metrics = _card_function(source, "_metrics")
-    line = next(ln for ln in metrics.splitlines() if "label: t.eta," in ln)
-    assert 'cls: "tall"' in line
+    goal = _card_function(source, "_tGoal")
     for part in ("energyToTarget", "costToTarget", "this._finish()"):
-        assert part in metrics, part
+        assert part in goal, part
+    assert 'this._tGoal("tall")' in source, "the goal tile spans both rows where there are two"
     assert ".t.tall{grid-row:span 2}" in source
 
 
 def test_one_charge_and_stop_share_one_cell_and_carry_a_caption():
     source = CARD.read_text(encoding="utf-8")
-    controls = _card_function(source, "_controls")
-    assert "label: t.one" not in controls and "label: t.stop" not in controls
-    assert 'class="bt"' in controls
-    assert '<span class="l">' in controls, "a caption; title= is invisible on touch"
-    assert "mdi:lightning-bolt-circle" in controls
+    run = _card_function(source, "_btnsRun")
+    assert 'class="bt"' in run
+    assert "t.one," in run and "t.stop," in run
+    assert "mdi:lightning-bolt-circle" in run
     assert "STOP" in source and "<polygon" in source, "a road-style STOP sign"
-    assert 'aria-label="${label}"' in controls and "t.one," in controls and "t.stop," in controls
+    btn = _card_function(source, "_btn")
+    assert '<span class="l">' in btn, "a caption; title= is invisible on touch"
+    assert 'aria-label="${label}"' in btn
 
 
 def test_full_layout_does_not_repeat_the_to_goal_readings():
@@ -411,32 +409,31 @@ def test_full_layout_does_not_repeat_the_to_goal_readings():
 
 
 def test_status_and_control_share_one_to_target_block():
-    """Status showed target → eta and dropped energy, cost and the finish clock."""
+    """Status showed target -> eta and dropped energy, cost and the finish clock."""
     source = CARD.read_text(encoding="utf-8")
-    assert "this._metrics()" in _card_function(source, "_status")
-    assert "this._metrics()" in _card_function(source, "_controls")
-    assert "extended" not in _card_function(source, "_metrics"), "one block, no density switch"
-    metrics = _card_function(source, "_metrics")
-    for part in ("energyToTarget", "costToTarget", "this._finish()"):
-        assert part in metrics, part
+    for layout in ("_status", "_controls"):
+        assert "this._tGoal(" in _card_function(source, layout), layout
+    assert "extended" not in source, "one block, no density switch"
 
 
-def test_basic_control_groups_session_and_shows_temperature():
-    """Basic: Power over Temp on the left, one two-row Session tile (time, energy, money) in the centre."""
+def test_basic_control_puts_the_session_between_the_two_switch_pairs():
+    """Basic Control mirrors Advanced: switches, session, switches -- session in the middle."""
     source = CARD.read_text(encoding="utf-8")
-    metrics = _card_function(source, "_metrics")
-    assert any("label: t.session," in ln and 'cls: "tall"' in ln for ln in metrics.splitlines())
-    assert "sessionEnergy" in metrics
-    assert "label: t.temp" in metrics
+    controls = _card_function(source, "_controls")
+    basic = controls.split(": [", 1)[1]
+    assert basic.index("_tSession(") > basic.index("_btnsCfg()")
+    assert basic.index("_tSession(") < basic.index("_btnsRun()")
 
 
-def test_voltage_rides_with_power_and_is_never_shown_twice():
+def test_voltage_and_temperature_ride_in_the_state_line_and_never_in_a_tile():
+    """Both are what a bad charge is diagnosed with, so every layout carries them at no extra height."""
     source = CARD.read_text(encoding="utf-8")
-    metrics = _card_function(source, "_metrics")
-    power = next(ln for ln in metrics.splitlines() if "label: t.power," in ln)
-    assert 'num(this._s("voltage"))' in power
-    assert metrics.count('num(this._s("voltage"))') == 1
-    assert "t.voltage" not in _card_function(source, "_full")
+    assert source.count('num(this._s("voltage"))') == 1, "one place builds the voltage"
+    assert 'this._volt()' in _card_function(source, "_strip")
+    assert 'this._temps()' in _card_function(source, "_strip")
+    for tile in ("_tPower", "_tCurrent", "_tSession"):
+        assert "voltage" not in _card_function(source, tile), tile
+        assert "Temp" not in _card_function(source, tile), tile
 
 
 def test_the_bar_never_paints_locally_restored_numbers_as_live_data():
@@ -474,24 +471,24 @@ def test_the_reason_the_charger_is_not_charging_is_shown():
 
 def test_state_and_progress_sit_in_one_strip_in_every_layout():
     source = CARD.read_text(encoding="utf-8")
-    for layout in ("_compact", "_status", "_controls"):
+    for layout in ("_status", "_controls"):
         assert "this._strip()" in _card_function(source, layout), layout
+    compact = _card_function(source, "_compact")
+    assert 'class="sst"' in compact and "this._bar()" in compact, "compact inlines the same strip"
     assert "t.state" not in _card_function(source, "_status"), "no separate State tile"
 
 
 def test_each_mode_shows_the_session_once():
     """Basic printed "Session" on both the duration tile and the energy/cost tile."""
     source = CARD.read_text(encoding="utf-8")
-    advanced, basic = _card_function(source, "_metrics").split("} else {", 1)
-    assert advanced.count("label: t.session,") == 1
-    assert basic.count("label: t.session,") == 1
+    assert source.count("label: this._t.session,") == 2, "one per mode, both inside _tSession"
+    session = _card_function(source, "_tSession")
+    assert session.count("label: this._t.session,") == 2
 
 
 def test_battery_icons_only_appear_where_soc_exists():
     source = CARD.read_text(encoding="utf-8")
-    metrics = _card_function(source, "_metrics")
-    power = next(ln for ln in metrics.splitlines() if "label: t.power," in ln)
-    assert "_batteryIcon" not in power
+    assert "_batteryIcon" not in _card_function(source, "_tPower")
     assert "this._advanced" in _card_function(source, "_batteryIcon")
 
 
@@ -503,13 +500,12 @@ def test_alerts_reach_the_compact_layout_too():
 
 def test_an_idle_to_target_tile_shows_the_gap_instead_of_dashes():
     source = CARD.read_text(encoding="utf-8")
-    metrics = _card_function(source, "_metrics")
-    assert "eta ? this._pair" in metrics, "charging shows the time, idle shows now -> target"
+    assert "eta ? this._pair" in _card_function(source, "_tGoal"), "charging shows the time, idle shows now -> target"
 
 
 def test_rows_with_no_value_are_dropped():
     source = CARD.read_text(encoding="utf-8")
-    assert "_rows(" in _card_function(source, "_metrics")
+    assert "_rows(" in _card_function(source, "_tGoal")
     assert "filter(Boolean)" in _card_function(source, "_rows")
 
 
@@ -524,21 +520,20 @@ def test_units_follow_one_spacing_rule():
 
 def test_one_icon_per_concept():
     source = CARD.read_text(encoding="utf-8")
-    metrics = _card_function(source, "_metrics")
-    for label, icon in (("t.power", "mdi:flash"), ("t.session", "mdi:"), ("t.current", "mdi:current-ac")):
-        line = next(ln for ln in metrics.splitlines() if f"label: {label}," in ln)
-        assert icon in line, label
-    assert 'icon: "mdi:sine-wave", label: t.power' not in source, "sine-wave is voltage, not power"
-    assert 'icon: "mdi:timer-outline", label: t.eta' not in source, "the timer is duration, not the goal"
+    for tile, icon in (("_tPower", "mdi:flash"), ("_tCurrent", "mdi:current-ac"), ("_tGoal", "mdi:flag-checkered")):
+        assert icon in _card_function(source, tile), tile
+    assert 'icon: "mdi:sine-wave"' not in source, "sine-wave is voltage, not power"
+    assert 'icon: "mdi:timer-outline", label: this._t.eta' not in source, "the timer is duration, not the goal"
 
 
-def test_the_slider_is_not_called_what_the_current_tile_is_called():
+def test_the_slider_is_the_current_and_never_shares_a_layout_with_the_current_tile():
+    """The slider sets the current, so it says so; the tile only exists where there is no slider."""
     source = CARD.read_text(encoding="utf-8")
-    for lang in ("en", "uk"):
-        block = source.split(f"  {lang}: {{", 1)[1].split("\n  }", 1)[0]
-        current = re.search(r'current: "([^"]+)"', block).group(1)
-        set_current = re.search(r'setCurrent: "([^"]+)"', block).group(1)
-        assert current != set_current, lang
+    assert "this._t.current" in _card_function(source, "_slider")
+    assert "setCurrent" not in source
+    controls = _card_function(source, "_controls")
+    assert "_tCurrent()" not in controls, "the slider already shows it"
+    assert "_tCurrent()" in _card_function(source, "_status")
 
 
 def test_stopping_confirms_inside_the_card():
@@ -570,9 +565,10 @@ def test_basic_full_is_more_than_basic_control():
     source = CARD.read_text(encoding="utf-8")
     full = _card_function(source, "_full")
     assert "this._advanced" in full
-    for key in ("lastSession", "groundProt"):
-        assert key in full, key
+    for tile in ("_tTotal()", "_tLast()", "groundProt"):
+        assert tile in full, tile
     assert '"last_session_energy"' in source and '"ground_protection"' in source
+    assert '"counter_a_energy"' in source and '"counter_a_cost"' in source
 
 
 def test_card_size_matches_what_is_rendered():
@@ -582,9 +578,12 @@ def test_card_size_matches_what_is_rendered():
 
 
 def test_money_uses_the_currency_the_entity_reports():
+    """HA reports the code (UAH), not the sign, so the card maps the ones it knows."""
     source = CARD.read_text(encoding="utf-8")
-    assert "unit_of_measurement" in _card_function(source, "_money")
-    assert source.count('"\u20b4"') == 1, "the hryvnia is a fallback, not a constant"
+    money = _card_function(source, "_money")
+    assert "unit_of_measurement" in money
+    assert 'UAH: "\u20b4"' in money and 'EUR: "\u20ac"' in money
+    assert "|| raw" in money, "an unknown code is printed as it comes"
 
 
 def test_offline_says_so_and_for_how_long():
@@ -593,3 +592,30 @@ def test_offline_says_so_and_for_how_long():
     assert "last_changed" in _card_function(source, "_since")
     for lang in ("en", "uk"):
         assert re.search(r'offline: "[^"]+"', source.split(f"  {lang}: {{", 1)[1]), lang
+
+
+def test_both_modes_carry_the_same_two_config_switches():
+    """OCPP and "no limit" are switches, so they light up like One charge does."""
+    source = CARD.read_text(encoding="utf-8")
+    cfg = _card_function(source, "_btnsCfg")
+    assert "t.ocpp" in cfg and "t.noLimits" in cfg
+    assert '"connect_to_ocpp"' in source and '"limit_disable_all"' in source
+    controls = _card_function(source, "_controls")
+    advanced = controls.split("? [", 1)[1].split("\n", 1)[0]
+    basic = controls.split("      : [", 1)[1].split("\n", 1)[0]
+    assert "_btnsCfg()" in advanced and "_btnsCfg()" in basic, "same pair in both modes"
+
+
+def test_one_separator_between_every_reading():
+    """The dot is a constant, so the compact row and the state line cannot drift apart."""
+    source = CARD.read_text(encoding="utf-8")
+    assert "const SEP = " in source
+    assert "chips.join(SEP)" in _card_function(source, "_compact")
+    assert "join(SEP)" in _card_function(source, "_strip")
+    assert "join(SEP)" in _card_function(source, "_temps")
+
+
+def test_the_compact_row_shrinks_before_it_wraps():
+    """A narrow card drops a point of type rather than pushing the readings onto a second line."""
+    source = CARD.read_text(encoding="utf-8")
+    assert "@container (max-width: 356px){.ch,.cp .sst{font-size:12px}" in source
