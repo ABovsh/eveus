@@ -2,20 +2,15 @@
 
 ## Unreleased
 
-Everything below is the **Eveus card**. The integration's entities are unchanged.
+Everything below is the **Eveus card**, which arrived in 4.23.0. The integration's entities are unchanged.
 
 ### ✨ Added
-- **The card shows the mains voltage in every layout, and the plug and box temperatures in all but `compact`.** They sit at the right edge of the state line, so they take no space of their own. A voltage outside 215–245 V, or a probe above 60 °C, colours itself.
-- **The card carries the OCPP and Disable limits switches**, beside One Charge and Stop Charging in `control` and `full`.
-- **The card says why the charger is not charging.** Under the state it prints the Not Charging Reason — Waiting for Car, Waiting for Schedule, Controlled by OCPP, Charge Complete and the rest.
-- **The card marks stale readings as stale.** When the charger stops answering, the state reads *Offline* with how long ago the last reading arrived, the tiles dim, the SOC bar keeps only its Target tick and the controls stop responding.
-- **`status` and `control` carry the whole to-target block:** the Target SOC and the time left while charging, the gap from the current SOC to the target while idle, then the energy and cost still needed and the charging finish time. It used to be three separate tiles, in `full` only.
-- **In Basic mode, `full` has a row of its own:** energy and cost since the counter was reset, the last charge's energy and the **Ground protection** switch.
-- **Tiles work from the keyboard**, and stopping a charge in progress is confirmed in the tile itself rather than in a browser dialog.
+- **The card shows more in the same space.** The mains voltage in every layout, and the plug and box temperatures in all but `compact`, ride along the state line. `status` and `control` carry the whole to-target block — the Target SOC and the time left while charging, the gap from the current SOC to the target while idle, then the energy and cost still needed and the charging finish time — which used to be three tiles in `full` alone.
+- **More of the charger is controlled from the card.** The OCPP and Disable limits switches join One Charge and Stop Charging in `control` and `full`.
+- **The card explains itself when nothing is charging.** It prints the Not Charging Reason under the state — Waiting for Car, Waiting for Schedule, Controlled by OCPP, Charge Complete and the rest — and once the charger stops answering it reads *Offline* with how long ago the last reading arrived, dims the tiles and holds the controls.
 
 ### 🔧 Changed
-- **No reading appears twice on a card.** The State tile is gone — the state shares its line with the SOC bar; `control` and `full` drop the Current and Power tiles, because the slider is now named **Current** and prints the power the charger is producing at its end; and Basic mode no longer labels two tiles *Session*. The **Limit: SOC enabled** toggle was dropped from the card; the entity itself is unchanged.
-- **Cost is printed in the currency its entity reports** (`UAH` → `₴`) instead of a fixed hryvnia sign, and a reading the charger cannot supply is left out rather than printed as `--`. The English name of the goal tile is **To target** (was *Time to SOC*).
+- **No reading appears twice, and none is invented.** The State tile is gone, because the state shares its line with the SOC bar; `control` and `full` drop the Current and Power tiles, because the slider is named **Current** and prints the power the charger is producing at its end; Basic mode no longer labels two tiles *Session*; and a reading the charger cannot supply is left out instead of printed as `--`. Cost follows the currency its entity reports.
 
   <p>
     <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
