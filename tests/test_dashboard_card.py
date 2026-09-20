@@ -1,10 +1,16 @@
 """The bundled dashboard card: served and registered by the integration."""
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 import custom_components.eveus as eveus
 
@@ -634,3 +640,118 @@ def test_the_editor_offers_full_only_where_it_adds_something():
     assert "static getConfigForm" not in source, "a static form cannot see the mode"
     editor = _editor_function(source, "_resolve")
     assert "eveus/card_entities" in editor and "soc_percent" in editor, "an unset mode follows the integration"
+
+
+# --- behaviour: a tap has to answer before the round trip -------------------
+
+NODE_HARNESS = r"""
+const fs = require("fs"), vm = require("vm");
+const registry = {};
+class HTMLElement {
+  constructor() { this.shadowRoot = null; }
+  attachShadow() {
+    this.shadowRoot = { innerHTML: "", addEventListener() {}, getAnimations: () => [], querySelector: () => null };
+    return this.shadowRoot;
+  }
+  addEventListener() {} dispatchEvent() {} appendChild() {}
+}
+const sandbox = {
+  HTMLElement, console, setTimeout, clearTimeout, Math, JSON, Object, Number, Promise, Event: class {},
+  customElements: { get: () => undefined, define: (t, c) => { registry[t] = c; } },
+  window: { customCards: [] },
+  document: { createElement: () => new HTMLElement() },
+};
+vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), sandbox);
+
+const st = (state, attributes = {}) => ({ state, attributes, last_changed: new Date().toISOString() });
+const ids = {
+  state: "sensor.state", reason: "sensor.reason", ground: "sensor.ground",
+  voltage: "sensor.voltage", power: "sensor.power", current: "sensor.current",
+  sessionEnergy: "sensor.se", sessionCost: "sensor.sc", sessionTime: "sensor.stime",
+  oneCharge: "switch.one", stop: "switch.stop", ocpp: "switch.ocpp", noLimits: "switch.nolimits",
+  chargingCurrent: "number.cur",
+};
+const states = {
+  "sensor.state": st("Standby"), "sensor.reason": st("unknown"), "sensor.ground": st("Connected"),
+  "sensor.voltage": st("227"), "sensor.power": st("0"), "sensor.current": st("0"),
+  "sensor.se": st("0"), "sensor.sc": st("0"), "sensor.stime": st("0m"),
+  "switch.one": st("off"), "switch.stop": st("off"), "switch.ocpp": st("off"), "switch.nolimits": st("off"),
+  "number.cur": st("16", { min: 8, max: 32, step: 1 }),
+};
+
+const calls = [];
+let settle;
+const hass = {
+  states, locale: { language: "en" }, themes: { darkMode: true },
+  callWS: () => new Promise(() => {}),
+  callService: (...a) => { calls.push(a); return new Promise((res, rej) => { settle = { res, rej }; }); },
+};
+
+const card = new registry["eveus-card"]();
+card.setConfig({ layout: "control", mode: "basic", language: "en" });
+card._ids = ids;
+card._idsFor = null;          // pretend the entity lookup already answered
+card.hass = hass;
+
+const colourOf = (key) => {
+  const m = card.shadowRoot.innerHTML.match(
+    new RegExp('style="--c:(#[0-9A-Fa-f]{6})"[^>]*data-toggle="' + key + '"'));
+  return m ? m[1].toUpperCase() : null;
+};
+
+const el = { dataset: { toggle: process.argv[3] } };
+el.closest = (sel) => (sel === "[data-toggle]" ? el : null);
+const ev = { target: { closest: (sel) => (sel === "[data-toggle]" ? el : null) }, stopPropagation() {} };
+
+const before = colourOf(process.argv[3]);
+const pending = card._onClick(ev);           // service promise is still unresolved
+const afterTap = colourOf(process.argv[3]);
+
+(async () => {
+  let afterFailure = null;
+  if (process.argv[4] === "reject" && settle) {
+    settle.rej(new Error("charger refused"));
+    try { await pending; } catch (e) {}
+    await new Promise((r) => setTimeout(r, 0));
+    afterFailure = colourOf(process.argv[3]);
+  }
+  console.log(JSON.stringify({ before, afterTap, afterFailure, calls: calls.length,
+                               service: calls[0] ? calls[0][1] : null }));
+})();
+"""
+
+
+def _run_card(toggle: str, mode: str = "tap") -> dict:
+    """Execute the card in node and report what a tap paints, and when."""
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - CI runners all ship node
+        pytest.skip("node is required to exercise the card's own behaviour")
+    harness = Path(tempfile.mkdtemp()) / "harness.js"
+    harness.write_text(NODE_HARNESS, encoding="utf-8")
+    out = subprocess.run(
+        [node, str(harness), str(CARD), toggle, mode],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.parametrize(
+    "toggle,colour",
+    [("oneCharge", "#2ECC71"), ("stop", "#E74C3C"), ("ocpp", "#3498DB"), ("noLimits", "#F39C12")],
+)
+def test_a_toggle_paints_the_tap_before_the_service_answers(toggle, colour):
+    """The card is the button's only feedback, so the tap cannot wait for the round trip."""
+    result = _run_card(toggle)
+    assert result["calls"] == 1, "the command still goes out"
+    assert result["service"] == "turn_on", "the pin does not invert the command"
+    assert result["before"] == "#95A5A6", "starts grey"
+    assert result["afterTap"] == colour, "painted before the service call resolves"
+
+
+def test_a_refused_command_takes_the_paint_back():
+    """An optimistic tap must not outlive a command the charger rejected."""
+    result = _run_card("oneCharge", "reject")
+    assert result["afterTap"] == "#2ECC71"
+    assert result["afterFailure"] == "#95A5A6", "falls back to what the charger says"

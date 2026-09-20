@@ -91,6 +91,7 @@ class EveusCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._resolve();
+    this._settlePending();
     const sig = Object.values(this._ids || {}).map((id) => hass.states[id]?.state).join("|") + JSON.stringify(this._pending) + this._confirm + hass.locale?.language + hass.themes?.darkMode;
     if (sig !== this._sig && !this._sliding) { this._sig = sig; this._render(); }
   }
@@ -128,6 +129,9 @@ class EveusCard extends HTMLElement {
 
   _s(k) { return this._ids?.[k] && this._hass ? this._hass.states[this._ids[k]] : undefined; }
   _v(k) { return k in this._pending ? this._pending[k] : num(this._s(k)); }
+  // A tap the card has not finished sending outranks the state it is replacing:
+  // the colour is a switch's only feedback here, so it answers the finger.
+  _on(k) { const p = this._pending[k]; return typeof p === "boolean" ? p : this._s(k)?.state === "on"; }
   get _t() {
     const l = this._config.language !== "auto" ? this._config.language : this._hass.locale?.language || "en";
     return l.startsWith("uk") ? I18N.uk : I18N.en;
@@ -310,7 +314,7 @@ class EveusCard extends HTMLElement {
   // Stopping a running charge asks once, in the tile itself.
   _btn(k, color, label, icon) {
     if (!this._s(k)) return "";
-    const on = this._s(k).state === "on", ask = this._confirm === k;
+    const on = this._on(k), ask = this._confirm === k;
     return `<div class="t bn ${on || ask ? "act" : ""}" style="--c:${ask ? C.red : on ? color : C.grey}" data-toggle="${k}" role="switch" tabindex="0" aria-checked="${on}" aria-label="${label}">${icon}<span class="l">${ask ? this._t.sure : label}</span></div>`;
   }
 
@@ -465,12 +469,12 @@ class EveusCard extends HTMLElement {
     if (tog) {
       const k = tog.dataset.toggle, s = this._s(k);
       if (!s || !this._online) return;
-      const on = s.state === "on";
+      const on = this._on(k);
       // Stopping a running charge asks once, in the tile; a browser dialog is
       // unstyled and some webviews never show it.
       if (k === "stop" && !on && this._charging && this._confirm !== k) return this._ask(k);
       this._confirm = null;
-      return this._hass.callService("switch", on ? "turn_off" : "turn_on", { entity_id: this._ids[k] });
+      return this._toggle(k, on);
     }
     const more = e.target.closest("[data-more]");
     if (more && !e.target.closest("input")) this._more(more.dataset.more);
@@ -503,6 +507,52 @@ class EveusCard extends HTMLElement {
     const out = this.shadowRoot.querySelector(".sv");
     if (out) out.textContent = `${e.target.value}A`;
     if (commit) this._commit(k);
+  }
+
+  // Paint first, send second. The state round trip is milliseconds on a LAN,
+  // but the card is the button's only feedback -- HA's own toggle moves
+  // locally on tap, an icon-only tile has nothing but its colour -- so a tap
+  // that paints nothing reads as a tap that missed, and gets repeated. The pin
+  // is released when the real state agrees (_settlePending), when the charger
+  // refuses, or after a timeout, so a command that never lands cannot leave a
+  // colour the charger never confirmed.
+  async _toggle(k, on) {
+    const want = !on;
+    this._pending[k] = want;
+    this._render();
+    this._timers = this._timers || {};
+    clearTimeout(this._timers[k]);
+    this._timers[k] = setTimeout(() => this._clearPending(k), 4000);
+    try {
+      await this._hass.callService("switch", want ? "turn_on" : "turn_off", { entity_id: this._ids[k] });
+    } catch (err) {
+      // Swallowed on purpose: the paint coming straight back off the button is
+      // the visible answer, where an unhandled rejection is only console noise
+      // in a webview nobody has open.
+      this._clearPending(k);
+    }
+  }
+
+  _clearPending(k) {
+    if (!(k in this._pending)) return;
+    clearTimeout(this._timers?.[k]);
+    delete this._pending[k];
+    this._sig = null;
+    if (this._hass) this.hass = this._hass;
+  }
+
+  // A pinned tap is released the moment the state machine agrees with it. The
+  // timer in _toggle is only the backstop: HA answers in milliseconds, so this
+  // is what normally ends the pin, one poll ahead of any timeout.
+  _settlePending() {
+    for (const k of Object.keys(this._pending)) {
+      const want = this._pending[k];
+      if (typeof want !== "boolean") continue;
+      if (this._s(k)?.state === (want ? "on" : "off")) {
+        clearTimeout(this._timers?.[k]);
+        delete this._pending[k];
+      }
+    }
   }
 
   async _commit(k) {

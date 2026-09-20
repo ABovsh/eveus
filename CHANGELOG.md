@@ -17,6 +17,9 @@ Everything below is the **Eveus card**, which arrived in 4.23.0. The integration
     <img alt="Eveus card — Basic mode" src="docs/images/card-basic-en.jpg" width="49%">
   </p>
 
+### 🐛 Fixed
+- **The card's switches answer the tap immediately.** One Charge, Stop Charging, OCPP and Disable limits painted their new colour only once Home Assistant reported the new state, so on the card the tap looked like it had missed and got repeated. They now paint on tap, and revert if the charger refuses the command.
+
 ## 4.23.0 - 2026-09-19
 
 ### ✨ Added
