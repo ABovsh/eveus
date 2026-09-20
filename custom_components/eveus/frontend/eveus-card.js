@@ -9,7 +9,7 @@ const I18N = {
     one: "One", stop: "Stop", on: "On", off: "Off",
     initial: "Initial", target: "Target", capacity: "Capacity", correction: "Loss",
     temp: "Temp", voltage: "Voltage", paused: "Paused", offline: "Offline",
-    lastSession: "Last charge", groundProt: "Protection", sure: "Sure?", total: "Total", ocpp: "OCPP", noLimits: "No limit",
+    sure: "Sure?", ocpp: "OCPP", noLimits: "No limit",
     mn: "m", hr: "h", noDevice: "No Eveus charger found", ground: "No ground",
   },
   uk: {
@@ -17,7 +17,7 @@ const I18N = {
     one: "Один", stop: "Стоп", on: "Увімк", off: "Вимк",
     initial: "Початковий", target: "Ціль", capacity: "Ємність", correction: "Втрати",
     temp: "Темп.", voltage: "Напруга", paused: "Пауза", offline: "Немає зв'язку",
-    lastSession: "Мин. заряд", groundProt: "Захист", sure: "Точно?", total: "Всього", ocpp: "OCPP", noLimits: "Безліміт",
+    sure: "Точно?", ocpp: "OCPP", noLimits: "Безліміт",
     mn: "хв", hr: "год", noDevice: "Станцію Eveus не знайдено", ground: "Немає заземлення",
   },
 };
@@ -48,8 +48,6 @@ const KEYS = {
   finish: "charging_finish_time", energyToTarget: "energy_to_target_soc",
   costToTarget: "cost_to_target_soc", ground: "ground", boxTemp: "box_temperature",
   plugTemp: "plug_temperature", adaptiveLimit: "adaptive_current_limit",
-  lastSession: "last_session_energy", groundProt: "ground_protection",
-  totalEnergy: "counter_a_energy", totalCost: "counter_a_cost",
   oneCharge: "one_charge", stop: "stop_charging",
   ocpp: "connect_to_ocpp", noLimits: "limit_disable_all",
   chargingCurrent: "charging_current", initialSoc: "initial_soc", targetSoc: "target_soc",
@@ -112,10 +110,10 @@ class EveusCard extends HTMLElement {
 
   disconnectedCallback() { clearTimeout(this._staleTimer); clearTimeout(this._confirmTimer); }
 
-  // Full adds a settings row to Control: four steppers in Advanced, two tiles in Basic.
+  // Full adds the settings row to Control, and only in Advanced mode.
   getCardSize() {
-    const base = { compact: 1, status: 2, control: 3, full: 4 }[this._config.layout] ?? 3;
-    return this._config.layout === "full" && this._advanced ? base + 1 : base;
+    const layout = this._config.layout === "full" && !this._advanced ? "control" : this._config.layout;
+    return ({ compact: 1, status: 2, control: 3, full: 5 })[layout] ?? 3;
   }
   getGridOptions() { return { columns: 12, min_columns: 6, rows: "auto" }; }
 
@@ -322,22 +320,6 @@ class EveusCard extends HTMLElement {
           value: this._rows(`<b style="--value-color:${col}">${time ?? "--"}</b>`, money) });
   }
 
-  _tToggle(k, label, icon) {
-    const on = this._s(k)?.state === "on";
-    return this._tile({ icon, label, value: on ? this._t.on : this._t.off, color: on ? C.green : C.grey, toggle: k });
-  }
-
-  _tLast() {
-    return this._tile({ icon: "mdi:history", label: this._t.lastSession, more: this._ids.lastSession,
-      value: `<i>${kwh(num(this._s("lastSession"))) ?? "--"}</i>` });
-  }
-
-  // Counter A: everything put through the charger since it was last reset.
-  _tTotal() {
-    return this._tile({ icon: "mdi:counter", label: this._t.total, more: this._ids.totalEnergy,
-      value: this._rows(`<b>${kwh(num(this._s("totalEnergy"))) ?? "--"}</b>`, `<i>${this._money(num(this._s("totalCost")), "totalCost")}</i>`) });
-  }
-
   // Stopping a running charge asks once, in the tile itself.
   _btn(k, color, label, icon) {
     if (!this._s(k)) return "";
@@ -429,15 +411,13 @@ class EveusCard extends HTMLElement {
     return `<div class="g3">${tiles.join("")}</div>${this._strip()}${this._slider()}${this._alerts()}`;
   }
 
-  // Full is Control plus the settings: the steppers in Advanced, the two
-  // readings Basic has no room for elsewhere.
+  // Full is Control plus the SOC settings. Basic has no SOC, so it has no
+  // settings row and Full is Control.
   _full() {
+    if (!this._advanced) return this._controls();
     const t = this._t;
-    const extra = this._advanced
-      ? `<div class="g4">${this._stepper("initialSoc", t.initial, "%")}${this._stepper("targetSoc", t.target, "%")}
-        ${this._stepper("capacity", t.capacity, "kWh")}${this._stepper("correction", t.correction, "%", 1)}</div>`
-      : `<div class="g3">${this._tTotal()}${this._tLast()}${this._tToggle("groundProt", t.groundProt, "mdi:shield-flash")}</div>`;
-    return this._controls() + extra;
+    return this._controls() + `<div class="g4">${this._stepper("initialSoc", t.initial, "%")}${this._stepper("targetSoc", t.target, "%")}
+      ${this._stepper("capacity", t.capacity, "kWh")}${this._stepper("correction", t.correction, "%", 1)}</div>`;
   }
 
   _render() {
@@ -555,8 +535,7 @@ ha-card{container-type:inline-size;box-sizing:border-box;padding:4px;display:fle
 ha-card.chg{animation:bp 2.4s ease-in-out infinite}
 @keyframes bp{0%,100%{box-shadow:0 1px 10px color-mix(in srgb,var(--c) 22%,transparent),inset 0 0 6px color-mix(in srgb,var(--c) 5%,transparent)}50%{box-shadow:0 2px 22px color-mix(in srgb,var(--c) 48%,transparent),inset 0 0 12px color-mix(in srgb,var(--c) 12%,transparent)}}
 ha-card.off .t,ha-card.off .st,ha-card.off .sl,ha-card.off .ch{opacity:.5}
-.g2,.g3,.g4{display:grid;gap:4px;grid-template-columns:repeat(3,minmax(0,1fr))}
-.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3,.g4{display:grid;gap:4px;grid-template-columns:repeat(3,minmax(0,1fr))}
 .g4{grid-template-columns:repeat(4,minmax(0,1fr))}
 .t,.st,.sl,.cp{box-sizing:border-box;border-radius:10px;padding:3px 5px;cursor:pointer;min-width:0;
   background:rgba(127,127,127,.05);border:1px solid rgba(127,127,127,.16);transition:background .2s,border-color .2s}

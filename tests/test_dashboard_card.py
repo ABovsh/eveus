@@ -314,7 +314,7 @@ def test_full_only_adds_settings_to_control():
     """Full is Control plus the settings row -- it never repeats a reading Control already shows."""
     source = CARD.read_text(encoding="utf-8")
     full = _card_function(source, "_full")
-    assert "this._controls() + extra" in full
+    assert "this._controls() +" in full
     assert '<div class="g4">' in full, "four steppers, one row"
     assert "socLimit" not in source, "the SOC-limit toggle was dropped from the card"
 
@@ -561,14 +561,13 @@ def test_controls_are_inert_while_the_charger_is_unreachable():
     assert "disabled" in _card_function(source, "_slider")
 
 
-def test_basic_full_is_more_than_basic_control():
+def test_basic_has_no_full_layout():
+    """Basic has no SOC settings, so Full would be Control with a heading; it renders Control."""
     source = CARD.read_text(encoding="utf-8")
     full = _card_function(source, "_full")
-    assert "this._advanced" in full
-    for tile in ("_tTotal()", "_tLast()", "groundProt"):
-        assert tile in full, tile
-    assert '"last_session_energy"' in source and '"ground_protection"' in source
-    assert '"counter_a_energy"' in source and '"counter_a_cost"' in source
+    assert "if (!this._advanced) return this._controls();" in full
+    size = _card_function(source, "getCardSize")
+    assert '"control" : this._config.layout' in size, "and it reports Control's height"
 
 
 def test_card_size_matches_what_is_rendered():
