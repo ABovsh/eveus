@@ -11,6 +11,7 @@ Changes to the **Eveus card**.
 
 ### 🔧 Changed
 - **A more compact layout:** fewer duplicate readings, unavailable values omitted, and costs shown in the entity's currency. The `full` layout is available only in Advanced mode.
+- **Raising the charging current now asks before it is sent.** In `control` and `full`, moving the slider up shows the new value as a button in the slider row; tap it within four seconds to apply it, or the slider returns to the charger's current setting. Lowering the current is sent straight away.
 
 ### 🐛 Fixed
 - **Switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.

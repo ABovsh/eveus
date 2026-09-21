@@ -151,7 +151,7 @@ The card follows the integration mode; `mode: basic` simplifies it, while
 
 - **Warnings:** voltage is amber outside 215–245 V and red below 205 V or above 253 V; temperatures are amber from 60 °C and red from 70 °C. Faults, missing ground and reasons for not charging appear on the card.
 - **Offline:** shows the age of the last reading and disables controls.
-- **Interaction:** tap a reading to open its entity. Long-press **SOC**, **To target** or **Current** to change the corresponding setting. To stop an active charge, tap again within four seconds.
+- **Interaction:** tap a reading to open its entity. Long-press **SOC**, **To target** or **Current** to change the corresponding setting. To stop an active charge, tap again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once.
 
 ### How to add the card
 

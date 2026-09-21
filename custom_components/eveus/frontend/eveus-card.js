@@ -242,17 +242,26 @@ class EveusCard extends HTMLElement {
   }
 
   // The slider is the current, so it is called that; the power it is producing
-  // rides at its end, which is why no tile repeats either of them.
+  // rides at its end, which is why no tile repeats either of them. A raise is
+  // held back until the readout is tapped (_onSlide), so that readout is a
+  // button while the question stands -- it costs no height and the row already
+  // draws the eye it needs.
   _slider() {
     const s = this._s("chargingCurrent");
     if (!s) return "";
     const a = s.attributes, v = this._v("chargingCurrent");
+    const ask = this._confirm === "chargingCurrent";
     const lim = num(this._s("adaptiveLimit"));
     const min = a.min ?? 6, max = a.max ?? 32;
     const mark = lim !== null && lim < max && lim > min ? `<span class="mk" style="left:${((lim - min) / (max - min)) * 100}%" title="adaptive ${lim}A"></span>` : "";
-    return `<div class="sl"><ha-icon icon="mdi:current-ac"></ha-icon><span class="l">${this._t.current}</span>
+    // The number lives in its own span either way, so a drag can repaint it
+    // without wiping the check mark beside it.
+    const readout = ask
+      ? `<button class="sv ok" data-confirm="chargingCurrent" aria-label="${this._t.sure}"><span class="cv">${fmt(v)}A</span><ha-icon icon="mdi:check"></ha-icon></button>`
+      : `<b class="sv"><span class="cv">${fmt(v)}A</span></b>`;
+    return `<div class="sl${ask ? " ask" : ""}"><ha-icon icon="mdi:current-ac"></ha-icon><span class="l">${ask ? this._t.sure : this._t.current}</span>
       <div class="rw">${mark}<input type="range" data-slide="chargingCurrent" ${this._online ? "" : "disabled"} min="${min}" max="${max}" step="${a.step ?? 1}" value="${v ?? min}"></div>
-      <b class="sv">${fmt(v)}A</b><b class="sp" style="--value-color:${this._socColor()}">${kw(num(this._s("power")))}</b></div>`;
+      ${readout}<b class="sp" style="--value-color:${this._socColor()}">${kw(num(this._s("power")))}</b></div>`;
   }
 
   // Only a live SOC may fill the bar: Initial and Target SOC are HA-local numbers
@@ -419,6 +428,10 @@ class EveusCard extends HTMLElement {
       return;
     }
     const body = this[`_${this._config.layout === "control" ? "controls" : this._config.layout}`]();
+    // Arrow keys commit one step per press, so a keyboard raise redraws the row
+    // it is being made on. innerHTML replaces the input, which would drop the
+    // focus after the first press and end the interaction.
+    const focused = root.activeElement?.dataset?.slide;
     // Keep the charging pulse at its current phase when a reading updates.
     const phases = new Map();
     for (const animation of root.getAnimations()) {
@@ -429,6 +442,7 @@ class EveusCard extends HTMLElement {
       const phase = phases.get(animation.animationName);
       if (phase !== undefined && phase !== null) animation.currentTime = phase;
     }
+    if (focused) root.querySelector(`input[data-slide="${focused}"]`)?.focus();
     // Nothing changes state while the charger is unreachable, so the age of the
     // readings has to move the card by itself.
     clearTimeout(this._staleTimer);
@@ -476,14 +490,31 @@ class EveusCard extends HTMLElement {
       this._confirm = null;
       return this._toggle(k, on);
     }
+    const ok = e.target.closest("[data-confirm]");
+    if (ok) {
+      e.stopPropagation();
+      const k = ok.dataset.confirm;
+      this._confirm = null;
+      this._render();
+      return this._commit(k);
+    }
     const more = e.target.closest("[data-more]");
     if (more && !e.target.closest("input")) this._more(more.dataset.more);
   }
 
+  // The window is armed per key, and only the key still asking may close it:
+  // an answered tap leaves its own pin behind, and this timer must not be the
+  // thing that releases it 4s later.
   _ask(k) {
     this._confirm = k;
     clearTimeout(this._confirmTimer);
-    this._confirmTimer = setTimeout(() => { this._confirm = null; this._sig = null; if (this._hass) this.hass = this._hass; }, 4000);
+    this._confirmTimer = setTimeout(() => {
+      if (this._confirm !== k) return;
+      this._confirm = null;
+      delete this._pending[k];
+      this._sig = null;
+      if (this._hass) this.hass = this._hass;
+    }, 4000);
     this._render();
   }
 
@@ -499,14 +530,24 @@ class EveusCard extends HTMLElement {
     this._timers[k] = setTimeout(() => this._commit(k), 800);
   }
 
+  // Raising the charging current is the only move on this card that can ask an
+  // installation for more than it was wired for, and a slider is exactly the
+  // control a sleeve or a passing finger moves by accident. So a raise is
+  // painted but not sent: it waits for a tap on the readout, or expires. Going
+  // down overloads nothing and stays one gesture.
   _onSlide(e, commit) {
     const k = e.target.dataset?.slide;
     if (!k) return;
-    this._pending[k] = Number(e.target.value);
+    const next = Number(e.target.value);
+    const now = num(this._s(k));
+    this._pending[k] = next;
     this._sliding = !commit;
-    const out = this.shadowRoot.querySelector(".sv");
+    const out = this.shadowRoot.querySelector(".cv");
     if (out) out.textContent = `${e.target.value}A`;
-    if (commit) this._commit(k);
+    if (!commit) return;
+    if (now !== null && next > now) return this._ask(k);
+    this._confirm = null;
+    this._commit(k);
   }
 
   // Paint first, send second. The state round trip is milliseconds on a LAN,
@@ -625,6 +666,16 @@ input[type=range]{width:100%;min-width:0;margin:0;accent-color:var(--primary-col
 input[type=range]:disabled{cursor:not-allowed;opacity:.45}
 .mk{position:absolute;top:3px;width:2px;height:18px;background:${C.orange};border-radius:1px;pointer-events:none;transform:translateX(-1px)}
 .sv{min-width:34px;text-align:right}
+.sl.ask{border-color:color-mix(in srgb,${C.orange} 62%,transparent);background:color-mix(in srgb,${C.orange} 10%,transparent)}
+.sl.ask .l{color:${C.orange}}
+.sl.ask ha-icon{color:${C.orange}}
+/* The stepper rule above sizes every button 20x24, so this one says its own width. */
+.sv.ok{display:inline-flex;align-items:center;justify-content:flex-end;gap:2px;cursor:pointer;padding:1px 4px;
+  width:auto;flex:none;white-space:nowrap;overflow-wrap:normal;font-family:inherit;border-radius:8px;
+  border:1px solid color-mix(in srgb,${C.orange} 70%,transparent);
+  background:color-mix(in srgb,${C.orange} 20%,transparent)}
+.sv.ok .cv{flex:none}
+.sv.ok ha-icon{--mdc-icon-size:14px;color:${C.orange};flex:none}
 .sp{flex:none;min-width:44px;text-align:right;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;color:color-mix(in srgb,var(--value-color) var(--value-weight,100%),var(--primary-text-color))}
 .bar{position:relative;height:4px;border-radius:2px;background:rgba(127,127,127,.15);margin:0 5px 2px;overflow:visible}
 .bar .base{position:absolute;left:0;top:0;height:100%;border-radius:2px;background:color-mix(in srgb,var(--c) 30%,transparent)}

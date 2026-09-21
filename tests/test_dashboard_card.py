@@ -755,3 +755,158 @@ def test_a_refused_command_takes_the_paint_back():
     result = _run_card("oneCharge", "reject")
     assert result["afterTap"] == "#2ECC71"
     assert result["afterFailure"] == "#95A5A6", "falls back to what the charger says"
+
+
+# --- behaviour: raising the current is the one move that asks ---------------
+
+NODE_SLIDER_HARNESS = r"""
+const fs = require("fs"), vm = require("vm");
+const registry = {};
+const timers = [];
+class HTMLElement {
+  constructor() { this.shadowRoot = null; }
+  attachShadow() {
+    this.shadowRoot = { innerHTML: "", addEventListener() {}, getAnimations: () => [],
+                        querySelector: () => null, activeElement: null };
+    return this.shadowRoot;
+  }
+  addEventListener() {} dispatchEvent() {} appendChild() {}
+}
+const sandbox = {
+  HTMLElement, console, Math, JSON, Object, Number, Promise, Date, Event: class {},
+  setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+  clearTimeout: (id) => { if (id) timers[id - 1] = null; },
+  customElements: { get: () => undefined, define: (t, c) => { registry[t] = c; } },
+  window: { customCards: [] },
+  document: { createElement: () => new HTMLElement() },
+};
+vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), sandbox);
+
+const st = (state, attributes = {}) => ({ state, attributes, last_changed: new Date().toISOString() });
+const ids = {
+  state: "sensor.state", reason: "sensor.reason", ground: "sensor.ground",
+  voltage: "sensor.voltage", power: "sensor.power", current: "sensor.current",
+  sessionEnergy: "sensor.se", sessionCost: "sensor.sc", sessionTime: "sensor.stime",
+  oneCharge: "switch.one", stop: "switch.stop", ocpp: "switch.ocpp", noLimits: "switch.nolimits",
+  chargingCurrent: "number.cur",
+};
+const states = {
+  "sensor.state": st("Charging"), "sensor.reason": st("unknown"), "sensor.ground": st("Connected"),
+  "sensor.voltage": st("227"), "sensor.power": st("3600"), "sensor.current": st("16"),
+  "sensor.se": st("0"), "sensor.sc": st("0"), "sensor.stime": st("0m"),
+  "switch.one": st("off"), "switch.stop": st("off"), "switch.ocpp": st("off"), "switch.nolimits": st("off"),
+  "number.cur": st("16", { min: 8, max: 32, step: 1 }),
+};
+
+const calls = [];
+const hass = {
+  states, locale: { language: "en" }, themes: { darkMode: true },
+  callWS: () => new Promise(() => {}),
+  callService: (...a) => { calls.push(a); return new Promise(() => {}); },
+};
+
+const card = new registry["eveus-card"]();
+card.setConfig({ layout: "control", mode: "basic", language: "en" });
+card._ids = ids;
+card._idsFor = null;
+card.hass = hass;
+
+const html = () => card.shadowRoot.innerHTML;
+const asking = () => /data-confirm="chargingCurrent"/.test(html());
+const shown = () => { const m = html().match(/class="cv">([^<]*)/); return m ? m[1] : null; };
+const tapOn = (attr, value) => {
+  const el = { dataset: { [attr === "data-confirm" ? "confirm" : "toggle"]: value } };
+  el.closest = (sel) => (sel === `[${attr}]` ? el : null);
+  return card._onClick({ target: { closest: (sel) => (sel === `[${attr}]` ? el : null) },
+                         stopPropagation() {} });
+};
+const slide = (value, commit) =>
+  card._onSlide({ target: { dataset: { slide: "chargingCurrent" }, value: String(value) } }, commit);
+const fire = (from = 0, to = timers.length) => { for (const t of timers.slice(from, to)) if (t) t.fn(); };
+
+const mode = process.argv[3];
+const out = {};
+
+if (mode === "stop-race") {
+  // Ask, answer, then let the (now stale) confirmation window expire: the pin
+  // the answer painted must survive it.
+  tapOn("data-toggle", "stop");
+  const armed = timers.length;
+  tapOn("data-toggle", "stop");
+  fire(0, armed);
+  out.pinned = card._pending.stop === true;
+} else {
+  const target = Number(process.argv[4]);
+  slide(target, false);
+  slide(target, true);
+  out.afterSlide = { calls: calls.length, asking: asking(), shown: shown() };
+  if (mode === "confirm") tapOn("data-confirm", "chargingCurrent");
+  if (mode === "expire") fire();
+  out.calls = calls.length;
+  out.service = calls[0] ? calls[0][1] : null;
+  out.value = calls[0] ? calls[0][2].value : null;
+  out.asking = asking();
+  out.shown = shown();
+}
+console.log(JSON.stringify(out));
+"""
+
+
+def _run_slider(mode: str, target: int = 16) -> dict:
+    """Drive the current slider in node and report what was sent, and when."""
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - CI runners all ship node
+        pytest.skip("node is required to exercise the card's own behaviour")
+    harness = Path(tempfile.mkdtemp()) / "slider.js"
+    harness.write_text(NODE_SLIDER_HARNESS, encoding="utf-8")
+    out = subprocess.run(
+        [node, str(harness), str(CARD), mode, str(target)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_raising_the_current_is_not_sent_until_it_is_confirmed():
+    """A stray swipe on a wall tablet must not raise the current on its own."""
+    result = _run_slider("ask", 24)
+    assert result["calls"] == 0, "nothing reaches the charger on the gesture alone"
+    assert result["asking"] is True, "the card asks, in the slider row"
+    assert result["shown"] == "24A", "the slider stays where the finger left it"
+
+
+def test_confirming_a_raise_sends_it_once():
+    result = _run_slider("confirm", 24)
+    assert result["afterSlide"]["calls"] == 0
+    assert result["calls"] == 1 and result["service"] == "set_value"
+    assert result["value"] == 24
+    assert result["asking"] is False, "the question is answered and gone"
+
+
+def test_lowering_the_current_needs_no_confirmation():
+    """Turning the current down can overload nothing, so it must stay one gesture."""
+    result = _run_slider("lower", 10)
+    assert result["afterSlide"]["asking"] is False
+    assert result["calls"] == 1 and result["value"] == 10
+
+
+def test_an_unanswered_raise_snaps_the_slider_back():
+    """A question nobody answered must not leave a value the charger never took."""
+    result = _run_slider("expire", 24)
+    assert result["calls"] == 0
+    assert result["asking"] is False
+    assert result["shown"] == "16A", "back to what the charger actually holds"
+
+
+def test_an_expiring_confirmation_cannot_release_an_answered_tap():
+    """Stop arms the same window; answering it must not be undone 4s later."""
+    result = _run_slider("stop-race")
+    assert result["pinned"] is True
+
+
+def test_the_slider_keeps_focus_across_the_redraw_it_causes():
+    """Arrow keys commit per press, so asking redraws mid-interaction."""
+    source = CARD.read_text(encoding="utf-8")
+    render = _card_function(source, "_render")
+    assert "activeElement" in render and "data-slide" in render
