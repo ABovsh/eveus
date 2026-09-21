@@ -2,23 +2,23 @@
 
 ## Unreleased
 
-Everything below is the **Eveus card**, which arrived in 4.23.0. The integration's entities are unchanged.
+Changes to the **Eveus card**.
 
 ### ✨ Added
-- **The card shows more in the same space.** The mains voltage in every layout, and the plug and box temperatures in all but `compact`, ride along the state line. `status` and `control` carry the whole to-target block — the Target SOC and the time left while charging, the gap from the current SOC to the target while idle, then the energy and cost still needed and the charging finish time — which used to be three tiles in `full` alone.
-- **More of the charger is controlled from the card.** The OCPP and Disable limits switches join One Charge and Stop Charging in `control` and `full`.
-- **The card explains itself when nothing is charging.** It prints the Not Charging Reason under the state — Waiting for Car, Waiting for Schedule, Controlled by OCPP, Charge Complete and the rest — and once the charger stops answering it reads *Offline* with how long ago the last reading arrived, dims the tiles and holds the controls.
+- **More charging information:** voltage in every layout, temperatures outside `compact`, and target SOC, remaining time, energy, cost and finish-time estimates in `status` and `control` (Advanced mode).
+- **More controls:** OCPP and Disable limits switches in `control` and `full`.
+- **Clearer waiting and offline states:** the reason charging has not started, the age of the last reading, and disabled controls while offline.
 
 ### 🔧 Changed
-- **No reading appears twice, and none is invented.** The State tile is gone, because the state shares its line with the SOC bar; `control` and `full` drop the Current and Power tiles, because the slider is named **Current** and prints the power the charger is producing at its end; Basic mode no longer labels two tiles *Session*, and the card editor stops offering `full` there, since Basic has no SOC settings to add; and a reading the charger cannot supply is left out instead of printed as `--`. Cost follows the currency its entity reports.
-
-  <p>
-    <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
-    <img alt="Eveus card — Basic mode" src="docs/images/card-basic-en.jpg" width="49%">
-  </p>
+- **A more compact layout:** fewer duplicate readings, unavailable values omitted, and costs shown in the entity's currency. Basic mode uses `control` instead of `full`.
 
 ### 🐛 Fixed
-- **The card's switches answer the tap immediately.** One Charge, Stop Charging, OCPP and Disable limits painted their new colour only once Home Assistant reported the new state, so on the card the tap looked like it had missed and got repeated. They now paint on tap, and revert if the charger refuses the command.
+- **Switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.
+
+<p>
+  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="docs/images/card-basic-en.jpg" width="49%">
+</p>
 
 ## 4.23.0 - 2026-09-19
 
