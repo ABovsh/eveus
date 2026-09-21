@@ -1,4 +1,4 @@
 {
-  "_comment": "Survivor-count ratchet for the single mutmut 3 run: an increase fails the job (new code shipped without a test that kills its mutants), a decrease is a prompt to tighten. The number is OBSERVED, never predicted: 860 from a local py3.12 / HA 2025.1.4 run of `mutmut run` over the whole package on rc 3c32936 plus the pragma sweep (7551 mutants, 6683 killed, 3 timeouts, 5 without tests). Replace it with the figure from the first workflow_dispatch run in CI.",
-  "survivors": 860
+  "_comment": "Survivor-count ratchet for the single mutmut 3 run: an increase fails the job (new code shipped without a test that kills its mutants), a decrease is a prompt to tighten. The number is OBSERVED, never predicted: 858 from CI workflow_dispatch run 35653206988 on rc 0bf222f (7597 mutants, 2 timeouts). Equivalent mutants are carried here rather than killed; a line that is genuinely unobservable carries `pragma: no mutate` with its reason instead.",
+  "survivors": 858
 }
