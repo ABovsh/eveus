@@ -365,3 +365,75 @@ def test_seed_is_normalized_on_construction() -> None:
         updater, calc, seed=float("nan"), device_number=1
     )
     assert n_nan.native_value == 50  # default
+
+
+# --- the config entry mirrors the live value, so setup can seed from it ------
+
+
+class _EntryHass(HelperHass):
+    """A hass whose config_entries records every entry update."""
+
+    def __init__(self) -> None:
+        super().__init__({})
+        self.updates: list[dict] = []
+        hass = self
+
+        class _ConfigEntries:
+            @staticmethod
+            def async_update_entry(entry, *, data) -> None:
+                entry.data = data
+                hass.updates.append(data)
+
+        self.config_entries = _ConfigEntries()
+
+
+def test_setting_a_soc_input_mirrors_it_into_the_config_entry(monkeypatch) -> None:
+    """Setup seeds the calculator from the entry, before any entity exists.
+
+    A disabled SOC input is never added at all, so a value that lives only in
+    the entity's restored state leaves that seed permanently stale -- SOC is
+    then computed from whatever was last typed into the config flow. Measured
+    live 2026-09-21: the entry held initial_soc 76 / target 80 while the
+    entities held 25 / 100, and every restart published SOC 95 % and "Target
+    reached" before the entities landed.
+    """
+    updater = _updater()
+    updater.config_entry.data = {"battery_capacity": 50}
+    calc = CachedSOCCalculator()
+    n_cap = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    n_cap.hass = _EntryHass()
+    disable_state_writes(n_cap)
+    monkeypatch.setattr(number_module, "async_dispatcher_send", lambda *a, **k: None)
+
+    asyncio.run(n_cap.async_set_native_value(70))
+
+    assert updater.config_entry.data["battery_capacity"] == 70
+
+
+def test_a_restored_soc_input_repairs_a_stale_config_entry(monkeypatch) -> None:
+    """The divergence already exists in the wild; the first restart fixes it."""
+    updater = _updater()
+    updater.config_entry.data = {"battery_capacity": 50, "initial_soc": 76}
+    calc = CachedSOCCalculator()
+    n_cap = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    n_cap.hass = _EntryHass()
+    disable_state_writes(n_cap)
+
+    _run_added_to_hass(n_cap, 90, monkeypatch)
+
+    assert updater.config_entry.data == {"battery_capacity": 90, "initial_soc": 76}
+
+
+def test_a_soc_input_that_already_matches_writes_no_config_entry(monkeypatch) -> None:
+    """No churn: an unchanged value must not rewrite the entry on every restart."""
+    updater = _updater()
+    updater.config_entry.data = {"battery_capacity": 50}
+    calc = CachedSOCCalculator()
+    n_cap = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    hass = _EntryHass()
+    n_cap.hass = hass
+    disable_state_writes(n_cap)
+
+    _run_added_to_hass(n_cap, 50, monkeypatch)
+
+    assert hass.updates == []
