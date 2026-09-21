@@ -238,6 +238,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # the listeners a window closed, because HA notifies them only on the
         # success -> failure edge, never on a repeated failure.
         self._first_failure_monotonic: float | None = None
+        # A grace period holds the LAST reading. Until one exists there is
+        # nothing to hold, and an entry can now be set up with the charger
+        # switched off, so this is a state entities really reach.
+        self._ever_succeeded = False
         self._grace_timer_unsubs: list = []
         # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
         # that completes mid-unload from scheduling fresh refresh timers, and a
@@ -371,7 +375,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         return self._device_available
 
     def visible_within(self, grace: int) -> bool:
-        """Whether an entity with this grace period is still visible."""
+        """Whether an entity with this grace period is still visible.
+
+        The grace period exists to hold the last reading through a missed
+        poll. Before the first successful poll there is no reading to hold,
+        so an entity must be unavailable rather than stay visible with
+        nothing to show -- that publishes `unknown`, which helpers and
+        automations ingest, where `unavailable` is one they skip.
+        """
+        if not self._ever_succeeded:
+            return False
         return self.seconds_unavailable < grace
 
     @property
@@ -571,6 +584,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._poll_results.append(True)
         self._consecutive_failures = 0
         self._device_available = True
+        self._ever_succeeded = True
         self._stop_outage_clock()
         self._next_poll_attempt = 0.0
         self._last_success_time = time.time()

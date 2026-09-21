@@ -1810,6 +1810,9 @@ def test_coordinator_owns_one_grace_clock_per_period(
         common_network, "async_get_clientsession", lambda hass: _FailingSession()
     )
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    # A reading to hold: without one the entities are unavailable outright and
+    # there is no grace window for this test to measure.
+    updater._record_success(0.05, {"state": 2})
     notified: list[bool] = []
     updater.async_update_listeners = lambda: notified.append(True)
 
@@ -1948,3 +1951,43 @@ def test_did_not_answer_and_answered_wrongly_are_different_exception_types(
     with pytest.raises(UpdateFailed) as exc_info:
         asyncio.run(updater._async_update_data())
     assert not isinstance(exc_info.value, common_network.EveusUnreachable)
+
+
+def test_grace_does_not_apply_before_the_first_successful_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A grace period holds the LAST reading; with none held there is nothing to hold.
+
+    Home Assistant can set an entry up while the charger is switched off, so
+    entities are built with no reading at all. Letting the grace window run
+    then keeps them visible with nothing to show, and they publish `unknown`
+    -- a value helpers and automations ingest, where `unavailable` is skipped.
+    """
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(common_network.EveusUnreachable):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is False
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD) is False
+
+
+def test_grace_applies_again_once_a_poll_has_succeeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A charger that answered once and then went away still holds its last reading."""
+    session = _Session(_Response(payload={"state": 4, "currentSet": 16, "powerMeas": 7200}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    asyncio.run(updater._async_update_data())
+
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    with pytest.raises(common_network.EveusUnreachable):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
