@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.24.0 - 2026-09-22
 
 ### ✨ Added
 - **Card — more charging information.** Voltage in every layout, temperatures outside `compact`, and target SOC, remaining time, energy, cost and finish-time estimates in `status` and `control` (Advanced mode).
@@ -17,8 +17,8 @@
 - **Card — switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.
 
 <p>
-  <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
-  <img alt="Eveus card — Basic mode" src="docs/images/card-basic-en.jpg" width="49%">
+  <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced-en.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-basic-en.jpg" width="49%">
 </p>
 
 ## 4.23.0 - 2026-09-19
