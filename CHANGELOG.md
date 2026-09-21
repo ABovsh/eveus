@@ -2,20 +2,18 @@
 
 ## Unreleased
 
-Changes to the **Eveus card**, and to how quickly a charger that was switched off comes back.
-
 ### ✨ Added
-- **More charging information:** voltage in every layout, temperatures outside `compact`, and target SOC, remaining time, energy, cost and finish-time estimates in `status` and `control` (Advanced mode).
-- **More controls:** OCPP and Disable limits switches in `control` and `full`.
-- **Clearer waiting and offline states:** the reason charging has not started, the age of the last reading, and disabled controls while offline.
+- **Card — more charging information.** Voltage in every layout, temperatures outside `compact`, and target SOC, remaining time, energy, cost and finish-time estimates in `status` and `control` (Advanced mode).
+- **Card — more controls.** OCPP and Disable limits switches in `control` and `full`.
+- **Card — clearer waiting and offline states.** The reason charging has not started, the age of the last reading, and disabled controls while offline.
 
 ### 🔧 Changed
-- **A more compact layout:** fewer duplicate readings, unavailable values omitted, and costs shown in the entity's currency. The `full` layout is available only in Advanced mode.
-- **Raising the charging current now asks before it is sent.** In `control` and `full`, moving the slider up shows the new value as a button in the slider row; tap it within four seconds to apply it, or the slider returns to the charger's current setting. Lowering the current is sent straight away.
+- **Card — a more compact layout.** Fewer duplicate readings, unavailable values omitted, and costs in the entity's currency; `full` is available only in Advanced mode.
+- **Card — raising the charging current asks before it is sent.** Move the slider up and tap the new value within four seconds to apply it; lowering the current applies at once.
 
 ### 🐛 Fixed
-- **A charger switched back on returns within a minute, even if Home Assistant started while it was off.** Setup used to fail when the charger did not answer, which handed recovery to Home Assistant's own retry and its ten-minute backoff, so a charger powered on again could stay missing for that long. The integration now finishes setting up without the charger: its entities start `unavailable` and it is polled every 60 seconds until it answers — the same cadence as for a charger switched off mid-session. Wrong credentials, or a reply the integration cannot read, still stop setup.
-- **Switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.
+- **Integration — a charger switched back on returns within a minute, even if Home Assistant started while it was off.** Setup no longer waits for the charger: its entities start `unavailable` and it is polled every 60 seconds until it answers.
+- **Card — switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.
 
 <p>
   <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
