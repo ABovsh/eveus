@@ -1945,14 +1945,18 @@ def test_setup_restates_first_refresh_reason_on_the_entry(
 # --- a charger that is switched off is not a broken entry -------------------
 
 
-class _UnreachableUpdater(_Updater):
-    """First refresh fails the way Home Assistant reports an unanswered poll."""
+class _UnreachableUpdaterWithoutArming(_Updater):
+    """First refresh fails the way Home Assistant reports an unanswered poll.
+
+    Deliberately does NOT define ``probe_init_firmware_on_first_success``: the
+    optional hooks are looked up, not called outright, and a double that is
+    missing one must still set the entry up.
+    """
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.last_update_success = True
         self.init_firmware_calls = 0
-        self.firmware_probe_armed = False
 
     async def async_config_entry_first_refresh(self) -> None:
         self.last_update_success = False
@@ -1963,6 +1967,14 @@ class _UnreachableUpdater(_Updater):
 
     async def async_maybe_fetch_init_firmware(self) -> None:
         self.init_firmware_calls += 1
+
+
+class _UnreachableUpdater(_UnreachableUpdaterWithoutArming):
+    """The same, with the arming hook the real coordinator carries."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.firmware_probe_armed = False
 
     def probe_init_firmware_on_first_success(self) -> None:
         self.firmware_probe_armed = True
@@ -2051,3 +2063,21 @@ def test_a_charger_that_was_off_at_setup_owes_its_firmware_probe_to_the_first_po
 
     assert entry.runtime_data.updater.init_firmware_calls == 0
     assert entry.runtime_data.updater.firmware_probe_armed is True
+
+
+def test_setup_survives_an_updater_double_that_cannot_arm_the_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Arming is best-effort: a coordinator without it must not fail setup.
+
+    Same reason the firmware probe itself is looked up rather than called
+    outright -- the doubles standing in for the coordinator elsewhere do not
+    all implement every optional hook, and none of them is essential to an
+    entry coming up.
+    """
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _UnreachableUpdaterWithoutArming)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    assert entry.runtime_data.updater.init_firmware_calls == 0

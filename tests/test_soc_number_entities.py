@@ -437,3 +437,26 @@ def test_a_soc_input_that_already_matches_writes_no_config_entry(monkeypatch) ->
     _run_added_to_hass(n_cap, 50, monkeypatch)
 
     assert hass.updates == []
+
+
+def test_a_hass_without_config_entries_does_not_break_the_push(monkeypatch) -> None:
+    """The hass doubles these entities are built with do not all carry it.
+
+    The mirror is a side effect of pushing the value to the calculator; it must
+    never be the reason a push raises.
+    """
+    from types import SimpleNamespace
+
+    updater = _updater()
+    updater.config_entry.data = {"battery_capacity": 50}
+    calc = CachedSOCCalculator()
+    n_cap = EveusBatteryCapacityNumber(updater, calc, seed=50, device_number=1)
+    n_cap.hass = SimpleNamespace(states=None)
+    disable_state_writes(n_cap)
+    monkeypatch.setattr(number_module, "async_dispatcher_send", lambda *a, **k: None)
+
+    asyncio.run(n_cap.async_set_native_value(70))
+
+    assert n_cap.native_value == 70
+    assert calc.battery_capacity == 70
+    assert updater.config_entry.data == {"battery_capacity": 50}

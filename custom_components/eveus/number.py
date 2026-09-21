@@ -560,18 +560,21 @@ class EveusSocConfigNumber(
         value writes nothing. No update listener is registered for this entry
         (see ``_finish_setup``), so this cannot trigger a reload.
         """
-        entry = getattr(self._updater, "config_entry", None)
         hass = self.hass
-        if hass is None or entry is None:
+        if hass is None:
             return
+        # getattr-guarded: a real HomeAssistant always has this, but the hass
+        # doubles these entities are built with in tests do not all carry it.
         config_entries = getattr(hass, "config_entries", None)
         if config_entries is None:
             return
+        entry = self._updater.config_entry
         value = self._attr_native_value
-        data = getattr(entry, "data", None) or {}
-        if data.get(self._soc_key) == value:
+        if entry.data.get(self._soc_key) == value:
             return
-        config_entries.async_update_entry(entry, data={**data, self._soc_key: value})
+        config_entries.async_update_entry(
+            entry, data={**entry.data, self._soc_key: value}
+        )
 
     def _apply_value(self, value: float) -> None:
         """Clamp, store, persist, and push a SOC-input value."""

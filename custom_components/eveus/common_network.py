@@ -241,11 +241,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # A grace period holds the LAST reading. Until one exists there is
         # nothing to hold, and an entry can now be set up with the charger
         # switched off, so this is a state entities really reach.
-        self._ever_succeeded = False
+        self._ever_succeeded = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
         # Set by setup when it could not spend the once-ever /init firmware
         # probe, because no poll had landed yet; see
         # ``probe_init_firmware_on_first_success``.
-        self._probe_fw_on_first_success = False
+        self._probe_fw_on_first_success = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
         self._grace_timer_unsubs: list = []
         # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
         # that completes mid-unload from scheduling fresh refresh timers, and a
@@ -611,7 +611,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
         if self._probe_fw_on_first_success:
-            self._probe_fw_on_first_success = False
+            self._probe_fw_on_first_success = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
             self._start_init_firmware_probe()
         self._connection_quality_cache = None
         was_likely_offline = self.is_likely_offline

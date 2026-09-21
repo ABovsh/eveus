@@ -1998,10 +1998,12 @@ class _TaskHass(_Hass):
 
     def __init__(self) -> None:
         self.tasks: list[asyncio.Task] = []
+        self.names: list[str] = []
 
     def async_create_background_task(self, coro, name: str, eager_start: bool = True):
         task = asyncio.ensure_future(coro)
         self.tasks.append(task)
+        self.names.append(name)
         return task
 
 
@@ -2039,6 +2041,9 @@ def test_a_charger_off_at_setup_still_gets_its_one_firmware_probe(
     asyncio.run(scenario())
 
     assert probes == [1]
+    # The task is named so it is identifiable in Home Assistant's task list and
+    # in a "task was destroyed" warning; an unnamed background task is not.
+    assert hass.names == [f"eveus {TEST_HOST} /init firmware fallback"]
 
 
 def test_an_unarmed_coordinator_does_not_probe_on_every_poll(
