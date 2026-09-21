@@ -1991,3 +1991,81 @@ def test_grace_applies_again_once_a_poll_has_succeeded(
         asyncio.run(updater._async_update_data())
 
     assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
+
+
+class _TaskHass(_Hass):
+    """A hass that keeps the background tasks the coordinator creates."""
+
+    def __init__(self) -> None:
+        self.tasks: list[asyncio.Task] = []
+
+    def async_create_background_task(self, coro, name: str, eager_start: bool = True):
+        task = asyncio.ensure_future(coro)
+        self.tasks.append(task)
+        return task
+
+
+def test_a_charger_off_at_setup_still_gets_its_one_firmware_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The /init probe is once-ever and setup skips it when no poll landed.
+
+    Firmware 1.x never carries verFWMain in /main (GitHub issue #11), so the
+    only source of a version for those chargers is the /init probe. An entry
+    can now be set up while the charger is switched off, and setup runs the
+    probe only when its first refresh succeeded -- so the coordinator owes it
+    to the first poll that lands, or device_info shows "Unknown" for the whole
+    session.
+    """
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+    probes: list[int] = []
+
+    async def fake_probe() -> None:
+        probes.append(1)
+
+    monkeypatch.setattr(updater, "async_maybe_fetch_init_firmware", fake_probe)
+
+    async def scenario() -> None:
+        updater.probe_init_firmware_on_first_success()
+        await updater._async_update_data()
+        await asyncio.gather(*hass.tasks)
+        # A second good poll must not ask again: the probe is once-ever.
+        await updater._async_update_data()
+        await asyncio.gather(*hass.tasks)
+
+    asyncio.run(scenario())
+
+    assert probes == [1]
+
+
+def test_an_unarmed_coordinator_does_not_probe_on_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup awaits the probe itself on the normal path; nothing to schedule."""
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+
+    asyncio.run(updater._async_update_data())
+
+    assert hass.tasks == []
+
+
+def test_a_probe_armed_on_a_shutting_down_coordinator_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poll that lands mid-unload must not start work on a torn-down entry."""
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+    updater.probe_init_firmware_on_first_success()
+    updater._shutting_down = True
+
+    asyncio.run(updater._async_update_data())
+
+    assert hass.tasks == []

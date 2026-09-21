@@ -1952,6 +1952,7 @@ class _UnreachableUpdater(_Updater):
         super().__init__(*args, **kwargs)
         self.last_update_success = True
         self.init_firmware_calls = 0
+        self.firmware_probe_armed = False
 
     async def async_config_entry_first_refresh(self) -> None:
         self.last_update_success = False
@@ -1962,6 +1963,9 @@ class _UnreachableUpdater(_Updater):
 
     async def async_maybe_fetch_init_firmware(self) -> None:
         self.init_firmware_calls += 1
+
+    def probe_init_firmware_on_first_success(self) -> None:
+        self.firmware_probe_armed = True
 
 
 class _BadPayloadUpdater(_Updater):
@@ -2027,3 +2031,23 @@ def test_bad_credentials_still_fail_setup(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(ConfigEntryAuthFailed):
         asyncio.run(eveus.async_setup_entry(hass, entry))
     assert hass.config_entries.forwarded == []
+
+
+def test_a_charger_that_was_off_at_setup_owes_its_firmware_probe_to_the_first_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skipping the probe is not the same as never running it.
+
+    The /init fallback is the only firmware source a fw-1.x charger has
+    (GitHub issue #11) and it is asked once ever. Setup cannot spend it on a
+    charger that did not answer, so it must hand it to the coordinator, or the
+    device shows "Unknown" firmware until the entry is reloaded.
+    """
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _UnreachableUpdater)
+
+    asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert entry.runtime_data.updater.init_firmware_calls == 0
+    assert entry.runtime_data.updater.firmware_probe_armed is True

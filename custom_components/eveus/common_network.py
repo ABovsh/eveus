@@ -242,6 +242,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # nothing to hold, and an entry can now be set up with the charger
         # switched off, so this is a state entities really reach.
         self._ever_succeeded = False
+        # Set by setup when it could not spend the once-ever /init firmware
+        # probe, because no poll had landed yet; see
+        # ``probe_init_firmware_on_first_success``.
+        self._probe_fw_on_first_success = False
         self._grace_timer_unsubs: list = []
         # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
         # that completes mid-unload from scheduling fresh refresh timers, and a
@@ -577,8 +581,38 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Rate-limit availability logging."""
         return self._availability_log.should_log(ERROR_LOG_RATE_LIMIT)
 
+    def probe_init_firmware_on_first_success(self) -> None:
+        """Owe the once-ever /init firmware probe to the first poll that lands.
+
+        Setup normally awaits the probe itself, right after its first refresh.
+        An entry can now be created while the charger is switched off, and
+        that refresh never returns a payload -- but the probe is the only
+        firmware source a fw-1.x charger has (it omits verFWMain from /main,
+        GitHub issue #11), so skipping it there has to mean *later*, not
+        *never*: device_info would otherwise read "Unknown" until the entry is
+        reloaded.
+        """
+        self._probe_fw_on_first_success = True
+
+    def _start_init_firmware_probe(self) -> None:
+        """Run the deferred probe off the poll path, never inside it.
+
+        Same reason ``async_maybe_fetch_init_firmware`` is not called from
+        ``_async_update_data``: a slow or hanging /init must not delay the
+        cycle every entity depends on.
+        """
+        if self._shutting_down or self._init_fw_fetch_done:
+            return
+        self.hass.async_create_background_task(
+            self.async_maybe_fetch_init_firmware(),
+            f"eveus {self.host} /init firmware fallback",
+        )
+
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
+        if self._probe_fw_on_first_success:
+            self._probe_fw_on_first_success = False
+            self._start_init_firmware_probe()
         self._connection_quality_cache = None
         was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)

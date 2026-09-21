@@ -670,6 +670,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         fetch_init_firmware = getattr(updater, "async_maybe_fetch_init_firmware", None)
         if callable(fetch_init_firmware) and updater.last_update_success:
             await fetch_init_firmware()
+        elif callable(fetch_init_firmware):
+            # Skipped, not cancelled: the coordinator runs it on the first poll
+            # that lands, otherwise a fw-1.x charger that happened to be off at
+            # startup would show "Unknown" until the entry is reloaded.
+            arm_probe = getattr(updater, "probe_init_firmware_on_first_success", None)
+            if callable(arm_probe):
+                arm_probe()
 
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
