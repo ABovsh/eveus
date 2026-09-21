@@ -413,7 +413,8 @@ More help: [integration website](https://abovsh.github.io/eveus/) · [community 
 
 The integration polls more often while charging and less often when idle.
 After power and network connectivity return, readings normally recover within
-a minute. Command acceptance and setting changes are checked; Home Assistant
+a minute — whether the charger was switched off during a session or before
+Home Assistant started. Command acceptance and setting changes are checked; Home Assistant
 shows errors. If the charger rejects credentials after a password change, the
 integration asks you to enter them again.
 

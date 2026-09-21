@@ -1913,3 +1913,38 @@ def test_failed_poll_without_an_entry_announces_nothing(
     updater._record_failure(asyncio.TimeoutError())
 
     assert sent == []
+
+
+def test_a_charger_that_did_not_answer_is_unavailable_not_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poll nobody answered must start the outage clock, not hold the last value."""
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater.data = {"state": 2}
+
+    with pytest.raises(common_network.EveusUnreachable):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.available is False
+
+
+def test_did_not_answer_and_answered_wrongly_are_different_exception_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup reads the type to decide whether an entry may start without a reading.
+
+    A charger that is switched off comes back on its own; a reply this firmware
+    cannot produce does not, so the two must never be the same class.
+    """
+    assert issubclass(common_network.EveusUnreachable, UpdateFailed)
+
+    session = _Session(_Response(payload=["not", "a", "mapping"]))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(UpdateFailed) as exc_info:
+        asyncio.run(updater._async_update_data())
+    assert not isinstance(exc_info.value, common_network.EveusUnreachable)

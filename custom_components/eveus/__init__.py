@@ -39,6 +39,7 @@ from homeassistant.helpers import issue_registry as ir
 from .const import (
     DOMAIN,
     MODEL_MAX_CURRENT,
+    OFFLINE_UPDATE_INTERVAL,
     CONF_MODEL,
     CONF_SCHEME,
     DEFAULT_SCHEME,
@@ -58,7 +59,7 @@ from .const import (
     DEFAULT_BATTERY_CAPACITY,
     DEFAULT_SOC_CORRECTION,
 )
-from .common_network import EveusUpdater
+from .common_network import EveusUnreachable, EveusUpdater
 from .issues import (
     BatteryLowTracker,
     ClockDriftTracker,
@@ -637,14 +638,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # transient, or payload failure) setup fails and the entry must carry no
         # runtime objects — otherwise diagnostics would report a failed setup as
         # ready and stale listeners could survive.
-        await updater.async_config_entry_first_refresh()
+        # A charger nobody can reach is not a broken entry -- switching it off
+        # between sessions is how these are used. ConfigEntryNotReady would
+        # hand recovery to Home Assistant's setup backoff, which caps at
+        # SETUP_RETRY_MAX_WAIT (10 minutes), so a charger powered back on can
+        # stay missing for that long; the coordinator already owns this case
+        # with a flat 60 s offline cycle and it never gets to run. So finish
+        # setup: the entities exist and read unavailable, exactly as they do
+        # for an outage mid-session, and the first poll that lands fills them.
+        # Every other failure still fails setup -- bad credentials, or a reply
+        # this firmware cannot produce, are not fixed by polling again.
+        try:
+            await updater.async_config_entry_first_refresh()
+        except ConfigEntryNotReady as err:
+            if not isinstance(err.__cause__, EveusUnreachable):
+                raise
+            _LOGGER.warning(
+                "Eveus charger did not answer during setup; its entities start "
+                "unavailable and it is polled every %d s until it returns",
+                OFFLINE_UPDATE_INTERVAL,
+            )
         # Firmware 1.x omits verFWMain from /main entirely (GitHub issue #11);
         # resolve a fallback from /init once, right after the first successful
         # poll, so device_info never has to show "Unknown" for those chargers.
+        # Skipped when that poll did not happen: the probe is once-ever, and
+        # spending it on a charger that is switched off would leave a fw-1.x
+        # device showing "Unknown" for the whole session. device_info fills
+        # sw_version in as soon as a real firmware string lands.
         # getattr-guarded: test doubles for EveusUpdater used elsewhere don't
         # all implement this, and it is not essential to setup succeeding.
         fetch_init_firmware = getattr(updater, "async_maybe_fetch_init_firmware", None)
-        if callable(fetch_init_firmware):
+        if callable(fetch_init_firmware) and updater.last_update_success:
             await fetch_init_firmware()
 
         entry.runtime_data = EveusRuntimeData(

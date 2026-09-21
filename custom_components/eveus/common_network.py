@@ -94,6 +94,16 @@ _UPDATE_INTERVALS = {
 _MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
 
 
+class EveusUnreachable(UpdateFailed):
+    """The charger did not answer at all.
+
+    Distinct from every other poll failure because it is the only one that a
+    later poll can fix on its own: the charger is switched off, or off the
+    network. Setup reads the type, not the message, to decide whether an entry
+    may start without a first reading (see ``async_setup_entry``).
+    """
+
+
 def _bounded(value: float | int | None, maximum: float) -> float | int | None:
     """Return the value only when it sits in [0, maximum], else None.
 
@@ -950,4 +960,4 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             asyncio.TimeoutError,
         ) as err:
             self._record_failure(err)
-            raise UpdateFailed(f"Eveus connection issue: {type(err).__name__}") from err
+            raise EveusUnreachable(f"Eveus connection issue: {type(err).__name__}") from err

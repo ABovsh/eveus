@@ -1940,3 +1940,90 @@ def test_setup_restates_first_refresh_reason_on_the_entry(
     assert "currentSet" in message
     assert "16" in message
     assert hass.config_entries.forwarded == []
+
+
+# --- a charger that is switched off is not a broken entry -------------------
+
+
+class _UnreachableUpdater(_Updater):
+    """First refresh fails the way Home Assistant reports an unanswered poll."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.last_update_success = True
+        self.init_firmware_calls = 0
+
+    async def async_config_entry_first_refresh(self) -> None:
+        self.last_update_success = False
+        self.available = False
+        err = ConfigEntryNotReady()
+        err.__cause__ = eveus.EveusUnreachable("Eveus connection issue: ClientConnectorError")
+        raise err
+
+    async def async_maybe_fetch_init_firmware(self) -> None:
+        self.init_firmware_calls += 1
+
+
+class _BadPayloadUpdater(_Updater):
+    """The charger answered, but with something this firmware cannot produce."""
+
+    async def async_config_entry_first_refresh(self) -> None:
+        self.last_update_success = False
+        err = ConfigEntryNotReady()
+        err.__cause__ = UpdateFailed("Invalid Eveus response: 'currentSet' value 32 exceeds model maximum 16")
+        raise err
+
+
+def test_a_charger_that_is_switched_off_still_completes_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Powering the charger off between sessions is normal, not a broken entry.
+
+    ConfigEntryNotReady hands recovery to Home Assistant's setup backoff, which
+    caps at ten minutes; the coordinator's own offline cycle brings a returning
+    charger back within one minute. Setup must reach the coordinator.
+    """
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _UnreachableUpdater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    assert hass.config_entries.forwarded, "the platforms are set up, so the entities exist"
+    assert entry.runtime_data is not None
+    assert entry.runtime_data.updater.last_update_success is False
+
+
+def test_an_unreachable_charger_does_not_burn_the_one_init_firmware_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The /init fallback is asked once ever, and only after a poll succeeded."""
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _UnreachableUpdater)
+
+    asyncio.run(eveus.async_setup_entry(hass, entry))
+
+    assert entry.runtime_data.updater.init_firmware_calls == 0
+
+
+def test_a_payload_the_charger_cannot_produce_still_fails_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only an unanswered charger is excused; polling does not fix a bad reply."""
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _BadPayloadUpdater)
+
+    with pytest.raises(ConfigEntryNotReady):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+    assert hass.config_entries.forwarded == []
+
+
+def test_bad_credentials_still_fail_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+    hass = _hass()
+    entry = _Entry(_data())
+    monkeypatch.setattr(eveus, "EveusUpdater", _AuthFailingUpdater)
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        asyncio.run(eveus.async_setup_entry(hass, entry))
+    assert hass.config_entries.forwarded == []
