@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.24.0 - 2026-09-22
+
+### ✨ Added
+- **Card — more charging information.** Voltage in every layout, temperatures outside `compact`, and target SOC, remaining time, energy, cost and finish-time estimates in `status` and `control` (Advanced mode).
+- **Card — more controls.** OCPP and Disable limits switches in `control` and `full`.
+- **Card — clearer waiting and offline states.** The reason charging has not started, the age of the last reading, and disabled controls while offline.
+
+### 🔧 Changed
+- **Card — a more compact layout.** Fewer duplicate readings, unavailable values omitted, and costs in the entity's currency; `full` is available only in Advanced mode.
+- **Card — raising the charging current asks before it is sent.** Move the slider up and tap the new value within four seconds to apply it; lowering the current applies at once.
+
+### 🐛 Fixed
+- **Integration — a charger switched back on returns within a minute, even if Home Assistant started while it was off.** Setup no longer waits for the charger: its entities start `unavailable` and it is polled every 60 seconds until it answers.
+- **Integration — SOC readings no longer show a wrong value right after a restart.** Initial SOC, Target SOC, Battery Capacity and SOC Correction are saved as you change them, so SOC Percent, SOC Energy and the estimates are calculated from your current settings from the first reading. They previously fell back to the values entered when the integration was added — until all four entities had loaded, or for the whole session if one of them is hidden or disabled, which could also stop a charge early when the SOC limit is on.
+- **Card — switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.
+
+<p>
+  <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced-en.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-basic-en.jpg" width="49%">
+</p>
+
 ## 4.23.0 - 2026-09-19
 
 ### ✨ Added

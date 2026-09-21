@@ -536,10 +536,45 @@ class EveusSocConfigNumber(
     def _push(self) -> None:
         """Push the current value into the calculator and notify SOC sensors."""
         self._soc_calculator.set_value(self._soc_key, self._attr_native_value)
+        self._mirror_into_config_entry()
         if self.hass is not None:
             async_dispatcher_send(
                 self.hass, soc_update_signal(self._updater.config_entry.entry_id)
             )
+
+    def _mirror_into_config_entry(self) -> None:
+        """Keep the entry's copy equal to the live value.
+
+        Setup seeds the calculator from ``entry.data`` because a disabled SOC
+        input is never added to Home Assistant at all, so its
+        ``async_added_to_hass`` never runs and nothing would push a value
+        (see ``async_setup_entry``). That seed is only as good as the entry:
+        these values are edited on the entity, and the entry otherwise keeps
+        whatever the config flow last wrote. Live 2026-09-21 the entry still
+        held initial_soc 76 / target_soc 80 while the entities held 25 / 100,
+        so every restart published SOC 95 % and "Target reached" until the
+        entities landed -- and a SOC limit evaluated in that window would
+        have stopped the charge.
+
+        Written only on a real change, so a restart that restores the same
+        value writes nothing. No update listener is registered for this entry
+        (see ``_finish_setup``), so this cannot trigger a reload.
+        """
+        hass = self.hass
+        if hass is None:
+            return
+        # getattr-guarded: a real HomeAssistant always has this, but the hass
+        # doubles these entities are built with in tests do not all carry it.
+        config_entries = getattr(hass, "config_entries", None)
+        if config_entries is None:
+            return
+        entry = self._updater.config_entry
+        value = self._attr_native_value
+        if entry.data.get(self._soc_key) == value:
+            return
+        config_entries.async_update_entry(
+            entry, data={**entry.data, self._soc_key: value}
+        )
 
     def _apply_value(self, value: float) -> None:
         """Clamp, store, persist, and push a SOC-input value."""

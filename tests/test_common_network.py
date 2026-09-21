@@ -1810,6 +1810,9 @@ def test_coordinator_owns_one_grace_clock_per_period(
         common_network, "async_get_clientsession", lambda hass: _FailingSession()
     )
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    # A reading to hold: without one the entities are unavailable outright and
+    # there is no grace window for this test to measure.
+    updater._record_success(0.05, {"state": 2})
     notified: list[bool] = []
     updater.async_update_listeners = lambda: notified.append(True)
 
@@ -1913,3 +1916,161 @@ def test_failed_poll_without_an_entry_announces_nothing(
     updater._record_failure(asyncio.TimeoutError())
 
     assert sent == []
+
+
+def test_a_charger_that_did_not_answer_is_unavailable_not_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poll nobody answered must start the outage clock, not hold the last value."""
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater.data = {"state": 2}
+
+    with pytest.raises(common_network.EveusUnreachable):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.available is False
+
+
+def test_did_not_answer_and_answered_wrongly_are_different_exception_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup reads the type to decide whether an entry may start without a reading.
+
+    A charger that is switched off comes back on its own; a reply this firmware
+    cannot produce does not, so the two must never be the same class.
+    """
+    assert issubclass(common_network.EveusUnreachable, UpdateFailed)
+
+    session = _Session(_Response(payload=["not", "a", "mapping"]))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(UpdateFailed) as exc_info:
+        asyncio.run(updater._async_update_data())
+    assert not isinstance(exc_info.value, common_network.EveusUnreachable)
+
+
+def test_grace_does_not_apply_before_the_first_successful_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A grace period holds the LAST reading; with none held there is nothing to hold.
+
+    Home Assistant can set an entry up while the charger is switched off, so
+    entities are built with no reading at all. Letting the grace window run
+    then keeps them visible with nothing to show, and they publish `unknown`
+    -- a value helpers and automations ingest, where `unavailable` is skipped.
+    """
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    with pytest.raises(common_network.EveusUnreachable):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is False
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD) is False
+
+
+def test_grace_applies_again_once_a_poll_has_succeeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A charger that answered once and then went away still holds its last reading."""
+    session = _Session(_Response(payload={"state": 4, "currentSet": 16, "powerMeas": 7200}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    asyncio.run(updater._async_update_data())
+
+    monkeypatch.setattr(
+        common_network, "async_get_clientsession", lambda hass: _FailingSession()
+    )
+    with pytest.raises(common_network.EveusUnreachable):
+        asyncio.run(updater._async_update_data())
+
+    assert updater.visible_within(CONTROL_GRACE_PERIOD) is True
+
+
+class _TaskHass(_Hass):
+    """A hass that keeps the background tasks the coordinator creates."""
+
+    def __init__(self) -> None:
+        self.tasks: list[asyncio.Task] = []
+        self.names: list[str] = []
+
+    def async_create_background_task(self, coro, name: str, eager_start: bool = True):
+        task = asyncio.ensure_future(coro)
+        self.tasks.append(task)
+        self.names.append(name)
+        return task
+
+
+def test_a_charger_off_at_setup_still_gets_its_one_firmware_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The /init probe is once-ever and setup skips it when no poll landed.
+
+    Firmware 1.x never carries verFWMain in /main (GitHub issue #11), so the
+    only source of a version for those chargers is the /init probe. An entry
+    can now be set up while the charger is switched off, and setup runs the
+    probe only when its first refresh succeeded -- so the coordinator owes it
+    to the first poll that lands, or device_info shows "Unknown" for the whole
+    session.
+    """
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+    probes: list[int] = []
+
+    async def fake_probe() -> None:
+        probes.append(1)
+
+    monkeypatch.setattr(updater, "async_maybe_fetch_init_firmware", fake_probe)
+
+    async def scenario() -> None:
+        updater.probe_init_firmware_on_first_success()
+        await updater._async_update_data()
+        await asyncio.gather(*hass.tasks)
+        # A second good poll must not ask again: the probe is once-ever.
+        await updater._async_update_data()
+        await asyncio.gather(*hass.tasks)
+
+    asyncio.run(scenario())
+
+    assert probes == [1]
+    # The task is named so it is identifiable in Home Assistant's task list and
+    # in a "task was destroyed" warning; an unnamed background task is not.
+    assert hass.names == [f"eveus {TEST_HOST} /init firmware fallback"]
+
+
+def test_an_unarmed_coordinator_does_not_probe_on_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup awaits the probe itself on the normal path; nothing to schedule."""
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+
+    asyncio.run(updater._async_update_data())
+
+    assert hass.tasks == []
+
+
+def test_a_probe_armed_on_a_shutting_down_coordinator_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poll that lands mid-unload must not start work on a torn-down entry."""
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+    updater.probe_init_firmware_on_first_success()
+    updater._shutting_down = True
+
+    asyncio.run(updater._async_update_data())
+
+    assert hass.tasks == []

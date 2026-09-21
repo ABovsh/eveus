@@ -94,6 +94,16 @@ _UPDATE_INTERVALS = {
 _MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
 
 
+class EveusUnreachable(UpdateFailed):
+    """The charger did not answer at all.
+
+    Distinct from every other poll failure because it is the only one that a
+    later poll can fix on its own: the charger is switched off, or off the
+    network. Setup reads the type, not the message, to decide whether an entry
+    may start without a first reading (see ``async_setup_entry``).
+    """
+
+
 def _bounded(value: float | int | None, maximum: float) -> float | int | None:
     """Return the value only when it sits in [0, maximum], else None.
 
@@ -228,6 +238,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # the listeners a window closed, because HA notifies them only on the
         # success -> failure edge, never on a repeated failure.
         self._first_failure_monotonic: float | None = None
+        # A grace period holds the LAST reading. Until one exists there is
+        # nothing to hold, and an entry can now be set up with the charger
+        # switched off, so this is a state entities really reach.
+        self._ever_succeeded = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
+        # Set by setup when it could not spend the once-ever /init firmware
+        # probe, because no poll had landed yet; see
+        # ``probe_init_firmware_on_first_success``.
+        self._probe_fw_on_first_success = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
         self._grace_timer_unsubs: list = []
         # Set once async_shutdown runs (entry unload / HA stop). Blocks a command
         # that completes mid-unload from scheduling fresh refresh timers, and a
@@ -361,7 +379,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         return self._device_available
 
     def visible_within(self, grace: int) -> bool:
-        """Whether an entity with this grace period is still visible."""
+        """Whether an entity with this grace period is still visible.
+
+        The grace period exists to hold the last reading through a missed
+        poll. Before the first successful poll there is no reading to hold,
+        so an entity must be unavailable rather than stay visible with
+        nothing to show -- that publishes `unknown`, which helpers and
+        automations ingest, where `unavailable` is one they skip.
+        """
+        if not self._ever_succeeded:
+            return False
         return self.seconds_unavailable < grace
 
     @property
@@ -554,13 +581,44 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Rate-limit availability logging."""
         return self._availability_log.should_log(ERROR_LOG_RATE_LIMIT)
 
+    def probe_init_firmware_on_first_success(self) -> None:
+        """Owe the once-ever /init firmware probe to the first poll that lands.
+
+        Setup normally awaits the probe itself, right after its first refresh.
+        An entry can now be created while the charger is switched off, and
+        that refresh never returns a payload -- but the probe is the only
+        firmware source a fw-1.x charger has (it omits verFWMain from /main,
+        GitHub issue #11), so skipping it there has to mean *later*, not
+        *never*: device_info would otherwise read "Unknown" until the entry is
+        reloaded.
+        """
+        self._probe_fw_on_first_success = True
+
+    def _start_init_firmware_probe(self) -> None:
+        """Run the deferred probe off the poll path, never inside it.
+
+        Same reason ``async_maybe_fetch_init_firmware`` is not called from
+        ``_async_update_data``: a slow or hanging /init must not delay the
+        cycle every entity depends on.
+        """
+        if self._shutting_down or self._init_fw_fetch_done:
+            return
+        self.hass.async_create_background_task(
+            self.async_maybe_fetch_init_firmware(),
+            f"eveus {self.host} /init firmware fallback",
+        )
+
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
+        if self._probe_fw_on_first_success:
+            self._probe_fw_on_first_success = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
+            self._start_init_firmware_probe()
         self._connection_quality_cache = None
         was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)
         self._consecutive_failures = 0
         self._device_available = True
+        self._ever_succeeded = True
         self._stop_outage_clock()
         self._next_poll_attempt = 0.0
         self._last_success_time = time.time()
@@ -950,4 +1008,4 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             asyncio.TimeoutError,
         ) as err:
             self._record_failure(err)
-            raise UpdateFailed(f"Eveus connection issue: {type(err).__name__}") from err
+            raise EveusUnreachable(f"Eveus connection issue: {type(err).__name__}") from err

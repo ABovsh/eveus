@@ -143,6 +143,9 @@ def test_availability_grace_uses_monotonic_not_wall_clock(
         SimpleNamespace(monotonic=lambda: fake_monotonic, time=lambda: 4_102_444_800.0),
     )
     updater = EveusUpdater("192.0.2.1", "u", "p", SimpleNamespace(loop=None))
+    # The grace window holds the LAST reading, so one must exist: a coordinator
+    # that has never succeeded is unavailable outright, not inside a grace.
+    updater._record_success(0.05, {"state": 2})
     updater._record_failure(TimeoutError())
     sensor = _diag_sensor(updater)
     assert updater.seconds_unavailable == 0.0
