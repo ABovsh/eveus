@@ -156,7 +156,8 @@ HTTP API й не потребує інтернету.
 | `control` | Показники, повзунок струму й перемикачі **OCPP**, **Безліміт**, **Один**, **Стоп** |
 | `full` | Усе з `control` і параметри **Початковий**, **Ціль**, **Ємність**, **Втрати**; **лише Розширений режим** |
 
-У Базовому режимі немає SOC, а картка `full` показує `control`.
+У Базовому режимі доступні `compact`, `status` і `control`, без SOC.
+Вигляд `full` доступний лише в Розширеному режимі.
 Картка бере режим з інтеграції; `mode: basic` спрощує її,
 а `mode: advanced` потребує Розширеного режиму інтеграції.
 
@@ -177,7 +178,7 @@ Reset frontend cache**, потім перезапустіть застосуно
 
 ```yaml
 type: custom:eveus-card
-layout: control      # compact | status | control | full
+layout: control      # compact | status | control; full — лише Розширений режим
 # device_id: ...     # лише якщо станцій кілька
 # mode: basic        # advanced | basic (типово — за режимом інтеграції)
 # language: uk       # auto (типово, мова Home Assistant) | uk | en

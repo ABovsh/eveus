@@ -10,7 +10,7 @@ Changes to the **Eveus card**.
 - **Clearer waiting and offline states:** the reason charging has not started, the age of the last reading, and disabled controls while offline.
 
 ### 🔧 Changed
-- **A more compact layout:** fewer duplicate readings, unavailable values omitted, and costs shown in the entity's currency. Basic mode uses `control` instead of `full`.
+- **A more compact layout:** fewer duplicate readings, unavailable values omitted, and costs shown in the entity's currency. The `full` layout is available only in Advanced mode.
 
 ### 🐛 Fixed
 - **Switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.

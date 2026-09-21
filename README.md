@@ -144,7 +144,8 @@ you add to your dashboard:
 | `control` | Readings, current slider and **OCPP**, **No limit**, **One**, **Stop** switches |
 | `full` | `control` plus **Initial**, **Target**, **Capacity** and **Loss** settings; **Advanced mode only** |
 
-Basic mode has no SOC. A `full` card uses `control` in Basic mode.
+Basic mode provides `compact`, `status` and `control`, without SOC.
+The `full` layout is available only in Advanced mode.
 The card follows the integration mode; `mode: basic` simplifies it, while
 `mode: advanced` requires Advanced integration mode.
 
@@ -165,7 +166,7 @@ Reset frontend cache**, then restart the app.
 
 ```yaml
 type: custom:eveus-card
-layout: control      # compact | status | control | full
+layout: control      # compact | status | control; full: Advanced only
 # device_id: ...     # only with several chargers
 # mode: basic        # advanced | basic (default: follows the integration)
 # language: uk       # auto (default, Home Assistant's language) | uk | en
