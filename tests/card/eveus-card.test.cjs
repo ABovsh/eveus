@@ -1,0 +1,806 @@
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(require('node:path').join(__dirname, '../../custom_components/eveus/frontend/eveus-card.js'), 'utf8');
+function setup(max = 16, step = 1) {
+  const registry = {}, timers = new Map(); let timer = 0;
+  class HTMLElement {
+    attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
+  }
+  const sandbox = {HTMLElement, console, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
+    customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
+  vm.runInNewContext(source, sandbox);
+  const card = new registry['eveus-card'](); card.setConfig({sections:['current']});
+  const st = (state,attributes={})=>({state:String(state),attributes});
+  const states = {'sensor.state':st('Charging'),'number.amps':st(10,{min:6,max,step}),'sensor.amps':st(8.4)};
+  const calls=[];
+  const hass = {states,callWS:async()=>({entities:{state:'sensor.state',charging_current:'number.amps',current:'sensor.amps'}}),
+    callService:async(...args)=>{calls.push(args);}};
+  card._ids={state:'sensor.state',charging_current:'number.amps',current:'sensor.amps'};card._resolved=true;card.hass=hass;
+  const slide=(v,commit=true)=>card._onSlide({target:{dataset:{slide:'current'},value:String(v)}},commit);
+  return {card,states,calls,hass,slide,timers};
+}
+for(const max of [16,32,40,48]) test(`model maximum ${max} A and actual current`,()=>{
+  const {card,slide,calls}=setup(max);
+  assert.match(card.shadowRoot.innerHTML,new RegExp(`max="${max}"`));
+  assert.match(card.shadowRoot.innerHTML,/8.4 A/);
+  slide(max+1); assert.equal(calls.length,0); assert.equal(card._draft,null);
+});
+test('increase waits for confirmation; decrease sends once; rendering never sends', async()=>{
+  const {card,slide,calls,hass}=setup(32);
+  card.hass=hass; assert.equal(calls.length,0);
+  slide(24,false); slide(24); assert.equal(calls.length,0);assert.equal(card._asking,true);
+  await card._confirm();assert.equal(calls.length,1);assert.equal(calls[0][2].value,24);
+  await card._confirm();assert.equal(calls.length,1);
+  const x=setup(); x.slide(8);assert.equal(x.calls.length,1);assert.equal(x.calls[0][2].value,8);
+});
+test('unanswered confirmation expires',()=>{
+  const {card,slide,timers,calls}=setup();slide(14);
+  for(const fn of [...timers.values()]) fn();
+  assert.equal(card._draft,null);assert.equal(card._asking,false);assert.equal(calls.length,0);
+});
+test('bounds update without a state change cancels unsafe confirmation',async()=>{
+  const {card,slide,states,hass,calls}=setup(32);slide(24);
+  states['number.amps'].attributes.max=16;card.hass=hass;
+  assert.match(card.shadowRoot.innerHTML,/max="16"/);
+  await card._confirm();assert.equal(calls.length,0);
+});
+test('offline or unavailable number cannot send a pending confirmation',async()=>{
+  for(const id of ['sensor.state','number.amps']) {
+    const {card,slide,states,hass,calls}=setup();slide(14);states[id].state='unavailable';card.hass=hass;
+    await card._confirm();slide(8);assert.equal(calls.length,0);assert.match(card.shadowRoot.innerHTML,/disabled/);
+  }
+});
+test('missing bounds disable; fractional step is enforced',()=>{
+  const x=setup();delete x.states['number.amps'].attributes.max;x.card.hass=x.hass;x.slide(14);
+  assert.equal(x.calls.length,0);assert.match(x.card.shadowRoot.innerHTML,/disabled/);
+  const y=setup(16,.5);y.slide(10.2);assert.equal(y.card._draft,null);y.slide(10.5);assert.equal(y.card._asking,true);
+});
+test('actual-current tick shows only while charging with a non-zero current; draft does not replace it',()=>{
+  const {card,states,hass,slide}=setup();slide(14);assert.match(card.shadowRoot.innerHTML,/title="Actual current 8.4 A"/);
+  states['sensor.amps'].state='0';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+  states['sensor.amps'].state='unavailable';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+  states['sensor.amps'].state='8.4';states['sensor.state'].state='Connected';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+});
+test('disconnect cancels confirmation and draft',async()=>{
+  const {card,slide,calls}=setup();slide(14);card.disconnectedCallback();await card._confirm();assert.equal(calls.length,0);
+});
+test('rejected service restores actual setting and shows an error',async()=>{
+  const {card,slide,hass}=setup();hass.callService=async()=>{throw Error('rejected');};slide(14);await card._confirm();
+  assert.equal(card._draft,null);assert.match(card.shadowRoot.innerHTML,/Could not set current/);
+});
+
+test('module label stays Current and actual reading is only a scale marker',()=>{
+  const {card,states,hass}=setup();
+  assert.match(card.shadowRoot.innerHTML,/class="mk"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/class="actual"/);
+  states['sensor.state'].state='unavailable';card.hass=hass;
+  assert.match(card.shadowRoot.innerHTML,/class="label">Current</);
+});
+
+function setupLimits({advanced=true,suspended=false,online=true}={}) {
+  const registry = {};
+  class HTMLElement {
+    attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
+  }
+  const sandbox = {HTMLElement, console, setTimeout, clearTimeout,
+    customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
+  vm.runInNewContext(source, sandbox);
+  const card = new registry['eveus-card'](); card.setConfig({sections:['limits']});
+  const st = (state,attributes={})=>({state:String(state),attributes});
+  const states = {
+    'sensor.state':st(online?'Charging':'unavailable'),
+    'switch.disable':st(suspended?'on':'off'),
+    'switch.energy':st('on'),'switch.time':st('off'),'switch.cost':st('on'),
+    'number.energy':st(25,{min:0,max:100,step:1,unit_of_measurement:'kWh'}),
+    'number.time':st(120,{min:0,max:1440,step:5,unit_of_measurement:'min'}),
+    'number.cost':st(500,{min:0,max:10000,step:1,unit_of_measurement:'UAH'}),
+  };
+  const entities = {state:'sensor.state',limit_disable_all:'switch.disable',
+    limit_energy_enabled:'switch.energy',limit_time_enabled:'switch.time',limit_cost_enabled:'switch.cost',
+    limit_energy:'number.energy',limit_time:'number.time',limit_cost:'number.cost'};
+  if (advanced) {
+    states['switch.soc']=st('on');states['number.soc']=st(80,{min:0,max:100,step:1,unit_of_measurement:'%'});
+    entities.limit_soc_enabled='switch.soc';entities.target_soc='number.soc';
+    states['sensor.soc_pct']=st(44,{unit_of_measurement:'%'});entities.soc_percent='sensor.soc_pct'; // Advanced = the integration publishes an SOC
+  }
+  const calls=[];
+  const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
+  card._ids=entities;card._resolved=true;card.hass=hass;
+  return {card,states,calls,hass};
+}
+
+test('limits render four compact peer tiles in one row with the global override above',()=>{
+  const {card}=setupLimits();
+  const html=card.shadowRoot.innerHTML;
+  assert.match(html,/class="limits-grid four /);
+  assert.equal((html.match(/class="limit-tile/g)||[]).length,4);
+  assert.match(html,/Disable all/);
+  assert.match(html,/SOC/);assert.match(html,/Energy/);assert.match(html,/Time/);assert.match(html,/Cost/);
+  // Units ride in the tile header so the number keeps its full size in a 4-wide row.
+  assert.match(html,/Time<small class="tile-unit">min<\/small>[^]*data-fit>120<\/b>/);
+});
+
+test('Disable all calls only the existing global override and visibly suspends saved limits',async()=>{
+  const {card,calls}=setupLimits({suspended:true});
+  assert.match(card.shadowRoot.innerHTML,/limits-grid four suspended/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/limit-tile active/);
+  await card._toggleLimit('limit_disable_all');
+  assert.equal(JSON.stringify(calls),JSON.stringify([['switch','turn_off',{entity_id:'switch.disable'}]]));
+});
+
+test('limit toggles and thresholds use their existing switch and number entities',async()=>{
+  const {card,calls}=setupLimits();
+  await card._toggleLimit('limit_time_enabled');
+  await card._stepLimit('limit_time',1);
+  assert.equal(JSON.stringify(calls[0]),JSON.stringify(['switch','turn_on',{entity_id:'switch.time'}]));
+  assert.equal(JSON.stringify(calls[1]),JSON.stringify(['number','set_value',{entity_id:'number.time',value:125}]));
+});
+
+test('Basic mode omits unsupported SOC and lets the three native limits fill the row',()=>{
+  const {card}=setupLimits({advanced:false});
+  const html=card.shadowRoot.innerHTML;
+  assert.match(html,/class="limits-grid three /);
+  assert.equal((html.match(/class="limit-tile/g)||[]).length,3);
+  assert.doesNotMatch(html,/>SOC</);
+});
+
+test('offline limits remain informative but cannot operate',async()=>{
+  const {card,calls}=setupLimits({online:false});
+  assert.match(card.shadowRoot.innerHTML,/class="limits off"/);
+  await card._toggleLimit('limit_energy_enabled');
+  await card._stepLimit('limit_energy',1);
+  assert.equal(calls.length,0);
+});
+
+test('tapping a limit value opens an inline editor bound to its entity bounds',()=>{
+  const {card}=setupLimits();
+  card._startLimitEdit('limit_time');
+  const html=card.shadowRoot.innerHTML;
+  assert.match(html,/data-limit-edit="limit_time"/);
+  assert.match(html,/value="120"/);
+  assert.match(html,/min="0"/);
+  assert.match(html,/max="1440"/);
+  assert.match(html,/step="5"/);
+});
+
+test('committing an inline edit rounds to the nearest step and clamps to bounds, then sends once',async()=>{
+  const {card,calls}=setupLimits();
+  card._startLimitEdit('limit_time');
+  await card._commitLimitEdit('limit_time',503);
+  assert.equal(JSON.stringify(calls[0]),JSON.stringify(['number','set_value',{entity_id:'number.time',value:505}]));
+  assert.equal(card._editingLimit,null);
+  const {card:c2,calls:c2calls}=setupLimits();
+  c2._startLimitEdit('limit_cost');
+  await c2._commitLimitEdit('limit_cost',99999);
+  assert.equal(JSON.stringify(c2calls[0]),JSON.stringify(['number','set_value',{entity_id:'number.cost',value:10000}]));
+});
+
+test('an unparsable or unchanged inline edit sends nothing',async()=>{
+  const {card,calls}=setupLimits();
+  card._startLimitEdit('limit_energy');
+  await card._commitLimitEdit('limit_energy','abc');
+  assert.equal(calls.length,0);
+  card._startLimitEdit('limit_energy');
+  await card._commitLimitEdit('limit_energy',25);
+  assert.equal(calls.length,0);
+});
+
+test('offline cannot open the inline editor',()=>{
+  const {card}=setupLimits({online:false});
+  card._startLimitEdit('limit_energy');
+  assert.equal(card._editingLimit,null);
+});
+
+function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connected',protection='on'}={}) {
+  const registry = {};
+  class HTMLElement extends EventTarget {
+    attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
+  }
+  const sandbox = {HTMLElement, CustomEvent, console, setTimeout, clearTimeout,
+    customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
+  vm.runInNewContext(source, sandbox);
+  const card = new registry['eveus-card'](); card.setConfig({sections:['safety']});
+  const st = (state,attributes={})=>({state:String(state),attributes});
+  const states = {
+    'sensor.state':st(online?'Charging':'unavailable'),
+    'sensor.box':st(box,{unit_of_measurement:'°C'}),
+    'sensor.plug':st(plug,{unit_of_measurement:'°C'}),
+    'sensor.leak':st(leak,{unit_of_measurement:'mA'}),
+    'sensor.conn':st(conn,{unit_of_measurement:'%'}),
+    'sensor.ground':st(ground),
+    'switch.protection':st(protection),
+  };
+  const entities = {state:'sensor.state',box_temperature:'sensor.box',plug_temperature:'sensor.plug',
+    leakage_current:'sensor.leak',connection_quality:'sensor.conn',ground:'sensor.ground',ground_protection:'switch.protection'};
+  const calls=[];
+  const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
+  card._ids=entities;card._resolved=true;card.hass=hass;
+  return {card,states,calls,hass};
+}
+
+test('safety is one thin row (the .sl pattern, not a boxed limits grid), icon-identified items',()=>{
+  const {card}=setupSafety();
+  const html=card.shadowRoot.innerHTML;
+  assert.match(html,/class="sl safety /);
+  assert.doesNotMatch(html,/class="limits-grid/);
+  assert.doesNotMatch(html,/class="limit-tile/);
+  assert.match(html,/title="Box temperature/);assert.match(html,/title="Plug temperature/);
+  assert.match(html,/title="Ground: tap to arm\/disarm protection"/);assert.match(html,/title="Leakage current/);
+  assert.match(html,/20°/);assert.match(html,/12°/);assert.match(html,/>OK</);assert.match(html,/0<small>mA/);
+});
+
+test('normal readings render the good color, not bad',()=>{
+  const {card}=setupSafety();
+  const html=card.shadowRoot.innerHTML;
+  assert.doesNotMatch(html,/safety-value bad/);
+  assert.doesNotMatch(html,/<i class="bad">/);
+});
+
+test('high temperature turns only that reading bad, the other stays good',()=>{
+  const {card}=setupSafety({box:85,plug:12});
+  const html=card.shadowRoot.innerHTML;
+  assert.match(html,/safety-value bad">85°/);
+  assert.match(html,/safety-value good">12°/);
+});
+
+test('high leakage current turns bad',()=>{
+  const {card}=setupSafety({leak:32});
+  assert.match(card.shadowRoot.innerHTML,/safety-value bad">32<small>mA/);
+});
+
+test('ground not connected is bad even while protection stays on',()=>{
+  const {card}=setupSafety({ground:'Not Connected'});
+  const html=card.shadowRoot.innerHTML;
+  assert.match(html,/safety-value bad">Bad</);
+  assert.match(html,/<i class="good">/);
+});
+
+test('ground protection off marks its dot bad and the toggle unchecked',()=>{
+  const {card}=setupSafety({protection:'off'});
+  const html=card.shadowRoot.innerHTML;
+  assert.match(html,/<i class="bad">/);
+  assert.match(html,/aria-checked="false"/);
+});
+
+test('toggling ground protection uses the existing switch entity',async()=>{
+  const {card,calls}=setupSafety({protection:'off'});
+  await card._toggleLimit('ground_protection');
+  assert.equal(JSON.stringify(calls),JSON.stringify([['switch','turn_on',{entity_id:'switch.protection'}]]));
+});
+
+test('unknown readings show a dash with no color class',()=>{
+  const {card,states,hass}=setupSafety();
+  states['sensor.box'].state='unavailable';
+  states['sensor.ground'].state='unavailable';
+  states['switch.protection'].state='unavailable';
+  card.hass=hass;
+  const html=card.shadowRoot.innerHTML;
+  assert.match(html,/safety-value ">—°/);
+  assert.match(html,/safety-value ">—</);
+  assert.match(html,/aria-label="Ground protection"[^>]*\bdisabled\b/);
+});
+
+test('offline safety row is visibly disabled and cannot toggle',async()=>{
+  const {card,calls}=setupSafety({online:false});
+  assert.match(card.shadowRoot.innerHTML,/class="sl safety off"/);
+  await card._toggleLimit('ground_protection');
+  assert.equal(calls.length,0);
+});
+
+test('every item has its own icon, matched to the entity it represents',()=>{
+  const {card}=setupSafety();
+  const html=card.shadowRoot.innerHTML;
+  for (const icon of ['mdi:ev-station"','mdi:ev-plug-type2"','mdi:current-dc"']) {
+    assert.match(html,new RegExp(icon.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  }
+  assert.match(html,/class="safety-ground-icon"/);
+});
+
+test('Connection quality icon reflects its own Excellent/Good/Fair/Poor/Critical brackets, independent of the good/bad text color',()=>{
+  assert.match(setupSafety({conn:98}).card.shadowRoot.innerHTML,/mdi:wifi-strength-4"/);
+  assert.match(setupSafety({conn:90}).card.shadowRoot.innerHTML,/mdi:wifi-strength-3"/);
+  assert.match(setupSafety({conn:70}).card.shadowRoot.innerHTML,/mdi:wifi-strength-2"/);
+  assert.match(setupSafety({conn:50}).card.shadowRoot.innerHTML,/mdi:wifi-strength-1"/);
+  assert.match(setupSafety({conn:10}).card.shadowRoot.innerHTML,/mdi:wifi-strength-alert-outline"/);
+});
+
+test('tapping a read-only item fires hass-more-info for its own entity; tapping Ground still toggles',()=>{
+  const {card}=setupSafety();
+  const events=[];
+  card.addEventListener('hass-more-info',(e)=>events.push(e.detail.entityId));
+  card._moreInfo('box_temperature');
+  card._moreInfo('leakage_current');
+  card._moreInfo('connection_quality');
+  assert.deepEqual(events,['sensor.box','sensor.leak','sensor.conn']);
+  card._moreInfo('not_a_real_key');
+  assert.equal(events.length,3);
+});
+
+test('Connection quality renders alongside the other readings, colored by its own metric, and never affects the card-wide alert',()=>{
+  const strong=setupSafety({conn:98});
+  assert.match(strong.card.shadowRoot.innerHTML,/safety-value good">98<small>%/);
+  const weak=setupSafety({conn:40});
+  assert.match(weak.card.shadowRoot.innerHTML,/safety-value bad">40<small>%/);
+  assert.equal(weak.card._safetyStatus(),'good');
+});
+
+test('safety row tint: good when everything is fine, bad the moment one reading trips, none when offline — scoped to the row, not the whole card',()=>{
+  const good=setupSafety();
+  assert.match(good.card.shadowRoot.innerHTML,/class="sl safety safety-good"/);
+  assert.doesNotMatch(good.card.shadowRoot.innerHTML,/<ha-card class=/);
+  const bad=setupSafety({box:85});
+  assert.match(bad.card.shadowRoot.innerHTML,/class="sl safety safety-bad"/);
+  assert.doesNotMatch(bad.card.shadowRoot.innerHTML,/<ha-card class=/);
+  const offline=setupSafety({online:false});
+  assert.doesNotMatch(offline.card.shadowRoot.innerHTML,/class="[^"]*safety-(good|bad)/);
+});
+
+// ---------- Status, Actions and the card-level alert strip ----------
+function setupStatus({state='Charging',reason='Charging',substate='No Limits',stop='off',one='off',ocpp='off',sections=['status','actions'],changed}={}) {
+  const registry = {}, timers = new Map(); let timer = 0;
+  class HTMLElement extends EventTarget {
+    attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
+  }
+  const sandbox = {HTMLElement, CustomEvent, console, Date, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
+    customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
+  vm.runInNewContext(source, sandbox);
+  const card = new registry['eveus-card'](); card.setConfig({sections});
+  const st = (s,attributes={})=>({state:String(s),attributes,last_changed:changed});
+  const states = {'sensor.state':st(state),'sensor.reason':st(reason),'sensor.sub':st(substate),
+    'switch.stop':st(stop),'switch.one':st(one),'switch.ocpp':st(ocpp)};
+  const entities = {state:'sensor.state',not_charging_reason:'sensor.reason',substate:'sensor.sub',
+    stop_charging:'switch.stop',one_charge:'switch.one',connect_to_ocpp:'switch.ocpp'};
+  const calls=[];
+  const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
+  card._ids=entities;card._resolved=true;card.hass=hass;
+  const html=()=>card.shadowRoot.innerHTML.replace(/<style>[\s\S]*?<\/style>/,'');
+  return {card,states,calls,hass,timers,html};
+}
+
+test('status is one full-width row with state and note; OCPP/One/Stop live in their own Actions section',()=>{
+  const s=setupStatus({sections:['status']}).html();
+  assert.match(s,/class="sl status/);
+  assert.match(s,/>Charging</);
+  assert.doesNotMatch(s,/data-status-toggle/);
+  const a=setupStatus({sections:['actions']}).html();
+  assert.match(a,/class="panel actions/);
+  for(const k of ['connect_to_ocpp','one_charge','stop_charging']) assert.match(a,new RegExp(`data-status-toggle="${k}"`));
+  assert.match(a,/>OCPP<[^]*>One charge<[^]*>Stop</);
+  assert.doesNotMatch(s+a,/limit_disable_all|Unlimited|No limit/);
+});
+
+test('actions say their state in words; a stopped charger offers resume',()=>{
+  const a=setupStatus({sections:['actions'],state:'Standby',stop:'on',one:'on'}).html();
+  assert.match(a,/act-btn status-one_charge on[^]*>On</);
+  assert.match(a,/act-btn status-stop_charging on[^]*>Stopped<[^]*Tap to resume/);
+  assert.match(a,/status-connect_to_ocpp[^]*>Off</);
+  assert.match(setupStatus({sections:['actions']}).html(),/status-stop_charging[^]*>Stop<[^]*Tap to stop/);
+});
+
+test('state colour class: charging good, stopped paused, error bad',()=>{
+  assert.match(setupStatus().html(),/status-state charging/);
+  const stopped=setupStatus({state:'Standby',stop:'on',reason:'Stopped by User'}).html();
+  assert.match(stopped,/status-state paused/);assert.match(stopped,/>Stopped</);
+  assert.match(setupStatus({state:'Error',substate:'Grounding Error'}).html(),/status-state fault/);
+});
+
+test('not-charging reason is shown when it adds something, hidden when it repeats the state',()=>{
+  assert.match(setupStatus({state:'Connected',reason:'Waiting for Car'}).html(),/status-note[^>]*>Waiting for Car</);
+  assert.doesNotMatch(setupStatus({state:'Charge Complete',reason:'Charge Complete'}).html(),/status-note/);
+  assert.doesNotMatch(setupStatus().html(),/status-note/);
+});
+
+test('error shows its fault as the state text, falling back to Error',()=>{
+  assert.match(setupStatus({state:'Error',substate:'Grounding Error'}).html(),/status-state fault">Grounding Error</);
+  assert.match(setupStatus({state:'Error',substate:'unknown'}).html(),/status-state fault">Error</);
+});
+
+test('OCPP and One toggle their own switches immediately',async()=>{
+  const {card,calls}=setupStatus();
+  await card._statusToggle('connect_to_ocpp');
+  await card._statusToggle('one_charge');
+  assert.deepEqual(calls.map(c=>[c[1],c[2].entity_id]),[['turn_on','switch.ocpp'],['turn_on','switch.one']]);
+});
+
+test('Stop during charging asks first, confirms on second tap, expires after 4 s',async()=>{
+  const {card,calls,timers,html}=setupStatus();
+  await card._statusToggle('stop_charging');
+  assert.equal(calls.length,0);assert.match(html(),/Sure\?/);
+  await card._statusToggle('stop_charging');
+  assert.deepEqual(calls.map(c=>[c[1],c[2].entity_id]),[['turn_on','switch.stop']]);
+  const x=setupStatus();await x.card._statusToggle('stop_charging');
+  for(const fn of [...x.timers.values()]) fn();
+  assert.doesNotMatch(x.html(),/Sure\?/);
+  await x.card._statusToggle('stop_charging');assert.equal(x.calls.length,0);
+});
+
+test('Stop when not charging, and resuming, send without asking',async()=>{
+  const idle=setupStatus({state:'Connected'});await idle.card._statusToggle('stop_charging');
+  assert.deepEqual(idle.calls.map(c=>c[1]),['turn_on']);
+  const stopped=setupStatus({state:'Standby',stop:'on'});await stopped.card._statusToggle('stop_charging');
+  assert.deepEqual(stopped.calls.map(c=>c[1]),['turn_off']);
+});
+
+test('offline status: readable, buttons disabled, nothing sent',async()=>{
+  const {card,calls,html}=setupStatus({state:'unavailable'});
+  assert.match(html(),/>Offline</);
+  assert.match(html(),/data-status-toggle="stop_charging"[^>]*disabled/);
+  await card._statusToggle('stop_charging');assert.equal(calls.length,0);
+});
+
+test('alert strip appears at the top when status is hidden and the charger is offline or in error',()=>{
+  const ago=new Date(Date.now()-5*60000).toISOString();
+  const off=setupStatus({state:'unavailable',sections:['current'],changed:ago}).html();
+  assert.match(off,/<ha-card[^>]*><div class="alert-strip offline"/);
+  assert.match(off,/Offline · 5m ago/);
+  const err=setupStatus({state:'Error',substate:'Box Overheat',sections:['safety']}).html();
+  assert.match(err,/<ha-card[^>]*><div class="alert-strip fault"[^]*Box Overheat/);
+});
+
+test('no alert strip when healthy, or when the status row already shows the alert',()=>{
+  assert.doesNotMatch(setupStatus({sections:['current']}).html(),/alert-strip/);
+  assert.doesNotMatch(setupStatus({state:'unavailable',sections:['status','current']}).html(),/alert-strip/);
+  assert.doesNotMatch(setupStatus({state:'Error',sections:['current','status']}).html(),/alert-strip/);
+});
+
+// ---------- Meter, Battery SOC, SOC settings, Adaptive charging ----------
+function setupAll({sections, mode, over={}, charging=true, locale, language}={}) {
+  const registry = {}, timers = new Map(); let timer = 0;
+  class HTMLElement extends EventTarget {
+    attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}, querySelectorAll(){return [];}}; }
+  }
+  const sandbox = {HTMLElement, CustomEvent, console, Date, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
+    customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
+  vm.runInNewContext(source, sandbox);
+  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {})});
+  const st = (s,attributes={})=>({state:String(s),attributes});
+  const base = {
+    state:['sensor.state', charging ? 'Charging' : 'Connected'],
+    power:['sensor.power',3620,{unit_of_measurement:'W'}], current:['sensor.cur',15.9,{unit_of_measurement:'A'}], voltage:['sensor.voltage',227,{unit_of_measurement:'V'}],
+    session_energy:['sensor.se',15.58,{unit_of_measurement:'kWh'}], session_cost:['sensor.sc',67.3,{unit_of_measurement:'UAH'}],
+    session_time:['sensor.stime','5h 30m'],
+    soc_percent:['sensor.soc',44,{unit_of_measurement:'%'}], time_to_target_soc:['sensor.eta', charging ? '2h 15m' : 'Not charging'],
+    energy_to_target_soc:['sensor.etts',26.32,{unit_of_measurement:'kWh'}], cost_to_target_soc:['sensor.ctts',113.72,{unit_of_measurement:'UAH'}],
+    charging_finish_time:['sensor.finish', charging ? '2026-09-22T18:40:00+00:00' : 'unavailable'],
+    initial_soc:['number.isoc',25,{min:0,max:100,step:1,unit_of_measurement:'%'}],
+    target_soc:['number.tsoc',75,{min:0,max:100,step:5,unit_of_measurement:'%'}],
+    battery_capacity:['number.cap',75,{min:10,max:160,step:1,unit_of_measurement:'kWh'}],
+    soc_correction:['number.corr',10.5,{min:0,max:20,step:.5,unit_of_measurement:'%'}],
+    limit_disable_all:['switch.dis','off'], limit_soc_enabled:['switch.socen','on'],
+    limit_energy:['number.le',100,{min:0,max:100,step:1,unit_of_measurement:'kWh'}], limit_energy_enabled:['switch.lee','off'],
+    limit_time:['number.lt',60,{min:0,max:1440,step:1,unit_of_measurement:'min'}], limit_time_enabled:['switch.lte','off'],
+    limit_cost:['number.lc',50,{min:0,max:10000,step:1,unit_of_measurement:'UAH'}], limit_cost_enabled:['switch.lce','off'],
+    adaptive_mode:['select.am','Voltage',{options:['Off','Voltage','Auto','Power']}],
+    undervoltage_threshold:['number.uv',210,{min:210,max:220,step:1,unit_of_measurement:'V'}],
+    adaptive_current_limit:['sensor.acl',7,{unit_of_measurement:'A'}],
+  };
+  const merged={...base,...over};
+  const states={}, entities={};
+  for(const [k,v] of Object.entries(merged)) { if(!v) continue; entities[k]=v[0]; states[v[0]]=st(v[1],v[2]||{}); }
+  const calls=[];
+  const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);},...(locale ? {locale:{language:locale}} : {})};
+  card._ids=entities;card._resolved=true;card.hass=hass;
+  const html=()=>card.shadowRoot.innerHTML.replace(/<style>[\s\S]*?<\/style>/,'');
+  return {card,states,calls,hass,timers,html};
+}
+
+test('meter reads like the charger screen: big voltage, power and actual current; no session',()=>{
+  const {html}=setupAll({sections:['basic_info'],over:{current:['sensor.cur',15.9,{unit_of_measurement:'A'}]}});
+  assert.match(html(),/class="panel meter"/);
+  assert.match(html(),/data-more-info="voltage"[^]*>227<small>V[^]*data-more-info="power"[^]*>3\.6<small>kW[^]*data-more-info="current"[^]*>15\.9<small>A/);
+  assert.doesNotMatch(html(),/session_energy|soc_percent/);
+});
+test('meter voltage outside the working band is bad; unknown readings are dashes',()=>{
+  assert.match(setupAll({sections:['basic_info'],over:{voltage:['sensor.voltage',200]}}).html(),/meter-value bad"[^>]*>200/);
+  assert.doesNotMatch(setupAll({sections:['basic_info']}).html(),/meter-value bad/);
+  const x=setupAll({sections:['basic_info'],over:{power:['sensor.power','unavailable']}}).html();
+  assert.match(x,/data-more-info="power"[^]*>—</);
+});
+test('Session is its own thin row: energy, cost (currency after, two decimals) and duration as separate items',()=>{
+  const {html}=setupAll({sections:['session']});
+  assert.match(html(),/class="sl session"/);
+  assert.match(html(),/>Session</);
+  assert.match(html(),/data-more-info="session_energy"[^]*>15\.6<small>kWh[^]*data-more-info="session_cost"[^]*>67\.30<small>₴<\/small>[^]*data-more-info="session_time"[^]*>5h 30m</);
+  assert.match(setupAll({sections:['session'],over:{session_cost:['sensor.sc',1234.5,{unit_of_measurement:'UAH'}]}}).html(),/>1235<small>₴/);
+});
+test('battery SOC: start → estimated SOC tile, to-target tile with ETA, energy, cost and finish, and a full-width bar',()=>{
+  const {html}=setupAll({sections:['advanced_info']});
+  assert.match(html(),/class="panel soc soc-mid"/);
+  assert.match(html(),/data-more-info="soc_percent"[^]*25<small>%[^]*soc-arrow[^]*≈44<small>%/);
+  assert.match(html(),/data-more-info="time_to_target_soc"[^]*75<small>%[^]*soc-arrow[^]*2h15m/);
+  assert.match(html(),/26\.3<small>kWh[^]*114/);
+  assert.match(html(),/soc-finish/);
+  assert.match(html(),/soc-base" style="width:25%"/);
+  assert.match(html(),/soc-fill" style="left:25%;width:19%"/);
+  assert.match(html(),/soc-target" style="left:75%"/);
+});
+test('battery SOC idle: no fabricated ETA, shows SOC → target; reached says so; basic mode renders nothing',()=>{
+  const idle=setupAll({sections:['advanced_info'],charging:false}).html();
+  assert.doesNotMatch(idle,/Not charging|soc-finish/);
+  assert.match(idle,/44<small>%[^]*soc-arrow[^]*75<small>%/);
+  assert.match(setupAll({sections:['advanced_info'],over:{soc_percent:['sensor.soc',80]}}).html(),/Target reached/);
+  assert.doesNotMatch(setupAll({sections:['advanced_info'],mode:'basic'}).html(),/class="(sl|panel)/);
+  assert.doesNotMatch(setupAll({sections:['advanced_controls'],mode:'basic'}).html(),/limit-tile/);
+});
+test('SOC settings wear the battery section colour',()=>{
+  assert.match(setupAll({sections:['advanced_controls']}).html(),/class="limits controls soc-mid"/);
+  assert.match(setupAll({sections:['advanced_controls'],charging:false}).html(),/class="limits controls soc-idle"/);
+});
+const HISTORY={total_energy:['sensor.tot',5290.16,{unit_of_measurement:'kWh'}],
+  counter_a_energy:['sensor.ae',949.11,{unit_of_measurement:'kWh'}],counter_a_cost:['sensor.ac',3032.94,{unit_of_measurement:'UAH'}],
+  counter_b_energy:['sensor.be',3694.81,{unit_of_measurement:'kWh'}],counter_b_cost:['sensor.bc',12669.33,{unit_of_measurement:'UAH'}],
+  reset_counter_a:['button.ra','unknown'],reset_counter_b:['button.rb','unknown']};
+test('History: Total, Counter A and Counter B with energy and cost, each opening More Info',()=>{
+  const {html}=setupAll({sections:['history'],over:HISTORY});
+  assert.match(html(),/class="panel history"/);
+  assert.match(html(),/>Total<[^]*data-more-info="total_energy"[^]*5290<small>kWh/);
+  assert.match(html(),/>Counter A<[^]*data-more-info="counter_a_energy"[^]*949<small>kWh[^]*3033/);
+  assert.match(html(),/>Counter B<[^]*data-more-info="counter_b_energy"[^]*3695<small>kWh[^]*12669/);
+  assert.match(html(),/data-reset="reset_counter_a"/);
+  assert.doesNotMatch(html(),/data-reset="total/);
+});
+test('Counter reset asks first, presses the button only on confirm, and cancel or timeout sends nothing',async()=>{
+  const x=setupAll({sections:['history'],over:HISTORY});
+  await x.card._resetCounter('reset_counter_a');
+  assert.equal(x.calls.length,0);
+  assert.match(x.html(),/Reset Counter A\?[^]*data-reset-cancel[^]*data-reset-confirm="reset_counter_a"/);
+  await x.card._resetCounter('reset_counter_a',true);
+  assert.equal(JSON.stringify(x.calls),JSON.stringify([['button','press',{entity_id:'button.ra'}]]));
+  assert.doesNotMatch(x.html(),/data-reset-confirm/);
+  const y=setupAll({sections:['history'],over:HISTORY});
+  await y.card._resetCounter('reset_counter_b');y.card._cancelReset();
+  await y.card._resetCounter('reset_counter_b',true);
+  await y.card._resetCounter('reset_counter_b');for(const fn of [...y.timers.values()]) fn();
+  await y.card._resetCounter('reset_counter_b',true);
+  assert.equal(y.calls.length,0);
+  const z=setupAll({sections:['history'],over:{...HISTORY,state:['sensor.state','unavailable']}});
+  assert.match(z.html(),/data-reset="reset_counter_a"[^>]*disabled/);
+  await z.card._resetCounter('reset_counter_a');await z.card._resetCounter('reset_counter_a',true);
+  assert.equal(z.calls.length,0);
+});
+test('default order is logical: state and actions, battery and its settings, power and current, adaptive, session and its limits, counters, safety',()=>{
+  const x=setupAll({sections:['current']});
+  assert.throws(()=>x.card.setConfig({sections:['bogus']}),/status, actions, advanced_info, advanced_controls, basic_info, current, adaptive, session, limits, history, safety/);
+});
+test('SOC settings: four number tiles with steppers and tap-to-edit, using entity bounds',async()=>{
+  const {html,card,calls}=setupAll({sections:['advanced_controls']});
+  for(const k of ['initial_soc','target_soc','battery_capacity','soc_correction']) assert.match(html(),new RegExp(`data-limit-step="${k}"`));
+  assert.match(html(),/limits-grid four/);
+  assert.match(html(),/Loss<small class="tile-unit">%<\/small>[^]*data-fit>10\.5<\/b>/);
+  await card._stepLimit('soc_correction',1);
+  assert.equal(JSON.stringify(calls.at(-1)),JSON.stringify(['number','set_value',{entity_id:'number.corr',value:11}]));
+  await card._stepLimit('target_soc',1);
+  assert.equal(calls.at(-1)[2].value,80);
+});
+test('Limits SOC tile turns read-only "To target" when SOC settings own the Target SOC editor',()=>{
+  const both=setupAll({sections:['limits','advanced_controls']}).html();
+  const limits=both.slice(0,both.indexOf('aria-label="Advanced controls"'));
+  assert.match(limits,/limit-value readonly/);
+  assert.doesNotMatch(limits,/data-limit-step="target_soc"/);
+  assert.match(limits,/data-limit-toggle="limit_soc_enabled"/);
+  const alone=setupAll({sections:['limits']}).html();
+  assert.match(alone,/data-limit-step="target_soc"/);
+});
+test('adaptive: named as adaptive charging, mode picker, threshold only in Voltage mode, read-only adaptive cap',async()=>{
+  const v=setupAll({sections:['adaptive']});
+  assert.match(v.html(),/class="panel adaptive"/);
+  assert.match(v.html(),/>Adaptive charging</);
+  assert.match(v.html(),/<select[^>]*data-select="adaptive_mode"/);
+  assert.match(v.html(),/<option value="Voltage" selected>Voltage<\/option>/);
+  assert.match(v.html(),/Slow down below[^]*data-limit-step="undervoltage_threshold"/);
+  assert.match(v.html(),/data-more-info="adaptive_current_limit"[^]*>7<small>A/);
+  await v.card._selectOption('adaptive_mode','Auto');
+  assert.equal(JSON.stringify(v.calls.at(-1)),JSON.stringify(['select','select_option',{entity_id:'select.am',option:'Auto'}]));
+  const off=setupAll({sections:['adaptive'],over:{adaptive_mode:['select.am','Off',{options:['Off','Voltage','Auto','Power']}]}}).html();
+  assert.doesNotMatch(off,/undervoltage_threshold|adaptive_current_limit/);
+  const power=setupAll({sections:['adaptive'],over:{adaptive_mode:['select.am','Power',{options:['Off','Voltage','Auto','Power']}]}}).html();
+  assert.doesNotMatch(power,/undervoltage_threshold/);assert.match(power,/adaptive_current_limit/);
+});
+test('adaptive offline or unchanged option sends nothing',async()=>{
+  const x=setupAll({sections:['adaptive'],over:{state:['sensor.state','unavailable']}});
+  await x.card._selectOption('adaptive_mode','Auto');
+  const y=setupAll({sections:['adaptive']});await y.card._selectOption('adaptive_mode','Voltage');await y.card._selectOption('adaptive_mode','Bogus');
+  assert.equal(x.calls.length+y.calls.length,0);
+  assert.match(x.html(),/<select[^>]*disabled/);
+});
+
+test('safety row carries its Safety label (hidden only by CSS on narrow cards)',()=>{
+  const {card}=setupSafety();
+  assert.match(card.shadowRoot.innerHTML,/class="label safety-label">Safety</);
+});
+
+test('SOC tiles: long press opens the setting (Battery → Initial SOC, target → Target SOC) and swallows the click',()=>{
+  const x=setupAll({sections:['advanced_info']});
+  assert.match(x.html(),/data-more-info="soc_percent" data-hold="initial_soc"/);
+  assert.match(x.html(),/data-more-info="time_to_target_soc" data-hold="target_soc"/);
+  const opened=[];x.card.addEventListener('hass-more-info',(e)=>opened.push(e.detail.entityId));
+  const el=(hold,more)=>({closest:(sel)=>sel==='[data-hold]'?{dataset:{hold}}:sel==='[data-more-info]'?{dataset:{moreInfo:more}}:null});
+  x.card._holdStart({target:el('initial_soc','soc_percent'),clientX:5,clientY:5});
+  for(const fn of [...x.timers.values()]) fn();
+  x.card._onClick({target:el('initial_soc','soc_percent')});
+  assert.deepEqual([...opened],['number.isoc']);
+  // A short tap still opens the reading itself.
+  x.card._holdStart({target:el('target_soc','time_to_target_soc'),clientX:5,clientY:5});x.card._holdEnd();
+  x.card._onClick({target:el('target_soc','time_to_target_soc')});
+  assert.deepEqual([...opened],['number.isoc','sensor.eta']);
+});
+
+// ---- Editor (composition pass) ----
+function setupEditor(config) {
+  const registry = {}, events = [];
+  class HTMLElement {
+    attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
+    addEventListener() {}
+    dispatchEvent(e) { events.push(e); return true; }
+  }
+  class CustomEvent { constructor(type, init) { this.type = type; Object.assign(this, init); } }
+  const cards = [];
+  const sandbox = {HTMLElement, CustomEvent, console, setTimeout(){return 0;}, clearTimeout(){},
+    customElements:{define:(k,v)=>registry[k]=v, get:(k)=>registry[k]}, window:{customCards:cards}};
+  vm.runInNewContext(source, sandbox);
+  vm.runInNewContext(source, {...sandbox}); // a second module copy (integration + /local) must not throw or double-list
+  const Card = registry['eveus-card'];
+  const editor = new registry['eveus-card-editor']();
+  editor.setConfig(config);
+  const last = () => events.at(-1)?.detail.config;
+  return {Card, editor, events, last, cards};
+}
+test('card is listed once in the picker, stubs the full default card and offers an editor', () => {
+  const {Card, cards} = setupEditor({sections:['current']});
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].name, 'Eveus EV Charger');
+  assert.deepEqual([...Card.getStubConfig().sections], ['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','history','safety']);
+  assert.equal(typeof Card.getConfigElement, 'function');
+});
+test('a card without sections shows the whole default card', () => {
+  const {Card} = setupEditor({});
+  const card = new Card(); card.setConfig({});
+  assert.equal(card._config.sections.length, 11);
+});
+test('editor lists enabled sections in order, then hidden ones, with readable names', () => {
+  const {editor} = setupEditor({sections:['current','status']});
+  const html = editor._sectionsHtml();
+  assert.ok(html.indexOf('Current slider') < html.indexOf('Status'));
+  assert.ok(html.indexOf('Status') < html.indexOf('Safety'));
+  assert.match(html, /data-toggle="current" checked/);
+  assert.match(html, /data-toggle="safety"(?! checked)/);
+  assert.match(html, /data-move="current" data-dir="-1" disabled/); // first cannot go up
+  assert.match(html, /data-move="status" data-dir="1" disabled/);   // last enabled cannot go down
+});
+test('editor hides, shows and reorders sections and reports the new config', () => {
+  const {editor, last} = setupEditor({sections:['status','current','session'], device_id:'d1'});
+  editor._move('session', -1);
+  assert.deepEqual([...last().sections], ['status','session','current']);
+  assert.equal(last().device_id, 'd1');
+  editor._toggle('status');
+  assert.deepEqual([...last().sections], ['session','current']);
+  editor._toggle('safety');
+  assert.deepEqual([...last().sections], ['session','current','safety']);
+});
+test('editor keeps at least one section and can restore the default order', () => {
+  const {editor, last, events} = setupEditor({sections:['current']});
+  editor._toggle('current');
+  assert.equal(events.length, 0);
+  assert.match(editor._sectionsHtml(), /data-toggle="current" checked disabled/);
+  editor._resetOrder();
+  assert.equal(last().sections.length, 11);
+});
+test('basic mode greys out the SOC sections in the editor without dropping them', () => {
+  const all = ['status','advanced_info','current','advanced_controls','session'];
+  const {editor, last} = setupEditor({sections: all, mode: 'basic'});
+  const html = editor._sectionsHtml();
+  assert.match(html, /class="row na"><label><input type="checkbox" data-toggle="advanced_info" checked disabled>/);
+  assert.doesNotMatch(html, /data-move="advanced_info"/);
+  assert.match(html, /advanced mode only/);
+  assert.ok(html.indexOf('Battery SOC') > html.indexOf('Safety'), 'greyed rows go last');
+  assert.match(html, /data-move="session" data-dir="1" disabled/); // last usable section
+  editor._move('current', 1);                                       // skips the greyed SOC settings
+  assert.deepEqual([...last().sections], ['status','advanced_info','session','advanced_controls','current']);
+  editor._toggle('advanced_info');                                  // cannot be toggled in basic
+  assert.deepEqual([...last().sections], ['status','advanced_info','session','advanced_controls','current']);
+});
+test('editor follows the integration when mode is empty: no SOC entity means basic', async () => {
+  const {editor} = setupEditor({sections: ['advanced_info','current']});
+  editor.hass = {callWS: async () => ({entities: {state: 'sensor.s'}})};
+  await new Promise((r) => setImmediate(r));
+  assert.match(editor._sectionsHtml(), /class="row na"/);
+  const adv = setupEditor({sections: ['advanced_info','current']}).editor;
+  adv.hass = {callWS: async () => ({entities: {soc_percent: 'sensor.soc'}})};
+  await new Promise((r) => setImmediate(r));
+  assert.doesNotMatch(adv._sectionsHtml(), /class="row na"/);
+});
+test('basic mode: Limits has no SOC tile (Energy, Time, Cost only)',()=>{
+  const basic=setupAll({sections:['limits'],mode:'basic'}).html();
+  assert.doesNotMatch(basic,/limit_soc_enabled|target_soc/);
+  assert.match(basic,/data-limit-toggle="limit_energy_enabled"|Energy/);
+});
+
+// ---- Ukrainian ----
+const ALL = ['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','history','safety'];
+const FULL_OVER = {
+  stop_charging:['switch.stop','off'], one_charge:['switch.one','off'], connect_to_ocpp:['switch.ocpp','on'],
+  not_charging_reason:['sensor.reason','Charging'], soc_energy:['sensor.soce',33],
+  total_energy:['sensor.tot',5290,{unit_of_measurement:'kWh'}],
+  counter_a_energy:['sensor.ca',949,{unit_of_measurement:'kWh'}], counter_a_cost:['sensor.cac',3033,{unit_of_measurement:'UAH'}], reset_counter_a:['button.ra','unknown'],
+  counter_b_energy:['sensor.cb',3695,{unit_of_measurement:'kWh'}], counter_b_cost:['sensor.cbc',12669,{unit_of_measurement:'UAH'}], reset_counter_b:['button.rb','unknown'],
+  ground_protection:['switch.gp','on'], ground:['sensor.ground','Connected'], box_temperature:['sensor.bt',14], plug_temperature:['sensor.pt',6],
+  leakage_current:['sensor.lk',0], connection_quality:['sensor.cq',100],
+  charging_current:['number.cc',12,{min:6,max:32,step:1}],
+};
+// Visible text plus the words a screen reader or tooltip speaks.
+const spoken = (html) => [html.replace(/<[^>]+>/g, ' '), ...[...html.matchAll(/(?:title|aria-label)="([^"]*)"/g)].map((m) => m[1])].join(' ');
+const ENGLISH = /\b(Session|Limits?|Counter|Voltage|Power|Current|Battery|Target|Safety|Stop|Stopped|Sure|Tap|Offline|Loading|Reset|Cancel|Disable|Adaptive|Slow|capped|cap|battery|go|all time|Total|Energy|Time|Cost|Initial|Capacity|Loss|Charging|Connected|On|Off|One|charge|Finish|est|details|Actual|Requested|Decrease|Increase|Set|Box|Plug|Ground|Leakage|Connection|Bad|reached|Hold)\b/;
+test('uk: the whole card speaks Ukrainian when Home Assistant does', () => {
+  const {html} = setupAll({sections: ALL, locale: 'uk', over: FULL_OVER});
+  const text = spoken(html());
+  assert.doesNotMatch(text, ENGLISH, text.match(ENGLISH)?.[0]);
+  for (const word of ['Заряджання', 'Одноразове', 'Стоп', 'Батарея', 'Ціль', 'Напруга', 'Потужність', 'Струм',
+    'Адаптивне заряджання', 'Сесія', 'Ліміти', 'Без лімітів', 'Енергія', 'Час', 'Вартість', 'Загалом', 'Лічильник A', 'Безпека']) {
+    assert.ok(text.includes(word), word);
+  }
+  assert.match(html(), /2<small>год<\/small>\s*15<small>хв<\/small>/); // time to target
+  assert.match(html(), /5<small>год<\/small>\s*30<small>хв<\/small>/); // session time
+  assert.match(html(), /<option value="Voltage" selected>Напруга<\/option>/);
+});
+test('uk: language setting overrides Home Assistant both ways', () => {
+  assert.match(setupAll({sections:['session'], locale:'uk', language:'en'}).html(), />Session</);
+  assert.match(setupAll({sections:['session'], locale:'en', language:'uk'}).html(), />Сесія</);
+  assert.match(setupAll({sections:['session']}).html(), />Session</); // no locale → English
+});
+test('uk: charger states, faults, reasons and offline age are translated', () => {
+  const idle = setupAll({sections:['status'], locale:'uk', charging:false, over:{not_charging_reason:['sensor.r','Cable Not Connected'], state:['sensor.state','Standby']}}).html();
+  assert.match(idle, />Очікування</); assert.match(idle, />Кабель не підключено</);
+  const fault = setupAll({sections:['status'], locale:'uk', over:{state:['sensor.state','Error'], substate:['sensor.sub','Box Overheat']}}).html();
+  assert.match(fault, />Перегрів корпусу</);
+  const x = setupAll({sections:['status'], locale:'uk'}); x.states['sensor.state'] = {state:'unavailable', attributes:{}, last_changed:new Date(Date.now()-12*60000).toISOString()}; x.card.hass = x.hass;
+  assert.match(x.html(), />Немає зв'язку</); assert.match(x.html(), />12 хв тому</);
+  // an unknown value from newer firmware still shows, untranslated
+  assert.match(setupAll({sections:['status'], locale:'uk', over:{state:['sensor.state','Warp Drive']}}).html(), />Warp Drive</);
+});
+test('uk: counter reset asks in Ukrainian; adaptive keeps sending the real option', async () => {
+  const x = setupAll({sections:['history','adaptive'], locale:'uk', over: FULL_OVER});
+  x.card._resetCounter('reset_counter_a');
+  assert.match(x.html(), /Скинути лічильник A\?/); assert.match(x.html(), />Скасувати</); assert.match(x.html(), /обнулено/);
+  await x.card._selectOption('adaptive_mode', 'Auto');
+  assert.equal(JSON.stringify(x.calls.at(-1)), JSON.stringify(['select', 'select_option', {entity_id: 'select.am', option: 'Auto'}]));
+});
+test('uk: editor follows Home Assistant language and offers the card language', () => {
+  const {editor} = setupEditor({sections:['current']});
+  editor._hass = {locale:{language:'uk'}};
+  const html = editor._sectionsHtml();
+  assert.match(html, /Повзунок струму/); assert.match(html, /Безпека/); assert.doesNotMatch(html, /Current slider|Safety/);
+  const names = editor._schema().map((f) => f.name);
+  assert.equal(JSON.stringify(names), JSON.stringify(['device_id', 'mode', 'language']));
+  assert.equal(JSON.stringify(editor._schema()[2].selector.select.options.map((o) => o.label)), JSON.stringify(['Мова Home Assistant', 'Українська', 'English']));
+  assert.equal(editor._labels().head, 'Розділи');
+});
+
+// ---- Saved dashboards from the four-layout card (4.24.0 and earlier) ----
+const LEGACY = {
+  compact: ['status','advanced_info','basic_info','session'],
+  status: ['status','advanced_info','basic_info','session','safety'],
+  control: ['status','actions','advanced_info','basic_info','current','session'],
+  full: ALL,
+};
+test('a saved layout keeps working: each old layout opens as its matching sections', () => {
+  const {Card} = setupEditor({});
+  for (const [layout, sections] of Object.entries(LEGACY)) {
+    const card = new Card(); card.setConfig({type: 'custom:eveus-card', layout, mode: 'basic', language: 'uk'});
+    assert.equal(JSON.stringify(card._config.sections), JSON.stringify(sections), layout);
+    assert.equal(card._config.mode, 'basic'); assert.equal(card._config.language, 'uk');
+  }
+  const card = new Card(); card.setConfig({layout: 'control', sections: ['safety']});
+  assert.equal(JSON.stringify(card._config.sections), '["safety"]', 'explicit sections win');
+  const odd = new Card(); odd.setConfig({layout: 'mystery'});
+  assert.equal(odd._config.sections.length, 11, 'an unknown layout opens the full card');
+});
+test('the editor opens a saved layout as its sections and replaces it on the first change', () => {
+  const {editor, last} = setupEditor({type: 'custom:eveus-card', layout: 'compact'});
+  assert.match(editor._sectionsHtml(), /data-toggle="session" checked/);
+  assert.match(editor._sectionsHtml(), /data-toggle="actions"(?! checked)/);
+  editor._toggle('safety');
+  assert.equal(last().layout, undefined);
+  assert.equal(JSON.stringify(last().sections), JSON.stringify([...LEGACY.compact, 'safety']));
+});

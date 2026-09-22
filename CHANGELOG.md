@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Everything below is the **Eveus card**. The integration's entities are unchanged.
+
+### ✨ Added
+- **Build the card from sections in the card editor, no YAML needed.** Tick, hide and reorder eleven sections: Status, Buttons (OCPP · One charge · Stop), Battery SOC, SOC settings, Meter (voltage · power · current), Current slider, Adaptive charging, Session, Limits, Counters and Safety. In Basic mode the two SOC sections are greyed out and stay in the card's settings.
+- **More of the charger in one card.** Adaptive Mode with its voltage threshold and current cap; Limit Energy, Limit Time, Limit Cost and SOC limit with **Disable all**; Total Energy and Counter A/B with a reset that asks first; and a Safety row with box and plug temperature, ground, leakage current and connection quality.
+- **Charger states in Ukrainian.** State, fault and the reason charging has not started follow the card's language.
+
+### 🔧 Changed
+- **Layouts are replaced by sections; saved cards keep working.** A card saved with `layout:` opens as the matching sections: `compact` — Status, Battery SOC, Meter, Session; `status` — the same plus Safety; `control` — adds Buttons and the Current slider; `full` — every section. The first change in the editor saves them as `sections:`.
+
 ## 4.24.0 - 2026-09-22
 
 ### ✨ Added
@@ -17,8 +29,8 @@
 - **Card — switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.
 
 <p>
-  <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced-en.jpg" width="49%">
-  <img alt="Eveus card — Basic mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-basic-en.jpg" width="49%">
+  <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced-en-4.24.0.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-basic-en-4.24.0.jpg" width="49%">
 </p>
 
 ## 4.23.0 - 2026-09-19
