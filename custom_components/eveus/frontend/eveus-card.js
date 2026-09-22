@@ -117,7 +117,10 @@ const I18N = {
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'Є', bad: 'Немає',
     // "1d 02h 05m" / "5h 30m" / "45m" → numbers with small Ukrainian units.
-    duration: (text) => text.replace(/(\d+)\s*d/, '$1<small>д</small> ').replace(/(\d+)\s*h/, '$1<small>год</small> ').replace(/(\d+)\s*m/, '$1<small>хв</small>').trim(),
+    duration: (text) => text.trim().split(/\s+/).map((part) => {
+      const m = /^(\d+)([dhm])$/.exec(part);
+      return m ? `${m[1]}<small>${{d: 'д', h: 'год', m: 'хв'}[m[2]]}</small>` : part;
+    }).join(' '),
     sessionDuration: (text) => I18N.uk.duration(text),
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
@@ -250,7 +253,7 @@ class EveusCard extends HTMLElement {
       // against a fallback font, then Roboto lands wider with no resize/DOM
       // event); refit once fonts finish loading so that swap can't leave stale,
       // overflowing text on screen.
-      if (typeof document !== 'undefined' && document.fonts?.ready) {
+      if (typeof document !== 'undefined' && document.fonts) {
         document.fonts.ready.then(() => this._fitLimitValues());
       }
     }
