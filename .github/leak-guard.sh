@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Leak Guard — canonical deny-list + checker for Anton's PUBLIC repos.
+# Leak Guard — canonical deny-list + checker for Anton's repos.
 #
 # ONE source of truth, used by three layers:
 #   * .git/hooks/pre-push          -> pre-push-leak-guard (symlink to this dir)
@@ -26,6 +26,27 @@ INTERNAL_RE='(^|/)(superpowers|internal|private)/|(^|/)docs/plans?/|[-_.](plan|s
 # --- Exemptions: templates, placeholders, fixtures. ----------------------
 ALLOW_RE='/\.gitkeep$|\.(example|sample|template|dist)$|(^|/)(example|sample|template)[-_.]|(^|/)tests?/fixtures?/'
 
+# --- Scope: which classes are enforced in THIS repo. ---------------------
+# The INTERNAL list exists for one reason: keeping internal artifacts off the
+# public internet. In the private repos documentation belongs IN git, so there
+# only the SECRET list applies -- otherwise the guard blocks the very docs it
+# is supposed to preserve. Unlisted repos get the full check (fail-safe), so
+# CI on a public repo and any new repo stay strict.
+PRIVATE_REPOS='vault|opt-scripts|ai-plugin|ha-automations'
+
+scope() {  # -> "all" | "secrets"
+  [ -n "${LEAK_GUARD_SCOPE:-}" ] && { printf '%s\n' "$LEAK_GUARD_SCOPE"; return; }
+  local url name
+  url="$(git remote get-url origin 2>/dev/null)" || url=''
+  name="$(basename "${url%.git}")"
+  case "$name" in
+    ?*) printf '%s\n' "$name" | grep -qxE "$PRIVATE_REPOS" \
+           && echo secrets || echo all ;;
+    *)  echo all ;;
+  esac
+}
+SCOPE="$(scope)"
+
 scan() {  # reads paths on stdin, prints "CLASS<TAB>path"
   # grep, not awk: awk -v strips the backslashes out of an ERE, which both warns
   # on every run and silently loosens the patterns (\.env$ would become .env$).
@@ -33,6 +54,7 @@ scan() {  # reads paths on stdin, prints "CLASS<TAB>path"
   paths="$(grep -ivE "$ALLOW_RE")" || true
   [ -n "$paths" ] || return 0
   printf '%s\n' "$paths" | grep -iE "$SECRET_RE" | sed 's/^/SECRET\t/' || true
+  [ "$SCOPE" = secrets ] && return 0
   printf '%s\n' "$paths" | grep -iE "$INTERNAL_RE" | grep -ivE "$SECRET_RE" \
     | sed 's/^/INTERNAL\t/' || true
 }
@@ -59,9 +81,11 @@ case "$mode" in
   *) echo "usage: leak-guard.sh {tree [ref]|range <base> <head>|history}" >&2; exit 2 ;;
 esac
 
-[ -n "$hits" ] || { echo "Leak guard passed: nothing matched in $where."; exit 0; }
+note=''
+[ "$SCOPE" = secrets ] && note=' (private repo: secrets only)'
+[ -n "$hits" ] || { echo "Leak guard passed: nothing matched in $where$note."; exit 0; }
 
-echo "LEAK GUARD FAILED -- disallowed paths in $where:" >&2
+echo "LEAK GUARD FAILED -- disallowed paths in $where$note:" >&2
 echo "$hits" | sort -u | sed 's/^/  /' >&2
 echo >&2
 echo "SECRET   = credential material. Untrack it AND rotate the credential." >&2
