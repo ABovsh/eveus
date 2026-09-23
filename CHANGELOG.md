@@ -5,12 +5,16 @@
 Everything below is the **Eveus card**. The integration's entities are unchanged.
 
 ### ✨ Added
-- **Build the card from sections in the card editor, no YAML needed.** Tick, hide and reorder eleven sections: Status, Buttons (OCPP · One charge · Stop), Battery SOC, SOC settings, Meter (voltage · power · current), Current slider, Adaptive charging, Session, Limits, Counters and Safety. In Basic mode the two SOC sections are greyed out and stay in the card's settings.
-- **More of the charger in one card.** Adaptive Mode with its voltage threshold and current cap; Limit Energy, Limit Time, Limit Cost and SOC limit with **Disable all**; Total Energy and Counter A/B with a reset that asks first; and a Safety row with box and plug temperature, ground, leakage current and connection quality.
-- **Charger states in Ukrainian.** State, fault and the reason charging has not started follow the card's language.
+- **Build the card from sections in the card editor, no YAML needed.** Tick, hide and reorder thirteen sections: Status, Buttons (OCPP · One charge · Stop), Battery SOC, SOC settings, Meter (voltage · power · current), Current slider, Adaptive charging, Session, Limits, Schedules, Charger clock, Counters and Safety. In Basic mode the two SOC sections are greyed out and stay in the card's settings.
+- **More of the charger in one card.** Adaptive Mode with its voltage threshold and current cap; Limit Energy, Limit Time, Limit Cost and SOC limit with **Disable all**; Total Energy and Counter A/B with a reset that asks first; a Safety row with box and plug temperature, ground, leakage current and connection quality; Schedule 1 and Schedule 2, one row each, with on/off, start and stop time, and current and energy limits; and a Charger clock row with Time Zone, Time Drift and **Sync Time**.
+- **Charger states in Ukrainian.** State, fault and the reason charging has not started follow the card's language. **Waiting for Schedule** adds the next start time, e.g. `Waiting for Schedule · from 23:00`.
+- **Hide single items in the card editor.** Expand a section to hide any of its items, e.g. Schedule 2 or connection quality; the rest of the row spreads out. In YAML: `hide: [schedules.schedule_2, safety.connection]`.
+- **A running schedule glows.** Its badge pulses while Home Assistant's clock is inside the schedule's window.
+- **Large numbers are grouped:** `12 669 ₴`, `5 290 kWh`.
+- **Light theme:** Meter headers and the adaptive current limit are darker, so they stay readable on white.
 
-### 🔧 Changed
-- **Layouts are replaced by sections; saved cards keep working.** A card saved with `layout:` opens as the matching sections: `compact` — Status, Battery SOC, Meter, Session; `status` — the same plus Safety; `control` — adds Buttons and the Current slider; `full` — every section. The first change in the editor saves them as `sections:`.
+### ⚠️ Breaking
+- **The Eveus card is rebuilt: remove it from your dashboards and add it again.** Open **Edit dashboard**, delete each Eveus card, then **Add card → Eveus EV Charger**. A card saved with `layout:` still opens as the matching sections (`compact` — Status, Battery SOC, Meter, Session; `status` — the same plus Safety; `control` — adds Buttons and the Current slider; `full` — every section), and a card saved with `sections:` keeps only the sections it lists, so neither shows Schedules or Charger clock. A newly added card has every section in the default order.
 
 ## 4.24.0 - 2026-09-22
 

@@ -446,7 +446,7 @@ test('no alert strip when healthy, or when the status row already shows the aler
 });
 
 // ---------- Meter, Battery SOC, SOC settings, Adaptive charging ----------
-function setupAll({sections, mode, over={}, charging=true, locale, language}={}) {
+function setupAll({sections, mode, over={}, charging=true, locale, language, hide}={}) {
   const registry = {}, timers = new Map(); let timer = 0;
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}, querySelectorAll(){return [];}}; }
@@ -454,7 +454,7 @@ function setupAll({sections, mode, over={}, charging=true, locale, language}={})
   const sandbox = {HTMLElement, CustomEvent, console, Date, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
   vm.runInNewContext(source, sandbox);
-  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {})});
+  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {}), ...(hide ? {hide} : {})});
   const st = (s,attributes={})=>({state:String(s),attributes});
   const base = {
     state:['sensor.state', charging ? 'Charging' : 'Connected'],
@@ -503,23 +503,23 @@ test('Session is its own thin row: energy, cost (currency after, two decimals) a
   assert.match(html(),/class="sl session"/);
   assert.match(html(),/>Session</);
   assert.match(html(),/data-more-info="session_energy"[^]*>15\.6<small>kWh[^]*data-more-info="session_cost"[^]*>67\.30<small>₴<\/small>[^]*data-more-info="session_time"[^]*>5h 30m</);
-  assert.match(setupAll({sections:['session'],over:{session_cost:['sensor.sc',1234.5,{unit_of_measurement:'UAH'}]}}).html(),/>1235<small>₴/);
+  assert.match(setupAll({sections:['session'],over:{session_cost:['sensor.sc',1234.5,{unit_of_measurement:'UAH'}]}}).html(),/>1\u202f235<small>₴/);
 });
-test('battery SOC: start → estimated SOC tile, to-target tile with ETA, energy, cost and finish, and a full-width bar',()=>{
+test('battery SOC: the battery tile leads with the SOC; the target tile with the time left and the finish time',()=>{
   const {html}=setupAll({sections:['advanced_info']});
   assert.match(html(),/class="panel soc soc-mid"/);
-  assert.match(html(),/data-more-info="soc_percent"[^]*25<small>%[^]*soc-arrow[^]*≈44<small>%/);
-  assert.match(html(),/data-more-info="time_to_target_soc"[^]*75<small>%[^]*soc-arrow[^]*2h15m/);
-  assert.match(html(),/26\.3<small>kWh[^]*114/);
-  assert.match(html(),/soc-finish/);
+  assert.match(html(),/data-more-info="soc_percent"[^]*<b data-fit="26">≈44<small>%<\/small><\/b>[^]*from 25<small>%/);
+  assert.match(html(),/data-more-info="time_to_target_soc"[^]*To 75<small>%[^]*class="soc-finish"[^>]*>\d{2}:\d{2}<[^]*<b data-fit="24">2h15m<\/b>/);
+  assert.match(html(),/26\.3<small>kWh[^]*114[^]*to go/);
   assert.match(html(),/soc-base" style="width:25%"/);
   assert.match(html(),/soc-fill" style="left:25%;width:19%"/);
   assert.match(html(),/soc-target" style="left:75%"/);
 });
-test('battery SOC idle: no fabricated ETA, shows SOC → target; reached says so; basic mode renders nothing',()=>{
-  const idle=setupAll({sections:['advanced_info'],charging:false}).html();
-  assert.doesNotMatch(idle,/Not charging|soc-finish/);
-  assert.match(idle,/44<small>%[^]*soc-arrow[^]*75<small>%/);
+test('battery SOC idle: no time and no finish without a charge — the energy to go leads; reached says so; basic mode renders nothing',()=>{
+  const cc={charging_current:['number.cc',12,{min:6,max:32,step:1,unit_of_measurement:'A'}]};
+  const idle=setupAll({sections:['advanced_info'],charging:false,over:cc}).html();
+  assert.doesNotMatch(idle,/Not charging|soc-finish|≈\d+h|\d{2}:\d{2}/);
+  assert.match(idle,/To 75<small>%[^]*<b data-fit="24">26\.3<small>kWh<\/small><\/b>[^]*114<small>₴<\/small> <span class="tile-note">to go/);
   assert.match(setupAll({sections:['advanced_info'],over:{soc_percent:['sensor.soc',80]}}).html(),/Target reached/);
   assert.doesNotMatch(setupAll({sections:['advanced_info'],mode:'basic'}).html(),/class="(sl|panel)/);
   assert.doesNotMatch(setupAll({sections:['advanced_controls'],mode:'basic'}).html(),/limit-tile/);
@@ -535,9 +535,9 @@ const HISTORY={total_energy:['sensor.tot',5290.16,{unit_of_measurement:'kWh'}],
 test('History: Total, Counter A and Counter B with energy and cost, each opening More Info',()=>{
   const {html}=setupAll({sections:['history'],over:HISTORY});
   assert.match(html(),/class="panel history"/);
-  assert.match(html(),/>Total<[^]*data-more-info="total_energy"[^]*5290<small>kWh/);
-  assert.match(html(),/>Counter A<[^]*data-more-info="counter_a_energy"[^]*949<small>kWh[^]*3033/);
-  assert.match(html(),/>Counter B<[^]*data-more-info="counter_b_energy"[^]*3695<small>kWh[^]*12669/);
+  assert.match(html(),/>Total<[^]*data-more-info="total_energy"[^]*5\u202f290<small>kWh/);
+  assert.match(html(),/>Counter A<[^]*data-more-info="counter_a_energy"[^]*949<small>kWh[^]*3\u202f033/);
+  assert.match(html(),/>Counter B<[^]*data-more-info="counter_b_energy"[^]*3\u202f695<small>kWh[^]*12\u202f669/);
   assert.match(html(),/data-reset="reset_counter_a"/);
   assert.doesNotMatch(html(),/data-reset="total/);
 });
@@ -562,7 +562,7 @@ test('Counter reset asks first, presses the button only on confirm, and cancel o
 });
 test('default order is logical: state and actions, battery and its settings, power and current, adaptive, session and its limits, counters, safety',()=>{
   const x=setupAll({sections:['current']});
-  assert.throws(()=>x.card.setConfig({sections:['bogus']}),/status, actions, advanced_info, advanced_controls, basic_info, current, adaptive, session, limits, history, safety/);
+  assert.throws(()=>x.card.setConfig({sections:['bogus']}),/status, actions, advanced_info, advanced_controls, basic_info, current, adaptive, session, limits, schedules, time, history, safety/);
 });
 test('SOC settings: four number tiles with steppers and tap-to-edit, using entity bounds',async()=>{
   const {html,card,calls}=setupAll({sections:['advanced_controls']});
@@ -651,13 +651,13 @@ test('card is listed once in the picker, stubs the full default card and offers 
   const {Card, cards} = setupEditor({sections:['current']});
   assert.equal(cards.length, 1);
   assert.equal(cards[0].name, 'Eveus EV Charger');
-  assert.deepEqual([...Card.getStubConfig().sections], ['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','history','safety']);
+  assert.deepEqual([...Card.getStubConfig().sections], ['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety']);
   assert.equal(typeof Card.getConfigElement, 'function');
 });
 test('a card without sections shows the whole default card', () => {
   const {Card} = setupEditor({});
   const card = new Card(); card.setConfig({});
-  assert.equal(card._config.sections.length, 11);
+  assert.equal(card._config.sections.length, 13);
 });
 test('editor lists enabled sections in order, then hidden ones, with readable names', () => {
   const {editor} = setupEditor({sections:['current','status']});
@@ -685,7 +685,7 @@ test('editor keeps at least one section and can restore the default order', () =
   assert.equal(events.length, 0);
   assert.match(editor._sectionsHtml(), /data-toggle="current" checked disabled/);
   editor._resetOrder();
-  assert.equal(last().sections.length, 11);
+  assert.equal(last().sections.length, 13);
 });
 test('basic mode greys out the SOC sections in the editor without dropping them', () => {
   const all = ['status','advanced_info','current','advanced_controls','session'];
@@ -717,8 +717,19 @@ test('basic mode: Limits has no SOC tile (Energy, Time, Cost only)',()=>{
   assert.match(basic,/data-limit-toggle="limit_energy_enabled"|Energy/);
 });
 
+const SCHED = {
+  schedule_1_enabled:['switch.s1','on'], schedule_1_start:['time.s1a','23:00:00'], schedule_1_stop:['time.s1b','07:00:00'],
+  schedule_1_current_limit_enabled:['switch.s1c','on'], schedule_1_current_limit:['number.s1c',16,{min:7,max:16,step:1,unit_of_measurement:'A'}],
+  schedule_1_energy_limit_enabled:['switch.s1e','off'], schedule_1_energy_limit:['number.s1e',76.371,{min:0,max:100,step:1,unit_of_measurement:'kWh'}],
+  schedule_2_enabled:['switch.s2','off'], schedule_2_start:['time.s2a','09:00:00'], schedule_2_stop:['time.s2b','18:00:00'],
+  schedule_2_current_limit_enabled:['switch.s2c','on'], schedule_2_current_limit:['number.s2c',10,{min:7,max:16,step:1,unit_of_measurement:'A'}],
+  schedule_2_energy_limit_enabled:['switch.s2e','off'], schedule_2_energy_limit:['number.s2e',0,{min:0,max:100,step:1,unit_of_measurement:'kWh'}],
+};
+const TIME = {
+  time_zone:['select.tz','+3',{options:['-1','0','+1','+2','+3']}], time_drift:['sensor.drift',0,{unit_of_measurement:'s'}], sync_time:['button.sync','unknown'],
+};
 // ---- Ukrainian ----
-const ALL = ['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','history','safety'];
+const ALL = ['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
 const FULL_OVER = {
   stop_charging:['switch.stop','off'], one_charge:['switch.one','off'], connect_to_ocpp:['switch.ocpp','on'],
   not_charging_reason:['sensor.reason','Charging'], soc_energy:['sensor.soce',33],
@@ -728,6 +739,7 @@ const FULL_OVER = {
   ground_protection:['switch.gp','on'], ground:['sensor.ground','Connected'], box_temperature:['sensor.bt',14], plug_temperature:['sensor.pt',6],
   leakage_current:['sensor.lk',0], connection_quality:['sensor.cq',100],
   charging_current:['number.cc',12,{min:6,max:32,step:1}],
+  ...SCHED, ...TIME,
 };
 // Visible text plus the words a screen reader or tooltip speaks.
 const spoken = (html) => [html.replace(/<[^>]+>/g, ' '), ...[...html.matchAll(/(?:title|aria-label)="([^"]*)"/g)].map((m) => m[1])].join(' ');
@@ -736,7 +748,7 @@ test('uk: the whole card speaks Ukrainian when Home Assistant does', () => {
   const {html} = setupAll({sections: ALL, locale: 'uk', over: FULL_OVER});
   const text = spoken(html());
   assert.doesNotMatch(text, ENGLISH, text.match(ENGLISH)?.[0]);
-  for (const word of ['Заряджання', 'Одноразове', 'Стоп', 'Батарея', 'Ціль', 'Напруга', 'Потужність', 'Струм',
+  for (const word of ['Заряджання', 'Один заряд', 'Стоп', 'Батарея', 'Ціль', 'Напруга', 'Потужність', 'Струм',
     'Адаптивне заряджання', 'Сесія', 'Ліміти', 'Без лімітів', 'Енергія', 'Час', 'Вартість', 'Загалом', 'Лічильник A', 'Безпека']) {
     assert.ok(text.includes(word), word);
   }
@@ -794,7 +806,7 @@ test('a saved layout keeps working: each old layout opens as its matching sectio
   const card = new Card(); card.setConfig({layout: 'control', sections: ['safety']});
   assert.equal(JSON.stringify(card._config.sections), '["safety"]', 'explicit sections win');
   const odd = new Card(); odd.setConfig({layout: 'mystery'});
-  assert.equal(odd._config.sections.length, 11, 'an unknown layout opens the full card');
+  assert.equal(odd._config.sections.length, 13, 'an unknown layout opens the full card');
 });
 test('the editor opens a saved layout as its sections and replaces it on the first change', () => {
   const {editor, last} = setupEditor({type: 'custom:eveus-card', layout: 'compact'});
@@ -803,4 +815,213 @@ test('the editor opens a saved layout as its sections and replaces it on the fir
   editor._toggle('safety');
   assert.equal(last().layout, undefined);
   assert.equal(JSON.stringify(last().sections), JSON.stringify([...LEGACY.compact, 'safety']));
+});
+
+// ---- Schedules and charger time ----
+const rowOf = (html, n) => html.split('class="sched-row')[n];
+test('schedules: one row per schedule with its window, current cap and energy cap', () => {
+  const {html, card, hass} = setupAll({sections:['schedules'], over:SCHED});
+  card._nowHM = () => '12:00'; card.hass = hass; // outside both windows
+  assert.equal((html().match(/class="sched-row/g) || []).length, 2);
+  const one = rowOf(html(), 1), two = rowOf(html(), 2);
+  assert.match(one, /^ on"/, 'an enabled schedule is lit');
+  assert.doesNotMatch(two, /^ on"/, 'a disabled schedule stays neutral');
+  assert.match(one, /data-limit-toggle="schedule_1_enabled" role="switch" aria-checked="true"/);
+  assert.match(one, /data-time-edit-trigger="schedule_1_start"[^>]*>23:00</);
+  assert.match(one, /data-time-edit-trigger="schedule_1_stop"[^>]*>07:00</);
+  assert.match(one, /data-limit-toggle="schedule_1_current_limit_enabled"[^>]*aria-checked="true"/);
+  assert.match(one, /data-limit-edit-trigger="schedule_1_current_limit"[\s\S]*?16<small>A<\/small>/);
+  assert.match(one, /data-limit-edit-trigger="schedule_1_energy_limit"[\s\S]*?76<small>kWh<\/small>/);
+  assert.match(one, /class="sched-lim active"/, 'cap on inside an enabled schedule is active');
+  assert.match(two, /class="sched-lim saved"/, 'cap on inside a disabled schedule is only saved');
+  assert.match(two, />09:00<[\s\S]*>18:00</);
+});
+test('schedules: toggles and caps use their own switch and number entities', async () => {
+  const {card, calls} = setupAll({sections:['schedules'], over:SCHED});
+  await card._toggleLimit('schedule_2_enabled');
+  await card._toggleLimit('schedule_1_energy_limit_enabled');
+  await card._commitLimitEdit('schedule_1_current_limit', '12');
+  assert.equal(JSON.stringify(calls), JSON.stringify([
+    ['switch','turn_on',{entity_id:'switch.s2'}], ['switch','turn_on',{entity_id:'switch.s1e'}],
+    ['number','set_value',{entity_id:'number.s1c',value:12}]]));
+});
+test('schedule times: a changed time is sent once as HH:MM:SS after a short pause, or at once on blur', async () => {
+  const {card, calls, timers, html} = setupAll({sections:['schedules'], over:SCHED});
+  card._startTimeEdit('schedule_1_start');
+  assert.match(card.shadowRoot.innerHTML, /<input type="time"[^>]*data-time-edit="schedule_1_start"[^>]*value="23:00"/, 'tap opens a time input');
+  card._timeDraft('schedule_1_start', '22:15');
+  card._timeDraft('schedule_1_start', '22:30');
+  assert.equal(calls.length, 0, 'still typing');
+  for (const fn of [...timers.values()]) await fn();
+  assert.equal(JSON.stringify(calls), JSON.stringify([['time','set_value',{entity_id:'time.s1a',time:'22:30:00'}]]));
+  assert.match(html(), /data-time-edit-trigger="schedule_1_start"[^>]*>22:30</, 'pending value shows until HA confirms');
+  card._startTimeEdit('schedule_1_stop'); card._timeDraft('schedule_1_stop', '06:00'); await card._timeBlur('schedule_1_stop');
+  assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify(['time','set_value',{entity_id:'time.s1b',time:'06:00:00'}]));
+  const n = calls.length;
+  card._startTimeEdit('schedule_2_start'); card._timeDraft('schedule_2_start', '09:00'); await card._timeBlur('schedule_2_start');
+  card._startTimeEdit('schedule_2_stop'); card._timeDraft('schedule_2_stop', ''); await card._timeBlur('schedule_2_stop');
+  assert.equal(calls.length, n, 'unchanged or cleared time sends nothing');
+});
+test('schedules offline: readable, every control disabled, nothing sent', async () => {
+  const {card, calls, html} = setupAll({sections:['schedules'], over:{...SCHED, state:['sensor.state','unavailable']}});
+  assert.match(html(), /data-time-edit-trigger="schedule_1_start"[^>]*disabled/);
+  assert.match(html(), /data-limit-toggle="schedule_1_enabled"[^>]*disabled/);
+  card._startTimeEdit('schedule_1_start'); card._timeDraft('schedule_1_start', '01:00'); await card._timeBlur('schedule_1_start');
+  await card._toggleLimit('schedule_1_enabled');
+  assert.equal(calls.length, 0);
+  assert.match(setupAll({sections:['schedules']}).html(), /No Eveus schedules found/);
+});
+test('time: zone picker, clock drift coloured by the Repairs threshold, and a sync button', async () => {
+  const {card, calls, html} = setupAll({sections:['time'], over:TIME});
+  assert.match(html(), /class="sl time/);
+  assert.match(html(), /<option value="\+3" selected>UTC\+3<\/option>/);
+  assert.match(html(), /<option value="0">UTC<\/option>/);
+  assert.match(html(), /data-more-info="time_drift"[\s\S]*?class="time-drift good">0<small>s<\/small>/);
+  await card._selectOption('time_zone', '+2');
+  await card._syncTime();
+  assert.equal(JSON.stringify(calls), JSON.stringify([['select','select_option',{entity_id:'select.tz',option:'+2'}], ['button','press',{entity_id:'button.sync'}]]));
+  assert.match(html(), /class="time-sync done"/, 'the tap is acknowledged');
+  const drift = (v) => setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',v,{unit_of_measurement:'s'}]}}).html();
+  assert.match(drift(90), /class="time-drift good">\+2<small>min<\/small>/);
+  assert.match(drift(900), /class="time-drift bad">\+15<small>min<\/small>/);
+  assert.match(drift(-3600), /class="time-drift bad">−1<small>h<\/small>/);
+  assert.match(drift('unavailable'), /class="time-drift">—/);
+});
+test('time offline: nothing can be changed or pressed', async () => {
+  const {card, calls, html} = setupAll({sections:['time'], over:{...TIME, state:['sensor.state','unavailable']}});
+  assert.match(html(), /data-select="time_zone"[^>]*disabled/);
+  assert.match(html(), /class="time-sync"[^>]*disabled/);
+  await card._syncTime(); await card._selectOption('time_zone', '+2');
+  assert.equal(calls.length, 0);
+});
+test('uk: schedules and time speak Ukrainian', () => {
+  const {html} = setupAll({sections:['schedules','time'], over:{...SCHED, ...TIME, time_drift:['sensor.drift',-120,{unit_of_measurement:'s'}]}, locale:'uk'});
+  assert.match(html(), /Розклад 1/);
+  assert.match(html(), /Часовий пояс/);
+  assert.match(html(), /−2<small>хв<\/small>/);
+  assert.match(html(), /Синхр/);
+});
+
+// ---- Finishing pass: digit groups, active schedule, hidden items ----
+test('large readings group their digits with a narrow no-break space, in both languages: 5 290', () => {
+  assert.match(setupAll({sections:['history'], over:HISTORY}).html(), /12\u202f669<small>₴/);
+  const uk = setupAll({sections:['history','session'], over:{...HISTORY, session_cost:['sensor.sc',1234.5,{unit_of_measurement:'UAH'}]}, locale:'uk'}).html();
+  assert.match(uk, /5 290<small>kWh/);
+  assert.match(uk, /12 669<small>₴/);
+  assert.match(uk, /1 235<small>₴/);
+  assert.match(uk, />949<small>kWh/, 'three digits stay as they are');
+});
+test('a running schedule is marked now, by Home Assistant time, only while it is on', () => {
+  const at = (hm, over = {}) => { const x = setupAll({sections:['schedules'], over:{...SCHED, ...over}}); x.card._nowHM = () => hm; x.card.hass = x.hass; return x.html(); };
+  assert.match(rowOf(at('23:30'), 1), /^ on now"/, 'inside an overnight window');
+  assert.match(rowOf(at('06:59'), 1), /^ on now"/, 'after midnight, before stop');
+  assert.match(rowOf(at('07:00'), 1), /^ on"/, 'stop time is outside');
+  assert.match(rowOf(at('12:00', {schedule_2_enabled:['switch.s2','off']}), 2), /^"/, 'a disabled schedule is never now');
+  assert.match(rowOf(at('12:00', {schedule_2_enabled:['switch.s2','on']}), 2), /^ on now"/);
+  const x = setupAll({sections:['schedules'], over:SCHED}); x.card.hass = {...x.hass, config:{time_zone:'Europe/Kyiv'}};
+  assert.match(x.card._nowHM(), /^\d{2}:\d{2}$/);
+});
+test('waiting for a schedule says when the next one starts', () => {
+  const at = (hm, locale, over = {}) => { const x = setupAll({sections:['status'], charging:false, locale, over:{...SCHED, not_charging_reason:['sensor.reason','Waiting for Schedule'], ...over}}); x.card._nowHM = () => hm; x.card.hass = x.hass; return x.html(); };
+  assert.match(at('20:00'), /status-note">Waiting for Schedule · from 23:00</);
+  assert.match(at('20:00', 'uk'), /status-note">Очікує розкладу · з 23:00</);
+  assert.match(at('08:00', undefined, {schedule_2_enabled:['switch.s2','on']}), /from 09:00</, 'the nearest enabled start wins');
+  assert.match(at('20:00', undefined, {schedule_1_enabled:['switch.s1','off']}), /status-note">Waiting for Schedule</, 'no enabled schedule, no time');
+});
+test('hidden items drop out of their section and the row re-spreads', () => {
+  const x = setupAll({sections:['actions','basic_info','history','limits','schedules','time','safety','session','advanced_controls'],
+    over:{...FULL_OVER}, hide:['actions.ocpp','basic_info.voltage','history.total','limits.cost','schedules.schedule_2','time.sync','safety.connection','session.time','advanced_controls.loss']}).html();
+  assert.doesNotMatch(x, /data-status-toggle="connect_to_ocpp"/);
+  assert.match(x, /class="panel actions" style="grid-template-columns:repeat\(2,minmax\(0,1fr\)\)"/);
+  assert.doesNotMatch(x, /data-more-info="voltage"/);
+  assert.match(x, /class="panel meter" style="grid-template-columns:repeat\(2,minmax\(0,1fr\)\)"/);
+  assert.doesNotMatch(x, /data-more-info="total_energy"/); assert.match(x, /class="tiles two"/);
+  assert.doesNotMatch(x, /data-limit-toggle="limit_cost_enabled"/); assert.match(x, /limits-grid three/);
+  assert.equal((x.match(/class="sched-row/g) || []).length, 1);
+  assert.doesNotMatch(x, /data-sync/);
+  assert.doesNotMatch(x, /data-more-info="connection_quality"/);
+  assert.doesNotMatch(x, /data-more-info="session_time"/);
+  assert.doesNotMatch(x, /data-limit-step="soc_correction"/);
+  const all = setupAll({sections:['actions'], over:{...FULL_OVER}}).html();
+  assert.match(all, /class="panel actions" aria-label/, 'three buttons keep the stylesheet grid');
+});
+test('editor: expand a section to hide or show its items; the last item cannot be hidden', () => {
+  const {editor, last} = setupEditor({sections:['time','status']});
+  assert.doesNotMatch(editor._sectionsHtml(), /data-item=/, 'items are folded away');
+  assert.match(editor._sectionsHtml(), /data-expand="time"/);
+  assert.doesNotMatch(editor._sectionsHtml(), /data-expand="status"/, 'a one-item section has nothing to hide');
+  editor._expand('time');
+  const html = editor._sectionsHtml();
+  assert.match(html, /data-item="time.zone" checked/); assert.match(html, /Time zone/);
+  editor._toggleItem('time.sync');
+  assert.deepEqual([...last().hide], ['time.sync']);
+  editor._toggleItem('time.zone');
+  assert.deepEqual([...last().hide], ['time.sync', 'time.zone']);
+  editor._toggleItem('time.drift');
+  assert.deepEqual([...last().hide], ['time.sync', 'time.zone'], 'drift is the last one left');
+  assert.match(editor._sectionsHtml(), /data-item="time.drift" checked disabled/);
+  editor._toggleItem('time.sync'); editor._toggleItem('time.zone');
+  assert.equal(last().hide, undefined, 'nothing hidden, nothing written');
+});
+test('the card knows a light Home Assistant theme, so low-contrast hues can darken there only', () => {
+  const x = setupAll({sections:['basic_info']});
+  assert.match(x.html(), /<ha-card data-state="charging">/);
+  x.card.hass = {...x.hass, themes:{darkMode:false}};
+  assert.match(x.html(), /<ha-card data-state="charging" data-theme="light">/);
+});
+
+test('updates keep the same ha-card and replace only what is inside it (a new ha-card is empty for a frame and the page scrolls to the top)', () => {
+  const x = setupAll({sections:['session']});
+  const attrs = {}, inner = {html: ''};
+  const haCard = {setAttribute:(k,v)=>{attrs[k]=v;}, removeAttribute:(k)=>{delete attrs[k];}, set innerHTML(v){inner.html=v;}, get innerHTML(){return inner.html;}};
+  x.card.shadowRoot = {innerHTML:'<style>kept</style><ha-card></ha-card>', querySelector:(q)=>q==='ha-card'?haCard:null, querySelectorAll:()=>[], addEventListener(){}};
+  x.states['sensor.se'].state = '16'; x.card.hass = x.hass;
+  assert.equal(x.card.shadowRoot.innerHTML, '<style>kept</style><ha-card></ha-card>');
+  assert.match(inner.html, /class="sl session"/);
+  assert.equal(attrs['data-state'], 'charging');
+});
+test('restoring focus after an update never scrolls the page', () => {
+  const x = setupAll({sections:['limits']});
+  let opts = 'none';
+  const input = {focus:(o)=>{opts=o;}, select(){}};
+  x.card._editingLimit = 'limit_energy';
+  x.card.shadowRoot = {innerHTML:'', querySelector:(q)=>q.startsWith('[data-limit-edit=')?input:null, querySelectorAll:()=>[], addEventListener(){}};
+  x.card._render();
+  assert.deepEqual({...opts}, {preventScroll:true});
+});
+test('an open picker (time zone, adaptive mode) is not re-rendered away by live updates', async () => {
+  const x = setupAll({sections:['time','adaptive'], over:TIME});
+  x.card._selectFocus('time_zone');
+  const before = x.card.shadowRoot.innerHTML;
+  x.states['sensor.drift'].state = '30'; x.card.hass = x.hass;
+  assert.equal(x.card.shadowRoot.innerHTML, before, 'frozen while the list is open');
+  await x.card._selectOption('time_zone', '+2');
+  assert.equal(JSON.stringify(x.calls.at(-1)), JSON.stringify(['select','select_option',{entity_id:'select.tz',option:'+2'}]));
+  assert.match(x.html(), /\+30<small>s/, 'a choice ends the freeze');
+  x.card._selectFocus('adaptive_mode'); x.card._selectBlur();
+  x.states['sensor.drift'].state = '60'; x.card.hass = x.hass;
+  assert.match(x.html(), /\+1<small>min/, 'closing without a choice ends it too');
+  x.card._selectFocus('adaptive_mode');
+  for (const fn of [...x.timers.values()]) fn();
+  x.states['sensor.drift'].state = '0'; x.card.hass = x.hass;
+  assert.match(x.html(), /time-drift good">0<small>s/, 'a forgotten focus times out');
+});
+
+test('updates from other entities do not re-render the card; its own entities and the minute do', () => {
+  const x = setupAll({sections:['session']});
+  x.card.shadowRoot.innerHTML = 'SENTINEL';
+  x.hass.states['light.kitchen'] = {state:'on', attributes:{}};
+  x.card.hass = {...x.hass};
+  assert.equal(x.card.shadowRoot.innerHTML, 'SENTINEL', 'someone else\'s light');
+  x.states['sensor.se'] = {state:'16.2', attributes:{unit_of_measurement:'kWh'}}; x.card.hass = x.hass;
+  assert.match(x.card.shadowRoot.innerHTML, /16\.2<small>kWh/);
+  x.card.shadowRoot.innerHTML = 'SENTINEL';
+  x.card._nowHM = () => '23:59'; x.card.hass = x.hass;
+  assert.notEqual(x.card.shadowRoot.innerHTML, 'SENTINEL', 'a new minute re-renders (offline age, running schedule)');
+});
+test('a config change from the editor re-renders even when no state changed', async () => {
+  const x = setupAll({sections:['session']});
+  x.card.setConfig({sections:['session'], language:'uk'});
+  await x.card._resolve();
+  assert.match(x.html(), />Сесія</);
 });
