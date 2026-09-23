@@ -60,5 +60,4 @@ variables:
     {{ '%dh %02dm' | format(secs // 3600, (secs % 3600) // 60) }}.
     {%- endif %}
 
-actions:
-  - !input notify_action
+actions: !input notify_action

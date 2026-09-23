@@ -340,6 +340,8 @@ URL, then fill in the two or three fields it asks for — no YAML.
 | Charging session notification | Notifies on start and finish through the action of your choice; the finish message includes session energy, cost and duration | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
 | Stop charging on low house battery | When your inverter's battery stays below a threshold for two minutes, stops charging with the charger's own **Stop Charging** switch, not by cutting its power. Does not automatically resume charging after recovery | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
 
+In the session notification blueprint, add one or more notification actions and use `{{ message }}` for their text.
+
 ## Events & Device Triggers
 
 The integration fires events on the Home Assistant event bus for charger state transitions. Every payload includes `device_number`:

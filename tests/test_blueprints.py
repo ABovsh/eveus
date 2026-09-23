@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from homeassistant.helpers import config_validation as cv
+from homeassistant.util import yaml as yaml_util
 
 from custom_components.eveus.const import DOMAIN
 from custom_components.eveus.device_trigger import _EVENT_FOR_TYPE
@@ -56,3 +58,38 @@ def test_device_triggers_name_real_event_types(path: Path) -> None:
             continue
         assert trigger["domain"] == DOMAIN
         assert trigger["type"] in _EVENT_FOR_TYPE
+
+
+@pytest.mark.parametrize(
+    ("actions", "expected_count"),
+    [
+        ([{"action": "persistent_notification.create", "data": {"message": "hello"}}], 1),
+        ([{"delay": "00:00:01"}, {"action": "persistent_notification.create", "data": {"message": "hello"}}], 2),
+    ],
+)
+def test_session_notification_action_input_is_a_valid_sequence(
+    actions: list[dict], expected_count: int
+) -> None:
+    """An action selector returns a list that must remain flat after substitution."""
+    blueprint = yaml_util.load_yaml(BLUEPRINT_DIR / "notify_session.yaml")
+    expanded = yaml_util.substitute(
+        blueprint,
+        {"charger": "charger-device", "notify_action": actions, "currency": "UAH"},
+    )
+
+    assert len(cv.SCRIPT_SCHEMA(expanded["actions"])) == expected_count
+
+
+def test_low_house_battery_blueprint_actions_validate_after_substitution() -> None:
+    """The other shipped blueprint also yields a valid action sequence."""
+    blueprint = yaml_util.load_yaml(BLUEPRINT_DIR / "stop_on_low_house_battery.yaml")
+    expanded = yaml_util.substitute(
+        blueprint,
+        {
+            "battery_soc": "sensor.house_battery",
+            "threshold": 40,
+            "stop_switch": "switch.charger_stop_charging",
+        },
+    )
+
+    assert len(cv.SCRIPT_SCHEMA(expanded["actions"])) == 1

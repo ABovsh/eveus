@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-Everything below is the **Eveus card**. The integration's entities are unchanged.
+### 🐛 Fixed
+- **The charging session notification blueprint now saves in Home Assistant.** Its selected notification actions form a valid action sequence.
+  Fixes [#17](https://github.com/ABovsh/eveus/issues/17).
+
+The remaining Unreleased changes are for the **Eveus card**. The integration's entities are unchanged.
 
 ### ✨ Added
 - **Build the card from sections in the card editor, no YAML needed.** Tick, hide and reorder thirteen sections: Status, Buttons (OCPP · One charge · Stop), Battery SOC, SOC settings, Meter (voltage · power · current), Current slider, Adaptive charging, Session, Limits, Schedules, Charger clock, Counters and Safety. In Basic mode the two SOC sections are greyed out and stay in the card's settings.
