@@ -163,7 +163,7 @@ The card follows the integration mode; `mode: basic` simplifies it, while
 
 - **Warnings:** voltage is red below 205 V or above 253 V; temperatures are red from 80 °C and leakage current from 30 mA, the charger's own fault limits; Time Drift is red from 10 minutes, when Home Assistant raises its clock Repairs notice. Faults and reasons for not charging appear in **Status**.
 - **Offline:** shows the age of the last reading and disables controls.
-- **Interaction:** tap a reading to open its entity. Long-press the battery tile to set Initial SOC, or the target tile to set Target SOC. To stop an active charge, tap **Stop** again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once. Resetting a counter asks for confirmation. In **Schedules**, tap a time to pick a new one, tap a limit's icon to turn it on or off, and tap its value to type a new one. A schedule's badge glows while it is running.
+- **Interaction:** tap a reading to open its entity. Long-press the battery tile, or focus it and press Alt+Enter, to set Initial SOC; use the target tile the same way for Target SOC. To stop an active charge, tap **Stop** again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once. Resetting a counter asks for confirmation. In **Schedules**, tap a time to pick a new one, tap a limit's icon to turn it on or off, and tap its value to type a new one. A schedule's badge glows while the charger's clock places it in its window. The card omits that glow and the next-start time when Time Drift is unknown or at least 10 minutes.
 
 ### How to add the card
 

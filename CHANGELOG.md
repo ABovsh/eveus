@@ -9,9 +9,12 @@ Everything below is the **Eveus card**. The integration's entities are unchanged
 - **More of the charger in one card.** Adaptive Mode with its voltage threshold and current cap; Limit Energy, Limit Time, Limit Cost and SOC limit with **Disable all**; Total Energy and Counter A/B with a reset that asks first; a Safety row with box and plug temperature, ground, leakage current and connection quality; Schedule 1 and Schedule 2, one row each, with on/off, start and stop time, and current and energy limits; and a Charger clock row with Time Zone, Time Drift and **Sync Time**.
 - **Charger states in Ukrainian.** State, fault and the reason charging has not started follow the card's language. **Waiting for Schedule** adds the next start time, e.g. `Waiting for Schedule · from 23:00`.
 - **Hide single items in the card editor.** Expand a section to hide any of its items, e.g. Schedule 2 or connection quality; the rest of the row spreads out. In YAML: `hide: [schedules.schedule_2, safety.connection]`.
-- **A running schedule glows.** Its badge pulses while Home Assistant's clock is inside the schedule's window.
+- **A running schedule glows.** Its badge pulses when the charger's clock is inside the schedule window; if clock drift is unknown or at least 10 minutes, the card omits the running marker and next-start estimate.
 - **Large numbers are grouped:** `12 669 ₴`, `5 290 kWh`.
 - **Light theme:** Meter headers and the adaptive current limit are darker, so they stay readable on white.
+
+### 🔧 Changed
+- **Controls stay readable on narrow cards.** Buttons, SOC settings, limits and counters spread across wider cells when space is tight; schedule and clock controls have larger touch areas.
 
 ### ⚠️ Breaking
 - **The Eveus card is rebuilt: remove it from your dashboards and add it again.** Open **Edit dashboard**, delete each Eveus card, then **Add card → Eveus EV Charger**. A card saved with `layout:` still opens as the matching sections (`compact` — Status, Battery SOC, Meter, Session; `status` — the same plus Safety; `control` — adds Buttons and the Current slider; `full` — every section), and a card saved with `sections:` keeps only the sections it lists, so neither shows Schedules or Charger clock. A newly added card has every section in the default order.

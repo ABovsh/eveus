@@ -475,6 +475,7 @@ function setupAll({sections, mode, over={}, charging=true, locale, language, hid
     adaptive_mode:['select.am','Voltage',{options:['Off','Voltage','Auto','Power']}],
     undervoltage_threshold:['number.uv',210,{min:210,max:220,step:1,unit_of_measurement:'V'}],
     adaptive_current_limit:['sensor.acl',7,{unit_of_measurement:'A'}],
+    time_drift:['sensor.drift',0,{unit_of_measurement:'s'}],
   };
   const merged={...base,...over};
   const states={}, entities={};
@@ -625,6 +626,16 @@ test('SOC tiles: long press opens the setting (Battery → Initial SOC, target �
   x.card._holdStart({target:el('target_soc','time_to_target_soc'),clientX:5,clientY:5});x.card._holdEnd();
   x.card._onClick({target:el('target_soc','time_to_target_soc')});
   assert.deepEqual([...opened],['number.isoc','sensor.eta']);
+});
+test('SOC settings are reachable from a keyboard without triggering the tile tap',()=>{
+  const x=setupAll({sections:['advanced_info']});
+  const opened=[];x.card.addEventListener('hass-more-info',(e)=>opened.push(e.detail.entityId));
+  const event=(hold)=>({key:'Enter',altKey:true,target:{closest:(selector)=>selector==='[data-hold]'?{dataset:{hold}}:null},preventDefault(){this.prevented=true;}});
+  const initial=event('initial_soc');x.card._onKeyDown(initial);
+  const target=event('target_soc');x.card._onKeyDown(target);
+  assert.deepEqual([...opened],['number.isoc','number.tsoc']);
+  assert.equal(initial.prevented,true);assert.equal(target.prevented,true);
+  assert.match(x.html(),/aria-keyshortcuts="Alt\+Enter"/);
 });
 
 // ---- Editor (composition pass) ----
@@ -911,7 +922,7 @@ test('large readings group their digits with a narrow no-break space, in both la
   assert.match(uk, /1 235<small>₴/);
   assert.match(uk, />949<small>kWh/, 'three digits stay as they are');
 });
-test('a running schedule is marked now, by Home Assistant time, only while it is on', () => {
+test('a running schedule is marked now, by the charger clock, only while it is on', () => {
   const at = (hm, over = {}) => { const x = setupAll({sections:['schedules'], over:{...SCHED, ...over}}); x.card._nowHM = () => hm; x.card.hass = x.hass; return x.html(); };
   assert.match(rowOf(at('23:30'), 1), /^ on now"/, 'inside an overnight window');
   assert.match(rowOf(at('06:59'), 1), /^ on now"/, 'after midnight, before stop');
@@ -920,6 +931,29 @@ test('a running schedule is marked now, by Home Assistant time, only while it is
   assert.match(rowOf(at('12:00', {schedule_2_enabled:['switch.s2','on']}), 2), /^ on now"/);
   const x = setupAll({sections:['schedules'], over:SCHED}); x.card.hass = {...x.hass, config:{time_zone:'Europe/Kyiv'}};
   assert.match(x.card._nowHM(), /^\d{2}:\d{2}$/);
+});
+test('schedule predictions follow the charger clock and stop when its drift is unknown or unsafe', () => {
+  const x=setupAll({sections:['status','schedules'], charging:false, over:{...SCHED, not_charging_reason:['sensor.reason','Waiting for Schedule'], time_drift:['sensor.drift',120]}});
+  const offsets=[];
+  x.card._nowHM=(offset=0)=>{offsets.push(offset);return offset===120?'23:30':'23:28';};
+  x.card.hass=x.hass;
+  assert.match(rowOf(x.html(),1),/^ on now"/);
+  assert.ok(offsets.includes(120),'schedule clock uses measured drift');
+  x.states['sensor.drift'].state='600';x.card.hass=x.hass;
+  assert.doesNotMatch(rowOf(x.html(),1),/^ on now"/);
+  assert.doesNotMatch(x.html(),/status-note">Waiting for Schedule · from/);
+  x.states['sensor.drift'].state='unavailable';x.card.hass=x.hass;
+  assert.doesNotMatch(rowOf(x.html(),1),/^ on now"/);
+});
+test('masonry size follows rendered height, with a section-based estimate before first paint',()=>{
+  const x=setupAll({sections:['status']});
+  assert.ok(x.card.getCardSize()>=1);
+  x.card._hass=null;
+  x.card.setConfig({sections:ALL});
+  assert.ok(x.card.getCardSize()>1,'a full card cannot claim 50 px');
+  x.card.shadowRoot.querySelector=(q)=>q==='ha-card'?{getBoundingClientRect:()=>({height:511})}:null;
+  assert.equal(x.card.getCardSize(),11);
+  assert.equal(x.card.getGridOptions().rows,undefined,'sections view follows content height');
 });
 test('waiting for a schedule says when the next one starts', () => {
   const at = (hm, locale, over = {}) => { const x = setupAll({sections:['status'], charging:false, locale, over:{...SCHED, not_charging_reason:['sensor.reason','Waiting for Schedule'], ...over}}); x.card._nowHM = () => hm; x.card.hass = x.hass; return x.html(); };

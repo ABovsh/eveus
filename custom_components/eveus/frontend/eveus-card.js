@@ -67,8 +67,8 @@ const I18N = {
     stop: 'Stop', stopTitle: 'Stop charging', sure: 'Sure?', tapAgain: 'Tap again', tapResume: 'Tap to resume', tapStop: 'Tap to stop', on: 'On', off: 'Off',
     battery: 'Battery', est: 'est.', inBattery: 'in battery', toTarget: 'To target', target: 'Target', finish: 'Finish',
     finishTitle: 'Estimated finish time', reached: 'Target reached', toGo: 'to go',
-    batteryTitle: 'Estimated state of charge: session start → now. Hold: set Initial SOC',
-    targetTitle: 'To target: time left, energy and cost to go, finish time. Hold: set Target SOC',
+    batteryTitle: 'Estimated state of charge: session start → now. Hold or Alt+Enter: set Initial SOC',
+    targetTitle: 'To target: time left, energy and cost to go, finish time. Hold or Alt+Enter: set Target SOC',
     initial: 'Initial', initialTitle: 'Battery level when the session started', targetSocTitle: 'Target state of charge',
     capacity: 'Capacity', capacityTitle: 'Usable battery capacity',
     loss: 'Loss', lossTitle: 'Charging losses: share of delivered energy that does not reach the battery',
@@ -108,8 +108,8 @@ const I18N = {
     stop: 'Стоп', stopTitle: 'Зупинити заряджання', sure: 'Точно?', tapAgain: 'Ще раз', tapResume: 'Відновити', tapStop: 'Зупинити', on: 'Увімк', off: 'Вимк',
     battery: 'Батарея', est: 'оцін.', inBattery: 'у батареї', toTarget: 'До цілі', target: 'Ціль', finish: 'Завершення',
     finishTitle: 'Орієнтовний час завершення', reached: 'Ціль досягнуто', toGo: 'залишилось',
-    batteryTitle: 'Орієнтовний рівень заряду: початок сесії → зараз. Утримання: початковий SOC',
-    targetTitle: 'До цілі: час, енергія й вартість, що залишились, час завершення. Утримання: цільовий SOC',
+    batteryTitle: 'Орієнтовний рівень заряду: початок сесії → зараз. Утримуйте або натисніть Alt+Enter: початковий SOC',
+    targetTitle: 'До цілі: час, енергія й вартість, що залишились, час завершення. Утримуйте або натисніть Alt+Enter: цільовий SOC',
     initial: 'Початковий', initialTitle: 'Рівень заряду батареї на початку сесії', targetSocTitle: 'Цільовий рівень заряду',
     capacity: 'Ємність', capacityTitle: 'Корисна ємність батареї',
     loss: 'Втрати', lossTitle: 'Втрати заряджання: частка енергії, що не потрапляє в батарею',
@@ -272,16 +272,7 @@ class EveusCard extends HTMLElement {
         if (e.target.dataset?.select) { this._selectOption(e.target.dataset.select, e.target.value); return; }
         this._onSlide(e, true);
       });
-      this.shadowRoot.addEventListener('keydown', (e) => {
-        if (e.target.dataset?.timeEdit) {
-          if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
-          else if (e.key === 'Escape') { e.preventDefault(); this._timeCancel(); }
-          return;
-        }
-        if (!e.target.dataset?.limitEdit) return;
-        if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
-        else if (e.key === 'Escape') { e.preventDefault(); this._editingLimit = null; this._render(); }
-      });
+      this.shadowRoot.addEventListener('keydown', (e) => this._onKeyDown(e));
       this.shadowRoot.addEventListener('focusin', (e) => { if (e.target.dataset?.select) this._selectFocus(e.target.dataset.select); });
       this.shadowRoot.addEventListener('focusout', (e) => {
         if (e.target.dataset?.select) { this._selectBlur(); return; }
@@ -315,6 +306,20 @@ class EveusCard extends HTMLElement {
       }
     }
     if (this._hass) this.hass = this._hass;
+  }
+  _onKeyDown(e) {
+    if (e.key === 'Enter' && e.altKey) {
+      const tile = e.target.closest?.('[data-hold]');
+      if (tile) { e.preventDefault(); this._moreInfo(tile.dataset.hold); return; }
+    }
+    if (e.target.dataset?.timeEdit) {
+      if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); this._timeCancel(); }
+      return;
+    }
+    if (!e.target.dataset?.limitEdit) return;
+    if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+    else if (e.key === 'Escape') { e.preventDefault(); this._editingLimit = null; this._render(); }
   }
   _onClick(e) {
     // The click that ends a long press belongs to the press, not to a tap.
@@ -401,8 +406,12 @@ class EveusCard extends HTMLElement {
     this._editingSelect = null;
     this._resizeObserver?.disconnect();
   }
-  getCardSize() { return 1; }
-  getGridOptions() { return {columns: 12, min_columns: 6, rows: 'auto'}; }
+  getCardSize() {
+    const height = this.shadowRoot?.querySelector?.('ha-card')?.getBoundingClientRect?.().height;
+    if (Number.isFinite(height) && height > 0) return Math.max(1, Math.ceil(height / 50));
+    return Math.max(1, Math.ceil((this._config?.sections?.length || 1) * 60 / 50));
+  }
+  getGridOptions() { return {columns: 12, min_columns: 6}; }
   async _resolve() {
     const generation = this._generation;
     this._resolving = true;
@@ -803,12 +812,12 @@ class EveusCard extends HTMLElement {
     const fill = on && soc !== null ? Math.max(0, clamp(soc) - base) : 0;
     return `<section class="${['panel soc', `soc-${color}`, on ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.battery}">
       <div class="tiles two">
-        <button class="tile soc-tile" data-more-info="soc_percent" data-hold="initial_soc" title="${t.batteryTitle}">
+        <button class="tile soc-tile" data-more-info="soc_percent" data-hold="initial_soc" aria-keyshortcuts="Alt+Enter" title="${t.batteryTitle}">
           <span class="tile-head"><ha-icon icon="${icon}"></ha-icon>${t.battery}<span class="tile-aside">${t.est}</span></span>
           <span class="tile-big"><b data-fit="26">${soc === null ? '—' : `≈${pc(soc)}`}</b></span>
           <span class="tile-sub" data-fit="12">${batterySub || '&nbsp;'}</span>
         </button>
-        <button class="tile soc-tile" data-more-info="time_to_target_soc" data-hold="target_soc" title="${t.targetTitle}">
+        <button class="tile soc-tile" data-more-info="time_to_target_soc" data-hold="target_soc" aria-keyshortcuts="Alt+Enter" title="${t.targetTitle}">
           <span class="tile-head"><ha-icon icon="mdi:flag-checkered"></ha-icon>${reached ? t.target : t.to} ${pc(target)}${finish && !reached ? `<span class="soc-finish" title="${t.finishTitle}">${finish}</span>` : ''}</span>
           <span class="tile-big">${reached ? `<b data-fit="22">${t.reached}</b>` : `<b data-fit="24">${big}</b>`}</span>
           <span class="tile-sub" data-fit="12">${goalSub}</span>
@@ -847,7 +856,7 @@ class EveusCard extends HTMLElement {
       const {e, money: m} = value(key, cost);
       const resetBtn = reset && this._ids[reset]
         ? `<button class="reset-btn" data-reset="${reset}" title="${t.reset}: ${label}" aria-label="${t.reset}: ${label}" ${!this._online || this._state(reset)?.state === 'unavailable' ? 'disabled' : ''}><ha-icon icon="mdi:restore"></ha-icon></button>` : '';
-      return `<div class="tile hist-tile">
+      return `<div class="tile hist-tile${key === 'total_energy' ? ' hist-total' : ''}">
         <span class="tile-head"><span class="hist-label" data-fit="10.5">${label}</span>${resetBtn}</span>
         <button class="tile-body" data-more-info="${key}" title="${label} — ${t.details}">
           <span class="tile-big"><b data-fit="18">${e === null ? '—' : this._int(e)}<small>kWh</small></b></span>
@@ -1016,7 +1025,11 @@ class EveusCard extends HTMLElement {
     </div>`;
   }
   // Home Assistant's own clock and zone: the card must not trust the phone's.
-  _nowHM() { return this._hm(new Date()); }
+  _nowHM(offsetSeconds = 0) { return this._hm(new Date(Date.now() + offsetSeconds * 1000)); }
+  _scheduleHM() {
+    const drift = this._online ? currentNumber(this._state('time_drift')) : null;
+    return drift !== null && Math.abs(drift) < CLOCK_DRIFT_THRESHOLD_S ? this._nowHM(drift) : null;
+  }
   // 24-hour HH:MM in Home Assistant's zone.
   _hm(date) {
     const tz = this._hass?.config?.time_zone;
@@ -1029,12 +1042,15 @@ class EveusCard extends HTMLElement {
   _scheduleNow(n) {
     const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
     if (!this._online || !this._limitOn(`schedule_${n}_enabled`) || start === null || stop === null || start === stop) return false;
-    const now = this._nowHM();
+    const now = this._scheduleHM();
+    if (now === null) return false;
     return start < stop ? now >= start && now < stop : now >= start || now < stop;
   }
   // The start of the enabled schedule that comes next, for "Waiting for Schedule · from 23:00".
   _nextScheduleStart() {
-    const mins = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5)), now = mins(this._nowHM());
+    const clock = this._scheduleHM();
+    if (clock === null) return null;
+    const mins = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5)), now = mins(clock);
     const starts = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._limitOn(`schedule_${n}_enabled`))
       .map((n) => this._timeShown(`schedule_${n}_start`)).filter(Boolean);
     return starts.sort((a, b) => (mins(a) - now + 1440) % 1440 - (mins(b) - now + 1440) % 1440)[0] ?? null;
@@ -1232,10 +1248,10 @@ class EveusCard extends HTMLElement {
   _fitLimitValues() {
     if (typeof this.shadowRoot?.querySelectorAll !== 'function') return;
     for (const el of this.shadowRoot.querySelectorAll('[data-fit]')) {
-      let size = Number(el.dataset.fit) || 18;
+      let size = Math.max(11, Number(el.dataset.fit) || 18);
       el.style.fontSize = `${size}px`;
-      while (size > 7 && el.scrollWidth > el.clientWidth) {
-        size -= 1;
+      while (size > 11 && el.scrollWidth > el.clientWidth) {
+        size = Math.max(11, size - 1);
         el.style.fontSize = `${size}px`;
       }
     }
@@ -1381,6 +1397,10 @@ ha-card[data-state=paused]{--c:#f39c12}ha-card[data-state=fault]{--c:#e74c3c}ha-
 .status-main>ha-icon{color:var(--c);background:color-mix(in srgb,var(--c) 22%,transparent)}
 .sl{padding:2px 8px 2px 3px}.limits-head{padding-left:1px}
 .panel.history .tile-head,.limits.controls .limit-toggle{color:color-mix(in srgb,var(--h) 75%,var(--secondary-text-color))}
+/* Counters and a healthy clock are reference data; reserve the stronger section glass
+   for the status, live charging readings and controls. Fault/reset colours still win. */
+.panel.history:not(.asking-reset),.sl.time:not(.time-bad){border-color:color-mix(in srgb,var(--h) 10%,transparent);
+  background:linear-gradient(135deg,color-mix(in srgb,var(--h) 7%,transparent),color-mix(in srgb,var(--h) 2%,transparent) 65%)}
 .limit-tile,.tile{background:linear-gradient(160deg,rgba(255,255,255,.06),rgba(127,127,127,.05))}
 .limit-tile.active{background:linear-gradient(145deg,color-mix(in srgb,#2ecc71 24%,transparent),color-mix(in srgb,#2ecc71 7%,transparent));border-color:color-mix(in srgb,#2ecc71 55%,transparent)}
 /* Charging glow on live values, like 4.24.0. */
@@ -1475,6 +1495,25 @@ ha-card[data-state=charging] .soc-fill{animation:icon-glow 2.6s ease-in-out infi
 .reset-yes{border-color:#e74c3c;background:#e74c3c;color:#fff}
 .panel.history.asking-reset{--h:#e74c3c}
 
+/* Narrow cards use the spare vertical space so labels and controls remain legible. */
+@container (max-width:340px){
+  .status-main{height:auto;min-height:28px}
+  .status-note{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.15}
+  .soc-tile .tile-sub{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.1}
+  .panel.actions:not([style]){grid-template-columns:repeat(2,minmax(0,1fr))}
+  .panel.actions:not([style]) .act-btn:nth-child(3):last-child{grid-column:1/-1}
+  .limits-grid.four,.limits-grid.three{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .limits-grid.three .limit-tile:last-child{grid-column:1/-1}
+  .limits-grid .limit-toggle{height:24px;font-size:11.5px}
+  .limits-grid .limit-value{height:30px}
+  .panel.history .tiles.three{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .panel.history .tiles.three .hist-total{grid-column:1/-1;flex-direction:row;align-items:center;justify-content:space-between;min-height:42px}
+  .panel.history .tiles.three .hist-total .tile-head{width:auto;min-height:0}
+  .panel.history .tiles.three .hist-total .tile-body{width:auto;flex-direction:row;align-items:baseline;gap:6px}
+  .panel.history .hist-tile .tile-head{min-height:34px}
+  .panel.history .reset-btn{width:34px;height:34px}
+}
+
 .tile-unit{margin-left:2px;font-size:.85em;font-weight:500;opacity:.75;text-transform:none}
 .limit-toggle{position:relative}.limit-toggle i{position:absolute;top:4px;right:2px;margin:0}
 /* The on/off dot sits over the header's right edge; keep the unit clear of it. */
@@ -1507,9 +1546,9 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
    (icon = its switch, number = tap-to-edit). Lit = on, hollow dot = cap kept in a schedule that is off,
    glowing badge = running now. */
 .panel.sched{--h:#7c83fd;gap:3px;padding:3px}
-.sched-row{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;min-height:34px;padding:0 3px 0 0;border:1px solid transparent;border-radius:10px;background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(127,127,127,.04))}
+.sched-row{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;min-height:40px;padding:0 3px 0 0;border:1px solid transparent;border-radius:10px;background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(127,127,127,.04))}
 .sched-row.on{border-color:color-mix(in srgb,var(--h) 50%,transparent);background:linear-gradient(145deg,color-mix(in srgb,var(--h) 22%,transparent),color-mix(in srgb,var(--h) 6%,transparent))}
-.sched-toggle{flex:none;display:flex;align-items:center;gap:4px;height:32px;padding:0 4px 0 3px;margin:0;border:0;border-radius:9px;background:transparent;font-family:inherit;color:var(--secondary-text-color);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.sched-toggle{flex:none;display:flex;align-items:center;gap:4px;height:38px;padding:0 4px 0 3px;margin:0;border:0;border-radius:9px;background:transparent;font-family:inherit;color:var(--secondary-text-color);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .sched-toggle ha-icon{--mdc-icon-size:16px;box-sizing:content-box;padding:4px;border-radius:8px;color:var(--h);background:color-mix(in srgb,var(--h) 20%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--h) 28%,transparent)}
 .sched-toggle b{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
 .sched-row.on .sched-toggle ha-icon{color:#fff;background:var(--h);box-shadow:0 0 8px color-mix(in srgb,var(--h) 45%,transparent)}
@@ -1517,14 +1556,14 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 .sched-row.now .sched-toggle ha-icon{animation:sched-now 2.6s ease-in-out infinite}
 @keyframes sched-now{0%,100%{box-shadow:0 0 4px color-mix(in srgb,var(--h) 40%,transparent)}50%{box-shadow:0 0 14px color-mix(in srgb,var(--h) 90%,transparent)}}
 .sched-window{display:flex;align-items:center;flex:1 1 auto;min-width:0;overflow:hidden}
-.sched-time{flex:none;height:30px;padding:0 3px;margin:0;border:0;border-radius:7px;background:transparent;font-family:inherit;font-size:inherit;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.01em;color:var(--secondary-text-color);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.sched-time{flex:none;height:38px;padding:0 3px;margin:0;border:0;border-radius:7px;background:transparent;font-family:inherit;font-size:inherit;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.01em;color:var(--secondary-text-color);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .sched-row.on .sched-time{color:var(--primary-text-color)}
 .sched-time:hover,.sched-time:focus-visible{background:rgba(127,127,127,.14)}
 .sched-window.editing>:not(.sched-time-input){display:none}
-.sched-time-input{box-sizing:border-box;flex:1 1 auto;min-width:0;width:100%;height:28px;padding:0 2px;border:1px solid var(--h);border-radius:7px;background:transparent;color:inherit;color-scheme:dark;font-family:inherit;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.sched-time-input{box-sizing:border-box;flex:1 1 auto;min-width:0;width:100%;height:36px;padding:0 2px;border:1px solid var(--h);border-radius:7px;background:transparent;color:inherit;color-scheme:dark;font-family:inherit;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
 .sched-arrow{flex:none;font-style:normal;font-size:.76em;color:var(--secondary-text-color);margin:0 1px}
 .sched-caps{display:flex;align-items:center;gap:3px;flex:none;margin-left:auto}
-.sched-lim{display:flex;align-items:center;height:28px;border:1px solid transparent;border-radius:9px;background:var(--chip)}
+.sched-lim{display:flex;align-items:center;height:38px;border:1px solid transparent;border-radius:9px;background:var(--chip)}
 .sched-lim.active{border-color:color-mix(in srgb,var(--h) 60%,transparent);background:color-mix(in srgb,var(--h) 22%,transparent)}
 .sched-lim-toggle{position:relative;flex:none;display:flex;align-items:center;height:100%;padding:0 3px 0 6px;margin:0;border:0;background:transparent;font-family:inherit;color:var(--secondary-text-color);cursor:pointer;touch-action:manipulation}
 .sched-lim-toggle ha-icon{--mdc-icon-size:15px;color:inherit}
@@ -1539,19 +1578,19 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 .sched-lim .limit-edit-input{width:50px;height:24px;margin:0 3px}
 @container (max-width:350px){.sched-lim-toggle{padding-left:5px}.sched-lim-toggle ha-icon{--mdc-icon-size:13px}.sched-time{padding:0 2px}.sched-row{gap:4px}.sched-caps{gap:2px}.sched-lim-value{padding:0 5px 0 1px}}
 /* Charger clock: the schedules' hue; drift turns red only past the Repairs threshold. */
-.sl.time{--h:#7c83fd;gap:6px}.sl.time.time-bad{--h:#e74c3c;background:rgba(231,76,60,.14);border-color:rgba(231,76,60,.45)}
+.sl.time{--h:#7c83fd;gap:6px;min-height:40px}.sl.time.time-bad{--h:#e74c3c;background:rgba(231,76,60,.14);border-color:rgba(231,76,60,.45)}
 .time-label{flex:none}
 .time-row{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:1;min-width:0}
 .time-zone-wrap{display:flex;align-items:center;gap:3px;min-width:0}
 .time-zone-wrap ha-icon{--mdc-icon-size:15px;color:color-mix(in srgb,var(--h) 80%,var(--secondary-text-color))}
-.time-zone{box-sizing:border-box;height:28px;min-width:0;padding:0 6px;border:1px solid color-mix(in srgb,var(--h) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--h) 14%,transparent);color:var(--primary-text-color);font-family:inherit;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
+.time-zone{box-sizing:border-box;height:36px;min-width:0;padding:0 6px;border:1px solid color-mix(in srgb,var(--h) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--h) 14%,transparent);color:var(--primary-text-color);font-family:inherit;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
 .time-zone option{color:#000}
-.time-item{display:flex;align-items:center;gap:3px;height:28px;padding:0;margin:0;border:0;background:transparent;font-family:inherit;color:inherit;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.time-item{display:flex;align-items:center;gap:3px;height:36px;padding:0;margin:0;border:0;background:transparent;font-family:inherit;color:inherit;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
 .time-item ha-icon{--mdc-icon-size:15px}
 .time-drift{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--primary-text-color)}
 .time-drift small{margin-left:1px;font-size:.7em;font-weight:500;color:var(--secondary-text-color)}
 .time-drift.bad{color:#e74c3c}
-.time-sync{display:flex;align-items:center;gap:4px;height:28px;padding:0 10px 0 8px;margin:0;border:1px solid color-mix(in srgb,var(--h) 40%,transparent);border-radius:12px;background:color-mix(in srgb,var(--h) 12%,transparent);font-family:inherit;font-size:13px;font-weight:700;color:var(--primary-text-color);white-space:nowrap;cursor:pointer;touch-action:manipulation}
+.time-sync{display:flex;align-items:center;gap:4px;height:36px;padding:0 10px 0 8px;margin:0;border:1px solid color-mix(in srgb,var(--h) 40%,transparent);border-radius:12px;background:color-mix(in srgb,var(--h) 12%,transparent);font-family:inherit;font-size:13px;font-weight:700;color:var(--primary-text-color);white-space:nowrap;cursor:pointer;touch-action:manipulation}
 .time-sync ha-icon{--mdc-icon-size:15px;color:var(--h)}
 .time-sync:active{transform:scale(.96)}
 .time-sync.done{background:var(--h);color:#fff}.time-sync.done ha-icon{color:#fff}
