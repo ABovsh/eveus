@@ -1059,3 +1059,24 @@ test('a config change from the editor re-renders even when no state changed', as
   await x.card._resolve();
   assert.match(x.html(), />Сесія</);
 });
+
+test('a failed entity lookup is asked again later instead of latching "no charger"', async()=>{
+  const registry = {};
+  let now = 1000;
+  const FakeDate = class extends Date { static now() { return now; } };
+  const sandbox = {HTMLElement: class { attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; } },
+    console, Date: FakeDate, setTimeout(){return 0;}, clearTimeout(){}, customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
+  vm.runInNewContext(source, sandbox);
+  const card = new registry['eveus-card'](); card.setConfig({sections:['current']});
+  let asks = 0, failing = true;
+  const hass = {states:{'sensor.state':{state:'Charging',attributes:{}}}, callService:async()=>{},
+    callWS:async()=>{ asks++; if (failing) throw Error('socket closed'); return {entities:{state:'sensor.state'}}; }};
+  card.hass = hass; await new Promise((r)=>setImmediate(r));
+  assert.equal(asks, 1); assert.equal(card._ids, null);
+  card.hass = hass; await new Promise((r)=>setImmediate(r));
+  assert.equal(asks, 1, 'no retry storm on every state change');
+  failing = false; now += 60000;
+  card.hass = hass; await new Promise((r)=>setImmediate(r));
+  assert.equal(asks, 2);
+  assert.deepEqual({...card._ids}, {state:'sensor.state'});
+});

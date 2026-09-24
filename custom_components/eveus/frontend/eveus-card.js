@@ -19,6 +19,8 @@ const SAFETY_CONN_QUALITY_BAD_PCT = 60;
 // Mirrors const.py CLOCK_DRIFT_THRESHOLD_SECONDS: past it, schedules run at the wrong wall-clock
 // time and the integration raises its Repairs notice, so the card calls the drift bad from there.
 const CLOCK_DRIFT_THRESHOLD_S = 600;
+// How long a failed entity lookup waits before the card asks again.
+const RESOLVE_RETRY_MS = 10000;
 // The integration's Excellent/Good/Fair/Poor/Critical brackets (95/80/60/30) as MDI wifi icons.
 const connectionIcon = (pct) => {
   if (pct === null) return 'mdi:wifi-strength-outline';
@@ -358,7 +360,11 @@ class EveusCard extends HTMLElement {
   }
   set hass(hass) {
     this._hass = hass;
-    if (!this._resolved && !this._resolving) this._resolve();
+    // A failed lookup (Home Assistant still starting, the socket dropped mid-call) is
+    // asked again on a later update, throttled, rather than showing "no charger"
+    // until the page is reloaded.
+    const retry = this._resolved && this._ids === null && Date.now() >= (this._retryAt || 0);
+    if ((!this._resolved || retry) && !this._resolving) this._resolve();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
       const entity = this._state(key);
       const actual = typeof pending === 'boolean' ? entity?.state === 'on' : typeof pending === 'string' ? entity?.state : currentNumber(entity);
@@ -424,6 +430,7 @@ class EveusCard extends HTMLElement {
     } catch {
       if (generation !== this._generation) return;
       this._ids = null;
+      this._retryAt = Date.now() + RESOLVE_RETRY_MS;
     }
     if (generation !== this._generation) return;
     this._resolved = true;

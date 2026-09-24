@@ -85,15 +85,13 @@ class _LastSessionSensorBase(EveusSensorBase):
     def _handle_finished_event(self, event: Event) -> None:
         if event.data.get("device_number") != self._device_number:
             return
-        value = self._value_from_event(event.data)
-        if value is None:
-            self._attr_native_value = None
-        else:
-            self._attr_native_value = value
-            self._attr_extra_state_attributes = {
-                "reason": self._reason_from_event(event.data),
-                "finished_at": dt_util.now().isoformat(),
-            }
+        # State and attributes always describe the same session: an unusable
+        # value goes unknown, but the reason and finish time are this event's.
+        self._attr_native_value = self._value_from_event(event.data)
+        self._attr_extra_state_attributes = {
+            "reason": self._reason_from_event(event.data),
+            "finished_at": dt_util.now().isoformat(),
+        }
         if self.hass is not None:
             self.async_write_ha_state()
 

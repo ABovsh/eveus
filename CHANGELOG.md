@@ -5,6 +5,8 @@
 ### 🐛 Fixed
 - **The charging session notification blueprint now saves in Home Assistant.** Its selected notification actions form a valid action sequence.
   Fixes [#17](https://github.com/ABovsh/eveus/issues/17).
+- **Last Session Energy, Cost and Duration show the reason and finish time of the session they describe.** If the charger's final reading of a session is unusable, that value turns unknown instead of keeping the previous session's reason and finish time next to it.
+- **Initial SOC keeps its session value when the charger reports a state the integration does not recognise.** Only unplugging the car starts a new session, so an unrecognised state no longer makes the integration read the car's SOC again in the middle of a charge.
 
 The remaining Unreleased changes are for the **Eveus card**. The integration's entities are unchanged.
 
@@ -16,6 +18,9 @@ The remaining Unreleased changes are for the **Eveus card**. The integration's e
 - **A running schedule glows.** Its badge pulses when the charger's clock is inside the schedule window; if clock drift is unknown or at least 10 minutes, the card omits the running marker and next-start estimate.
 - **Large numbers are grouped:** `12 669 ₴`, `5 290 kWh`.
 - **Light theme:** Meter headers and the adaptive current limit are darker, so they stay readable on white.
+
+### 🐛 Fixed
+- **The card finds the charger again after Home Assistant restarts.** A card that opened while Home Assistant was still starting, or while the connection dropped, showed no charger until the page was reloaded; it now asks again every 10 seconds.
 
 ### 🔧 Changed
 - **Controls stay readable on narrow cards.** Buttons, SOC settings, limits and counters spread across wider cells when space is tight; schedule and clock controls have larger touch areas.
