@@ -6,6 +6,7 @@
 - **The charging session notification blueprint now saves in Home Assistant.** Its selected notification actions form a valid action sequence.
   Fixes [#17](https://github.com/ABovsh/eveus/issues/17).
 - **Last Session Energy, Cost and Duration show the reason and finish time of the session they describe.** If the charger's final reading of a session is unusable, that value turns unknown instead of keeping the previous session's reason and finish time next to it.
+- **Counter A Cost, Counter B Cost and Session Cost statistics no longer grow by themselves.** A Home Assistant restart while the charger was offline started a new cost period, and the long-term statistics added the whole counter once more. The period now survives such a restart. Totals recorded by earlier versions may be too high; correct them in **Developer tools → Statistics** with **Adjust sum**.
 - **Initial SOC keeps its session value when the charger reports a state the integration does not recognise.** Only unplugging the car starts a new session, so an unrecognised state no longer makes the integration read the car's SOC again in the middle of a charge.
 
 The remaining Unreleased changes are for the **Eveus card**. The integration's entities are unchanged.
@@ -16,6 +17,10 @@ The remaining Unreleased changes are for the **Eveus card**. The integration's e
 - **Charger states in Ukrainian.** State, fault and the reason charging has not started follow the card's language. **Waiting for Schedule** adds the next start time, e.g. `Waiting for Schedule · from 23:00`.
 - **Hide single items in the card editor.** Expand a section to hide any of its items, e.g. Schedule 2 or connection quality; the rest of the row spreads out. In YAML: `hide: [schedules.schedule_2, safety.connection]`.
 - **A running schedule glows.** Its badge pulses when the charger's clock is inside the schedule window; if clock drift is unknown or at least 10 minutes, the card omits the running marker and next-start estimate.
+- **Folded settings.** A card with six or more sections shows SOC settings, Adaptive charging, Limits, Schedules and Counters as one-line summaries; tap one to open it. `fold: false` keeps them open.
+- **Hints where something is off.** A fault shows its reading and what to do, e.g. `Plug Overheat · plug 86° · limit 80° · wait for it to cool`. A charge below the set current says why, e.g. `7 of 12 A · adaptive mode`. A charger clock off by whole hours gets a button for the matching time zone.
+- **Schedule check.** With the car plugged in and waiting, the battery section shows how much energy the next schedule can add, e.g. `Schedule 1: up to ≈21.8 kWh → ≈70%`.
+- **Last session, tariff and this month.** With the car unplugged, Session shows the last session and when it ended; plugged in, the active tariff price. Counters add this month's and last month's energy.
 - **Large numbers are grouped:** `12 669 ₴`, `5 290 kWh`.
 - **Light theme:** Meter headers and the adaptive current limit are darker, so they stay readable on white.
 
@@ -23,6 +28,9 @@ The remaining Unreleased changes are for the **Eveus card**. The integration's e
 - **The card finds the charger again after Home Assistant restarts.** A card that opened while Home Assistant was still starting, or while the connection dropped, showed no charger until the page was reloaded; it now asks again every 10 seconds.
 
 ### 🔧 Changed
+- **Limits that are off look off.** Their values are dimmed, the header says `none on`, and **Disable all** appears only when a limit is on.
+- **With no charge running, Stop reads "Tap to block"**, which is what it does.
+- **Session and Counters share the energy colour** of the meter instead of pink.
 - **Controls stay readable on narrow cards.** Buttons, SOC settings, limits and counters spread across wider cells when space is tight; schedule and clock controls have larger touch areas.
 
 ### ⚠️ Breaking

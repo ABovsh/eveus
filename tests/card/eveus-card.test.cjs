@@ -446,7 +446,7 @@ test('no alert strip when healthy, or when the status row already shows the aler
 });
 
 // ---------- Meter, Battery SOC, SOC settings, Adaptive charging ----------
-function setupAll({sections, mode, over={}, charging=true, locale, language, hide}={}) {
+function setupAll({sections, mode, over={}, charging=true, locale, language, hide, fold}={}) {
   const registry = {}, timers = new Map(); let timer = 0;
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}, querySelectorAll(){return [];}}; }
@@ -454,7 +454,7 @@ function setupAll({sections, mode, over={}, charging=true, locale, language, hid
   const sandbox = {HTMLElement, CustomEvent, console, Date, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
   vm.runInNewContext(source, sandbox);
-  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {}), ...(hide ? {hide} : {})});
+  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {}), ...(hide ? {hide} : {}), ...(fold === undefined ? {} : {fold})});
   const st = (s,attributes={})=>({state:String(s),attributes});
   const base = {
     state:['sensor.state', charging ? 'Charging' : 'Connected'],
@@ -756,9 +756,12 @@ const FULL_OVER = {
 const spoken = (html) => [html.replace(/<[^>]+>/g, ' '), ...[...html.matchAll(/(?:title|aria-label)="([^"]*)"/g)].map((m) => m[1])].join(' ');
 const ENGLISH = /\b(Session|Limits?|Counter|Voltage|Power|Current|Battery|Target|Safety|Stop|Stopped|Sure|Tap|Offline|Loading|Reset|Cancel|Disable|Adaptive|Slow|capped|cap|battery|go|all time|Total|Energy|Time|Cost|Initial|Capacity|Loss|Charging|Connected|On|Off|One|charge|Finish|est|details|Actual|Requested|Decrease|Increase|Set|Box|Plug|Ground|Leakage|Connection|Bad|reached|Hold)\b/;
 test('uk: the whole card speaks Ukrainian when Home Assistant does', () => {
-  const {html} = setupAll({sections: ALL, locale: 'uk', over: FULL_OVER});
+  const {html} = setupAll({sections: ALL, locale: 'uk', over: FULL_OVER, fold: false});
   const text = spoken(html());
   assert.doesNotMatch(text, ENGLISH, text.match(ENGLISH)?.[0]);
+  const folded = spoken(setupAll({sections: ALL, locale: 'uk', over: FULL_OVER}).html());
+  assert.doesNotMatch(folded, ENGLISH, folded.match(ENGLISH)?.[0]);
+  for (const word of ['Налаштування SOC', 'Розклади', 'Лічильники']) assert.ok(folded.includes(word), word);
   for (const word of ['Заряджання', 'Один заряд', 'Стоп', 'Батарея', 'Ціль', 'Напруга', 'Потужність', 'Струм',
     'Адаптивне заряджання', 'Сесія', 'Ліміти', 'Без лімітів', 'Енергія', 'Час', 'Вартість', 'Загалом', 'Лічильник A', 'Безпека']) {
     assert.ok(text.includes(word), word);
@@ -795,7 +798,7 @@ test('uk: editor follows Home Assistant language and offers the card language', 
   const html = editor._sectionsHtml();
   assert.match(html, /Повзунок струму/); assert.match(html, /Безпека/); assert.doesNotMatch(html, /Current slider|Safety/);
   const names = editor._schema().map((f) => f.name);
-  assert.equal(JSON.stringify(names), JSON.stringify(['device_id', 'mode', 'language']));
+  assert.equal(JSON.stringify(names), JSON.stringify(['device_id', 'mode', 'language', 'fold']));
   assert.equal(JSON.stringify(editor._schema()[2].selector.select.options.map((o) => o.label)), JSON.stringify(['Мова Home Assistant', 'Українська', 'English']));
   assert.equal(editor._labels().head, 'Розділи');
 });
@@ -964,7 +967,7 @@ test('waiting for a schedule says when the next one starts', () => {
 });
 test('hidden items drop out of their section and the row re-spreads', () => {
   const x = setupAll({sections:['actions','basic_info','history','limits','schedules','time','safety','session','advanced_controls'],
-    over:{...FULL_OVER}, hide:['actions.ocpp','basic_info.voltage','history.total','limits.cost','schedules.schedule_2','time.sync','safety.connection','session.time','advanced_controls.loss']}).html();
+    over:{...FULL_OVER}, fold:false, hide:['actions.ocpp','basic_info.voltage','history.total','limits.cost','schedules.schedule_2','time.sync','safety.connection','session.time','advanced_controls.loss']}).html();
   assert.doesNotMatch(x, /data-status-toggle="connect_to_ocpp"/);
   assert.match(x, /class="panel actions" style="grid-template-columns:repeat\(2,minmax\(0,1fr\)\)"/);
   assert.doesNotMatch(x, /data-more-info="voltage"/);
@@ -1079,4 +1082,157 @@ test('a failed entity lookup is asked again later instead of latching "no charge
   card.hass = hass; await new Promise((r)=>setImmediate(r));
   assert.equal(asks, 2);
   assert.deepEqual({...card._ids}, {state:'sensor.state'});
+});
+
+// ---- 2026-09-24 review: last session, fault guidance, limit state, why slower, schedule plan,
+// ---- time-zone fix, month energy, tariff, folding, Stop wording, haptics.
+const unplugged = {state:['sensor.state','Standby'], car_connected:['binary_sensor.car','off'],
+  last_session_energy:['sensor.lse',15.56,{unit_of_measurement:'kWh',reason:'unplugged',finished_at:'2026-09-20T15:21:42+03:00'}],
+  last_session_cost:['sensor.lsc',67.21,{unit_of_measurement:'UAH'}],
+  last_session_duration:['sensor.lsd',19895,{unit_of_measurement:'s'}]};
+test('unplugged, the Session row is the last session: its energy, cost, duration and when it ended',()=>{
+  const x=setupAll({sections:['session'],charging:false,over:unplugged});
+  assert.match(x.html(),/>Last session<small>[^<]+<\/small>/);
+  assert.match(x.html(),/data-more-info="last_session_energy"[^]*>15\.6<small>kWh[^]*data-more-info="last_session_cost"[^]*>67\.21<small>₴[^]*data-more-info="last_session_duration"[^]*>5h 31m</);
+  assert.doesNotMatch(x.html(),/data-more-info="session_energy"/);
+  const uk=setupAll({sections:['session'],charging:false,over:unplugged,language:'uk'});
+  assert.match(uk.html(),/>Остання сесія<small>/);
+  assert.match(uk.html(),/>5<small>год<\/small> 31<small>хв<\/small></);
+  // Plugged in, the charger's own session is shown as before.
+  const on=setupAll({sections:['session'],charging:false,over:{...unplugged,car_connected:['binary_sensor.car','on'],state:['sensor.state','Connected']}});
+  assert.match(on.html(),/>Session</);assert.match(on.html(),/data-more-info="session_energy"/);
+});
+test('while plugged in, the Session row carries the active tariff price',()=>{
+  const x=setupAll({sections:['session'],over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:'Rate 2'}]}});
+  assert.match(x.html(),/>Session<small[^>]*title="Rate 2"[^>]*>2\.16 ₴\/kWh<\/small>/);
+  const uk=setupAll({sections:['session'],language:'uk',over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:'Rate 2'}]}});
+  assert.match(uk.html(),/title="Тариф 2"/);
+});
+test('a fault names the reading behind it and what to do',()=>{
+  const hot=setupAll({sections:['status'],over:{state:['sensor.state','Error'],substate:['sensor.sub','Plug Overheat'],plug_temperature:['sensor.plug',86,{unit_of_measurement:'°C'}]}});
+  assert.match(hot.html(),/status-state fault">Plug Overheat<[^]*status-note">plug 86° · limit 80° · wait for it to cool</);
+  const low=setupAll({sections:['status'],over:{state:['sensor.state','Error'],substate:['sensor.sub','Low Voltage'],voltage:['sensor.voltage',181]}});
+  assert.match(low.html(),/status-note">mains 181 V · wait for the mains voltage to return to normal</);
+  const relay=setupAll({sections:['status'],language:'uk',over:{state:['sensor.state','Error'],substate:['sensor.sub','Relay Error']}});
+  assert.match(relay.html(),/status-note">перезапустіть станцію; якщо повторюється — зверніться до сервісу</);
+  // With the status row hidden, the alert strip carries the same detail.
+  const strip=setupAll({sections:['session'],over:{state:['sensor.state','Error'],substate:['sensor.sub','Plug Overheat'],plug_temperature:['sensor.plug',86,{unit_of_measurement:'°C'}]}});
+  assert.match(strip.html(),/alert-strip fault[^]*Plug Overheat · plug 86°/);
+});
+test('limits that are off read as off: dim values, a "none on" note, and no Disable all to press',()=>{
+  const off=setupAll({sections:['limits'],over:{limit_soc_enabled:['switch.socen','off']}});
+  assert.equal((off.html().match(/class="limit-tile inactive/g)||[]).length,4);
+  assert.match(off.html(),/class="limits-note">none on</);
+  assert.doesNotMatch(off.html(),/Disable all/);
+  const one=setupAll({sections:['limits'],over:{limit_soc_enabled:['switch.socen','off'],limit_energy_enabled:['switch.lee','on']}});
+  assert.match(one.html(),/Disable all/);assert.doesNotMatch(one.html(),/limits-note/);
+  assert.equal((one.html().match(/class="limit-tile inactive/g)||[]).length,3);
+  // Suspended keeps the button, so the limits can be switched back.
+  const sus=setupAll({sections:['limits'],over:{limit_soc_enabled:['switch.socen','off'],limit_disable_all:['switch.dis','on']}});
+  assert.match(sus.html(),/Disable all/);
+});
+test('charging slower than set: the status says why',()=>{
+  const cc={charging_current:['number.cc',12,{min:6,max:16,step:1,unit_of_measurement:'A'}]};
+  const adaptive=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',7]}});
+  assert.match(adaptive.html(),/status-note">7 of 12 A · adaptive mode</);
+  const car=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',9],adaptive_mode:['select.am','Off',{options:['Off','Voltage']}]}});
+  assert.match(car.html(),/status-note">9 of 12 A · the car takes less</);
+  const uk=setupAll({sections:['status'],language:'uk',over:{...cc,current:['sensor.cur',9],adaptive_mode:['select.am','Off',{options:['Off','Voltage']}]}});
+  assert.match(uk.html(),/status-note">9 з 12 A · авто приймає менше</);
+  // At the set current the note is the power instead.
+  const full=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',11.8],power:['sensor.power',2690]}});
+  assert.match(full.html(),/status-note">2\.7 kW/);
+});
+test('Basic mode or a hidden battery section: the charging status adds the finish time',()=>{
+  const cc={charging_current:['number.cc',16,{min:6,max:16,step:1}]};
+  const x=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',15.9]}});
+  assert.match(x.html(),/status-note">3\.6 kW · until \d{2}:\d{2}</);
+  const withBattery=setupAll({sections:['status','advanced_info'],over:{...cc,current:['sensor.cur',15.9]}});
+  assert.match(withBattery.html(),/status-note">3\.6 kW</);
+});
+const plan=(over={})=>({car_connected:['binary_sensor.car','on'],charging_current:['number.cc',12,{min:6,max:16,step:1}],
+  schedule_1_enabled:['switch.s1','on'],schedule_1_start:['time.s1a','23:00:00'],schedule_1_stop:['time.s1b','07:00:00'],...over});
+test('plugged in and waiting for a schedule, the battery section says how far that schedule gets it (energy, not time)',()=>{
+  const x=setupAll({sections:['advanced_info'],charging:false,over:plan()});
+  assert.match(x.html(),/class="soc-plan"[^]*Schedule 1: up to ≈21\.8<small>kWh<\/small> → ≈70<small>%/);
+  const enough=setupAll({sections:['advanced_info'],charging:false,over:plan({charging_current:['number.cc',16,{min:6,max:16,step:1}]})});
+  assert.match(enough.html(),/Schedule 1: enough for 75<small>%/);
+  // The schedule's own current limit wins over the slider.
+  const capped=setupAll({sections:['advanced_info'],charging:false,over:plan({schedule_1_current_limit:['number.s1c',10,{min:7,max:16,step:1}],schedule_1_current_limit_enabled:['switch.s1ce','on']})});
+  assert.match(capped.html(),/up to ≈18\.2<small>kWh/);
+  assert.doesNotMatch(setupAll({sections:['advanced_info'],over:plan()}).html(),/soc-plan/,'not while charging');
+  assert.doesNotMatch(setupAll({sections:['advanced_info'],charging:false,over:plan({car_connected:['binary_sensor.car','off']})}).html(),/soc-plan/,'not unplugged');
+  assert.doesNotMatch(setupAll({sections:['advanced_info'],charging:false,over:plan({schedule_1_enabled:['switch.s1','off']})}).html(),/soc-plan/,'no schedule on');
+  assert.match(setupAll({sections:['advanced_info'],charging:false,language:'uk',over:plan()}).html(),/Розклад 1: до ≈21\.8<small>kWh/);
+  // Only while the car waits: a fault or a finished charge has nothing to plan.
+  for (const state of ['Error','Charge Complete','Paused']) {
+    assert.doesNotMatch(setupAll({sections:['advanced_info'],charging:false,over:plan({state:['sensor.state',state]})}).html(),/soc-plan/,state);
+  }
+});
+test('a clock off by whole hours offers the time zone that fixes it instead of Sync',async()=>{
+  const tz={time_zone:['select.tz','+3',{options:['+1','+2','+3','+4']}],sync_time:['button.sync','unknown']};
+  const x=setupAll({sections:['time'],over:{...tz,time_drift:['sensor.drift',3600]}});
+  assert.match(x.html(),/data-zone-fix="\+2"[^]*>Set UTC\+2</);
+  assert.doesNotMatch(x.html(),/data-sync/);
+  x.card._onClick({target:{closest:(s)=>s==='[data-zone-fix]'?{dataset:{zoneFix:'+2'}}:null}});
+  await Promise.resolve();
+  assert.deepEqual(JSON.parse(JSON.stringify(x.calls.at(-1))),['select','select_option',{entity_id:'select.tz',option:'+2'}]);
+  const minutes=setupAll({sections:['time'],over:{...tz,time_drift:['sensor.drift',700]}});
+  assert.match(minutes.html(),/data-sync/);assert.doesNotMatch(minutes.html(),/data-zone-fix/);
+});
+test('Counters show this month and last month from the energy statistics',async()=>{
+  const x=setupAll({sections:['history'],over:{total_energy:['sensor.total',5290.16,{unit_of_measurement:'kWh'}]}});
+  const asked=[];
+  x.hass.callWS=async(msg)=>{asked.push(msg);return msg.calendar?.offset===-1?{change:240.4}:{change:182.33};};
+  await x.card._fetchMonth();
+  assert.deepEqual(asked.map((m)=>[m.type,m.statistic_id,m.calendar.period,m.calendar.offset??0,m.types.join()]),
+    [['recorder/statistic_during_period','sensor.total','month',0,'change'],['recorder/statistic_during_period','sensor.total','month',-1,'change']]);
+  assert.match(x.html(),/class="hist-month"[^]*182<small>kWh[^]*240<small>kWh/);
+  // Hidden like any other item.
+  const hidden=setupAll({sections:['history'],hide:['history.month'],over:{total_energy:['sensor.total',5290.16]}});
+  hidden.hass.callWS=async()=>({change:1});await hidden.card._fetchMonth();
+  assert.doesNotMatch(hidden.html(),/hist-month/);
+});
+test('a long card folds its settings into one-line summaries that open on tap; short cards and fold: false do not',()=>{
+  const all=['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
+  const x=setupAll({sections:all,over:plan({total_energy:['sensor.total',5290.16]})});
+  const h=x.html();
+  assert.doesNotMatch(h,/limits-grid/);assert.match(h,/data-fold="limits"/);
+  assert.match(h,/data-fold="advanced_controls"[^]*25<small>%<\/small> → 75<small>%/);
+  assert.match(h,/data-fold="schedules"[^]*>1 23:00→07:00</);
+  // The fold chevron ends the row, after the head's own controls.
+  assert.match(h,/data-select="adaptive_mode"[^]*<\/select><button class="fold-chev-btn" data-fold="adaptive"/);
+  assert.match(h,/data-fold="history"[^]*5 290<small>kWh/);
+  x.card._onClick({target:{closest:(s)=>s==='[data-fold]'?{dataset:{fold:'limits'}}:null}});
+  assert.match(x.html(),/limits-grid/);
+  x.card._onClick({target:{closest:(s)=>s==='[data-fold]'?{dataset:{fold:'limits'}}:null}});
+  assert.doesNotMatch(x.html(),/limits-grid/);
+  const short=setupAll({sections:['limits','history']});
+  assert.match(short.html(),/limits-grid/);assert.doesNotMatch(short.html(),/data-fold/);
+  const x2=setupAll({sections:all});x2.card.setConfig({sections:all,fold:false});x2.card._ids=x.card._ids;x2.card._resolved=true;x2.card.hass=x2.hass;
+  assert.match(x2.html(),/limits-grid/);assert.doesNotMatch(x2.html(),/data-fold/);
+});
+test('Stop says what a tap does when nothing is charging',()=>{
+  const idle=setupStatus({state:'Connected',sections:['actions']});
+  assert.match(idle.html(),/status-stop_charging idle[^]*>Tap to block</);
+  assert.match(setupStatus({state:'Charging',sections:['actions']}).html(),/>Tap to stop</);
+  assert.match(setupStatus({state:'Connected',sections:['actions'],stop:'on'}).html(),/>Tap to resume</);
+});
+test('taps give haptic feedback in the companion app',async()=>{
+  const registry={},events=[];
+  class HTMLElement extends EventTarget { attachShadow(){ return this.shadowRoot={innerHTML:'',addEventListener(){},querySelector(){return null;}}; } }
+  const sandbox={HTMLElement,CustomEvent,console,Date,setTimeout(){return 0;},clearTimeout(){},customElements:{define:(k,v)=>registry[k]=v},
+    window:{customCards:[],dispatchEvent:(e)=>events.push(`${e.type}:${e.detail}`)}};
+  vm.runInNewContext(source,sandbox);
+  const card=new registry['eveus-card']();card.setConfig({sections:['actions']});
+  const entities={state:'sensor.state',one_charge:'switch.one'};
+  card._ids=entities;card._resolved=true;
+  card.hass={states:{'sensor.state':{state:'Connected',attributes:{}},'switch.one':{state:'off',attributes:{}}},callWS:async()=>({entities}),callService:async()=>{}};
+  await card._statusToggle('one_charge');
+  assert.deepEqual(events,['haptic:light']);
+});
+test('the editor offers folding and the month item',()=>{
+  const {editor}=setupEditor({sections:['history']});
+  assert.ok(editor._schema().some((f)=>f.name==='fold'));
+  assert.match(source,/history: \['month', 'total', 'counter_a', 'counter_b'\]/);
 });

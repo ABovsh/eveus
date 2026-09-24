@@ -21,6 +21,27 @@ const SAFETY_CONN_QUALITY_BAD_PCT = 60;
 const CLOCK_DRIFT_THRESHOLD_S = 600;
 // How long a failed entity lookup waits before the card asks again.
 const RESOLVE_RETRY_MS = 10000;
+// Actual current this far below the set current is "slower than set", and the status says why.
+const SLOW_GAP_A = 1;
+// A card this long folds its settings sections into one-line summaries (the `fold` option overrides).
+const FOLD_MIN_SECTIONS = 6;
+const FOLDABLE = ['advanced_controls', 'adaptive', 'limits', 'schedules', 'history'];
+// Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
+const MONTH_REFRESH_MS = 15 * 60000;
+// Mirrors const.py CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS: a drift this close to whole hours is a wrong time zone.
+const TZ_MATCH_TOLERANCE_S = 300;
+// The Home Assistant app vibrates on these ("light", "selection", "warning", "success"); a browser ignores them.
+const haptic = (type) => {
+  try {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('haptic', {detail: type}));
+  } catch { /* no haptics here */ }
+};
+// "5h 31m" from seconds, the integration's own duration text.
+const minutesOf = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
+const hms = (seconds) => {
+  const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m`;
+};
 // The integration's Excellent/Good/Fair/Poor/Critical brackets (95/80/60/30) as MDI wifi icons.
 const connectionIcon = (pct) => {
   if (pct === null) return 'mdi:wifi-strength-outline';
@@ -29,6 +50,21 @@ const connectionIcon = (pct) => {
   if (pct > 60) return 'mdi:wifi-strength-2';
   if (pct > 30) return 'mdi:wifi-strength-1';
   return 'mdi:wifi-strength-alert-outline';
+};
+// A fault's reading (when one explains it) and what the user can do about it.
+const FAULTS = {
+  'Plug Overheat': {key: 'plug_temperature', unit: '°', limit: SAFETY_TEMP_HIGH_C, hint: 'cool'},
+  'Box Overheat': {key: 'box_temperature', unit: '°', limit: SAFETY_TEMP_HIGH_C, hint: 'cool'},
+  'Low Voltage': {key: 'voltage', unit: ' V', hint: 'voltage'},
+  'High Voltage': {key: 'voltage', unit: ' V', hint: 'voltage'},
+  'Current Leak High': {key: 'leakage_current', unit: ' mA', hint: 'leak'},
+  'Current Leak Low': {key: 'leakage_current', unit: ' mA', hint: 'leak'},
+  'GFCI Test Failure': {hint: 'leak'},
+  'Grounding Error': {hint: 'ground'},
+  'Overcurrent': {key: 'current', unit: ' A', hint: 'overcurrent'},
+  'Pilot Error': {hint: 'pilot'},
+  'Relay Error': {hint: 'service'}, 'Diode Error': {hint: 'service'},
+  'Interface Timeout': {hint: 'service'}, 'Software Failure': {hint: 'service'},
 };
 // The IEC 60417-5017 protective-earth symbol (stem + three descending bars) has no MDI
 // equivalent — checked live against this exact HA frontend: `mdi:ground`, `mdi:earth-ground`,
@@ -93,6 +129,21 @@ const I18N = {
     capCurrent: 'current limit', capEnergy: 'energy limit',
     zone: 'Time zone', drift: 'Clock drift: charger clock minus Home Assistant', sync: 'Sync', synced: 'Sent',
     syncTitle: 'Sync time: set the charger clock from Home Assistant', units: {s: 's', min: 'min', h: 'h'},
+    lastSession: 'Last session', rateNames: {'Primary Rate': 'Primary rate'},
+    faultLabels: {plug_temperature: 'plug', box_temperature: 'box', voltage: 'mains', leakage_current: 'leakage', current: 'current'},
+    faultLimit: 'limit',
+    faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
+      leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
+      overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
+    noneOn: 'none on', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
+    slowCar: 'the car takes less', until: 'until',
+    planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
+    planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
+    setZone: (z) => `Set ${z}`,
+    zoneFixTitle: 'The charger clock is off by whole hours, so its time zone is wrong. Tap to set the zone that matches Home Assistant',
+    socSettings: 'SOC settings', schedules: 'Schedules', counters: 'Counters',
+    tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
+    monthTitle: 'Energy this month and last month (Home Assistant statistics)',
     states: {},
   },
   uk: {
@@ -139,6 +190,21 @@ const I18N = {
     capCurrent: 'ліміт струму', capEnergy: 'ліміт енергії',
     zone: 'Часовий пояс', drift: 'Зміщення часу: годинник станції мінус Home Assistant', sync: 'Синхр.', synced: 'Надіслано',
     syncTitle: 'Синхронізувати час: виставити годинник станції за Home Assistant', units: {s: 'с', min: 'хв', h: 'год'},
+    lastSession: 'Остання сесія', rateNames: {'Primary Rate': 'Основний тариф', 'Rate 2': 'Тариф 2', 'Rate 3': 'Тариф 3'},
+    faultLabels: {plug_temperature: 'конектор', box_temperature: 'корпус', voltage: 'мережа', leakage_current: 'витік', current: 'струм'},
+    faultLimit: 'поріг',
+    faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
+      leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
+      overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
+    noneOn: 'усі вимкнено', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
+    slowCar: 'авто приймає менше', until: 'до',
+    planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
+    planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
+    setZone: (z) => `Обрати ${z}`,
+    zoneFixTitle: 'Годинник станції зміщено на цілі години, тож часовий пояс неправильний. Натисніть, щоб обрати пояс, що збігається з Home Assistant',
+    socSettings: 'Налаштування SOC', schedules: 'Розклади', counters: 'Лічильники',
+    tapBlock: 'Заблокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
+    monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
       'Startup': 'Запуск', 'System Test': 'Самотестування', 'Standby': 'Очікування', 'Connected': 'Підключено',
@@ -179,8 +245,8 @@ const LEGACY_LAYOUTS = {
 // What each section is made of. `hide: [section.item]` drops an item; the ids are part of saved configs.
 const ITEMS = {
   actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
-  basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time'], limits: ['soc', 'energy', 'time', 'cost'],
-  schedules: ['schedule_1', 'schedule_2'], time: ['zone', 'drift', 'sync'], history: ['total', 'counter_a', 'counter_b'],
+  basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time', 'rate'], limits: ['soc', 'energy', 'time', 'cost'],
+  schedules: ['schedule_1', 'schedule_2'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
   safety: ['box', 'plug', 'ground', 'leak', 'connection'],
 };
 const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
@@ -202,15 +268,16 @@ const EDITOR_I18N = {
       actions: {ocpp: 'OCPP', one_charge: 'One charge', stop: 'Stop'},
       advanced_controls: {initial: 'Initial', target: 'Target', capacity: 'Capacity', loss: 'Loss'},
       basic_info: {voltage: 'Voltage', power: 'Power', current: 'Current'},
-      session: {energy: 'Energy', cost: 'Cost', time: 'Time'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
+      session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
       schedules: {schedule_1: 'Schedule 1', schedule_2: 'Schedule 2'}, time: {zone: 'Time zone', drift: 'Drift', sync: 'Sync'},
-      history: {total: 'Total', counter_a: 'Counter A', counter_b: 'Counter B'},
+      history: {month: 'This month', total: 'Total', counter_a: 'Counter A', counter_b: 'Counter B'},
       safety: {box: 'Box', plug: 'Plug', ground: 'Ground', leak: 'Leakage', connection: 'Connection'},
     },
     itemsTitle: 'Show or hide items',
     head: 'Sections', reset: 'Default order', advOnly: 'advanced mode only', up: 'Move up', down: 'Move down',
     device: 'Charger', mode: 'Mode', modeHelp: 'Empty follows the integration', language: 'Language',
     advanced: 'Advanced', basic: 'Basic', languages: {auto: 'Home Assistant language', uk: 'Українська', en: 'English'},
+    fold: 'Fold settings', foldHelp: 'Long cards show settings as one-line summaries; tap one to open it',
   },
   uk: {
     names: {
@@ -225,15 +292,16 @@ const EDITOR_I18N = {
       actions: {ocpp: 'OCPP', one_charge: 'Один заряд', stop: 'Стоп'},
       advanced_controls: {initial: 'Початковий', target: 'Ціль', capacity: 'Ємність', loss: 'Втрати'},
       basic_info: {voltage: 'Напруга', power: 'Потужність', current: 'Струм'},
-      session: {energy: 'Енергія', cost: 'Вартість', time: 'Час'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
+      session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
       schedules: {schedule_1: 'Розклад 1', schedule_2: 'Розклад 2'}, time: {zone: 'Часовий пояс', drift: 'Зміщення', sync: 'Синхронізація'},
-      history: {total: 'Загалом', counter_a: 'Лічильник A', counter_b: 'Лічильник B'},
+      history: {month: 'Цей місяць', total: 'Загалом', counter_a: 'Лічильник A', counter_b: 'Лічильник B'},
       safety: {box: 'Корпус', plug: 'Конектор', ground: 'Заземлення', leak: 'Витік', connection: "Зв'язок"},
     },
     itemsTitle: 'Показати чи сховати елементи',
     head: 'Розділи', reset: 'Типовий порядок', advOnly: 'лише розширений режим', up: 'Вище', down: 'Нижче',
     device: 'Станція', mode: 'Режим', modeHelp: 'Порожнє поле — як в інтеграції', language: 'Мова картки',
     advanced: 'Розширений', basic: 'Базовий', languages: {auto: 'Мова Home Assistant', uk: 'Українська', en: 'English'},
+    fold: 'Згортати налаштування', foldHelp: 'Довга картка показує налаштування одним рядком; натисніть рядок, щоб розгорнути',
   },
 };
 const CURRENCY = {UAH: '₴', EUR: '€', USD: '$', GBP: '£', PLN: 'zł', CZK: 'Kč'};
@@ -265,6 +333,7 @@ class EveusCard extends HTMLElement {
     this._limitPending = {};
     this._limitTimers = {};
     this._editingLimit = null;
+    this._open = this._loadOpen();
     if (!this.shadowRoot) {
       this.attachShadow({mode: 'open'});
       this.shadowRoot.addEventListener('input', (e) => this._onSlide(e, false));
@@ -333,7 +402,11 @@ class EveusCard extends HTMLElement {
     const moreInfo = e.target.closest('[data-more-info]');
     const statusToggle = e.target.closest('[data-status-toggle]');
     const reset = e.target.closest('[data-reset],[data-reset-confirm],[data-reset-cancel]');
-    if (reset) {
+    const fold = e.target.closest('[data-fold]');
+    const zoneFix = e.target.closest('[data-zone-fix]');
+    if (fold) this._toggleFold(fold.dataset.fold);
+    else if (zoneFix) this._selectOption('time_zone', zoneFix.dataset.zoneFix);
+    else if (reset) {
       if (reset.dataset.reset) this._resetCounter(reset.dataset.reset);
       else if (reset.dataset.resetConfirm) this._resetCounter(reset.dataset.resetConfirm, true);
       else this._cancelReset();
@@ -365,6 +438,7 @@ class EveusCard extends HTMLElement {
     // until the page is reloaded.
     const retry = this._resolved && this._ids === null && Date.now() >= (this._retryAt || 0);
     if ((!this._resolved || retry) && !this._resolving) this._resolve();
+    if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) this._fetchMonth();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
       const entity = this._state(key);
       const actual = typeof pending === 'boolean' ? entity?.state === 'on' : typeof pending === 'string' ? entity?.state : currentNumber(entity);
@@ -505,6 +579,7 @@ class EveusCard extends HTMLElement {
     if (!this._canControl || !this._valid(this._draft)) { this._reset(); this._render(); return; }
     const value = this._draft, request = ++this._request;
     clearTimeout(this._timer);
+    haptic('light');
     this._sent = true;
     this._render();
     // Finite feedback even when HA never answers. Each response belongs to its
@@ -560,6 +635,7 @@ class EveusCard extends HTMLElement {
     const entity = this._state(key);
     if (!this._online || !entity || !['on', 'off'].includes(entity.state)) return;
     const value = !this._limitOn(key);
+    haptic('light');
     this._setLimitPending(key, value);
     this._render();
     try {
@@ -577,6 +653,7 @@ class EveusCard extends HTMLElement {
     const next = Math.max(attrs.min, Math.min(attrs.max, value + direction * attrs.step));
     if (next === value) return;
     const rounded = Number(next.toFixed(6));
+    haptic('selection');
     this._setLimitPending(key, rounded);
     this._render();
     try {
@@ -597,6 +674,7 @@ class EveusCard extends HTMLElement {
     const steps = Math.round((clamped - attrs.min) / attrs.step);
     const rounded = Number((attrs.min + steps * attrs.step).toFixed(6));
     if (rounded === this._limitValue(key)) { this._render(); return; }
+    haptic('selection');
     this._setLimitPending(key, rounded);
     this._render();
     try {
@@ -644,14 +722,15 @@ class EveusCard extends HTMLElement {
   _limitTile({key, toggle, label, fallbackUnit, readonly = false}) {
     const enabled = this._limitOn(toggle);
     const suspended = this._limitOn('limit_disable_all');
-    return `<div class="limit-tile ${enabled && !suspended ? 'active' : ''} ${enabled && suspended ? 'saved' : ''}">
+    const cls = ['limit-tile', enabled ? '' : 'inactive', enabled && !suspended ? 'active' : '', enabled && suspended ? 'saved' : ''].filter(Boolean).join(' ');
+    return `<div class="${cls}">
       <button class="limit-toggle" data-limit-toggle="${toggle}" role="switch" aria-checked="${enabled}" aria-label="${label}: ${this._t.limit}" ${!this._online ? 'disabled' : ''}>
         <span data-fit="10.5">${label}<small class="tile-unit">${this._unit(key, fallbackUnit)}</small></span><i></i>
       </button>
       ${this._numberValue({key, label, fallbackUnit, readonly, unit: false})}
     </div>`;
   }
-  _limitsSection() {
+  _limitsSection(fold = null) {
     const t = this._t;
     if (!this._ids?.limit_disable_all) return `<div class="message">${t.none.limits}</div>`;
     const suspended = this._limitOn('limit_disable_all');
@@ -669,13 +748,17 @@ class EveusCard extends HTMLElement {
         {key:'limit_cost',toggle:'limit_cost_enabled',label:t.cost,fallbackUnit:'UAH',item:'cost'},
       ].filter((x) => this._shows('limits', x.item)),
     );
-    return `<section class="limits ${this._online ? '' : 'off'}" aria-label="${t.aria.limits}">
-      <div class="limits-head"><span><ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b></span>
-        <button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
+    // With nothing on, "Disable all" has nothing to disable; suspended, it is how the limits come back.
+    const anyOn = items.some((item) => this._limitOn(item.toggle));
+    const note = !anyOn && !suspended ? `<small class="limits-note">${t.noneOn}</small>` : '';
+    const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
+    const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
+    const disable = anyOn || suspended ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
-        </button>
-      </div>
-      <div class="limits-grid ${GRID[items.length] || 'four'} ${suspended ? 'suspended' : ''}">${items.map((item) => this._limitTile(item)).join('')}</div>
+        </button>` : '';
+    const grid = !fold || fold.open ? `<div class="limits-grid ${GRID[items.length] || 'four'} ${suspended ? 'suspended' : ''}">${items.map((item) => this._limitTile(item)).join('')}</div>` : '';
+    return `<section class="${['limits', this._online ? '' : 'off', fold && !fold.open ? 'folded' : ''].filter(Boolean).join(' ')}" aria-label="${t.aria.limits}">
+      <div class="limits-head">${head}${disable}${fold ? this._foldChev('limits', fold.open) : ''}</div>${grid}
     </section>`;
   }
   // Shared by the section markup and the card-wide alert tint so the two can never disagree
@@ -769,6 +852,15 @@ class EveusCard extends HTMLElement {
     const t = this._t;
     if (!this._ids?.session_energy) return `<div class="message">${t.none.session}</div>`;
     const on = this._online;
+    // Unplugged, the charger still shows the last charge as "the session"; say which one it was.
+    const last = on && this._unplugged ? this._lastSession() : null;
+    if (last) return last;
+    const rateEntity = this._ids.active_rate_cost && this._shows('session', 'rate') ? this._state('active_rate_cost') : null;
+    const rate = on ? currentNumber(rateEntity) : null;
+    const rateName = rateEntity?.attributes?.rate_name;
+    const rateUnit = String(rateEntity?.attributes?.unit_of_measurement || '').replace('UAH', '₴');
+    const label = rate === null ? t.session
+      : `${t.session}<small class="session-rate" title="${t.rateNames[rateName] ?? rateName ?? ''}">${rate.toFixed(2)} ${rateUnit}</small>`;
     const e = on ? currentNumber(this._state('session_energy')) : null;
     const c = on ? currentNumber(this._state('session_cost')) : null;
     const raw = on ? this._state('session_time')?.state : null;
@@ -780,7 +872,7 @@ class EveusCard extends HTMLElement {
       this._ids.session_time && shows('time') ? this._infoItem('session_time', 'mdi:timer-outline', time ?? '—', '', t.sessionTime, true) : '',
     ].join('');
     return `<section class="${['sl', 'session', on ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.session}">
-      <ha-icon icon="mdi:counter"></ha-icon><span class="label">${t.session}</span><div class="info-row session-row">${items}</div>
+      <ha-icon icon="mdi:counter"></ha-icon><span class="label session-label">${label}</span><div class="info-row session-row">${items}</div>
     </section>`;
   }
   // The 4.24.0 card's battery pair: where the charge is (start → now) and how far to go
@@ -831,6 +923,7 @@ class EveusCard extends HTMLElement {
         </button>
       </div>
       <div class="soc-bar" aria-hidden="true"><span class="soc-base" style="width:${base}%"></span><span class="soc-fill" style="left:${base}%;width:${fill}%"></span>${target === null ? '' : `<span class="soc-target" style="left:${clamp(target)}%"></span>`}</div>
+      ${this._planLine()}
     </section>`;
   }
   // The charger's T/A/B counters. Resetting A or B is irreversible, so it always asks first.
@@ -841,7 +934,7 @@ class EveusCard extends HTMLElement {
       {key: 'counter_a_energy', item: 'counter_a', label: t.counterA, cost: 'counter_a_cost', reset: 'reset_counter_a'},
       {key: 'counter_b_energy', item: 'counter_b', label: t.counterB, cost: 'counter_b_cost', reset: 'reset_counter_b'},
     ].filter((item) => this._ids?.[item.key] && this._shows('history', item.item));
-    if (!items.length) return `<div class="message">${t.none.history}</div>`;
+    if (!items.length && !this._monthLine()) return `<div class="message">${t.none.history}</div>`;
     const value = (key, cost) => {
       const e = this._online ? currentNumber(this._state(key)) : null;
       const c = cost && this._online ? currentNumber(this._state(cost)) : null;
@@ -859,6 +952,7 @@ class EveusCard extends HTMLElement {
         </div>
       </section>`;
     }
+    const month = this._monthLine();
     const tiles = items.map(({key, label, cost, reset, sub}) => {
       const {e, money: m} = value(key, cost);
       const resetBtn = reset && this._ids[reset]
@@ -872,7 +966,7 @@ class EveusCard extends HTMLElement {
       </div>`;
     }).join('');
     return `<section class="${['panel history', this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.history}">
-      <div class="tiles ${GRID[items.length]}">${tiles}</div>
+      ${month}<div class="tiles ${GRID[items.length]}">${tiles}</div>
     </section>`;
   }
   // First call asks (8 s to answer); `confirmed` presses the integration's own reset button.
@@ -887,6 +981,7 @@ class EveusCard extends HTMLElement {
       return;
     }
     if (this._resetAsk !== key) return;
+    haptic('warning');
     clearTimeout(this._resetTimer);
     this._resetAsk = null;
     this._render();
@@ -933,6 +1028,7 @@ class EveusCard extends HTMLElement {
     const entity = this._state(key);
     const options = entity?.attributes?.options;
     if (!this._online || !Array.isArray(options) || !options.includes(option) || option === (this._limitPending[key] ?? entity.state)) { this._render(); return; }
+    haptic('selection');
     this._setLimitPending(key, option);
     this._render();
     try {
@@ -943,7 +1039,7 @@ class EveusCard extends HTMLElement {
       this._render();
     }
   }
-  _adaptiveSection() {
+  _adaptiveSection(fold = null) {
     const entity = this._state('adaptive_mode');
     const t = this._t;
     if (!entity) return `<div class="message">${t.none.adaptive}</div>`;
@@ -959,8 +1055,9 @@ class EveusCard extends HTMLElement {
     const cap = known && mode !== 'Off' && this._ids.adaptive_current_limit
       ? `<button class="adaptive-cap" data-more-info="adaptive_current_limit" title="${t.capTitle} — ${t.details}"><span>${threshold ? t.cap : t.capped}</span><b>${limit === null ? '—' : `${amps(limit)}<small>A</small>`}</b></button>` : '';
     return `<section class="${['panel adaptive', this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.adaptive}">
-      <div class="panel-head"><span class="panel-title"><ha-icon icon="mdi:auto-mode"></ha-icon><b data-fit="14">${t.adaptive}</b></span>${select}</div>
-      ${threshold || cap ? `<div class="adaptive-row">${threshold}${cap}</div>` : ''}
+      <div class="panel-head">${fold ? this._foldTitle('adaptive', `<ha-icon icon="mdi:auto-mode"></ha-icon><b data-fit="14">${t.adaptive}</b>`, fold.open, 'panel-title')
+        : `<span class="panel-title"><ha-icon icon="mdi:auto-mode"></ha-icon><b data-fit="14">${t.adaptive}</b></span>`}${select}${fold ? this._foldChev('adaptive', fold.open) : ''}</div>
+      ${(threshold || cap) && (!fold || fold.open) ? `<div class="adaptive-row">${threshold}${cap}</div>` : ''}
     </section>`;
   }
   // ---- Schedules: one row each — on/off, start → stop, current cap, energy cap. ----
@@ -997,6 +1094,7 @@ class EveusCard extends HTMLElement {
     const value = typeof raw === 'string' && /^\d{2}:\d{2}/.test(raw) ? raw.slice(0, 5) : null;
     if (!key || !this._online || value === null || value === this._timeShown(key)) { this._render(); return; }
     const time = `${value}:00`;
+    haptic('selection');
     this._setLimitPending(key, time);
     this._render();
     try {
@@ -1055,12 +1153,17 @@ class EveusCard extends HTMLElement {
   }
   // The start of the enabled schedule that comes next, for "Waiting for Schedule · from 23:00".
   _nextScheduleStart() {
+    const n = this._nextSchedule();
+    return n ? this._timeShown(`schedule_${n}_start`) : null;
+  }
+  // The enabled schedule whose start comes next on the charger's clock.
+  _nextSchedule() {
     const clock = this._scheduleHM();
     if (clock === null) return null;
-    const mins = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5)), now = mins(clock);
-    const starts = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._limitOn(`schedule_${n}_enabled`))
-      .map((n) => this._timeShown(`schedule_${n}_start`)).filter(Boolean);
-    return starts.sort((a, b) => (mins(a) - now + 1440) % 1440 - (mins(b) - now + 1440) % 1440)[0] ?? null;
+    const now = minutesOf(clock);
+    const next = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._limitOn(`schedule_${n}_enabled`) && this._timeShown(`schedule_${n}_start`))
+      .sort((a, b) => (minutesOf(this._timeShown(`schedule_${a}_start`)) - now + 1440) % 1440 - (minutesOf(this._timeShown(`schedule_${b}_start`)) - now + 1440) % 1440);
+    return next[0] ?? null;
   }
   _schedulesSection() {
     const t = this._t;
@@ -1080,6 +1183,7 @@ class EveusCard extends HTMLElement {
     const entity = this._state('sync_time');
     if (!this._online || !entity || entity.state === 'unavailable') return;
     this._syncDone = true;
+    haptic('success');
     clearTimeout(this._syncTimer);
     this._syncTimer = setTimeout(() => { this._syncDone = false; this._render(); }, 3000);
     this._render();
@@ -1103,7 +1207,10 @@ class EveusCard extends HTMLElement {
     const driftCls = drift === null ? '' : Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S ? 'bad' : 'good';
     const driftEl = this._ids.time_drift && this._shows('time', 'drift') ? `<button class="time-item" data-more-info="time_drift" title="${t.drift} — ${t.details}"><ha-icon icon="mdi:clock-alert-outline"></ha-icon><span class="${['time-drift', driftCls].filter(Boolean).join(' ')}">${this._driftText(drift)}</span></button>` : '';
     const syncOk = on && this._state('sync_time') && this._state('sync_time').state !== 'unavailable';
-    const syncEl = this._ids.sync_time && this._shows('time', 'sync') ? `<button class="${['time-sync', this._syncDone ? 'done' : ''].filter(Boolean).join(' ')}" data-sync title="${t.syncTitle}"${syncOk ? '' : ' disabled'}><ha-icon icon="${this._syncDone ? 'mdi:check' : 'mdi:clock-check-outline'}"></ha-icon><span>${this._syncDone ? t.synced : t.sync}</span></button>` : '';
+    const fix = known ? this._zoneFix(zone, drift, options) : null;
+    const syncEl = fix && this._shows('time', 'zone')
+      ? `<button class="time-sync time-fix" data-zone-fix="${fix}" title="${t.zoneFixTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><span>${t.setZone(fix === '0' ? 'UTC' : `UTC${fix}`)}</span></button>`
+      : this._ids.sync_time && this._shows('time', 'sync') ? `<button class="${['time-sync', this._syncDone ? 'done' : ''].filter(Boolean).join(' ')}" data-sync title="${t.syncTitle}"${syncOk ? '' : ' disabled'}><ha-icon icon="${this._syncDone ? 'mdi:check' : 'mdi:clock-check-outline'}"></ha-icon><span>${this._syncDone ? t.synced : t.sync}</span></button>` : '';
     return `<section class="${['sl time', driftCls === 'bad' ? 'time-bad' : '', on ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.time}">
       <ha-icon icon="mdi:clock-outline"></ha-icon><span class="label time-label">${t.time}</span>
       <div class="time-row">${zoneEl}${driftEl}${syncEl}</div>
@@ -1129,7 +1236,8 @@ class EveusCard extends HTMLElement {
     if (!this._online) return {kind: 'offline', icon: 'mdi:clock-alert-outline', text: [this._t.offline, this._since()].filter(Boolean).join(' · ')};
     if (this._state('state')?.state !== 'Error') return null;
     const sub = this._state('substate');
-    return {kind: 'fault', icon: 'mdi:alert', text: [this._t.error, sub && !['unknown', 'unavailable'].includes(sub.state) ? this._stateLabel(sub) : ''].filter(Boolean).join(' · ')};
+    const known = sub && !['unknown', 'unavailable'].includes(sub.state);
+    return {kind: 'fault', icon: 'mdi:alert', text: [this._t.error, known ? this._stateLabel(sub) : '', known ? this._faultDetail(sub.state) : ''].filter(Boolean).join(' · ')};
   }
   _alertStrip() {
     if (this._config.sections.includes('status')) return '';
@@ -1142,8 +1250,8 @@ class EveusCard extends HTMLElement {
     if (raw === 'Error') {
       const sub = this._state('substate');
       // The fault itself is the news; "Error" alone would push it off a narrow row.
-      const fault = sub && !['unknown', 'unavailable'].includes(sub.state) ? this._stateLabel(sub) : '';
-      return {cls: 'fault', icon: 'mdi:alert', text: fault || this._stateLabel(entity), note: ''};
+      const known = sub && !['unknown', 'unavailable'].includes(sub.state);
+      return {cls: 'fault', icon: 'mdi:alert', text: known ? this._stateLabel(sub) : this._stateLabel(entity), note: known ? this._faultDetail(sub.state) : ''};
     }
     const charging = raw === 'Charging', stopped = !charging && this._limitOn('stop_charging');
     const text = stopped ? this._t.stopped : this._stateLabel(entity);
@@ -1152,7 +1260,8 @@ class EveusCard extends HTMLElement {
     const reasonText = !charging && reason && !['unknown', 'unavailable', 'Charging'].includes(reason.state)
       ? [this._stateLabel(reason), next ? `${this._t.from} ${next}` : ''].filter(Boolean).join(' · ') : '';
     // "Stopped · Stopped by User" and "Charge Complete · Charge Complete" say nothing twice.
-    const note = reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
+    const note = charging ? this._chargingNote()
+      : reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
     return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, note};
   }
   // Stopping a running charge asks once, in the button itself; everything else is one tap.
@@ -1160,6 +1269,7 @@ class EveusCard extends HTMLElement {
     const entity = this._state(key);
     if (!this._online || !entity || !['on', 'off'].includes(entity.state)) return;
     if (key === 'stop_charging' && !this._limitOn(key) && this._charging && this._statusAsk !== key) {
+      haptic('warning');
       this._statusAsk = key;
       clearTimeout(this._statusTimer);
       this._statusTimer = setTimeout(() => { this._statusAsk = null; this._render(); }, 4000);
@@ -1190,11 +1300,12 @@ class EveusCard extends HTMLElement {
       const on = this._limitOn(b.key), ask = this._statusAsk === b.key;
       const known = ['on', 'off'].includes(this._state(b.key)?.state);
       const stop = b.key === 'stop_charging';
+      const idle = stop && !on && !ask && !this._charging;
       const label = ask ? t.sure : stop && on ? t.stopped : t[b.label];
-      const state = ask ? t.tapAgain : stop ? (on ? t.tapResume : t.tapStop) : on ? t.on : t.off;
+      const state = ask ? t.tapAgain : stop ? (on ? t.tapResume : idle ? t.tapBlock : t.tapStop) : on ? t.on : t.off;
       const icon = stop && on && !ask ? '<ha-icon icon="mdi:play-circle"></ha-icon>' : b.icon;
-      const cls = ['act-btn', `status-${b.key}`, on ? 'on' : '', ask ? 'asking' : ''].filter(Boolean).join(' ');
-      return `<button class="${cls}" data-status-toggle="${b.key}" role="switch" aria-checked="${on}" title="${t[b.title]}" ${!this._online || !known ? 'disabled' : ''}><span class="act-icon">${icon}</span><span class="act-text"><span class="act-label" data-fit="14">${label}</span><span class="act-state" data-fit="11.5">${state}</span></span></button>`;
+      const cls = ['act-btn', `status-${b.key}`, on ? 'on' : '', ask ? 'asking' : '', idle ? 'idle' : ''].filter(Boolean).join(' ');
+      return `<button class="${cls}" data-status-toggle="${b.key}" role="switch" aria-checked="${on}" title="${idle ? t.blockTitle : t[b.title]}" ${!this._online || !known ? 'disabled' : ''}><span class="act-icon">${icon}</span><span class="act-text"><span class="act-label" data-fit="14">${label}</span><span class="act-state" data-fit="11.5">${state}</span></span></button>`;
     }).join('')}</section>`;
   }
   _currentSection() {
@@ -1214,6 +1325,210 @@ class EveusCard extends HTMLElement {
       <div class="readout">${output}</div>
       </section>${this._error ? `<div class="error" role="alert">${t.setFailed}</div>` : ''}`;
   }
+  // ---- Folding: a long card shows its settings as one-line summaries that open on tap. ----
+  get _folding() {
+    const f = this._config.fold;
+    return f === undefined ? this._config.sections.length >= FOLD_MIN_SECTIONS : !!f;
+  }
+  // Which sections this viewer opened, kept in this browser only.
+  get _openKey() { return `eveus-card-open:${this._config?.device_id || ''}`; }
+  _loadOpen() {
+    try { return new Set(JSON.parse(localStorage.getItem(this._openKey) || '[]')); } catch { return new Set(); }
+  }
+  _toggleFold(section) {
+    if (!FOLDABLE.includes(section)) return;
+    if (!this._open.delete(section)) this._open.add(section);
+    try { localStorage.setItem(this._openKey, JSON.stringify([...this._open])); } catch { /* this browser keeps no state */ }
+    haptic('selection');
+    this._render();
+  }
+  _section(section) {
+    if (!this._folding || !FOLDABLE.includes(section)) return this[`_${section}Section`]();
+    const open = this._open.has(section) || (section === 'history' && !!this._resetAsk);
+    // Limits and Adaptive already have a head row: it is the fold's head too.
+    if (section === 'limits' || section === 'adaptive') return this[`_${section}Section`]({open});
+    const html = this[`_${section}Section`]();
+    if (!html.trimStart().startsWith('<section')) return html;
+    const {label, icon, cls, sum} = this._foldInfo(section);
+    if (open) {
+      return html.replace(/<section[^>]*>/, (tag) => `${tag}<button class="fold-head" data-fold="${section}" aria-expanded="true"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><ha-icon class="fold-chev" icon="mdi:chevron-up"></ha-icon></button>`);
+    }
+    return `<section class="${['sl fold', `fold-${section}`, cls, this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${label}">
+      <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><span class="fold-sum">${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
+    </section>`;
+  }
+  _foldTitle(section, inner, open, cls = '') {
+    return `<button class="${['fold-title', cls].filter(Boolean).join(' ')}" data-fold="${section}" aria-expanded="${open}">${inner}</button>`;
+  }
+  // The chevron ends the head row, after the head's own controls (Disable all, the mode list).
+  _foldChev(section, open) {
+    return `<button class="fold-chev-btn" data-fold="${section}" aria-expanded="${open}"><ha-icon class="fold-chev" icon="mdi:chevron-${open ? 'up' : 'down'}"></ha-icon></button>`;
+  }
+  // What a folded section says in its one line.
+  _foldInfo(section) {
+    const t = this._t, sep = '<i class="info-sep">·</i>';
+    const pc = (key) => { const v = currentNumber(this._state(key)); return v === null ? '—' : `${Number(v.toFixed(1))}<small>%</small>`; };
+    if (section === 'advanced_controls') {
+      const cap = currentNumber(this._state('battery_capacity'));
+      return {label: t.socSettings, icon: 'mdi:tune-variant', cls: `soc-${this._socColor}`,
+        sum: `${pc('initial_soc')} → ${pc('target_soc')}${sep}${cap === null ? '—' : Number(cap.toFixed(1))}<small>kWh</small>${sep}${t.loss} ${pc('soc_correction')}`};
+    }
+    if (section === 'schedules') {
+      const rows = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._shows('schedules', `schedule_${n}`)).map((n) => {
+        const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
+        return this._limitOn(`schedule_${n}_enabled`) && start && stop ? `${n} ${start}→${stop}` : `${n} ${t.off}`;
+      });
+      return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sum: rows.join(sep)};
+    }
+    const total = this._online ? currentNumber(this._state('total_energy')) : null;
+    const month = this._shows('history', 'month') && this._month?.cur != null ? `${this._monthNames()[0]} ${this._kwh(this._month.cur)}` : '';
+    return {label: t.counters, icon: 'mdi:counter', cls: '', sum: [month, total === null ? '' : `${t.total} ${this._kwh(total)}`].filter(Boolean).join(sep)};
+  }
+  _kwh(v) { return `${v < 100 ? Number(v.toFixed(1)) : this._int(v)}<small>kWh</small>`; }
+  // ---- Session: unplugged, the charger still reports the last charge as "the session". ----
+  // The car_connected sensor when it exists, otherwise Standby (the state with no car).
+  get _unplugged() {
+    const car = this._state('car_connected')?.state;
+    if (car === 'on' || car === 'off') return car === 'off';
+    return this._state('state')?.state === 'Standby';
+  }
+  _lastSession() {
+    const t = this._t;
+    const e = this._ids.last_session_energy ? currentNumber(this._state('last_session_energy')) : null;
+    if (e === null) return null;
+    const c = currentNumber(this._state('last_session_cost')), s = currentNumber(this._state('last_session_duration'));
+    const at = this._state('last_session_energy')?.attributes?.finished_at;
+    const when = at && !Number.isNaN(Date.parse(at)) ? this._when(new Date(at)) : '';
+    const shows = (item) => this._shows('session', item);
+    const items = [
+      shows('energy') ? this._infoItem('last_session_energy', 'mdi:lightning-bolt', `${Number(e.toFixed(e < 100 ? 1 : 0))}<small>kWh</small>`, '', t.lastSession, true) : '',
+      this._ids.last_session_cost && shows('cost') ? this._infoItem('last_session_cost', 'mdi:cash', c === null ? '—' : money(c < 1000 ? c.toFixed(2) : this._int(c), this._state('last_session_cost')?.attributes?.unit_of_measurement), '', t.lastSession, true) : '',
+      this._ids.last_session_duration && shows('time') ? this._infoItem('last_session_duration', 'mdi:timer-outline', s === null ? '—' : t.sessionDuration(hms(s)), '', t.lastSession, true) : '',
+    ].join('');
+    return `<section class="sl session last" aria-label="${t.lastSession}">
+      <ha-icon icon="mdi:history"></ha-icon><span class="label session-label">${t.lastSession}${when ? `<small>${when}</small>` : ''}</span><div class="info-row session-row">${items}</div>
+    </section>`;
+  }
+  // "Sun 15:21" within the week, "20 Sep" before it, in Home Assistant's zone and the card's language.
+  _when(date) {
+    const tz = this._hass?.config?.time_zone, days = (Date.now() - date.getTime()) / 86400000, recent = days >= 0 && days < 6;
+    try {
+      const d = new Intl.DateTimeFormat(langOf(this._config, this._hass) === 'uk' ? 'uk' : 'en-GB', {...(recent ? {weekday: 'short'} : {day: 'numeric', month: 'short'}), ...(tz ? {timeZone: tz} : {})}).format(date);
+      return recent ? `${d} ${this._hm(date)}` : d;
+    } catch {
+      return this._hm(date);
+    }
+  }
+  // ---- Status while charging: why it is slower than set, or the power (and finish when nothing else shows it). ----
+  _chargingNote() {
+    const t = this._t;
+    const actual = currentNumber(this._state('current')), set = currentNumber(this._state('charging_current'));
+    if (actual !== null && set !== null && set - actual >= SLOW_GAP_A) return `${t.of(amps(actual), amps(set))} · ${this._slowReason(actual, set)}`;
+    const w = currentNumber(this._state('power'));
+    const finish = this._advanced && this._config.sections.includes('advanced_info') ? null : this._finishHM();
+    return [w === null ? '' : `${(w / 1000).toFixed(1)} kW`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
+  }
+  _slowReason(actual, set) {
+    const t = this._t, mode = this._state('adaptive_mode')?.state;
+    const holds = (limit) => limit !== null && limit <= set - SLOW_GAP_A && actual <= limit + 0.5;
+    if (mode && !['Off', 'unknown', 'unavailable'].includes(mode) && holds(currentNumber(this._state('adaptive_current_limit')))) return t.slowAdaptive;
+    for (const n of [1, 2]) {
+      if (this._scheduleNow(n) && this._limitOn(`schedule_${n}_current_limit_enabled`) && holds(currentNumber(this._state(`schedule_${n}_current_limit`)))) return t.slowSchedule(n);
+    }
+    return t.slowCar;
+  }
+  _finishHM() {
+    if (!this._charging || !duration(this._state('time_to_target_soc')?.state)) return null;
+    const raw = this._state('charging_finish_time')?.state;
+    return raw && !Number.isNaN(Date.parse(raw)) ? this._hm(new Date(raw)) : null;
+  }
+  // A fault's own reading and what to do, e.g. "plug 86° · limit 80° · wait for it to cool".
+  _faultDetail(code) {
+    const f = FAULTS[code];
+    if (!f) return '';
+    const t = this._t, v = f.key && this._ids?.[f.key] ? currentNumber(this._state(f.key)) : null;
+    const reading = v === null ? '' : `${t.faultLabels[f.key]} ${f.key === 'current' ? amps(v) : Math.round(v)}${f.unit}${f.limit ? ` · ${t.faultLimit} ${f.limit}${f.unit}` : ''}`;
+    return [reading, t.faultHints[f.hint]].filter(Boolean).join(' · ');
+  }
+  // ---- Battery: plugged in and waiting, how far the next schedule gets it — energy and percent, never a time. ----
+  _plan() {
+    // Only while the car waits for its charge: a fault, a pause or a finished charge has nothing to plan.
+    if (!this._advanced || !this._online || this._unplugged || this._state('state')?.state !== 'Connected') return null;
+    const need = currentNumber(this._state('energy_to_target_soc')), soc = currentNumber(this._state('soc_percent'));
+    const target = currentNumber(this._state('target_soc')), capacity = currentNumber(this._state('battery_capacity'));
+    const loss = currentNumber(this._state('soc_correction')) ?? 0;
+    if ([need, soc, target, capacity].includes(null) || need <= 0 || soc >= target || capacity <= 0) return null;
+    const n = this._nextSchedule();
+    const start = n && this._timeShown(`schedule_${n}_start`), stop = n && this._timeShown(`schedule_${n}_stop`);
+    let current = currentNumber(this._state('charging_current'));
+    if (!start || !stop || current === null) return null;
+    const mins = (minutesOf(stop) - minutesOf(start) + 1440) % 1440;
+    if (!mins) return null;
+    const capA = currentNumber(this._state(`schedule_${n}_current_limit`));
+    if (capA !== null && this._limitOn(`schedule_${n}_current_limit_enabled`)) current = Math.min(current, capA);
+    const volts = currentNumber(this._state('voltage')) ?? 230, phases = this._ids.current_phase_3 ? 3 : 1;
+    let kwh = current * volts * phases / 1000 * mins / 60;
+    const capE = currentNumber(this._state(`schedule_${n}_energy_limit`));
+    if (capE !== null && capE > 0 && this._limitOn(`schedule_${n}_energy_limit_enabled`)) kwh = Math.min(kwh, capE);
+    return kwh >= need ? {n, target} : {n, kwh, soc: Math.min(100, soc + kwh * (1 - loss / 100) / capacity * 100)};
+  }
+  _planLine() {
+    const p = this._plan();
+    if (!p) return '';
+    const t = this._t, pc = (v) => `${Math.round(v)}<small>%</small>`;
+    const text = p.kwh === undefined ? `${t.planEnough(p.n)} ${pc(p.target)}`
+      : `${t.planUpTo(p.n)} ≈${Number(p.kwh.toFixed(1))}<small>kWh</small> → ≈${pc(p.soc)}`;
+    return `<div class="soc-plan" title="${t.planTitle}"><ha-icon icon="mdi:calendar-clock"></ha-icon><span>${text}</span></div>`;
+  }
+  // ---- Clock: whole hours of drift mean a wrong time zone (the Repairs notice says the same); Sync only sets UTC. ----
+  _zoneFix(zone, drift, options) {
+    if (drift === null) return null;
+    const hours = Math.round(drift / 3600);
+    if (!hours || Math.abs(drift - hours * 3600) > TZ_MATCH_TOLERANCE_S) return null;
+    const n = Number(zone) - hours;
+    const option = n === 0 ? '0' : n > 0 ? `+${n}` : String(n);
+    return Number.isFinite(n) && options.includes(option) ? option : null;
+  }
+  // ---- Counters: this month's and last month's energy from Home Assistant's long-term statistics. ----
+  get _wantsMonth() { return !!this._ids?.total_energy && this._config.sections.includes('history') && this._shows('history', 'month'); }
+  async _fetchMonth() {
+    const id = this._ids?.total_energy;
+    if (!id || typeof this._hass?.callWS !== 'function') return;
+    this._monthAt = Date.now();
+    this._monthBusy = true;
+    const ask = (offset) => this._hass.callWS({type: 'recorder/statistic_during_period', statistic_id: id,
+      calendar: offset ? {period: 'month', offset} : {period: 'month'}, types: ['change']});
+    const change = (r) => Number.isFinite(r?.change) ? r.change : null;
+    try {
+      const [cur, prev] = await Promise.all([ask(0), ask(-1)]);
+      this._month = {cur: change(cur), prev: change(prev)};
+    } catch {
+      this._month = null;
+    }
+    this._monthBusy = false;
+    this._lastSignature = null;
+    if (this._hass) this.hass = this._hass;
+  }
+  // This month's and last month's names, in Home Assistant's zone and the card's language.
+  _monthNames() {
+    const tz = this._hass?.config?.time_zone;
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {year: 'numeric', month: 'numeric', ...(tz ? {timeZone: tz} : {})}).formatToParts(new Date());
+      const y = Number(parts.find((p) => p.type === 'year').value), m = Number(parts.find((p) => p.type === 'month').value);
+      const locale = langOf(this._config, this._hass) === 'uk' ? 'uk' : 'en-GB';
+      const name = (yy, mm) => new Intl.DateTimeFormat(locale, {month: 'long', timeZone: 'UTC'}).format(new Date(Date.UTC(yy, mm - 1, 15)));
+      const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+      return [cap(name(y, m)), cap(name(m === 1 ? y - 1 : y, m === 1 ? 12 : m - 1))];
+    } catch {
+      return ['', ''];
+    }
+  }
+  _monthLine() {
+    const m = this._month;
+    if (!this._ids?.total_energy || !this._shows('history', 'month') || m?.cur == null) return '';
+    const t = this._t, [cur, prev] = this._monthNames();
+    return `<button class="hist-month" data-more-info="total_energy" title="${t.monthTitle}"><ha-icon icon="mdi:calendar-month"></ha-icon><span class="hist-month-cur">${cur} <b>${this._kwh(m.cur)}</b></span>${m.prev == null ? '' : `<span class="hist-month-prev">${prev} ${this._kwh(m.prev)}</span>`}</button>`;
+  }
   _render() {
     if (!this.shadowRoot || !this._hass) return;
     const focus = this.shadowRoot.activeElement;
@@ -1223,7 +1538,7 @@ class EveusCard extends HTMLElement {
       : focus?.hasAttribute('data-confirm') ? '[data-confirm]'
       : null;
     const body = !this._resolved ? `<div class="message">${this._t.loading}</div>`
-      : this._alertStrip() + this._config.sections.map((section) => this[`_${section}Section`]()).join('');
+      : this._alertStrip() + this._config.sections.map((section) => this._section(section)).join('');
     // The charger's state colours the card itself (glow, status badge); charging adds the
     // old card's slow pulse. A data attribute, not a class: alert tints stay section-scoped.
     const mood = this._resolved && this._ids?.state ? this._statusView().cls : 'idle';
@@ -1396,7 +1711,7 @@ ha-card[data-state=paused]{--c:#f39c12}ha-card[data-state=fault]{--c:#e74c3c}ha-
 .sl,.limits,.panel{--h:#95a5a6;border-color:color-mix(in srgb,var(--h) 16%,transparent);
   background:linear-gradient(135deg,color-mix(in srgb,var(--h) 13%,transparent),color-mix(in srgb,var(--h) 3%,transparent) 65%)}
 .sl.status{--h:var(--c)}.sl.current{--h:#3498db}.sl.info.basic{--h:#f5c542}.limits{--h:#f39c12}
-.panel.adaptive{--h:#22c1c3}.panel.meter{--h:#f5c542}.sl.session{--h:#e67e22}.panel.actions{--h:#95a5a6}.panel.history{--h:#ff6b9a}.sl.safety{--h:#2ecc71}.sl.safety.safety-bad{--h:#e74c3c}
+.panel.adaptive{--h:#22c1c3}.panel.meter{--h:#f5c542}.panel.actions{--h:#95a5a6}.sl.safety{--h:#2ecc71}.sl.safety.safety-bad{--h:#e74c3c}
 .panel.soc,.limits.controls{--h:#3498db}:is(.panel.soc,.limits.controls):is(.soc-low){--h:#e74c3c}:is(.panel.soc,.limits.controls):is(.soc-mid){--h:#f39c12}:is(.panel.soc,.limits.controls):is(.soc-high){--h:#2ecc71}:is(.panel.soc,.limits.controls):is(.soc-reached){--h:#a78bfa}:is(.panel.soc,.limits.controls):is(.soc-off){--h:#636e72}
 /* Icon badges: every section's lead icon sits in a tinted rounded square of its hue. */
 .sl>ha-icon,.limits-head>span ha-icon,.status-main>ha-icon,.panel-title>ha-icon{--mdc-icon-size:16px;box-sizing:content-box;padding:4px;border-radius:8px;color:var(--h,var(--c));
@@ -1604,6 +1919,54 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 @container (max-width:350px){.time-label{display:none}}
 /* Light theme: yellow and cyan text lose contrast on white; darker hues there, dark mode untouched. */
 ha-card[data-theme=light] .panel.meter{--h:#b7860b}ha-card[data-theme=light] .panel.adaptive{--h:#0f9496}
+/* ---- Folding: a long card shows its settings as one-line summaries; tap to open. ---- */
+.fold-btn,.fold-head,.fold-title{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;margin:0;padding:0;border:0;background:transparent;font-family:inherit;color:inherit;cursor:pointer;text-align:left;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.fold-btn{flex:1;min-height:30px}
+.fold-head{width:100%;min-height:26px;padding:0 2px 0 1px}
+.fold-btn>ha-icon:first-child,.fold-head>ha-icon:first-child{--mdc-icon-size:16px;box-sizing:content-box;padding:4px;border-radius:8px;color:var(--h);background:color-mix(in srgb,var(--h) 20%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--h) 28%,transparent)}
+.fold-sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;font-size:13px;font-weight:650;color:var(--primary-text-color);font-variant-numeric:tabular-nums}
+.fold-sum small{font-size:.75em;font-weight:500;color:var(--secondary-text-color)}
+ha-icon.fold-chev{--mdc-icon-size:18px;flex:none;padding:0;margin-left:auto;background:none;box-shadow:none;color:var(--secondary-text-color)}
+.fold-head .fold-chev{margin-left:auto}
+.limits-head>.fold-title,.panel-title.fold-title{flex:1;gap:5px;font-size:14px;font-weight:600;white-space:nowrap}
+.fold-chev-btn{flex:none;display:flex;align-items:center;justify-content:center;width:28px;height:28px;margin:0;padding:0;border:0;border-radius:8px;background:transparent;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+/* Narrow cards: a folded row keeps its icon and summary (like Time and Safety drop their labels). */
+@container (max-width:350px){.sl.fold .fold-btn>.label{display:none}.fold-chev-btn{width:18px}ha-icon.fold-chev{--mdc-icon-size:16px}.panel-head .adaptive-mode{padding:0 4px;font-size:12.5px}.panel-title.fold-title{gap:4px}}
+.limits-head>.fold-title>ha-icon:first-child{--mdc-icon-size:16px;box-sizing:content-box;padding:4px;border-radius:8px;color:var(--h);background:color-mix(in srgb,var(--h) 20%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--h) 28%,transparent)}
+.limits-head>.fold-title b,.panel-title.fold-title b{font-weight:600}
+.limits.folded{padding-bottom:2px}
+.sl.fold{padding:1px 6px 1px 3px}
+.sl.fold-schedules{--h:#7c83fd}
+.sl.fold-advanced_controls{--h:#3498db}.sl.fold-advanced_controls.soc-low{--h:#e74c3c}.sl.fold-advanced_controls.soc-mid{--h:#f39c12}.sl.fold-advanced_controls.soc-high{--h:#2ecc71}.sl.fold-advanced_controls.soc-reached{--h:#a78bfa}.sl.fold-advanced_controls.soc-off{--h:#636e72}
+/* Energy readings share one hue: meter, session and counters. Pink read as a warning next to real faults. */
+.sl.session,.panel.history,.sl.fold-history{--h:#f5c542}
+ha-card[data-theme=light] :is(.sl.session,.panel.history,.sl.fold-history){--h:#b7860b}
+/* Session: the tariff price, or when the last session ended, under the label. */
+.session-label{display:flex;flex-direction:column;justify-content:center;line-height:1.05}
+.session-label small{margin-top:1px;font-size:10.5px;font-weight:600;color:var(--secondary-text-color);white-space:nowrap}
+/* Limits that are off read as off; the dot is a ring until the limit is on. */
+.limits-note{margin-left:4px;font-size:11.5px;font-weight:600;color:var(--secondary-text-color)}
+.limit-tile.inactive .limit-value b{color:var(--secondary-text-color);opacity:.75}
+.limit-tile.inactive .limit-toggle i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--secondary-text-color);opacity:.6}
+.sched-lim:not(.active):not(.saved) .sched-lim-toggle i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--secondary-text-color);opacity:.5}
+.sched-lim:not(.active) .sched-lim-value b{opacity:.7}
+/* Battery: how far the next schedule gets it. */
+.soc-plan{display:flex;align-items:center;gap:5px;min-width:0;margin:-1px 6px 0;font-size:12px;font-weight:600;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden}
+.soc-plan span{min-width:0;overflow:hidden;text-overflow:ellipsis}.soc-plan small{font-size:.85em;font-weight:500}
+.soc-plan ha-icon{--mdc-icon-size:14px;color:var(--h)}
+/* A fault's reading and what to do wraps under the fault's name. */
+.sl.status.status-alert-fault .status-main{height:auto;min-height:28px;flex-wrap:wrap;row-gap:0;padding:2px 0}
+.sl.status.status-alert-fault .status-note{flex-basis:100%;padding-left:31px;white-space:normal;overflow:visible;line-height:1.2;color:var(--primary-text-color);opacity:.85}
+/* Stop with nothing charging blocks the next charge: the sign is quieter until a charge runs. */
+.act-btn.idle .act-stop-icon{filter:grayscale(.6);opacity:.8}
+/* Clock: the zone that fixes a whole-hour drift. */
+.time-sync.time-fix{border-color:color-mix(in srgb,#e74c3c 55%,transparent);background:color-mix(in srgb,#e74c3c 16%,transparent)}.time-sync.time-fix ha-icon{color:#e74c3c}
+/* Counters: this month and last month over the tiles. */
+.hist-month{box-sizing:border-box;display:flex;align-items:baseline;gap:6px;width:100%;min-width:0;min-height:24px;padding:0 6px 0 4px;margin:0;border:0;background:transparent;font-family:inherit;color:inherit;cursor:pointer;text-align:left;white-space:nowrap;overflow:hidden;-webkit-tap-highlight-color:transparent}
+.hist-month ha-icon{--mdc-icon-size:15px;align-self:center;color:var(--h)}
+.hist-month-cur{font-size:12.5px;font-weight:600;color:var(--secondary-text-color)}.hist-month-cur b{font-size:16px;font-weight:750;color:var(--primary-text-color)}
+.hist-month small{margin-left:1px;font-size:.72em;font-weight:500;color:var(--secondary-text-color)}
+.hist-month-prev{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--secondary-text-color)}
 `;
 
 const ADVANCED_SECTIONS = ['advanced_info', 'advanced_controls'];
@@ -1630,6 +1993,7 @@ class EveusCardEditor extends HTMLElement {
       .finally(() => this._render());
   }
   get _basic() { return this._config.mode ? this._config.mode === 'basic' : this._hasSoc === false; }
+  get _foldDefault() { return this._config.sections.length >= FOLD_MIN_SECTIONS; }
   // Basic mode has no SOC: those rows stay in the config (back on switching to Advanced) but
   // are greyed, last, and out of the ordering.
   _na(key) { return this._basic && ADVANCED_SECTIONS.includes(key); }
@@ -1643,6 +2007,7 @@ class EveusCardEditor extends HTMLElement {
       {name: 'device_id', selector: {device: {integration: 'eveus'}}},
       {name: 'mode', selector: {select: {options: [{value: 'advanced', label: l.advanced}, {value: 'basic', label: l.basic}]}}},
       {name: 'language', selector: {select: {mode: 'dropdown', options: Object.entries(l.languages).map(([value, label]) => ({value, label}))}}},
+      {name: 'fold', selector: {boolean: {}}},
     ];
   }
   _sectionsHtml() {
@@ -1729,13 +2094,15 @@ class EveusCardEditor extends HTMLElement {
     if (!this._hass) return;
     if (!this._form) {
       this._form = document.createElement('ha-form');
-      this._form.computeLabel = (f) => ({device_id: this._labels().device, mode: this._labels().mode, language: this._labels().language})[f.name];
-      this._form.computeHelper = (f) => f.name === 'mode' ? this._labels().modeHelp : undefined;
+      this._form.computeLabel = (f) => ({device_id: this._labels().device, mode: this._labels().mode, language: this._labels().language, fold: this._labels().fold})[f.name];
+      this._form.computeHelper = (f) => ({mode: this._labels().modeHelp, fold: this._labels().foldHelp})[f.name];
       this._form.addEventListener('value-changed', (e) => {
         e.stopPropagation();
-        const {device_id, mode, language} = e.detail.value, next = {...this._config};
+        const {device_id, mode, language, fold} = e.detail.value, next = {...this._config};
         // "auto" is the default, so it is not written into the card's YAML.
         for (const [k, v] of Object.entries({device_id, mode, language})) { if (v && v !== 'auto') next[k] = v; else delete next[k]; }
+        // Folding follows the card's length unless set the other way.
+        if (typeof fold !== 'boolean' || fold === this._foldDefault) delete next.fold; else next.fold = fold;
         this._config = next;
         this._resolve();
         this._render();
@@ -1745,7 +2112,7 @@ class EveusCardEditor extends HTMLElement {
     }
     this._form.hass = this._hass;
     this._form.schema = this._schema();
-    this._form.data = {device_id: this._config.device_id, mode: this._config.mode, language: this._config.language || 'auto'};
+    this._form.data = {device_id: this._config.device_id, mode: this._config.mode, language: this._config.language || 'auto', fold: this._config.fold ?? this._foldDefault};
   }
 }
 const EDITOR_CSS = `
