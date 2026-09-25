@@ -110,6 +110,11 @@ _FIELDS: Final[dict[str, _Field]] = {
     "tarifBValue": _f(0, MAX_RATE_HUNDREDTHS),
     "tarifAEnable": _i(),
     "tarifBEnable": _i(),
+    # Rate 2/3 windows, charger-local minutes of day.
+    "tarifAStart": _i(0, 1439),
+    "tarifAStop": _i(0, 1439),
+    "tarifBStart": _i(0, 1439),
+    "tarifBStop": _i(0, 1439),
     # --- diagnostics --------------------------------------------------------
     "temperature1": _f(MIN_VALID_TEMPERATURE_C, MAX_VALID_TEMPERATURE_C),
     "temperature2": _f(MIN_VALID_TEMPERATURE_C, MAX_VALID_TEMPERATURE_C),

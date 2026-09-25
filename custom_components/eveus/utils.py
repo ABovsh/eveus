@@ -551,3 +551,67 @@ def calculate_remaining_time(
     # the caller damps the minute count before it gets here.
     total_minutes = max(5, round(total_minutes / 5) * 5)
     return format_duration(int(total_minutes * 60))
+
+
+
+_MINUTES_PER_DAY = 1440
+
+
+def _in_window(minute: float, start: int, stop: int) -> bool:
+    """Whether a minute of day falls in [start, stop), wrapping past midnight."""
+    if start < stop:
+        return start <= minute < stop
+    return minute >= start or minute < stop
+
+
+def price_energy_over_tariffs(
+    energy_kwh: float,
+    power_w: float,
+    minute_of_day: float,
+    active_index: int,
+    rates: tuple[float, float, float],
+    windows: dict[int, tuple[int, int]],
+) -> float | None:
+    """Cost of drawing ``energy_kwh`` at ``power_w`` from ``minute_of_day`` on.
+
+    ``rates`` holds the primary rate and rates 2 and 3 (indexes 0, 1, 2 as in
+    ``activeTarif``); ``windows`` maps each ENABLED rate 2/3 to its charger
+    start/stop minutes. Outside every window the primary rate applies.
+
+    ``None`` when the model cannot be trusted, so the caller keeps the flat
+    active-rate price: no power, overlapping or zero-length windows (the
+    firmware's precedence there is unknown), or a model that disagrees with the
+    charger's own ``activeTarif`` for the current minute.
+    """
+    if power_w <= 0:
+        return None
+    spans = list(windows.values())
+    if any(start == stop for start, stop in spans):
+        return None
+    if len(spans) == 2:
+        (a_start, a_stop), (b_start, b_stop) = spans
+        if _in_window(a_start, b_start, b_stop) or _in_window(b_start, a_start, a_stop):
+            return None
+
+    def index_at(minute: float) -> int:
+        for index, (start, stop) in windows.items():
+            if _in_window(minute % _MINUTES_PER_DAY, start, stop):
+                return index
+        return 0
+
+    if index_at(minute_of_day) != active_index:
+        return None
+    if not spans:
+        return energy_kwh * rates[0]
+    edges = sorted({edge for span in spans for edge in span})
+    kwh_per_minute = power_w / 60000
+    now, left, cost = minute_of_day, energy_kwh, 0.0
+    while left > 0:
+        day, within = divmod(now, _MINUTES_PER_DAY)
+        # The next window edge today, or the first one tomorrow.
+        edge = next((e for e in edges if e > within), edges[0] + _MINUTES_PER_DAY)
+        drawn = min(left, (day * _MINUTES_PER_DAY + edge - now) * kwh_per_minute)
+        cost += drawn * rates[index_at(now)]
+        left -= drawn
+        now = day * _MINUTES_PER_DAY + edge
+    return cost

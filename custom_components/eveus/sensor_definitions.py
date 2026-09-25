@@ -24,10 +24,12 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.util import dt as dt_util
 
 from .common_base import EveusSensorBase
 from .const import (
+    MAX_COST_VALUE,
     poll_failure_signal,
     get_charging_state,
     get_error_state,
@@ -228,6 +230,25 @@ class OptimizedEveusSensor(EveusSensorBase):
         return previous_attrs != self._attr_extra_state_attributes
 
 
+class _CostWindowData(ExtraStoredData):
+    """A cost sensor's accumulation window, saved with the entity whatever its state.
+
+    Home Assistant saves an `unavailable` state without its attributes, so a
+    restart during an outage loses the `last_reset` attribute. This copy is
+    saved from the entity itself and survives it.
+    """
+
+    def __init__(self, last_reset: Optional[datetime], value: Optional[float]) -> None:
+        self.last_reset = last_reset
+        self.value = value
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "last_reset": self.last_reset.isoformat() if self.last_reset else None,
+            "value": self.value,
+        }
+
+
 class MonetaryCostSensor(OptimizedEveusSensor):
     """Cost sensor that tracks meter resets so TOTAL statistics stay correct.
 
@@ -264,6 +285,11 @@ class MonetaryCostSensor(OptimizedEveusSensor):
             self._prev_cost_value = value
         return changed
 
+    @property
+    def extra_restore_state_data(self) -> _CostWindowData:
+        """The accumulation window, saved even while the sensor is unavailable."""
+        return _CostWindowData(self._attr_last_reset, self._prev_cost_value)
+
     async def _async_restore_state(self, state) -> None:
         """Restore the previous accumulation window across restarts."""
         await super()._async_restore_state(state)
@@ -283,6 +309,26 @@ class MonetaryCostSensor(OptimizedEveusSensor):
         self._prev_cost_value = (
             restored if restored is not None and math.isfinite(restored) else None
         )
+        # A restart during an outage saved `unavailable`, with no last_reset and no
+        # value: the window then comes from the entity's own saved data. Without
+        # it the first reading opens a new window and the long-term statistics
+        # add the whole counter to the sum again.
+        stored = await self.async_get_last_extra_data()
+        data = stored.as_dict() if stored is not None else {}
+        if self._attr_last_reset is None and isinstance(data.get("last_reset"), str):
+            parsed = dt_util.parse_datetime(data["last_reset"])
+            if isinstance(parsed, datetime):
+                self._attr_last_reset = parsed
+        value = data.get("value")
+        if (
+            self._prev_cost_value is None
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            # A comparison, not math.isfinite: that raises on a huge int, and
+            # this bound also turns away inf and nan.
+            and -MAX_COST_VALUE <= value <= MAX_COST_VALUE
+        ):
+            self._prev_cost_value = float(value)
 
 
 def create_sensor(

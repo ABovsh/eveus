@@ -1001,14 +1001,23 @@ _EXPECTED_SPEC_ICONS = {
 
 @pytest.mark.parametrize(("key", "icon"), sorted(_EXPECTED_SPEC_ICONS.items()))
 def test_spec_icon_names_are_pinned(key: str, icon: str) -> None:
-    """Every icon-bearing spec keeps its exact MDI name."""
+    """Every icon-bearing spec keeps its exact MDI name.
+
+    `get_sensor_specifications` is `@lru_cache`d, so without a `cache_clear()`
+    this can silently read a tuple another test already built and never
+    execute `create_sensor_specifications` itself — invisible to mutation
+    testing, whose per-mutant test selection is coverage-based: a test that
+    never runs the mutated line can't be picked as its killer.
+    """
+    sensors.get_sensor_specifications.cache_clear()
     specs = {s.key: s for s in sensors.get_sensor_specifications(phases=1)}
     assert specs[key].icon == icon
 
 
 def test_spec_icon_inventory_is_complete() -> None:
     """The pinned mapping covers every icon-bearing spec, so a new sensor's
-    icon cannot slip in unpinned."""
+    icon cannot slip in unpinned. See the cache-clear note above."""
+    sensors.get_sensor_specifications.cache_clear()
     actual = {
         s.key
         for s in sensors.get_sensor_specifications(phases=1)

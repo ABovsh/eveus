@@ -667,7 +667,9 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             # against the other would skew the anchor. Nothing is forgotten —
             # the next successful poll retries.
             return
-        state = self._updater.snapshot.state
+        # known_state, like every other plug consumer: a code the map cannot
+        # name says nothing about the plug, so it must not re-arm seeding.
+        state = self._updater.snapshot.known_state
         if state is None:
             return
         if state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES:

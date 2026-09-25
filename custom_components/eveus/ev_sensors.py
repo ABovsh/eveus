@@ -20,6 +20,7 @@ from .utils import (
     calculate_remaining_time,
     calculate_soc_kwh,
     calculate_soc_percent,
+    price_energy_over_tariffs,
 )
 from .const import (
     DEFAULT_SOC_CORRECTION,
@@ -567,11 +568,14 @@ class EnergyToTargetSocSensor(BaseEVHelperSensor):
 
 
 class CostToTargetSocSensor(EnergyToTargetSocSensor):
-    """Forecast cost of reaching the Target SOC at the active tariff rate.
+    """Forecast cost of reaching the Target SOC.
 
-    Prices the remaining grid energy with the charger's currently active
-    tariff (`activeTarif` -> `tarif` / `tarifAValue` / `tarifBValue`), so the
-    forecast drifts only if the active rate changes before the session ends.
+    While charging, the remaining grid energy is spread over time at the
+    current power and each part priced at the tariff whose window it falls in
+    (charger clock, `tarif{A,B}{Enable,Start,Stop,Value}`), so a charge that
+    runs into or out of a night rate is priced as it will be billed. Without
+    power, or when the window model cannot be trusted, everything is priced at
+    the active tariff (`activeTarif`).
     """
 
     ENTITY_NAME = "Cost to Target SOC"
@@ -599,7 +603,34 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
         rate = get_active_rate_cost(self._updater, self.hass)
         if rate is None:
             return None
-        return round(remaining * rate, 2)
+        windowed = self._windowed_cost(remaining)
+        return round(remaining * rate if windowed is None else windowed, 2)
+
+    def _windowed_cost(self, remaining: float) -> Optional[float]:
+        """Remaining energy priced per tariff window, or None to stay flat."""
+        snap = self._updater.snapshot
+        clock = snap.charger_wall_clock_s
+        power = snap.get("powerMeas")
+        active = snap.get("activeTarif")
+        rates = tuple(snap.get(key) for key in ("tarif", "tarifAValue", "tarifBValue"))
+        if clock is None or not power or active is None or None in rates:
+            return None
+        windows = {}
+        for index, prefix in ((1, "tarifA"), (2, "tarifB")):
+            if snap.get(f"{prefix}Enable") != 1:
+                continue
+            start, stop = snap.get(f"{prefix}Start"), snap.get(f"{prefix}Stop")
+            if start is None or stop is None:
+                return None
+            windows[index] = (start, stop)
+        return price_energy_over_tariffs(
+            remaining,
+            power,
+            (clock % 86400) / 60,
+            active,
+            tuple(rate / 100 for rate in rates),
+            windows,
+        )
 
 
 class ChargingFinishTimeSensor(BaseEVHelperSensor):

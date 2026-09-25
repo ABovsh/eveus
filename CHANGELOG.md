@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.25.0 - 2026-09-26
+
+### ✨ Added
+- **A new modular, fully customizable Eveus card replaces the previous one.** Tick, hide and reorder its sections in the card editor, no YAML needed; it follows your Home Assistant language (English or Ukrainian). The card supports these sections:
+  - **Status** — charger state, faults with what to do, and why charging is slower or has not started
+  - **Buttons** — OCPP, One charge and Stop
+  - **Battery SOC** and **SOC settings** — estimated SOC, time, energy and cost to target, finish time (Advanced mode)
+  - **Meter** — voltage, power and current
+  - **Current slider** — charging current
+  - **Adaptive charging** — mode, voltage threshold and current cap
+  - **Session** — energy, cost and time; the last session and the active tariff
+  - **Limits** — energy, time, cost and SOC limits, **Disable all**
+  - **Schedules** — Schedule 1 and 2 with times and current and energy limits; a running schedule glows
+  - **Charger clock** — Time Zone, Time Drift and **Sync Time**
+  - **Counters** — total energy, Counter A and B with reset, this and last month
+  - **Safety** — box and plug temperature, ground, leakage current and connection quality
+
+  Closes [#16](https://github.com/ABovsh/eveus/issues/16).
+
+### ⚠️ Breaking
+- **Add the Eveus card again after updating.** A card added in 4.24.0 or earlier keeps only the sections of its old layout, without Schedules or Charger clock. Open **Edit dashboard**, delete each Eveus card, then **Add card → Eveus EV Charger**.
+
+### 🐛 Fixed
+- **The charging session notification blueprint now saves in Home Assistant.** Its selected notification actions form a valid action sequence.
+  Fixes [#17](https://github.com/ABovsh/eveus/issues/17).
+- **Last Session Energy, Cost and Duration show the reason and finish time of the session they describe.** If the charger's final reading of a session is unusable, that value turns unknown instead of keeping the previous session's reason and finish time next to it.
+- **Counter A Cost, Counter B Cost and Session Cost statistics no longer grow by themselves.** A Home Assistant restart while the charger was offline started a new cost period, and the long-term statistics added the whole counter once more. The period now survives such a restart.
+- **Cost to Target SOC follows the charger's tariff windows.** During a charge, the energy still to come is spread over time at the current power and priced at the rate of each window it falls in, so a charge that runs into or out of a night rate is no longer priced entirely at the rate active now. With no charge running, or with rate 2 and rate 3 windows that overlap, it still uses the active rate.
+- **Initial SOC keeps its session value when the charger reports a state the integration does not recognise.** Only unplugging the car starts a new session, so an unrecognised state no longer makes the integration read the car's SOC again in the middle of a charge.
+
+<p>
+  <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced-en-4.25.0.jpg" width="49%">
+  <img alt="Eveus card editor" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-editor-en-4.25.0.jpg" width="49%">
+</p>
+
 ## 4.24.0 - 2026-09-22
 
 ### ✨ Added
@@ -17,8 +52,8 @@
 - **Card — switches respond visually as soon as you tap.** If the command fails, the card restores the previous state.
 
 <p>
-  <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced-en.jpg" width="49%">
-  <img alt="Eveus card — Basic mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-basic-en.jpg" width="49%">
+  <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced-en-4.24.0.jpg" width="49%">
+  <img alt="Eveus card — Basic mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-basic-en-4.24.0.jpg" width="49%">
 </p>
 
 ## 4.23.0 - 2026-09-19

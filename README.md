@@ -1,7 +1,7 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.24.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.25.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
@@ -14,8 +14,11 @@ requiring internet access.
 
 <p align="center">
   <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
-  <img alt="Eveus card — Basic mode" src="docs/images/card-basic-en.jpg" width="49%">
+  <img alt="Eveus card editor — sections to tick and reorder" src="docs/images/card-editor-en.jpg" width="49%">
 </p>
+
+> [!IMPORTANT]
+> **Updating from 4.24.0 or earlier? Add the Eveus card again.** The card has been rebuilt and an existing card does not pick up the new sections. [How →](#eveus-card)
 
 **Contents:** [Install](#installation) · [Setup](#setup) · [First charge](#first-charge) ·
 [Card](#eveus-card) · [SOC](#battery-level-soc) · [Limits and schedules](#limits-schedules-and-cost) ·
@@ -45,8 +48,8 @@ All SOC features require **Advanced mode**. [Set up SOC →](#battery-level-soc)
 
 ### 📱 A ready-made card
 
-- **Readings and controls in one card:** from a compact row to charging controls and SOC settings.
-- **Three layouts in Basic mode, four in Advanced.** The card displays faults and asks for confirmation before stopping a charge.
+- **Readings and controls in one card,** built from sections you tick and reorder in the card editor: status, buttons, battery SOC and its settings, voltage, power and current, current slider, adaptive charging, session, limits, schedules, charger clock, counters and safety.
+- The card displays faults and asks before it stops a charge, raises the current or resets a counter.
 - A [ready-made dashboard](#dashboard) provides separate cards and graphs. [Add the Eveus card →](#eveus-card)
 
 ### 🧩 Automations
@@ -132,32 +135,50 @@ Use the [ready-made dashboard](#dashboard) if you want separate cards and graphs
 
 ## Eveus card
 
-The card is included with the integration. Choose a **Layout** for each copy
-you add to your dashboard:
+> [!WARNING]
+> **Updating from 4.24.0 or earlier? Add the card again.** The card has been rebuilt, and a card you added before keeps only the sections of its old layout, without Schedules or Charger clock.
+> 1. Open your dashboard → **Edit dashboard**.
+> 2. Delete each Eveus card.
+> 3. **Add card → Eveus EV Charger**, tick the sections you want and **Save**.
 
-### Layouts
+The card is included with the integration. Each copy you add shows the
+sections you choose, in the order you choose, and follows your Home Assistant
+language (English or Ukrainian).
 
-| Layout | Use it for |
+### Sections
+
+| Section | Shows |
 | --- | --- |
-| `compact` | Readings in one row; read-only |
-| `status` | Readings as tiles; read-only |
-| `control` | Readings, current slider and **OCPP**, **No limit**, **One**, **Stop** switches |
-| `full` | `control` plus **Initial**, **Target**, **Capacity** and **Loss** settings; **Advanced mode only** |
+| **Status** | Charger state and why it is not charging |
+| **Buttons** | **OCPP**, **One charge** and **Stop** |
+| **Battery SOC** | Estimated SOC and where the session started; while charging, time left and finish time; energy and cost to target; **Advanced mode only** |
+| **SOC settings** | **Initial**, **Target**, **Capacity** and **Loss**; **Advanced mode only** |
+| **Meter** | Voltage, power and current |
+| **Current slider** | Charging current |
+| **Adaptive charging** | Adaptive Mode, its voltage threshold and current cap |
+| **Session** | Session energy, cost and time |
+| **Limits** | Energy, time, cost and SOC limits, **Disable all** |
+| **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and energy limit |
+| **Charger clock** | Time Zone, Time Drift and **Sync Time** |
+| **Counters** | Total Energy, Counter A and Counter B, each with a reset |
+| **Safety** | Box and plug temperature, ground, leakage current, connection quality |
 
-Basic mode provides `compact`, `status` and `control`, without SOC.
-The `full` layout is available only in Advanced mode.
+In Basic mode the two SOC sections are hidden, and Limits has no SOC limit.
 The card follows the integration mode; `mode: basic` simplifies it, while
 `mode: advanced` requires Advanced integration mode.
 
-- **Warnings:** voltage is amber outside 215–245 V and red below 205 V or above 253 V; temperatures are amber from 60 °C and red from 70 °C. Faults, missing ground and reasons for not charging appear on the card.
+- **Warnings:** voltage is red below 205 V or above 253 V; temperatures are red from 80 °C and leakage current from 30 mA, the charger's own fault limits; Time Drift is red from 10 minutes, when Home Assistant raises its clock Repairs notice. Faults and reasons for not charging appear in **Status**.
 - **Offline:** shows the age of the last reading and disables controls.
-- **Interaction:** tap a reading to open its entity. Long-press **SOC**, **To target** or **Current** to change the corresponding setting. To stop an active charge, tap again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once.
+- **Folding:** a card with six or more sections shows SOC settings, Adaptive charging, Limits, Schedules and Counters as one-line summaries; tap one to open it. `fold: false` keeps them open.
+- **Hints:** a fault shows the reading behind it and what to do. While the charge runs below the set current, **Status** says why: adaptive mode, a schedule's current limit, or the car taking less. With the car plugged in and waiting for a schedule, the battery section shows how much energy that schedule can add. A charger clock that is off by whole hours gets a button for the matching time zone instead of **Sync**.
+- **Session and counters:** with the car unplugged, **Session** shows the last session and when it ended; plugged in, it shows the active tariff price. **Counters** add this month's and last month's energy from Home Assistant statistics.
+- **Interaction:** tap a reading to open its entity. Long-press the battery tile, or focus it and press Alt+Enter, to set Initial SOC; use the target tile the same way for Target SOC. To stop an active charge, tap **Stop** again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once. With no charge running, **Stop** blocks charging until you tap it again. Resetting a counter asks for confirmation. In **Schedules**, tap a time to pick a new one, tap a limit's icon to turn it on or off, and tap its value to type a new one. A schedule's badge glows while the charger's clock places it in its window. The card omits that glow and the next-start time when Time Drift is unknown or at least 10 minutes.
 
 ### How to add the card
 
 1. Restart Home Assistant after installing or updating the integration, then refresh your browser.
 2. Open your dashboard → **Edit dashboard → Add card → Eveus EV Charger**.
-3. Choose **Layout** (default: `control`) and **Save**. Set **Charger** if you have several; **Integration mode** and **Language** are optional.
+3. Tick the sections you want, reorder them with the arrows, and **Save**. Tap a section's settings icon to hide single items, e.g. Schedule 2. **Default order** restores all sections. Set **Charger** if you have several; **Mode** and **Language** are optional.
 
 In the mobile app, refresh through **Settings → Companion app → Troubleshooting →
 Reset frontend cache**, then restart the app.
@@ -166,11 +187,31 @@ Reset frontend cache**, then restart the app.
 
 ```yaml
 type: custom:eveus-card
-layout: control      # compact | status | control; full: Advanced only
+sections:            # any of these, in any order; omit for all of them
+  - status
+  - actions          # OCPP · One charge · Stop
+  - advanced_info    # Battery SOC (Advanced only)
+  - advanced_controls  # SOC settings (Advanced only)
+  - basic_info       # voltage · power · current
+  - current
+  - adaptive
+  - session
+  - limits
+  - schedules        # schedule 1 · 2
+  - time             # time zone · drift · sync
+  - history          # this month · counters
+  - safety
+# hide:              # single items: section.item
+#   - schedules.schedule_2
+#   - safety.connection
 # device_id: ...     # only with several chargers
 # mode: basic        # advanced | basic (default: follows the integration)
 # language: uk       # auto (default, Home Assistant's language) | uk | en
+# fold: false        # default: on from six sections
 ```
+
+Cards saved with the earlier `layout:` option keep working: `compact`,
+`status`, `control` and `full` open as the matching sections.
 
 If **Custom element doesn't exist** appears after an update, refresh the browser or reset the app's frontend cache.
 
@@ -223,7 +264,9 @@ energy, battery capacity and charging losses. Accuracy depends on these inputs.
 
 **Time to Target SOC** and **Charging Finish Time** are estimates and may change
 as charging power changes. **Energy to Target SOC** includes charging losses;
-**Cost to Target SOC** uses the current tariff. Setting a target alone does not
+**Cost to Target SOC** prices each part of a running charge at the tariff of
+the window it falls in, and uses the current tariff when no charge is running.
+Setting a target alone does not
 stop charging — turn on **Limit: SOC enabled** to enable that behavior.
 
 The integration enforces the SOC limit: Home Assistant must be running and able
@@ -308,6 +351,8 @@ URL, then fill in the two or three fields it asks for — no YAML.
 | --- | --- | --- |
 | Charging session notification | Notifies on start and finish through the action of your choice; the finish message includes session energy, cost and duration | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
 | Stop charging on low house battery | When your inverter's battery stays below a threshold for two minutes, stops charging with the charger's own **Stop Charging** switch, not by cutting its power. Does not automatically resume charging after recovery | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
+
+In the session notification blueprint, add one or more notification actions and use `{{ message }}` for their text.
 
 ## Events & Device Triggers
 
@@ -544,7 +589,7 @@ Advanced mode provides four `number` entities for SOC settings.
 | `sensor.eveus_ev_charger_time_to_target_soc` | Sensor | - | - | Human-readable ETA to target SOC |
 | `sensor.eveus_ev_charger_charging_finish_time` | Timestamp | - | - | Absolute finish time for automations and timestamp cards |
 | `sensor.eveus_ev_charger_energy_to_target_soc` | kWh | - | - | Grid energy still needed to reach Target SOC (charging losses included) |
-| `sensor.eveus_ev_charger_cost_to_target_soc` | UAH | - | - | Forecast cost of reaching Target SOC at the active tariff rate |
+| `sensor.eveus_ev_charger_cost_to_target_soc` | UAH | - | - | Forecast cost of reaching Target SOC, following the charger's tariff windows |
 
 </details>
 

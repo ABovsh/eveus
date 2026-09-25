@@ -1,4 +1,4 @@
 {
-  "_comment": "Survivor-count ratchet for the single mutmut 3 run: an increase fails the job (new code shipped without a test that kills its mutants), a decrease is a prompt to tighten. The number is OBSERVED, never predicted: 858 from CI workflow_dispatch run 35653206988 on rc 0bf222f (7597 mutants, 2 timeouts). Equivalent mutants are carried here rather than killed; a line that is genuinely unobservable carries `pragma: no mutate` with its reason instead.",
-  "survivors": 858
+  "_comment": "Survivor-count ratchet for the single mutmut 3 run: an increase fails the job (new code shipped without a test that kills its mutants), a decrease is a prompt to tighten. The number is OBSERVED, never predicted: 789 from CI workflow_dispatch run 36187698262 on rc 80a19c3 (7786 mutants, 10 timeouts). Equivalent mutants are carried here rather than killed; a line that is genuinely unobservable carries `pragma: no mutate` with its reason instead.",
+  "survivors": 789
 }
