@@ -2,18 +2,11 @@
 
 ## Unreleased
 
-### 🐛 Fixed
-- **The charging session notification blueprint now saves in Home Assistant.** Its selected notification actions form a valid action sequence.
-  Fixes [#17](https://github.com/ABovsh/eveus/issues/17).
-- **Last Session Energy, Cost and Duration show the reason and finish time of the session they describe.** If the charger's final reading of a session is unusable, that value turns unknown instead of keeping the previous session's reason and finish time next to it.
-- **Counter A Cost, Counter B Cost and Session Cost statistics no longer grow by themselves.** A Home Assistant restart while the charger was offline started a new cost period, and the long-term statistics added the whole counter once more. The period now survives such a restart. Totals recorded by earlier versions may be too high; correct them in **Developer tools → Statistics** with **Adjust sum**.
-- **Cost to Target SOC follows the charger's tariff windows.** During a charge, the energy still to come is spread over time at the current power and priced at the rate of each window it falls in, so a charge that runs into or out of a night rate is no longer priced entirely at the rate active now. With no charge running, or with rate 2 and rate 3 windows that overlap, it still uses the active rate.
-- **Initial SOC keeps its session value when the charger reports a state the integration does not recognise.** Only unplugging the car starts a new session, so an unrecognised state no longer makes the integration read the car's SOC again in the middle of a charge.
-
-The remaining Unreleased changes are for the **Eveus card**. The integration's entities are unchanged.
-
 ### ✨ Added
+Everything in this section is the **Eveus card**. The integration's entities are unchanged.
+
 - **Build the card from sections in the card editor, no YAML needed.** Tick, hide and reorder thirteen sections: Status, Buttons (OCPP · One charge · Stop), Battery SOC, SOC settings, Meter (voltage · power · current), Current slider, Adaptive charging, Session, Limits, Schedules, Charger clock, Counters and Safety. In Basic mode the two SOC sections are greyed out and stay in the card's settings.
+  Closes [#16](https://github.com/ABovsh/eveus/issues/16).
 - **More of the charger in one card.** Adaptive Mode with its voltage threshold and current cap; Limit Energy, Limit Time, Limit Cost and SOC limit with **Disable all**; Total Energy and Counter A/B with a reset that asks first; a Safety row with box and plug temperature, ground, leakage current and connection quality; Schedule 1 and Schedule 2, one row each, with on/off, start and stop time, and current and energy limits; and a Charger clock row with Time Zone, Time Drift and **Sync Time**.
 - **Charger states in Ukrainian.** State, fault and the reason charging has not started follow the card's language. **Waiting for Schedule** adds the next start time, e.g. `Waiting for Schedule · from 23:00`.
 - **Hide single items in the card editor.** Expand a section to hide any of its items, e.g. Schedule 2 or connection quality; the rest of the row spreads out. In YAML: `hide: [schedules.schedule_2, safety.connection]`.
@@ -25,17 +18,23 @@ The remaining Unreleased changes are for the **Eveus card**. The integration's e
 - **Large numbers are grouped:** `12 669 ₴`, `5 290 kWh`.
 - **Light theme:** Meter headers and the adaptive current limit are darker, so they stay readable on white.
 
-### 🐛 Fixed
-- **The card finds the charger again after Home Assistant restarts.** A card that opened while Home Assistant was still starting, or while the connection dropped, showed no charger until the page was reloaded; it now asks again every 10 seconds.
+### ⚠️ Breaking
+- **Add the Eveus card again after updating.** The card has been rebuilt, and a card added in 4.24.0 or earlier keeps only the sections of its old layout, without Schedules or Charger clock. Open **Edit dashboard**, delete each Eveus card, then **Add card → Eveus EV Charger**.
 
 ### 🔧 Changed
-- **Limits that are off look off.** Their values are dimmed, the header says `none on`, and **Disable all** appears only when a limit is on.
-- **With no charge running, Stop reads "Tap to block"**, which is what it does.
-- **Session and Counters share the energy colour** of the meter instead of pink.
-- **Controls stay readable on narrow cards.** Buttons, SOC settings, limits and counters spread across wider cells when space is tight; schedule and clock controls have larger touch areas.
+- **Card — limits that are off look off.** Their values are dimmed, the header says `none on`, and **Disable all** appears only when a limit is on.
+- **Card — with no charge running, Stop reads "Tap to block"**, which is what it does.
+- **Card — Session and Counters share the energy colour** of the meter instead of pink.
+- **Card — controls stay readable on narrow cards.** Buttons, SOC settings, limits and counters spread across wider cells when space is tight; schedule and clock controls have larger touch areas.
 
-### ⚠️ Breaking
-- **The Eveus card is rebuilt: remove it from your dashboards and add it again.** Open **Edit dashboard**, delete each Eveus card, then **Add card → Eveus EV Charger**. A card saved with `layout:` still opens as the matching sections (`compact` — Status, Battery SOC, Meter, Session; `status` — the same plus Safety; `control` — adds Buttons and the Current slider; `full` — every section), and a card saved with `sections:` keeps only the sections it lists, so neither shows Schedules or Charger clock. A newly added card has every section in the default order.
+### 🐛 Fixed
+- **The charging session notification blueprint now saves in Home Assistant.** Its selected notification actions form a valid action sequence.
+  Fixes [#17](https://github.com/ABovsh/eveus/issues/17).
+- **Last Session Energy, Cost and Duration show the reason and finish time of the session they describe.** If the charger's final reading of a session is unusable, that value turns unknown instead of keeping the previous session's reason and finish time next to it.
+- **Counter A Cost, Counter B Cost and Session Cost statistics no longer grow by themselves.** A Home Assistant restart while the charger was offline started a new cost period, and the long-term statistics added the whole counter once more. The period now survives such a restart. Totals recorded by earlier versions may be too high; correct them in **Developer tools → Statistics** with **Adjust sum**.
+- **Cost to Target SOC follows the charger's tariff windows.** During a charge, the energy still to come is spread over time at the current power and priced at the rate of each window it falls in, so a charge that runs into or out of a night rate is no longer priced entirely at the rate active now. With no charge running, or with rate 2 and rate 3 windows that overlap, it still uses the active rate.
+- **Initial SOC keeps its session value when the charger reports a state the integration does not recognise.** Only unplugging the car starts a new session, so an unrecognised state no longer makes the integration read the car's SOC again in the middle of a charge.
+- **Card — finds the charger again after Home Assistant restarts.** A card that opened while Home Assistant was still starting, or while the connection dropped, showed no charger until the page was reloaded; it now asks again every 10 seconds.
 
 ## 4.24.0 - 2026-09-22
 

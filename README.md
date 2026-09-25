@@ -14,8 +14,11 @@ requiring internet access.
 
 <p align="center">
   <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
-  <img alt="Eveus card — Basic mode" src="docs/images/card-basic-en.jpg" width="49%">
+  <img alt="Eveus card editor — sections to tick and reorder" src="docs/images/card-editor-en.jpg" width="49%">
 </p>
+
+> [!IMPORTANT]
+> **Updating from 4.24.0 or earlier? Add the Eveus card again.** The card has been rebuilt and an existing card does not pick up the new sections. [How →](#eveus-card)
 
 **Contents:** [Install](#installation) · [Setup](#setup) · [First charge](#first-charge) ·
 [Card](#eveus-card) · [SOC](#battery-level-soc) · [Limits and schedules](#limits-schedules-and-cost) ·
@@ -133,7 +136,10 @@ Use the [ready-made dashboard](#dashboard) if you want separate cards and graphs
 ## Eveus card
 
 > [!WARNING]
-> **Updating from 4.24.0 or earlier? Recreate the card.** The card has been rebuilt. Open **Edit dashboard**, delete each Eveus card, then **Add card → Eveus EV Charger**. Old cards keep working, but they miss the new sections.
+> **Updating from 4.24.0 or earlier? Add the card again.** The card has been rebuilt, and a card you added before keeps only the sections of its old layout, without Schedules or Charger clock.
+> 1. Open your dashboard → **Edit dashboard**.
+> 2. Delete each Eveus card.
+> 3. **Add card → Eveus EV Charger**, tick the sections you want and **Save**.
 
 The card is included with the integration. Each copy you add shows the
 sections you choose, in the order you choose, and follows your Home Assistant
