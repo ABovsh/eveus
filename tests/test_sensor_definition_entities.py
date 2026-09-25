@@ -1260,7 +1260,7 @@ async def test_only_link_sensors_follow_every_failed_poll(monkeypatch, offline_o
     connected: list[tuple[str, object]] = []
 
     def _connect(hass, signal, target):
-        connected.append((signal, target))
+        connected.append((hass, signal, target))
         return lambda: None
 
     monkeypatch.setattr(sensor_definitions, "async_dispatcher_connect", _connect)
@@ -1275,11 +1275,12 @@ async def test_only_link_sensors_follow_every_failed_poll(monkeypatch, offline_o
             available_when_offline=offline_ok,
         ),
     )
+    entity.hass = SimpleNamespace()
     await entity.async_added_to_hass()
 
     if offline_ok:
         assert connected == [
-            (poll_failure_signal("entry-1"), entity._handle_coordinator_update)
+            (entity.hass, poll_failure_signal("entry-1"), entity._handle_coordinator_update)
         ]
     else:
         assert connected == []
