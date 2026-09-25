@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.25.0 - 2026-09-25
+## 4.25.0 - 2026-09-26
 
 ### ✨ Added
 - **A new modular, fully customizable Eveus card replaces the previous one.** Tick, hide and reorder its sections in the card editor, no YAML needed; it follows your Home Assistant language (English or Ukrainian). The card supports these sections:
