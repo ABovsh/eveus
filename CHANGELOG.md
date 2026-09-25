@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.25.0 - 2026-09-25
 
 ### ✨ Added
 - **A new modular, fully customizable Eveus card replaces the previous one.** Tick, hide and reorder its sections in the card editor, no YAML needed; it follows your Home Assistant language (English or Ukrainian). The card supports these sections:
@@ -29,6 +29,11 @@
 - **Counter A Cost, Counter B Cost and Session Cost statistics no longer grow by themselves.** A Home Assistant restart while the charger was offline started a new cost period, and the long-term statistics added the whole counter once more. The period now survives such a restart.
 - **Cost to Target SOC follows the charger's tariff windows.** During a charge, the energy still to come is spread over time at the current power and priced at the rate of each window it falls in, so a charge that runs into or out of a night rate is no longer priced entirely at the rate active now. With no charge running, or with rate 2 and rate 3 windows that overlap, it still uses the active rate.
 - **Initial SOC keeps its session value when the charger reports a state the integration does not recognise.** Only unplugging the car starts a new session, so an unrecognised state no longer makes the integration read the car's SOC again in the middle of a charge.
+
+<p>
+  <img alt="Eveus card — Advanced mode" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-advanced-en-4.25.0.jpg" width="49%">
+  <img alt="Eveus card editor" src="https://raw.githubusercontent.com/ABovsh/eveus/main/docs/images/card-editor-en-4.25.0.jpg" width="49%">
+</p>
 
 ## 4.24.0 - 2026-09-22
 
