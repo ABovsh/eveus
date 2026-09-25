@@ -258,7 +258,9 @@ energy, battery capacity and charging losses. Accuracy depends on these inputs.
 
 **Time to Target SOC** and **Charging Finish Time** are estimates and may change
 as charging power changes. **Energy to Target SOC** includes charging losses;
-**Cost to Target SOC** uses the current tariff. Setting a target alone does not
+**Cost to Target SOC** prices each part of a running charge at the tariff of
+the window it falls in, and uses the current tariff when no charge is running.
+Setting a target alone does not
 stop charging — turn on **Limit: SOC enabled** to enable that behavior.
 
 The integration enforces the SOC limit: Home Assistant must be running and able
@@ -581,7 +583,7 @@ Advanced mode provides four `number` entities for SOC settings.
 | `sensor.eveus_ev_charger_time_to_target_soc` | Sensor | - | - | Human-readable ETA to target SOC |
 | `sensor.eveus_ev_charger_charging_finish_time` | Timestamp | - | - | Absolute finish time for automations and timestamp cards |
 | `sensor.eveus_ev_charger_energy_to_target_soc` | kWh | - | - | Grid energy still needed to reach Target SOC (charging losses included) |
-| `sensor.eveus_ev_charger_cost_to_target_soc` | UAH | - | - | Forecast cost of reaching Target SOC at the active tariff rate |
+| `sensor.eveus_ev_charger_cost_to_target_soc` | UAH | - | - | Forecast cost of reaching Target SOC, following the charger's tariff windows |
 
 </details>
 

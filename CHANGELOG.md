@@ -7,6 +7,7 @@
   Fixes [#17](https://github.com/ABovsh/eveus/issues/17).
 - **Last Session Energy, Cost and Duration show the reason and finish time of the session they describe.** If the charger's final reading of a session is unusable, that value turns unknown instead of keeping the previous session's reason and finish time next to it.
 - **Counter A Cost, Counter B Cost and Session Cost statistics no longer grow by themselves.** A Home Assistant restart while the charger was offline started a new cost period, and the long-term statistics added the whole counter once more. The period now survives such a restart. Totals recorded by earlier versions may be too high; correct them in **Developer tools → Statistics** with **Adjust sum**.
+- **Cost to Target SOC follows the charger's tariff windows.** During a charge, the energy still to come is spread over time at the current power and priced at the rate of each window it falls in, so a charge that runs into or out of a night rate is no longer priced entirely at the rate active now. With no charge running, or with rate 2 and rate 3 windows that overlap, it still uses the active rate.
 - **Initial SOC keeps its session value when the charger reports a state the integration does not recognise.** Only unplugging the car starts a new session, so an unrecognised state no longer makes the integration read the car's SOC again in the middle of a charge.
 
 The remaining Unreleased changes are for the **Eveus card**. The integration's entities are unchanged.

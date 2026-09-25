@@ -179,7 +179,7 @@ const I18N = {
     total: 'Загалом', allTime: 'за весь час', counterA: 'Лічильник A', counterB: 'Лічильник B', reset: 'Скинути',
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
-    groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'Є', bad: 'Немає',
+    groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
     // "1d 02h 05m" / "5h 30m" / "45m" → numbers with small Ukrainian units.
     duration: (text) => text.trim().split(/\s+/).map((part) => {
       const m = /^(\d+)([dhm])$/.exec(part);
@@ -695,7 +695,8 @@ class EveusCard extends HTMLElement {
   // `unit: false` leaves the unit to the tile header (see _unit) so a narrow tile keeps a big number.
   _unit(key, fallbackUnit) {
     const rawUnit = this._state(key)?.attributes?.unit_of_measurement || fallbackUnit;
-    return CURRENCY[rawUnit] || rawUnit;
+    // Time units have words in the card's language; kWh, V, A and currencies stay symbols.
+    return CURRENCY[rawUnit] || this._t.units[rawUnit] || rawUnit;
   }
   _numberValue({key, label, fallbackUnit, readonly = false, unit: showUnit = true}) {
     const entity = this._state(key), attrs = entity?.attributes || {};
@@ -917,7 +918,7 @@ class EveusCard extends HTMLElement {
           <span class="tile-sub" data-fit="12">${batterySub || '&nbsp;'}</span>
         </button>
         <button class="tile soc-tile" data-more-info="time_to_target_soc" data-hold="target_soc" aria-keyshortcuts="Alt+Enter" title="${t.targetTitle}">
-          <span class="tile-head"><ha-icon icon="mdi:flag-checkered"></ha-icon>${reached ? t.target : t.to} ${pc(target)}${finish && !reached ? `<span class="soc-finish" title="${t.finishTitle}">${finish}</span>` : ''}</span>
+          <span class="tile-head"><ha-icon icon="mdi:flag-checkered"></ha-icon><span class="soc-goal">${reached ? t.target : t.to} ${pc(target)}</span>${finish && !reached ? `<span class="soc-finish" title="${t.finishTitle}">${finish}</span>` : ''}</span>
           <span class="tile-big">${reached ? `<b data-fit="22">${t.reached}</b>` : `<b data-fit="24">${big}</b>`}</span>
           <span class="tile-sub" data-fit="12">${goalSub}</span>
         </button>

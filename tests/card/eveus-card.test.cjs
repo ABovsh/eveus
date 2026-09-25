@@ -785,6 +785,22 @@ test('uk: charger states, faults, reasons and offline age are translated', () =>
   // an unknown value from newer firmware still shows, untranslated
   assert.match(setupAll({sections:['status'], locale:'uk', over:{state:['sensor.state','Warp Drive']}}).html(), />Warp Drive</);
 });
+test('uk: a unit taken from the entity is translated too (Limit Time reads хв, not min)', () => {
+  const x = setupAll({sections:['limits'], locale:'uk', fold:false}).html();
+  assert.match(x, /Час<small class="tile-unit">хв<\/small>/);
+  assert.doesNotMatch(x, />min</);
+  // a unit the card has no word for still shows as the entity gives it
+  assert.match(x, /Енергія<small class="tile-unit">kWh<\/small>/);
+});
+test('uk: a connected ground reads OK, a missing one Немає', () => {
+  const card = (ground) => { const x = setupSafety({ground}); x.hass.locale = {language:'uk'}; x.card.hass = x.hass; return x.card.shadowRoot.innerHTML; };
+  assert.match(card('Connected'), /safety-value good">OK</);
+  assert.match(card('Not Connected'), /safety-value bad">Немає</);
+});
+test('target tile keeps the % against its number: the goal is one inline run, not two flex items', () => {
+  const {html} = setupAll({sections:['advanced_info']});
+  assert.match(html(), /<span class="soc-goal">To 75<small>%<\/small><\/span>/);
+});
 test('uk: counter reset asks in Ukrainian; adaptive keeps sending the real option', async () => {
   const x = setupAll({sections:['history','adaptive'], locale:'uk', over: FULL_OVER});
   x.card._resetCounter('reset_counter_a');

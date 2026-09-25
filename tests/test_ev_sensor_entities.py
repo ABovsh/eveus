@@ -1392,3 +1392,73 @@ def test_soc_percent_sensor_reports_how_it_was_anchored() -> None:
     assert sensor._update_extra_state_attributes() is True
     assert sensor.extra_state_attributes["soc_anchor"] == "set manually"
     assert sensor.extra_state_attributes["soc_anchor_seeded"] is False
+
+
+# Tariff windows during the charge. The charger's clock is local-encoded epoch
+# seconds, so the minute of day is read straight off it. 22:19 on the charger:
+_CLOCK_22_19 = 1790208000 + 22 * 3600 + 19 * 60
+# Anton's charger, 2026-09-25: primary 4.32, rate 2 = 2.16 from 23:00 to 07:00.
+_NIGHT_RATE = {
+    "timeZone": 3,
+    "tarif": 432,
+    "tarifAEnable": 1, "tarifAValue": 216, "tarifAStart": 1380, "tarifAStop": 420,
+    "tarifBEnable": 0, "tarifBValue": 100, "tarifBStart": 90, "tarifBStop": 0,
+}
+
+
+def _cost_sensor(fields):
+    from custom_components.eveus.ev_sensors import (
+        CachedSOCCalculator,
+        CostToTargetSocSensor,
+    )
+
+    calc = _push_ev_helpers(CachedSOCCalculator())
+    return CostToTargetSocSensor(
+        EveusTestUpdater({"sessionEnergy": "16", "state": 4, **fields}), 1, calc
+    )
+
+
+def test_cost_to_target_prices_each_tariff_window_the_charge_runs_through(
+    _ha_clock_plus3_ev,
+):
+    """37.33 kWh at 3.6 kW from 22:19: 41 min at 4.32 (2.46 kWh), the whole
+    23:00-07:00 night at 2.16 (28.8 kWh), the last 6.07 kWh at 4.32 again —
+    99.07, not 161.28 (everything at the day rate) nor 80.64 (at the night)."""
+    sensor = _cost_sensor({
+        **_NIGHT_RATE, "systemTime": _CLOCK_22_19, "activeTarif": 0, "powerMeas": 3600,
+    })
+    assert sensor._get_sensor_value() == pytest.approx(99.07, abs=0.02)
+
+
+def test_cost_to_target_inside_the_night_window_prices_the_morning_at_the_day_rate(
+    _ha_clock_plus3_ev,
+):
+    """From 23:10 the night leaves 470 min = 28.2 kWh at 2.16; 9.13 at 4.32."""
+    clock = 1790208000 + 23 * 3600 + 10 * 60
+    sensor = _cost_sensor({
+        **_NIGHT_RATE, "systemTime": clock, "activeTarif": 1, "powerMeas": 3600,
+    })
+    assert sensor._get_sensor_value() == pytest.approx(28.2 * 2.16 + (37.3333 - 28.2) * 4.32, abs=0.02)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        # Not charging: no power to place the energy in time.
+        {"powerMeas": 0},
+        # No charger clock.
+        {"systemTime": None},
+        # The charger says rate 2 is active, but by its clock 22:19 is outside
+        # the 23:00-07:00 window: the model does not match the firmware.
+        {"activeTarif": 1},
+        # Both windows on and overlapping: the firmware's precedence is unknown.
+        {"tarifBEnable": 1, "tarifBStart": 0, "tarifBStop": 120},
+        # An enabled window with no length: meaning unknown.
+        {"tarifAStart": 600, "tarifAStop": 600},
+    ],
+)
+def test_cost_to_target_falls_back_to_the_active_rate(_ha_clock_plus3_ev, override):
+    fields = {**_NIGHT_RATE, "systemTime": _CLOCK_22_19, "activeTarif": 0, "powerMeas": 3600, **override}
+    fields = {k: v for k, v in fields.items() if v is not None}
+    rate = 2.16 if fields["activeTarif"] == 1 else 4.32
+    assert _cost_sensor(fields)._get_sensor_value() == pytest.approx(37.3333 * rate, abs=0.02)
