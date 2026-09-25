@@ -471,6 +471,33 @@ def test_async_setup_entry_rejects_hardened_stored_data_edges(
         asyncio.run(eveus.async_setup_entry(_hass(), _Entry(_data(**overrides))))
 
 
+@pytest.mark.parametrize(
+    ("stored_host", "reason"),
+    [
+        ("charger\n.local", "Invalid host: Host contains invalid control characters"),
+        ("[::1", "Invalid host: Invalid IP address or hostname"),
+        ("ftp://charger.local", "Invalid host: Unsupported URL scheme"),
+        ("http://user:pw@charger.local", "Invalid host: Credentials in URL are not allowed"),
+        ("charger.local?x=1", "Invalid host: URL must not include a query or fragment"),
+        ("charger.local/main", "Invalid host: URL must not include a path"),
+        ("http://:8080", "Invalid host: Invalid IP address or hostname"),
+        ("charger.local:http", "Invalid host: Invalid port"),
+        ("charger.local:0", "Invalid host: Invalid port"),
+    ],
+)
+def test_async_setup_entry_names_why_a_stored_host_is_rejected(
+    stored_host: str, reason: str
+) -> None:
+    """The ConfigEntryError text is the failure reason HA shows on the entry,
+    so it must say what is wrong with the stored address."""
+    with pytest.raises(ConfigEntryError) as exc_info:
+        asyncio.run(
+            eveus.async_setup_entry(_hass(), _Entry(_data(**{CONF_HOST: stored_host})))
+        )
+
+    assert str(exc_info.value) == reason
+
+
 def test_async_setup_entry_rejects_invalid_scheme_returned_after_normalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
