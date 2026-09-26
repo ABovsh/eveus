@@ -7,6 +7,7 @@
 
 ### 🐛 Fixed
 - **Not Charging Reason and the card no longer say Charge Complete when a schedule or limit stopped the charge.** The charger reports Charge Complete in both cases; the reason now reads Waiting for Schedule or names the limit, and the card's status leads with it, followed by when the next schedule starts. A charge the car finished stays Charge Complete, also when the schedule window closes afterwards or Home Assistant restarts.
+- **The card no longer cuts off text on a phone.** In Ukrainian, the SOC row, the Stop button and the Counters row were clipped at common phone widths; their labels are shorter now (SOC, Блокувати, a short month name). A fault alert on a narrow card wraps onto a second line instead of losing its advice.
 
 ## 4.25.0 - 2026-09-26
 

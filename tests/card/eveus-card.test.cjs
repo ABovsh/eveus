@@ -776,7 +776,7 @@ test('uk: the whole card speaks Ukrainian when Home Assistant does', () => {
   assert.doesNotMatch(text, ENGLISH, text.match(ENGLISH)?.[0]);
   const folded = spoken(setupAll({sections: ALL, locale: 'uk', over: FULL_OVER}).html());
   assert.doesNotMatch(folded, ENGLISH, folded.match(ENGLISH)?.[0]);
-  for (const word of ['Налаштування SOC', 'Розклади', 'Лічильники']) assert.ok(folded.includes(word), word);
+  for (const word of ['SOC', 'Розклади', 'Лічильники']) assert.ok(folded.includes(word), word);
   for (const word of ['Заряджання', 'Один заряд', 'Стоп', 'Батарея', 'Ціль', 'Напруга', 'Потужність', 'Струм',
     'Адаптивне заряджання', 'Сесія', 'Ліміти', 'Без лімітів', 'Енергія', 'Час', 'Вартість', 'Загалом', 'Лічильник A', 'Безпека']) {
     assert.ok(text.includes(word), word);

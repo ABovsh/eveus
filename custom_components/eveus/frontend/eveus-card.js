@@ -202,8 +202,8 @@ const I18N = {
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
     setZone: (z) => `Обрати ${z}`,
     zoneFixTitle: 'Годинник станції зміщено на цілі години, тож часовий пояс неправильний. Натисніть, щоб обрати пояс, що збігається з Home Assistant',
-    socSettings: 'Налаштування SOC', schedules: 'Розклади', counters: 'Лічильники',
-    tapBlock: 'Заблокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
+    socSettings: 'SOC', schedules: 'Розклади', counters: 'Лічильники',
+    tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
     monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
@@ -1386,7 +1386,7 @@ class EveusCard extends HTMLElement {
       return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sum: rows.join(sep)};
     }
     const total = this._online ? currentNumber(this._state('total_energy')) : null;
-    const month = this._shows('history', 'month') && this._month?.cur != null ? `${this._monthNames()[0]} ${this._kwh(this._month.cur)}` : '';
+    const month = this._shows('history', 'month') && this._month?.cur != null ? `${this._monthNames('short')[0]} ${this._kwh(this._month.cur)}` : '';
     return {label: t.counters, icon: 'mdi:counter', cls: '', sum: [month, total === null ? '' : `${t.total} ${this._kwh(total)}`].filter(Boolean).join(sep)};
   }
   _kwh(v) { return `${v < 100 ? Number(v.toFixed(1)) : this._int(v)}<small>kWh</small>`; }
@@ -1514,14 +1514,15 @@ class EveusCard extends HTMLElement {
     this._lastSignature = null;
     if (this._hass) this.hass = this._hass;
   }
-  // This month's and last month's names, in Home Assistant's zone and the card's language.
-  _monthNames() {
+  // This month's and last month's names, in Home Assistant's zone and the card's language;
+  // 'short' for a folded one-line summary, where the full name clips on a phone.
+  _monthNames(style = 'long') {
     const tz = this._hass?.config?.time_zone;
     try {
       const parts = new Intl.DateTimeFormat('en-CA', {year: 'numeric', month: 'numeric', ...(tz ? {timeZone: tz} : {})}).formatToParts(new Date());
       const y = Number(parts.find((p) => p.type === 'year').value), m = Number(parts.find((p) => p.type === 'month').value);
       const locale = langOf(this._config, this._hass) === 'uk' ? 'uk' : 'en-GB';
-      const name = (yy, mm) => new Intl.DateTimeFormat(locale, {month: 'long', timeZone: 'UTC'}).format(new Date(Date.UTC(yy, mm - 1, 15)));
+      const name = (yy, mm) => new Intl.DateTimeFormat(locale, {month: style, timeZone: 'UTC'}).format(new Date(Date.UTC(yy, mm - 1, 15)));
       const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
       return [cap(name(y, m)), cap(name(m === 1 ? y - 1 : y, m === 1 ? 12 : m - 1))];
     } catch {
@@ -1668,7 +1669,7 @@ ha-card{container-type:inline-size}
 .adaptive-mode option{color:#000}
 .adaptive-threshold{flex:1;min-width:84px;max-width:130px}.adaptive-threshold .limit-value{height:22px}
 .sl.adaptive .info-item{margin-left:auto}
-.alert-strip{display:flex;align-items:center;gap:5px;min-height:20px;padding:0 8px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.alert-strip{display:flex;align-items:center;gap:5px;min-height:20px;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;line-height:1.3}
 .alert-strip ha-icon{--mdc-icon-size:14px;color:inherit}
 .alert-strip.fault{color:#e74c3c;background:rgba(231,76,60,.16);border:1px solid rgba(231,76,60,.5)}
 .alert-strip.offline{color:var(--secondary-text-color);background:rgba(127,127,127,.12);border:1px solid rgba(127,127,127,.4)}
