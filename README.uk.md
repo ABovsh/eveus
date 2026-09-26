@@ -378,7 +378,7 @@ Home Assistant вимкніть **Підключення до OCPP**. Досту
 | Подія | Коли створюється | Додаткові поля |
 | --- | --- | --- |
 | `eveus_charging_started` | Почалася сесія заряджання | — |
-| `eveus_charging_finished` | Сесія заряджання завершилася | `reason` (`complete`, `unplugged`, `stopped` або `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
+| `eveus_charging_finished` | Сесія заряджання завершилася | `reason` (`complete`, `schedule`, `limit`, `unplugged`, `stopped` або `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
 | `eveus_error` | Станція перейшла в стан помилки | `error_code`, `error_text` |
 | `eveus_car_connected` | Авто під'єднано | — |
 | `eveus_car_disconnected` | Авто від'єднано | — |

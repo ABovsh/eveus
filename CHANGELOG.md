@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### 🔧 Changed
+- **`eveus_charging_finished` tells a schedule or limit stop from a full car.** Two new `reason` values: `schedule` when a schedule window closed on the charge, and `limit` when an energy, time, cost or schedule energy limit stopped it. Both used to arrive as `complete` (or `stopped`), so automations matching `reason: complete` now fire only for a charge the car ended itself. Last Session Energy, Cost and Duration show the same reason.
+
+### 🐛 Fixed
+- **Not Charging Reason and the card no longer say Charge Complete when a schedule or limit stopped the charge.** The charger reports Charge Complete in both cases; the reason now reads Waiting for Schedule or names the limit, and the card's status leads with it, followed by when the next schedule starts. A charge the car finished stays Charge Complete, also when the schedule window closes afterwards or Home Assistant restarts.
+
 ## 4.25.0 - 2026-09-26
 
 ### ✨ Added

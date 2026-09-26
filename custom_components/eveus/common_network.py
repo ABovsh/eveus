@@ -28,6 +28,7 @@ from .const import (
     CONTROL_GRACE_PERIOD,
     DEFAULT_SCHEME,
     DEVICE_STATE_CHARGING,
+    DEVICE_STATE_COMPLETE,
     DEVICE_STATE_STANDBY,
     LEGACY_RAW_STATE_KEY,
     is_modern_firmware_payload,
@@ -41,7 +42,6 @@ from .const import (
     EVENT_CHARGING_FINISHED,
     EVENT_CHARGING_STARTED,
     EVENT_ERROR,
-    FINISHED_REASONS,
     get_error_state,
     IDLE_UPDATE_INTERVAL,
     OFFLINE_UPDATE_INTERVAL,
@@ -49,6 +49,7 @@ from .const import (
     SESSION_ACTIVE_STATES,
 )
 from ._payload import PayloadError, validate_main_payload
+from .charge_reason import finish_reason
 from .client import UPDATE_TIMEOUT_OBJ, fetch_json
 from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
@@ -276,6 +277,17 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # failed poll, exactly like `self.data`, so an entity inside its
         # availability grace window keeps republishing the reading behind it.
         self._snapshot = EveusSnapshot.empty()
+        # Whether the current stretch of state 5 has shown subState 0 — the
+        # car ended the charge itself (see `_track_charge_completion`). Held
+        # across a failed poll: an outage says nothing about the session, and a
+        # Wi-Fi drop after the window closes must not relabel a full car.
+        self._charge_completed = False
+        # The charger's sessionTime at the last poll that confirmed it. The
+        # counter runs from plug-in, so going below it means a new plug-in.
+        self._charge_completed_at: int | None = None
+        # A completion restored from the previous run, applied to the first
+        # poll that can confirm it is still the same plug-in.
+        self._charge_completion_seed: int | None = None
 
     @property
     def snapshot(self) -> EveusSnapshot:
@@ -639,7 +651,76 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             preserve_offline=was_likely_offline or self._offline_probation > 0,
         )
         self._maybe_burst_on_transition(new_data)
+        self._track_charge_completion(self._snapshot)
         self._emit_transition_events(new_data)
+
+    @property
+    def charge_completed(self) -> bool:
+        """Whether the charger's state 5 right now is a charge the car ended."""
+        return self._charge_completed
+
+    @property
+    def charge_completion_anchor(self) -> int | None:
+        """What the Not Charging Reason sensor saves across a restart."""
+        return self._charge_completed_at if self._charge_completed else None
+
+    def seed_charge_completion(self, session_time: Any) -> None:
+        """Re-arm a completion saved by the previous run.
+
+        Applied on the first poll that shows the same plug-in still parked in
+        state 5 (sessionTime at or past the saved one); dropped otherwise. The
+        value comes back from disk, so anything but a sane whole number is
+        ignored.
+        """
+        if (
+            not isinstance(session_time, int)
+            or isinstance(session_time, bool)
+            or not 0 <= session_time <= MAX_SESSION_TIME_SECONDS
+        ):
+            return
+        self._charge_completion_seed = session_time
+        # Setup may already have polled: settle it against that reading now, so
+        # the sensor's first published value is already the right one. Before
+        # the first poll the snapshot is empty and the seed waits for it.
+        self._track_charge_completion(self._snapshot)
+
+    def _track_charge_completion(self, snapshot: EveusSnapshot) -> None:
+        """Remember whether this stretch of state 5 is a finished charge.
+
+        The firmware parks a charge in state 5 both when the car is full and
+        when a schedule window or a limit stops it; subState tells them apart,
+        but only at that moment. It is a live signal: it reads "Schedule 1
+        Limit" all day outside the window, so a car that finished at 03:00
+        sees it flip at 07:00. subState 0 anywhere in the stretch therefore
+        marks it complete until the charger leaves state 5 or is replugged.
+        """
+        state = snapshot.known_state
+        if state is None:
+            # No reading yet, or a code the map cannot name: neither says
+            # anything about the session.
+            return
+        seed, self._charge_completion_seed = self._charge_completion_seed, None
+        if state != DEVICE_STATE_COMPLETE or not (
+            self._modern_firmware_seen or snapshot.modern_firmware
+        ):
+            self._charge_completed = False  # pragma: no mutate - False and None are equally falsy; the flag is only read for truthiness
+            self._charge_completed_at = None  # pragma: no mutate - only ever read behind the completed flag, which is off here
+            return
+        # Bounded by the snapshot: None when missing or out of range.
+        session_time = snapshot.session_time_s
+        if session_time is not None:
+            anchor = self._charge_completed_at if self._charge_completed else seed
+            if anchor is not None and session_time >= anchor:
+                self._charge_completed = True
+            elif anchor is not None:
+                # Counter went backwards: a new plug-in since the anchor.
+                self._charge_completed = False  # pragma: no mutate - False and None are equally falsy; the flag is only read for truthiness
+        if snapshot.get_int("subState") == 0:
+            self._charge_completed = True
+        if not self._charge_completed:
+            self._charge_completed_at = None  # pragma: no mutate - only ever read behind the completed flag, which is off here
+        elif session_time is not None:
+            self._charge_completed_at = session_time
 
     def _emit_transition_events(self, new_data: dict[str, Any]) -> None:
         """Fire bus events for device-state transitions between valid polls.
@@ -706,7 +787,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 EVENT_CHARGING_FINISHED,
                 {
                     **base,
-                    "reason": FINISHED_REASONS.get(state, "stopped"),
+                    "reason": finish_reason(
+                        state,
+                        get_safe_value(new_data, "subState", int),
+                        modern=self._modern_firmware_seen
+                        or is_modern_firmware_payload(new_data),
+                        ocpp=bool(get_safe_value(new_data, "ocppEnabled", int)),
+                    ),
                     "session_energy_kwh": _bounded(
                         get_safe_value(snapshot, "sessionEnergy", float), MAX_ENERGY_KWH
                     ),

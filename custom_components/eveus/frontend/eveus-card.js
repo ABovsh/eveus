@@ -1255,11 +1255,15 @@ class EveusCard extends HTMLElement {
       return {cls: 'fault', icon: 'mdi:alert', text: known ? this._stateLabel(sub) : this._stateLabel(entity), note: known ? this._faultDetail(sub.state) : ''};
     }
     const charging = raw === 'Charging', stopped = !charging && this._limitOn('stop_charging');
-    const text = stopped ? this._t.stopped : this._stateLabel(entity);
     const reason = this._state('not_charging_reason');
     const next = reason?.state === 'Waiting for Schedule' ? this._nextScheduleStart() : null;
-    const reasonText = !charging && reason && !['unknown', 'unavailable', 'Charging'].includes(reason.state)
-      ? [this._stateLabel(reason), next ? `${this._t.from} ${next}` : ''].filter(Boolean).join(' · ') : '';
+    const nextText = next ? `${this._t.from} ${next}` : '';
+    const reasonLabel = !charging && reason && !['unknown', 'unavailable', 'Charging'].includes(reason.state) ? this._stateLabel(reason) : '';
+    // The charger also parks a charge the schedule window or a limit ended in "Charge Complete";
+    // the reason tells them apart, so it leads and "Charge Complete" is not claimed for a car that is not full.
+    const held = !stopped && raw === 'Charge Complete' && reasonLabel && reason.state !== 'Charge Complete';
+    const text = stopped ? this._t.stopped : held ? reasonLabel : this._stateLabel(entity);
+    const reasonText = held ? nextText : [reasonLabel, nextText].filter(Boolean).join(' · ');
     // "Stopped · Stopped by User" and "Charge Complete · Charge Complete" say nothing twice.
     const note = charging ? this._chargingNote()
       : reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';

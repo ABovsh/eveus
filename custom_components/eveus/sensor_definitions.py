@@ -27,6 +27,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.util import dt as dt_util
 
+from .charge_reason import NOT_CHARGING_REASON_OPTIONS, not_charging_reason
 from .common_base import EveusSensorBase
 from .const import (
     MAX_COST_VALUE,
@@ -35,9 +36,7 @@ from .const import (
     get_error_state,
     get_normal_substate,
     CHARGING_STATES,
-    DEVICE_STATE_CHARGING,
     DEVICE_STATE_ERROR,
-    DEVICE_STATE_STANDBY,
     ERROR_STATES,
     NORMAL_SUBSTATES,
     RATE_STATES,
@@ -99,6 +98,10 @@ class EveusSensorEntityDescription(SensorEntityDescription, frozen_or_thawed=Tru
     # throws away — so it has to be seeded from the restored state or the sensor
     # counts backwards after a restart. See `_seed_session_hold`.
     restores_session_hold: bool = False
+    # Saves the coordinator's "this state 5 is a finished charge" memory with
+    # the entity, so a restart after the schedule window closes does not
+    # relabel a full car. See `EveusUpdater.seed_charge_completion`.
+    restores_charge_completion: bool = False
     # Churn damping for a reading that dithers between polls, applied by the
     # entity (`EveusSensorBase._deadband`) rather than here — see
     # `_make_value_getter`'s docstring for why the getter itself stays pure.
@@ -142,6 +145,10 @@ class OptimizedEveusSensor(EveusSensorBase):
         """
         if self._spec.restores_session_hold:
             self._seed_session_hold(await self.async_get_last_state())
+        if self._spec.restores_charge_completion:
+            stored = await self.async_get_last_extra_data()
+            data = stored.as_dict() if stored is not None else {}
+            self._updater.seed_charge_completion(data.get("completed_session_time"))
         await super().async_added_to_hass()
         if self._spec.available_when_offline:
             # The link metric moves on every failed poll, which HA does not
@@ -154,6 +161,18 @@ class OptimizedEveusSensor(EveusSensorBase):
                     self._handle_coordinator_update,
                 )
             )
+
+    @property
+    def extra_restore_state_data(self) -> Optional[ExtraStoredData]:
+        """The completion memory the reason is built on, saved whatever the state.
+
+        Kept in Home Assistant's restore store, not in an attribute: an
+        attribute is a recorder row, and an `unavailable` state is saved
+        without its attributes.
+        """
+        if not self._spec.restores_charge_completion:
+            return None
+        return _ChargeCompletionData(self._updater.charge_completion_anchor)
 
     def _seed_session_hold(self, state) -> None:
         """Re-arm `_session_time_seconds` from the state HA kept for us.
@@ -228,6 +247,16 @@ class OptimizedEveusSensor(EveusSensorBase):
                 )
         self._attr_extra_state_attributes = attrs or {}
         return previous_attrs != self._attr_extra_state_attributes
+
+
+class _ChargeCompletionData(ExtraStoredData):
+    """sessionTime at the last poll that confirmed a finished charge, or None."""
+
+    def __init__(self, session_time: Optional[int]) -> None:
+        self.session_time = session_time
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"completed_session_time": self.session_time}
 
 
 class _CostWindowData(ExtraStoredData):
@@ -577,48 +606,6 @@ def get_charger_substate(updater, hass) -> Optional[str]:
     return get_normal_substate(substate)
 
 
-# The two reasons both schedule slots share — named so schedule 1 and 2 cannot
-# drift into two differently-spelled versions of the same reason.
-_REASON_WAITING_FOR_SCHEDULE: Final[str] = "Waiting for Schedule"
-_REASON_SCHEDULE_ENERGY_LIMIT: Final[str] = "Schedule Energy Limit Reached"
-
-NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
-    "Charging",
-    "Starting Up",
-    "Cable Not Connected",
-    "Waiting for Car",
-    "Charge Complete",
-    "Stopped by User",
-    "Energy Limit Reached",
-    "Time Limit Reached",
-    "Cost Limit Reached",
-    _REASON_WAITING_FOR_SCHEDULE,
-    _REASON_SCHEDULE_ENERGY_LIMIT,
-    "Waiting for Activation",
-    "Paused by Adaptive Mode",
-    "Paused",
-    "Controlled by OCPP",
-    "Error",
-    "Unknown",
-)
-
-# subState meaning while the charger is Connected (3) or Paused (6) — the
-# reason it is holding off rather than delivering current. Schedule 1 and 2
-# collapse to one reason: which schedule fired is in the Schedule sensors.
-_SUBSTATE_REASONS: Final[Dict[int, str]] = {
-    1: "Stopped by User",
-    2: "Energy Limit Reached",
-    3: "Time Limit Reached",
-    4: "Cost Limit Reached",
-    5: _REASON_WAITING_FOR_SCHEDULE,
-    6: _REASON_SCHEDULE_ENERGY_LIMIT,
-    7: _REASON_WAITING_FOR_SCHEDULE,
-    8: _REASON_SCHEDULE_ENERGY_LIMIT,
-    9: "Waiting for Activation",
-    10: "Paused by Adaptive Mode",
-}
-
-
 def _reads_modern_codes(updater) -> bool:
     """Whether this updater's subState follows the modern maps.
 
@@ -639,55 +626,20 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
 
     State and Substate together already carry this, but reading them takes
     knowing which substate texts apply in which state. This folds both into a
-    single closed set of reasons an automation can match on directly.
+    single closed set of reasons an automation can match on directly — the
+    same answer the finish event names (see `charge_reason`).
     """
     state = _read_int(updater, "state")
     if state is None:
         return None
-    # Same closed-ENUM constraint as get_charger_state: an unmapped firmware
-    # state must collapse to "Unknown" rather than be labelled with substate
-    # text that does not apply to it.
-    if state not in CHARGING_STATES:
-        return "Unknown"
-    if state == DEVICE_STATE_CHARGING:
-        return "Charging"
-    if state in (0, 1):
-        return "Starting Up"
-    if state == DEVICE_STATE_STANDBY:
-        return "Cable Not Connected"
-    if state == DEVICE_STATE_ERROR:
-        return "Error"
-    # OCPP hands start/stop to the backend or the vendor app, so no limit below
-    # can be what is holding the session back — nothing HA does will start one
-    # until it is switched off. Named ahead of those limits because it is the
-    # only reason here that points at a setting the user has to change.
-    if _read_int(updater, "ocppEnabled"):
-        return "Controlled by OCPP"
-    # Firmware keeps subState alive in state 5, so 9 there is not a finished
-    # session — it is the charger holding for an external start command.
-    if _reads_modern_codes(updater) and _read_int(updater, "subState") == 9:
-        return _SUBSTATE_REASONS[9]
-    if state == 5:
-        return "Charge Complete"
-    # Only modern firmware's subState follows NORMAL_SUBSTATES. Firmware 1.x
-    # (GitHub issue #11) has its own codes, so reading one there would name a
-    # confident but arbitrary reason; fall through to the state-derived answer,
-    # which the coordinator's legacy translation already made correct.
-    if _reads_modern_codes(updater):
-        substate = _read_int(updater, "subState")
-        reason = _SUBSTATE_REASONS.get(substate)
-        if reason is not None:
-            return reason
-        # Same rule the state branch above follows: a code we cannot name is
-        # not the same as no code. subState 0 really does mean "no limits",
-        # but an unmapped non-zero one means some limit IS active — saying
-        # "nothing is holding it back" there would be a confident lie. A
-        # missing field is neither; it falls through as absent data.
-        if substate not in (None, 0):
-            return "Unknown"
-    # No limit is holding it back: Connected means the car has not asked for
-    # current yet, Paused means the charger itself is idling.
-    return "Waiting for Car" if state == 3 else "Paused"
+    return not_charging_reason(
+        state,
+        _read_int(updater, "subState"),
+        modern=_reads_modern_codes(updater),
+        ocpp=bool(_read_int(updater, "ocppEnabled")),
+        # A bare test double has no coordinator memory: nothing completed.
+        completed=getattr(updater, "charge_completed", False),
+    )
 
 
 def get_not_charging_reason_attrs(updater, hass) -> dict:
@@ -1168,6 +1120,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
             options=list(NOT_CHARGING_REASON_OPTIONS),
+            restores_charge_completion=True,
         ),
         EveusSensorEntityDescription(
             key="ground", name="Ground", value_fn=get_ground_status,

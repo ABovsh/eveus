@@ -24,6 +24,10 @@ COMMAND_TIMEOUT: Final[int] = 12
 DEVICE_STATE_STANDBY: Final[int] = 2
 # Charger device-state value that means "actively charging" (CHARGING_STATES[4]).
 DEVICE_STATE_CHARGING: Final[int] = 4
+# Charger device-state value that the firmware names "Charge Complete"
+# (CHARGING_STATES[5]) — also where a closing schedule window or a fired limit
+# parks a charge, so on its own it does not mean the car is full.
+DEVICE_STATE_COMPLETE: Final[int] = 5
 # Charger device-state value that means "error" (CHARGING_STATES[7]).
 DEVICE_STATE_ERROR: Final[int] = 7
 

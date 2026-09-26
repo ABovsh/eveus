@@ -23,12 +23,17 @@ from .const import (
     MAX_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
 )
+from .charge_reason import SUBSTATE_FINISH_REASONS
 from .sensor_definitions import ICON_CURRENCY_UAH, UNIT_UAH
 from homeassistant.const import UnitOfEnergy, UnitOfTime
 
 # Every reason the coordinator can fire, derived from the same mapping it uses
 # plus its own default, so the two can never drift apart.
-_KNOWN_FINISH_REASONS: frozenset[str] = frozenset(FINISHED_REASONS.values()) | {"stopped"}
+_KNOWN_FINISH_REASONS: frozenset[str] = (
+    frozenset(FINISHED_REASONS.values())
+    | frozenset(SUBSTATE_FINISH_REASONS.values())
+    | {"stopped"}
+)
 
 
 

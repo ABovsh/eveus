@@ -392,6 +392,21 @@ test('not-charging reason is shown when it adds something, hidden when it repeat
   assert.doesNotMatch(setupStatus().html(),/status-note/);
 });
 
+test('state 5 that a schedule or limit caused leads with the reason, not "Charge Complete"',()=>{
+  // Live 2026-09-26 07:01: the schedule window closed mid-charge; the charger said
+  // Charge Complete while the car was not full.
+  const held=setupStatus({state:'Charge Complete',reason:'Energy Limit Reached'}).html();
+  assert.match(held,/status-state idle">Energy Limit Reached</);
+  assert.doesNotMatch(held,/Charge Complete/);
+  assert.doesNotMatch(held,/status-note/,'the reason is the headline; saying it twice adds nothing');
+  // A stopped charger keeps its own headline, the reason goes underneath.
+  const stopped=setupStatus({state:'Charge Complete',reason:'Energy Limit Reached',stop:'on'}).html();
+  assert.match(stopped,/status-state paused">Stopped<[^]*status-note">Energy Limit Reached</);
+  // Unknown reason: fall back to the charger's own state.
+  assert.match(setupStatus({state:'Charge Complete',reason:'unavailable'}).html(),/status-state idle">Charge Complete</);
+  assert.match(setupStatus({state:'Charge Complete',reason:'Charge Complete'}).html(),/status-state idle">Charge Complete</);
+});
+
 test('error shows its fault as the state text, falling back to Error',()=>{
   assert.match(setupStatus({state:'Error',substate:'Grounding Error'}).html(),/status-state fault">Grounding Error</);
   assert.match(setupStatus({state:'Error',substate:'unknown'}).html(),/status-state fault">Error</);
@@ -980,6 +995,10 @@ test('waiting for a schedule says when the next one starts', () => {
   assert.match(at('20:00', 'uk'), /status-note">Очікує розкладу · з 23:00</);
   assert.match(at('08:00', undefined, {schedule_2_enabled:['switch.s2','on']}), /from 09:00</, 'the nearest enabled start wins');
   assert.match(at('20:00', undefined, {schedule_1_enabled:['switch.s1','off']}), /status-note">Waiting for Schedule</, 'no enabled schedule, no time');
+  // Parked in Charge Complete by the closing window: the reason leads, the time follows.
+  const parked = (hm, locale) => { const x = setupAll({sections:['status'], charging:false, locale, over:{...SCHED, state:['sensor.state','Charge Complete'], not_charging_reason:['sensor.reason','Waiting for Schedule']}}); x.card._nowHM = () => hm; x.card.hass = x.hass; return x.html(); };
+  assert.match(parked('09:00'), /status-state idle">Waiting for Schedule<\/span><span class="status-note">from 23:00</);
+  assert.match(parked('09:00', 'uk'), /status-state idle">Очікує розкладу<\/span><span class="status-note">з 23:00</);
 });
 test('hidden items drop out of their section and the row re-spreads', () => {
   const x = setupAll({sections:['actions','basic_info','history','limits','schedules','time','safety','session','advanced_controls'],

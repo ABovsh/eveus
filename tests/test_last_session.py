@@ -236,11 +236,15 @@ def test_known_finish_reasons_is_exactly_what_the_coordinator_can_fire() -> None
     reason being accepted. Spelling the set out here is what stops the literal
     being edited to something the coordinator never sends.
     """
+    from custom_components.eveus.charge_reason import SUBSTATE_FINISH_REASONS
+
     fallback = FINISHED_REASONS[3]
 
+    # SUBSTATE_FINISH_REASONS: the "schedule" / "limit" stops the coordinator
+    # names from subState (charge_reason.finish_reason).
     assert session_history._KNOWN_FINISH_REASONS == frozenset(
         FINISHED_REASONS.values()
-    ) | {fallback}
+    ) | frozenset(SUBSTATE_FINISH_REASONS.values()) | {fallback}
     assert fallback in FINISHED_REASONS.values()
 
 

@@ -361,7 +361,7 @@ The integration fires events on the Home Assistant event bus for charger state t
 | Event | Fires when | Extra payload fields |
 | --- | --- | --- |
 | `eveus_charging_started` | A charging session begins | — |
-| `eveus_charging_finished` | A charging session ends | `reason` (`complete`, `unplugged`, `stopped`, or `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
+| `eveus_charging_finished` | A charging session ends | `reason` (`complete`, `schedule`, `limit`, `unplugged`, `stopped`, or `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
 | `eveus_error` | The charger enters the error state | `error_code`, `error_text` |
 | `eveus_car_connected` | The car is electrically connected | — |
 | `eveus_car_disconnected` | The car is disconnected | — |
