@@ -138,6 +138,60 @@ test('limit toggles and thresholds use their existing switch and number entities
   assert.equal(JSON.stringify(calls[1]),JSON.stringify(['number','set_value',{entity_id:'number.time',value:125}]));
 });
 
+test('reconfiguring clears pending limit feedback timers',()=>{
+  const {card,timers}=setupAll({sections:['limits']});
+  card._setLimitPending('limit_time',61);
+  const previous=card._limitTimers.limit_time;
+  assert.equal(timers.has(previous),true);
+  card.setConfig({sections:['limits']});
+  assert.equal(timers.has(previous),false);
+  assert.equal(card._limitPending.limit_time,undefined);
+});
+
+test('a late failed limit command keeps feedback for a newer command',async()=>{
+  const {card,hass}=setupAll({sections:['limits']});
+  const pending=[];
+  hass.callService=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}));
+  const first=card._stepLimit('limit_time',1);
+  const second=card._stepLimit('limit_time',1);
+  assert.equal(card._limitPending.limit_time,62);
+  pending[0].reject(Error('first command failed'));
+  await first;
+  assert.equal(card._limitPending.limit_time,62);
+  pending[1].resolve();
+  await second;
+});
+
+test('a late failed select command keeps the newer choice',async()=>{
+  const {card,hass}=setupAll({sections:['adaptive']});
+  const pending=[];
+  hass.callService=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}));
+  const first=card._selectOption('adaptive_mode','Auto');
+  const second=card._selectOption('adaptive_mode','Power');
+  assert.equal(card._limitPending.adaptive_mode,'Power');
+  pending[0].reject(Error('first command failed'));
+  await first;
+  assert.equal(card._limitPending.adaptive_mode,'Power');
+  pending[1].resolve();
+  await second;
+});
+
+test('a late failed schedule-time command keeps the newer time',async()=>{
+  const {card,hass}=setupAll({sections:['schedules'],over:SCHED});
+  const pending=[];
+  hass.callService=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}));
+  card._editingTime='schedule_1_start';card._timeValue='22:00';
+  const first=card._commitTime();
+  card._editingTime='schedule_1_start';card._timeValue='21:00';
+  const second=card._commitTime();
+  assert.equal(card._limitPending.schedule_1_start,'21:00:00');
+  pending[0].reject(Error('first command failed'));
+  await first;
+  assert.equal(card._limitPending.schedule_1_start,'21:00:00');
+  pending[1].resolve();
+  await second;
+});
+
 test('Basic mode omits unsupported SOC and lets the three native limits fill the row',()=>{
   const {card}=setupLimits({advanced:false});
   const html=card.shadowRoot.innerHTML;

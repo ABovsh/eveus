@@ -330,6 +330,7 @@ class EveusCard extends HTMLElement {
     this._lastSignature = null;
     this._generation = (this._generation || 0) + 1;
     this._resolving = false;
+    Object.values(this._limitTimers || {}).forEach(clearTimeout);
     this._limitPending = {};
     this._limitTimers = {};
     this._editingLimit = null;
@@ -620,8 +621,17 @@ class EveusCard extends HTMLElement {
     this._limitPending[key] = value;
     this._limitTimers[key] = setTimeout(() => {
       delete this._limitPending[key];
+      delete this._limitTimers[key];
       this._render();
     }, 4000);
+    return this._limitTimers[key];
+  }
+  _rejectLimitPending(key, timer) {
+    if (this._limitTimers[key] !== timer) return;
+    clearTimeout(timer);
+    delete this._limitTimers[key];
+    delete this._limitPending[key];
+    this._render();
   }
   // Standard HA custom-card pattern: a bubbling, shadow-boundary-crossing event that the
   // frontend's global more-info-dialog listener picks up. No entity_id resolved (key not in
@@ -636,14 +646,12 @@ class EveusCard extends HTMLElement {
     if (!this._online || !entity || !['on', 'off'].includes(entity.state)) return;
     const value = !this._limitOn(key);
     haptic('light');
-    this._setLimitPending(key, value);
+    const timer = this._setLimitPending(key, value);
     this._render();
     try {
       await this._hass.callService('switch', value ? 'turn_on' : 'turn_off', {entity_id: this._ids[key]});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   async _stepLimit(key, direction) {
@@ -654,14 +662,12 @@ class EveusCard extends HTMLElement {
     if (next === value) return;
     const rounded = Number(next.toFixed(6));
     haptic('selection');
-    this._setLimitPending(key, rounded);
+    const timer = this._setLimitPending(key, rounded);
     this._render();
     try {
       await this._hass.callService('number', 'set_value', {entity_id: this._ids[key], value: rounded});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   async _commitLimitEdit(key, raw) {
@@ -675,14 +681,12 @@ class EveusCard extends HTMLElement {
     const rounded = Number((attrs.min + steps * attrs.step).toFixed(6));
     if (rounded === this._limitValue(key)) { this._render(); return; }
     haptic('selection');
-    this._setLimitPending(key, rounded);
+    const timer = this._setLimitPending(key, rounded);
     this._render();
     try {
       await this._hass.callService('number', 'set_value', {entity_id: this._ids[key], value: rounded});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   _startLimitEdit(key) {
@@ -1030,14 +1034,12 @@ class EveusCard extends HTMLElement {
     const options = entity?.attributes?.options;
     if (!this._online || !Array.isArray(options) || !options.includes(option) || option === (this._limitPending[key] ?? entity.state)) { this._render(); return; }
     haptic('selection');
-    this._setLimitPending(key, option);
+    const timer = this._setLimitPending(key, option);
     this._render();
     try {
       await this._hass.callService('select', 'select_option', {entity_id: this._ids[key], option});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   _adaptiveSection(fold = null) {
@@ -1096,14 +1098,12 @@ class EveusCard extends HTMLElement {
     if (!key || !this._online || value === null || value === this._timeShown(key)) { this._render(); return; }
     const time = `${value}:00`;
     haptic('selection');
-    this._setLimitPending(key, time);
+    const timer = this._setLimitPending(key, time);
     this._render();
     try {
       await this._hass.callService('time', 'set_value', {entity_id: this._ids[key], time});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   _scheduleRow(n) {

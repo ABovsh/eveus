@@ -2986,7 +2986,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
-        'Schedule 1 Limit',
+        'No Limits',
         dict({
           'device_class': 'enum',
           'friendly_name': 'Eveus EV Charger Substate',
@@ -17303,7 +17303,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
-        'Schedule 1 Limit',
+        'No Limits',
         dict({
           'device_class': 'enum',
           'friendly_name': 'Eveus EV Charger Substate',
