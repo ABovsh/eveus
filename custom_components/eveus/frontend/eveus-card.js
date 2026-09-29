@@ -26,6 +26,11 @@ const SLOW_GAP_A = 1;
 // A card this long folds its settings sections into one-line summaries (the `fold` option overrides).
 const FOLD_MIN_SECTIONS = 6;
 const FOLDABLE = ['advanced_controls', 'adaptive', 'limits', 'schedules', 'history'];
+// `size: {section: small|normal|large}`: small folds one section, large enlarges a readout
+// section's values once it shows this many items or fewer (a wider row needs no bigger text).
+const LARGE = ['advanced_info', 'basic_info', 'session', 'history'];
+const LARGE_MAX_ITEMS = 2;
+const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
 // Mirrors const.py CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS: a drift this close to whole hours is a wrong time zone.
@@ -253,6 +258,8 @@ const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
 // A grid whose stylesheet assumes `n` columns, re-spread when hidden items leave fewer.
 const columns = (count, n) => count === n ? '' : ` style="grid-template-columns:repeat(${count},minmax(0,1fr))"`;
 const sectionsOf = (config) => config.sections ?? LEGACY_LAYOUTS[config.layout] ?? SECTIONS;
+const sizesOf = (section) => [...(FOLDABLE.includes(section) ? ['small'] : []), 'normal', ...(LARGE.includes(section) ? ['large'] : [])];
+const largeFits = (config, section) => (ITEMS[section] || []).filter((i) => !config.hide?.includes(`${section}.${i}`)).length <= LARGE_MAX_ITEMS;
 // Editor words: what each section shows, in words a first-time user recognises.
 const EDITOR_I18N = {
   en: {
@@ -278,6 +285,7 @@ const EDITOR_I18N = {
     device: 'Charger', mode: 'Mode', modeHelp: 'Empty follows the integration', language: 'Language',
     advanced: 'Advanced', basic: 'Basic', languages: {auto: 'Home Assistant language', uk: 'Українська', en: 'English'},
     fold: 'Fold settings', foldHelp: 'Long cards show settings as one-line summaries; tap one to open it',
+    size: 'Size', sizes: {small: 'Small', normal: 'Normal', large: 'Large'}, largeHelp: 'Large: leave two items or fewer',
   },
   uk: {
     names: {
@@ -302,6 +310,7 @@ const EDITOR_I18N = {
     device: 'Станція', mode: 'Режим', modeHelp: 'Порожнє поле — як в інтеграції', language: 'Мова картки',
     advanced: 'Розширений', basic: 'Базовий', languages: {auto: 'Мова Home Assistant', uk: 'Українська', en: 'English'},
     fold: 'Згортати налаштування', foldHelp: 'Довга картка показує налаштування одним рядком; натисніть рядок, щоб розгорнути',
+    size: 'Розмір', sizes: {small: 'Малий', normal: 'Звичайний', large: 'Великий'}, largeHelp: 'Великий: залиште не більше двох елементів',
   },
 };
 const CURRENCY = {UAH: '₴', EUR: '€', USD: '$', GBP: '£', PLN: 'zł', CZK: 'Kč'};
@@ -322,6 +331,9 @@ class EveusCard extends HTMLElement {
     const sections = sectionsOf(config);
     if (!Array.isArray(sections) || sections.some((section) => !SECTIONS.includes(section))) {
       throw new Error(`Available sections: ${SECTIONS.join(', ')}`);
+    }
+    for (const [section, size] of Object.entries(config.size || {})) {
+      if (!sizesOf(section).includes(size)) throw new Error(`size: ${section} takes ${SECTIONS.includes(section) ? sizesOf(section).join(', ') : 'nothing'}`);
     }
     this._reset();
     this._config = {...config, sections: [...new Set(sections)]};
@@ -1348,7 +1360,11 @@ class EveusCard extends HTMLElement {
     this._render();
   }
   _section(section) {
-    if (!this._folding || !FOLDABLE.includes(section)) return this[`_${section}Section`]();
+    const size = this._config.size?.[section];
+    if (!FOLDABLE.includes(section) || (size ? size !== 'small' : !this._folding)) {
+      const html = this[`_${section}Section`]();
+      return size === 'large' && largeFits(this._config, section) ? this._large(html) : html;
+    }
     const open = this._open.has(section) || (section === 'history' && !!this._resetAsk);
     // Limits and Adaptive already have a head row: it is the fold's head too.
     if (section === 'limits' || section === 'adaptive') return this[`_${section}Section`]({open});
@@ -1361,6 +1377,14 @@ class EveusCard extends HTMLElement {
     return `<section class="${['sl fold', `fold-${section}`, cls, this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${label}">
       <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><span class="fold-sum">${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
     </section>`;
+  }
+  // Large: the same section, its fitted values started bigger (the fit still shrinks what clips).
+  // A tile's sub-line only grows a little: it already wraps on a narrow card.
+  _large(html) {
+    if (!html.trimStart().startsWith('<section')) return html;
+    return html.replace(/<section class="([^"]*)"/, '<section class="$1 big"')
+      .replace(/(class="([^"]*)" )?data-fit="([\d.]+)"/g, (_, head = '', cls = '', px) =>
+        `${head}data-fit="${Math.round(Number(px) * (cls.split(' ').includes('tile-sub') ? LARGE_SUB_SCALE : LARGE_SCALE))}"`);
   }
   _foldTitle(section, inner, open, cls = '') {
     return `<button class="${['fold-title', cls].filter(Boolean).join(' ')}" data-fold="${section}" aria-expanded="${open}">${inner}</button>`;
@@ -1973,6 +1997,15 @@ ha-card[data-theme=light] :is(.sl.session,.panel.history,.sl.fold-history){--h:#
 .hist-month-cur{font-size:12.5px;font-weight:600;color:var(--secondary-text-color)}.hist-month-cur b{font-size:16px;font-weight:750;color:var(--primary-text-color)}
 .hist-month small{margin-left:1px;font-size:.72em;font-weight:500;color:var(--secondary-text-color)}
 .hist-month-prev{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--secondary-text-color)}
+/* Large (size: large): the values start ~1.4x via data-fit; heads, icons and rows follow. */
+.big .meter-head,.big .tile-head,.big .soc-tile .tile-head{font-size:14px}.big .meter-head ha-icon,.big .tile-head ha-icon{--mdc-icon-size:18px}
+.big .meter-item,.big .tile{padding:6px 10px 8px}
+.panel.history.big .tiles.one .hist-tile{flex-direction:row;align-items:center;justify-content:space-between}
+.panel.history.big .tiles.one .tile-head{width:auto;min-height:0}.panel.history.big .tiles.one .tile-body{width:auto;flex-direction:row;align-items:baseline;gap:8px}
+.sl.session.big{padding:6px 10px}.big .session-label{font-size:16px}.big .session-label small{font-size:13px}
+.big .info-item{height:auto}.big .session-row .info-item ha-icon{--mdc-icon-size:20px}
+.big .soc-bar{height:12px;border-radius:6px}
+.big .hist-month{min-height:30px}.big .hist-month-cur,.big .hist-month-prev{font-size:15px}.big .hist-month-cur b{font-size:21px}.big .hist-month ha-icon{--mdc-icon-size:19px}
 `;
 
 const ADVANCED_SECTIONS = ['advanced_info', 'advanced_controls'];
@@ -2025,13 +2058,18 @@ class EveusCardEditor extends HTMLElement {
         return `<div class="row na"><label><input type="checkbox" data-toggle="${key}"${shown ? ' checked' : ''} disabled><span>${name}<small>${l.advOnly}</small></span></label></div>`;
       }
       const lock = shown && usable.length === 1 ? ' disabled' : '';
-      const expandable = shown && (ITEMS[key]?.length ?? 0) > 1, open = expandable && this._open?.has(key);
+      const sizes = sizesOf(key), expandable = shown && ((ITEMS[key]?.length ?? 0) > 1 || sizes.length > 1), open = expandable && this._open?.has(key);
       const expand = expandable ? `<button type="button" data-expand="${key}" class="${open ? 'open' : ''}" title="${l.itemsTitle}" aria-expanded="${!!open}"><ha-icon icon="mdi:tune-variant"></ha-icon></button>` : '';
       const hide = this._config.hide || [], left = (ITEMS[key] || []).filter((i) => !hide.includes(`${key}.${i}`)).length;
-      const items = open ? `<div class="items">${ITEMS[key].map((i) => {
+      const size = this._sizeOf(key), fits = largeFits(this._config, key);
+      const sizeRow = sizes.length > 1 ? `<div class="sizes"><span>${l.size}</span>${sizes.map((s) => {
+        const off = s === 'large' && !fits && size !== 'large';
+        return `<label${off ? ` title="${l.largeHelp}"` : ''}><input type="radio" name="size-${key}" data-size="${key}.${s}"${s === size ? ' checked' : ''}${off ? ' disabled' : ''}><span>${l.sizes[s]}</span></label>`;
+      }).join('')}</div>` : '';
+      const items = open ? `<div class="items">${(ITEMS[key] || []).map((i) => {
         const id = `${key}.${i}`, on = !hide.includes(id);
         return `<label><input type="checkbox" data-item="${id}"${on ? ' checked' : ''}${on && left === 1 ? ' disabled' : ''}><span>${l.items[key][i]}</span></label>`;
-      }).join('')}</div>` : '';
+      }).join('')}${sizeRow}</div>` : '';
       const move = (dir, off) => `<button type="button" data-move="${key}" data-dir="${dir}"${off ? ' disabled' : ''} title="${dir < 0 ? l.up : l.down}"><ha-icon icon="mdi:chevron-${dir < 0 ? 'up' : 'down'}"></ha-icon></button>`;
       return `<div class="row${shown ? '' : ' off'}"><label><input type="checkbox" data-toggle="${key}"${shown ? ' checked' : ''}${lock}><span>${name}${hint ? `<small>${hint}</small>` : ''}</span></label>`
         + expand + (shown ? move(-1, i === 0) + move(1, i === usable.length - 1) : '') + '</div>' + items;
@@ -2059,6 +2097,22 @@ class EveusCardEditor extends HTMLElement {
     this._emit(on);
   }
   _resetOrder() { this._emit([...SECTIONS]); }
+  // A foldable section follows the card's folding until it is given its own size.
+  _sizeDefault(key) { return FOLDABLE.includes(key) && (this._config.fold ?? this._foldDefault) ? 'small' : 'normal'; }
+  _sizeOf(key) { return this._config.size?.[key] ?? this._sizeDefault(key); }
+  // Only what differs from the default is written; Large waits until the section shows two items or fewer.
+  _setSize(key, value) {
+    if (!sizesOf(key).includes(value) || (value === 'large' && !largeFits(this._config, key))) { this._render(); return; }
+    const size = {...(this._config.size || {})};
+    if (value === this._sizeDefault(key)) delete size[key]; else size[key] = value;
+    this._writeSize(size);
+  }
+  _writeSize(size) {
+    const {size: _, layout, ...rest} = this._config;
+    this._config = Object.keys(size).length ? {...rest, size} : rest;
+    this._render();
+    this.dispatchEvent(new CustomEvent('config-changed', {detail: {config: this._config}, bubbles: true, composed: true}));
+  }
   _expand(key) {
     this._open = this._open || new Set();
     if (!this._open.delete(key)) this._open.add(key);
@@ -2073,6 +2127,12 @@ class EveusCardEditor extends HTMLElement {
     else { this._render(); return; }
     const {hide: _, layout, ...rest} = this._config;
     this._config = hide.length ? {...rest, hide} : rest;
+    // A shown item that makes the section too long for Large returns it to Normal.
+    if (this._config.size?.[section] === 'large' && !largeFits(this._config, section)) {
+      const {[section]: __, ...size} = this._config.size;
+      const {size: ___, ...kept} = this._config;
+      this._config = Object.keys(size).length ? {...kept, size} : kept;
+    }
     this._render();
     this.dispatchEvent(new CustomEvent('config-changed', {detail: {config: this._config}, bubbles: true, composed: true}));
   }
@@ -2091,6 +2151,7 @@ class EveusCardEditor extends HTMLElement {
       this.addEventListener('change', (e) => {
         if (e.target.dataset?.toggle) this._toggle(e.target.dataset.toggle);
         else if (e.target.dataset?.item) this._toggleItem(e.target.dataset.item);
+        else if (e.target.dataset?.size) this._setSize(...e.target.dataset.size.split('.'));
       });
     }
     const l = this._labels();
@@ -2136,6 +2197,8 @@ const EDITOR_CSS = `
 .items{display:flex;flex-wrap:wrap;gap:4px 14px;padding:6px 0 10px 30px;border-bottom:1px solid var(--divider-color)}
 .items label{display:flex;align-items:center;gap:6px;min-height:32px;cursor:pointer}
 .items input{width:18px;height:18px;margin:0;accent-color:var(--primary-color)}
+.sizes{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;width:100%}.sizes>span{color:var(--secondary-text-color)}
+.sizes label:has(input:disabled){opacity:.45;cursor:default}
 `;
 // The integration and a hand-added resource may both load this file: first copy wins.
 if (!customElements.get?.('eveus-card')) {

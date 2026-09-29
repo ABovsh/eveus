@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### ✨ Added
+- **Card sections can be Small or Large.** A section's settings icon in the card editor now sets its size, or `size:` in YAML. **Small** folds SOC settings, Adaptive charging, Limits, Schedules or Counters into one line on any card; **Normal** keeps one open on a card that folds. **Large** shows bigger readings in Battery SOC, Meter, Session and Counters when the section shows two items or fewer. Suggested in [#16](https://github.com/ABovsh/eveus/issues/16).
+
 ### 🔧 Changed
 - **`eveus_charging_finished` tells a schedule or limit stop from a full car.** Two new `reason` values: `schedule` when a schedule window closed on the charge, and `limit` when an energy, time, cost or schedule energy limit stopped it. Both used to arrive as `complete` (or `stopped`), so automations matching `reason: complete` now fire only for a charge the car ended itself. Last Session Energy, Cost and Duration show the same reason.
 

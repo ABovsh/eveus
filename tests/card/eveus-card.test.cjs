@@ -515,7 +515,7 @@ test('no alert strip when healthy, or when the status row already shows the aler
 });
 
 // ---------- Meter, Battery SOC, SOC settings, Adaptive charging ----------
-function setupAll({sections, mode, over={}, charging=true, locale, language, hide, fold}={}) {
+function setupAll({sections, mode, over={}, charging=true, locale, language, hide, fold, size}={}) {
   const registry = {}, timers = new Map(); let timer = 0;
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}, querySelectorAll(){return [];}}; }
@@ -523,7 +523,7 @@ function setupAll({sections, mode, over={}, charging=true, locale, language, hid
   const sandbox = {HTMLElement, CustomEvent, console, Date, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
   vm.runInNewContext(source, sandbox);
-  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {}), ...(hide ? {hide} : {}), ...(fold === undefined ? {} : {fold})});
+  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {}), ...(hide ? {hide} : {}), ...(fold === undefined ? {} : {fold}), ...(size ? {size} : {})});
   const st = (s,attributes={})=>({state:String(s),attributes});
   const base = {
     state:['sensor.state', charging ? 'Charging' : 'Connected'],
@@ -1324,4 +1324,55 @@ test('the editor offers folding and the month item',()=>{
   const {editor}=setupEditor({sections:['history']});
   assert.ok(editor._schema().some((f)=>f.name==='fold'));
   assert.match(source,/history: \['month', 'total', 'counter_a', 'counter_b'\]/);
+});
+
+// ---- Per-section size (issue #16): small folds one section, large enlarges a readout of two items ----
+test('size: small folds that one section on a short card; normal keeps a section open on a long one',()=>{
+  const short=setupAll({sections:['limits','schedules'],over:plan({}),size:{schedules:'small'}}).html();
+  assert.match(short,/data-fold="schedules"/);assert.doesNotMatch(short,/data-fold="limits"/);assert.match(short,/limits-grid/);
+  const all=['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
+  const long=setupAll({sections:all,over:plan({}),size:{limits:'normal'}}).html();
+  assert.match(long,/limits-grid/);assert.doesNotMatch(long,/data-fold="limits"/);assert.match(long,/data-fold="schedules"/);
+});
+test('size: large enlarges a readout section only while it shows two items or fewer',()=>{
+  const two=setupAll({sections:['basic_info'],hide:['basic_info.voltage'],size:{basic_info:'large'}}).html();
+  assert.match(two,/class="panel meter big"/);assert.match(two,/class="meter-value" data-fit="34"/);
+  const three=setupAll({sections:['basic_info'],size:{basic_info:'large'}}).html();
+  assert.doesNotMatch(three,/ big"/);assert.match(three,/data-fit="24"/);
+  const session=setupAll({sections:['session'],hide:['session.time','session.rate'],size:{session:'large'}}).html();
+  assert.match(session,/class="sl session big"/);assert.match(session,/data-fit="21"/);
+  const soc=setupAll({sections:['advanced_info'],size:{advanced_info:'large'}}).html();
+  assert.match(soc,/class="panel soc [^"]* big"/);
+  assert.match(soc,/class="tile-sub" data-fit="14"/,'a sub-line grows a little, not 1.4x');assert.match(soc,/<b data-fit="36">/);
+});
+test('size: a section that cannot take that size is a config error',()=>{
+  assert.throws(()=>setupAll({sections:['current'],size:{current:'large'}}),/size/);
+  assert.throws(()=>setupAll({sections:['session'],size:{session:'small'}}),/size/);
+  assert.throws(()=>setupAll({sections:['session'],size:{session:'huge'}}),/size/);
+});
+test('editor: the tune panel offers the sizes a section can take; Large waits for two items',()=>{
+  const {editor,last}=setupEditor({sections:['session','schedules','current']});
+  assert.doesNotMatch(editor._sectionsHtml(),/data-expand="current"/,'the slider has no sizes and no items');
+  editor._expand('session');
+  let html=editor._sectionsHtml();
+  assert.match(html,/data-size="session.normal" checked/);assert.doesNotMatch(html,/data-size="session.small"/);
+  assert.match(html,/data-size="session.large" disabled/);
+  editor._toggleItem('session.time');editor._toggleItem('session.rate');
+  assert.doesNotMatch(editor._sectionsHtml(),/data-size="session.large" disabled/);
+  editor._setSize('session','large');
+  assert.equal(last().size.session,'large');
+  editor._toggleItem('session.rate');
+  assert.equal(last().size,undefined,'a third item drops Large');
+  editor._expand('schedules');
+  assert.match(editor._sectionsHtml(),/data-size="schedules.small"/);assert.doesNotMatch(editor._sectionsHtml(),/data-size="schedules.large"/);
+  editor._setSize('schedules','small');assert.equal(last().size.schedules,'small');
+  editor._setSize('schedules','normal');assert.equal(last().size,undefined,'the default is not written');
+});
+test('editor: on a folding card a foldable section defaults to Small, and Normal is written',()=>{
+  const all=['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
+  const {editor,last}=setupEditor({sections:all});
+  editor._expand('limits');
+  assert.match(editor._sectionsHtml(),/data-size="limits.small" checked/);
+  editor._setSize('limits','normal');assert.equal(last().size.limits,'normal');
+  editor._setSize('limits','small');assert.equal(last().size,undefined);
 });
