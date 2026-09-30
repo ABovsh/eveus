@@ -1,17 +1,20 @@
 # Changelog
 
-## Unreleased
+## 4.26.0 - 2026-09-30
 
-### ✨ Added
-- **Card sections can be Small or Large.** A section's settings icon in the card editor now sets its size, or `size:` in YAML. **Small** folds SOC settings, Adaptive charging, Limits, Schedules or Counters into one line on any card; **Normal** keeps one open on a card that folds. **Large** shows bigger readings in Battery SOC, Meter, Session and Counters when the section shows two items or fewer. Suggested in [#16](https://github.com/ABovsh/eveus/issues/16).
+### ✨ New
+
+- **Adjustable card section sizes.** Choose Small, Normal or Large in the card editor or YAML. Small folds controls into a single line; Normal keeps a section expanded; Large enlarges readings in Battery SOC, Meter, Session and Counters when they contain up to two items. Suggested in [#16](https://github.com/ABovsh/eveus/issues/16).
 
 ### 🔧 Changed
-- **`eveus_charging_finished` tells a schedule or limit stop from a full car.** Two new `reason` values: `schedule` when a schedule window closed on the charge, and `limit` when an energy, time, cost or schedule energy limit stopped it. Both used to arrive as `complete` (or `stopped`), so automations matching `reason: complete` now fire only for a charge the car ended itself. Last Session Energy, Cost and Duration show the same reason.
+
+- **Charging-finished events distinguish schedule and limit stops from a full battery.** The new `reason` values are `schedule` and `limit`. Automations matching `reason: complete` now run only when the car ends the charge itself. Last Session sensors report the same reason.
 
 ### 🐛 Fixed
-- **Not Charging Reason and the card no longer say Charge Complete when a schedule or limit stopped the charge.** The charger reports Charge Complete in both cases; the reason now reads Waiting for Schedule or names the limit, and the card's status leads with it, followed by when the next schedule starts. A charge the car finished stays Charge Complete, also when the schedule window closes afterwards or Home Assistant restarts.
-- **The card no longer cuts off text on a phone.** In Ukrainian, the SOC row, the Stop button and the Counters row were clipped at common phone widths; their labels are shorter now (SOC, Блокувати, a short month name). A fault alert on a narrow card wraps onto a second line instead of losing its advice. Text fitting also catches fractional-width overflow, and resumes when the card is reopened after dashboard navigation.
-- **Card controls keep feedback for the latest action.** Reconfiguring the card or receiving a late failure from an earlier limit, adaptive-mode or schedule-time command no longer clears the pending indication for a newer change.
+
+- **Accurate charging status after a schedule or limit stop.** Not Charging Reason and the card now show Waiting for Schedule or the reached limit instead of Charge Complete. The card also shows when the next schedule starts.
+- **Better text fit on phones.** Ukrainian labels no longer clip in the SOC, Stop and Counters sections, and fault advice wraps on narrow cards. Text fitting also works after returning to the dashboard.
+- **Reliable feedback for card controls.** A delayed failure from an earlier command or a card configuration change no longer clears the pending indicator for the latest action.
 
 ## 4.25.0 - 2026-09-26
 
