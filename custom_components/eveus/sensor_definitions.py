@@ -638,7 +638,7 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
         modern=_reads_modern_codes(updater),
         ocpp=bool(_read_int(updater, "ocppEnabled")),
         # A bare test double has no coordinator memory: nothing completed.
-        completed=getattr(updater, "charge_completed", False),
+        completed=getattr(updater, "charge_completed", False),  # pragma: no mutate - False and None are equally falsy; only read for truthiness
     )
 
 

@@ -281,10 +281,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # car ended the charge itself (see `_track_charge_completion`). Held
         # across a failed poll: an outage says nothing about the session, and a
         # Wi-Fi drop after the window closes must not relabel a full car.
-        self._charge_completed = False
+        self._charge_completed = False  # pragma: no mutate - False and None are equally falsy; the flag is only read for truthiness
         # The charger's sessionTime at the last poll that confirmed it. The
         # counter runs from plug-in, so going below it means a new plug-in.
-        self._charge_completed_at: int | None = None
+        self._charge_completed_at: int | None = None  # pragma: no mutate - only ever read behind the completed flag, which is off here
         # A completion restored from the previous run, applied to the first
         # poll that can confirm it is still the same plug-in.
         self._charge_completion_seed: int | None = None

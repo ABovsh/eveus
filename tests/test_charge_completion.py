@@ -232,6 +232,30 @@ def test_legacy_firmware_finish_reason_is_state_derived():
     assert _finished(updater) == ["complete"]
 
 
+def test_finish_reason_keeps_modern_firmware_once_seen():
+    """A later poll without the firmware string must not fall back to legacy."""
+    updater = _updater()
+    _feed(updater, _charging())
+    _feed(updater, {"state": 5, "subState": 5, "sessionTime": 1060}, modern=False)
+    assert _finished(updater) == ["schedule"]
+
+
+def test_finish_reason_defers_to_ocpp():
+    """Under OCPP the schedule is not what stopped the session."""
+    updater = _updater()
+    _feed(updater, _charging())
+    _feed(updater, {"state": 5, "subState": 5, "sessionTime": 1060, "ocppEnabled": 1})
+    assert _finished(updater) == ["complete"]
+
+
+def test_finish_reason_reads_ocpp_flag_as_a_whole_number():
+    """A fractional flag is not "on"; only a whole-number 1 hands control to OCPP."""
+    updater = _updater()
+    _feed(updater, _charging())
+    _feed(updater, {"state": 5, "subState": 5, "sessionTime": 1060, "ocppEnabled": "0.5"})
+    assert _finished(updater) == ["schedule"]
+
+
 # --- across a restart ---------------------------------------------------------
 
 
