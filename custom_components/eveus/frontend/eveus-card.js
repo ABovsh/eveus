@@ -28,7 +28,7 @@ const FOLD_MIN_SECTIONS = 6;
 const FOLDABLE = ['advanced_controls', 'adaptive', 'limits', 'schedules', 'history'];
 // `size: {section: small|normal|large}`: small folds one section, large enlarges a readout
 // section's values once it shows this many items or fewer (a wider row needs no bigger text).
-const LARGE = ['advanced_info', 'basic_info', 'session', 'history'];
+const LARGE = new Set(['advanced_info', 'basic_info', 'session', 'history']);
 const LARGE_MAX_ITEMS = 2;
 const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
@@ -258,7 +258,7 @@ const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
 // A grid whose stylesheet assumes `n` columns, re-spread when hidden items leave fewer.
 const columns = (count, n) => count === n ? '' : ` style="grid-template-columns:repeat(${count},minmax(0,1fr))"`;
 const sectionsOf = (config) => config.sections ?? LEGACY_LAYOUTS[config.layout] ?? SECTIONS;
-const sizesOf = (section) => [...(FOLDABLE.includes(section) ? ['small'] : []), 'normal', ...(LARGE.includes(section) ? ['large'] : [])];
+const sizesOf = (section) => [...(FOLDABLE.includes(section) ? ['small'] : []), 'normal', ...(LARGE.has(section) ? ['large'] : [])];
 const largeFits = (config, section) => (ITEMS[section] || []).filter((i) => !config.hide?.includes(`${section}.${i}`)).length <= LARGE_MAX_ITEMS;
 // Editor words: what each section shows, in words a first-time user recognises.
 const EDITOR_I18N = {
@@ -324,6 +324,12 @@ const duration = (text) => typeof text === 'string' && /\d/.test(text) ? text.re
 // The existing card's working band for mains voltage: outside it the charger itself struggles.
 const VOLTAGE_LOW_V = 205, VOLTAGE_HIGH_V = 253;
 
+const validateSectionSizes = (sizes) => {
+  for (const [section, size] of Object.entries(sizes || {})) {
+    if (!sizesOf(section).includes(size)) throw new Error(`size: ${section} takes ${SECTIONS.includes(section) ? sizesOf(section).join(', ') : 'nothing'}`);
+  }
+};
+
 class EveusCard extends HTMLElement {
   static getStubConfig() { return {sections: [...SECTIONS]}; }
   static getConfigElement() { return document.createElement('eveus-card-editor'); }
@@ -332,9 +338,7 @@ class EveusCard extends HTMLElement {
     if (!Array.isArray(sections) || sections.some((section) => !SECTIONS.includes(section))) {
       throw new Error(`Available sections: ${SECTIONS.join(', ')}`);
     }
-    for (const [section, size] of Object.entries(config.size || {})) {
-      if (!sizesOf(section).includes(size)) throw new Error(`size: ${section} takes ${SECTIONS.includes(section) ? sizesOf(section).join(', ') : 'nothing'}`);
-    }
+    validateSectionSizes(config.size);
     this._reset();
     this._config = {...config, sections: [...new Set(sections)]};
     this._ids = null;
@@ -1280,7 +1284,9 @@ class EveusCard extends HTMLElement {
     // The charger also parks a charge the schedule window or a limit ended in "Charge Complete";
     // the reason tells them apart, so it leads and "Charge Complete" is not claimed for a car that is not full.
     const held = !stopped && raw === 'Charge Complete' && reasonLabel && reason.state !== 'Charge Complete';
-    const text = stopped ? this._t.stopped : held ? reasonLabel : this._stateLabel(entity);
+    let text = this._stateLabel(entity);
+    if (stopped) text = this._t.stopped;
+    else if (held) text = reasonLabel;
     const reasonText = held ? nextText : [reasonLabel, nextText].filter(Boolean).join(' · ');
     // "Stopped · Stopped by User" and "Charge Complete · Charge Complete" say nothing twice.
     const note = charging ? this._chargingNote()
@@ -1389,8 +1395,10 @@ class EveusCard extends HTMLElement {
   _large(html) {
     if (!html.trimStart().startsWith('<section')) return html;
     return html.replace(/<section class="([^"]*)"/, '<section class="$1 big"')
-      .replace(/(class="([^"]*)" )?data-fit="([\d.]+)"/g, (_, head = '', cls = '', px) =>
-        `${head}data-fit="${Math.round(Number(px) * (cls.split(' ').includes('tile-sub') ? LARGE_SUB_SCALE : LARGE_SCALE))}"`);
+      .replace(/(class="([^"]*)" )?data-fit="([\d.]+)"/g, (_, head, cls, px) => {
+        const scale = (cls ?? '').split(' ').includes('tile-sub') ? LARGE_SUB_SCALE : LARGE_SCALE;
+        return `${head ?? ''}data-fit="${Math.round(Number(px) * scale)}"`;
+      });
   }
   _foldTitle(section, inner, open, cls = '') {
     return `<button class="${['fold-title', cls].filter(Boolean).join(' ')}" data-fold="${section}" aria-expanded="${open}">${inner}</button>`;
@@ -2065,6 +2073,16 @@ class EveusCardEditor extends HTMLElement {
       {name: 'fold', selector: {boolean: {}}},
     ];
   }
+  _sizeOptionsHtml(key, sizes, size, fits) {
+    if (sizes.length <= 1) return '';
+    const l = this._labels();
+    const options = sizes.map((s) => {
+      const off = s === 'large' && !fits && size !== 'large';
+      const help = off ? ` title="${l.largeHelp}"` : '';
+      return `<label${help}><input type="radio" name="size-${key}" data-size="${key}.${s}"${s === size ? ' checked' : ''}${off ? ' disabled' : ''}><span>${l.sizes[s]}</span></label>`;
+    }).join('');
+    return `<div class="sizes"><span>${l.size}</span>${options}</div>`;
+  }
   _sectionsHtml() {
     const l = this._labels(), on = this._config.sections, usable = this._usable;
     const rows = [...usable, ...SECTIONS.filter((s) => !on.includes(s) && !this._na(s)), ...SECTIONS.filter((s) => this._na(s))];
@@ -2078,10 +2096,7 @@ class EveusCardEditor extends HTMLElement {
       const expand = expandable ? `<button type="button" data-expand="${key}" class="${open ? 'open' : ''}" title="${l.itemsTitle}" aria-expanded="${!!open}"><ha-icon icon="mdi:tune-variant"></ha-icon></button>` : '';
       const hide = this._config.hide || [], left = (ITEMS[key] || []).filter((i) => !hide.includes(`${key}.${i}`)).length;
       const size = this._sizeOf(key), fits = largeFits(this._config, key);
-      const sizeRow = sizes.length > 1 ? `<div class="sizes"><span>${l.size}</span>${sizes.map((s) => {
-        const off = s === 'large' && !fits && size !== 'large';
-        return `<label${off ? ` title="${l.largeHelp}"` : ''}><input type="radio" name="size-${key}" data-size="${key}.${s}"${s === size ? ' checked' : ''}${off ? ' disabled' : ''}><span>${l.sizes[s]}</span></label>`;
-      }).join('')}</div>` : '';
+      const sizeRow = this._sizeOptionsHtml(key, sizes, size, fits);
       const items = open ? `<div class="items">${(ITEMS[key] || []).map((i) => {
         const id = `${key}.${i}`, on = !hide.includes(id);
         return `<label><input type="checkbox" data-item="${id}"${on ? ' checked' : ''}${on && left === 1 ? ' disabled' : ''}><span>${l.items[key][i]}</span></label>`;
@@ -2119,12 +2134,14 @@ class EveusCardEditor extends HTMLElement {
   // Only what differs from the default is written; Large waits until the section shows two items or fewer.
   _setSize(key, value) {
     if (!sizesOf(key).includes(value) || (value === 'large' && !largeFits(this._config, key))) { this._render(); return; }
-    const size = {...(this._config.size || {})};
+    const size = {...this._config.size};
     if (value === this._sizeDefault(key)) delete size[key]; else size[key] = value;
     this._writeSize(size);
   }
   _writeSize(size) {
-    const {size: _, layout, ...rest} = this._config;
+    const rest = {...this._config};
+    delete rest.size;
+    delete rest.layout;
     this._config = Object.keys(size).length ? {...rest, size} : rest;
     this._render();
     this.dispatchEvent(new CustomEvent('config-changed', {detail: {config: this._config}, bubbles: true, composed: true}));
@@ -2141,15 +2158,19 @@ class EveusCardEditor extends HTMLElement {
     if (hide.includes(id)) hide.splice(hide.indexOf(id), 1);
     else if (ITEMS[section].filter((i) => !hide.includes(`${section}.${i}`)).length > 1) hide.push(id);
     else { this._render(); return; }
-    const {hide: _, layout, ...rest} = this._config;
+    const rest = {...this._config};
+    delete rest.hide;
+    delete rest.layout;
     this._config = hide.length ? {...rest, hide} : rest;
     // A shown item that makes the section too long for Large returns it to Normal.
     if (this._config.size?.[section] === 'large' && !largeFits(this._config, section)) {
-      const {[section]: __, ...size} = this._config.size;
+      const size = {...this._config.size};
+      delete size[section];
       // Counters default to Small on a long card. Removing Large alone
       // would fold them, rather than keep the now wider section at Normal.
       if (this._sizeDefault(section) === 'small') size[section] = 'normal';
-      const {size: ___, ...kept} = this._config;
+      const kept = {...this._config};
+      delete kept.size;
       this._config = Object.keys(size).length ? {...kept, size} : kept;
     }
     this._render();

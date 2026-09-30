@@ -22,17 +22,22 @@ from .const import (
 _REASON_WAITING_FOR_SCHEDULE: Final[str] = "Waiting for Schedule"
 _REASON_SCHEDULE_ENERGY_LIMIT: Final[str] = "Schedule Energy Limit Reached"
 _REASON_CHARGE_COMPLETE: Final[str] = "Charge Complete"
+_REASON_WAITING_FOR_CAR: Final[str] = "Waiting for Car"
+_REASON_STOPPED_BY_USER: Final[str] = "Stopped by User"
+_REASON_ENERGY_LIMIT: Final[str] = "Energy Limit Reached"
+_REASON_TIME_LIMIT: Final[str] = "Time Limit Reached"
+_REASON_COST_LIMIT: Final[str] = "Cost Limit Reached"
 
 NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
     "Charging",
     "Starting Up",
     "Cable Not Connected",
-    "Waiting for Car",
+    _REASON_WAITING_FOR_CAR,
     _REASON_CHARGE_COMPLETE,
-    "Stopped by User",
-    "Energy Limit Reached",
-    "Time Limit Reached",
-    "Cost Limit Reached",
+    _REASON_STOPPED_BY_USER,
+    _REASON_ENERGY_LIMIT,
+    _REASON_TIME_LIMIT,
+    _REASON_COST_LIMIT,
     _REASON_WAITING_FOR_SCHEDULE,
     _REASON_SCHEDULE_ENERGY_LIMIT,
     "Waiting for Activation",
@@ -47,10 +52,10 @@ NOT_CHARGING_REASON_OPTIONS: Final[tuple[str, ...]] = (
 # Schedule 1 and 2 collapse to one reason: which schedule fired is in the
 # Schedule sensors.
 SUBSTATE_REASONS: Final[Dict[int, str]] = {
-    1: "Stopped by User",
-    2: "Energy Limit Reached",
-    3: "Time Limit Reached",
-    4: "Cost Limit Reached",
+    1: _REASON_STOPPED_BY_USER,
+    2: _REASON_ENERGY_LIMIT,
+    3: _REASON_TIME_LIMIT,
+    4: _REASON_COST_LIMIT,
     5: _REASON_WAITING_FOR_SCHEDULE,
     6: _REASON_SCHEDULE_ENERGY_LIMIT,
     7: _REASON_WAITING_FOR_SCHEDULE,
@@ -65,11 +70,11 @@ _SUBSTATE_ACTIVATION: Final[int] = 9
 # other reason keeps the state-derived FINISHED_REASONS value it always had.
 SUBSTATE_FINISH_REASONS: Final[Dict[str, str]] = {
     _REASON_WAITING_FOR_SCHEDULE: "schedule",
-    "Energy Limit Reached": "limit",
-    "Time Limit Reached": "limit",
-    "Cost Limit Reached": "limit",
+    _REASON_ENERGY_LIMIT: "limit",
+    _REASON_TIME_LIMIT: "limit",
+    _REASON_COST_LIMIT: "limit",
     _REASON_SCHEDULE_ENERGY_LIMIT: "limit",
-    "Stopped by User": "stopped",
+    _REASON_STOPPED_BY_USER: "stopped",
 }
 
 
@@ -115,7 +120,7 @@ def not_charging_reason(
     if not modern:
         if state == DEVICE_STATE_COMPLETE:
             return _REASON_CHARGE_COMPLETE
-        return "Waiting for Car" if state == 3 else "Paused"
+        return _REASON_WAITING_FOR_CAR if state == 3 else "Paused"
     # 9 is the charger holding for an external start command — a live setting,
     # so it wins even over a completion seen earlier.
     if substate == _SUBSTATE_ACTIVATION:
@@ -133,7 +138,7 @@ def not_charging_reason(
         return "Unknown"
     # No limit is holding it back: Connected means the car has not asked for
     # current yet, Paused means the charger itself is idling.
-    return "Waiting for Car" if state == 3 else "Paused"
+    return _REASON_WAITING_FOR_CAR if state == 3 else "Paused"
 
 
 def finish_reason(
