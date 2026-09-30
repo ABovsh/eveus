@@ -349,18 +349,20 @@ class EveusCard extends HTMLElement {
     this._open = this._loadOpen();
     if (!this.shadowRoot) {
       this.attachShadow({mode: 'open'});
+      // Event handlers intentionally start async actions without waiting; each action
+      // handles service failures and owns its pending feedback.
       this.shadowRoot.addEventListener('input', (e) => this._onSlide(e, false));
       this.shadowRoot.addEventListener('change', (e) => {
-        if (e.target.dataset?.limitEdit) { this._commitLimitEdit(e.target.dataset.limitEdit, e.target.value); return; }
+        if (e.target.dataset?.limitEdit) { void this._commitLimitEdit(e.target.dataset.limitEdit, e.target.value); return; }
         if (e.target.dataset?.timeEdit) { this._timeDraft(e.target.dataset.timeEdit, e.target.value); return; }
-        if (e.target.dataset?.select) { this._selectOption(e.target.dataset.select, e.target.value); return; }
+        if (e.target.dataset?.select) { void this._selectOption(e.target.dataset.select, e.target.value); return; }
         this._onSlide(e, true);
       });
       this.shadowRoot.addEventListener('keydown', (e) => this._onKeyDown(e));
       this.shadowRoot.addEventListener('focusin', (e) => { if (e.target.dataset?.select) this._selectFocus(e.target.dataset.select); });
       this.shadowRoot.addEventListener('focusout', (e) => {
         if (e.target.dataset?.select) { this._selectBlur(); return; }
-        if (e.target.dataset?.timeEdit) { this._timeBlur(e.target.dataset.timeEdit); return; }
+        if (e.target.dataset?.timeEdit) { void this._timeBlur(e.target.dataset.timeEdit); return; }
         if (e.target.dataset?.limitEdit && this._editingLimit === e.target.dataset.limitEdit) {
           this._editingLimit = null;
           this._render();
@@ -386,7 +388,7 @@ class EveusCard extends HTMLElement {
       // event); refit once fonts finish loading so that swap can't leave stale,
       // overflowing text on screen.
       if (typeof document !== 'undefined' && document.fonts) {
-        document.fonts.ready.then(() => this._fitLimitValues());
+        void document.fonts.ready.then(() => this._fitLimitValues());
       }
     }
     if (this._hass) this.hass = this._hass;
@@ -418,19 +420,19 @@ class EveusCard extends HTMLElement {
     const fold = e.target.closest('[data-fold]');
     const zoneFix = e.target.closest('[data-zone-fix]');
     if (fold) this._toggleFold(fold.dataset.fold);
-    else if (zoneFix) this._selectOption('time_zone', zoneFix.dataset.zoneFix);
+    else if (zoneFix) void this._selectOption('time_zone', zoneFix.dataset.zoneFix);
     else if (reset) {
-      if (reset.dataset.reset) this._resetCounter(reset.dataset.reset);
-      else if (reset.dataset.resetConfirm) this._resetCounter(reset.dataset.resetConfirm, true);
+      if (reset.dataset.reset) void this._resetCounter(reset.dataset.reset);
+      else if (reset.dataset.resetConfirm) void this._resetCounter(reset.dataset.resetConfirm, true);
       else this._cancelReset();
-    } else if (statusToggle) this._statusToggle(statusToggle.dataset.statusToggle);
-    else if (step) this._stepLimit(step.dataset.limitStep, Number(step.dataset.dir));
-    else if (toggle) this._toggleLimit(toggle.dataset.limitToggle);
+    } else if (statusToggle) void this._statusToggle(statusToggle.dataset.statusToggle);
+    else if (step) void this._stepLimit(step.dataset.limitStep, Number(step.dataset.dir));
+    else if (toggle) void this._toggleLimit(toggle.dataset.limitToggle);
     else if (editTrigger) this._startLimitEdit(editTrigger.dataset.limitEditTrigger);
     else if (timeTrigger) this._startTimeEdit(timeTrigger.dataset.timeEditTrigger);
-    else if (e.target.closest('[data-sync]')) this._syncTime();
+    else if (e.target.closest('[data-sync]')) void this._syncTime();
     else if (moreInfo) this._moreInfo(moreInfo.dataset.moreInfo);
-    else if (e.target.closest('[data-confirm]')) this._confirm();
+    else if (e.target.closest('[data-confirm]')) void this._confirm();
   }
   _holdStart(e) {
     this._held = false;
@@ -450,8 +452,8 @@ class EveusCard extends HTMLElement {
     // asked again on a later update, throttled, rather than showing "no charger"
     // until the page is reloaded.
     const retry = this._resolved && this._ids === null && Date.now() >= (this._retryAt || 0);
-    if ((!this._resolved || retry) && !this._resolving) this._resolve();
-    if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) this._fetchMonth();
+    if ((!this._resolved || retry) && !this._resolving) void this._resolve();
+    if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
       const entity = this._state(key);
       const actual = typeof pending === 'boolean' ? entity?.state === 'on' : typeof pending === 'string' ? entity?.state : currentNumber(entity);
@@ -584,7 +586,7 @@ class EveusCard extends HTMLElement {
       this._render();
     } else if (value < current) {
       this._asking = false;
-      this._send();
+      void this._send();
     } else { this._reset(); this._render(); }
   }
   async _confirm() {
