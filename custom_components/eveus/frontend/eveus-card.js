@@ -479,7 +479,11 @@ class EveusCard extends HTMLElement {
     return JSON.stringify([Object.values(this._ids || {}).map((id) => { const e = states[id]; return e ? [e.state, e.attributes, e.last_changed] : null; }),
       this._resolved, this._nowHM(), this._hass.locale?.language, this._hass.themes?.darkMode]);
   }
-  connectedCallback() { this._lastSignature = null; if (this._hass) this.hass = this._hass; }
+  connectedCallback() {
+    this._resizeObserver?.observe(this);
+    this._lastSignature = null;
+    if (this._hass) this.hass = this._hass;
+  }
   disconnectedCallback() {
     this._reset();
     clearTimeout(this._statusTimer);
@@ -1599,10 +1603,20 @@ class EveusCard extends HTMLElement {
   // ceiling still fits without clipping.
   _fitLimitValues() {
     if (typeof this.shadowRoot?.querySelectorAll !== 'function') return;
+    // scrollWidth/clientWidth are integers: a fraction of a pixel can still
+    // trigger an ellipsis while both read the same. Measure the text's real
+    // bounds too, so Large's longer translated captions fit completely.
+    const range = typeof document !== 'undefined' && document.createRange?.();
+    const overflows = (el) => {
+      if (el.scrollWidth > el.clientWidth) return true;
+      if (!range) return false;
+      range.selectNodeContents(el);
+      return range.getBoundingClientRect().width > el.getBoundingClientRect().width + 0.01;
+    };
     for (const el of this.shadowRoot.querySelectorAll('[data-fit]')) {
       let size = Math.max(11, Number(el.dataset.fit) || 18);
       el.style.fontSize = `${size}px`;
-      while (size > 11 && el.scrollWidth > el.clientWidth) {
+      while (size > 11 && overflows(el)) {
         size = Math.max(11, size - 1);
         el.style.fontSize = `${size}px`;
       }
@@ -2130,6 +2144,9 @@ class EveusCardEditor extends HTMLElement {
     // A shown item that makes the section too long for Large returns it to Normal.
     if (this._config.size?.[section] === 'large' && !largeFits(this._config, section)) {
       const {[section]: __, ...size} = this._config.size;
+      // Counters default to Small on a long card. Removing Large alone
+      // would fold them, rather than keep the now wider section at Normal.
+      if (this._sizeDefault(section) === 'small') size[section] = 'normal';
       const {size: ___, ...kept} = this._config;
       this._config = Object.keys(size).length ? {...kept, size} : kept;
     }

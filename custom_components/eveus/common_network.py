@@ -662,7 +662,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def charge_completion_anchor(self) -> int | None:
         """What the Not Charging Reason sensor saves across a restart."""
-        return self._charge_completed_at if self._charge_completed else None
+        if self._charge_completed and self._charge_completed_at is not None:
+            return self._charge_completed_at
+        # Setup can remain offline, or the first reply can lack sessionTime.
+        # Save the pending seed too: neither has disproved the old completion.
+        return self._charge_completion_seed
 
     def seed_charge_completion(self, session_time: Any) -> None:
         """Re-arm a completion saved by the previous run.
@@ -699,16 +703,19 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # No reading yet, or a code the map cannot name: neither says
             # anything about the session.
             return
-        seed, self._charge_completion_seed = self._charge_completion_seed, None
-        if state != DEVICE_STATE_COMPLETE or not (
-            self._modern_firmware_seen or snapshot.modern_firmware
-        ):
+        if state != DEVICE_STATE_COMPLETE:
+            self._charge_completion_seed = None
             self._charge_completed = False  # pragma: no mutate - False and None are equally falsy; the flag is only read for truthiness
             self._charge_completed_at = None  # pragma: no mutate - only ever read behind the completed flag, which is off here
+            return
+        if not (self._modern_firmware_seen or snapshot.modern_firmware):
+            # An optional firmware marker may arrive after the first poll.
+            # Keep a restored seed until its subState map can be established.
             return
         # Bounded by the snapshot: None when missing or out of range.
         session_time = snapshot.session_time_s
         if session_time is not None:
+            seed, self._charge_completion_seed = self._charge_completion_seed, None
             anchor = self._charge_completed_at if self._charge_completed else seed
             if anchor is not None and session_time >= anchor:
                 self._charge_completed = True

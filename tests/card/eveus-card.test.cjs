@@ -1376,3 +1376,48 @@ test('editor: on a folding card a foldable section defaults to Small, and Normal
   editor._setSize('limits','normal');assert.equal(last().size.limits,'normal');
   editor._setSize('limits','small');assert.equal(last().size,undefined);
 });
+
+test('fitted text clears fractional overflow even when DOM widths round equal', () => {
+  const registry = {};
+  class HTMLElement {
+    attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
+  }
+  const clipped = {dataset:{fit:'12'},style:{},clientWidth:154,
+    get scrollWidth() { return Math.round(153.89 * parseFloat(this.style.fontSize) / 12); },
+    getBoundingClientRect() { return {width:153.5}; }};
+  const roomy = {dataset:{fit:'36'},style:{},clientWidth:154,scrollWidth:79,
+    getBoundingClientRect() { return {width:153.5}; }};
+  const document = {createRange() { let el; return {
+    selectNodeContents(value) { el=value; },
+    getBoundingClientRect() { return {width:el===clipped ? 153.89 * parseFloat(el.style.fontSize)/12 : 79}; },
+  }; }};
+  const sandbox = {HTMLElement,document,console,setTimeout,clearTimeout,
+    customElements:{define:(k,v)=>registry[k]=v},window:{customCards:[]}};
+  vm.runInNewContext(source,sandbox);
+  const card = new registry['eveus-card']();card.setConfig({sections:['advanced_info']});
+  card.shadowRoot.querySelectorAll = (selector) => selector==='[data-fit]' ? [clipped,roomy] : [];
+  card._fitLimitValues();
+  assert.equal(clipped.style.fontSize,'11px','fractional overflow would still draw an ellipsis at 12px');
+  assert.equal(roomy.style.fontSize,'36px','readings with room retain their configured Large size');
+});
+
+test('adding a third counter leaves a Large section open at Normal on a folding card', () => {
+  const all=['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
+  const {editor,last}=setupEditor({sections:all,size:{history:'large'},hide:['history.month','history.total']});
+  editor._toggleItem('history.total');
+  assert.equal(editor._sizeOf('history'),'normal','adding a counter must not collapse the section to Small');
+  const config=last();
+  assert.equal(config.size.history,'normal');
+  const rendered=setupAll({...config,over:HISTORY}).html();
+  assert.match(rendered,/class="panel history"/);
+  assert.doesNotMatch(rendered,/fold-history|panel history big/);
+});
+
+test('a reattached card observes width changes again', () => {
+  const {card}=setup();
+  const seen=[];
+  card._resizeObserver={disconnect(){seen.push('disconnect');},observe(el){seen.push(el);}};
+  card.disconnectedCallback();
+  card.connectedCallback();
+  assert.deepEqual(seen,['disconnect',card],'dashboard navigation must not leave refitting detached');
+});
