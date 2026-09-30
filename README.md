@@ -1,7 +1,7 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.25.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.26.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
@@ -170,6 +170,7 @@ The card follows the integration mode; `mode: basic` simplifies it, while
 - **Warnings:** voltage is red below 205 V or above 253 V; temperatures are red from 80 °C and leakage current from 30 mA, the charger's own fault limits; Time Drift is red from 10 minutes, when Home Assistant raises its clock Repairs notice. Faults and reasons for not charging appear in **Status**.
 - **Offline:** shows the age of the last reading and disables controls.
 - **Folding:** a card with six or more sections shows SOC settings, Adaptive charging, Limits, Schedules and Counters as one-line summaries; tap one to open it. `fold: false` keeps them open.
+- **Size:** each section's settings icon sets its size. **Small** folds that section into one line on any card; **Normal** keeps it open on a folding card. **Large** shows bigger readings in Battery SOC, Meter, Session and Counters once the section shows two items or fewer. Adding more than two items returns a Large section to Normal.
 - **Hints:** a fault shows the reading behind it and what to do. While the charge runs below the set current, **Status** says why: adaptive mode, a schedule's current limit, or the car taking less. With the car plugged in and waiting for a schedule, the battery section shows how much energy that schedule can add. A charger clock that is off by whole hours gets a button for the matching time zone instead of **Sync**.
 - **Session and counters:** with the car unplugged, **Session** shows the last session and when it ended; plugged in, it shows the active tariff price. **Counters** add this month's and last month's energy from Home Assistant statistics.
 - **Interaction:** tap a reading to open its entity. Long-press the battery tile, or focus it and press Alt+Enter, to set Initial SOC; use the target tile the same way for Target SOC. To stop an active charge, tap **Stop** again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once. With no charge running, **Stop** blocks charging until you tap it again. Resetting a counter asks for confirmation. In **Schedules**, tap a time to pick a new one, tap a limit's icon to turn it on or off, and tap its value to type a new one. A schedule's badge glows while the charger's clock places it in its window. The card omits that glow and the next-start time when Time Drift is unknown or at least 10 minutes.
@@ -178,7 +179,7 @@ The card follows the integration mode; `mode: basic` simplifies it, while
 
 1. Restart Home Assistant after installing or updating the integration, then refresh your browser.
 2. Open your dashboard → **Edit dashboard → Add card → Eveus EV Charger**.
-3. Tick the sections you want, reorder them with the arrows, and **Save**. Tap a section's settings icon to hide single items, e.g. Schedule 2. **Default order** restores all sections. Set **Charger** if you have several; **Mode** and **Language** are optional.
+3. Tick the sections you want, reorder them with the arrows, and **Save**. Tap a section's settings icon to hide single items, e.g. Schedule 2, or to set its size. **Default order** restores all sections. Set **Charger** if you have several; **Mode** and **Language** are optional.
 
 In the mobile app, refresh through **Settings → Companion app → Troubleshooting →
 Reset frontend cache**, then restart the app.
@@ -208,6 +209,9 @@ sections:            # any of these, in any order; omit for all of them
 # mode: basic        # advanced | basic (default: follows the integration)
 # language: uk       # auto (default, Home Assistant's language) | uk | en
 # fold: false        # default: on from six sections
+# size:              # per section: small (one line) | normal | large (two items or fewer)
+#   session: large
+#   schedules: small
 ```
 
 Cards saved with the earlier `layout:` option keep working: `compact`,
@@ -361,7 +365,7 @@ The integration fires events on the Home Assistant event bus for charger state t
 | Event | Fires when | Extra payload fields |
 | --- | --- | --- |
 | `eveus_charging_started` | A charging session begins | — |
-| `eveus_charging_finished` | A charging session ends | `reason` (`complete`, `unplugged`, `stopped`, or `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
+| `eveus_charging_finished` | A charging session ends | `reason` (`complete`, `schedule`, `limit`, `unplugged`, `stopped`, or `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
 | `eveus_error` | The charger enters the error state | `error_code`, `error_text` |
 | `eveus_car_connected` | The car is electrically connected | — |
 | `eveus_car_disconnected` | The car is disconnected | — |

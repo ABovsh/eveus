@@ -138,6 +138,60 @@ test('limit toggles and thresholds use their existing switch and number entities
   assert.equal(JSON.stringify(calls[1]),JSON.stringify(['number','set_value',{entity_id:'number.time',value:125}]));
 });
 
+test('reconfiguring clears pending limit feedback timers',()=>{
+  const {card,timers}=setupAll({sections:['limits']});
+  card._setLimitPending('limit_time',61);
+  const previous=card._limitTimers.limit_time;
+  assert.equal(timers.has(previous),true);
+  card.setConfig({sections:['limits']});
+  assert.equal(timers.has(previous),false);
+  assert.equal(card._limitPending.limit_time,undefined);
+});
+
+test('a late failed limit command keeps feedback for a newer command',async()=>{
+  const {card,hass}=setupAll({sections:['limits']});
+  const pending=[];
+  hass.callService=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}));
+  const first=card._stepLimit('limit_time',1);
+  const second=card._stepLimit('limit_time',1);
+  assert.equal(card._limitPending.limit_time,62);
+  pending[0].reject(Error('first command failed'));
+  await first;
+  assert.equal(card._limitPending.limit_time,62);
+  pending[1].resolve();
+  await second;
+});
+
+test('a late failed select command keeps the newer choice',async()=>{
+  const {card,hass}=setupAll({sections:['adaptive']});
+  const pending=[];
+  hass.callService=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}));
+  const first=card._selectOption('adaptive_mode','Auto');
+  const second=card._selectOption('adaptive_mode','Power');
+  assert.equal(card._limitPending.adaptive_mode,'Power');
+  pending[0].reject(Error('first command failed'));
+  await first;
+  assert.equal(card._limitPending.adaptive_mode,'Power');
+  pending[1].resolve();
+  await second;
+});
+
+test('a late failed schedule-time command keeps the newer time',async()=>{
+  const {card,hass}=setupAll({sections:['schedules'],over:SCHED});
+  const pending=[];
+  hass.callService=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}));
+  card._editingTime='schedule_1_start';card._timeValue='22:00';
+  const first=card._commitTime();
+  card._editingTime='schedule_1_start';card._timeValue='21:00';
+  const second=card._commitTime();
+  assert.equal(card._limitPending.schedule_1_start,'21:00:00');
+  pending[0].reject(Error('first command failed'));
+  await first;
+  assert.equal(card._limitPending.schedule_1_start,'21:00:00');
+  pending[1].resolve();
+  await second;
+});
+
 test('Basic mode omits unsupported SOC and lets the three native limits fill the row',()=>{
   const {card}=setupLimits({advanced:false});
   const html=card.shadowRoot.innerHTML;
@@ -392,6 +446,21 @@ test('not-charging reason is shown when it adds something, hidden when it repeat
   assert.doesNotMatch(setupStatus().html(),/status-note/);
 });
 
+test('state 5 that a schedule or limit caused leads with the reason, not "Charge Complete"',()=>{
+  // Live 2026-09-26 07:01: the schedule window closed mid-charge; the charger said
+  // Charge Complete while the car was not full.
+  const held=setupStatus({state:'Charge Complete',reason:'Energy Limit Reached'}).html();
+  assert.match(held,/status-state idle">Energy Limit Reached</);
+  assert.doesNotMatch(held,/Charge Complete/);
+  assert.doesNotMatch(held,/status-note/,'the reason is the headline; saying it twice adds nothing');
+  // A stopped charger keeps its own headline, the reason goes underneath.
+  const stopped=setupStatus({state:'Charge Complete',reason:'Energy Limit Reached',stop:'on'}).html();
+  assert.match(stopped,/status-state paused">Stopped<[^]*status-note">Energy Limit Reached</);
+  // Unknown reason: fall back to the charger's own state.
+  assert.match(setupStatus({state:'Charge Complete',reason:'unavailable'}).html(),/status-state idle">Charge Complete</);
+  assert.match(setupStatus({state:'Charge Complete',reason:'Charge Complete'}).html(),/status-state idle">Charge Complete</);
+});
+
 test('error shows its fault as the state text, falling back to Error',()=>{
   assert.match(setupStatus({state:'Error',substate:'Grounding Error'}).html(),/status-state fault">Grounding Error</);
   assert.match(setupStatus({state:'Error',substate:'unknown'}).html(),/status-state fault">Error</);
@@ -446,7 +515,7 @@ test('no alert strip when healthy, or when the status row already shows the aler
 });
 
 // ---------- Meter, Battery SOC, SOC settings, Adaptive charging ----------
-function setupAll({sections, mode, over={}, charging=true, locale, language, hide, fold}={}) {
+function setupAll({sections, mode, over={}, charging=true, locale, language, hide, fold, size}={}) {
   const registry = {}, timers = new Map(); let timer = 0;
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}, querySelectorAll(){return [];}}; }
@@ -454,7 +523,7 @@ function setupAll({sections, mode, over={}, charging=true, locale, language, hid
   const sandbox = {HTMLElement, CustomEvent, console, Date, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
   vm.runInNewContext(source, sandbox);
-  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {}), ...(hide ? {hide} : {}), ...(fold === undefined ? {} : {fold})});
+  const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {}), ...(hide ? {hide} : {}), ...(fold === undefined ? {} : {fold}), ...(size ? {size} : {})});
   const st = (s,attributes={})=>({state:String(s),attributes});
   const base = {
     state:['sensor.state', charging ? 'Charging' : 'Connected'],
@@ -761,7 +830,7 @@ test('uk: the whole card speaks Ukrainian when Home Assistant does', () => {
   assert.doesNotMatch(text, ENGLISH, text.match(ENGLISH)?.[0]);
   const folded = spoken(setupAll({sections: ALL, locale: 'uk', over: FULL_OVER}).html());
   assert.doesNotMatch(folded, ENGLISH, folded.match(ENGLISH)?.[0]);
-  for (const word of ['Налаштування SOC', 'Розклади', 'Лічильники']) assert.ok(folded.includes(word), word);
+  for (const word of ['SOC', 'Розклади', 'Лічильники']) assert.ok(folded.includes(word), word);
   for (const word of ['Заряджання', 'Один заряд', 'Стоп', 'Батарея', 'Ціль', 'Напруга', 'Потужність', 'Струм',
     'Адаптивне заряджання', 'Сесія', 'Ліміти', 'Без лімітів', 'Енергія', 'Час', 'Вартість', 'Загалом', 'Лічильник A', 'Безпека']) {
     assert.ok(text.includes(word), word);
@@ -980,6 +1049,10 @@ test('waiting for a schedule says when the next one starts', () => {
   assert.match(at('20:00', 'uk'), /status-note">Очікує розкладу · з 23:00</);
   assert.match(at('08:00', undefined, {schedule_2_enabled:['switch.s2','on']}), /from 09:00</, 'the nearest enabled start wins');
   assert.match(at('20:00', undefined, {schedule_1_enabled:['switch.s1','off']}), /status-note">Waiting for Schedule</, 'no enabled schedule, no time');
+  // Parked in Charge Complete by the closing window: the reason leads, the time follows.
+  const parked = (hm, locale) => { const x = setupAll({sections:['status'], charging:false, locale, over:{...SCHED, state:['sensor.state','Charge Complete'], not_charging_reason:['sensor.reason','Waiting for Schedule']}}); x.card._nowHM = () => hm; x.card.hass = x.hass; return x.html(); };
+  assert.match(parked('09:00'), /status-state idle">Waiting for Schedule<\/span><span class="status-note">from 23:00</);
+  assert.match(parked('09:00', 'uk'), /status-state idle">Очікує розкладу<\/span><span class="status-note">з 23:00</);
 });
 test('hidden items drop out of their section and the row re-spreads', () => {
   const x = setupAll({sections:['actions','basic_info','history','limits','schedules','time','safety','session','advanced_controls'],
@@ -1251,4 +1324,100 @@ test('the editor offers folding and the month item',()=>{
   const {editor}=setupEditor({sections:['history']});
   assert.ok(editor._schema().some((f)=>f.name==='fold'));
   assert.match(source,/history: \['month', 'total', 'counter_a', 'counter_b'\]/);
+});
+
+// ---- Per-section size (issue #16): small folds one section, large enlarges a readout of two items ----
+test('size: small folds that one section on a short card; normal keeps a section open on a long one',()=>{
+  const short=setupAll({sections:['limits','schedules'],over:plan({}),size:{schedules:'small'}}).html();
+  assert.match(short,/data-fold="schedules"/);assert.doesNotMatch(short,/data-fold="limits"/);assert.match(short,/limits-grid/);
+  const all=['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
+  const long=setupAll({sections:all,over:plan({}),size:{limits:'normal'}}).html();
+  assert.match(long,/limits-grid/);assert.doesNotMatch(long,/data-fold="limits"/);assert.match(long,/data-fold="schedules"/);
+});
+test('size: large enlarges a readout section only while it shows two items or fewer',()=>{
+  const two=setupAll({sections:['basic_info'],hide:['basic_info.voltage'],size:{basic_info:'large'}}).html();
+  assert.match(two,/class="panel meter big"/);assert.match(two,/class="meter-value" data-fit="34"/);
+  const three=setupAll({sections:['basic_info'],size:{basic_info:'large'}}).html();
+  assert.doesNotMatch(three,/ big"/);assert.match(three,/data-fit="24"/);
+  const session=setupAll({sections:['session'],hide:['session.time','session.rate'],size:{session:'large'}}).html();
+  assert.match(session,/class="sl session big"/);assert.match(session,/data-fit="21"/);
+  const soc=setupAll({sections:['advanced_info'],size:{advanced_info:'large'}}).html();
+  assert.match(soc,/class="panel soc [^"]* big"/);
+  assert.match(soc,/class="tile-sub" data-fit="14"/,'a sub-line grows a little, not 1.4x');assert.match(soc,/<b data-fit="36">/);
+});
+test('size: a section that cannot take that size is a config error',()=>{
+  assert.throws(()=>setupAll({sections:['current'],size:{current:'large'}}),/size/);
+  assert.throws(()=>setupAll({sections:['session'],size:{session:'small'}}),/size/);
+  assert.throws(()=>setupAll({sections:['session'],size:{session:'huge'}}),/size/);
+});
+test('editor: the tune panel offers the sizes a section can take; Large waits for two items',()=>{
+  const {editor,last}=setupEditor({sections:['session','schedules','current']});
+  assert.doesNotMatch(editor._sectionsHtml(),/data-expand="current"/,'the slider has no sizes and no items');
+  editor._expand('session');
+  let html=editor._sectionsHtml();
+  assert.match(html,/data-size="session.normal" checked/);assert.doesNotMatch(html,/data-size="session.small"/);
+  assert.match(html,/data-size="session.large" disabled/);
+  editor._toggleItem('session.time');editor._toggleItem('session.rate');
+  assert.doesNotMatch(editor._sectionsHtml(),/data-size="session.large" disabled/);
+  editor._setSize('session','large');
+  assert.equal(last().size.session,'large');
+  editor._toggleItem('session.rate');
+  assert.equal(last().size,undefined,'a third item drops Large');
+  editor._expand('schedules');
+  assert.match(editor._sectionsHtml(),/data-size="schedules.small"/);assert.doesNotMatch(editor._sectionsHtml(),/data-size="schedules.large"/);
+  editor._setSize('schedules','small');assert.equal(last().size.schedules,'small');
+  editor._setSize('schedules','normal');assert.equal(last().size,undefined,'the default is not written');
+});
+test('editor: on a folding card a foldable section defaults to Small, and Normal is written',()=>{
+  const all=['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
+  const {editor,last}=setupEditor({sections:all});
+  editor._expand('limits');
+  assert.match(editor._sectionsHtml(),/data-size="limits.small" checked/);
+  editor._setSize('limits','normal');assert.equal(last().size.limits,'normal');
+  editor._setSize('limits','small');assert.equal(last().size,undefined);
+});
+
+test('fitted text clears fractional overflow even when DOM widths round equal', () => {
+  const registry = {};
+  class HTMLElement {
+    attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
+  }
+  const clipped = {dataset:{fit:'12'},style:{},clientWidth:154,
+    get scrollWidth() { return Math.round(153.89 * parseFloat(this.style.fontSize) / 12); },
+    getBoundingClientRect() { return {width:153.5}; }};
+  const roomy = {dataset:{fit:'36'},style:{},clientWidth:154,scrollWidth:79,
+    getBoundingClientRect() { return {width:153.5}; }};
+  const document = {createRange() { let el; return {
+    selectNodeContents(value) { el=value; },
+    getBoundingClientRect() { return {width:el===clipped ? 153.89 * parseFloat(el.style.fontSize)/12 : 79}; },
+  }; }};
+  const sandbox = {HTMLElement,document,console,setTimeout,clearTimeout,
+    customElements:{define:(k,v)=>registry[k]=v},window:{customCards:[]}};
+  vm.runInNewContext(source,sandbox);
+  const card = new registry['eveus-card']();card.setConfig({sections:['advanced_info']});
+  card.shadowRoot.querySelectorAll = (selector) => selector==='[data-fit]' ? [clipped,roomy] : [];
+  card._fitLimitValues();
+  assert.equal(clipped.style.fontSize,'11px','fractional overflow would still draw an ellipsis at 12px');
+  assert.equal(roomy.style.fontSize,'36px','readings with room retain their configured Large size');
+});
+
+test('adding a third counter leaves a Large section open at Normal on a folding card', () => {
+  const all=['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
+  const {editor,last}=setupEditor({sections:all,size:{history:'large'},hide:['history.month','history.total']});
+  editor._toggleItem('history.total');
+  assert.equal(editor._sizeOf('history'),'normal','adding a counter must not collapse the section to Small');
+  const config=last();
+  assert.equal(config.size.history,'normal');
+  const rendered=setupAll({...config,over:HISTORY}).html();
+  assert.match(rendered,/class="panel history"/);
+  assert.doesNotMatch(rendered,/fold-history|panel history big/);
+});
+
+test('a reattached card observes width changes again', () => {
+  const {card}=setup();
+  const seen=[];
+  card._resizeObserver={disconnect(){seen.push('disconnect');},observe(el){seen.push(el);}};
+  card.disconnectedCallback();
+  card.connectedCallback();
+  assert.deepEqual(seen,['disconnect',card],'dashboard navigation must not leave refitting detached');
 });

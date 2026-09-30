@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.26.0 - 2026-10-01
+
+### ✨ New
+
+- **Adjustable card section sizes.** Choose Small, Normal or Large in the card editor or YAML. Small folds controls into a single line; Normal keeps a section expanded; Large enlarges readings in Battery SOC, Meter, Session and Counters when they contain up to two items. Suggested in [#16](https://github.com/ABovsh/eveus/issues/16).
+
+### 🔧 Changed
+
+- **Charging-finished events distinguish schedule and limit stops from a full battery.** The new `reason` values are `schedule` and `limit`. Automations matching `reason: complete` now run only when the car ends the charge itself. Last Session sensors report the same reason.
+
+### 🐛 Fixed
+
+- **Accurate charging status after a schedule or limit stop.** Not Charging Reason and the card now show Waiting for Schedule or the reached limit instead of Charge Complete. The card also shows when the next schedule starts.
+- **Better text fit on phones.** Ukrainian labels no longer clip in the SOC, Stop and Counters sections, and fault advice wraps on narrow cards. Text fitting also works after returning to the dashboard.
+- **Reliable feedback for card controls.** A delayed failure from an earlier command or a card configuration change no longer clears the pending indicator for the latest action.
+
 ## 4.25.0 - 2026-09-26
 
 ### ✨ Added

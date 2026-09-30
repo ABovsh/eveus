@@ -26,6 +26,11 @@ const SLOW_GAP_A = 1;
 // A card this long folds its settings sections into one-line summaries (the `fold` option overrides).
 const FOLD_MIN_SECTIONS = 6;
 const FOLDABLE = ['advanced_controls', 'adaptive', 'limits', 'schedules', 'history'];
+// `size: {section: small|normal|large}`: small folds one section, large enlarges a readout
+// section's values once it shows this many items or fewer (a wider row needs no bigger text).
+const LARGE = new Set(['advanced_info', 'basic_info', 'session', 'history']);
+const LARGE_MAX_ITEMS = 2;
+const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
 // Mirrors const.py CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS: a drift this close to whole hours is a wrong time zone.
@@ -202,8 +207,8 @@ const I18N = {
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
     setZone: (z) => `Обрати ${z}`,
     zoneFixTitle: 'Годинник станції зміщено на цілі години, тож часовий пояс неправильний. Натисніть, щоб обрати пояс, що збігається з Home Assistant',
-    socSettings: 'Налаштування SOC', schedules: 'Розклади', counters: 'Лічильники',
-    tapBlock: 'Заблокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
+    socSettings: 'SOC', schedules: 'Розклади', counters: 'Лічильники',
+    tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
     monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
@@ -253,6 +258,8 @@ const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
 // A grid whose stylesheet assumes `n` columns, re-spread when hidden items leave fewer.
 const columns = (count, n) => count === n ? '' : ` style="grid-template-columns:repeat(${count},minmax(0,1fr))"`;
 const sectionsOf = (config) => config.sections ?? LEGACY_LAYOUTS[config.layout] ?? SECTIONS;
+const sizesOf = (section) => [...(FOLDABLE.includes(section) ? ['small'] : []), 'normal', ...(LARGE.has(section) ? ['large'] : [])];
+const largeFits = (config, section) => (ITEMS[section] || []).filter((i) => !config.hide?.includes(`${section}.${i}`)).length <= LARGE_MAX_ITEMS;
 // Editor words: what each section shows, in words a first-time user recognises.
 const EDITOR_I18N = {
   en: {
@@ -278,6 +285,7 @@ const EDITOR_I18N = {
     device: 'Charger', mode: 'Mode', modeHelp: 'Empty follows the integration', language: 'Language',
     advanced: 'Advanced', basic: 'Basic', languages: {auto: 'Home Assistant language', uk: 'Українська', en: 'English'},
     fold: 'Fold settings', foldHelp: 'Long cards show settings as one-line summaries; tap one to open it',
+    size: 'Size', sizes: {small: 'Small', normal: 'Normal', large: 'Large'}, largeHelp: 'Large: leave two items or fewer',
   },
   uk: {
     names: {
@@ -302,6 +310,7 @@ const EDITOR_I18N = {
     device: 'Станція', mode: 'Режим', modeHelp: 'Порожнє поле — як в інтеграції', language: 'Мова картки',
     advanced: 'Розширений', basic: 'Базовий', languages: {auto: 'Мова Home Assistant', uk: 'Українська', en: 'English'},
     fold: 'Згортати налаштування', foldHelp: 'Довга картка показує налаштування одним рядком; натисніть рядок, щоб розгорнути',
+    size: 'Розмір', sizes: {small: 'Малий', normal: 'Звичайний', large: 'Великий'}, largeHelp: 'Великий: залиште не більше двох елементів',
   },
 };
 const CURRENCY = {UAH: '₴', EUR: '€', USD: '$', GBP: '£', PLN: 'zł', CZK: 'Kč'};
@@ -315,6 +324,12 @@ const duration = (text) => typeof text === 'string' && /\d/.test(text) ? text.re
 // The existing card's working band for mains voltage: outside it the charger itself struggles.
 const VOLTAGE_LOW_V = 205, VOLTAGE_HIGH_V = 253;
 
+const validateSectionSizes = (sizes) => {
+  for (const [section, size] of Object.entries(sizes || {})) {
+    if (!sizesOf(section).includes(size)) throw new Error(`size: ${section} takes ${SECTIONS.includes(section) ? sizesOf(section).join(', ') : 'nothing'}`);
+  }
+};
+
 class EveusCard extends HTMLElement {
   static getStubConfig() { return {sections: [...SECTIONS]}; }
   static getConfigElement() { return document.createElement('eveus-card-editor'); }
@@ -323,6 +338,7 @@ class EveusCard extends HTMLElement {
     if (!Array.isArray(sections) || sections.some((section) => !SECTIONS.includes(section))) {
       throw new Error(`Available sections: ${SECTIONS.join(', ')}`);
     }
+    validateSectionSizes(config.size);
     this._reset();
     this._config = {...config, sections: [...new Set(sections)]};
     this._ids = null;
@@ -330,24 +346,27 @@ class EveusCard extends HTMLElement {
     this._lastSignature = null;
     this._generation = (this._generation || 0) + 1;
     this._resolving = false;
+    Object.values(this._limitTimers || {}).forEach(clearTimeout);
     this._limitPending = {};
     this._limitTimers = {};
     this._editingLimit = null;
     this._open = this._loadOpen();
     if (!this.shadowRoot) {
       this.attachShadow({mode: 'open'});
+      // Event handlers intentionally start async actions without waiting; each action
+      // handles service failures and owns its pending feedback.
       this.shadowRoot.addEventListener('input', (e) => this._onSlide(e, false));
       this.shadowRoot.addEventListener('change', (e) => {
-        if (e.target.dataset?.limitEdit) { this._commitLimitEdit(e.target.dataset.limitEdit, e.target.value); return; }
+        if (e.target.dataset?.limitEdit) { void this._commitLimitEdit(e.target.dataset.limitEdit, e.target.value); return; }
         if (e.target.dataset?.timeEdit) { this._timeDraft(e.target.dataset.timeEdit, e.target.value); return; }
-        if (e.target.dataset?.select) { this._selectOption(e.target.dataset.select, e.target.value); return; }
+        if (e.target.dataset?.select) { void this._selectOption(e.target.dataset.select, e.target.value); return; }
         this._onSlide(e, true);
       });
       this.shadowRoot.addEventListener('keydown', (e) => this._onKeyDown(e));
       this.shadowRoot.addEventListener('focusin', (e) => { if (e.target.dataset?.select) this._selectFocus(e.target.dataset.select); });
       this.shadowRoot.addEventListener('focusout', (e) => {
         if (e.target.dataset?.select) { this._selectBlur(); return; }
-        if (e.target.dataset?.timeEdit) { this._timeBlur(e.target.dataset.timeEdit); return; }
+        if (e.target.dataset?.timeEdit) { void this._timeBlur(e.target.dataset.timeEdit); return; }
         if (e.target.dataset?.limitEdit && this._editingLimit === e.target.dataset.limitEdit) {
           this._editingLimit = null;
           this._render();
@@ -373,7 +392,7 @@ class EveusCard extends HTMLElement {
       // event); refit once fonts finish loading so that swap can't leave stale,
       // overflowing text on screen.
       if (typeof document !== 'undefined' && document.fonts) {
-        document.fonts.ready.then(() => this._fitLimitValues());
+        void document.fonts.ready.then(() => this._fitLimitValues());
       }
     }
     if (this._hass) this.hass = this._hass;
@@ -405,19 +424,19 @@ class EveusCard extends HTMLElement {
     const fold = e.target.closest('[data-fold]');
     const zoneFix = e.target.closest('[data-zone-fix]');
     if (fold) this._toggleFold(fold.dataset.fold);
-    else if (zoneFix) this._selectOption('time_zone', zoneFix.dataset.zoneFix);
+    else if (zoneFix) void this._selectOption('time_zone', zoneFix.dataset.zoneFix);
     else if (reset) {
-      if (reset.dataset.reset) this._resetCounter(reset.dataset.reset);
-      else if (reset.dataset.resetConfirm) this._resetCounter(reset.dataset.resetConfirm, true);
+      if (reset.dataset.reset) void this._resetCounter(reset.dataset.reset);
+      else if (reset.dataset.resetConfirm) void this._resetCounter(reset.dataset.resetConfirm, true);
       else this._cancelReset();
-    } else if (statusToggle) this._statusToggle(statusToggle.dataset.statusToggle);
-    else if (step) this._stepLimit(step.dataset.limitStep, Number(step.dataset.dir));
-    else if (toggle) this._toggleLimit(toggle.dataset.limitToggle);
+    } else if (statusToggle) void this._statusToggle(statusToggle.dataset.statusToggle);
+    else if (step) void this._stepLimit(step.dataset.limitStep, Number(step.dataset.dir));
+    else if (toggle) void this._toggleLimit(toggle.dataset.limitToggle);
     else if (editTrigger) this._startLimitEdit(editTrigger.dataset.limitEditTrigger);
     else if (timeTrigger) this._startTimeEdit(timeTrigger.dataset.timeEditTrigger);
-    else if (e.target.closest('[data-sync]')) this._syncTime();
+    else if (e.target.closest('[data-sync]')) void this._syncTime();
     else if (moreInfo) this._moreInfo(moreInfo.dataset.moreInfo);
-    else if (e.target.closest('[data-confirm]')) this._confirm();
+    else if (e.target.closest('[data-confirm]')) void this._confirm();
   }
   _holdStart(e) {
     this._held = false;
@@ -437,8 +456,8 @@ class EveusCard extends HTMLElement {
     // asked again on a later update, throttled, rather than showing "no charger"
     // until the page is reloaded.
     const retry = this._resolved && this._ids === null && Date.now() >= (this._retryAt || 0);
-    if ((!this._resolved || retry) && !this._resolving) this._resolve();
-    if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) this._fetchMonth();
+    if ((!this._resolved || retry) && !this._resolving) void this._resolve();
+    if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
       const entity = this._state(key);
       const actual = typeof pending === 'boolean' ? entity?.state === 'on' : typeof pending === 'string' ? entity?.state : currentNumber(entity);
@@ -466,7 +485,11 @@ class EveusCard extends HTMLElement {
     return JSON.stringify([Object.values(this._ids || {}).map((id) => { const e = states[id]; return e ? [e.state, e.attributes, e.last_changed] : null; }),
       this._resolved, this._nowHM(), this._hass.locale?.language, this._hass.themes?.darkMode]);
   }
-  connectedCallback() { this._lastSignature = null; if (this._hass) this.hass = this._hass; }
+  connectedCallback() {
+    this._resizeObserver?.observe(this);
+    this._lastSignature = null;
+    if (this._hass) this.hass = this._hass;
+  }
   disconnectedCallback() {
     this._reset();
     clearTimeout(this._statusTimer);
@@ -567,7 +590,7 @@ class EveusCard extends HTMLElement {
       this._render();
     } else if (value < current) {
       this._asking = false;
-      this._send();
+      void this._send();
     } else { this._reset(); this._render(); }
   }
   async _confirm() {
@@ -620,8 +643,17 @@ class EveusCard extends HTMLElement {
     this._limitPending[key] = value;
     this._limitTimers[key] = setTimeout(() => {
       delete this._limitPending[key];
+      delete this._limitTimers[key];
       this._render();
     }, 4000);
+    return this._limitTimers[key];
+  }
+  _rejectLimitPending(key, timer) {
+    if (this._limitTimers[key] !== timer) return;
+    clearTimeout(timer);
+    delete this._limitTimers[key];
+    delete this._limitPending[key];
+    this._render();
   }
   // Standard HA custom-card pattern: a bubbling, shadow-boundary-crossing event that the
   // frontend's global more-info-dialog listener picks up. No entity_id resolved (key not in
@@ -636,14 +668,12 @@ class EveusCard extends HTMLElement {
     if (!this._online || !entity || !['on', 'off'].includes(entity.state)) return;
     const value = !this._limitOn(key);
     haptic('light');
-    this._setLimitPending(key, value);
+    const timer = this._setLimitPending(key, value);
     this._render();
     try {
       await this._hass.callService('switch', value ? 'turn_on' : 'turn_off', {entity_id: this._ids[key]});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   async _stepLimit(key, direction) {
@@ -654,14 +684,12 @@ class EveusCard extends HTMLElement {
     if (next === value) return;
     const rounded = Number(next.toFixed(6));
     haptic('selection');
-    this._setLimitPending(key, rounded);
+    const timer = this._setLimitPending(key, rounded);
     this._render();
     try {
       await this._hass.callService('number', 'set_value', {entity_id: this._ids[key], value: rounded});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   async _commitLimitEdit(key, raw) {
@@ -675,14 +703,12 @@ class EveusCard extends HTMLElement {
     const rounded = Number((attrs.min + steps * attrs.step).toFixed(6));
     if (rounded === this._limitValue(key)) { this._render(); return; }
     haptic('selection');
-    this._setLimitPending(key, rounded);
+    const timer = this._setLimitPending(key, rounded);
     this._render();
     try {
       await this._hass.callService('number', 'set_value', {entity_id: this._ids[key], value: rounded});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   _startLimitEdit(key) {
@@ -1030,14 +1056,12 @@ class EveusCard extends HTMLElement {
     const options = entity?.attributes?.options;
     if (!this._online || !Array.isArray(options) || !options.includes(option) || option === (this._limitPending[key] ?? entity.state)) { this._render(); return; }
     haptic('selection');
-    this._setLimitPending(key, option);
+    const timer = this._setLimitPending(key, option);
     this._render();
     try {
       await this._hass.callService('select', 'select_option', {entity_id: this._ids[key], option});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   _adaptiveSection(fold = null) {
@@ -1096,14 +1120,12 @@ class EveusCard extends HTMLElement {
     if (!key || !this._online || value === null || value === this._timeShown(key)) { this._render(); return; }
     const time = `${value}:00`;
     haptic('selection');
-    this._setLimitPending(key, time);
+    const timer = this._setLimitPending(key, time);
     this._render();
     try {
       await this._hass.callService('time', 'set_value', {entity_id: this._ids[key], time});
     } catch {
-      clearTimeout(this._limitTimers[key]);
-      delete this._limitPending[key];
-      this._render();
+      this._rejectLimitPending(key, timer);
     }
   }
   _scheduleRow(n) {
@@ -1255,11 +1277,17 @@ class EveusCard extends HTMLElement {
       return {cls: 'fault', icon: 'mdi:alert', text: known ? this._stateLabel(sub) : this._stateLabel(entity), note: known ? this._faultDetail(sub.state) : ''};
     }
     const charging = raw === 'Charging', stopped = !charging && this._limitOn('stop_charging');
-    const text = stopped ? this._t.stopped : this._stateLabel(entity);
     const reason = this._state('not_charging_reason');
     const next = reason?.state === 'Waiting for Schedule' ? this._nextScheduleStart() : null;
-    const reasonText = !charging && reason && !['unknown', 'unavailable', 'Charging'].includes(reason.state)
-      ? [this._stateLabel(reason), next ? `${this._t.from} ${next}` : ''].filter(Boolean).join(' · ') : '';
+    const nextText = next ? `${this._t.from} ${next}` : '';
+    const reasonLabel = !charging && reason && !['unknown', 'unavailable', 'Charging'].includes(reason.state) ? this._stateLabel(reason) : '';
+    // The charger also parks a charge the schedule window or a limit ended in "Charge Complete";
+    // the reason tells them apart, so it leads and "Charge Complete" is not claimed for a car that is not full.
+    const held = !stopped && raw === 'Charge Complete' && reasonLabel && reason.state !== 'Charge Complete';
+    let text = this._stateLabel(entity);
+    if (stopped) text = this._t.stopped;
+    else if (held) text = reasonLabel;
+    const reasonText = held ? nextText : [reasonLabel, nextText].filter(Boolean).join(' · ');
     // "Stopped · Stopped by User" and "Charge Complete · Charge Complete" say nothing twice.
     const note = charging ? this._chargingNote()
       : reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
@@ -1344,7 +1372,11 @@ class EveusCard extends HTMLElement {
     this._render();
   }
   _section(section) {
-    if (!this._folding || !FOLDABLE.includes(section)) return this[`_${section}Section`]();
+    const size = this._config.size?.[section];
+    if (!FOLDABLE.includes(section) || (size ? size !== 'small' : !this._folding)) {
+      const html = this[`_${section}Section`]();
+      return size === 'large' && largeFits(this._config, section) ? this._large(html) : html;
+    }
     const open = this._open.has(section) || (section === 'history' && !!this._resetAsk);
     // Limits and Adaptive already have a head row: it is the fold's head too.
     if (section === 'limits' || section === 'adaptive') return this[`_${section}Section`]({open});
@@ -1357,6 +1389,16 @@ class EveusCard extends HTMLElement {
     return `<section class="${['sl fold', `fold-${section}`, cls, this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${label}">
       <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><span class="fold-sum">${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
     </section>`;
+  }
+  // Large: the same section, its fitted values started bigger (the fit still shrinks what clips).
+  // A tile's sub-line only grows a little: it already wraps on a narrow card.
+  _large(html) {
+    if (!html.trimStart().startsWith('<section')) return html;
+    return html.replace(/<section class="([^"]*)"/, '<section class="$1 big"')
+      .replace(/(class="([^"]*)" )?data-fit="([\d.]+)"/g, (_, head, cls, px) => {
+        const scale = (cls ?? '').split(' ').includes('tile-sub') ? LARGE_SUB_SCALE : LARGE_SCALE;
+        return `${head ?? ''}data-fit="${Math.round(Number(px) * scale)}"`;
+      });
   }
   _foldTitle(section, inner, open, cls = '') {
     return `<button class="${['fold-title', cls].filter(Boolean).join(' ')}" data-fold="${section}" aria-expanded="${open}">${inner}</button>`;
@@ -1382,7 +1424,7 @@ class EveusCard extends HTMLElement {
       return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sum: rows.join(sep)};
     }
     const total = this._online ? currentNumber(this._state('total_energy')) : null;
-    const month = this._shows('history', 'month') && this._month?.cur != null ? `${this._monthNames()[0]} ${this._kwh(this._month.cur)}` : '';
+    const month = this._shows('history', 'month') && this._month?.cur != null ? `${this._monthNames('short')[0]} ${this._kwh(this._month.cur)}` : '';
     return {label: t.counters, icon: 'mdi:counter', cls: '', sum: [month, total === null ? '' : `${t.total} ${this._kwh(total)}`].filter(Boolean).join(sep)};
   }
   _kwh(v) { return `${v < 100 ? Number(v.toFixed(1)) : this._int(v)}<small>kWh</small>`; }
@@ -1510,14 +1552,15 @@ class EveusCard extends HTMLElement {
     this._lastSignature = null;
     if (this._hass) this.hass = this._hass;
   }
-  // This month's and last month's names, in Home Assistant's zone and the card's language.
-  _monthNames() {
+  // This month's and last month's names, in Home Assistant's zone and the card's language;
+  // 'short' for a folded one-line summary, where the full name clips on a phone.
+  _monthNames(style = 'long') {
     const tz = this._hass?.config?.time_zone;
     try {
       const parts = new Intl.DateTimeFormat('en-CA', {year: 'numeric', month: 'numeric', ...(tz ? {timeZone: tz} : {})}).formatToParts(new Date());
       const y = Number(parts.find((p) => p.type === 'year').value), m = Number(parts.find((p) => p.type === 'month').value);
       const locale = langOf(this._config, this._hass) === 'uk' ? 'uk' : 'en-GB';
-      const name = (yy, mm) => new Intl.DateTimeFormat(locale, {month: 'long', timeZone: 'UTC'}).format(new Date(Date.UTC(yy, mm - 1, 15)));
+      const name = (yy, mm) => new Intl.DateTimeFormat(locale, {month: style, timeZone: 'UTC'}).format(new Date(Date.UTC(yy, mm - 1, 15)));
       const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
       return [cap(name(y, m)), cap(name(m === 1 ? y - 1 : y, m === 1 ? 12 : m - 1))];
     } catch {
@@ -1570,10 +1613,20 @@ class EveusCard extends HTMLElement {
   // ceiling still fits without clipping.
   _fitLimitValues() {
     if (typeof this.shadowRoot?.querySelectorAll !== 'function') return;
+    // scrollWidth/clientWidth are integers: a fraction of a pixel can still
+    // trigger an ellipsis while both read the same. Measure the text's real
+    // bounds too, so Large's longer translated captions fit completely.
+    const range = typeof document !== 'undefined' && document.createRange?.();
+    const overflows = (el) => {
+      if (el.scrollWidth > el.clientWidth) return true;
+      if (!range) return false;
+      range.selectNodeContents(el);
+      return range.getBoundingClientRect().width > el.getBoundingClientRect().width + 0.01;
+    };
     for (const el of this.shadowRoot.querySelectorAll('[data-fit]')) {
       let size = Math.max(11, Number(el.dataset.fit) || 18);
       el.style.fontSize = `${size}px`;
-      while (size > 11 && el.scrollWidth > el.clientWidth) {
+      while (size > 11 && overflows(el)) {
         size = Math.max(11, size - 1);
         el.style.fontSize = `${size}px`;
       }
@@ -1664,7 +1717,7 @@ ha-card{container-type:inline-size}
 .adaptive-mode option{color:#000}
 .adaptive-threshold{flex:1;min-width:84px;max-width:130px}.adaptive-threshold .limit-value{height:22px}
 .sl.adaptive .info-item{margin-left:auto}
-.alert-strip{display:flex;align-items:center;gap:5px;min-height:20px;padding:0 8px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.alert-strip{display:flex;align-items:center;gap:5px;min-height:20px;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;line-height:1.3}
 .alert-strip ha-icon{--mdc-icon-size:14px;color:inherit}
 .alert-strip.fault{color:#e74c3c;background:rgba(231,76,60,.16);border:1px solid rgba(231,76,60,.5)}
 .alert-strip.offline{color:var(--secondary-text-color);background:rgba(127,127,127,.12);border:1px solid rgba(127,127,127,.4)}
@@ -1968,6 +2021,15 @@ ha-card[data-theme=light] :is(.sl.session,.panel.history,.sl.fold-history){--h:#
 .hist-month-cur{font-size:12.5px;font-weight:600;color:var(--secondary-text-color)}.hist-month-cur b{font-size:16px;font-weight:750;color:var(--primary-text-color)}
 .hist-month small{margin-left:1px;font-size:.72em;font-weight:500;color:var(--secondary-text-color)}
 .hist-month-prev{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--secondary-text-color)}
+/* Large (size: large): the values start ~1.4x via data-fit; heads, icons and rows follow. */
+.big .meter-head,.big .tile-head,.big .soc-tile .tile-head{font-size:14px}.big .meter-head ha-icon,.big .tile-head ha-icon{--mdc-icon-size:18px}
+.big .meter-item,.big .tile{padding:6px 10px 8px}
+.panel.history.big .tiles.one .hist-tile{flex-direction:row;align-items:center;justify-content:space-between}
+.panel.history.big .tiles.one .tile-head{width:auto;min-height:0}.panel.history.big .tiles.one .tile-body{width:auto;flex-direction:row;align-items:baseline;gap:8px}
+.sl.session.big{padding:6px 10px}.big .session-label{font-size:16px}.big .session-label small{font-size:13px}
+.big .info-item{height:auto}.big .session-row .info-item ha-icon{--mdc-icon-size:20px}
+.big .soc-bar{height:12px;border-radius:6px}
+.big .hist-month{min-height:30px}.big .hist-month-cur,.big .hist-month-prev{font-size:15px}.big .hist-month-cur b{font-size:21px}.big .hist-month ha-icon{--mdc-icon-size:19px}
 `;
 
 const ADVANCED_SECTIONS = ['advanced_info', 'advanced_controls'];
@@ -2011,6 +2073,16 @@ class EveusCardEditor extends HTMLElement {
       {name: 'fold', selector: {boolean: {}}},
     ];
   }
+  _sizeOptionsHtml(key, sizes, size, fits) {
+    if (sizes.length <= 1) return '';
+    const l = this._labels();
+    const options = sizes.map((s) => {
+      const off = s === 'large' && !fits && size !== 'large';
+      const help = off ? ` title="${l.largeHelp}"` : '';
+      return `<label${help}><input type="radio" name="size-${key}" data-size="${key}.${s}"${s === size ? ' checked' : ''}${off ? ' disabled' : ''}><span>${l.sizes[s]}</span></label>`;
+    }).join('');
+    return `<div class="sizes"><span>${l.size}</span>${options}</div>`;
+  }
   _sectionsHtml() {
     const l = this._labels(), on = this._config.sections, usable = this._usable;
     const rows = [...usable, ...SECTIONS.filter((s) => !on.includes(s) && !this._na(s)), ...SECTIONS.filter((s) => this._na(s))];
@@ -2020,13 +2092,15 @@ class EveusCardEditor extends HTMLElement {
         return `<div class="row na"><label><input type="checkbox" data-toggle="${key}"${shown ? ' checked' : ''} disabled><span>${name}<small>${l.advOnly}</small></span></label></div>`;
       }
       const lock = shown && usable.length === 1 ? ' disabled' : '';
-      const expandable = shown && (ITEMS[key]?.length ?? 0) > 1, open = expandable && this._open?.has(key);
+      const sizes = sizesOf(key), expandable = shown && ((ITEMS[key]?.length ?? 0) > 1 || sizes.length > 1), open = expandable && this._open?.has(key);
       const expand = expandable ? `<button type="button" data-expand="${key}" class="${open ? 'open' : ''}" title="${l.itemsTitle}" aria-expanded="${!!open}"><ha-icon icon="mdi:tune-variant"></ha-icon></button>` : '';
       const hide = this._config.hide || [], left = (ITEMS[key] || []).filter((i) => !hide.includes(`${key}.${i}`)).length;
-      const items = open ? `<div class="items">${ITEMS[key].map((i) => {
+      const size = this._sizeOf(key), fits = largeFits(this._config, key);
+      const sizeRow = this._sizeOptionsHtml(key, sizes, size, fits);
+      const items = open ? `<div class="items">${(ITEMS[key] || []).map((i) => {
         const id = `${key}.${i}`, on = !hide.includes(id);
         return `<label><input type="checkbox" data-item="${id}"${on ? ' checked' : ''}${on && left === 1 ? ' disabled' : ''}><span>${l.items[key][i]}</span></label>`;
-      }).join('')}</div>` : '';
+      }).join('')}${sizeRow}</div>` : '';
       const move = (dir, off) => `<button type="button" data-move="${key}" data-dir="${dir}"${off ? ' disabled' : ''} title="${dir < 0 ? l.up : l.down}"><ha-icon icon="mdi:chevron-${dir < 0 ? 'up' : 'down'}"></ha-icon></button>`;
       return `<div class="row${shown ? '' : ' off'}"><label><input type="checkbox" data-toggle="${key}"${shown ? ' checked' : ''}${lock}><span>${name}${hint ? `<small>${hint}</small>` : ''}</span></label>`
         + expand + (shown ? move(-1, i === 0) + move(1, i === usable.length - 1) : '') + '</div>' + items;
@@ -2054,6 +2128,24 @@ class EveusCardEditor extends HTMLElement {
     this._emit(on);
   }
   _resetOrder() { this._emit([...SECTIONS]); }
+  // A foldable section follows the card's folding until it is given its own size.
+  _sizeDefault(key) { return FOLDABLE.includes(key) && (this._config.fold ?? this._foldDefault) ? 'small' : 'normal'; }
+  _sizeOf(key) { return this._config.size?.[key] ?? this._sizeDefault(key); }
+  // Only what differs from the default is written; Large waits until the section shows two items or fewer.
+  _setSize(key, value) {
+    if (!sizesOf(key).includes(value) || (value === 'large' && !largeFits(this._config, key))) { this._render(); return; }
+    const size = {...this._config.size};
+    if (value === this._sizeDefault(key)) delete size[key]; else size[key] = value;
+    this._writeSize(size);
+  }
+  _writeSize(size) {
+    const rest = {...this._config};
+    delete rest.size;
+    delete rest.layout;
+    this._config = Object.keys(size).length ? {...rest, size} : rest;
+    this._render();
+    this.dispatchEvent(new CustomEvent('config-changed', {detail: {config: this._config}, bubbles: true, composed: true}));
+  }
   _expand(key) {
     this._open = this._open || new Set();
     if (!this._open.delete(key)) this._open.add(key);
@@ -2066,8 +2158,21 @@ class EveusCardEditor extends HTMLElement {
     if (hide.includes(id)) hide.splice(hide.indexOf(id), 1);
     else if (ITEMS[section].filter((i) => !hide.includes(`${section}.${i}`)).length > 1) hide.push(id);
     else { this._render(); return; }
-    const {hide: _, layout, ...rest} = this._config;
+    const rest = {...this._config};
+    delete rest.hide;
+    delete rest.layout;
     this._config = hide.length ? {...rest, hide} : rest;
+    // A shown item that makes the section too long for Large returns it to Normal.
+    if (this._config.size?.[section] === 'large' && !largeFits(this._config, section)) {
+      const size = {...this._config.size};
+      delete size[section];
+      // Counters default to Small on a long card. Removing Large alone
+      // would fold them, rather than keep the now wider section at Normal.
+      if (this._sizeDefault(section) === 'small') size[section] = 'normal';
+      const kept = {...this._config};
+      delete kept.size;
+      this._config = Object.keys(size).length ? {...kept, size} : kept;
+    }
     this._render();
     this.dispatchEvent(new CustomEvent('config-changed', {detail: {config: this._config}, bubbles: true, composed: true}));
   }
@@ -2086,6 +2191,7 @@ class EveusCardEditor extends HTMLElement {
       this.addEventListener('change', (e) => {
         if (e.target.dataset?.toggle) this._toggle(e.target.dataset.toggle);
         else if (e.target.dataset?.item) this._toggleItem(e.target.dataset.item);
+        else if (e.target.dataset?.size) this._setSize(...e.target.dataset.size.split('.'));
       });
     }
     const l = this._labels();
@@ -2131,6 +2237,8 @@ const EDITOR_CSS = `
 .items{display:flex;flex-wrap:wrap;gap:4px 14px;padding:6px 0 10px 30px;border-bottom:1px solid var(--divider-color)}
 .items label{display:flex;align-items:center;gap:6px;min-height:32px;cursor:pointer}
 .items input{width:18px;height:18px;margin:0;accent-color:var(--primary-color)}
+.sizes{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;width:100%}.sizes>span{color:var(--secondary-text-color)}
+.sizes label:has(input:disabled){opacity:.45;cursor:default}
 `;
 // The integration and a hand-added resource may both load this file: first copy wins.
 if (!customElements.get?.('eveus-card')) {

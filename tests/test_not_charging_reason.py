@@ -229,12 +229,21 @@ def test_waiting_for_activation_survives_the_charge_complete_state():
 
 
 def test_a_normal_completion_still_reads_as_charge_complete():
-    """Only subState 9 overrides state 5; a finished session is untouched."""
-    for substate in (0, 1, 2, 5):
-        assert (
-            get_not_charging_reason(_modern(state=5, subState=substate), None)
-            == "Charge Complete"
-        )
+    """subState 0 in state 5 is a charge the car ended itself."""
+    assert get_not_charging_reason(_modern(state=5, subState=0), None) == "Charge Complete"
+
+
+@pytest.mark.parametrize(
+    ("substate", "expected"),
+    [(1, "Stopped by User"), (2, "Energy Limit Reached"), (5, "Waiting for Schedule")],
+)
+def test_state_5_names_the_limit_that_stopped_the_charge(substate, expected):
+    """Live 2026-09-26 07:01: a closing schedule window lands in state 5 + subState 5.
+
+    With no completion seen in this state-5 stretch (a bare double has none),
+    the substate is what stopped the charge.
+    """
+    assert get_not_charging_reason(_modern(state=5, subState=substate), None) == expected
 
 
 def test_legacy_firmware_keeps_charge_complete_for_substate_9():

@@ -14,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from conftest import StreamReaderStub, TEST_BASE_URL, TEST_HOST, TEST_PASSWORD, TEST_USERNAME
-from custom_components.eveus import common_network
+from custom_components.eveus import common_network, const
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.const import (
     AVAILABILITY_GRACE_PERIOD,
@@ -1128,7 +1128,7 @@ def test_emit_transition_events_fires_charging_finished_with_bounded_session_val
             common_network.EVENT_CHARGING_FINISHED,
             {
                 "device_number": 1,
-                "reason": common_network.FINISHED_REASONS.get(5, "stopped"),
+                "reason": const.FINISHED_REASONS.get(5, "stopped"),
                 "session_energy_kwh": 12.5,
                 "session_cost": 3.2,
                 "session_duration_s": 3600,
