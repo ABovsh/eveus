@@ -523,3 +523,18 @@ def test_write_errors_name_the_setting_and_the_rejected_value():
     with pytest.raises(HomeAssistantError) as failed:
         asyncio.run(ent.async_set_native_value(40))
     assert str(failed.value) == "Failed to set Limit Energy: boom"
+
+
+def test_absolute_setpoints_keep_only_latest_waiting_value():
+    ent, updater = _make(ENERGY)
+
+    async def scenario():
+        await ent._command_lock.acquire()
+        tasks = [asyncio.create_task(ent.async_set_native_value(value)) for value in (20, 30, 40)]
+        for _ in range(5):
+            await asyncio.sleep(0)
+        ent._command_lock.release()
+        await asyncio.gather(*tasks)
+
+    asyncio.run(scenario())
+    updater.send_command.assert_awaited_once_with('energyLimit', 40000)

@@ -584,3 +584,22 @@ def test_command_rejects_a_redirect_without_following_or_retrying(status: int) -
 
     assert asyncio.run(manager.send_command("currentSet", 16)) is False
     assert [call["allow_redirects"] for call in session.calls] == [False]
+
+
+def test_stop_overtakes_waiting_settings_without_interrupting_inflight(monkeypatch):
+    session = _Session(_Response())
+    manager = CommandManager(_Updater(session))
+    original_sleep = asyncio.sleep
+    monkeypatch.setattr(common_command.asyncio, 'sleep', _no_sleep)
+
+    async def scenario():
+        await manager._lock.acquire()
+        settings = [asyncio.create_task(manager.send_command('currentSet', v)) for v in (8, 10)]
+        stop = asyncio.create_task(manager.send_command('evseEnabled', 1))
+        for _ in range(5):
+            await original_sleep(0)
+        manager._lock.release()
+        await asyncio.gather(*settings, stop)
+
+    asyncio.run(scenario())
+    assert session.calls[0]['data'] == 'pageevent=evseEnabled&evseEnabled=1'

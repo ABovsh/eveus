@@ -340,3 +340,39 @@ async def test_disabled_soc_correction_entity_does_not_blank_soc_percent(
     assert state is not None
     assert state.state not in (None, "unknown", "unavailable")
     float(state.state)
+
+
+async def test_meter_tail_reaches_ha_before_reset_and_cost_window_changes(
+    hass, aioclient_mock, monkeypatch
+):
+    """Observe actual HA state events, including the buffered tail and reset."""
+    from custom_components.eveus import sensor_definitions as sd
+
+    clock = [dt_util.utcnow().replace(second=0, microsecond=0)]
+    monkeypatch.setattr(sd, 'dt_util', SimpleNamespace(utcnow=lambda: clock[0], parse_datetime=dt_util.parse_datetime))
+    entry = _entry(hass, HOST_A)
+    payload = {**REAL_MAIN, 'state':4, 'evseEnabled':0, 'sessionEnergy':10,
+               'sessionMoney':10, 'sessionTime':100, 'totalEnergy':100}
+    _mock_charger(aioclient_mock, HOST_A, json=payload)
+    await _setup(hass, entry)
+    updater = entry.runtime_data.updater
+    await updater.async_refresh()
+    entity_id = 'sensor.eveus_ev_charger_session_cost'
+    rows = []
+    unsub = hass.bus.async_listen('state_changed', lambda event: rows.append(event.data['new_state'])
+                                 if event.data['entity_id'] == entity_id else None)
+    clock[0] += timedelta(seconds=30)
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, 'sessionMoney':11})
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == '10.0'
+    assert rows == []
+    clock[0] += timedelta(seconds=5)
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, 'sessionMoney':0, 'sessionTime':0})
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    unsub()
+    assert [row.state for row in rows] == ['11.0', '0.0']
+    assert rows[0].attributes['last_reset'] < rows[1].attributes['last_reset']

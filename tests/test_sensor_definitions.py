@@ -1109,7 +1109,7 @@ def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
         "leak_current_peak": ("Leakage Current Peak", "mdi:current-dc",
                               SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0, None),
         "wifi_signal": ("WiFi Signal", "mdi:wifi",
-                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, MEASURED),
+                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, None),
     }
     for key, (name, icon, device_class, unit, precision, state_class) in expected.items():
         spec = specs[key]

@@ -126,6 +126,8 @@ const I18N = {
     set: 'Set', decrease: 'Decrease', increase: 'Increase',
     total: 'Total', allTime: 'all time', counterA: 'Counter A', counterB: 'Counter B', reset: 'Reset',
     resetQ: (label) => `Reset ${label}?`, toZero: 'will be set to 0', cancel: 'Cancel',
+    confirm: 'Confirm',
+    disableGroundQ: 'Disable ground protection?', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.',
     safety: 'Safety', box: 'Box temperature', plug: 'Plug temperature', groundProt: 'Ground protection',
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
     // The integration's "5h 30m": English keeps it as text, compact.
@@ -183,6 +185,8 @@ const I18N = {
     set: 'Встановити', decrease: 'Зменшити', increase: 'Збільшити',
     total: 'Загалом', allTime: 'за весь час', counterA: 'Лічильник A', counterB: 'Лічильник B', reset: 'Скинути',
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
+    confirm: 'Підтвердити',
+    disableGroundQ: 'Вимкнути захист заземлення?', disableAllQ: 'Вимкнути всі ліміти зарядки?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.',
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
     // "1d 02h 05m" / "5h 30m" / "45m" → numbers with small Ukrainian units.
@@ -350,6 +354,8 @@ class EveusCard extends HTMLElement {
     this._limitPending = {};
     this._limitTimers = {};
     this._editingLimit = null;
+    this._guardAsk = null;
+    this._commandError = false;
     this._open = this._loadOpen();
     if (!this.shadowRoot) {
       this.attachShadow({mode: 'open'});
@@ -398,6 +404,7 @@ class EveusCard extends HTMLElement {
     if (this._hass) this.hass = this._hass;
   }
   _onKeyDown(e) {
+    if (e.key === 'Escape' && this._guardAsk) { e.preventDefault(); this._guardAsk = null; this._render(); return; }
     if (e.key === 'Enter' && e.altKey) {
       const tile = e.target.closest?.('[data-hold]');
       if (tile) { e.preventDefault(); this._moreInfo(tile.dataset.hold); return; }
@@ -423,7 +430,9 @@ class EveusCard extends HTMLElement {
     const reset = e.target.closest('[data-reset],[data-reset-confirm],[data-reset-cancel]');
     const fold = e.target.closest('[data-fold]');
     const zoneFix = e.target.closest('[data-zone-fix]');
-    if (fold) this._toggleFold(fold.dataset.fold);
+    if (e.target.closest('[data-guard-confirm]')) void this._confirmGuard();
+    else if (e.target.closest('[data-guard-cancel]')) { this._guardAsk = null; this._render(); }
+    else if (fold) this._toggleFold(fold.dataset.fold);
     else if (zoneFix) void this._selectOption('time_zone', zoneFix.dataset.zoneFix);
     else if (reset) {
       if (reset.dataset.reset) void this._resetCounter(reset.dataset.reset);
@@ -496,6 +505,7 @@ class EveusCard extends HTMLElement {
     this._statusAsk = null;
     clearTimeout(this._resetTimer);
     this._resetAsk = null;
+    this._guardAsk = null;
     this._holdEnd();
     Object.values(this._limitTimers || {}).forEach(clearTimeout);
     this._limitPending = {};
@@ -640,12 +650,15 @@ class EveusCard extends HTMLElement {
   }
   _setLimitPending(key, value) {
     clearTimeout(this._limitTimers[key]);
+    this._commandError = false;
     this._limitPending[key] = value;
     this._limitTimers[key] = setTimeout(() => {
       delete this._limitPending[key];
       delete this._limitTimers[key];
+      this._commandError = 'timeout';
       this._render();
-    }, 4000);
+    }, 60000);
+    this._limitTimers[key]?.unref?.();
     return this._limitTimers[key];
   }
   _rejectLimitPending(key, timer) {
@@ -653,6 +666,7 @@ class EveusCard extends HTMLElement {
     clearTimeout(timer);
     delete this._limitTimers[key];
     delete this._limitPending[key];
+    this._commandError = true;
     this._render();
   }
   // Standard HA custom-card pattern: a bubbling, shadow-boundary-crossing event that the
@@ -663,10 +677,32 @@ class EveusCard extends HTMLElement {
     if (!entityId) return;
     this.dispatchEvent(new CustomEvent('hass-more-info', {detail: {entityId}, bubbles: true, composed: true}));
   }
-  async _toggleLimit(key) {
+  async _confirmGuard() {
+    const ask = this._guardAsk;
+    this._guardAsk = null;
+    if (!ask || ask.generation !== this._generation || this._ids?.[ask.key] !== ask.id
+      || this._limitOn(ask.key) === ask.value) { this._render(); return; }
+    await this._toggleLimit(ask.key, true);
+  }
+  _controlFeedback() {
+    const t = this._t;
+    const ask = this._guardAsk;
+    const labels = {limit_soc_enabled: t.soc, limit_energy_enabled: t.energy, limit_time_enabled: t.time, limit_cost_enabled: t.cost};
+    const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
+    return (ask ? `<div class="message guard-ask" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
+      + (this._commandError ? `<div class="message" role="alert">${this._commandError === 'timeout' ? t.commandTimeout : t.commandFailed}</div>` : '');
+  }
+  async _toggleLimit(key, confirmed = false) {
     const entity = this._state(key);
     if (!this._online || !entity || !['on', 'off'].includes(entity.state)) return;
     const value = !this._limitOn(key);
+    const weakening = (key === 'ground_protection' && !value)
+      || (key === 'limit_disable_all' && value)
+      || (['limit_soc_enabled', 'limit_energy_enabled', 'limit_time_enabled', 'limit_cost_enabled'].includes(key) && !value);
+    if (weakening && !confirmed) {
+      this._guardAsk = {key, value, id: this._ids[key], generation: this._generation};
+      haptic('warning'); this._render(); return;
+    }
     haptic('light');
     const timer = this._setLimitPending(key, value);
     this._render();
@@ -696,6 +732,7 @@ class EveusCard extends HTMLElement {
     this._editingLimit = null;
     const entity = this._state(key), attrs = entity?.attributes;
     if (!this._online || !attrs || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite)) { this._render(); return; }
+    if (raw == null || (typeof raw === 'string' && !raw.trim())) { this._render(); return; }
     const parsed = Number(raw);
     if (!Number.isFinite(parsed)) { this._render(); return; }
     const clamped = Math.max(attrs.min, Math.min(attrs.max, parsed));
@@ -1576,13 +1613,13 @@ class EveusCard extends HTMLElement {
   _render() {
     if (!this.shadowRoot || !this._hass) return;
     const focus = this.shadowRoot.activeElement;
-    const selector = this._editingLimit ? `[data-limit-edit="${this._editingLimit}"]`
+    const selector = this._guardAsk ? '[data-guard-confirm]' : this._editingLimit ? `[data-limit-edit="${this._editingLimit}"]`
       : this._editingTime ? `[data-time-edit="${this._editingTime}"]`
       : focus?.dataset?.slide ? 'input'
       : focus?.hasAttribute('data-confirm') ? '[data-confirm]'
       : null;
     const body = !this._resolved ? `<div class="message">${this._t.loading}</div>`
-      : this._alertStrip() + this._config.sections.map((section) => this._section(section)).join('');
+      : this._controlFeedback() + this._alertStrip() + this._config.sections.map((section) => this._section(section)).join('');
     // The charger's state colours the card itself (glow, status badge); charging adds the
     // old card's slow pulse. A data attribute, not a class: alert tints stay section-scoped.
     const mood = this._resolved && this._ids?.state ? this._statusView().cls : 'idle';
@@ -1641,6 +1678,7 @@ class EveusCard extends HTMLElement {
 const MODULAR_STYLE = `
 :host{display:block}
 ha-card{box-sizing:border-box;display:flex;flex-direction:column;gap:1px;padding:2px 4px 1px;border-radius:14px;overflow:hidden;line-height:1.2}
+.guard-ask{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:10;box-sizing:border-box;max-width:480px;margin:auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px;border:1px solid #f39c12;border-radius:10px;background:var(--ha-card-background,var(--card-background-color,#1c1c1c));box-shadow:0 4px 12px #0006}.guard-ask span{flex:1 1 180px}.guard-ask button{min-height:32px;cursor:pointer}
 .sl{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;padding:1px 8px;border:1px solid rgba(127,127,127,.16);border-radius:10px;background:rgba(127,127,127,.05)}
 ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color);flex:none}
 .label{font-size:13px;font-weight:600;white-space:nowrap;color:var(--primary-text-color)}

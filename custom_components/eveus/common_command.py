@@ -4,6 +4,8 @@ import asyncio
 import random
 import time
 from collections.abc import Callable
+from contextlib import asynccontextmanager
+import heapq
 from typing import Any
 
 import aiohttp
@@ -26,13 +28,52 @@ _COMMAND_RETRY_BACKOFF: tuple[float, ...] = (0.5, 1.5)
 _COMMAND_RETRY_JITTER = 0.25
 
 
+class _PriorityLock:
+    """One wire owner; Stop goes before ordinary unsent commands."""
+
+    def __init__(self):
+        self._held = False
+        self._sequence = 0
+        self._waiters = []
+
+    async def acquire(self, priority=1):
+        if not self._held:
+            self._held = True
+            return
+        future = asyncio.get_running_loop().create_future()
+        self._sequence += 1
+        heapq.heappush(self._waiters, (priority, self._sequence, future))
+        try:
+            await future
+        except asyncio.CancelledError:
+            if not future.cancelled():
+                self.release()
+            raise
+
+    def release(self):
+        while self._waiters:
+            _, _, future = heapq.heappop(self._waiters)
+            if not future.done():
+                future.set_result(None)
+                return
+        self._held = False
+
+    @asynccontextmanager
+    async def hold(self, priority):
+        await self.acquire(priority)
+        try:
+            yield
+        finally:
+            self.release()
+
+
 class CommandManager:
     """Manage command execution with rate limiting and error handling."""
 
     def __init__(self, updater) -> None:
         """Initialize command manager."""
         self._updater = updater
-        self._lock = asyncio.Lock()
+        self._lock = _PriorityLock()
         # None = no command sent yet. A 0 sentinel was unsafe once timing moved
         # to the monotonic clock: right after boot monotonic() can be < 1, making
         # the first command sleep up to a second for no reason.
@@ -75,7 +116,8 @@ class CommandManager:
         backoff. A rejection returns False without a POST, a retry or a failure
         count — nothing went wrong on the network.
         """
-        async with self._lock:
+        priority = 0 if command == "evseEnabled" and value == 1 else 1
+        async with self._lock.hold(priority):
             # Rate limit: minimum 1 second between commands. Monotonic clock so a
             # backward wall-clock step (NTP correction, manual set, VM resume)
             # can't make `time_since_last` negative and stall every command for

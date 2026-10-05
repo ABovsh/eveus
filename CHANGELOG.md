@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### ✨ New
+
+- **Protection and charging limits cannot be disabled by an accidental tap.** The card asks for confirmation and reports refused or unconfirmed changes; an empty numeric field cancels editing.
+
+### ⚠️ Breaking
+
+- **WiFi Signal and Connection Quality stop collecting future long-term statistics.** Use their ordinary history for connection diagnostics; existing statistics remain stored.
+
+### 🔧 Changed
+
+- **Fewer energy and cost history updates.** Session, total and A/B energy and session and A/B cost publish ordinary growth once per minute, with immediate session, reset and availability transitions.
+- **Stop moves ahead of waiting settings.** Numerical settings keep the latest waiting value, reducing repeated commands.
+
+### 🐛 Fixed
+
+- **Charging no longer stops using an outdated SOC target.** Queued and retried SOC stops recheck the current target, SOC, connection and session before sending.
+
 ## 4.26.0 - 2026-10-01
 
 ### ✨ New

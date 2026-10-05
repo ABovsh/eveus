@@ -929,7 +929,7 @@ def test_the_readings_that_do_move_keep_their_statistics() -> None:
     specs = {s.key: s for s in sd.create_sensor_specifications()}
 
     for key in ("battery_voltage", "active_rate_cost", "box_temperature",
-                "plug_temperature", "wifi_signal"):
+                "plug_temperature"):
         assert specs[key].state_class is not None, (
             f"{key} moves on its own and its long-term trend is the point"
         )

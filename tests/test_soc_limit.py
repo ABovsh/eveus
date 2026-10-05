@@ -1047,6 +1047,37 @@ def test_eligible_stop_posts_once_and_waits_for_confirmation(monkeypatch) -> Non
     assert [etype for etype, _ in events] == [EVENT_SOC_LIMIT_REACHED]
 
 
+@pytest.mark.parametrize("change", ["target", "soc", "offline", "failed", "ended", "session"])
+def test_queued_stop_rechecks_all_live_conditions(monkeypatch, change):
+    session = _RecordingSession(200)
+    updater, ctrl, events = _real_stack(monkeypatch, session)
+
+    async def scenario():
+        lock = updater._command_manager._lock
+        await lock.acquire()
+        ctrl.process()
+        await _settle()
+        if change == "target":
+            ctrl._calc.set_value("target_soc", 90)
+        elif change == "soc":
+            ctrl._calc.set_value("initial_soc", 10)
+        elif change == "offline":
+            updater._device_available = False
+        elif change == "failed":
+            updater.last_update_success = False
+        elif change == "ended":
+            _seed(updater, {**updater.data, "state": 1})
+        else:
+            _seed(updater, {**updater.data, "sessionEnergy": 1})
+        lock.release()
+        await ctrl._stop_task
+
+    asyncio.run(scenario())
+    assert _stop_posts(session) == []
+    assert events == []
+    assert ctrl._pending is None
+
+
 # --- Snapshot migration (P2.2) ---------------------------------------------
 
 
@@ -1209,3 +1240,46 @@ def test_unknown_master_switch_at_the_pre_lock_read_is_left_to_the_wire_check():
     ctrl.process()
     assert [(cmd, val) for cmd, val, _ in updater.sent] == [("evseEnabled", 1)]
     assert updater.sent[0][2]() is False
+
+
+@pytest.mark.parametrize(('change', 'expected'), [
+    ('clock_reset', 0), ('clock_equal', 1), ('clock_missing', 1),
+    ('new_clock', 1), ('energy_reset', 0), ('energy_boundary', 1),
+    ('zero_target', 0), ('one_target', 1), ('unset_target', 0),
+    ('missing_energy', 0), ('already_stopped', 0), ('unset_soc', 0),
+])
+def test_wire_guard_session_identity_and_optional_fields(monkeypatch, change, expected):
+    session = _RecordingSession(200)
+    updater, ctrl, events = _real_stack(monkeypatch, session)
+    _seed(updater, {**updater.data, 'sessionTime':100})
+    if change == 'new_clock':
+        _seed(updater, {k:v for k,v in updater.data.items() if k != 'sessionTime'})
+
+    async def scenario():
+        lock = updater._command_manager._lock
+        await lock.acquire()
+        ctrl.process()
+        await _settle()
+        if change == 'clock_reset':
+            _seed(updater, {**updater.data, 'sessionTime':99})
+        elif change == 'clock_missing':
+            _seed(updater, {k:v for k,v in updater.data.items() if k != 'sessionTime'})
+        elif change == 'new_clock':
+            _seed(updater, {**updater.data, 'sessionTime':100})
+        elif change in ('energy_reset', 'energy_boundary'):
+            ctrl._calc.set_value('target_soc', 70)
+            _seed(updater, {**updater.data, 'sessionEnergy':29.49 if change == 'energy_reset' else 29.5})
+        elif change in ('zero_target', 'one_target', 'unset_target'):
+            ctrl._calc.set_value('target_soc', {'zero_target':0,'one_target':1,'unset_target':None}[change])
+        elif change == 'missing_energy':
+            _seed(updater, {k:v for k,v in updater.data.items() if k != 'sessionEnergy'})
+        elif change == 'already_stopped':
+            _seed(updater, {**updater.data, 'evseEnabled':1})
+        elif change == 'unset_soc':
+            ctrl._calc.set_value('initial_soc', None)
+        lock.release()
+        await ctrl._stop_task
+
+    asyncio.run(scenario())
+    assert len(_stop_posts(session)) == expected
+    assert events == []

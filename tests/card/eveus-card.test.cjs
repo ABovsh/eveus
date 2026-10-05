@@ -1421,3 +1421,61 @@ test('a reattached card observes width changes again', () => {
   card.connectedCallback();
   assert.deepEqual(seen,['disconnect',card],'dashboard navigation must not leave refitting detached');
 });
+
+test('empty or whitespace numeric input cancels without changing the battery capacity', async()=>{
+  for (const raw of ['', '   ']) {
+    const x=setupLimits();
+    x.states['number.capacity']={state:'75',attributes:{min:10,max:160,step:1}};
+    x.card._ids.battery_capacity='number.capacity';
+    await x.card._commitLimitEdit('battery_capacity',raw);
+    assert.equal(x.calls.length,0);
+  }
+});
+test('weakening ground protection or limits needs explicit confirmation', async()=>{
+  for (const [key,state] of [['ground_protection','on'],['limit_disable_all','off'],['limit_soc_enabled','on']]) {
+    const x=setupLimits();x.states['switch.guard']={state,attributes:{}};x.card._ids[key]='switch.guard';
+    await x.card._toggleLimit(key);
+    assert.equal(x.calls.length,0);
+    assert.match(x.card.shadowRoot.innerHTML,/data-guard-confirm/);
+    await x.card._confirmGuard();
+    assert.equal(x.calls.length,1);
+  }
+});
+test('rejected numeric service displays an actionable error',async()=>{
+  const x=setupLimits();x.hass.callService=async()=>{throw Error('rejected');};
+  await x.card._stepLimit('limit_time',1);
+  assert.match(x.card.shadowRoot.innerHTML,/Command failed/);
+});
+
+test('cancelled guard and changed switch cannot send a stale confirmation',async()=>{
+  const x=setupLimits();
+  await x.card._toggleLimit('limit_soc_enabled');
+  x.states['switch.soc'].state='off';
+  await x.card._confirmGuard();
+  assert.equal(x.calls.length,0);
+  x.states['switch.soc'].state='on';
+  await x.card._toggleLimit('limit_soc_enabled');
+  x.card.disconnectedCallback();
+  await x.card._confirmGuard();
+  assert.equal(x.calls.length,0);
+});
+test('a valid zero remains a number edit and confirmation labels are translated',async()=>{
+  for (const language of ['en','uk']) {
+    const x=setupLimits(); x.card._config.language=language;
+    await x.card._commitLimitEdit('limit_energy','0');
+    assert.equal(x.calls[0][2].value,0);
+    await x.card._toggleLimit('limit_soc_enabled');
+    assert.match(x.card.shadowRoot.innerHTML,language==='uk'?/Підтвердити/:/Confirm/);
+    assert.doesNotMatch(x.card.shadowRoot.innerHTML,/undefined/);
+    x.card.disconnectedCallback();
+  }
+});
+
+test('Escape cancels a safety confirmation and pending expiry explains uncertainty',async()=>{
+  const x=setupLimits();await x.card._toggleLimit('limit_soc_enabled');
+  x.card._onKeyDown({key:'Escape',target:{dataset:{}},preventDefault(){}});
+  await x.card._confirmGuard();assert.equal(x.calls.length,0);
+  const y=setup();y.card._setLimitPending('charging_current',12);
+  for(const fn of [...y.timers.values()]) fn();
+  assert.match(y.card.shadowRoot.innerHTML,/not confirmed/);
+});

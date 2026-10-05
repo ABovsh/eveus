@@ -252,11 +252,32 @@ class SocLimitController:
         down, it does not cancel), and a cancellation can lose the race with the
         lock hand-off. Re-read everything against the latest poll.
         """
-        return (
-            # Disabling or unloading re-arms, so the generation covers both.
-            generation == self._generation
-            and _limits_suspended(self._updater.snapshot) is False
-        )
+        if (
+            generation != self._generation
+            or not self._enabled
+            or not self._updater.available
+            or not self._updater.last_update_success
+        ):
+            return False
+        snapshot = self._updater.snapshot
+        energy = snapshot.session_energy_kwh
+        clock = snapshot.session_time_s
+        target = self._calc.target_soc
+        if (
+            _limits_suspended(snapshot) is not False
+            or snapshot.session_active is not True
+            or snapshot.get_int("evseEnabled") != 0
+            or energy is None
+            or target is None
+            or target <= 0
+            or (self._pending_energy is not None
+                and energy < self._pending_energy - _SESSION_RESET_EPS_KWH)
+            or (self._pending_session_time is not None and clock is not None
+                and clock < self._pending_session_time)
+        ):
+            return False
+        current = self._calc.get_soc_percent_exact(energy)
+        return current is not None and current >= target
 
     def _emit_reached(self, soc: int, target: int) -> None:
         """Latch and fire the reached event exactly once for this session."""

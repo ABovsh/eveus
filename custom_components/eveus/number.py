@@ -371,7 +371,13 @@ class EveusSetpointNumber(EveusNumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         raw = self._normalize_write(_validate_finite_number(value, self.ENTITY_NAME))
+        token = object()
+        self._latest_write = token
         async with self._command_lock:
+            # Absolute settings can replace unsent settings of this entity;
+            # reset buttons and stateful toggles never enter this path.
+            if self._latest_write is not token:
+                return
             # Clamp INSIDE the lock against a freshly refreshed bound: a write
             # queued behind another command must honour a dynamic min/max that
             # shifted while it waited, not the bound captured at enqueue time.
