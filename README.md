@@ -334,6 +334,11 @@ over waiting settings, and numerical controls keep the latest waiting value.
 WiFi Signal and Connection Quality keep ordinary history but no longer collect
 long-term statistics; existing statistics stay stored.
 
+Current Set, Adaptive Current Limit, Active Rate Cost, Energy to Target SOC,
+SOC Energy and Session Energy also use ordinary history only. Graphs based on
+their statistics stop receiving new data; ordinary history follows the
+recorder retention period. Existing statistics stay stored.
+
 ### OCPP control
 
 **Connect to OCPP** allows the charger to connect to its OCPP server, used by

@@ -923,13 +923,13 @@ def test_the_readings_that_do_move_keep_their_statistics() -> None:
     the clock resets. A very slowly moving signal is the case statistics are
     FOR, not an argument against them.
 
-    Active Rate Cost switches between the three configured rates by time of
-    day, so unlike the rates themselves it genuinely varies.
     """
     specs = {s.key: s for s in sd.create_sensor_specifications()}
 
-    for key in ("battery_voltage", "active_rate_cost", "box_temperature",
-                "plug_temperature"):
+    for key in ("battery_voltage", "box_temperature", "plug_temperature",
+                "voltage", "current", "power", "total_energy",
+                "counter_a_energy", "counter_b_energy", "session_cost",
+                "counter_a_cost", "counter_b_cost"):
         assert specs[key].state_class is not None, (
             f"{key} moves on its own and its long-term trend is the point"
         )

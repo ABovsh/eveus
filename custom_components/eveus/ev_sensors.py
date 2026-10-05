@@ -374,14 +374,13 @@ class EVSocKwhSensor(BaseEVHelperSensor):
     """SOC energy sensor — battery energy in kWh from session delivered."""
 
     ENTITY_NAME = "SOC Energy"
-    # Stored energy currently in the battery — a level, not a cumulative meter —
-    # so ENERGY_STORAGE (the device class HA pairs with MEASUREMENT) rather than
-    # ENERGY (which HA only allows with TOTAL/TOTAL_INCREASING).
+    # Estimated stored battery energy, not a cumulative meter. Ordinary history
+    # preserves this level; SOC Percent provides the long-term battery trend.
     _attr_device_class = SensorDeviceClass.ENERGY_STORAGE
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:battery-charging"
     _attr_suggested_display_precision = 1
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = None
     _requires_helpers = False
     # A battery level, not a meter: nothing accumulates here, so holding it
     # within 0.1 kWh loses nothing and drops the per-poll write while charging.
@@ -530,10 +529,10 @@ class EnergyToTargetSocSensor(BaseEVHelperSensor):
     ENTITY_NAME = "Energy to Target SOC"
     # No device class: this is energy still NEEDED from the grid, not energy
     # currently stored — ENERGY_STORAGE would mislabel it, and ENERGY requires
-    # TOTAL/TOTAL_INCREASING. Plain kWh + MEASUREMENT is the honest contract.
+    # TOTAL/TOTAL_INCREASING. Keep this forecast in ordinary history only.
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:battery-arrow-up"
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = None
     _attr_suggested_display_precision = 1
     _requires_helpers = False
     # A forecast displayed to one decimal — a 0.25 kWh step is finer than the

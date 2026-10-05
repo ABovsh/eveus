@@ -9,6 +9,7 @@
 ### ⚠️ Breaking
 
 - **WiFi Signal and Connection Quality stop collecting future long-term statistics.** Use their ordinary history for connection diagnostics; existing statistics remain stored.
+- **Six session, setting and SOC sensors stop collecting future statistics:** Current Set, Adaptive Current Limit, Active Rate Cost, Energy to Target SOC, SOC Energy and Session Energy. Use ordinary history for their graphs; existing statistics remain stored.
 
 ### 🔧 Changed
 

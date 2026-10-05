@@ -1145,7 +1145,7 @@ def _attr(cls: type, name: str):
 
 
 def test_soc_kwh_sensor_metadata() -> None:
-    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+    from homeassistant.components.sensor import SensorDeviceClass
     from homeassistant.const import UnitOfEnergy
 
     assert EVSocKwhSensor.ENTITY_NAME == "SOC Energy"
@@ -1153,7 +1153,7 @@ def test_soc_kwh_sensor_metadata() -> None:
     assert _attr(EVSocKwhSensor, "native_unit_of_measurement") == UnitOfEnergy.KILO_WATT_HOUR
     assert _attr(EVSocKwhSensor, "icon") == "mdi:battery-charging"
     assert _attr(EVSocKwhSensor, "suggested_display_precision") == 1
-    assert _attr(EVSocKwhSensor, "state_class") == SensorStateClass.MEASUREMENT
+    assert _attr(EVSocKwhSensor, "state_class") is None
 
 
 def test_soc_percent_sensor_metadata() -> None:
@@ -1169,13 +1169,12 @@ def test_soc_percent_sensor_metadata() -> None:
 
 def test_energy_to_target_soc_sensor_metadata() -> None:
     from custom_components.eveus.ev_sensors import EnergyToTargetSocSensor
-    from homeassistant.components.sensor import SensorStateClass
     from homeassistant.const import UnitOfEnergy
 
     assert EnergyToTargetSocSensor.ENTITY_NAME == "Energy to Target SOC"
     assert _attr(EnergyToTargetSocSensor, "native_unit_of_measurement") == UnitOfEnergy.KILO_WATT_HOUR
     assert _attr(EnergyToTargetSocSensor, "icon") == "mdi:battery-arrow-up"
-    assert _attr(EnergyToTargetSocSensor, "state_class") == SensorStateClass.MEASUREMENT
+    assert _attr(EnergyToTargetSocSensor, "state_class") is None
     assert _attr(EnergyToTargetSocSensor, "suggested_display_precision") == 1
 
 

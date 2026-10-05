@@ -1092,9 +1092,9 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
 
     # Measurement sensors
     measurements = [
-        ("Voltage", get_voltage, ICON_FLASH, SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, None, 2),
-        ("Current", get_current, ICON_CURRENT_AC, SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, None, 0.2),
-        ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None, 50),
+        ("Voltage", get_voltage, ICON_FLASH, SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, None, 2, SensorStateClass.MEASUREMENT),
+        ("Current", get_current, ICON_CURRENT_AC, SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, None, 0.2, SensorStateClass.MEASUREMENT),
+        ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None, 50, SensorStateClass.MEASUREMENT),
         (
             "Current Set",
             current_set_getter,
@@ -1104,6 +1104,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             0,
             EntityCategory.DIAGNOSTIC,
             None,
+            None,  # A setpoint; ordinary history captures its changes.
         ),
     ]
 
@@ -1114,22 +1115,22 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             value_fn=fn,
             icon=icon,
             device_class=device_class,
-            state_class=SensorStateClass.MEASUREMENT,
+            state_class=state_class,
             native_unit_of_measurement=unit,
             suggested_display_precision=precision,
             entity_category=category,
             deadband=deadband,
         )
-        for name, fn, icon, device_class, unit, precision, category, deadband in measurements
+        for name, fn, icon, device_class, unit, precision, category, deadband, state_class in measurements
     ]
 
     # Energy sensors.
     # Session Energy resets to 0 each session and is deliberately kept out of
-    # the Energy Dashboard, so it is a plain MEASUREMENT with no device class
-    # (HA forbids ENERGY + MEASUREMENT). The lifetime/counter meters increase
+    # the Energy Dashboard and statistics; ordinary history captures the session.
+    # The lifetime/counter meters increase
     # and reset, so they use the ENERGY device class with TOTAL_INCREASING.
     energy_sensors = [
-        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", SensorStateClass.MEASUREMENT, None),
+        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", None, None),
         ("Total Energy", get_total_energy, "mdi:transmission-tower", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
         ("Counter A Energy", get_counter_a_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
         ("Counter B Energy", get_counter_b_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
@@ -1305,7 +1306,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
         EveusSensorEntityDescription(
             key="active_rate_cost", name="Active Rate Cost", value_fn=get_active_rate_cost,
             icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=UNIT_UAH_PER_KWH, suggested_display_precision=2,
+            native_unit_of_measurement=UNIT_UAH_PER_KWH, suggested_display_precision=2,
             attributes_fn=get_active_rate_attrs,
         ),
         EveusSensorEntityDescription(
@@ -1356,7 +1357,6 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             value_fn=adaptive_current_getter,
             icon=ICON_CURRENT_AC,
             device_class=SensorDeviceClass.CURRENT,
-            state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfElectricCurrent.AMPERE, suggested_display_precision=0,
             entity_category=EntityCategory.DIAGNOSTIC,
         ),
