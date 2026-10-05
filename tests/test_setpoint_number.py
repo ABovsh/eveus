@@ -1,6 +1,6 @@
 """EveusSetpointNumber scaling, clamping, and command wiring."""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from homeassistant.components.number import NumberMode
@@ -58,7 +58,8 @@ def test_energy_reads_one_to_one_writes_times_1000():
     assert ent._read_device_value() == 57.0       # HA shows 57 kWh (device_to_ha=1)
     asyncio.run(ent.async_set_native_value(40))
     # The WRITE must be the ×1000 form, not 40.
-    updater.send_command.assert_awaited_once_with("energyLimit", 40000)
+    updater.send_command.assert_awaited_once_with("energyLimit", 40000, preflight=ANY)
+    assert updater.send_command.await_args.kwargs["preflight"]()
 
 
 def test_time_reads_seconds_as_minutes_writes_minutes_as_seconds():
@@ -66,13 +67,13 @@ def test_time_reads_seconds_as_minutes_writes_minutes_as_seconds():
     updater.data = {"timeLimit": 3600}
     assert ent._read_device_value() == 60.0       # 3600 s -> 60 min
     asyncio.run(ent.async_set_native_value(30))
-    updater.send_command.assert_awaited_once_with("timeLimit", 1800)
+    updater.send_command.assert_awaited_once_with("timeLimit", 1800, preflight=ANY)
 
 
 def test_value_is_clamped_to_range_before_write():
     ent, updater = _make(ENERGY)
     asyncio.run(ent.async_set_native_value(99999))
-    updater.send_command.assert_awaited_once_with("energyLimit", 100000)  # 100 kWh max ×1000
+    updater.send_command.assert_awaited_once_with("energyLimit", 100000, preflight=ANY)  # 100 kWh max ×1000
 
 
 def test_unique_id_and_translation_key_from_name():
@@ -130,7 +131,7 @@ def test_undervoltage_threshold_reads_and_writes_ai_voltage():
 
     asyncio.run(ent.async_set_native_value(218))
 
-    updater.send_command.assert_awaited_once_with("aiVoltage", 218)
+    updater.send_command.assert_awaited_once_with("aiVoltage", 218, preflight=ANY)
 
 
 def test_undervoltage_threshold_min_tracks_minvoltage():
@@ -175,7 +176,7 @@ def test_threshold_write_reclamps_against_min_raised_while_queued():
         ent._command_lock.release()
         await task
         # Must have re-clamped to the NEW floor, not sent the stale 165.
-        updater.send_command.assert_awaited_once_with("aiVoltage", 210)
+        updater.send_command.assert_awaited_once_with("aiVoltage", 210, preflight=ANY)
 
     asyncio.run(scenario())
 
@@ -302,7 +303,8 @@ def test_setpoint_number_pending_value_visible_mid_command():
     ent, updater = _make(ENERGY)
     seen = {}
 
-    async def _capture(command, value):
+    async def _capture(command, value, *, preflight):
+        assert preflight()
         seen["pending"] = ent._pending_value
         seen["attr"] = ent._attr_native_value
         return True
@@ -537,4 +539,4 @@ def test_absolute_setpoints_keep_only_latest_waiting_value():
         await asyncio.gather(*tasks)
 
     asyncio.run(scenario())
-    updater.send_command.assert_awaited_once_with('energyLimit', 40000)
+    updater.send_command.assert_awaited_once_with('energyLimit', 40000, preflight=ANY)

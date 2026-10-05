@@ -18,7 +18,7 @@ from urllib.parse import parse_qs
 import pytest
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, STATE_UNAVAILABLE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -359,8 +359,12 @@ async def test_meter_tail_reaches_ha_before_reset_and_cost_window_changes(
     await updater.async_refresh()
     entity_id = 'sensor.eveus_ev_charger_session_cost'
     rows = []
-    unsub = hass.bus.async_listen('state_changed', lambda event: rows.append(event.data['new_state'])
-                                 if event.data['entity_id'] == entity_id else None)
+    @callback
+    def record_meter_state(event):
+        if event.data['entity_id'] == entity_id:
+            rows.append(event.data['new_state'])
+
+    unsub = hass.bus.async_listen('state_changed', record_meter_state)
     clock[0] += timedelta(seconds=30)
     aioclient_mock.clear_requests()
     _mock_charger(aioclient_mock, HOST_A, json={**payload, 'sessionMoney':11})
@@ -375,4 +379,30 @@ async def test_meter_tail_reaches_ha_before_reset_and_cost_window_changes(
     await hass.async_block_till_done()
     unsub()
     assert [row.state for row in rows] == ['11.0', '0.0']
+    assert hass.states.get(entity_id).state == '0.0'
     assert rows[0].attributes['last_reset'] < rows[1].attributes['last_reset']
+
+
+@pytest.mark.parametrize("key,field", [
+    ("total_energy", "totalEnergy"), ("session_cost", "sessionMoney"),
+])
+async def test_missing_meter_is_unavailable_and_recovers_to_valid_zero(
+    hass, aioclient_mock, key, field
+):
+    entry = _entry(hass, HOST_A)
+    payload = {**REAL_MAIN, field: 10}
+    _mock_charger(aioclient_mock, HOST_A, json=payload)
+    await _setup(hass, entry)
+    updater = entry.runtime_data.updater
+    entity_id = f"sensor.eveus_ev_charger_{key}"
+    assert hass.states.get(entity_id).state == "10.0"
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={k: v for k, v in payload.items() if k != field})
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, field: 0})
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "0.0"

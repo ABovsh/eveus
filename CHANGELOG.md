@@ -14,11 +14,13 @@
 ### 🔧 Changed
 
 - **Fewer energy and cost history updates.** Session, total and A/B energy and session and A/B cost publish ordinary growth once per minute, with immediate session, reset and availability transitions.
-- **Stop moves ahead of waiting settings.** Numerical settings keep the latest waiting value, reducing repeated commands.
+- **Stop moves ahead of waiting settings.** Numerical settings keep the latest waiting value even behind another control, reducing repeated commands.
 
 ### 🐛 Fixed
 
 - **Charging no longer stops using an outdated SOC target.** Queued and retried SOC stops recheck the current target, SOC, connection and session before sending.
+- **SOC notifications describe the limit that stopped charging.** They use the target and SOC checked before transmission; a manual stop cannot confirm an unsent SOC command.
+- **Missing energy and cost readings show unavailable.** The last observed total is preserved before a missing reading, and valid zeroes become available immediately.
 
 ## 4.26.0 - 2026-10-01
 

@@ -329,8 +329,12 @@ Energy and cost sensors publish ordinary growth once per minute to reduce
 history writes. Session changes, counter resets and availability changes publish
 immediately; the latest observed value is flushed before a reset or orderly
 unload. Automations using these sensors receive ordinary growth at this cadence.
-SOC enforcement continues to use every fresh charger poll. Stop takes priority
-over waiting settings, and numerical controls keep the latest waiting value.
+SOC enforcement continues to use every fresh charger poll. Its reached event
+reports the target and SOC checked before the Stop was sent; a manual stop
+cannot confirm a SOC command still waiting in the queue. Stop takes priority
+over waiting settings, and numerical controls keep the latest waiting value,
+including while another control holds the command queue. A missing energy or
+cost reading makes its sensor unavailable; a valid zero remains available.
 WiFi Signal and Connection Quality keep ordinary history but no longer collect
 long-term statistics; existing statistics stay stored.
 

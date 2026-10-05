@@ -185,6 +185,10 @@ class OptimizedEveusSensor(EveusSensorBase):
         """Connectivity-describing sensors stay available while polls fail."""
         if self._spec.available_when_offline:
             return True
+        if self._spec.minute_publication and self._updater.available:
+            # A reachable charger can omit one meter. Flush its held tail through
+            # the publication override, then expose the missing source as unavailable.
+            return super().available and self._get_sensor_value() is not None
         return super().available
 
     async def async_added_to_hass(self) -> None:

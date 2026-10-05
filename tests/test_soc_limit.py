@@ -321,7 +321,10 @@ def test_confirmation_during_inflight_stop_is_not_lost():
         gate = asyncio.Event()
         events = []
 
-        async def slow_send(_cmd, _val, **_kwargs):
+        async def slow_send(_cmd, _val, **kwargs):
+            # Mirror the real manager: eligibility is checked at transmission,
+            # before the response is delayed, rather than while still queued.
+            assert kwargs["preflight"]()
             await gate.wait()
             return True
 

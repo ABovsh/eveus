@@ -816,7 +816,9 @@ def test_v07_current_number_displays_sub7_but_writes_floor() -> None:
     num.async_write_ha_state = MagicMock()
     assert num.native_value == 6
     _asyncio2.run(num.async_set_native_value(3))
-    upd.send_command.assert_awaited_with("currentSet", 7)
+    upd.send_command.assert_awaited_once()
+    assert upd.send_command.await_args.args == ("currentSet", 7)
+    assert upd.send_command.await_args.kwargs["preflight"]()
 
 
 def test_v14_charger_number_prefers_fresh_device_over_restored(monkeypatch) -> None:

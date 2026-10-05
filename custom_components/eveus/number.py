@@ -392,6 +392,7 @@ class EveusSetpointNumber(EveusNumberEntity):
                 accepted=clamped,
                 rejected_message=f"Eveus charger did not accept {self._write_label(clamped)}",
                 failure_prefix=f"Failed to set {self._write_label()}",
+                preflight=lambda: self._latest_write is token,
             )
 
     async def _async_restore_state(self, state: State) -> None:
