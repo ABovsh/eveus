@@ -121,3 +121,33 @@ def test_incomplete_soc_inputs_veto_without_counting_command_failure(monkeypatch
     assert _stop_posts(session) == []
     assert events == []
     assert updater._command_manager.consecutive_failures == 0
+
+
+def test_superseded_write_does_not_republish_stale_device_value():
+    ent, updater = _make(ENERGY)
+    updater.data = {"energyLimit": 10}
+    rows = []
+    ent.async_write_ha_state = lambda: rows.append(ent.native_value)
+
+    async def scenario():
+        reached_wire, release = asyncio.Event(), asyncio.Event()
+
+        async def hold_at_wire(command, value, *, preflight):
+            reached_wire.set()
+            await release.wait()
+            return preflight()
+
+        updater.send_command.side_effect = hold_at_wire
+        older = asyncio.create_task(ent.async_set_native_value(20))
+        await reached_wire.wait()
+        newest = asyncio.create_task(ent.async_set_native_value(30))
+        await asyncio.sleep(0)
+        updater.send_command.side_effect = None
+        release.set()
+        await asyncio.gather(older, newest)
+
+    asyncio.run(scenario())
+    # The newest write owns the display: no row for the charger's old value
+    # between the two requested ones.
+    assert rows == [20, 30]
+    assert updater.send_command.await_count == 2

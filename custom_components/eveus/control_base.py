@@ -78,6 +78,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         self._set_pending(pending)
         self._set_display_value(shown)
         self._write_if_changed(shown)  # type: ignore[attr-defined]
+        superseded = False
         try:
             kwargs = {}
             if extra is not None:
@@ -90,6 +91,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             # An absolute setpoint superseded while waiting (or retrying)
             # is a successful coalescing decision, not a rejected command.
             if preflight is not None and not preflight():
+                superseded = True
                 return
             if not success:
                 raise HomeAssistantError(rejected_message)
@@ -101,9 +103,14 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             raise HomeAssistantError(f"{failure_prefix}: {err}") from err
         finally:
             self._set_pending(None)
-            value = self._resolve_display_value()
-            self._set_display_value(value)
-            self._write_if_changed(value)  # type: ignore[attr-defined]
+            # The superseding write is queued behind the caller's lock and
+            # republishes the display itself; resolving here would show the
+            # charger's old value (a spurious row) between the two requests.
+            # If it never arrives, the next poll reconciles the display.
+            if not superseded:
+                value = self._resolve_display_value()
+                self._set_display_value(value)
+                self._write_if_changed(value)  # type: ignore[attr-defined]
 
     @callback
     def _handle_coordinator_update(self) -> None:
