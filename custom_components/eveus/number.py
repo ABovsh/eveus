@@ -1,6 +1,7 @@
 """Support for Eveus number entities with optimistic UI and safety."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
@@ -371,29 +372,52 @@ class EveusSetpointNumber(EveusNumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         raw = self._normalize_write(_validate_finite_number(value, self.ENTITY_NAME))
-        token = object()
+        # The token is also this write's outcome. A call replaced by a newer
+        # value before it was applied waits for the newest write and shares its
+        # result, so no call reports success for a value that was never sent.
+        token: asyncio.Future = asyncio.get_running_loop().create_future()
         self._latest_write = token
-        async with self._command_lock:
-            # Absolute settings can replace unsent settings of this entity;
-            # reset buttons and stateful toggles never enter this path.
-            if self._latest_write is not token:
-                return
-            # Clamp INSIDE the lock against a freshly refreshed bound: a write
-            # queued behind another command must honour a dynamic min/max that
-            # shifted while it waited, not the bound captured at enqueue time.
-            self._pre_send_refresh()
-            clamped = max(
-                self._attr_native_min_value, min(self._attr_native_max_value, raw)
-            )
-            await self._send_pinned_command(
-                device_value=int(round(clamped * self._ha_to_device)),
-                pending=clamped,
-                shown=clamped,
-                accepted=clamped,
-                rejected_message=f"Eveus charger did not accept {self._write_label(clamped)}",
-                failure_prefix=f"Failed to set {self._write_label()}",
-                preflight=lambda: self._latest_write is token,
-            )
+        try:
+            async with self._command_lock:
+                # Absolute settings can replace unsent settings of this entity;
+                # reset buttons and stateful toggles never enter this path.
+                if self._latest_write is token:
+                    await self._send_latest_write(raw, token)
+        except BaseException as err:
+            if not token.done():
+                token.set_result(err)
+            raise
+        if self._latest_write is token:
+            token.set_result(None)
+            return
+        # Waited on outside the lock: the newest write needs it to send.
+        outcome = await asyncio.shield(self._latest_write)
+        token.set_result(outcome)
+        if isinstance(outcome, HomeAssistantError):
+            raise HomeAssistantError(str(outcome)) from outcome
+        if outcome is not None:
+            raise HomeAssistantError(
+                f"Failed to set {self._write_label()}: replaced by a newer value "
+                "that was not applied"
+            ) from outcome
+
+    async def _send_latest_write(self, raw: float, token: asyncio.Future) -> None:
+        # Clamp INSIDE the lock against a freshly refreshed bound: a write
+        # queued behind another command must honour a dynamic min/max that
+        # shifted while it waited, not the bound captured at enqueue time.
+        self._pre_send_refresh()
+        clamped = max(
+            self._attr_native_min_value, min(self._attr_native_max_value, raw)
+        )
+        await self._send_pinned_command(
+            device_value=int(round(clamped * self._ha_to_device)),
+            pending=clamped,
+            shown=clamped,
+            accepted=clamped,
+            rejected_message=f"Eveus charger did not accept {self._write_label(clamped)}",
+            failure_prefix=f"Failed to set {self._write_label()}",
+            preflight=lambda: self._latest_write is token,
+        )
 
     async def _async_restore_state(self, state: State) -> None:
         try:

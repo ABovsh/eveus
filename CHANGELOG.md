@@ -5,22 +5,29 @@
 ### ✨ New
 
 - **Protection and charging limits cannot be disabled by an accidental tap.** The card asks for confirmation and reports refused or unconfirmed changes; an empty numeric field cancels editing.
+- **The card shows where Initial SOC came from.** A small icon on the Battery tile tells whether it was read from the car, set manually, or the car reading could not be used. Hover the icon, or open SOC Percent, for the reason.
+- **Every card control reports a refused command.** Counter resets, clock sync and current changes that fail or are not confirmed by the charger now show a message instead of silently reverting.
+- **The card respects the system's reduced-motion setting.** Charging pulses and transitions stop when the phone or browser asks for less motion.
 
 ### ⚠️ Breaking
 
-- **WiFi Signal and Connection Quality stop collecting future long-term statistics.** Use their ordinary history for connection diagnostics; existing statistics remain stored.
-- **Six session, setting and SOC sensors stop collecting future statistics:** Current Set, Adaptive Current Limit, Active Rate Cost, Energy to Target SOC, SOC Energy and Session Energy. Use ordinary history for their graphs; existing statistics remain stored.
+- **Eight sensors stop collecting new long-term statistics:** WiFi Signal, Connection Quality, Current Set, Adaptive Current Limit, Active Rate Cost, Energy to Target SOC, SOC Energy and Session Energy.
+  - **Why:** Home Assistant writes statistics for such a sensor every 5 minutes and every hour, whether or not its value changes, up to about 2,500 extra database rows a day per charger. These are settings, estimates or diagnostics, so averages over months add little.
+  - **What stays:** the sensors, their current values and their ordinary history. Existing statistics are not deleted. Energy and cost totals, voltage, current, power, temperatures and SOC Percent keep their statistics.
+  - **What you will see:** Home Assistant raises one Repairs notice per sensor ("no longer has a state class"). To clear it, delete that sensor's old statistics in Developer Tools → Statistics, or leave it.
 
 ### 🔧 Changed
 
 - **Fewer energy and cost history updates.** Session, total and A/B energy and session and A/B cost publish ordinary growth once per minute, with immediate session, reset and availability transitions.
-- **Stop moves ahead of waiting settings.** Numerical settings keep the latest waiting value even behind another control, reducing repeated commands.
+- **Stop moves ahead of waiting settings.** When a numerical setting is changed again before the charger received the previous value, only the newest value is sent, and every one of those calls finishes with the newest value's result.
 
 ### 🐛 Fixed
 
 - **Charging no longer stops using an outdated SOC target.** Queued and retried SOC stops recheck the current target, SOC, connection and session before sending.
 - **SOC notifications describe the limit that stopped charging.** They use the target and SOC checked before transmission; a manual stop cannot confirm an unsent SOC command.
 - **Missing energy and cost readings show unavailable.** The last observed total is preserved before a missing reading, and valid zeroes become available immediately.
+- **The card follows renamed entities.** Renaming an Eveus entity no longer leaves the card showing no connection until the page is reloaded.
+- **Month energy and card mode belong to the selected charger.** Switching the card or its editor to another charger no longer shows the previous charger's monthly totals or picks the wrong Advanced/Basic mode.
 
 ## 4.26.0 - 2026-10-01
 

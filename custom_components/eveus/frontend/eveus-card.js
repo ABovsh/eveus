@@ -33,6 +33,10 @@ const LARGE_MAX_ITEMS = 2;
 const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
+// A command not confirmed by the charger's own state within this long is reported as unconfirmed.
+const COMMAND_TIMEOUT_MS = 60000;
+// Text from entity attributes goes into markup; quote it.
+const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 // Mirrors const.py CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS: a drift this close to whole hours is a wrong time zone.
 const TZ_MATCH_TOLERANCE_S = 300;
 // The Home Assistant app vibrates on these ("light", "selection", "warning", "success"); a browser ignores them.
@@ -128,6 +132,7 @@ const I18N = {
     resetQ: (label) => `Reset ${label}?`, toZero: 'will be set to 0', cancel: 'Cancel',
     confirm: 'Confirm',
     disableGroundQ: 'Disable ground protection?', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.',
+    socFromCar: (detail) => `Initial SOC from the car: ${detail}`, socManual: 'Initial SOC set manually', socNotUsed: (detail) => `Car SOC not used (${detail}); the manual value applies`,
     safety: 'Safety', box: 'Box temperature', plug: 'Plug temperature', groundProt: 'Ground protection',
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
     // The integration's "5h 30m": English keeps it as text, compact.
@@ -187,6 +192,7 @@ const I18N = {
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
     confirm: 'Підтвердити',
     disableGroundQ: 'Вимкнути захист заземлення?', disableAllQ: 'Вимкнути всі ліміти зарядки?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.',
+    socFromCar: (detail) => `Початковий SOC з авто: ${detail}`, socManual: 'Початковий SOC задано вручну', socNotUsed: (detail) => `SOC авто не використано (${detail}); діє значення, задане вручну`,
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
     // "1d 02h 05m" / "5h 30m" / "45m" → numbers with small Ukrainian units.
@@ -356,6 +362,10 @@ class EveusCard extends HTMLElement {
     this._editingLimit = null;
     this._guardAsk = null;
     this._commandError = false;
+    this._resolveAgain = false;
+    this._month = null;
+    this._monthAt = 0;
+    this._monthBusy = false;
     this._open = this._loadOpen();
     if (!this.shadowRoot) {
       this.attachShadow({mode: 'open'});
@@ -466,6 +476,7 @@ class EveusCard extends HTMLElement {
     // until the page is reloaded.
     const retry = this._resolved && this._ids === null && Date.now() >= (this._retryAt || 0);
     if ((!this._resolved || retry) && !this._resolving) void this._resolve();
+    if (this._resolved) this._watchRegistry();
     if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
       const entity = this._state(key);
@@ -518,6 +529,9 @@ class EveusCard extends HTMLElement {
     clearTimeout(this._selectTimer);
     this._editingSelect = null;
     this._resizeObserver?.disconnect();
+    const unsubscribe = this._registryUnsub;
+    this._registryUnsub = null;
+    unsubscribe?.then((unsub) => unsub?.()).catch(() => {});
   }
   getCardSize() {
     const height = this.shadowRoot?.querySelector?.('ha-card')?.getBoundingClientRect?.().height;
@@ -542,7 +556,20 @@ class EveusCard extends HTMLElement {
     if (generation !== this._generation) return;
     this._resolved = true;
     this._resolving = false;
+    if (this._resolveAgain) { this._resolveAgain = false; void this._resolve(); return; }
     this.hass = this._hass;
+  }
+  // Renaming an entity_id leaves the resolved map pointing at a name that no longer exists:
+  // look the charger up again when one of its entities is renamed (the lookup is by unique_id).
+  _watchRegistry() {
+    if (this._registryUnsub || this.isConnected === false || typeof this._hass?.connection?.subscribeEvents !== 'function') return;
+    this._registryUnsub = this._hass.connection.subscribeEvents((event) => {
+      const old = event?.data?.old_entity_id;
+      if (!old || !Object.values(this._ids || {}).includes(old)) return;
+      if (this._resolving) this._resolveAgain = true;
+      else void this._resolve();
+    }, 'entity_registry_updated');
+    this._registryUnsub.catch(() => { this._registryUnsub = null; });
   }
   _state(key) { return this._hass?.states[this._ids?.[key]]; }
   get _online() {
@@ -617,7 +644,8 @@ class EveusCard extends HTMLElement {
     this._render();
     // Finite feedback even when HA never answers. Each response belongs to its
     // own request, so a late failure cannot undo a newer interaction.
-    this._expire();
+    this._commandError = false;
+    this._timer = setTimeout(() => { this._reset(); this._commandError = 'timeout'; this._render(); }, COMMAND_TIMEOUT_MS);
     try {
       await this._hass.callService('number', 'set_value', {entity_id: this._ids.charging_current, value});
     } catch {
@@ -657,7 +685,7 @@ class EveusCard extends HTMLElement {
       delete this._limitTimers[key];
       this._commandError = 'timeout';
       this._render();
-    }, 60000);
+    }, COMMAND_TIMEOUT_MS);
     this._limitTimers[key]?.unref?.();
     return this._limitTimers[key];
   }
@@ -948,6 +976,17 @@ class EveusCard extends HTMLElement {
     if (!this._charging || soc === null) return 'idle';
     return soc < 40 ? 'low' : soc < 75 ? 'mid' : 'high';
   }
+  // Where Initial SOC, the anchor of every SOC figure, came from: SOC Percent's own attributes.
+  _socSource() {
+    const attrs = this._online ? this._state('soc_percent')?.attributes : null;
+    const detail = attrs?.soc_anchor;
+    if (typeof detail !== 'string' || !detail) return '';
+    const t = this._t;
+    const [cls, icon, title] = attrs.soc_anchor_seeded === true ? ['car', 'mdi:car', t.socFromCar(detail)]
+      : detail === 'set manually' ? ['manual', 'mdi:hand-back-right-outline', t.socManual]
+      : ['stale', 'mdi:car-off', t.socNotUsed(detail)];
+    return `<span class="soc-src ${cls}" title="${esc(title)}" aria-label="${esc(title)}"><ha-icon icon="${icon}"></ha-icon></span>`;
+  }
   _advanced_infoSection() {
     if (!this._advanced) return '';
     const t = this._t, on = this._online;
@@ -976,7 +1015,7 @@ class EveusCard extends HTMLElement {
     return `<section class="${['panel soc', `soc-${color}`, on ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.battery}">
       <div class="tiles two">
         <button class="tile soc-tile" data-more-info="soc_percent" data-hold="initial_soc" aria-keyshortcuts="Alt+Enter" title="${t.batteryTitle}">
-          <span class="tile-head"><ha-icon icon="${icon}"></ha-icon>${t.battery}<span class="tile-aside">${t.est}</span></span>
+          <span class="tile-head"><ha-icon icon="${icon}"></ha-icon>${t.battery}<span class="tile-aside">${this._socSource()}${t.est}</span></span>
           <span class="tile-big"><b data-fit="26">${soc === null ? '—' : `≈${pc(soc)}`}</b></span>
           <span class="tile-sub" data-fit="12">${batterySub || '&nbsp;'}</span>
         </button>
@@ -1051,7 +1090,10 @@ class EveusCard extends HTMLElement {
     this._render();
     try {
       await this._hass.callService('button', 'press', {entity_id: this._ids[key]});
-    } catch { /* HA reports a refused reset itself (button.py raises HomeAssistantError). */ }
+    } catch {
+      this._commandError = true;
+      this._render();
+    }
   }
   _cancelReset() {
     clearTimeout(this._resetTimer);
@@ -1252,6 +1294,7 @@ class EveusCard extends HTMLElement {
     } catch {
       clearTimeout(this._syncTimer);
       this._syncDone = false;
+      this._commandError = true;
       this._render();
     }
   }
@@ -1572,17 +1615,21 @@ class EveusCard extends HTMLElement {
   // ---- Counters: this month's and last month's energy from Home Assistant's long-term statistics. ----
   get _wantsMonth() { return !!this._ids?.total_energy && this._config.sections.includes('history') && this._shows('history', 'month'); }
   async _fetchMonth() {
-    const id = this._ids?.total_energy;
+    const id = this._ids?.total_energy, generation = this._generation;
     if (!id || typeof this._hass?.callWS !== 'function') return;
     this._monthAt = Date.now();
     this._monthBusy = true;
+    // An answer for a charger or entity the card no longer shows is dropped.
+    const current = () => generation === this._generation && this._ids?.total_energy === id;
     const ask = (offset) => this._hass.callWS({type: 'recorder/statistic_during_period', statistic_id: id,
       calendar: offset ? {period: 'month', offset} : {period: 'month'}, types: ['change']});
     const change = (r) => Number.isFinite(r?.change) ? r.change : null;
     try {
       const [cur, prev] = await Promise.all([ask(0), ask(-1)]);
+      if (!current()) return;
       this._month = {cur: change(cur), prev: change(prev)};
     } catch {
+      if (!current()) return;
       this._month = null;
     }
     this._monthBusy = false;
@@ -1787,7 +1834,8 @@ ha-card{--accent:var(--primary-color,#3498db);--panel:rgba(127,127,127,.075);--t
 .tiles{display:grid;min-width:0}.tiles.two{grid-template-columns:repeat(2,minmax(0,1fr))}.tiles.three{grid-template-columns:repeat(3,minmax(0,1fr))}.tiles.one{grid-template-columns:minmax(0,1fr)}
 .tile{box-sizing:border-box;display:flex;flex-direction:column;align-items:flex-start;gap:0;min-width:0;padding:2px 7px 3px;margin:0;font-family:inherit;color:inherit;text-align:left;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .tile:hover,.tile:focus-visible{background:rgba(127,127,127,.15)}
-.tile-head{display:flex;align-items:center;gap:4px;width:100%;white-space:nowrap}.tile-aside{margin-left:auto;font-weight:600;color:var(--primary-text-color);opacity:.85}.tile-aside small{font-size:.9em}.tile-head ha-icon{--mdc-icon-size:14px;color:var(--accent)}
+.tile-head{display:flex;align-items:center;gap:4px;width:100%;white-space:nowrap}.tile-aside{margin-left:auto;font-weight:600;color:var(--primary-text-color);opacity:.85}.tile-aside small{font-size:.9em}.soc-src{display:inline-flex;vertical-align:-2px;margin-right:3px}.tile-head .soc-src ha-icon{--mdc-icon-size:13px;color:var(--secondary-text-color)}.tile-head .soc-src.stale ha-icon{color:#f39c12}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none !important;transition:none !important}}.tile-head ha-icon{--mdc-icon-size:14px;color:var(--accent)}
 .tile-big{display:flex;align-items:baseline;max-width:100%;min-width:0;white-space:nowrap;font-size:19px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;color:var(--primary-text-color)}
 .tile-big b{min-width:0;overflow:hidden;font-weight:700}.tile-big small{font-size:.6em;font-weight:500;color:var(--secondary-text-color);margin-left:1px}
 .tile-sub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:600;color:var(--secondary-text-color);font-variant-numeric:tabular-nums}
@@ -2086,11 +2134,13 @@ class EveusCardEditor extends HTMLElement {
     const want = this._config?.device_id || null;
     if (!this._hass?.callWS || this._config?.mode || this._socFor === want) return;
     this._socFor = want;
+    this._hasSoc = undefined;
     const msg = {type: 'eveus/card_entities'};
     if (want) msg.device_id = want;
+    // An answer about a device the editor no longer shows is dropped.
     this._hass.callWS(msg)
-      .then((res) => { this._hasSoc = !!res?.entities?.soc_percent; })
-      .catch(() => { this._hasSoc = true; })
+      .then((res) => { if (this._socFor === want) this._hasSoc = !!res?.entities?.soc_percent; })
+      .catch(() => { if (this._socFor === want) this._hasSoc = true; })
       .finally(() => this._render());
   }
   get _basic() { return this._config.mode ? this._config.mode === 'basic' : this._hasSoc === false; }

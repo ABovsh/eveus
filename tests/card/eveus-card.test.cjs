@@ -1479,3 +1479,118 @@ test('Escape cancels a safety confirmation and pending expiry explains uncertain
   for(const fn of [...y.timers.values()]) fn();
   assert.match(y.card.shadowRoot.innerHTML,/not confirmed/);
 });
+
+// ---- October 6 RC: device isolation, rename, motion, SOC source, command feedback ----
+const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return {promise, resolve}; };
+test('month statistics asked for one charger never land on another after switching device', async () => {
+  const x = setupAll({sections:['history'], over:{total_energy:['sensor.total_a',5290.16]}});
+  const pending = deferred();
+  x.hass.callWS = (msg) => msg.type === 'eveus/card_entities'
+    ? Promise.resolve({entities:{state:'sensor.state', total_energy:'sensor.total_b'}})
+    : msg.statistic_id === 'sensor.total_a' ? pending.promise : Promise.resolve({change:7});
+  const first = x.card._fetchMonth();
+  x.card.setConfig({sections:['history'], device_id:'b'});
+  x.card.hass = x.hass;
+  await new Promise((r) => setImmediate(r));
+  pending.resolve({change:999});
+  await first;
+  await new Promise((r) => setImmediate(r));
+  assert.equal(x.card._ids.total_energy, 'sensor.total_b');
+  assert.notEqual(x.card._month?.cur, 999);
+  assert.equal(x.card._month?.cur, 7, 'the new charger gets its own month');
+});
+test('editor mode probe for a previous device cannot overwrite the current one', async () => {
+  const {editor} = setupEditor({sections:['current'], device_id:'a'});
+  const probeA = deferred();
+  editor.hass = {callWS:(msg) => msg.device_id === 'a' ? probeA.promise : Promise.resolve({entities:{state:'sensor.state'}})};
+  editor.setConfig({sections:['current'], device_id:'b'});
+  await new Promise((r) => setImmediate(r));
+  assert.equal(editor._hasSoc, false);
+  probeA.resolve({entities:{soc_percent:'sensor.soc'}});
+  await new Promise((r) => setImmediate(r));
+  assert.equal(editor._hasSoc, false);
+});
+test('renaming an entity re-finds the charger entities without a page reload', async () => {
+  const x = setupAll({sections:['session']});
+  const subs = []; let unsubscribed = 0;
+  x.hass.connection = {subscribeEvents:async (cb, type) => { subs.push([cb, type]); return () => { unsubscribed++; }; }};
+  x.card.hass = x.hass;
+  await new Promise((r) => setImmediate(r));
+  assert.equal(subs.length, 1); assert.equal(subs[0][1], 'entity_registry_updated');
+  x.card.hass = x.hass;
+  assert.equal(subs.length, 1, 'one subscription per connected card');
+  const renamed = {...x.card._ids, session_energy:'sensor.se_new'};
+  x.states['sensor.se_new'] = x.states['sensor.se'];
+  x.hass.callWS = async () => ({entities:renamed});
+  subs[0][0]({data:{action:'update', entity_id:'sensor.unrelated', old_entity_id:'sensor.other'}});
+  await new Promise((r) => setImmediate(r));
+  assert.equal(x.card._ids.session_energy, 'sensor.se');
+  subs[0][0]({data:{action:'update', entity_id:'sensor.se_new', old_entity_id:'sensor.se'}});
+  await new Promise((r) => setImmediate(r));
+  assert.equal(x.card._ids.session_energy, 'sensor.se_new');
+  x.card.disconnectedCallback();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(unsubscribed, 1);
+});
+test('reduced-motion preference stops animations and transitions', () => {
+  const x = setupAll({sections:['status']});
+  assert.match(x.card.shadowRoot.innerHTML, /@media \(prefers-reduced-motion: ?reduce\)\{[^}]*animation:none !important[^}]*transition:none !important/);
+});
+test('battery tile says where the Initial SOC came from', () => {
+  const soc = (attributes) => setupAll({sections:['advanced_info'], over:{soc_percent:['sensor.soc',44,{unit_of_measurement:'%', ...attributes}]}}).html();
+  assert.match(soc({soc_anchor_seeded:true, soc_anchor:'45.0% from sensor.car_soc'}), /class="soc-src car" title="Initial SOC from the car: 45.0% from sensor.car_soc"[^>]*><ha-icon icon="mdi:car"/);
+  assert.match(soc({soc_anchor_seeded:false, soc_anchor:'set manually'}), /class="soc-src manual" title="Initial SOC set manually"[^>]*><ha-icon icon="mdi:hand-back-right-outline"/);
+  assert.match(soc({soc_anchor_seeded:false, soc_anchor:'sensor.car_soc is "unavailable"'}), /class="soc-src stale" title="Car SOC not used \(sensor.car_soc is &quot;unavailable&quot;\); the manual value applies"[^>]*><ha-icon icon="mdi:car-off"/);
+  assert.doesNotMatch(soc({}), /soc-src/);
+  const uk = setupAll({sections:['advanced_info'], language:'uk', over:{soc_percent:['sensor.soc',44,{soc_anchor_seeded:true, soc_anchor:'45.0% from sensor.car_soc'}]}}).html();
+  assert.match(uk, /title="Початковий SOC з авто: 45.0% from sensor.car_soc"/);
+});
+test('every control reports a refused command', async () => {
+  const fail = async () => { throw Error('refused'); };
+  const reset = setupAll({sections:['history'], over:HISTORY});
+  reset.hass.callService = fail;
+  await reset.card._resetCounter('reset_counter_a'); await reset.card._resetCounter('reset_counter_a', true);
+  assert.match(reset.html(), /role="alert">Command failed/);
+  const sync = setupAll({sections:['time'], over:TIME});
+  sync.hass.callService = fail;
+  await sync.card._syncTime();
+  assert.match(sync.html(), /role="alert">Command failed/);
+  assert.doesNotMatch(sync.html(), /time-sync done/);
+});
+test('an unconfirmed current change is reported instead of silently reverting', async () => {
+  const {card, slide, timers} = setup();
+  slide(8);
+  await new Promise((r) => setImmediate(r));
+  for (const fn of [...timers.values()]) fn();
+  assert.equal(card._draft, null);
+  assert.equal(card._commandError, 'timeout');
+  assert.match(card.shadowRoot.innerHTML, /Change not confirmed/);
+});
+test('a rename during a running lookup triggers one more lookup', async () => {
+  const x = setupAll({sections:['session']});
+  const subs = [];
+  x.hass.connection = {subscribeEvents:async (cb) => { subs.push(cb); return () => {}; }};
+  x.card.hass = x.hass;
+  await new Promise((r) => setImmediate(r));
+  const slow = deferred(); let asked = 0;
+  x.hass.callWS = () => { asked++; return asked === 1 ? slow.promise : Promise.resolve({entities:{...x.card._ids, session_energy:'sensor.se_final'}}); };
+  x.card._resolved = false; x.card.hass = x.hass;
+  subs[0]({data:{old_entity_id:'sensor.se'}});
+  slow.resolve({entities:{...x.card._ids, session_energy:'sensor.se_stale'}});
+  await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+  assert.equal(asked, 2);
+  assert.equal(x.card._ids.session_energy, 'sensor.se_final');
+});
+test('switching device forgets the previous charger month before the new one answers', async () => {
+  const x = setupAll({sections:['history'], over:{total_energy:['sensor.total_a',5290.16]}});
+  x.hass.callWS = async () => ({change:999});
+  await x.card._fetchMonth();
+  assert.equal(x.card._month.cur, 999);
+  const never = new Promise(() => {});
+  x.hass.callWS = (msg) => msg.type === 'eveus/card_entities' ? Promise.resolve({entities:{state:'sensor.state', total_energy:'sensor.total_b'}}) : never;
+  x.card.setConfig({sections:['history'], device_id:'b'});
+  x.card.hass = x.hass;
+  await new Promise((r) => setImmediate(r));
+  assert.equal(x.card._month, null);
+  assert.doesNotMatch(x.html(), /999/);
+});
