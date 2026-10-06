@@ -59,6 +59,9 @@ from .utils import normalize_soc_input
 
 _LOGGER = logging.getLogger(__name__)
 
+# Outcome of a setpoint write that a newer value of the same entity replaced.
+_REPLACED = object()
+
 
 def _validate_finite_number(value, label: str) -> float:
     """Reject NaN/inf/bool from service-call input before clamping."""
@@ -372,9 +375,11 @@ class EveusSetpointNumber(EveusNumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         raw = self._normalize_write(_validate_finite_number(value, self.ENTITY_NAME))
-        # The token is also this write's outcome. A call replaced by a newer
-        # value before it was applied waits for the newest write and shares its
-        # result, so no call reports success for a value that was never sent.
+        # Each write's token is settled once, by this call only: None when the
+        # value was applied, the error when it failed, or _REPLACED when a newer
+        # value of this entity took its place. A replaced call then reports the
+        # result of the write that replaced it, so no call reports success for
+        # a value that was never sent.
         token: asyncio.Future = asyncio.get_running_loop().create_future()
         self._latest_write = token
         try:
@@ -384,24 +389,13 @@ class EveusSetpointNumber(EveusNumberEntity):
                 if self._latest_write is token:
                     await self._send_latest_write(raw, token)
         except BaseException as err:
-            if not token.done():
-                token.set_result(err)
+            token.set_result(err if self._latest_write is token else _REPLACED)
             raise
-        if self._latest_write is token:
-            token.set_result(None)
-            return
-        # Waited on outside the lock: the newest write needs it to send.
-        newest = self._latest_write
-        try:
-            outcome = await asyncio.shield(newest)
-        except BaseException:
-            # This caller stopped waiting; calls sharing its outcome still
-            # receive the newest write's result when it arrives.
-            newest.add_done_callback(
-                lambda done: token.done() or token.set_result(done.result())
-            )
-            raise
+        outcome = None if self._latest_write is token else _REPLACED
         token.set_result(outcome)
+        while outcome is _REPLACED:
+            # Waited on outside the lock: the newer write needs it to send.
+            outcome = await asyncio.shield(self._latest_write)
         if isinstance(outcome, HomeAssistantError):
             raise HomeAssistantError(str(outcome)) from outcome
         if outcome is not None:

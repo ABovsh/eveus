@@ -149,3 +149,44 @@ def test_waiter_survives_the_write_it_waits_on_being_cancelled():
     # The newest value was applied, so the older call succeeded with it.
     assert older is None
     updater.send_command.assert_awaited_once()
+
+
+def test_cancelling_a_replaced_queued_write_does_not_fail_the_older_call():
+    """A replaced write cancelled while it waits for the lock defers to the
+    newer write, so the call it replaced reports the value actually applied."""
+    ent, updater = _make(ENERGY)
+
+    async def scenario():
+        lock = ent._command_lock
+        await lock.acquire()
+        older = asyncio.create_task(ent.async_set_native_value(20))
+        await asyncio.sleep(0)
+        gate = asyncio.Event()
+
+        async def hold():
+            async with lock:
+                await gate.wait()
+
+        holder = asyncio.create_task(hold())
+        await asyncio.sleep(0)
+        middle = asyncio.create_task(ent.async_set_native_value(25))
+        await asyncio.sleep(0)
+        lock.release()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        newest = asyncio.create_task(ent.async_set_native_value(30))
+        await asyncio.sleep(0)
+        middle.cancel()  # still queued behind `holder`
+        await asyncio.sleep(0)
+        gate.set()
+        await holder
+        return await asyncio.wait_for(
+            asyncio.gather(older, middle, newest, return_exceptions=True), 1
+        )
+
+    older, middle, newest = asyncio.run(scenario())
+
+    assert isinstance(middle, asyncio.CancelledError)
+    assert newest is None
+    assert older is None
+    updater.send_command.assert_awaited_once()
