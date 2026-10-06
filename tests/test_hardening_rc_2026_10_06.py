@@ -93,3 +93,59 @@ def test_write_replaced_at_the_wire_shares_the_newest_outcome(newest_ok):
     else:
         assert isinstance(newest, HomeAssistantError)
         assert isinstance(older, HomeAssistantError)
+
+
+def test_waiter_survives_the_write_it_waits_on_being_cancelled():
+    """A caller sharing a replaced write's outcome still finishes when that
+    write's own caller is cancelled while it waits for an even newer value."""
+    ent, updater = _make(ENERGY)
+
+    async def scenario():
+        reached_wire, release = asyncio.Event(), asyncio.Event()
+
+        async def hold_at_wire(command, value, *, preflight):
+            reached_wire.set()
+            await release.wait()
+            return preflight()
+
+        updater.send_command.side_effect = hold_at_wire
+        lock = ent._command_lock
+        await lock.acquire()
+        older = asyncio.create_task(ent.async_set_native_value(20))
+        await asyncio.sleep(0)
+        # Stands in for the replaced writes queued between the two: the older
+        # call has already taken `middle` as the newest write when `newest`
+        # arrives, and `middle` only reaches the lock after that.
+        gate = asyncio.Event()
+
+        async def hold():
+            async with lock:
+                await gate.wait()
+
+        holder = asyncio.create_task(hold())
+        await asyncio.sleep(0)
+        middle = asyncio.create_task(ent.async_set_native_value(25))
+        await asyncio.sleep(0)
+        lock.release()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        newest = asyncio.create_task(ent.async_set_native_value(30))
+        await asyncio.sleep(0)
+        gate.set()
+        await holder
+        await reached_wire.wait()
+        middle.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        results = await asyncio.wait_for(
+            asyncio.gather(older, middle, newest, return_exceptions=True), 1
+        )
+        return results
+
+    older, middle, newest = asyncio.run(scenario())
+
+    assert isinstance(middle, asyncio.CancelledError)
+    assert newest is None
+    # The newest value was applied, so the older call succeeded with it.
+    assert older is None
+    updater.send_command.assert_awaited_once()

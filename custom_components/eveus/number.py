@@ -391,7 +391,16 @@ class EveusSetpointNumber(EveusNumberEntity):
             token.set_result(None)
             return
         # Waited on outside the lock: the newest write needs it to send.
-        outcome = await asyncio.shield(self._latest_write)
+        newest = self._latest_write
+        try:
+            outcome = await asyncio.shield(newest)
+        except BaseException:
+            # This caller stopped waiting; calls sharing its outcome still
+            # receive the newest write's result when it arrives.
+            newest.add_done_callback(
+                lambda done: token.done() or token.set_result(done.result())
+            )
+            raise
         token.set_result(outcome)
         if isinstance(outcome, HomeAssistantError):
             raise HomeAssistantError(str(outcome)) from outcome

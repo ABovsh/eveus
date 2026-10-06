@@ -563,13 +563,13 @@ class EveusCard extends HTMLElement {
   // look the charger up again when one of its entities is renamed (the lookup is by unique_id).
   _watchRegistry() {
     if (this._registryUnsub || this.isConnected === false || typeof this._hass?.connection?.subscribeEvents !== 'function') return;
-    this._registryUnsub = this._hass.connection.subscribeEvents((event) => {
+    const subscription = this._registryUnsub = this._hass.connection.subscribeEvents((event) => {
       const old = event?.data?.old_entity_id;
       if (!old || !Object.values(this._ids || {}).includes(old)) return;
       if (this._resolving) this._resolveAgain = true;
       else void this._resolve();
     }, 'entity_registry_updated');
-    this._registryUnsub.catch(() => { this._registryUnsub = null; });
+    subscription.catch(() => { if (this._registryUnsub === subscription) this._registryUnsub = null; });
   }
   _state(key) { return this._hass?.states[this._ids?.[key]]; }
   get _online() {
@@ -1619,8 +1619,13 @@ class EveusCard extends HTMLElement {
     if (!id || typeof this._hass?.callWS !== 'function') return;
     this._monthAt = Date.now();
     this._monthBusy = true;
-    // An answer for a charger or entity the card no longer shows is dropped.
-    const current = () => generation === this._generation && this._ids?.total_energy === id;
+    // An answer for a charger or entity the card no longer shows is dropped. A renamed total
+    // (same card configuration) is asked for again on the next update.
+    const current = () => {
+      if (generation === this._generation && this._ids?.total_energy === id) return true;
+      if (generation === this._generation) { this._monthBusy = false; this._monthAt = 0; }
+      return false;
+    };
     const ask = (offset) => this._hass.callWS({type: 'recorder/statistic_during_period', statistic_id: id,
       calendar: offset ? {period: 'month', offset} : {period: 'month'}, types: ['change']});
     const change = (r) => Number.isFinite(r?.change) ? r.change : null;

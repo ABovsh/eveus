@@ -1594,3 +1594,47 @@ test('switching device forgets the previous charger month before the new one ans
   assert.equal(x.card._month, null);
   assert.doesNotMatch(x.html(), /999/);
 });
+// ---- October 6 RC review: rename during a month lookup, failed registry subscription ----
+test('renaming the energy total while month statistics load keeps month totals refreshing', async () => {
+  const x = setupAll({sections:['history'], over:{total_energy:['sensor.total_a',5290.16]}});
+  const subs = [];
+  x.hass.connection = {subscribeEvents:async (cb) => { subs.push(cb); return () => {}; }};
+  const pending = deferred(); const asked = [];
+  x.hass.callWS = (msg) => {
+    if (msg.type === 'eveus/card_entities') return Promise.resolve({entities:{...x.card._ids, total_energy:'sensor.total_new'}});
+    asked.push(msg.statistic_id);
+    return msg.statistic_id === 'sensor.total_a' ? pending.promise : Promise.resolve({change:7});
+  };
+  x.card._monthAt = 0;
+  x.card.hass = x.hass;
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(asked, ['sensor.total_a', 'sensor.total_a']);
+  subs[0]({data:{action:'update', entity_id:'sensor.total_new', old_entity_id:'sensor.total_a'}});
+  await new Promise((r) => setImmediate(r));
+  assert.equal(x.card._ids.total_energy, 'sensor.total_new');
+  pending.resolve({change:999});
+  await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+  x.card.hass = x.hass;
+  await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+  assert.ok(asked.includes('sensor.total_new'), 'the renamed total is asked for');
+  assert.equal(x.card._monthBusy, false);
+  assert.equal(x.card._month?.cur, 7);
+});
+test('a failed old registry subscription does not orphan the current one', async () => {
+  const x = setupAll({sections:['session']});
+  const first = deferred(); let unsubscribed = 0, subscribed = 0;
+  x.hass.connection = {subscribeEvents:() => { subscribed++; return subscribed === 1
+    ? first.promise.then(() => { throw Error('socket closed'); })
+    : Promise.resolve(() => { unsubscribed++; }); }};
+  x.card.hass = x.hass;
+  x.card.disconnectedCallback();
+  x.card.hass = x.hass;
+  assert.equal(subscribed, 2);
+  first.resolve();
+  await new Promise((r) => setImmediate(r));
+  x.card.hass = x.hass;
+  assert.equal(subscribed, 2, 'the live subscription is kept, not duplicated');
+  x.card.disconnectedCallback();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(unsubscribed, 1);
+});
