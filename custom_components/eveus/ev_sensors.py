@@ -608,6 +608,8 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
     def _windowed_cost(self, remaining: float) -> Optional[float]:
         """Remaining energy priced per tariff window, or None to stay flat."""
         snap = self._updater.snapshot
+        if snap.session_active is not True:
+            return None
         clock = snap.charger_wall_clock_s
         power = snap.get("powerMeas")
         active = snap.get("activeTarif")

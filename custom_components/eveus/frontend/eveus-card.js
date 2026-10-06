@@ -470,6 +470,21 @@ class EveusCard extends HTMLElement {
     this._holdAt = null;
   }
   set hass(hass) {
+    if (this._connection && this._connection !== hass.connection) {
+      const unsubscribe = this._registryUnsub;
+      this._registryUnsub = null;
+      unsubscribe?.then((unsub) => unsub?.()).catch(() => {});
+      this._generation++;
+      this._ids = null;
+      this._resolved = false;
+      this._resolving = false;
+      this._resolveAgain = false;
+      this._month = null;
+      this._monthAt = 0;
+      this._monthBusy = false;
+      this._lastSignature = null;
+    }
+    this._connection = hass.connection;
     this._hass = hass;
     // A failed lookup (Home Assistant still starting, the socket dropped mid-call) is
     // asked again on a later update, throttled, rather than showing "no charger"
@@ -563,7 +578,9 @@ class EveusCard extends HTMLElement {
   // look the charger up again when one of its entities is renamed (the lookup is by unique_id).
   _watchRegistry() {
     if (this._registryUnsub || this.isConnected === false || typeof this._hass?.connection?.subscribeEvents !== 'function') return;
-    const subscription = this._registryUnsub = this._hass.connection.subscribeEvents((event) => {
+    const connection = this._connection;
+    const subscription = this._registryUnsub = connection.subscribeEvents((event) => {
+      if (connection !== this._connection) return;
       const old = event?.data?.old_entity_id;
       if (!old || !Object.values(this._ids || {}).includes(old)) return;
       if (this._resolving) this._resolveAgain = true;

@@ -203,6 +203,7 @@ class ClockDriftTracker:
         # oscillating across a classification boundary can't rewrite the
         # issue on every poll.
         self.rekey_streak = 0
+        self.rekey_candidate: tuple[str, int] | None = None
 
     def evaluate(self, snapshot) -> bool | None:
         """Return True to raise, False to clear, or None to leave unchanged."""
@@ -290,7 +291,9 @@ def update_clock_drift_issue(
         and tracker.still_drifted
         and (tracker.kind, tracker.hours) != tracker.published
     ):
-        tracker.rekey_streak += 1
+        candidate = (tracker.kind, tracker.hours)
+        tracker.rekey_streak = tracker.rekey_streak + 1 if candidate == tracker.rekey_candidate else 1
+        tracker.rekey_candidate = candidate
         rekey = tracker.rekey_streak >= CLOCK_DRIFT_TRIGGER_POLLS
     else:
         tracker.rekey_streak = 0

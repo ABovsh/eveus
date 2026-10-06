@@ -269,7 +269,9 @@ energy, battery capacity and charging losses. Accuracy depends on these inputs.
 **Time to Target SOC** and **Charging Finish Time** are estimates and may change
 as charging power changes. **Energy to Target SOC** includes charging losses;
 **Cost to Target SOC** prices each part of a running charge at the tariff of
-the window it falls in, and uses the current tariff when no charge is running.
+the window it falls in, and uses the current tariff when no charge is running,
+even if the charger still reports residual power. Very low power readings do
+not slow down the forecast calculation.
 Setting a target alone does not
 stop charging — turn on **Limit: SOC enabled** to enable that behavior.
 
