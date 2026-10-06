@@ -27,7 +27,6 @@
 - **Legacy charging state ignores impossible readings.** Corrupt power or current values no longer make firmware 1.x appear to be charging.
 - **Clock notices wait for a consistent offset.** Different timezone offsets no longer count as consecutive confirmations of the same repair advice.
 - **Reloading cancels pending firmware reads.** An old charger connection no longer finishes its firmware request after the integration unloads.
-- **The card refreshes after a connection replacement.** Entity lookups, rename notifications and monthly totals follow the current Home Assistant connection.
 - **Charging no longer stops using an outdated SOC target.** Queued and retried SOC stops recheck the current target, SOC, connection and session before sending.
 - **SOC notifications describe the limit that stopped charging.** They use the target and SOC checked before transmission; a manual stop cannot confirm an unsent SOC command.
 - **Missing energy and cost readings show unavailable.** The last observed total is preserved before a missing reading, and valid zeroes become available immediately.
