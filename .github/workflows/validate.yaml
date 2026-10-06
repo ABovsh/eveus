@@ -82,6 +82,18 @@ jobs:
           timeout --kill-after=30s 5m
           python -X faulthandler -m pytest -vv -o addopts='' tests_ha
 
+      - name: Set up Node for card tests
+        if: matrix.ha-label == 'min'
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" # v6
+        with:
+          node-version: "22"
+
+      - name: Run card tests with coverage
+        if: matrix.ha-label == 'min'
+        run: |
+          node --experimental-test-coverage --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage.lcov --test-coverage-include='**/eveus-card.js' tests/card/eveus-card.test.cjs
+          grep -q '^SF:.*custom_components/eveus/frontend/eveus-card.js' coverage.lcov
+
       - name: Upload coverage report
         # One leg only: the floor leg feeds SonarCloud, so two matrix legs can't
         # race to upload the same artifact name.
@@ -89,7 +101,9 @@ jobs:
         uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
         with:
           name: coverage-xml
-          path: coverage.xml
+          path: |
+            coverage.xml
+            coverage.lcov
           retention-days: 1
 
   sonar:

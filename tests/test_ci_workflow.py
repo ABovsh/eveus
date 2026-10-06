@@ -26,6 +26,17 @@ _MUTATION_BASELINE = Path(".github/mutation-baseline.json")
 _PACKAGE = Path("custom_components/eveus")
 
 
+def test_validate_runs_card_tests_and_uploads_their_coverage() -> None:
+    workflow = yaml.safe_load(Path(".github/workflows/validate.yaml").read_text())
+    steps = workflow["jobs"]["test"]["steps"]
+    card_commands = [step["run"] for step in steps if "tests/card" in step.get("run", "")]
+    assert card_commands, "Validate never executes the shipped card's behavior tests"
+    assert any("--experimental-test-coverage" in command for command in card_commands)
+    uploaded = [step["with"]["path"] for step in steps if "upload-artifact@" in step.get("uses", "")]
+    assert any("coverage.xml" in paths and "coverage.lcov" in paths for paths in uploaded)
+    assert "sonar.javascript.lcov.reportPaths=coverage.lcov" in Path("sonar-project.properties").read_text()
+
+
 def _mutmut_config() -> dict:
     return tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["tool"][
         "mutmut"

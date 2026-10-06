@@ -2,7 +2,9 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const source = fs.readFileSync(require('node:path').join(__dirname, '../../custom_components/eveus/frontend/eveus-card.js'), 'utf8');
+const sourcePath = require('node:path').join(__dirname, '../../custom_components/eveus/frontend/eveus-card.js');
+const source = fs.readFileSync(sourcePath, 'utf8');
+const runCard = (sandbox) => vm.runInNewContext(source, sandbox, {filename: sourcePath});
 function setup(max = 16, step = 1) {
   const registry = {}, timers = new Map(); let timer = 0;
   class HTMLElement {
@@ -10,7 +12,7 @@ function setup(max = 16, step = 1) {
   }
   const sandbox = {HTMLElement, console, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
-  vm.runInNewContext(source, sandbox);
+  runCard(sandbox);
   const card = new registry['eveus-card'](); card.setConfig({sections:['current']});
   const st = (state,attributes={})=>({state:String(state),attributes});
   const states = {'sensor.state':st('Charging'),'number.amps':st(10,{min:6,max,step}),'sensor.amps':st(8.4)};
@@ -86,7 +88,7 @@ function setupLimits({advanced=true,suspended=false,online=true}={}) {
   }
   const sandbox = {HTMLElement, console, setTimeout, clearTimeout,
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
-  vm.runInNewContext(source, sandbox);
+  runCard(sandbox);
   const card = new registry['eveus-card'](); card.setConfig({sections:['limits']});
   const st = (state,attributes={})=>({state:String(state),attributes});
   const states = {
@@ -254,7 +256,7 @@ function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connecte
   }
   const sandbox = {HTMLElement, CustomEvent, console, setTimeout, clearTimeout,
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
-  vm.runInNewContext(source, sandbox);
+  runCard(sandbox);
   const card = new registry['eveus-card'](); card.setConfig({sections:['safety']});
   const st = (state,attributes={})=>({state:String(state),attributes});
   const states = {
@@ -399,7 +401,7 @@ function setupStatus({state='Charging',reason='Charging',substate='No Limits',st
   }
   const sandbox = {HTMLElement, CustomEvent, console, Date, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
-  vm.runInNewContext(source, sandbox);
+  runCard(sandbox);
   const card = new registry['eveus-card'](); card.setConfig({sections});
   const st = (s,attributes={})=>({state:String(s),attributes,last_changed:changed});
   const states = {'sensor.state':st(state),'sensor.reason':st(reason),'sensor.sub':st(substate),
@@ -522,7 +524,7 @@ function setupAll({sections, mode, over={}, charging=true, locale, language, hid
   }
   const sandbox = {HTMLElement, CustomEvent, console, Date, setTimeout(fn){timers.set(++timer, fn);return timer;}, clearTimeout(id){timers.delete(id);},
     customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
-  vm.runInNewContext(source, sandbox);
+  runCard(sandbox);
   const card = new registry['eveus-card'](); card.setConfig({sections, ...(mode ? {mode} : {}), ...(language ? {language} : {}), ...(hide ? {hide} : {}), ...(fold === undefined ? {} : {fold}), ...(size ? {size} : {})});
   const st = (s,attributes={})=>({state:String(s),attributes});
   const base = {
@@ -719,8 +721,8 @@ function setupEditor(config) {
   const cards = [];
   const sandbox = {HTMLElement, CustomEvent, console, setTimeout(){return 0;}, clearTimeout(){},
     customElements:{define:(k,v)=>registry[k]=v, get:(k)=>registry[k]}, window:{customCards:cards}};
-  vm.runInNewContext(source, sandbox);
-  vm.runInNewContext(source, {...sandbox}); // a second module copy (integration + /local) must not throw or double-list
+  runCard(sandbox);
+  runCard({...sandbox}); // a second module copy (integration + /local) must not throw or double-list
   const Card = registry['eveus-card'];
   const editor = new registry['eveus-card-editor']();
   editor.setConfig(config);
@@ -1158,7 +1160,7 @@ test('a failed entity lookup is asked again later instead of latching "no charge
   const FakeDate = class extends Date { static now() { return now; } };
   const sandbox = {HTMLElement: class { attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; } },
     console, Date: FakeDate, setTimeout(){return 0;}, clearTimeout(){}, customElements:{define:(k,v)=>registry[k]=v}, window:{customCards:[]}};
-  vm.runInNewContext(source, sandbox);
+  runCard(sandbox);
   const card = new registry['eveus-card'](); card.setConfig({sections:['current']});
   let asks = 0, failing = true;
   const hass = {states:{'sensor.state':{state:'Charging',attributes:{}}}, callService:async()=>{},
@@ -1312,7 +1314,7 @@ test('taps give haptic feedback in the companion app',async()=>{
   class HTMLElement extends EventTarget { attachShadow(){ return this.shadowRoot={innerHTML:'',addEventListener(){},querySelector(){return null;}}; } }
   const sandbox={HTMLElement,CustomEvent,console,Date,setTimeout(){return 0;},clearTimeout(){},customElements:{define:(k,v)=>registry[k]=v},
     window:{customCards:[],dispatchEvent:(e)=>events.push(`${e.type}:${e.detail}`)}};
-  vm.runInNewContext(source,sandbox);
+  runCard(sandbox);
   const card=new registry['eveus-card']();card.setConfig({sections:['actions']});
   const entities={state:'sensor.state',one_charge:'switch.one'};
   card._ids=entities;card._resolved=true;
@@ -1393,7 +1395,7 @@ test('fitted text clears fractional overflow even when DOM widths round equal', 
   }; }};
   const sandbox = {HTMLElement,document,console,setTimeout,clearTimeout,
     customElements:{define:(k,v)=>registry[k]=v},window:{customCards:[]}};
-  vm.runInNewContext(source,sandbox);
+  runCard(sandbox);
   const card = new registry['eveus-card']();card.setConfig({sections:['advanced_info']});
   card.shadowRoot.querySelectorAll = (selector) => selector==='[data-fit]' ? [clipped,roomy] : [];
   card._fitLimitValues();
