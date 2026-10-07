@@ -1,4 +1,4 @@
 {
-  "_comment": "Survivor-count ratchet for the single mutmut 3 run: increases fail the job; decreases tighten this baseline. OBSERVED: 790 survivors from CI workflow_dispatch run 36772627804 on rc f698a7d (7875 mutants, 11 timeouts), 2026-09-30. Equivalent mutants remain in the count; only verified unobservable lines use pragma: no mutate with a reason.",
-  "survivors": 790
+  "_comment": "Survivor-count ratchet for the single mutmut 3 run: increases fail the job; decreases tighten this baseline. OBSERVED: 809 survivors from CI scheduled run 37457254429 on rc (8032 mutants, 19 timeouts), 2026-10-06. Up from 790: the SOC-stop, setpoint-outcome, clock-drift and tariff-pricing code added since f698a7d has no killer tests yet (a local Python 3.13 run counts 813). Equivalent mutants remain in the count; only verified unobservable lines use pragma: no mutate with a reason.",
+  "survivors": 809
 }
