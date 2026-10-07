@@ -29,7 +29,7 @@
 - **Reloading cancels pending firmware reads.** An old charger connection no longer finishes its firmware request after the integration unloads.
 - **Charging no longer stops using an outdated SOC target.** Queued and retried SOC stops recheck the current target, SOC, connection and session before sending.
 - **SOC notifications describe the limit that stopped charging.** They use the target and SOC checked before transmission; a manual stop cannot confirm an unsent SOC command.
-- **Missing energy and cost readings show unavailable.** The last observed total is preserved before a missing reading, and valid zeroes become available immediately.
+- **Missing energy and cost readings show unavailable.** The last observed total is preserved before a missing reading; a connection loss keeps the sensor unavailable until a valid reading returns, including zero.
 - **The card follows renamed entities.** Renaming an Eveus entity no longer leaves the card showing no connection until the page is reloaded.
 - **Month energy and card mode belong to the selected charger.** Switching the card or its editor to another charger no longer shows the previous charger's monthly totals or picks the wrong Advanced/Basic mode.
 

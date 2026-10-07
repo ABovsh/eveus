@@ -336,7 +336,8 @@ reports the target and SOC checked before the Stop was sent; a manual stop
 cannot confirm a SOC command still waiting in the queue. Stop takes priority
 over waiting settings, and numerical controls keep the latest waiting value,
 including while another control holds the command queue. A missing energy or
-cost reading makes its sensor unavailable; a valid zero remains available.
+cost reading keeps its sensor unavailable, including through a connection loss,
+until a valid reading returns; a valid zero remains available.
 WiFi Signal and Connection Quality keep ordinary history but no longer collect
 long-term statistics; existing statistics stay stored.
 

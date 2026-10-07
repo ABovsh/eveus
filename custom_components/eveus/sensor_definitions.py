@@ -189,6 +189,10 @@ class OptimizedEveusSensor(EveusSensorBase):
             # A reachable charger can omit one meter. Flush its held tail through
             # the publication override, then expose the missing source as unavailable.
             return super().available and self._get_sensor_value() is not None
+        if self._spec.minute_publication:
+            # Connectivity grace can hold a valid reading, but cannot resurrect
+            # a meter whose last successful poll already lost its source.
+            return super().available and self._attr_native_value is not None
         return super().available
 
     async def async_added_to_hass(self) -> None:

@@ -401,8 +401,26 @@ async def test_missing_meter_is_unavailable_and_recovers_to_valid_zero(
     await updater.async_refresh()
     await hass.async_block_till_done()
     assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+    rows = []
+
+    @callback
+    def capture(event):
+        if event.data["entity_id"] == entity_id:
+            rows.append(event.data["new_state"].state)
+
+    unsub = hass.bus.async_listen("state_changed", capture)
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(f"http://{HOST_A}/main", exc=asyncio.TimeoutError())
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD)
+    assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+    assert rows == []
     aioclient_mock.clear_requests()
     _mock_charger(aioclient_mock, HOST_A, json={**payload, field: 0})
+    updater._next_poll_attempt = 0
     await updater.async_refresh()
     await hass.async_block_till_done()
     assert hass.states.get(entity_id).state == "0.0"
+    assert rows == ["0.0"]
+    unsub()
