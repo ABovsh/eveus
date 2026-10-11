@@ -63,6 +63,7 @@ class SocLimitController:
         # held across retries so an end-of-session poll can't lose it. While it is
         # set and the charger is still charging, each active poll re-sends the Stop.
         self._pending: tuple[int, int] | None = None
+        self._stop_attempted = False
         # ``sessionEnergy`` observed when the pending Stop was issued. It only
         # grows within a session and resets at a new one, so a later poll showing
         # a smaller value means the boundary was missed (e.g. hidden by failed
@@ -112,6 +113,7 @@ class SocLimitController:
         """Reset the latch and invalidate (and cancel) any in-flight stop."""
         self._fired = False
         self._pending = None
+        self._stop_attempted = False
         self._pending_energy = None
         self._pending_session_time = None
         self._generation += 1
@@ -191,7 +193,8 @@ class SocLimitController:
         # our command caused — not a pre-existing/stale 1 and not an unplug (which
         # leaves it 0). Checked before the session-over return so a stop that ends
         # the session in the same poll is still confirmed.
-        if self._pending is not None and not self._fired and evse_enabled == 1:
+        if (self._pending is not None and self._stop_attempted
+                and not self._fired and evse_enabled == 1):
             self._emit_reached(*self._pending)
         if not active:
             # Session boundary — derived from ``state`` alone, so a payload missing
@@ -252,11 +255,41 @@ class SocLimitController:
         down, it does not cancel), and a cancellation can lose the race with the
         lock hand-off. Re-read everything against the latest poll.
         """
-        return (
-            # Disabling or unloading re-arms, so the generation covers both.
-            generation == self._generation
-            and _limits_suspended(self._updater.snapshot) is False
-        )
+        if (
+            generation != self._generation
+            or not self._enabled
+            or not self._updater.available
+            or not self._updater.last_update_success
+        ):
+            return False
+        snapshot = self._updater.snapshot
+        energy = snapshot.session_energy_kwh
+        clock = snapshot.session_time_s
+        target = self._calc.target_soc
+        if (
+            _limits_suspended(snapshot) is not False
+            or snapshot.session_active is not True
+            or snapshot.get_int("evseEnabled") != 0
+            or energy is None
+            or target is None
+            or target <= 0
+            or (self._pending_energy is not None
+                and energy < self._pending_energy - _SESSION_RESET_EPS_KWH)
+            or (self._pending_session_time is not None and clock is not None
+                and clock < self._pending_session_time)
+        ):
+            return False
+        current = self._calc.get_soc_percent_exact(energy)
+        if current is None or current < target:
+            return False
+        # The decision uses live inputs; the eventual event must describe that
+        # same decision rather than the target/SOC captured before queueing.
+        self._pending = (round(current), round(target))
+        # This synchronous preflight is called immediately before the HTTP
+        # attempt, after queueing and pacing. A provisional queued token alone
+        # cannot attribute an external Stop to SOC enforcement.
+        self._stop_attempted = True
+        return True
 
     def _emit_reached(self, soc: int, target: int) -> None:
         """Latch and fire the reached event exactly once for this session."""
@@ -295,9 +328,11 @@ class SocLimitController:
         # already took effect at the charger) and must be able to confirm it —
         # otherwise the boundary re-arm would cancel this task and lose the event.
         # Bound to this session's energy so a missed boundary can't carry it over.
-        self._pending = (soc, target)
-        self._pending_energy = energy
-        self._pending_session_time = session_time
+        if self._pending is None:
+            self._stop_attempted = False
+            self._pending = (soc, target)
+            self._pending_energy = energy
+            self._pending_session_time = session_time
         # process() only checked suspendLimits when it scheduled this task; a
         # poll that toggled "Disable limits" on while this task was queued
         # would otherwise never be re-consulted, and the command below would
@@ -349,4 +384,5 @@ class SocLimitController:
                 self._pending_session_time = None
             _LOGGER.debug("SOC-limit Stop not accepted; will retry")
             return
+        self._stop_attempted = True
         _LOGGER.debug("SOC-limit Stop sent (%s%% >= %s%%); awaiting confirm", soc, target)

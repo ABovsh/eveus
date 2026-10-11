@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.27.0 - 2026-10-11
+
+### ✨ New
+
+- **Protection and charging limits cannot be disabled by an accidental tap.** The card asks for confirmation and reports refused or unconfirmed changes; an empty numeric field cancels editing.
+- **The card shows where Initial SOC came from.** A small icon on the Battery tile tells whether it was read from the car, set manually, or the car reading could not be used. Hover the icon, or open SOC Percent, for the reason.
+- **Every card control reports a refused command.** Counter resets, clock sync and current changes that fail or are not confirmed by the charger now show a message instead of silently reverting.
+- **The card respects the system's reduced-motion setting.** Charging pulses and transitions stop when the phone or browser asks for less motion.
+
+### ⚠️ Breaking
+
+- **Seven sensors stop collecting new long-term statistics:** WiFi Signal, Connection Quality, Current Set, Adaptive Current Limit, Active Rate Cost, Energy to Target SOC and SOC Energy. This removes up to about 2,200 database rows a day per charger for settings, estimates and diagnostics. Their current values and ordinary history stay; statistics graphs of these sensors stop updating.
+  - **Migration:** Developer Tools → Statistics lists each of them as "no longer has a state class". Delete its old statistics there to clear the entry, or leave it.
+
+### 🔧 Changed
+
+- **Fewer energy and cost history updates.** Session, total and A/B energy and session and A/B cost publish ordinary growth once per minute, with immediate session, reset and availability transitions.
+- **Stop moves ahead of waiting settings.** When a numerical setting is changed again before the charger received the previous value, only the newest value is sent, and every one of those calls finishes with the newest value's result.
+
+### 🐛 Fixed
+
+- **Cost forecasts stay responsive at very low power.** Long charging estimates no longer stall Home Assistant while calculating tariff windows; idle estimates use the current tariff even if a residual power reading remains.
+- **Legacy charging state ignores impossible readings.** Corrupt power or current values no longer make firmware 1.x appear to be charging.
+- **Clock notices wait for a consistent offset.** Different timezone offsets no longer count as consecutive confirmations of the same repair advice.
+- **Reloading cancels pending firmware reads.** An old charger connection no longer finishes its firmware request after the integration unloads.
+- **Charging no longer stops using an outdated SOC target.** Queued and retried SOC stops recheck the current target, SOC, connection and session before sending.
+- **SOC notifications describe the limit that stopped charging.** They use the target and SOC checked before transmission; a manual stop cannot confirm an unsent SOC command.
+- **Missing energy and cost readings show unavailable.** The last observed total is preserved before a missing reading; a connection loss keeps the sensor unavailable until a valid reading returns, including zero.
+- **The card follows renamed entities.** Renaming an Eveus entity no longer leaves the card showing no connection until the page is reloaded.
+- **Month energy and card mode belong to the selected charger.** Switching the card or its editor to another charger no longer shows the previous charger's monthly totals or picks the wrong Advanced/Basic mode.
+
 ## 4.26.0 - 2026-10-01
 
 ### ✨ New

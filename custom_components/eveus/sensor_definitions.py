@@ -22,6 +22,7 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import ExtraStoredData
@@ -106,6 +107,9 @@ class EveusSensorEntityDescription(SensorEntityDescription, frozen_or_thawed=Tru
     # entity (`EveusSensorBase._deadband`) rather than here — see
     # `_make_value_getter`'s docstring for why the getter itself stays pure.
     deadband: Optional[float] = None
+    # Raw coordinator data stays live; only these accumulated meters publish
+    # ordinary growth once per UTC minute, with terminal/reset flushes.
+    minute_publication: bool = False
 
 
 class OptimizedEveusSensor(EveusSensorBase):
@@ -125,12 +129,70 @@ class OptimizedEveusSensor(EveusSensorBase):
         self._error_log = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
         self._deadband = spec.deadband
         self._attr_extra_state_attributes = {}
+        self._meter_latest = None
+        self._meter_context = None
+        self._meter_clock = None
+        self._meter_bucket = None
+        self._publication_override = False
+        self._publication_value = None
+
+    def _publish_meter_value(self, value) -> None:
+        """Use the normal availability, cost-reset and write-on-change path."""
+        self._publication_override = True
+        self._publication_value = value
+        try:
+            super()._handle_coordinator_update()
+        finally:
+            self._publication_override = False
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        if not self._spec.minute_publication:
+            super()._handle_coordinator_update()
+            return
+        snapshot = self._updater.snapshot
+        value = self._get_sensor_value()
+        context = (self._updater.available, snapshot.get_int("state"),
+                   snapshot.get_int("evseEnabled"))
+        clock = snapshot.session_time_s
+        bucket = int(dt_util.utcnow().timestamp() // 60)
+        reset = (
+            value is not None and self._meter_latest is not None
+            and value < self._meter_latest
+        ) or (clock is not None and self._meter_clock is not None
+              and clock < self._meter_clock)
+        terminal = reset or context != self._meter_context or value is None
+        if (reset or value is None) and self._meter_latest is not None:
+            # Publish the last observed tail BEFORE a reset/new window. Both
+            # rows go through MonetaryCostSensor's last_reset bookkeeping.
+            self._publish_meter_value(self._meter_latest)
+        publish = terminal or self._meter_bucket != bucket or self._attr_native_value is None
+        self._publish_meter_value(value if publish else self._attr_native_value)
+        if publish:
+            self._meter_bucket = bucket
+        self._meter_latest = value
+        self._meter_context = context
+        self._meter_clock = clock
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Flush the latest observed meter before an orderly unload/restart."""
+        if self._spec.minute_publication and self._meter_latest is not None:
+            self._publish_meter_value(self._meter_latest)
+        await super().async_will_remove_from_hass()
 
     @property
     def available(self) -> bool:
         """Connectivity-describing sensors stay available while polls fail."""
         if self._spec.available_when_offline:
             return True
+        if self._spec.minute_publication and self._updater.available:
+            # A reachable charger can omit one meter. Flush its held tail through
+            # the publication override, then expose the missing source as unavailable.
+            return super().available and self._get_sensor_value() is not None
+        if self._spec.minute_publication:
+            # Connectivity grace can hold a valid reading, but cannot resurrect
+            # a meter whose last successful poll already lost its source.
+            return super().available and self._attr_native_value is not None
         return super().available
 
     async def async_added_to_hass(self) -> None:
@@ -208,6 +270,8 @@ class OptimizedEveusSensor(EveusSensorBase):
 
     def _get_sensor_value(self) -> Any:
         """Return computed sensor value from coordinator data."""
+        if self._publication_override:
+            return self._publication_value
         if not self._updater.available and not self._spec.available_when_offline:
             return None
 
@@ -1036,9 +1100,9 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
 
     # Measurement sensors
     measurements = [
-        ("Voltage", get_voltage, ICON_FLASH, SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, None, 2),
-        ("Current", get_current, ICON_CURRENT_AC, SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, None, 0.2),
-        ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None, 50),
+        ("Voltage", get_voltage, ICON_FLASH, SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, 0, None, 2, SensorStateClass.MEASUREMENT),
+        ("Current", get_current, ICON_CURRENT_AC, SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE, 1, None, 0.2, SensorStateClass.MEASUREMENT),
+        ("Power", get_power, ICON_FLASH, SensorDeviceClass.POWER, UnitOfPower.WATT, 1, None, 50, SensorStateClass.MEASUREMENT),
         (
             "Current Set",
             current_set_getter,
@@ -1048,6 +1112,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             0,
             EntityCategory.DIAGNOSTIC,
             None,
+            None,  # A setpoint; ordinary history captures its changes.
         ),
     ]
 
@@ -1058,13 +1123,13 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             value_fn=fn,
             icon=icon,
             device_class=device_class,
-            state_class=SensorStateClass.MEASUREMENT,
+            state_class=state_class,
             native_unit_of_measurement=unit,
             suggested_display_precision=precision,
             entity_category=category,
             deadband=deadband,
         )
-        for name, fn, icon, device_class, unit, precision, category, deadband in measurements
+        for name, fn, icon, device_class, unit, precision, category, deadband, state_class in measurements
     ]
 
     # Energy sensors.
@@ -1088,6 +1153,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             device_class=device_class,
             state_class=state_class,
             native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            minute_publication=True,
             suggested_display_precision=2,
         )
         for name, fn, icon, state_class, device_class in energy_sensors
@@ -1187,7 +1253,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
                 # once, not twice.
                 ("wifi_signal", "WiFi Signal", get_wifi_rssi,
                  "mdi:wifi", SensorDeviceClass.SIGNAL_STRENGTH,
-                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, SensorStateClass.MEASUREMENT,
+                 SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, None,
                  WIFI_RSSI_DEADBAND),
             )
         ),
@@ -1229,14 +1295,14 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             icon=ICON_CURRENCY_UAH,
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
-            tracks_reset=True,
+            tracks_reset=True, minute_publication=True,
         ),
         EveusSensorEntityDescription(
             key="counter_b_cost", name="Counter B Cost", value_fn=get_counter_b_cost,
             icon=ICON_CURRENCY_UAH,
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
-            tracks_reset=True,
+            tracks_reset=True, minute_publication=True,
         ),
         EveusSensorEntityDescription(
             # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
@@ -1248,7 +1314,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
         EveusSensorEntityDescription(
             key="active_rate_cost", name="Active Rate Cost", value_fn=get_active_rate_cost,
             icon=ICON_CURRENCY_UAH,
-            state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=UNIT_UAH_PER_KWH, suggested_display_precision=2,
+            native_unit_of_measurement=UNIT_UAH_PER_KWH, suggested_display_precision=2,
             attributes_fn=get_active_rate_attrs,
         ),
         EveusSensorEntityDescription(
@@ -1284,7 +1350,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             icon="mdi:cash",
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
-            tracks_reset=True,
+            tracks_reset=True, minute_publication=True,
         ),
         EveusSensorEntityDescription(
             key="adaptive_charging", name="Adaptive Charging",
@@ -1299,7 +1365,6 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             value_fn=adaptive_current_getter,
             icon=ICON_CURRENT_AC,
             device_class=SensorDeviceClass.CURRENT,
-            state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfElectricCurrent.AMPERE, suggested_display_precision=0,
             entity_category=EntityCategory.DIAGNOSTIC,
         ),
@@ -1326,7 +1391,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             available_when_offline=True,
             value_fn=get_connection_quality,
             icon="mdi:connection",
-            state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0,
+            native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0,
             entity_category=EntityCategory.DIAGNOSTIC, attributes_fn=get_connection_attrs,
         ),
     ]

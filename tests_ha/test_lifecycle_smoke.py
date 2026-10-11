@@ -18,7 +18,7 @@ from urllib.parse import parse_qs
 import pytest
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, STATE_UNAVAILABLE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -340,3 +340,87 @@ async def test_disabled_soc_correction_entity_does_not_blank_soc_percent(
     assert state is not None
     assert state.state not in (None, "unknown", "unavailable")
     float(state.state)
+
+
+async def test_meter_tail_reaches_ha_before_reset_and_cost_window_changes(
+    hass, aioclient_mock, monkeypatch
+):
+    """Observe actual HA state events, including the buffered tail and reset."""
+    from custom_components.eveus import sensor_definitions as sd
+
+    clock = [dt_util.utcnow().replace(second=0, microsecond=0)]
+    monkeypatch.setattr(sd, 'dt_util', SimpleNamespace(utcnow=lambda: clock[0], parse_datetime=dt_util.parse_datetime))
+    entry = _entry(hass, HOST_A)
+    payload = {**REAL_MAIN, 'state':4, 'evseEnabled':0, 'sessionEnergy':10,
+               'sessionMoney':10, 'sessionTime':100, 'totalEnergy':100}
+    _mock_charger(aioclient_mock, HOST_A, json=payload)
+    await _setup(hass, entry)
+    updater = entry.runtime_data.updater
+    await updater.async_refresh()
+    entity_id = 'sensor.eveus_ev_charger_session_cost'
+    rows = []
+    @callback
+    def record_meter_state(event):
+        if event.data['entity_id'] == entity_id:
+            rows.append(event.data['new_state'])
+
+    unsub = hass.bus.async_listen('state_changed', record_meter_state)
+    clock[0] += timedelta(seconds=30)
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, 'sessionMoney':11})
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == '10.0'
+    assert rows == []
+    clock[0] += timedelta(seconds=5)
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, 'sessionMoney':0, 'sessionTime':0})
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    unsub()
+    assert [row.state for row in rows] == ['11.0', '0.0']
+    assert hass.states.get(entity_id).state == '0.0'
+    assert rows[0].attributes['last_reset'] < rows[1].attributes['last_reset']
+
+
+@pytest.mark.parametrize("key,field", [
+    ("total_energy", "totalEnergy"), ("session_cost", "sessionMoney"),
+])
+async def test_missing_meter_is_unavailable_and_recovers_to_valid_zero(
+    hass, aioclient_mock, key, field
+):
+    entry = _entry(hass, HOST_A)
+    payload = {**REAL_MAIN, field: 10}
+    _mock_charger(aioclient_mock, HOST_A, json=payload)
+    await _setup(hass, entry)
+    updater = entry.runtime_data.updater
+    entity_id = f"sensor.eveus_ev_charger_{key}"
+    assert hass.states.get(entity_id).state == "10.0"
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={k: v for k, v in payload.items() if k != field})
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+    rows = []
+
+    @callback
+    def capture(event):
+        if event.data["entity_id"] == entity_id:
+            rows.append(event.data["new_state"].state)
+
+    unsub = hass.bus.async_listen("state_changed", capture)
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(f"http://{HOST_A}/main", exc=asyncio.TimeoutError())
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    assert updater.visible_within(AVAILABILITY_GRACE_PERIOD)
+    assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+    assert rows == []
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, field: 0})
+    updater._next_poll_attempt = 0
+    await updater.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "0.0"
+    assert rows == ["0.0"]
+    unsub()

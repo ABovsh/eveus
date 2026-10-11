@@ -224,7 +224,7 @@ def test_current_number_wraps_unexpected_command_exception() -> None:
     from homeassistant.exceptions import HomeAssistantError
 
     class BrokenUpdater(_Updater):
-        async def send_command(self, command: str, value: object, *, retry: bool = True) -> bool:
+        async def send_command(self, command: str, value: object, *, retry: bool = True, preflight=None) -> bool:
             raise RuntimeError("network disappeared")
 
     entity = EveusCurrentNumber(BrokenUpdater({"currentSet": "16"}), "16A")
@@ -768,7 +768,8 @@ def test_current_number_serializes_concurrent_commands() -> None:
 
     timeline: list[tuple[str, object]] = []
 
-    async def instrumented(command, value, *, retry=True, extra=None) -> bool:
+    async def instrumented(command, value, *, retry=True, extra=None, preflight=None) -> bool:
+        assert preflight()
         timeline.append(("start", value))
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -918,7 +919,7 @@ def test_set_current_propagates_auth_failure() -> None:
     from homeassistant.exceptions import ConfigEntryAuthFailed
 
     class _AuthFailUpdater(_Updater):
-        async def send_command(self, command, value, *, retry=True, extra=None):
+        async def send_command(self, command, value, *, retry=True, extra=None, preflight=None):
             raise ConfigEntryAuthFailed("Eveus charger rejected credentials")
 
     entity = EveusCurrentNumber(_AuthFailUpdater({"currentSet": 10}), "16A")
@@ -1375,7 +1376,8 @@ def test_current_number_pending_value_is_visible_mid_command() -> None:
     _disable_state_writes(entity)
     seen = {}
 
-    async def _capture(command, value):
+    async def _capture(command, value, *, preflight):
+        assert preflight()
         seen["pending"] = entity._pending_value
         seen["attr"] = entity._attr_native_value
         return True

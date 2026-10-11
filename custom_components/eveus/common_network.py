@@ -136,8 +136,9 @@ def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
     actively charging). Modern known states 0-7 always decide charging
     activity from the state value itself and never reach this helper.
     """
-    power = get_safe_value(data, "powerMeas", float)
-    current = get_safe_value(data, "curMeas1", float)
+    snapshot = EveusSnapshot.parse(data)
+    power = snapshot.power_w
+    current = snapshot.cur_meas[0]
     return (power is not None and power > 0) or (current is not None and current > 0)
 
 
@@ -258,6 +259,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # either "not needed" (modern firmware) or "fetch failed/pending".
         self._init_fw_fallback: str | None = None
         self._init_fw_fetch_done = False
+        self._init_fw_task: asyncio.Task | None = None
         # Legacy-firmware charging latch (GitHub issue #11): fw-1.x reports
         # code 3 both plugged-idle and actively charging, distinguishable
         # only by the electrical measurements. Once a session is observed,
@@ -587,6 +589,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._shutting_down = True
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
+        if self._init_fw_task is not None:
+            self._init_fw_task.cancel()
+            await asyncio.gather(self._init_fw_task, return_exceptions=True)
+            self._init_fw_task = None
         await super().async_shutdown()
 
     def _should_log(self) -> bool:
@@ -615,7 +621,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """
         if self._shutting_down or self._init_fw_fetch_done:
             return
-        self.hass.async_create_background_task(
+        self._init_fw_task = self.hass.async_create_background_task(
             self.async_maybe_fetch_init_firmware(),
             f"eveus {self.host} /init firmware fallback",
         )

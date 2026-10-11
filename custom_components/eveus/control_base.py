@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import Any, Generic, TypeVar
 
 from homeassistant.core import callback
@@ -63,6 +64,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         rejected_message: str,
         failure_prefix: str,
         extra: dict[str, Any] | None = None,
+        preflight: Callable[[], bool] | None = None,
     ) -> None:
         """Send one write while the display is pinned to the requested value.
 
@@ -76,17 +78,21 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         self._set_pending(pending)
         self._set_display_value(shown)
         self._write_if_changed(shown)  # type: ignore[attr-defined]
+        superseded = False
         try:
-            # Only widen the call when a caller actually has sibling fields to
-            # send: existing tests pin the two-argument call shape for the
-            # (far more common) plain writes, and an explicit `extra=None`
-            # is behaviourally identical but a different call signature.
+            kwargs = {}
             if extra is not None:
-                success = await self._updater.send_command(  # type: ignore[attr-defined]
-                    self._command, device_value, extra=extra
-                )
-            else:
-                success = await self._updater.send_command(self._command, device_value)  # type: ignore[attr-defined]
+                kwargs["extra"] = extra
+            if preflight is not None:
+                kwargs["preflight"] = preflight
+            success = await self._updater.send_command(  # type: ignore[attr-defined]
+                self._command, device_value, **kwargs
+            )
+            # An absolute setpoint superseded while waiting (or retrying)
+            # is a successful coalescing decision, not a rejected command.
+            if preflight is not None and not preflight():
+                superseded = True
+                return
             if not success:
                 raise HomeAssistantError(rejected_message)
             self._set_optimistic_value(accepted)
@@ -97,9 +103,14 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             raise HomeAssistantError(f"{failure_prefix}: {err}") from err
         finally:
             self._set_pending(None)
-            value = self._resolve_display_value()
-            self._set_display_value(value)
-            self._write_if_changed(value)  # type: ignore[attr-defined]
+            # The superseding write is queued behind the caller's lock and
+            # republishes the display itself; resolving here would show the
+            # charger's old value (a spurious row) between the two requests.
+            # If it never arrives, the next poll reconciles the display.
+            if not superseded:
+                value = self._resolve_display_value()
+                self._set_display_value(value)
+                self._write_if_changed(value)  # type: ignore[attr-defined]
 
     @callback
     def _handle_coordinator_update(self) -> None:

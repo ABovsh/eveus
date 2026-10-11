@@ -603,9 +603,21 @@ def price_energy_over_tariffs(
         return None
     if not spans:
         return energy_kwh * rates[0]
-    edges = sorted({edge for span in spans for edge in span})
     kwh_per_minute = power_w / 60000
-    now, left, cost = minute_of_day, energy_kwh, 0.0
+    day_energy = kwh_per_minute * _MINUTES_PER_DAY
+    if day_energy == 0:
+        return None
+    # Every full day has the same price, even when it starts partway through
+    # a window. Price those days together; tiny positive readings must not
+    # turn an estimate into millions of synchronous day-by-day iterations.
+    left = energy_kwh % day_energy
+    weighted_rate = _MINUTES_PER_DAY * rates[0] + sum(
+        ((stop - start) % _MINUTES_PER_DAY) * (rates[index] - rates[0])
+        for index, (start, stop) in windows.items()
+    )
+    cost = (energy_kwh - left) * weighted_rate / _MINUTES_PER_DAY
+    edges = sorted({edge for span in spans for edge in span})
+    now = minute_of_day
     while left > 0:
         day, within = divmod(now, _MINUTES_PER_DAY)
         # The next window edge today, or the first one tomorrow.

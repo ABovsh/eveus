@@ -170,6 +170,16 @@ def test_session_energy_uses_measurement_state_class() -> None:
     assert specs["Session Energy"].state_class == "measurement"
 
 
+@pytest.mark.parametrize("name", [
+    "Current Set", "Adaptive Current Limit", "Active Rate Cost",
+])
+def test_setting_sensors_keep_ordinary_history_only(name: str) -> None:
+    # Settings and tariff prices remain available to the card and automations
+    # without extra aggregates.
+    specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
+    assert specs[name].state_class is None
+
+
 def test_sensor_keys_and_names_are_unique() -> None:
     specs = sensors.get_sensor_specifications()
     keys = [s.key for s in specs]
@@ -1109,7 +1119,7 @@ def test_diagnostic_measurement_specs_are_unchanged_by_the_refactor() -> None:
         "leak_current_peak": ("Leakage Current Peak", "mdi:current-dc",
                               SensorDeviceClass.CURRENT, UnitOfElectricCurrent.MILLIAMPERE, 0, None),
         "wifi_signal": ("WiFi Signal", "mdi:wifi",
-                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, MEASURED),
+                        SensorDeviceClass.SIGNAL_STRENGTH, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, 0, None),
     }
     for key, (name, icon, device_class, unit, precision, state_class) in expected.items():
         spec = specs[key]

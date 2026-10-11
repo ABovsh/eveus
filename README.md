@@ -1,7 +1,7 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.26.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.27.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
@@ -173,7 +173,7 @@ The card follows the integration mode; `mode: basic` simplifies it, while
 - **Size:** each section's settings icon sets its size. **Small** folds that section into one line on any card; **Normal** keeps it open on a folding card. **Large** shows bigger readings in Battery SOC, Meter, Session and Counters once the section shows two items or fewer. Adding more than two items returns a Large section to Normal.
 - **Hints:** a fault shows the reading behind it and what to do. While the charge runs below the set current, **Status** says why: adaptive mode, a schedule's current limit, or the car taking less. With the car plugged in and waiting for a schedule, the battery section shows how much energy that schedule can add. A charger clock that is off by whole hours gets a button for the matching time zone instead of **Sync**.
 - **Session and counters:** with the car unplugged, **Session** shows the last session and when it ended; plugged in, it shows the active tariff price. **Counters** add this month's and last month's energy from Home Assistant statistics.
-- **Interaction:** tap a reading to open its entity. Long-press the battery tile, or focus it and press Alt+Enter, to set Initial SOC; use the target tile the same way for Target SOC. To stop an active charge, tap **Stop** again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once. With no charge running, **Stop** blocks charging until you tap it again. Resetting a counter asks for confirmation. In **Schedules**, tap a time to pick a new one, tap a limit's icon to turn it on or off, and tap its value to type a new one. A schedule's badge glows while the charger's clock places it in its window. The card omits that glow and the next-start time when Time Drift is unknown or at least 10 minutes.
+- **Interaction:** tap a reading to open its entity. Long-press the battery tile, or focus it and press Alt+Enter, to set Initial SOC; use the target tile the same way for Target SOC. To stop an active charge, tap **Stop** again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once. With no charge running, **Stop** blocks charging until you tap it again. Resetting a counter, disabling ground protection or turning off a charging limit asks for confirmation. Clearing a numeric input cancels editing. A refused or unconfirmed change shows a message. In **Schedules**, tap a time to pick a new one, tap a limit's icon to turn it on or off, and tap its value to type a new one. A schedule's badge glows while the charger's clock places it in its window. The card omits that glow and the next-start time when Time Drift is unknown or at least 10 minutes.
 
 ### How to add the card
 
@@ -269,7 +269,9 @@ energy, battery capacity and charging losses. Accuracy depends on these inputs.
 **Time to Target SOC** and **Charging Finish Time** are estimates and may change
 as charging power changes. **Energy to Target SOC** includes charging losses;
 **Cost to Target SOC** prices each part of a running charge at the tariff of
-the window it falls in, and uses the current tariff when no charge is running.
+the window it falls in, and uses the current tariff when no charge is running,
+even if the charger still reports residual power. Very low power readings do
+not slow down the forecast calculation.
 Setting a target alone does not
 stop charging — turn on **Limit: SOC enabled** to enable that behavior.
 
@@ -324,6 +326,23 @@ A/B, which can be reset separately. The charger calculates session and counter
 costs using its configured tariffs, including tariff changes during a session.
 Tariff rates are available as sensors in Home Assistant; change them on the
 charger. For consumption history, add the charger to the [Energy dashboard](#energy-dashboard).
+
+Energy and cost sensors publish ordinary growth once per minute to reduce
+history writes. Session changes, counter resets and availability changes publish
+immediately; the latest observed value is flushed before a reset or orderly
+unload. Automations using these sensors receive ordinary growth at this cadence.
+SOC enforcement continues to use every fresh charger poll. Its reached event
+reports the target and SOC checked before the Stop was sent; a manual stop
+cannot confirm a SOC command still waiting in the queue. Stop takes priority
+over waiting settings, and numerical controls keep the latest waiting value,
+including while another control holds the command queue. A missing energy or
+cost reading keeps its sensor unavailable, including through a connection loss,
+until a valid reading returns; a valid zero remains available.
+WiFi Signal, Connection Quality, Current Set, Adaptive Current Limit, Active
+Rate Cost, Energy to Target SOC and SOC Energy use ordinary history only.
+Graphs based on their long-term statistics stop receiving new data; ordinary
+history follows the recorder retention period, and existing statistics stay
+stored.
 
 ### OCPP control
 

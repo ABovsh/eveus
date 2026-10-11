@@ -208,7 +208,10 @@ class EveusTestUpdater(OutageClock):
         *,
         retry: bool = True,
         extra: dict[str, object] | None = None,
+        preflight=None,
     ) -> bool:
+        if preflight is not None and not preflight():
+            return False
         self.commands.append((command, value))
         self.command_extras.append(extra)
         self.last_retry = retry

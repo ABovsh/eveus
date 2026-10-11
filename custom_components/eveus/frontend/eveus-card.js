@@ -33,6 +33,10 @@ const LARGE_MAX_ITEMS = 2;
 const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
+// A command not confirmed by the charger's own state within this long is reported as unconfirmed.
+const COMMAND_TIMEOUT_MS = 60000;
+// Text from entity attributes goes into markup; quote it.
+const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 // Mirrors const.py CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS: a drift this close to whole hours is a wrong time zone.
 const TZ_MATCH_TOLERANCE_S = 300;
 // The Home Assistant app vibrates on these ("light", "selection", "warning", "success"); a browser ignores them.
@@ -126,6 +130,9 @@ const I18N = {
     set: 'Set', decrease: 'Decrease', increase: 'Increase',
     total: 'Total', allTime: 'all time', counterA: 'Counter A', counterB: 'Counter B', reset: 'Reset',
     resetQ: (label) => `Reset ${label}?`, toZero: 'will be set to 0', cancel: 'Cancel',
+    confirm: 'Confirm',
+    disableGroundQ: 'Disable ground protection?', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.',
+    socFromCar: (detail) => `Initial SOC from the car: ${detail}`, socManual: 'Initial SOC set manually', socNotUsed: (detail) => `Car SOC not used (${detail}); the manual value applies`,
     safety: 'Safety', box: 'Box temperature', plug: 'Plug temperature', groundProt: 'Ground protection',
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
     // The integration's "5h 30m": English keeps it as text, compact.
@@ -183,6 +190,9 @@ const I18N = {
     set: 'Встановити', decrease: 'Зменшити', increase: 'Збільшити',
     total: 'Загалом', allTime: 'за весь час', counterA: 'Лічильник A', counterB: 'Лічильник B', reset: 'Скинути',
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
+    confirm: 'Підтвердити',
+    disableGroundQ: 'Вимкнути захист заземлення?', disableAllQ: 'Вимкнути всі ліміти зарядки?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.',
+    socFromCar: (detail) => `Початковий SOC з авто: ${detail}`, socManual: 'Початковий SOC задано вручну', socNotUsed: (detail) => `SOC авто не використано (${detail}); діє значення, задане вручну`,
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
     // "1d 02h 05m" / "5h 30m" / "45m" → numbers with small Ukrainian units.
@@ -350,6 +360,12 @@ class EveusCard extends HTMLElement {
     this._limitPending = {};
     this._limitTimers = {};
     this._editingLimit = null;
+    this._guardAsk = null;
+    this._commandError = false;
+    this._resolveAgain = false;
+    this._month = null;
+    this._monthAt = 0;
+    this._monthBusy = false;
     this._open = this._loadOpen();
     if (!this.shadowRoot) {
       this.attachShadow({mode: 'open'});
@@ -398,6 +414,7 @@ class EveusCard extends HTMLElement {
     if (this._hass) this.hass = this._hass;
   }
   _onKeyDown(e) {
+    if (e.key === 'Escape' && this._guardAsk) { e.preventDefault(); this._guardAsk = null; this._render(); return; }
     if (e.key === 'Enter' && e.altKey) {
       const tile = e.target.closest?.('[data-hold]');
       if (tile) { e.preventDefault(); this._moreInfo(tile.dataset.hold); return; }
@@ -423,7 +440,9 @@ class EveusCard extends HTMLElement {
     const reset = e.target.closest('[data-reset],[data-reset-confirm],[data-reset-cancel]');
     const fold = e.target.closest('[data-fold]');
     const zoneFix = e.target.closest('[data-zone-fix]');
-    if (fold) this._toggleFold(fold.dataset.fold);
+    if (e.target.closest('[data-guard-confirm]')) void this._confirmGuard();
+    else if (e.target.closest('[data-guard-cancel]')) { this._guardAsk = null; this._render(); }
+    else if (fold) this._toggleFold(fold.dataset.fold);
     else if (zoneFix) void this._selectOption('time_zone', zoneFix.dataset.zoneFix);
     else if (reset) {
       if (reset.dataset.reset) void this._resetCounter(reset.dataset.reset);
@@ -457,6 +476,7 @@ class EveusCard extends HTMLElement {
     // until the page is reloaded.
     const retry = this._resolved && this._ids === null && Date.now() >= (this._retryAt || 0);
     if ((!this._resolved || retry) && !this._resolving) void this._resolve();
+    if (this._resolved) this._watchRegistry();
     if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
       const entity = this._state(key);
@@ -496,6 +516,7 @@ class EveusCard extends HTMLElement {
     this._statusAsk = null;
     clearTimeout(this._resetTimer);
     this._resetAsk = null;
+    this._guardAsk = null;
     this._holdEnd();
     Object.values(this._limitTimers || {}).forEach(clearTimeout);
     this._limitPending = {};
@@ -508,6 +529,9 @@ class EveusCard extends HTMLElement {
     clearTimeout(this._selectTimer);
     this._editingSelect = null;
     this._resizeObserver?.disconnect();
+    const unsubscribe = this._registryUnsub;
+    this._registryUnsub = null;
+    unsubscribe?.then((unsub) => unsub?.()).catch(() => {});
   }
   getCardSize() {
     const height = this.shadowRoot?.querySelector?.('ha-card')?.getBoundingClientRect?.().height;
@@ -532,7 +556,20 @@ class EveusCard extends HTMLElement {
     if (generation !== this._generation) return;
     this._resolved = true;
     this._resolving = false;
+    if (this._resolveAgain) { this._resolveAgain = false; void this._resolve(); return; }
     this.hass = this._hass;
+  }
+  // Renaming an entity_id leaves the resolved map pointing at a name that no longer exists:
+  // look the charger up again when one of its entities is renamed (the lookup is by unique_id).
+  _watchRegistry() {
+    if (this._registryUnsub || this.isConnected === false || typeof this._hass?.connection?.subscribeEvents !== 'function') return;
+    const subscription = this._registryUnsub = this._hass.connection.subscribeEvents((event) => {
+      const old = event?.data?.old_entity_id;
+      if (!old || !Object.values(this._ids || {}).includes(old)) return;
+      if (this._resolving) this._resolveAgain = true;
+      else void this._resolve();
+    }, 'entity_registry_updated');
+    subscription.catch(() => { if (this._registryUnsub === subscription) this._registryUnsub = null; });
   }
   _state(key) { return this._hass?.states[this._ids?.[key]]; }
   get _online() {
@@ -607,7 +644,8 @@ class EveusCard extends HTMLElement {
     this._render();
     // Finite feedback even when HA never answers. Each response belongs to its
     // own request, so a late failure cannot undo a newer interaction.
-    this._expire();
+    this._commandError = false;
+    this._timer = setTimeout(() => { this._reset(); this._commandError = 'timeout'; this._render(); }, COMMAND_TIMEOUT_MS);
     try {
       await this._hass.callService('number', 'set_value', {entity_id: this._ids.charging_current, value});
     } catch {
@@ -640,12 +678,15 @@ class EveusCard extends HTMLElement {
   }
   _setLimitPending(key, value) {
     clearTimeout(this._limitTimers[key]);
+    this._commandError = false;
     this._limitPending[key] = value;
     this._limitTimers[key] = setTimeout(() => {
       delete this._limitPending[key];
       delete this._limitTimers[key];
+      this._commandError = 'timeout';
       this._render();
-    }, 4000);
+    }, COMMAND_TIMEOUT_MS);
+    this._limitTimers[key]?.unref?.();
     return this._limitTimers[key];
   }
   _rejectLimitPending(key, timer) {
@@ -653,6 +694,7 @@ class EveusCard extends HTMLElement {
     clearTimeout(timer);
     delete this._limitTimers[key];
     delete this._limitPending[key];
+    this._commandError = true;
     this._render();
   }
   // Standard HA custom-card pattern: a bubbling, shadow-boundary-crossing event that the
@@ -663,10 +705,32 @@ class EveusCard extends HTMLElement {
     if (!entityId) return;
     this.dispatchEvent(new CustomEvent('hass-more-info', {detail: {entityId}, bubbles: true, composed: true}));
   }
-  async _toggleLimit(key) {
+  async _confirmGuard() {
+    const ask = this._guardAsk;
+    this._guardAsk = null;
+    if (!ask || ask.generation !== this._generation || this._ids?.[ask.key] !== ask.id
+      || this._limitOn(ask.key) === ask.value) { this._render(); return; }
+    await this._toggleLimit(ask.key, true);
+  }
+  _controlFeedback() {
+    const t = this._t;
+    const ask = this._guardAsk;
+    const labels = {limit_soc_enabled: t.soc, limit_energy_enabled: t.energy, limit_time_enabled: t.time, limit_cost_enabled: t.cost};
+    const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
+    return (ask ? `<div class="message guard-ask" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
+      + (this._commandError ? `<div class="message" role="alert">${this._commandError === 'timeout' ? t.commandTimeout : t.commandFailed}</div>` : '');
+  }
+  async _toggleLimit(key, confirmed = false) {
     const entity = this._state(key);
     if (!this._online || !entity || !['on', 'off'].includes(entity.state)) return;
     const value = !this._limitOn(key);
+    const weakening = (key === 'ground_protection' && !value)
+      || (key === 'limit_disable_all' && value)
+      || (['limit_soc_enabled', 'limit_energy_enabled', 'limit_time_enabled', 'limit_cost_enabled'].includes(key) && !value);
+    if (weakening && !confirmed) {
+      this._guardAsk = {key, value, id: this._ids[key], generation: this._generation};
+      haptic('warning'); this._render(); return;
+    }
     haptic('light');
     const timer = this._setLimitPending(key, value);
     this._render();
@@ -696,6 +760,7 @@ class EveusCard extends HTMLElement {
     this._editingLimit = null;
     const entity = this._state(key), attrs = entity?.attributes;
     if (!this._online || !attrs || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite)) { this._render(); return; }
+    if (raw == null || (typeof raw === 'string' && !raw.trim())) { this._render(); return; }
     const parsed = Number(raw);
     if (!Number.isFinite(parsed)) { this._render(); return; }
     const clamped = Math.max(attrs.min, Math.min(attrs.max, parsed));
@@ -911,6 +976,17 @@ class EveusCard extends HTMLElement {
     if (!this._charging || soc === null) return 'idle';
     return soc < 40 ? 'low' : soc < 75 ? 'mid' : 'high';
   }
+  // Where Initial SOC, the anchor of every SOC figure, came from: SOC Percent's own attributes.
+  _socSource() {
+    const attrs = this._online ? this._state('soc_percent')?.attributes : null;
+    const detail = attrs?.soc_anchor;
+    if (typeof detail !== 'string' || !detail) return '';
+    const t = this._t;
+    const [cls, icon, title] = attrs.soc_anchor_seeded === true ? ['car', 'mdi:car', t.socFromCar(detail)]
+      : detail === 'set manually' ? ['manual', 'mdi:hand-back-right-outline', t.socManual]
+      : ['stale', 'mdi:car-off', t.socNotUsed(detail)];
+    return `<span class="soc-src ${cls}" title="${esc(title)}" aria-label="${esc(title)}"><ha-icon icon="${icon}"></ha-icon></span>`;
+  }
   _advanced_infoSection() {
     if (!this._advanced) return '';
     const t = this._t, on = this._online;
@@ -939,7 +1015,7 @@ class EveusCard extends HTMLElement {
     return `<section class="${['panel soc', `soc-${color}`, on ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.battery}">
       <div class="tiles two">
         <button class="tile soc-tile" data-more-info="soc_percent" data-hold="initial_soc" aria-keyshortcuts="Alt+Enter" title="${t.batteryTitle}">
-          <span class="tile-head"><ha-icon icon="${icon}"></ha-icon>${t.battery}<span class="tile-aside">${t.est}</span></span>
+          <span class="tile-head"><ha-icon icon="${icon}"></ha-icon>${t.battery}<span class="tile-aside">${this._socSource()}${t.est}</span></span>
           <span class="tile-big"><b data-fit="26">${soc === null ? '—' : `≈${pc(soc)}`}</b></span>
           <span class="tile-sub" data-fit="12">${batterySub || '&nbsp;'}</span>
         </button>
@@ -1014,7 +1090,10 @@ class EveusCard extends HTMLElement {
     this._render();
     try {
       await this._hass.callService('button', 'press', {entity_id: this._ids[key]});
-    } catch { /* HA reports a refused reset itself (button.py raises HomeAssistantError). */ }
+    } catch {
+      this._commandError = true;
+      this._render();
+    }
   }
   _cancelReset() {
     clearTimeout(this._resetTimer);
@@ -1215,6 +1294,7 @@ class EveusCard extends HTMLElement {
     } catch {
       clearTimeout(this._syncTimer);
       this._syncDone = false;
+      this._commandError = true;
       this._render();
     }
   }
@@ -1535,17 +1615,26 @@ class EveusCard extends HTMLElement {
   // ---- Counters: this month's and last month's energy from Home Assistant's long-term statistics. ----
   get _wantsMonth() { return !!this._ids?.total_energy && this._config.sections.includes('history') && this._shows('history', 'month'); }
   async _fetchMonth() {
-    const id = this._ids?.total_energy;
+    const id = this._ids?.total_energy, generation = this._generation;
     if (!id || typeof this._hass?.callWS !== 'function') return;
     this._monthAt = Date.now();
     this._monthBusy = true;
+    // An answer for a charger or entity the card no longer shows is dropped. A renamed total
+    // (same card configuration) is asked for again on the next update.
+    const current = () => {
+      if (generation === this._generation && this._ids?.total_energy === id) return true;
+      if (generation === this._generation) { this._monthBusy = false; this._monthAt = 0; }
+      return false;
+    };
     const ask = (offset) => this._hass.callWS({type: 'recorder/statistic_during_period', statistic_id: id,
       calendar: offset ? {period: 'month', offset} : {period: 'month'}, types: ['change']});
     const change = (r) => Number.isFinite(r?.change) ? r.change : null;
     try {
       const [cur, prev] = await Promise.all([ask(0), ask(-1)]);
+      if (!current()) return;
       this._month = {cur: change(cur), prev: change(prev)};
     } catch {
+      if (!current()) return;
       this._month = null;
     }
     this._monthBusy = false;
@@ -1576,13 +1665,13 @@ class EveusCard extends HTMLElement {
   _render() {
     if (!this.shadowRoot || !this._hass) return;
     const focus = this.shadowRoot.activeElement;
-    const selector = this._editingLimit ? `[data-limit-edit="${this._editingLimit}"]`
+    const selector = this._guardAsk ? '[data-guard-confirm]' : this._editingLimit ? `[data-limit-edit="${this._editingLimit}"]`
       : this._editingTime ? `[data-time-edit="${this._editingTime}"]`
       : focus?.dataset?.slide ? 'input'
       : focus?.hasAttribute('data-confirm') ? '[data-confirm]'
       : null;
     const body = !this._resolved ? `<div class="message">${this._t.loading}</div>`
-      : this._alertStrip() + this._config.sections.map((section) => this._section(section)).join('');
+      : this._controlFeedback() + this._alertStrip() + this._config.sections.map((section) => this._section(section)).join('');
     // The charger's state colours the card itself (glow, status badge); charging adds the
     // old card's slow pulse. A data attribute, not a class: alert tints stay section-scoped.
     const mood = this._resolved && this._ids?.state ? this._statusView().cls : 'idle';
@@ -1641,6 +1730,7 @@ class EveusCard extends HTMLElement {
 const MODULAR_STYLE = `
 :host{display:block}
 ha-card{box-sizing:border-box;display:flex;flex-direction:column;gap:1px;padding:2px 4px 1px;border-radius:14px;overflow:hidden;line-height:1.2}
+.guard-ask{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:10;box-sizing:border-box;max-width:480px;margin:auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px;border:1px solid #f39c12;border-radius:10px;background:var(--ha-card-background,var(--card-background-color,#1c1c1c));box-shadow:0 4px 12px #0006}.guard-ask span{flex:1 1 180px}.guard-ask button{min-height:32px;cursor:pointer}
 .sl{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;padding:1px 8px;border:1px solid rgba(127,127,127,.16);border-radius:10px;background:rgba(127,127,127,.05)}
 ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color);flex:none}
 .label{font-size:13px;font-weight:600;white-space:nowrap;color:var(--primary-text-color)}
@@ -1749,7 +1839,8 @@ ha-card{--accent:var(--primary-color,#3498db);--panel:rgba(127,127,127,.075);--t
 .tiles{display:grid;min-width:0}.tiles.two{grid-template-columns:repeat(2,minmax(0,1fr))}.tiles.three{grid-template-columns:repeat(3,minmax(0,1fr))}.tiles.one{grid-template-columns:minmax(0,1fr)}
 .tile{box-sizing:border-box;display:flex;flex-direction:column;align-items:flex-start;gap:0;min-width:0;padding:2px 7px 3px;margin:0;font-family:inherit;color:inherit;text-align:left;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .tile:hover,.tile:focus-visible{background:rgba(127,127,127,.15)}
-.tile-head{display:flex;align-items:center;gap:4px;width:100%;white-space:nowrap}.tile-aside{margin-left:auto;font-weight:600;color:var(--primary-text-color);opacity:.85}.tile-aside small{font-size:.9em}.tile-head ha-icon{--mdc-icon-size:14px;color:var(--accent)}
+.tile-head{display:flex;align-items:center;gap:4px;width:100%;white-space:nowrap}.tile-aside{margin-left:auto;font-weight:600;color:var(--primary-text-color);opacity:.85}.tile-aside small{font-size:.9em}.soc-src{display:inline-flex;vertical-align:-2px;margin-right:3px}.soc-tile .tile-head .soc-src ha-icon{--mdc-icon-size:13px;color:var(--secondary-text-color)}.soc-tile .tile-head .soc-src.stale ha-icon{color:#f39c12}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none !important;transition:none !important}}.tile-head ha-icon{--mdc-icon-size:14px;color:var(--accent)}
 .tile-big{display:flex;align-items:baseline;max-width:100%;min-width:0;white-space:nowrap;font-size:19px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;color:var(--primary-text-color)}
 .tile-big b{min-width:0;overflow:hidden;font-weight:700}.tile-big small{font-size:.6em;font-weight:500;color:var(--secondary-text-color);margin-left:1px}
 .tile-sub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:600;color:var(--secondary-text-color);font-variant-numeric:tabular-nums}
@@ -2048,11 +2139,13 @@ class EveusCardEditor extends HTMLElement {
     const want = this._config?.device_id || null;
     if (!this._hass?.callWS || this._config?.mode || this._socFor === want) return;
     this._socFor = want;
+    this._hasSoc = undefined;
     const msg = {type: 'eveus/card_entities'};
     if (want) msg.device_id = want;
+    // An answer about a device the editor no longer shows is dropped.
     this._hass.callWS(msg)
-      .then((res) => { this._hasSoc = !!res?.entities?.soc_percent; })
-      .catch(() => { this._hasSoc = true; })
+      .then((res) => { if (this._socFor === want) this._hasSoc = !!res?.entities?.soc_percent; })
+      .catch(() => { if (this._socFor === want) this._hasSoc = true; })
       .finally(() => this._render());
   }
   get _basic() { return this._config.mode ? this._config.mode === 'basic' : this._hasSoc === false; }

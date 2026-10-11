@@ -25,6 +25,7 @@ SONAR_HARDENING_PLAN.md
 # Coverage / test artifacts
 .coverage
 coverage.xml
+coverage.lcov
 .mutmut-cache
 # mutmut 3 working copy and results
 mutants/
