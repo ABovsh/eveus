@@ -338,13 +338,11 @@ over waiting settings, and numerical controls keep the latest waiting value,
 including while another control holds the command queue. A missing energy or
 cost reading keeps its sensor unavailable, including through a connection loss,
 until a valid reading returns; a valid zero remains available.
-WiFi Signal and Connection Quality keep ordinary history but no longer collect
-long-term statistics; existing statistics stay stored.
-
-Current Set, Adaptive Current Limit, Active Rate Cost, Energy to Target SOC,
-SOC Energy and Session Energy also use ordinary history only. Graphs based on
-their statistics stop receiving new data; ordinary history follows the
-recorder retention period. Existing statistics stay stored.
+WiFi Signal, Connection Quality, Current Set, Adaptive Current Limit, Active
+Rate Cost, Energy to Target SOC and SOC Energy use ordinary history only.
+Graphs based on their long-term statistics stop receiving new data; ordinary
+history follows the recorder retention period, and existing statistics stay
+stored.
 
 ### OCPP control
 

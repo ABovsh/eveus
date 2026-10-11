@@ -11,10 +11,8 @@
 
 ### ⚠️ Breaking
 
-- **Eight sensors stop collecting new long-term statistics:** WiFi Signal, Connection Quality, Current Set, Adaptive Current Limit, Active Rate Cost, Energy to Target SOC, SOC Energy and Session Energy.
-  - **Why:** Home Assistant writes statistics for such a sensor every 5 minutes and every hour, whether or not its value changes, up to about 2,500 extra database rows a day per charger. These are settings, estimates or diagnostics, so averages over months add little.
-  - **What stays:** the sensors, their current values and their ordinary history. Existing statistics are not deleted. Energy and cost totals, voltage, current, power, temperatures and SOC Percent keep their statistics.
-  - **What you will see:** Home Assistant raises one Repairs notice per sensor ("no longer has a state class"). To clear it, delete that sensor's old statistics in Developer Tools → Statistics, or leave it.
+- **Seven sensors stop collecting new long-term statistics:** WiFi Signal, Connection Quality, Current Set, Adaptive Current Limit, Active Rate Cost, Energy to Target SOC and SOC Energy. This removes up to about 2,200 database rows a day per charger for settings, estimates and diagnostics. Their current values and ordinary history stay; statistics graphs of these sensors stop updating.
+  - **Migration:** Developer Tools → Statistics lists each of them as "no longer has a state class". Delete its old statistics there to clear the entry, or leave it.
 
 ### 🔧 Changed
 

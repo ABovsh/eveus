@@ -163,12 +163,19 @@ def test_rate_status_sits_with_its_own_rate_cost() -> None:
         assert specs[f"Rate {n} Status"].entity_category == specs[f"Rate {n} Cost"].entity_category is None
 
 
+def test_session_energy_uses_measurement_state_class() -> None:
+    # Regression: TOTAL without last_reset breaks HA long-term energy statistics.
+    # Session energy resets each session (MEASUREMENT), not a monotonic counter.
+    specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
+    assert specs["Session Energy"].state_class == "measurement"
+
+
 @pytest.mark.parametrize("name", [
-    "Session Energy", "Current Set", "Adaptive Current Limit", "Active Rate Cost",
+    "Current Set", "Adaptive Current Limit", "Active Rate Cost",
 ])
-def test_session_and_setting_sensors_keep_ordinary_history_only(name: str) -> None:
-    # Cumulative energy/cost meters provide long-term accounting; these values
-    # remain available to the card and automations without extra aggregates.
+def test_setting_sensors_keep_ordinary_history_only(name: str) -> None:
+    # Settings and tariff prices remain available to the card and automations
+    # without extra aggregates.
     specs = {spec.name: spec for spec in sensors.get_sensor_specifications()}
     assert specs[name].state_class is None
 

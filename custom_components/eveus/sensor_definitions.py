@@ -1134,11 +1134,11 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
 
     # Energy sensors.
     # Session Energy resets to 0 each session and is deliberately kept out of
-    # the Energy Dashboard and statistics; ordinary history captures the session.
-    # The lifetime/counter meters increase
+    # the Energy Dashboard, so it is a plain MEASUREMENT with no device class
+    # (HA forbids ENERGY + MEASUREMENT). The lifetime/counter meters increase
     # and reset, so they use the ENERGY device class with TOTAL_INCREASING.
     energy_sensors = [
-        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", None, None),
+        ("Session Energy", get_session_energy, "mdi:transmission-tower-export", SensorStateClass.MEASUREMENT, None),
         ("Total Energy", get_total_energy, "mdi:transmission-tower", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
         ("Counter A Energy", get_counter_a_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
         ("Counter B Energy", get_counter_b_energy, "mdi:counter", SensorStateClass.TOTAL_INCREASING, SensorDeviceClass.ENERGY),
