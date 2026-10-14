@@ -164,6 +164,10 @@ _FIELDS: Final[dict[str, _Field]] = {
     "sh2EnergyValue": _f(0, MAX_SCHEDULE_ENERGY_KWH),
 }
 
+# Every key a snapshot can answer for. A firmware family whose payload lacks
+# one of these marks it unsupported (see ``EveusSnapshot.unsupported``).
+FIELD_KEYS: Final[frozenset[str]] = frozenset(_FIELDS)
+
 
 def model_max_current(model: str | None) -> int:
     """This charger's design current, falling back to the largest model.
@@ -206,10 +210,19 @@ class EveusSnapshot:
     raw: Mapping[str, Any]
     values: Mapping[str, Any]
     model: str | None = None
+    # Keys this charger's firmware family does not provide at all, as opposed
+    # to a reading that is merely absent or unusable on one poll. Empty for
+    # every firmware that reports its full ``/main``; an entity reads its own
+    # availability from it, so nothing published for those firmwares changes.
+    unsupported: frozenset[str] = frozenset()
 
     @classmethod
     def parse(
-        cls, payload: Mapping[str, Any] | Any, model: str | None = None
+        cls,
+        payload: Mapping[str, Any] | Any,
+        model: str | None = None,
+        *,
+        unsupported: frozenset[str] = frozenset(),
     ) -> "EveusSnapshot":
         """Build a snapshot from a validated ``/main`` payload."""
         if not isinstance(payload, Mapping):
@@ -220,6 +233,7 @@ class EveusSnapshot:
             raw=payload,
             values=_parse_fields(payload, model_max_current(model)),
             model=model,
+            unsupported=frozenset(unsupported),
         )
 
     @classmethod
@@ -257,6 +271,14 @@ class EveusSnapshot:
         pinned optimistic write.
         """
         return key in self.raw
+
+    def supports(self, key: str) -> bool:
+        """Whether this charger's firmware provides the field at all.
+
+        ``False`` only for a field the coordinator marked unsupported for this
+        firmware family; a reading missing from one reply is still supported.
+        """
+        return key not in self.unsupported
 
     # --- typed views --------------------------------------------------------
 

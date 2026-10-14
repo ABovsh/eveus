@@ -81,7 +81,7 @@ Also supported: **multiple chargers**, **English and Ukrainian**, automatic reco
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A, or 48A charger reachable from Home Assistant |
-| Charger firmware | Verified on R3.05.x; [R3.01.x and 1.x](#older-charger-firmware) have fewer available readings |
+| Charger firmware | Verified on R3.05.x and [REVE](#reve-firmware); [R3.01.x and 1.x](#older-charger-firmware) have fewer available readings |
 | Network | Local LAN access to the charger HTTP API |
 | Setup details | Charger IP/hostname or URL, username, password, model |
 
@@ -158,10 +158,10 @@ language (English or Ukrainian).
 | **Adaptive charging** | Adaptive Mode, its voltage threshold and current cap |
 | **Session** | Session energy, cost and time |
 | **Limits** | Energy, time, cost and SOC limits, **Disable all** |
-| **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and energy limit |
+| **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and energy limit (where the charger's firmware has one) |
 | **Charger clock** | Time Zone, Time Drift and **Sync Time** |
 | **Counters** | Total Energy, Counter A and Counter B, each with a reset |
-| **Safety** | Box and plug temperature, ground, leakage current, connection quality |
+| **Safety** | Box and plug temperature, ground, leakage current, connection quality; a reading the charger's firmware does not report is not shown |
 
 In Basic mode the two SOC sections are hidden, and Limits has no SOC limit.
 The card follows the integration mode; `mode: basic` simplifies it, while
@@ -497,6 +497,15 @@ Work through these in order:
 3. **Open the Eveus card on the Integrations tab.** If it shows **Failed setup, will retry**, open the error details. The error also appears in **Settings → System → Logs**. The device only appears after setup succeeds.
 
 The number of entities depends on the integration mode and phase count.
+
+### REVE firmware
+
+The integration recognizes REVE firmware by itself; no setup change is needed.
+
+- **Charging Current** and the schedules are written where REVE keeps them, so a change made in Home Assistant stays in effect. Schedule 1 and Schedule 2 are the first two schedules in the charger's app; the days of the week set there are kept.
+- Schedules and tariffs changed in the charger's app appear in Home Assistant within about a minute.
+- **Primary Rate Cost** shows REVE's base price; the Rate 2 and Rate 3 sensors show its first two rates.
+- REVE does not report these readings, so they stay unavailable: **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, **Active Rate Cost**, **Cost to Target SOC**, the schedule energy limits, and **Plug Temperature** on a charger without a plug sensor.
 
 ### Older charger firmware
 

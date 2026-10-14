@@ -73,8 +73,12 @@ def snapshot_of(updater: object) -> Any:
     from custom_components.eveus.snapshot import EveusSnapshot
 
     data = getattr(updater, "data", None)
+    # A double standing in for a REVE coordinator also carries the fields its
+    # normalisation marked unsupported; every other double omits them.
+    unsupported = getattr(updater, "unsupported_fields", None)
+    extra = {} if unsupported is None else {"unsupported": unsupported}
     return EveusSnapshot.parse(
-        data if isinstance(data, dict) else {}, getattr(updater, "model", None)
+        data if isinstance(data, dict) else {}, getattr(updater, "model", None), **extra
     )
 
 

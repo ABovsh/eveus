@@ -4,11 +4,13 @@
 
 ### ✨ New
 
+- **REVE firmware support.** On REVE chargers, **Charging Current** and the schedules set in Home Assistant now stay in effect, and the tariff sensors show REVE's own prices. Readings and settings REVE does not have are unavailable instead of showing random numbers, and the card leaves them out. [Details](README.md#reve-firmware)
 - **The card tells you when One charge overrides your schedules and limits.** One charge makes the charger start at once and ignore every schedule and limit, so a schedule set while it is on seemed not to work. Schedules and Limits now say so in an amber note with a **Turn off** button; the ignored schedule windows are struck through and the limits shown as suspended, also on a folded row.
 
 ### 🐛 Fixed
 
 - **A single missed reply no longer flashes every entity unavailable.** After one missed poll the charger is asked again in 15 seconds, inside the grace window, instead of a minute later, when the window was already closing.
+- **No false Leakage detected notice on REVE.** REVE reports raw sensor counts in place of the leakage current, which raised the notice on an idle charger. A notice raised before this update stays until you press **Ignore**.
 - **Card error messages no longer stay for good.** A refused or unconfirmed change is shown for 30 seconds or until tapped.
 - **Scrolling the page keeps a pending current increase.** A touch scroll over the card no longer cancels the Confirm button of a raised **Current**.
 - **While One charge is on, the card no longer predicts a schedule.** The battery section drops the schedule's energy estimate, the status no longer names the next start or blames a schedule's current limit for a slow charge, and no schedule glows as running.

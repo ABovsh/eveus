@@ -52,6 +52,13 @@ from .const import (
 from ._payload import PayloadError, validate_main_payload
 from .charge_reason import finish_reason
 from .client import UPDATE_TIMEOUT_OBJ, fetch_json
+from .reve import (
+    FAMILY_CLASSIC,
+    FAMILY_REVE,
+    ReveApi,
+    is_reve_payload,
+    normalize_reve_payload,
+)
 from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
 
@@ -279,6 +286,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # so one degraded reply that omits it must not demote a modern charger
         # to the 1.x code translation for that poll.
         self._modern_firmware_seen = False
+        # Sticky like the marker above, for the same reason: one reply that
+        # omits the REVE markers must not hand that poll the unreliable
+        # tariff/schedule/leak fields REVE reports.
+        self._reve_seen = False
+        self._reve = ReveApi(self)
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
         # availability grace window keeps republishing the reading behind it.
@@ -309,6 +321,24 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def is_modern_firmware(self) -> bool:
         """Whether this charger's codes follow the modern state/substate maps."""
         return self._modern_firmware_seen or is_modern_firmware_payload(self.data or {})
+
+    @property
+    def firmware_family(self) -> str:
+        """``reve`` once this charger has identified as REVE, else ``classic``."""
+        return FAMILY_REVE if self._reve_seen else FAMILY_CLASSIC
+
+    def reve_command_route(self, command: str) -> Callable[[Any], Any] | None:
+        """The GraphQL write REVE needs for this command, or ``None`` for ``/pageEvent``."""
+        return self._reve.route(command) if self._reve_seen else None
+
+    def reve_diagnostics(self) -> dict[str, Any] | None:
+        """REVE's GraphQL side and the fields it cannot provide; ``None`` otherwise."""
+        if not self._reve_seen:
+            return None
+        return {
+            **self._reve.diagnostics(),
+            "unsupported_fields": sorted(self._snapshot.unsupported),
+        }
 
     def _reset_legacy_charging_latch(self) -> None:
         self._legacy_charging_latched = False
@@ -1093,10 +1123,21 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # rather than being published as healthy.
             new_data = validate_main_payload(new_data, self._model)
             new_data = self._normalize_legacy_device_state(new_data)
+            unsupported: frozenset[str] = frozenset()
+            if self._reve_seen or is_reve_payload(new_data):
+                self._reve_seen = True
+                # Never raises: a GraphQL read that fails leaves the schedule
+                # and tariff fields unsupported, it does not fail this poll.
+                await self._reve.refresh_if_due()
+                new_data, unsupported = normalize_reve_payload(
+                    new_data, self._reve.extras
+                )
             # Parse AFTER the legacy translation (this coordinator owns the
             # fw-1.x latch), and BEFORE _record_success, which notifies the
             # listeners that read the snapshot.
-            self._snapshot = EveusSnapshot.parse(new_data, self._model)
+            self._snapshot = EveusSnapshot.parse(
+                new_data, self._model, unsupported=unsupported
+            )
 
             self._record_success(time.monotonic() - start_monotonic, new_data)
             return new_data

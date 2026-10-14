@@ -30,6 +30,10 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         """Store the coordinator payload key backing this control."""
         self.__dict__["_state_key"] = value
 
+    def _source_keys(self) -> tuple[str, ...]:
+        """A control is backed by exactly the field it reads back."""
+        return (self._state_key,)
+
     def _read_device_value(self) -> T | None:
         """Return the latest valid device value, or None when unavailable."""
         raise NotImplementedError

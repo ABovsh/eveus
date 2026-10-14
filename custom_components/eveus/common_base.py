@@ -60,6 +60,11 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     # Controls drop a pending optimistic value when they go unavailable.
     _clear_optimistic_on_unavailable = False
     _availability_label = "Entity"
+    # The payload fields this entity's value comes from. When the charger's
+    # firmware provides none of them at all (see `EveusSnapshot.unsupported`),
+    # the entity is unavailable instead of blank. Empty = not charger-backed,
+    # or derived from many fields.
+    _firmware_source_keys: tuple[str, ...] = ()
 
     def __init__(self, updater: "EveusUpdater", device_number: int = 1) -> None:
         """Initialize the entity."""
@@ -87,7 +92,30 @@ class BaseEveusEntity(CoordinatorEntity["EveusUpdater"], RestoreEntity):
     @property
     def available(self) -> bool:
         """Visible while the coordinator's outage is inside this grace period."""
-        return self._updater.visible_within(self._grace_period)
+        return (
+            self._updater.visible_within(self._grace_period)
+            and self._firmware_provides_source
+        )
+
+    def _source_keys(self) -> tuple[str, ...]:
+        """The payload fields this entity reads; see `_firmware_source_keys`."""
+        return self._firmware_source_keys
+
+    @property
+    def _firmware_provides_source(self) -> bool:
+        """False only when the firmware supports none of this entity's fields.
+
+        Every firmware that reports its full ``/main`` marks nothing
+        unsupported, so for it this is always True and availability is exactly
+        the grace-period rule above.
+        """
+        keys = self._source_keys()
+        if not keys:
+            return True
+        snapshot = getattr(self._updater, "snapshot", None)
+        if snapshot is None:
+            return True
+        return any(snapshot.supports(key) for key in keys)
 
     @property
     def name(self) -> str | None:

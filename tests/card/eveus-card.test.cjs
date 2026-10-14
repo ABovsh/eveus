@@ -328,7 +328,7 @@ test('toggling ground protection uses the existing switch entity',async()=>{
 
 test('unknown readings show a dash with no color class',()=>{
   const {card,states,hass}=setupSafety();
-  states['sensor.box'].state='unavailable';
+  states['sensor.box'].state='unknown';
   states['sensor.ground'].state='unavailable';
   states['switch.protection'].state='unavailable';
   card.hass=hass;
@@ -336,6 +336,28 @@ test('unknown readings show a dash with no color class',()=>{
   assert.match(html,/safety-value ">—°/);
   assert.match(html,/safety-value ">—</);
   assert.match(html,/aria-label="Ground protection"[^>]*\bdisabled\b/);
+});
+
+test('a reading the firmware does not provide is hidden while the charger answers (REVE: plug, leakage)',()=>{
+  const {card,states,hass}=setupSafety();
+  states['sensor.plug'].state='unavailable';
+  states['sensor.leak'].state='unavailable';
+  card.hass=hass;
+  const html=card.shadowRoot.innerHTML;
+  assert.doesNotMatch(html,/data-more-info="plug_temperature"/);
+  assert.doesNotMatch(html,/data-more-info="leakage_current"/);
+  assert.match(html,/data-more-info="box_temperature"/);
+  assert.match(html,/data-limit-toggle="ground_protection"/);
+  assert.match(html,/data-more-info="connection_quality"/);
+  assert.match(html,/class="sl safety safety-good"/);
+});
+
+test('while the charger is away every safety item stays in place, dashed',()=>{
+  const {card,states,hass}=setupSafety({online:false});
+  for (const id of ['sensor.box','sensor.plug','sensor.leak']) states[id].state='unavailable';
+  card.hass=hass;
+  const html=card.shadowRoot.innerHTML;
+  for (const key of ['box_temperature','plug_temperature','leakage_current']) assert.match(html,new RegExp(`data-more-info="${key}"`));
 });
 
 test('offline safety row is visibly disabled and cannot toggle',async()=>{
@@ -936,6 +958,17 @@ test('schedules: one row per schedule with its window, current cap and energy ca
   assert.match(one, /class="sched-lim active"/, 'cap on inside an enabled schedule is active');
   assert.match(two, /class="sched-lim saved"/, 'cap on inside a disabled schedule is only saved');
   assert.match(two, />09:00<[\s\S]*>18:00</);
+});
+test('schedules: a cap the firmware does not have is left out (REVE: no energy cap)', () => {
+  const over = {...SCHED};
+  for (const n of [1, 2]) {
+    over[`schedule_${n}_energy_limit`] = [SCHED[`schedule_${n}_energy_limit`][0], 'unavailable'];
+    over[`schedule_${n}_energy_limit_enabled`] = [SCHED[`schedule_${n}_energy_limit_enabled`][0], 'unavailable'];
+  }
+  const {html} = setupAll({sections:['schedules'], over});
+  const one = rowOf(html(), 1);
+  assert.doesNotMatch(one, /schedule_1_energy_limit/);
+  assert.match(one, /data-limit-edit-trigger="schedule_1_current_limit"[\s\S]*?16<small>A<\/small>/);
 });
 test('schedules: toggles and caps use their own switch and number entities', async () => {
   const {card, calls} = setupAll({sections:['schedules'], over:SCHED});

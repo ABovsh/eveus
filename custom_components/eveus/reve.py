@@ -1,0 +1,465 @@
+"""REVE firmware: where its settings really live, and what ``/main`` misreports.
+
+REVE (first seen as REVE_PLUS_1.0.0 / 2.4.0) keeps the ``/main`` + ``/pageEvent``
+API, so most of the integration works unchanged. Part of ``/main``, however, is a
+projection the firmware no longer maintains — verified on a live REVE Plus on
+2026-10-15:
+
+* ``tarif*`` / ``activeTarif`` return uninitialised memory, different on every
+  poll. The real tariffs are GraphQL ``ratesV2`` (a base price plus up to four
+  rates with weekdays), in currency units rather than hundredths.
+* ``sh1*`` / ``sh2*`` mirror a legacy copy of the schedules. Writing them changes
+  ``/main`` but not the schedule the charger runs, and ``sh*Enabled`` reverts
+  within seconds. The real schedules are GraphQL ``scheduleV2``.
+* ``currentSet`` written through ``/pageEvent`` reverts within a second; GraphQL
+  ``stationCurrent`` holds (and ``/main`` reports it).
+* ``leakValue`` / ``leakValueH`` are raw ADC counts — the same numbers ``/debug``
+  shows as ``cll`` / ``clh`` — not milliamps.
+* ``temperature2`` reads -60 on a unit without a plug sensor.
+
+Everything else written through ``/pageEvent`` (Stop, One Charge, adaptive mode
+and threshold, minimum voltage) reaches the charger's real state.
+
+So the coordinator, for a REVE charger only, drops the unreliable fields, lays
+the GraphQL schedules and rates over the legacy keys the entities already read,
+and marks every field left without a source unsupported. The entities, their
+unique IDs and every other firmware's payload stay exactly as they were.
+
+The GraphQL documents below are copied from the charger maker's own app. The
+REVE server stops answering every query after a few malformed ones until the
+charger is power-cycled, so no query text is ever built at runtime.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import math
+import time
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from functools import partial
+from typing import Any, Final
+
+import aiohttp
+
+from .client import GraphQLError, post_graphql
+from .snapshot import FIELD_KEYS
+
+_LOGGER = logging.getLogger(__name__)
+
+FAMILY_CLASSIC: Final = "classic"
+FAMILY_REVE: Final = "reve"
+
+# /main fields REVE reports but no longer maintains (see the module docstring).
+REVE_UNRELIABLE_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "tarif", "activeTarif",
+        "tarifAEnable", "tarifAValue", "tarifAStart", "tarifAStop",
+        "tarifBEnable", "tarifBValue", "tarifBStart", "tarifBStop",
+        "leakValue", "leakValueH",
+        *(
+            f"sh{slot}{field}"
+            for slot in (1, 2)
+            for field in (
+                "Enabled", "Start", "Stop", "CurrentEnable", "CurrentValue",
+                "EnergyEnable", "EnergyValue",
+            )
+        ),
+    }
+)
+# temperature2 on a unit with no plug sensor.
+_NO_PLUG_SENSOR: Final = -60
+
+# Legacy schedule key suffix -> scheduleV2 item field.
+_SLOT_FIELDS: Final[dict[str, str]] = {
+    "Enabled": "enabled",
+    "Start": "start",
+    "Stop": "end",
+    "CurrentEnable": "currentLimitEnabled",
+    "CurrentValue": "value",
+}
+SCHEDULE_COMMANDS: Final[frozenset[str]] = frozenset(
+    f"sh{slot}{suffix}" for slot in (1, 2) for suffix in _SLOT_FIELDS
+)
+# scheduleV2 has no per-schedule energy cap.
+SCHEDULE_ENERGY_COMMANDS: Final[frozenset[str]] = frozenset(
+    f"sh{slot}Energy{suffix}" for slot in (1, 2) for suffix in ("Enable", "Value")
+)
+CURRENT_COMMAND: Final = "currentSet"
+
+_MINUTES_PER_DAY: Final = 1440
+
+# How often the schedules and rates are re-read, how long a failed read waits
+# before the next attempt, and how long a last good read stays in force. The
+# 15-minute limit is what turns a GraphQL server that has stopped answering
+# into honestly unavailable schedule and tariff entities.
+EXTRAS_REFRESH_SECONDS: Final = 60
+EXTRAS_RETRY_SECONDS: Final = 300
+EXTRAS_MAX_AGE_SECONDS: Final = 900
+GRAPHQL_TIMEOUT: Final = aiohttp.ClientTimeout(total=6)
+
+EXTRAS_QUERY: Final = """query StationData {
+        stationData {
+            scheduleV2 {
+                name
+                start
+                end
+                weekdays
+                enabled
+                value
+                currentLimitEnabled
+            }
+            ratesV2 {
+                base
+                rates {
+                    name
+                    start
+                    end
+                    weekdays
+                    enabled
+                    value
+                }
+            }
+        }
+    }"""
+
+UPDATE_MUTATION: Final = """mutation UpdateStationData($input: StationDataInput!) {
+        updateStationData(input: $input)
+    }"""
+
+
+class ReveCommandUnsupported(Exception):
+    """A setting REVE has no place for (or a schedule slot it does not have)."""
+
+
+def is_reve_payload(data: Mapping[str, Any]) -> bool:
+    """Whether a ``/main`` payload comes from REVE firmware.
+
+    Two explicit markers, either sufficient: the version string the app shows
+    (``verFWWifi``, ``REVE_PLUS_1.0.0``) and the maker name. Anything else —
+    including a payload with neither field — is treated as it always was.
+    """
+    wifi = data.get("verFWWifi")
+    if isinstance(wifi, str) and wifi.strip().upper().startswith("REVE_"):
+        return True
+    maker = data.get("manufacturer")
+    return isinstance(maker, str) and maker.strip().lower() == "reve"
+
+
+# ---------------------------------------------------------------------------
+# GraphQL data
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ReveExtras:
+    """The schedules and tariffs REVE keeps only in GraphQL, validated."""
+
+    schedules: tuple[dict[str, Any], ...]
+    base_rate: float
+    rates: tuple[dict[str, Any], ...]
+
+
+def _bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in (0, 1) and not isinstance(value, float):
+        return bool(value)
+    raise ValueError("not a boolean")  # pragma: no mutate - message text; only the exception type is ever logged
+
+
+def _number(value: Any) -> int | float:
+    """A finite, non-negative number; whole numbers stay ``int`` on the wire."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("not a number")  # pragma: no mutate - message text; only the exception type is ever logged
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("number out of range")  # pragma: no mutate - message text; only the exception type is ever logged
+    return int(value) if float(value).is_integer() else float(value)
+
+
+def _minute(value: Any) -> int:
+    number = _number(value)
+    if not isinstance(number, int) or number >= _MINUTES_PER_DAY:
+        raise ValueError("minute of day out of range")  # pragma: no mutate - message text; only the exception type is ever logged
+    return number
+
+
+def _whole(value: Any) -> int:
+    number = _number(value)
+    if not isinstance(number, int):
+        raise ValueError("not a whole number")  # pragma: no mutate - message text; only the exception type is ever logged
+    return number
+
+
+def _weekdays(value: Any) -> list[int]:
+    """Weekdays as the app reads them: a 0-6 list (0 = Sunday) or a bitmask."""
+    if isinstance(value, list):
+        days = {_whole(day) for day in value}
+        if any(day > 6 for day in days):
+            raise ValueError("weekday out of range")  # pragma: no mutate - message text; only the exception type is ever logged
+        return sorted(days)
+    mask = _whole(value)
+    if mask > 127:
+        raise ValueError("weekday mask out of range")  # pragma: no mutate - message text; only the exception type is ever logged
+    return [day for day in range(7) if mask & (1 << day)]  # pragma: no mutate - a mask of at most 127 has no bit 7
+
+
+def _name(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("name is not text")  # pragma: no mutate - message text; only the exception type is ever logged
+    return value
+
+
+def _schedule_item(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("schedule is not an object")  # pragma: no mutate - message text; only the exception type is ever logged
+    return {
+        "name": _name(raw.get("name")),
+        "start": _minute(raw.get("start")),
+        "end": _minute(raw.get("end")),
+        "weekdays": _weekdays(raw.get("weekdays")),
+        "enabled": _bool(raw.get("enabled")),
+        "value": _number(raw.get("value")),
+        "currentLimitEnabled": _bool(raw.get("currentLimitEnabled")),
+    }
+
+
+def _rate_item(raw: Any) -> dict[str, Any]:
+    """The fields the tariff sensors read. Names and weekdays are not read, so
+    a format change in them cannot take the tariffs away."""
+    if not isinstance(raw, dict):
+        raise ValueError("rate is not an object")  # pragma: no mutate - message text; only the exception type is ever logged
+    return {
+        "start": _minute(raw.get("start")),
+        "end": _minute(raw.get("end")),
+        "enabled": _bool(raw.get("enabled")),
+        "value": _number(raw.get("value")),
+    }
+
+
+def parse_extras(data: Any) -> ReveExtras:
+    """Validate the ``data`` of ``EXTRAS_QUERY``; any doubt is a ``ValueError``."""
+    station = data.get("stationData") if isinstance(data, dict) else None
+    if not isinstance(station, dict):
+        raise ValueError("no stationData")  # pragma: no mutate - message text; only the exception type is ever logged
+    schedules = station.get("scheduleV2")
+    rates = station.get("ratesV2")
+    if not isinstance(schedules, list) or not isinstance(rates, dict):
+        raise ValueError("no scheduleV2/ratesV2")  # pragma: no mutate - message text; only the exception type is ever logged
+    rate_items = rates.get("rates")
+    if not isinstance(rate_items, list):
+        raise ValueError("no rates")  # pragma: no mutate - message text; only the exception type is ever logged
+    return ReveExtras(
+        schedules=tuple(_schedule_item(item) for item in schedules),
+        base_rate=_number(rates.get("base")),
+        rates=tuple(_rate_item(item) for item in rate_items),
+    )
+
+
+# ---------------------------------------------------------------------------
+# /main normalisation
+# ---------------------------------------------------------------------------
+
+
+def _hundredths(value: float) -> int:
+    """Currency units as the legacy ``tarif*`` hundredths."""
+    return round(value * 100)
+
+
+def _schedule_projection(schedules: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    projection: dict[str, Any] = {}
+    for slot, item in enumerate(schedules[:2], start=1):
+        projection[f"sh{slot}Enabled"] = int(item["enabled"])
+        projection[f"sh{slot}Start"] = item["start"]
+        projection[f"sh{slot}Stop"] = item["end"]
+        projection[f"sh{slot}CurrentEnable"] = int(item["currentLimitEnabled"])
+        projection[f"sh{slot}CurrentValue"] = item["value"]
+    return projection
+
+
+def _rate_projection(extras: ReveExtras) -> dict[str, Any]:
+    projection: dict[str, Any] = {"tarif": _hundredths(extras.base_rate)}
+    for letter, item in zip("AB", extras.rates):
+        projection[f"tarif{letter}Enable"] = int(item["enabled"])
+        projection[f"tarif{letter}Value"] = _hundredths(item["value"])
+        projection[f"tarif{letter}Start"] = item["start"]
+        projection[f"tarif{letter}Stop"] = item["end"]
+    return projection
+
+
+def _is_no_sensor_reading(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value == _NO_PLUG_SENSOR
+    )
+
+
+def normalize_reve_payload(
+    main: Mapping[str, Any], extras: ReveExtras | None
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """Return the payload the entities read, and the fields REVE cannot provide.
+
+    The input is never mutated. Without ``extras`` (GraphQL not read yet, or no
+    longer answering) the schedule and tariff fields are simply unsupported, so
+    their entities are unavailable rather than showing ``/main``'s projection.
+    """
+    payload = {key: value for key, value in main.items() if key not in REVE_UNRELIABLE_FIELDS}
+    if _is_no_sensor_reading(payload.get("temperature2")):
+        del payload["temperature2"]
+    if extras is not None:
+        payload.update(_schedule_projection(extras.schedules))
+        payload.update(_rate_projection(extras))
+    unsupported = frozenset(key for key in FIELD_KEYS if key not in payload)
+    return payload, unsupported
+
+
+# ---------------------------------------------------------------------------
+# Schedule writes
+# ---------------------------------------------------------------------------
+
+
+def _coerce_slot_value(field: str, value: Any) -> Any:
+    if field in ("enabled", "currentLimitEnabled"):
+        return _bool(value)
+    if field in ("start", "end"):
+        return _minute(value)
+    return _whole(value)
+
+
+def apply_schedule_command(
+    schedules: list[dict[str, Any]], command: str, value: Any
+) -> list[dict[str, Any]]:
+    """The full ``scheduleV2`` list with one legacy schedule field changed.
+
+    REVE replaces the whole list on every write, so every other schedule and
+    every other field goes back exactly as it was read.
+    """
+    if command not in SCHEDULE_COMMANDS:
+        raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged
+    slot = int(command[2])
+    if len(schedules) < slot:
+        raise ReveCommandUnsupported(f"schedule {slot} does not exist")  # pragma: no mutate - message text; only the exception type is ever logged
+    field = _SLOT_FIELDS[command[3:]]
+    updated = [dict(item) for item in schedules]
+    updated[slot - 1][field] = _coerce_slot_value(field, value)
+    return updated
+
+
+# ---------------------------------------------------------------------------
+# The coordinator's GraphQL side
+# ---------------------------------------------------------------------------
+
+
+class ReveApi:
+    """Reads and writes the settings REVE keeps only in GraphQL."""
+
+    def __init__(self, updater: Any) -> None:
+        self._updater = updater
+        self._extras: ReveExtras | None = None  # pragma: no mutate - read only behind `_fetched_at`, which is None here
+        self._fetched_at: float | None = None
+        self._retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
+        self._failures = 0
+        self._last_error: str | None = None  # pragma: no mutate - only read once a read has set or cleared it
+
+    @property
+    def extras(self) -> ReveExtras | None:
+        """The last good read, while it is recent enough to stand for now."""
+        if self._extras is None or self._fetched_at is None:
+            return None
+        if time.monotonic() - self._fetched_at > EXTRAS_MAX_AGE_SECONDS:
+            return None
+        return self._extras
+
+    async def refresh_if_due(self) -> None:
+        """Re-read schedules and rates when due. Never raises: ``/main`` decides
+        whether a poll succeeded, and a failed read only waits for its retry."""
+        now = time.monotonic()
+        if self._fetched_at is not None and now - self._fetched_at < EXTRAS_REFRESH_SECONDS:
+            return
+        if now < self._retry_at:
+            return
+        try:
+            self._store(await self._read_extras())
+        except asyncio.CancelledError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            self._failures += 1
+            self._last_error = type(err).__name__
+            self._retry_at = now + EXTRAS_RETRY_SECONDS
+            _LOGGER.debug("REVE schedules/rates read failed: %s", type(err).__name__)
+
+    def route(self, command: str) -> Callable[[Any], Awaitable[None]] | None:
+        """The GraphQL write for a command, or ``None`` to keep ``/pageEvent``."""
+        if command == CURRENT_COMMAND:
+            return self.set_station_current
+        if command in SCHEDULE_COMMANDS:
+            return partial(self.write_schedule, command)
+        if command in SCHEDULE_ENERGY_COMMANDS:
+            return partial(self._refuse, command)  # pragma: no mutate - the command only names the refusal
+        return None
+
+    async def set_station_current(self, value: Any) -> None:
+        await self._mutate({"stationCurrent": _whole(value)})
+
+    async def write_schedule(self, command: str, value: Any) -> None:
+        # Read right before writing: the list is replaced whole, and the app
+        # may have changed another schedule since the last poll.
+        current = await self._read_extras()
+        updated = apply_schedule_command(list(current.schedules), command, value)
+        await self._mutate({"scheduleV2": updated})
+        self._store(
+            ReveExtras(tuple(updated), current.base_rate, current.rates)
+        )
+
+    async def _refuse(self, command: str, _value: Any) -> None:
+        raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged
+
+    def diagnostics(self) -> dict[str, Any]:
+        extras = self.extras
+        return {
+            "graphql_ok": extras is not None and self._last_error is None,
+            "schedules": None if extras is None else len(extras.schedules),
+            "rates": None if extras is None else len(extras.rates),
+            "read_age_seconds": (
+                None
+                if self._fetched_at is None
+                else round(time.monotonic() - self._fetched_at)
+            ),
+            "read_failures": self._failures,
+            "last_error": self._last_error,
+        }
+
+    def _store(self, extras: ReveExtras) -> None:
+        self._extras = extras
+        self._fetched_at = time.monotonic()
+        self._retry_at = 0.0  # pragma: no mutate - any value below the monotonic clock is equivalent
+        self._last_error = None
+
+    async def _read_extras(self) -> ReveExtras:
+        return parse_extras(await self._post("StationData", EXTRAS_QUERY))
+
+    async def _mutate(self, change: dict[str, Any]) -> None:
+        data = await self._post("UpdateStationData", UPDATE_MUTATION, {"input": change})
+        result = data.get("updateStationData")
+        accepted = result is True or (
+            isinstance(result, dict) and result.get("success") is True
+        )
+        if not accepted:
+            raise GraphQLError("REVE did not accept the change")  # pragma: no mutate - message text; only the exception type is ever logged
+
+    async def _post(
+        self, operation: str, document: str, variables: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        updater = self._updater
+        return await post_graphql(
+            updater.get_session(),
+            updater.url_for("/graphql"),
+            auth=updater.basic_auth,
+            timeout=GRAPHQL_TIMEOUT,
+            operation=operation,
+            document=document,
+            variables=variables,
+        )

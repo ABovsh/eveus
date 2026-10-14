@@ -210,6 +210,14 @@ class CommandManager:
         # rather than the moment the command was queued behind the lock.
         if callable(value):
             value = value()
+        # REVE keeps a few settings only in GraphQL; for every other firmware,
+        # and every other command, there is no route and /pageEvent is used.
+        route = getattr(self._updater, "reve_command_route", None)
+        write = route(command) if route is not None else None
+        if write is not None:
+            await write(value)
+            self._consecutive_failures = 0
+            return True
         fields = {"pageevent": command, command: value}
         if extra:
             fields.update(extra)

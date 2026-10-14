@@ -30,6 +30,8 @@ class EveusBinaryDescription:
     icon: str
     is_on_fn: Callable[[EveusSnapshot], bool | None]
     entity_category: EntityCategory | None = None
+    # Payload fields the reading comes from; see `BaseEveusEntity._firmware_source_keys`.
+    source_keys: tuple[str, ...] = ()
 
 
 def _car_connected_is_on(snapshot: EveusSnapshot) -> bool | None:
@@ -78,6 +80,7 @@ BINARY_SENSORS: Final[tuple[EveusBinaryDescription, ...]] = (
         icon="mdi:cloud-check",
         entity_category=EntityCategory.DIAGNOSTIC,
         is_on_fn=_ocpp_connected_is_on,
+        source_keys=("ocppconnected",),
     ),
 )
 
@@ -101,6 +104,7 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
         self._attr_device_class = description.device_class
         self._attr_icon = description.icon
         self._attr_entity_category = description.entity_category
+        self._firmware_source_keys = description.source_keys
         # Last reading taken from a SUCCESSFUL poll, republished through the
         # grace window. Kept here rather than derived in the coordinator
         # callback so `is_on` still answers before the first update, the way

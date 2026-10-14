@@ -268,6 +268,8 @@ const ITEMS = {
   schedules: ['schedule_1', 'schedule_2'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
   safety: ['box', 'plug', 'ground', 'leak', 'connection'],
 };
+// The entity behind each safety item, in ITEMS.safety order; null = always shown.
+const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_current', null];
 const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
 // A grid whose stylesheet assumes `n` columns, re-spread when hidden items leave fewer.
 const columns = (count, n) => count === n ? '' : ` style="grid-template-columns:repeat(${count},minmax(0,1fr))"`;
@@ -935,9 +937,15 @@ class EveusCard extends HTMLElement {
         </button>`,
         `<button class="safety-item" data-more-info="leakage_current" title="${t.leak} — ${d}"><ha-icon icon="mdi:current-dc"></ha-icon><span class="safety-value ${r.leakCls}">${r.leak === null ? '—' : Math.round(r.leak)}<small>mA</small></span></button>`,
         `<button class="safety-item" data-more-info="connection_quality" title="${t.conn} — ${d}"><ha-icon icon="${connectionIcon(r.conn)}"></ha-icon><span class="safety-value ${r.connCls}">${r.conn === null ? '—' : Math.round(r.conn)}<small>%</small></span></button>`,
-      ].filter((_, i) => this._shows('safety', ITEMS.safety[i])).join('')}</div>
+      ].filter((_, i) => this._shows('safety', ITEMS.safety[i]) && !this._unsupported(SAFETY_SOURCES[i])).join('')}</div>
     </section>`;
   }
+  // A reading or setting the charger's firmware does not provide at all: the
+  // integration publishes it `unavailable` while the charger itself answers (REVE
+  // has no leakage current in mA, no schedule energy cap, and a unit without a
+  // plug sensor no plug temperature). An outage makes every entity unavailable at
+  // once; the card then shows the charger offline instead.
+  _unsupported(key) { return Boolean(key) && this._online && this._state(key)?.state === 'unavailable'; }
   get _charging() { return this._state('state')?.state === 'Charging'; }
   get _t() { return I18N[langOf(this._config, this._hass)]; }
   _shows(section, item) { return !this._config.hide?.includes(`${section}.${item}`); }
@@ -1250,7 +1258,7 @@ class EveusCard extends HTMLElement {
     };
     const cap = (kind, icon, label, fallbackUnit) => {
       const key = `${p}_${kind}_limit`, toggle = `${key}_enabled`;
-      if (!this._ids[key] || !this._ids[toggle]) return '';
+      if (!this._ids[key] || !this._ids[toggle] || this._unsupported(key)) return '';
       const capOn = this._limitOn(toggle), value = this._limitValue(key), attrs = this._state(key)?.attributes || {};
       const disabled = !this._online || value === null || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite);
       const shown = value === null ? '—' : `${Number(value.toFixed(attrs.step < 1 ? 1 : 0))}<small>${this._unit(key, fallbackUnit)}</small>`;

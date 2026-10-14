@@ -1,0 +1,686 @@
+{
+ "fw151_unknown_state_main.json": {
+  "eveus_active_rate_cost": {
+   "available": true,
+   "value": null
+  },
+  "eveus_adaptive_charging": {
+   "available": true,
+   "value": "Off"
+  },
+  "eveus_adaptive_current_limit": {
+   "available": true,
+   "value": 7.0
+  },
+  "eveus_adaptive_mode": {
+   "available": true,
+   "value": "Off"
+  },
+  "eveus_battery_capacity": {
+   "available": true,
+   "value": 50.0
+  },
+  "eveus_battery_voltage": {
+   "available": true,
+   "value": 2.87
+  },
+  "eveus_box_temperature": {
+   "available": true,
+   "value": 26.0
+  },
+  "eveus_car_connected": {
+   "available": true,
+   "value": null
+  },
+  "eveus_charging_current": {
+   "available": true,
+   "value": 7.0
+  },
+  "eveus_charging_finish_time": {
+   "available": false,
+   "value": null
+  },
+  "eveus_connect_to_ocpp": {
+   "available": true,
+   "value": null
+  },
+  "eveus_connection_quality": {
+   "available": true,
+   "value": 0
+  },
+  "eveus_cost_to_target_soc": {
+   "available": true,
+   "value": null
+  },
+  "eveus_counter_a_cost": {
+   "available": true,
+   "value": 7406.75
+  },
+  "eveus_counter_a_energy": {
+   "available": true,
+   "value": 2799.43
+  },
+  "eveus_counter_b_cost": {
+   "available": true,
+   "value": 7406.75
+  },
+  "eveus_counter_b_energy": {
+   "available": true,
+   "value": 2799.43
+  },
+  "eveus_current": {
+   "available": true,
+   "value": 0.0
+  },
+  "eveus_current_set": {
+   "available": true,
+   "value": 7.0
+  },
+  "eveus_energy_to_target_soc": {
+   "available": true,
+   "value": null
+  },
+  "eveus_force_refresh": {
+   "available": true,
+   "value": null
+  },
+  "eveus_ground": {
+   "available": true,
+   "value": "Connected"
+  },
+  "eveus_ground_protection": {
+   "available": true,
+   "value": null
+  },
+  "eveus_initial_soc": {
+   "available": true,
+   "value": 20.0
+  },
+  "eveus_last_session_cost": {
+   "available": true,
+   "value": null
+  },
+  "eveus_last_session_duration": {
+   "available": true,
+   "value": null
+  },
+  "eveus_last_session_energy": {
+   "available": true,
+   "value": null
+  },
+  "eveus_leakage_current": {
+   "available": true,
+   "value": 0.0
+  },
+  "eveus_leakage_current_peak": {
+   "available": true,
+   "value": null
+  },
+  "eveus_limit_cost": {
+   "available": true,
+   "value": 1280.0
+  },
+  "eveus_limit_cost_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_limit_disable_all": {
+   "available": true,
+   "value": false
+  },
+  "eveus_limit_energy": {
+   "available": true,
+   "value": 72.5
+  },
+  "eveus_limit_energy_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_limit_soc_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_limit_time": {
+   "available": true,
+   "value": 126.0
+  },
+  "eveus_limit_time_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_minimum_voltage": {
+   "available": true,
+   "value": null
+  },
+  "eveus_not_charging_reason": {
+   "available": true,
+   "value": "Unknown"
+  },
+  "eveus_ocpp_connected": {
+   "available": true,
+   "value": null
+  },
+  "eveus_one_charge": {
+   "available": true,
+   "value": false
+  },
+  "eveus_plug_temperature": {
+   "available": true,
+   "value": 18.0
+  },
+  "eveus_power": {
+   "available": true,
+   "value": 0.0
+  },
+  "eveus_primary_rate_cost": {
+   "available": true,
+   "value": 4.32
+  },
+  "eveus_rate_2_cost": {
+   "available": true,
+   "value": null
+  },
+  "eveus_rate_2_status": {
+   "available": true,
+   "value": null
+  },
+  "eveus_rate_3_cost": {
+   "available": true,
+   "value": null
+  },
+  "eveus_rate_3_status": {
+   "available": true,
+   "value": null
+  },
+  "eveus_reset_counter_a": {
+   "available": true,
+   "value": null
+  },
+  "eveus_reset_counter_b": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_1": {
+   "available": true,
+   "value": "Disabled"
+  },
+  "eveus_schedule_1_current_limit": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_1_current_limit_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_1_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_1_energy_limit": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_1_energy_limit_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_1_start": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_1_stop": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_2": {
+   "available": true,
+   "value": "Disabled"
+  },
+  "eveus_schedule_2_current_limit": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_2_current_limit_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_2_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_2_energy_limit": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_2_energy_limit_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_2_start": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_2_stop": {
+   "available": true,
+   "value": null
+  },
+  "eveus_session_active": {
+   "available": true,
+   "value": null
+  },
+  "eveus_session_cost": {
+   "available": true,
+   "value": 0.69
+  },
+  "eveus_session_energy": {
+   "available": true,
+   "value": 0.16
+  },
+  "eveus_session_time": {
+   "available": true,
+   "value": "5m"
+  },
+  "eveus_soc_correction": {
+   "available": true,
+   "value": 7.5
+  },
+  "eveus_soc_energy": {
+   "available": true,
+   "value": null
+  },
+  "eveus_soc_percent": {
+   "available": true,
+   "value": null
+  },
+  "eveus_state": {
+   "available": true,
+   "value": "Unknown"
+  },
+  "eveus_stop_charging": {
+   "available": true,
+   "value": true
+  },
+  "eveus_substate": {
+   "available": true,
+   "value": null
+  },
+  "eveus_sync_time": {
+   "available": true,
+   "value": null
+  },
+  "eveus_target_soc": {
+   "available": true,
+   "value": 80.0
+  },
+  "eveus_time_drift": {
+   "available": true,
+   "value": -8543220
+  },
+  "eveus_time_to_target_soc": {
+   "available": true,
+   "value": null
+  },
+  "eveus_time_zone": {
+   "available": true,
+   "value": "+3"
+  },
+  "eveus_total_energy": {
+   "available": true,
+   "value": 16386.2
+  },
+  "eveus_undervoltage_threshold": {
+   "available": true,
+   "value": 200.0
+  },
+  "eveus_voltage": {
+   "available": true,
+   "value": 225.0
+  },
+  "eveus_wifi_signal": {
+   "available": true,
+   "value": null
+  }
+ },
+ "real_main_response.json": {
+  "eveus_active_rate_cost": {
+   "available": true,
+   "value": 4.32
+  },
+  "eveus_adaptive_charging": {
+   "available": true,
+   "value": "Voltage"
+  },
+  "eveus_adaptive_current_limit": {
+   "available": true,
+   "value": 7.0
+  },
+  "eveus_adaptive_mode": {
+   "available": true,
+   "value": "Voltage"
+  },
+  "eveus_battery_capacity": {
+   "available": true,
+   "value": 50.0
+  },
+  "eveus_battery_voltage": {
+   "available": true,
+   "value": 2.81
+  },
+  "eveus_box_temperature": {
+   "available": true,
+   "value": 33.0
+  },
+  "eveus_car_connected": {
+   "available": true,
+   "value": false
+  },
+  "eveus_charging_current": {
+   "available": true,
+   "value": 16.0
+  },
+  "eveus_charging_finish_time": {
+   "available": false,
+   "value": null
+  },
+  "eveus_connect_to_ocpp": {
+   "available": true,
+   "value": false
+  },
+  "eveus_connection_quality": {
+   "available": true,
+   "value": 0
+  },
+  "eveus_cost_to_target_soc": {
+   "available": true,
+   "value": null
+  },
+  "eveus_counter_a_cost": {
+   "available": true,
+   "value": 2408.47
+  },
+  "eveus_counter_a_energy": {
+   "available": true,
+   "value": 766.78
+  },
+  "eveus_counter_b_cost": {
+   "available": true,
+   "value": 12044.86
+  },
+  "eveus_counter_b_energy": {
+   "available": true,
+   "value": 3512.48
+  },
+  "eveus_current": {
+   "available": true,
+   "value": 0.0
+  },
+  "eveus_current_set": {
+   "available": true,
+   "value": 16.0
+  },
+  "eveus_energy_to_target_soc": {
+   "available": true,
+   "value": null
+  },
+  "eveus_force_refresh": {
+   "available": true,
+   "value": null
+  },
+  "eveus_ground": {
+   "available": true,
+   "value": "Connected"
+  },
+  "eveus_ground_protection": {
+   "available": true,
+   "value": true
+  },
+  "eveus_initial_soc": {
+   "available": true,
+   "value": 20.0
+  },
+  "eveus_last_session_cost": {
+   "available": true,
+   "value": null
+  },
+  "eveus_last_session_duration": {
+   "available": true,
+   "value": null
+  },
+  "eveus_last_session_energy": {
+   "available": true,
+   "value": null
+  },
+  "eveus_leakage_current": {
+   "available": true,
+   "value": 0.0
+  },
+  "eveus_leakage_current_peak": {
+   "available": true,
+   "value": 0.0
+  },
+  "eveus_limit_cost": {
+   "available": true,
+   "value": 592.0
+  },
+  "eveus_limit_cost_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_limit_disable_all": {
+   "available": true,
+   "value": false
+  },
+  "eveus_limit_energy": {
+   "available": true,
+   "value": 56.904
+  },
+  "eveus_limit_energy_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_limit_soc_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_limit_time": {
+   "available": true,
+   "value": 378.0
+  },
+  "eveus_limit_time_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_minimum_voltage": {
+   "available": true,
+   "value": "200"
+  },
+  "eveus_not_charging_reason": {
+   "available": true,
+   "value": "Cable Not Connected"
+  },
+  "eveus_ocpp_connected": {
+   "available": true,
+   "value": false
+  },
+  "eveus_one_charge": {
+   "available": true,
+   "value": false
+  },
+  "eveus_plug_temperature": {
+   "available": true,
+   "value": 27.0
+  },
+  "eveus_power": {
+   "available": true,
+   "value": 0.0
+  },
+  "eveus_primary_rate_cost": {
+   "available": true,
+   "value": 4.32
+  },
+  "eveus_rate_2_cost": {
+   "available": true,
+   "value": 2.16
+  },
+  "eveus_rate_2_status": {
+   "available": true,
+   "value": "Enabled"
+  },
+  "eveus_rate_3_cost": {
+   "available": true,
+   "value": 1.0
+  },
+  "eveus_rate_3_status": {
+   "available": true,
+   "value": "Disabled"
+  },
+  "eveus_reset_counter_a": {
+   "available": true,
+   "value": null
+  },
+  "eveus_reset_counter_b": {
+   "available": true,
+   "value": null
+  },
+  "eveus_schedule_1": {
+   "available": true,
+   "value": "Enabled"
+  },
+  "eveus_schedule_1_current_limit": {
+   "available": true,
+   "value": 16.0
+  },
+  "eveus_schedule_1_current_limit_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_1_enabled": {
+   "available": true,
+   "value": true
+  },
+  "eveus_schedule_1_energy_limit": {
+   "available": true,
+   "value": 76.371
+  },
+  "eveus_schedule_1_energy_limit_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_1_start": {
+   "available": true,
+   "value": "23:00:00"
+  },
+  "eveus_schedule_1_stop": {
+   "available": true,
+   "value": "07:00:00"
+  },
+  "eveus_schedule_2": {
+   "available": true,
+   "value": "Disabled"
+  },
+  "eveus_schedule_2_current_limit": {
+   "available": true,
+   "value": 16.0
+  },
+  "eveus_schedule_2_current_limit_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_2_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_2_energy_limit": {
+   "available": true,
+   "value": 0.0
+  },
+  "eveus_schedule_2_energy_limit_enabled": {
+   "available": true,
+   "value": false
+  },
+  "eveus_schedule_2_start": {
+   "available": true,
+   "value": "09:00:00"
+  },
+  "eveus_schedule_2_stop": {
+   "available": true,
+   "value": "18:00:00"
+  },
+  "eveus_session_active": {
+   "available": true,
+   "value": false
+  },
+  "eveus_session_cost": {
+   "available": true,
+   "value": 44.57
+  },
+  "eveus_session_energy": {
+   "available": true,
+   "value": 20.63
+  },
+  "eveus_session_time": {
+   "available": true,
+   "value": "20h 00m"
+  },
+  "eveus_soc_correction": {
+   "available": true,
+   "value": 7.5
+  },
+  "eveus_soc_energy": {
+   "available": true,
+   "value": null
+  },
+  "eveus_soc_percent": {
+   "available": true,
+   "value": null
+  },
+  "eveus_state": {
+   "available": true,
+   "value": "Standby"
+  },
+  "eveus_stop_charging": {
+   "available": true,
+   "value": false
+  },
+  "eveus_substate": {
+   "available": true,
+   "value": "Schedule 1 Limit"
+  },
+  "eveus_sync_time": {
+   "available": true,
+   "value": null
+  },
+  "eveus_target_soc": {
+   "available": true,
+   "value": 80.0
+  },
+  "eveus_time_drift": {
+   "available": true,
+   "value": -4433640
+  },
+  "eveus_time_to_target_soc": {
+   "available": true,
+   "value": null
+  },
+  "eveus_time_zone": {
+   "available": true,
+   "value": "+3"
+  },
+  "eveus_total_energy": {
+   "available": true,
+   "value": 5107.83
+  },
+  "eveus_undervoltage_threshold": {
+   "available": true,
+   "value": 210.0
+  },
+  "eveus_voltage": {
+   "available": true,
+   "value": 226.0
+  },
+  "eveus_wifi_signal": {
+   "available": true,
+   "value": -64.0
+  }
+ }
+}

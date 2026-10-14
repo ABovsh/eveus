@@ -128,6 +128,7 @@ class OptimizedEveusSensor(EveusSensorBase):
         self.entity_description = spec
         self._error_log = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
         self._deadband = spec.deadband
+        self._firmware_source_keys = tuple(getattr(spec.value_fn, "source_keys", ()))
         self._attr_extra_state_attributes = {}
         self._meter_latest = None
         self._meter_context = None
@@ -489,6 +490,7 @@ def _make_value_getter(
         if transform:
             value = transform(value)
         return round(value, precision)
+    getter.source_keys = (key,)
     return getter
 
 
@@ -510,6 +512,7 @@ def _make_enum_getter(key: str, mapping: dict[int, str]):
     def getter(updater, hass) -> Optional[str]:
         return mapping.get(_read_int(updater, key))
     getter.options = tuple(dict.fromkeys(mapping.values()))
+    getter.source_keys = (key,)
     return getter
 
 
@@ -864,6 +867,10 @@ def get_active_rate_cost(updater, hass) -> Optional[float]:
     if value is None:
         return None
     return round(value / 100, 2)
+
+
+# Priced by the active-rate index; a firmware without one has no active rate.
+get_active_rate_cost.source_keys = ("activeTarif",)
 
 
 def get_active_rate_attrs(updater, hass) -> dict:

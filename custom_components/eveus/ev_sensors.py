@@ -578,6 +578,8 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
     """
 
     ENTITY_NAME = "Cost to Target SOC"
+    # Priced at the active rate, so it needs the charger's active-rate index.
+    _firmware_source_keys = ("activeTarif",)
     # Monetary semantics, but no state_class: a forecast that counts down to
     # zero would only pollute long-term statistics.
     _attr_device_class = SensorDeviceClass.MONETARY

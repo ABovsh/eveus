@@ -150,8 +150,19 @@ def _equals(key: str, expected: int, allowed: frozenset[int]) -> Signal:
     return evaluate
 
 
+# A raw reading the firmware does not provide at all is not "unknown": nothing
+# will ever arrive to settle it. Such a signal reads as absent — no trigger,
+# nothing left to recover from — so the policy falls back to the charger's own
+# fault codes, and a notice raised earlier can still recover. A reading that is
+# merely missing from one reply stays unknown and freezes the streaks.
+_ABSENT_TRIGGER = False
+_ABSENT_RECOVERED = True
+
+
 def _at_least(key: str, threshold: float) -> Signal:
     def evaluate(snapshot: EveusSnapshot) -> bool | None:
+        if not snapshot.supports(key):
+            return _ABSENT_TRIGGER
         value = snapshot.get(key)
         return None if value is None else value >= threshold
 
@@ -160,6 +171,8 @@ def _at_least(key: str, threshold: float) -> Signal:
 
 def _at_most(key: str, threshold: float) -> Signal:
     def evaluate(snapshot: EveusSnapshot) -> bool | None:
+        if not snapshot.supports(key):
+            return _ABSENT_RECOVERED
         value = snapshot.get(key)
         return None if value is None else value <= threshold
 
@@ -168,6 +181,8 @@ def _at_most(key: str, threshold: float) -> Signal:
 
 def _below(key: str, threshold: float) -> Signal:
     def evaluate(snapshot: EveusSnapshot) -> bool | None:
+        if not snapshot.supports(key):
+            return _ABSENT_RECOVERED
         value = snapshot.get(key)
         return None if value is None else value < threshold
 

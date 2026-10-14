@@ -82,7 +82,8 @@ _KNOWN_MAIN_FIELDS = frozenset({
     "IEM1_money", "IEM2", "IEM2_money", "lang", "leakValue", "leakValueH",
     "led_ctrl", "limitsStatus", "logReady", "manufacturer", "minCurrent",
     "minVoltage", "model", "moneyLimit", "moneyLimitS", "ocppconnected",
-    "ocppEnabled", "ocppOfflineAva", "ocppVendor", "one_charge", "oneCharge",
+    "ocppEnabled", "ocppOfflineAva", "ocppState", "ocppVendor", "ocppWorkOffline",
+    "one_charge", "oneCharge",
     "pilot", "powerMeas", "restricted_mode", "RSSI", "scanComplete", "serialNum",
     "serialNumCPU", "sessionEnergy", "sessionMoney", "sessionStart",
     "sessionStarted", "sessionTime", "sh1CurrentEnable", "sh1CurrentValue",
@@ -233,6 +234,7 @@ async def async_get_config_entry_diagnostics(
                 "current_set": _scalar(data.get("currentSet")),
                 "model": _scalar(data.get("model")),
                 "manufacturer": _scalar(data.get("manufacturer")),
+                "firmware_family": getattr(updater, "firmware_family", "classic"),
             },
             # SOC inputs and the external-sensor seeding outcome. Absent when
             # setup predates the calculator (older entries under test).
@@ -250,4 +252,10 @@ async def async_get_config_entry_diagnostics(
             "unknown_main_fields_suppressed": main_suppressed,
         }
     )
+    # REVE only: whether its GraphQL side answers, and which /main fields it
+    # cannot provide (field names only, never values).
+    reve_diagnostics = getattr(updater, "reve_diagnostics", None)
+    reve = reve_diagnostics() if callable(reve_diagnostics) else None
+    if reve is not None:
+        payload["reve"] = reve
     return payload
