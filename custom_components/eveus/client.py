@@ -26,12 +26,13 @@ from urllib.parse import urlencode
 import aiohttp
 
 from ._payload import raise_for_redirect, read_json_capped
-from .const import COMMAND_TIMEOUT, UPDATE_TIMEOUT
+from .const import COMMAND_TIMEOUT, GRAPHQL_TIMEOUT, UPDATE_TIMEOUT
 
 # Built once and shared, so the poll and the setup validation cannot drift onto
 # two different budgets again.
 UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
 COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
+GRAPHQL_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=GRAPHQL_TIMEOUT)
 
 _FORM_HEADERS = {"Content-type": "application/x-www-form-urlencoded"}
 _GRAPHQL_HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -134,7 +135,6 @@ async def post_graphql(
     url: str,
     *,
     auth: aiohttp.BasicAuth,
-    timeout: aiohttp.ClientTimeout | None,
     operation: str,
     document: str,
     variables: dict[str, Any] | None = None,
@@ -153,7 +153,7 @@ async def post_graphql(
         session,
         url,
         auth=auth,
-        timeout=timeout,
+        timeout=GRAPHQL_TIMEOUT_OBJ,
         data=body,
         headers=dict(_GRAPHQL_HEADERS),
     ) as response:

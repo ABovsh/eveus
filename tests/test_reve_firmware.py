@@ -40,6 +40,7 @@ from conftest import (
 import test_entity_inventory as inventory
 from custom_components.eveus import common_network
 from custom_components.eveus import reve
+from custom_components.eveus.client import GRAPHQL_TIMEOUT_OBJ
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.diagnostics import async_get_config_entry_diagnostics
 from custom_components.eveus.reve import (
@@ -490,7 +491,8 @@ def test_classic_firmware_never_touches_graphql(monkeypatch: pytest.MonkeyPatch)
     assert data == _classic_main()
     assert updater.snapshot.unsupported == frozenset()
     assert updater.firmware_family == "classic"
-    assert ok and ok_schedule
+    assert ok
+    assert ok_schedule
     assert charger.paths() == ["/main", "/pageEvent", "/pageEvent"]
 
 
@@ -795,7 +797,7 @@ def test_graphql_requests_carry_the_session_auth_timeout_and_operation(
 
     read, write = seen
     assert read["auth"] is updater.basic_auth
-    assert read["timeout"] is reve.GRAPHQL_TIMEOUT
+    assert read["timeout"] is GRAPHQL_TIMEOUT_OBJ
     assert read["allow_redirects"] is False
     assert json.loads(read["data"])["operationName"] == "StationData"
     assert json.loads(write["data"])["operationName"] == "UpdateStationData"
@@ -839,7 +841,8 @@ def test_reve_diagnostics_report_the_read_exactly(monkeypatch: pytest.MonkeyPatc
         "read_failures": 0,
         "last_error": None,
     }
-    assert "leakValue" in unsupported and unsupported == sorted(unsupported)
+    assert "leakValue" in unsupported
+    assert unsupported == sorted(unsupported)
 
     charger.graphql_status = 500
     now[0] += reve.EXTRAS_REFRESH_SECONDS

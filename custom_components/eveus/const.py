@@ -25,6 +25,9 @@ FIRST_FAILURE_RETRY_INTERVAL: Final[int] = 15
 # Stop no longer waits more than a minute behind a dead request.
 UPDATE_TIMEOUT: Final[int] = 10
 COMMAND_TIMEOUT: Final[int] = 12
+# REVE's GraphQL answers in ~0.05-0.3 s. A read rides inside a /main poll, so
+# a hanging one may delay that poll by at most this much, once per retry window.
+GRAPHQL_TIMEOUT: Final[int] = 6
 
 # Charger device-state value that means "idle/standby" (CHARGING_STATES[2]).
 DEVICE_STATE_STANDBY: Final[int] = 2

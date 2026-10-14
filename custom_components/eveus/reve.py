@@ -96,7 +96,6 @@ _MINUTES_PER_DAY: Final = 1440
 EXTRAS_REFRESH_SECONDS: Final = 60
 EXTRAS_RETRY_SECONDS: Final = 300
 EXTRAS_MAX_AGE_SECONDS: Final = 900
-GRAPHQL_TIMEOUT: Final = aiohttp.ClientTimeout(total=6)
 
 EXTRAS_QUERY: Final = """query StationData {
         stationData {
@@ -458,7 +457,6 @@ class ReveApi:
             updater.get_session(),
             updater.url_for("/graphql"),
             auth=updater.basic_auth,
-            timeout=GRAPHQL_TIMEOUT,
             operation=operation,
             document=document,
             variables=variables,
