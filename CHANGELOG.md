@@ -15,6 +15,7 @@
 - **Escape closes every question on the card,** including a counter reset and a stop that asks first.
 - **The session tariff shows the currency symbol for every currency,** not only for UAH.
 - **Counters showing only this month draw no empty row.**
+- **The Stop button's state fits on narrow cards.** "Tap to resume" was cut off in a three-button row about 360 px wide.
 
 ## 4.27.0 - 2026-10-11
 

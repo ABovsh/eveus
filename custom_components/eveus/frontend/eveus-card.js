@@ -1511,12 +1511,12 @@ class EveusCard extends HTMLElement {
     if (section === 'limits' || section === 'adaptive') return this[`_${section}Section`]({open});
     const html = this[`_${section}Section`]();
     if (!html.trimStart().startsWith('<section')) return html;
-    const {label, icon, cls, sum, sumCls, sumTitle} = this._foldInfo(section);
+    const {label, icon, cls, sum, sumCls, sumTitle, flag = ''} = this._foldInfo(section);
     if (open) {
       return html.replace(/<section[^>]*>/, (tag) => `${tag}<button class="fold-head" data-fold="${section}" aria-expanded="true"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><ha-icon class="fold-chev" icon="mdi:chevron-up"></ha-icon></button>`);
     }
     return `<section class="${['sl fold', `fold-${section}`, cls, this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${label}">
-      <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><span class="${['fold-sum', sumCls].filter(Boolean).join(' ')}"${sumTitle ? ` title="${sumTitle}"` : ''}>${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
+      <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span>${flag}<span class="${['fold-sum', sumCls].filter(Boolean).join(' ')}"${sumTitle ? ` title="${sumTitle}"` : ''}>${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
     </section>`;
   }
   // Large: the same section, its fitted values started bigger (the fit still shrinks what clips).
@@ -1552,7 +1552,7 @@ class EveusCard extends HTMLElement {
         if (!this._limitOn(`schedule_${n}_enabled`) || !start || !stop) return `${n} ${t.off}`;
         return ignored ? `<s>${n} ${start}→${stop}</s>` : `${n} ${start}→${stop}`;
       });
-      if (ignored) return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sumCls: 'overridden', sumTitle: t.oneOverrides.schedules, sum: `${this._overrideFlag('schedules')}${rows.join(sep)}`};
+      if (ignored) return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sumCls: 'overridden', sumTitle: t.oneOverrides.schedules, flag: this._overrideFlag('schedules'), sum: rows.join(sep)};
       return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sum: rows.join(sep)};
     }
     const total = this._online ? currentNumber(this._state('total_energy')) : null;
@@ -2052,6 +2052,8 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 .act-text{display:flex;flex-direction:column;align-items:flex-start;flex:1;min-width:0;line-height:1.2}
 .act-label,.act-state{display:block;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:clip}
 .act-label{font-size:14px}
+/* A third of a narrow card: a smaller icon and tighter padding leave the state line ("Tap to resume") room. */
+@container (max-width:380px){.act-btn{gap:5px;padding:4px 5px}.act-icon ha-icon{--mdc-icon-size:22px}.act-stop-icon{width:22px;height:22px}}
 .meter-item{align-items:center;text-align:center;padding:3px 4px 4px}
 .meter-head{justify-content:center}
 .sl.session{gap:6px}.session-row{flex:1;justify-content:space-around;gap:4px}
@@ -2188,6 +2190,7 @@ ha-card[data-theme=light] :is(.sl.session,.panel.history,.sl.fold-history){--h:#
 .panel.sched.overridden .sched-row.on .sched-time{text-decoration:line-through;text-decoration-color:color-mix(in srgb,#f39c12 80%,transparent);text-decoration-thickness:1.5px}
 .limits-head ha-icon.override-flag,ha-icon.override-flag{--mdc-icon-size:15px;padding:0;margin:0 4px 0 0;background:none;box-shadow:none;color:#f39c12;vertical-align:-3px}
 .limits-head .override-flag{margin-left:6px}
+.fold-btn>.override-flag{margin:0 -2px 0 auto;vertical-align:baseline}.fold-sum.overridden{flex:0 1 auto}
 .fold-sum.overridden s{text-decoration-color:color-mix(in srgb,#f39c12 80%,transparent);text-decoration-thickness:1.5px;color:var(--secondary-text-color)}
 `;
 

@@ -1747,3 +1747,8 @@ test('One charge on: only the schedules it ignores are struck through, and no ne
   s.card._nowHM = () => '20:00'; s.card.hass = s.hass;
   assert.doesNotMatch(s.html(), /from 23:00/);
 });
+test('the folded One charge flag is its own item in the centred row, not text inside the summary', () => {
+  const h = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('on')}}).html();
+  assert.match(h, /<\/span><ha-icon class="override-flag"[^>]*><\/ha-icon><span class="fold-sum overridden"/);
+  assert.doesNotMatch(h, /class="fold-sum[^"]*"[^>]*><ha-icon class="override-flag"/);
+});
