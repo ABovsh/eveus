@@ -1552,11 +1552,11 @@ test('every control reports a refused command', async () => {
   const reset = setupAll({sections:['history'], over:HISTORY});
   reset.hass.callService = fail;
   await reset.card._resetCounter('reset_counter_a'); await reset.card._resetCounter('reset_counter_a', true);
-  assert.match(reset.html(), /role="alert">Command failed/);
+  assert.match(reset.html(), /role="alert"[^>]*>Command failed/);
   const sync = setupAll({sections:['time'], over:TIME});
   sync.hass.callService = fail;
   await sync.card._syncTime();
-  assert.match(sync.html(), /role="alert">Command failed/);
+  assert.match(sync.html(), /role="alert"[^>]*>Command failed/);
   assert.doesNotMatch(sync.html(), /time-sync done/);
 });
 test('an unconfirmed current change is reported instead of silently reverting', async () => {
@@ -1639,4 +1639,111 @@ test('a failed old registry subscription does not orphan the current one', async
   x.card.disconnectedCallback();
   await new Promise((r) => setImmediate(r));
   assert.equal(unsubscribed, 1);
+});
+
+// ---- One charge overrides schedules and limits ----
+// The charger's "charge now" ignores every limit and schedule, so a user who sets a schedule
+// with One charge left on sees the car charge at once and the schedule apparently ignored.
+const ONE = (state) => ({one_charge:['switch.one', state]});
+test('One charge on: Schedules says the schedules are ignored and offers to turn it off', async () => {
+  const x = setupAll({sections:['schedules'], charging:false, over:{...SCHED, ...ONE('on')}});
+  const h = x.html();
+  assert.match(h, /class="panel sched overridden"/);
+  assert.match(h, /class="override" role="note"[^]*One charge ignores the schedules[^]*<button class="override-off" data-status-toggle="one_charge"[^>]*>Turn off</);
+  assert.doesNotMatch(rowOf(h, 1), /^ on now"/, 'a window One charge ignores is not marked running');
+  // The tap paints at once (the notice goes) and sends the One charge switch, nothing else.
+  let release; x.hass.callService = (...args) => { x.calls.push(args); return new Promise((r) => { release = r; }); };
+  x.card._onClick({target:{closest:(s) => s === '[data-status-toggle]' ? {dataset:{statusToggle:'one_charge'}} : null}});
+  assert.doesNotMatch(x.html(), /class="override"/, 'the notice goes on tap, before Home Assistant answers');
+  assert.equal(JSON.stringify(x.calls), JSON.stringify([['switch','turn_off',{entity_id:'switch.one'}]]));
+  release();
+});
+test('One charge notice: only when it is on, a schedule is on, and the charger answers', () => {
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...ONE('off')}}).html(), /class="override"|overridden/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...ONE('on'), schedule_1_enabled:['switch.s1','off']}}).html(), /class="override"/, 'no schedule on, nothing ignored');
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...ONE('on'), state:['sensor.state','unavailable']}}).html(), /class="override"/);
+  assert.match(setupAll({sections:['schedules'], locale:'uk', over:{...SCHED, ...ONE('on')}}).html(), /«Один заряд» ігнорує розклади[^]*>Вимкнути</);
+});
+test('One charge on: a folded Schedules row strikes the ignored windows through and says why', () => {
+  const x = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('on')}});
+  assert.match(x.html(), /data-fold="schedules"[^]*class="fold-sum overridden" title="One charge ignores the schedules"[^]*1 23:00→07:00/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('off')}}).html(), /overridden/);
+});
+test('One charge on: Limits shows the saved limits as suspended and says so', () => {
+  const on = {...ONE('on'), limit_energy_enabled:['switch.lee','on']};
+  const h = setupAll({sections:['limits'], over:on}).html();
+  assert.match(h, /One charge ignores the limits/);
+  assert.match(h, /limits-grid four suspended/);
+  assert.doesNotMatch(h, /limit-tile active/);
+  assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, ...ONE('off')}}).html(), /class="override"/);
+  assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, limit_disable_all:['switch.dis','on']}}).html(), /class="override"/, 'Disable all already says it');
+});
+test('One charge on: no schedule plan, and a schedule current cap is not blamed for a slow charge', () => {
+  assert.doesNotMatch(setupAll({sections:['advanced_info'], charging:false, over:plan(ONE('on'))}).html(), /soc-plan/);
+  const slow = {...SCHED, ...ONE('on'), current:['sensor.cur',9.9], charging_current:['number.cc',16,{min:6,max:16,step:1}],
+    schedule_1_current_limit:['number.s1c',10,{min:7,max:16,step:1}], adaptive_mode:['select.am','Off',{options:['Off','Voltage']}]};
+  const x = setupAll({sections:['status'], over:slow}); x.card._nowHM = () => '23:30'; x.card.hass = x.hass;
+  assert.doesNotMatch(x.html(), /Schedule 1 limit/);
+});
+
+// ---- Polish pass: errors that outlive their moment, gestures, empty grids ----
+test('a command error can be tapped away and clears itself; it never stays on the card for good', async () => {
+  const x = setupAll({sections:['time'], over:TIME});
+  x.hass.callService = async () => { throw Error('refused'); };
+  await x.card._syncTime();
+  assert.match(x.html(), /<button class="message cmd-error" role="alert" data-dismiss-error[^>]*>Command failed/);
+  x.card._onClick({target:{closest:(s) => s === '[data-dismiss-error]' ? {} : null}});
+  assert.doesNotMatch(x.html(), /Command failed/, 'a tap dismisses it');
+  await x.card._syncTime();
+  assert.match(x.html(), /Command failed/);
+  for (const fn of [...x.timers.values()]) fn();
+  assert.doesNotMatch(x.html(), /Command failed/, 'and it clears on its own');
+});
+test('a scroll gesture cancels a slider drag, not an increase waiting for confirmation', () => {
+  const {card, slide} = setup(32);
+  slide(24);
+  assert.equal(card._asking, true);
+  card._onPointerCancel();
+  assert.equal(card._asking, true, 'scrolling the page keeps the Confirm button');
+  slide(20, false);
+  card._onPointerCancel();
+  assert.equal(card._draft, null, 'a drag the browser took over is dropped');
+  assert.equal(card._sliding, false);
+});
+test('Counters with only this month shown draw no empty tile grid', async () => {
+  const x = setupAll({sections:['history'], hide:['history.total','history.counter_a','history.counter_b'], over:HISTORY});
+  x.card._month = {cur:12.3, prev:40}; x.card._lastSignature = null; x.card.hass = x.hass;
+  assert.match(x.html(), /hist-month/);
+  assert.doesNotMatch(x.html(), /tiles undefined|class="tiles/);
+});
+test('the session tariff writes its currency as a symbol, whatever the currency', () => {
+  const rate = (unit) => setupAll({sections:['session'], over:{car_connected:['binary_sensor.car','on'], active_rate_cost:['sensor.rate',0.25,{unit_of_measurement:unit, rate_name:'Primary Rate'}]}}).html();
+  assert.match(rate('UAH/kWh'), /class="session-rate"[^>]*>0\.25 ₴\/kWh</);
+  assert.match(rate('EUR/kWh'), /class="session-rate"[^>]*>0\.25 €\/kWh</);
+});
+test('the schedule time picker follows the theme: a dark picker on a light card hides its own icons', () => {
+  const style = source.match(/const MODULAR_STYLE = `([^`]*)`/)[1];
+  assert.match(style, /\.sched-time-input\{[^}]*color-scheme:dark/);
+  assert.match(style, /ha-card\[data-theme=light\] \.sched-time-input\{color-scheme:light\}/);
+});
+test('Escape closes any open question: a counter reset or a stop that asks first', async () => {
+  const esc = (card) => card._onKeyDown({key:'Escape', target:{dataset:{}}, preventDefault(){}});
+  const r = setupAll({sections:['history'], over:HISTORY});
+  await r.card._resetCounter('reset_counter_a');
+  assert.match(r.html(), /reset-ask/);
+  esc(r.card);
+  assert.doesNotMatch(r.html(), /reset-ask/);
+  const s = setupStatus({state:'Charging', sections:['actions']});
+  await s.card._statusToggle('stop_charging');
+  assert.match(s.html(), />Sure\?</);
+  esc(s.card);
+  assert.doesNotMatch(s.html(), />Sure\?</);
+  assert.equal(s.calls.length, 0);
+});
+test('One charge on: only the schedules it ignores are struck through, and no next start is promised', () => {
+  const x = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('on')}});
+  assert.match(x.html(), /<s>1 23:00→07:00<\/s><i class="info-sep">·<\/i>2 Off/);
+  const s = setupAll({sections:['status'], charging:false, over:{...SCHED, ...ONE('on'), not_charging_reason:['sensor.reason','Waiting for Schedule']}});
+  s.card._nowHM = () => '20:00'; s.card.hass = s.hass;
+  assert.doesNotMatch(s.html(), /from 23:00/);
 });

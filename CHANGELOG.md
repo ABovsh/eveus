@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### ✨ New
+
+- **The card tells you when One charge overrides your schedules and limits.** One charge makes the charger start at once and ignore every schedule and limit, so a schedule set while it is on seemed not to work. Schedules and Limits now say so in an amber note with a **Turn off** button; the ignored schedule windows are struck through and the limits shown as suspended, also on a folded row.
+
+### 🐛 Fixed
+
+- **Card error messages no longer stay for good.** A refused or unconfirmed change is shown for 30 seconds or until tapped.
+- **Scrolling the page keeps a pending current increase.** A touch scroll over the card no longer cancels the Confirm button of a raised **Current**.
+- **While One charge is on, the card no longer predicts a schedule.** The battery section drops the schedule's energy estimate, the status no longer names the next start or blames a schedule's current limit for a slow charge, and no schedule glows as running.
+- **The schedule time picker is readable in light themes.**
+- **Escape closes every question on the card,** including a counter reset and a stop that asks first.
+- **The session tariff shows the currency symbol for every currency,** not only for UAH.
+- **Counters showing only this month draw no empty row.**
+
 ## 4.27.0 - 2026-10-11
 
 ### ✨ New
