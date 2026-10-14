@@ -13,12 +13,17 @@ projection the firmware no longer maintains — verified on a live REVE Plus on
   within seconds. The real schedules are GraphQL ``scheduleV2``.
 * ``currentSet`` written through ``/pageEvent`` reverts within a second; GraphQL
   ``stationCurrent`` holds (and ``/main`` reports it).
+* ``evseEnabled`` — the classic Stop flag — changes nothing visible: on classic
+  firmware Stop put an idle charger in subState 1, on REVE ``evseEnabled=1``
+  leaves it at 0. REVE starts and stops through GraphQL ``chargingCommand``
+  (the vendor app's only start/stop): 2 puts the charger in subState 9,
+  waiting for activation, until 1 (start) or 0 (charge now) releases it.
 * ``leakValue`` / ``leakValueH`` are raw ADC counts — the same numbers ``/debug``
   shows as ``cll`` / ``clh`` — not milliamps.
 * ``temperature2`` reads -60 on a unit without a plug sensor.
 
-Everything else written through ``/pageEvent`` (Stop, One Charge, adaptive mode
-and threshold, minimum voltage) reaches the charger's real state.
+Everything else written through ``/pageEvent`` (One Charge, adaptive mode and
+threshold, minimum voltage) reaches the charger's real state.
 
 So the coordinator, for a REVE charger only, drops the unreliable fields, lays
 the GraphQL schedules and rates over the legacy keys the entities already read,
@@ -36,7 +41,7 @@ import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Final
 
@@ -57,6 +62,8 @@ REVE_UNRELIABLE_FIELDS: Final[frozenset[str]] = frozenset(
         "tarifAEnable", "tarifAValue", "tarifAStart", "tarifAStop",
         "tarifBEnable", "tarifBValue", "tarifBStart", "tarifBStop",
         "leakValue", "leakValueH",
+        # Stop is read from chargingCommand instead; see the docstring.
+        "evseEnabled",
         *(
             f"sh{slot}{field}"
             for slot in (1, 2)
@@ -86,6 +93,11 @@ SCHEDULE_ENERGY_COMMANDS: Final[frozenset[str]] = frozenset(
     f"sh{slot}Energy{suffix}" for slot in (1, 2) for suffix in ("Enable", "Value")
 )
 CURRENT_COMMAND: Final = "currentSet"
+STOP_COMMAND: Final = "evseEnabled"
+# chargingCommand values, as the vendor app sends them.
+_COMMAND_START: Final = 1
+_COMMAND_STOP: Final = 2
+_CHARGING_COMMANDS: Final = frozenset({0, _COMMAND_START, _COMMAND_STOP})
 
 _MINUTES_PER_DAY: Final = 1440
 
@@ -119,6 +131,7 @@ EXTRAS_QUERY: Final = """query StationData {
                     value
                 }
             }
+            chargingCommand
         }
     }"""
 
@@ -157,6 +170,8 @@ class ReveExtras:
     schedules: tuple[dict[str, Any], ...]
     base_rate: float
     rates: tuple[dict[str, Any], ...]
+    # The last start/stop command; None when REVE did not report a usable one.
+    charging_command: int | None = None
 
 
 def _bool(value: Any) -> bool:
@@ -250,10 +265,18 @@ def parse_extras(data: Any) -> ReveExtras:
     rate_items = rates.get("rates")
     if not isinstance(rate_items, list):
         raise ValueError("no rates")  # pragma: no mutate - message text; only the exception type is ever logged
+    command = station.get("chargingCommand")
     return ReveExtras(
         schedules=tuple(_schedule_item(item) for item in schedules),
         base_rate=_number(rates.get("base")),
         rates=tuple(_rate_item(item) for item in rate_items),
+        # Stop alone becomes unsupported without it; the schedules and rates
+        # are still good.
+        charging_command=(
+            command
+            if type(command) is int and command in _CHARGING_COMMANDS
+            else None
+        ),
     )
 
 
@@ -311,6 +334,8 @@ def normalize_reve_payload(
     if extras is not None:
         payload.update(_schedule_projection(extras.schedules))
         payload.update(_rate_projection(extras))
+        if extras.charging_command is not None:
+            payload[STOP_COMMAND] = int(extras.charging_command == _COMMAND_STOP)
     unsupported = frozenset(key for key in FIELD_KEYS if key not in payload)
     return payload, unsupported
 
@@ -394,6 +419,8 @@ class ReveApi:
         """The GraphQL write for a command, or ``None`` to keep ``/pageEvent``."""
         if command == CURRENT_COMMAND:
             return self.set_station_current
+        if command == STOP_COMMAND:
+            return self.set_stop
         if command in SCHEDULE_COMMANDS:
             return partial(self.write_schedule, command)
         if command in SCHEDULE_ENERGY_COMMANDS:
@@ -403,15 +430,20 @@ class ReveApi:
     async def set_station_current(self, value: Any) -> None:
         await self._mutate({"stationCurrent": _whole(value)})
 
+    async def set_stop(self, value: Any) -> None:
+        """Stop (1) or release (0) charging the way the vendor app does."""
+        command = _COMMAND_STOP if _bool(value) else _COMMAND_START
+        await self._mutate({"chargingCommand": command})
+        if self._extras is not None:
+            self._store(replace(self._extras, charging_command=command))
+
     async def write_schedule(self, command: str, value: Any) -> None:
         # Read right before writing: the list is replaced whole, and the app
         # may have changed another schedule since the last poll.
         current = await self._read_extras()
         updated = apply_schedule_command(list(current.schedules), command, value)
         await self._mutate({"scheduleV2": updated})
-        self._store(
-            ReveExtras(tuple(updated), current.base_rate, current.rates)
-        )
+        self._store(replace(current, schedules=tuple(updated)))
 
     async def _refuse(self, command: str, _value: Any) -> None:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged

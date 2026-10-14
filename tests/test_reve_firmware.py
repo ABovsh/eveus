@@ -124,7 +124,7 @@ def test_unreliable_main_fields_are_dropped_without_graphql_data() -> None:
     payload, unsupported = normalize_reve_payload(main, None)
 
     for key in _RATE_KEYS | _SCHEDULE_KEYS | _SCHEDULE_ENERGY_KEYS | {
-        "activeTarif", "leakValue", "leakValueH", "temperature2"
+        "activeTarif", "leakValue", "leakValueH", "temperature2", "evseEnabled"
     }:
         assert key not in payload, key
         assert key in unsupported, key
@@ -132,7 +132,7 @@ def test_unreliable_main_fields_are_dropped_without_graphql_data() -> None:
     assert "ocppconnected" in unsupported
     # Everything else passes through untouched.
     for key in ("state", "subState", "currentSet", "voltMeas1", "totalEnergy",
-                "evseEnabled", "aiStatus", "temperature1", "verFWWifi"):
+                "oneCharge", "aiStatus", "temperature1", "verFWWifi"):
         assert payload[key] == main[key]
         assert key not in unsupported
     # The caller's payload is not mutated.
@@ -256,6 +256,7 @@ _NO_REVE_SOURCE = {
     "eveus_schedule_2_energy_limit_enabled",
 }
 _FROM_GRAPHQL = {
+    "eveus_stop_charging",
     "eveus_schedule_1", "eveus_schedule_2",
     "eveus_schedule_1_enabled", "eveus_schedule_2_enabled",
     "eveus_schedule_1_start", "eveus_schedule_1_stop",
@@ -551,10 +552,10 @@ def test_reve_settings_with_a_working_page_event_still_use_it(monkeypatch: pytes
     asyncio.run(updater._async_update_data())
     charger.calls.clear()
 
-    for command, value in (("aiMode", 0), ("evseEnabled", 1), ("oneCharge", 0), ("minVoltage", 180)):
+    for command, value in (("aiMode", 0), ("oneCharge", 0), ("minVoltage", 180)):
         assert asyncio.run(updater._command_manager.send_command(command, value)) is True
 
-    assert charger.paths() == ["/pageEvent"] * 4
+    assert charger.paths() == ["/pageEvent"] * 3
 
 
 def test_a_rejected_graphql_write_fails_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -890,3 +891,64 @@ def test_a_partial_graphql_result_with_errors_is_rejected(monkeypatch: pytest.Mo
     asyncio.run(updater._async_update_data())
     assert updater.snapshot.supports("sh1Enabled") is False
     assert updater.reve_diagnostics()["last_error"] == "GraphQLError"
+
+
+# ---------------------------------------------------------------------------
+# Stop Charging on REVE: the vendor's own start/stop command
+# ---------------------------------------------------------------------------
+# Verified idle on REVE_PLUS_1.0.0 (2026-10-15): chargingCommand=2 puts the
+# charger in subState 9 (waiting for activation) until a start command, while
+# evseEnabled=1 changes nothing visible (on classic firmware Stop showed
+# subState 1). The vendor app starts and stops only through chargingCommand.
+
+
+@pytest.mark.parametrize(("command", "stopped"), [(2, 1), (1, 0), (0, 0)])
+def test_stop_reads_the_charging_command(command: int, stopped: int) -> None:
+    body = copy.deepcopy(_reve_extras_body()["data"])
+    body["stationData"]["chargingCommand"] = command
+    payload, unsupported = normalize_reve_payload(_reve_main(), parse_extras(body))
+    assert payload["evseEnabled"] == stopped
+    assert "evseEnabled" not in unsupported
+
+
+@pytest.mark.parametrize("command", [None, 3, -1, "2", True])
+def test_an_unusable_charging_command_leaves_stop_unsupported(command: Any) -> None:
+    body = copy.deepcopy(_reve_extras_body()["data"])
+    if command is None:
+        del body["stationData"]["chargingCommand"]
+    else:
+        body["stationData"]["chargingCommand"] = command
+    extras = parse_extras(body)
+    payload, unsupported = normalize_reve_payload(_reve_main(), extras)
+    assert "evseEnabled" not in payload
+    assert "evseEnabled" in unsupported
+    # The schedules and rates still come through.
+    assert payload["sh1Start"] == 1380
+
+
+def test_reve_stop_and_resume_go_through_the_charging_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    charger.calls.clear()
+
+    assert asyncio.run(updater._command_manager.send_command("evseEnabled", 1)) is True
+    assert asyncio.run(updater._command_manager.send_command("evseEnabled", 0)) is True
+
+    assert charger.paths() == ["/graphql", "/graphql"]
+    stop, resume = (body["variables"] for _, body in charger.calls)
+    assert stop == {"input": {"chargingCommand": 2}}
+    assert resume == {"input": {"chargingCommand": 1}}
+
+
+def test_the_stop_written_is_what_the_next_poll_shows(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    asyncio.run(updater._command_manager.send_command("evseEnabled", 1))
+    charger.calls.clear()
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["evseEnabled"] == 1
+    assert charger.paths() == ["/main"]

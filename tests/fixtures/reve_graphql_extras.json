@@ -109,7 +109,8 @@
                         6
                     ]
                 }
-            ]
+            ],
+            "chargingCommand": 1
         }
     }
 }

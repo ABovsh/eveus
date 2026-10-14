@@ -502,7 +502,7 @@ The number of entities depends on the integration mode and phase count.
 
 The integration recognizes REVE firmware by itself; no setup change is needed.
 
-- **Charging Current** and the schedules are written where REVE keeps them, so a change made in Home Assistant stays in effect. Schedule 1 and Schedule 2 are the first two schedules in the charger's app; the days of the week set there are kept.
+- **Charging Current** and the schedules are written where REVE keeps them, so a change made in Home Assistant stays in effect. **Stop Charging** uses REVE's own start/stop command, the one the charger's app sends. Schedule 1 and Schedule 2 are the first two schedules in the charger's app; the days of the week set there are kept.
 - Schedules and tariffs changed in the charger's app appear in Home Assistant within about a minute.
 - **Primary Rate Cost** shows REVE's base price; the Rate 2 and Rate 3 sensors show its first two rates.
 - REVE does not report these readings, so they stay unavailable: **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, **Active Rate Cost**, **Cost to Target SOC**, the schedule energy limits, and **Plug Temperature** on a charger without a plug sensor.
