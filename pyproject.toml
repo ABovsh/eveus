@@ -35,6 +35,8 @@ source_paths = ["custom_components/eveus/"]
 do_not_mutate = [
     # Pure re-export shim: imports and __all__, no branch for a mutant to hide in.
     "custom_components/eveus/common.py",
+    # Developer probe, never released.
+    "custom_components/eveus/dev_probe.py",  # DEV-PROBE
 ]
 # Log calls and lines already reviewed and marked `pragma: no mutate` are never
 # asserted on, so a mutant there survives by construction.
@@ -52,6 +54,7 @@ pytest_add_cli_args = [
     "--ignore=tests/test_firmware_drift_live.py",
     "--ignore=tests/test_blueprints.py",
     "--ignore=tests/test_entity_inventory.py",
+    "--ignore=tests/test_reve_probe_report.py",  # DEV-PROBE
 ]
 pytest_add_cli_args_test_selection = ["tests/"]
 # Translations, the dashboard card and other non-Python package data that the
