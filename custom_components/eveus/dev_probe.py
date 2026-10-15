@@ -13,8 +13,8 @@ While enabled it:
   GraphQL request (operation, outcome, latency, error kind), plus a line when
   the probe starts and whenever the firmware versions change;
 * reads REVE's GraphQL every ``GRAPHQL_PROBE_SECONDS`` instead of every five
-  minutes, also while ``/main`` is failing, so outage windows are known to the
-  minute;
+  minutes, on a timer of its own (so independently of ``/main``'s cadence) and
+  also while ``/main`` is failing, so outage windows are known to the minute;
 * while a car is in, reads REVE's session from GraphQL once a minute and logs
   it next to ``/main``'s session fields from the same poll (``"event":
   "session"``), to decide which source the session sensors should read;
@@ -40,14 +40,14 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import async_track_time_change, async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from . import reve
@@ -59,10 +59,14 @@ _LOGGER = logging.getLogger(__name__)
 
 PROBE_DIR = "eveus_probe"
 # How often GraphQL is read while the probe runs; the integration alone reads
-# it every five minutes. A request about 55 s after the last one is due, so a
-# poll landing a moment early does not skip a minute.
-GRAPHQL_PROBE_SECONDS = 60
+# it every five minutes. 30 s since 2026-10-15 22:xx, the vendor's question:
+# does a 30 s interval change how often the Wi-Fi module drops (60 s before).
+# A request 5 s short of the interval is due, so a poll or tick landing a
+# moment early does not skip a turn.
+GRAPHQL_PROBE_SECONDS = 30
 _DUE_SLACK = 5
+# The session is compared once a minute whatever the read interval is.
+SESSION_COMPARE_SECONDS = 60
 API_MAIN = "main"
 API_GRAPHQL = "graphql"
 # Read only while a car is in (CONNECTED_STATES), next to /main's session
@@ -215,6 +219,7 @@ class DevProbe:
         self._last_session: float | None = None
         self._firmware: tuple[Any, Any] | None = None
         self._unsub_midnight: Callable[[], None] | None = None
+        self._unsub_reads: Callable[[], None] | None = None
 
     async def async_start(self) -> None:
         today = dt_util.now().date()
@@ -229,10 +234,15 @@ class DevProbe:
         self._unsub_midnight = async_track_time_change(
             self._hass, self._midnight, hour=0, minute=0, second=0
         )
+        self._unsub_reads = async_track_time_interval(
+            self._hass, self._read_tick, timedelta(seconds=GRAPHQL_PROBE_SECONDS)
+        )
 
     async def async_close(self) -> None:
         if self._unsub_midnight is not None:
             self._unsub_midnight()
+        if self._unsub_reads is not None:
+            self._unsub_reads()
         for task in list(self._tasks):
             task.cancel()
         while self._writer is not None and not self._writer.done():
@@ -298,15 +308,25 @@ class DevProbe:
             or time.monotonic() - self._last_graphql >= GRAPHQL_PROBE_SECONDS - _DUE_SLACK
         )
 
+    @callback
+    def _read_tick(self, _now: datetime) -> None:
+        self._probe_graphql_now()
+
     def _probe_graphql_now(self) -> None:
-        """Ask GraphQL while /main fails, so the two outages are told apart."""
+        """Ask GraphQL when due, between polls and while /main fails."""
         if not getattr(self._updater, "_reve_seen", False) or not self._graphql_due():
             return
         task = self._hass.async_create_background_task(
-            self._updater._reve.refresh(), "eveus dev probe GraphQL read"
+            self._read_if_due(), "eveus dev probe GraphQL read"
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def _read_if_due(self) -> None:
+        # Checked again when the task runs: a poll may have read meanwhile,
+        # and two reads at once are a load the charger never sees otherwise.
+        if self._graphql_due():
+            await self._updater._reve.refresh()
 
     def _main_succeeded(self, response_time: float, data: dict[str, Any]) -> None:
         firmware = (
@@ -330,7 +350,7 @@ class DevProbe:
         now = time.monotonic()
         if (
             self._last_session is not None
-            and now - self._last_session < GRAPHQL_PROBE_SECONDS - _DUE_SLACK
+            and now - self._last_session < SESSION_COMPARE_SECONDS - _DUE_SLACK
         ):
             return
         self._last_session = now

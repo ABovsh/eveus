@@ -145,6 +145,19 @@ def _no_midnight_timer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dev_probe, "async_track_time_change", lambda *_a, **_k: lambda: None)
 
 
+@pytest.fixture(autouse=True)
+def _read_timer(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The probe's own GraphQL timer, fired by hand: [callback, interval]."""
+    timer: list[Any] = []
+
+    def track(_hass: Any, action: Any, interval: timedelta) -> Any:
+        timer[:] = [action, interval]
+        return lambda: timer.clear()
+
+    monkeypatch.setattr(dev_probe, "async_track_time_interval", track, raising=False)
+    return timer
+
+
 def _lines(root: Path) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for path in sorted((root / dev_probe.PROBE_DIR).glob("*.jsonl")):
@@ -250,6 +263,41 @@ def test_graphql_is_read_every_minute_and_while_main_fails(
     main_failure = [line for line in _lines(tmp_path) if line.get("api") == API_MAIN][-1]
     assert main_failure["err"] == "TimeoutError"
     assert updater.dev_probe.outages[API_MAIN].down_since is not None
+
+
+def test_graphql_is_read_every_thirty_seconds_between_main_polls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _read_timer: list[Any]
+) -> None:
+    # Asked by the vendor (2026-10-15): does a 30 s request interval change
+    # how often the Wi-Fi module drops? /main keeps its own cadence, so the
+    # probe reads GraphQL on a timer of its own.
+    (tmp_path / dev_probe.PROBE_DIR).mkdir()
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    hass, entry = _Hass(tmp_path), _Entry()
+
+    async def scenario() -> None:
+        await dev_probe.async_attach(hass, entry, updater)
+        await _poll(updater)
+        tick, interval = _read_timer
+        assert interval == timedelta(seconds=30)
+        tick(None)  # not due yet: the poll has just read
+        await _settle(hass)
+        now[0] += GRAPHQL_PROBE_SECONDS
+        tick(None)  # due, with no /main poll in between
+        await _settle(hass)
+        await entry.unload()
+
+    asyncio.run(scenario())
+    exchanges = [(line["api"], line["ok"]) for line in _lines(tmp_path) if "api" in line]
+
+    assert GRAPHQL_PROBE_SECONDS == 30
+    assert exchanges == [
+        *[(API_GRAPHQL, True)] * 3, (API_MAIN, True),
+        *[(API_GRAPHQL, True)] * 3,
+    ]
+    assert _read_timer == []  # the timer stops with the entry
 
 
 def test_graphql_failures_count_as_outages_and_reach_the_sensor(
