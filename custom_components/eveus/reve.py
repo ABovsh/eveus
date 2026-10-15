@@ -118,7 +118,11 @@ EXTRAS_REFRESH_SECONDS: Final = 300
 EXTRAS_RETRY_SECONDS: Final = 300
 EXTRAS_MAX_AGE_SECONDS: Final = 3600
 
-EXTRAS_QUERY: Final = """query StationData {
+# The vendor app reads each setting with its own small document; these are
+# its ScheduleV2 and RatesV2 queries as the local interface takes them (no
+# stationId), and a document of the same shape for chargingCommand. Sent one
+# at a time, in this order, stopping at the first refused one.
+SCHEDULES_QUERY: Final = """query StationData {
         stationData {
             scheduleV2 {
                 name
@@ -129,6 +133,11 @@ EXTRAS_QUERY: Final = """query StationData {
                 value
                 currentLimitEnabled
             }
+        }
+    }"""
+
+RATES_QUERY: Final = """query StationData {
+        stationData {
             ratesV2 {
                 base
                 rates {
@@ -140,6 +149,11 @@ EXTRAS_QUERY: Final = """query StationData {
                     value
                 }
             }
+        }
+    }"""
+
+COMMAND_QUERY: Final = """query StationData {
+        stationData {
             chargingCommand
         }
     }"""
@@ -268,21 +282,30 @@ def _rate_item(raw: Any) -> dict[str, Any]:
     }
 
 
+def parse_schedules(station: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Validate ``stationData.scheduleV2``; any doubt is a ``ValueError``."""
+    schedules = station.get("scheduleV2")
+    if not isinstance(schedules, list):
+        raise ValueError("no scheduleV2")  # pragma: no mutate - message text; only the exception type is ever logged
+    return tuple(_schedule_item(item) for item in schedules)
+
+
 def parse_extras(data: Any) -> ReveExtras:
-    """Validate the ``data`` of ``EXTRAS_QUERY``; any doubt is a ``ValueError``."""
+    """Validate the merged ``data`` of the three read documents; any doubt is a
+    ``ValueError``."""
     station = data.get("stationData") if isinstance(data, dict) else None
     if not isinstance(station, dict):
         raise ValueError("no stationData")  # pragma: no mutate - message text; only the exception type is ever logged
-    schedules = station.get("scheduleV2")
+    schedules = parse_schedules(station)
     rates = station.get("ratesV2")
-    if not isinstance(schedules, list) or not isinstance(rates, dict):
-        raise ValueError("no scheduleV2/ratesV2")  # pragma: no mutate - message text; only the exception type is ever logged
+    if not isinstance(rates, dict):
+        raise ValueError("no ratesV2")  # pragma: no mutate - message text; only the exception type is ever logged
     rate_items = rates.get("rates")
     if not isinstance(rate_items, list):
         raise ValueError("no rates")  # pragma: no mutate - message text; only the exception type is ever logged
     command = station.get("chargingCommand")
     return ReveExtras(
-        schedules=tuple(_schedule_item(item) for item in schedules),
+        schedules=schedules,
         base_rate=_number(rates.get("base")),
         rates=tuple(_rate_item(item) for item in rate_items),
         # Stop alone becomes unsupported without it; the schedules and rates
@@ -504,8 +527,14 @@ class ReveApi:
 
     async def write_schedule(self, command: str, value: Any) -> None:
         # Read right before writing: the list is replaced whole, and the app
-        # may have changed another schedule since the last poll.
-        current = await self._read_extras()
+        # may have changed another schedule since the last poll. The rates and
+        # Stop stand on the last read; with none yet, read everything.
+        held = self._extras
+        if held is None:
+            current = await self._read_extras()
+        else:
+            schedules = parse_schedules(await self._station(SCHEDULES_QUERY))
+            current = ReveExtras(schedules, held.base_rate, held.rates, held.charging_command)
         updated = apply_schedule_command(list(current.schedules), command, value)
         await self._mutate({"scheduleV2": updated})
         self._store(
@@ -546,7 +575,17 @@ class ReveApi:
         self._last_error = None
 
     async def _read_extras(self) -> ReveExtras:
-        return parse_extras(await self._post("StationData", EXTRAS_QUERY))
+        station: dict[str, Any] = {}
+        for document in (SCHEDULES_QUERY, RATES_QUERY, COMMAND_QUERY):
+            station.update(await self._station(document))
+        return parse_extras({"stationData": station})
+
+    async def _station(self, document: str) -> dict[str, Any]:
+        data = await self._post("StationData", document)
+        station = data.get("stationData")
+        if not isinstance(station, dict):
+            raise ValueError("no stationData")  # pragma: no mutate - message text; only the exception type is ever logged
+        return station
 
     async def _mutate(self, change: dict[str, Any]) -> None:
         data = await self._post("UpdateStationData", UPDATE_MUTATION, {"input": change})

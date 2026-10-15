@@ -57,7 +57,7 @@ async def test_the_probe_publishes_its_sensors_and_logs(
             ]
         )
         assert [line.get("event") or line["api"] for line in lines] == [
-            "start", "graphql", "firmware", "main",
+            "start", "graphql", "graphql", "graphql", "firmware", "main",
         ]
     finally:
         await hass.async_add_executor_job(

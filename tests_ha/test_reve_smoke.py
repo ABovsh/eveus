@@ -67,7 +67,8 @@ async def test_reve_charger_publishes_its_real_settings(
     assert float(state(f"number.{_PREFIX}_charging_current")) == 7
     assert state(f"sensor.{_PREFIX}_state") == "Standby"
     graphql_calls = [call for call in aioclient_mock.mock_calls if str(call[1]).endswith("/graphql")]
-    assert len(graphql_calls) == 1
+    # One read: the schedules, the rates and Stop, one small document each.
+    assert len(graphql_calls) == 3
 
 
 async def test_reve_raw_leak_counts_raise_no_repair(

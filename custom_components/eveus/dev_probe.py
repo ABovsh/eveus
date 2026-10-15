@@ -47,6 +47,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
+from . import reve
 from ._payload import PayloadError
 from .common_base import BaseEveusEntity
 
@@ -60,6 +61,13 @@ GRAPHQL_PROBE_SECONDS = 60
 _DUE_SLACK = 5
 API_MAIN = "main"
 API_GRAPHQL = "graphql"
+# Every read document shares the operation name StationData; the log names
+# which one it was, so a refusal shows which document the server refused.
+_DOCUMENT_LABELS = {
+    reve.SCHEDULES_QUERY: "ScheduleV2",
+    reve.RATES_QUERY: "RatesV2",
+    reve.COMMAND_QUERY: "ChargingCommand",
+}
 _SENSOR_NAMES = {
     API_MAIN: "Dev /main outages today",
     API_GRAPHQL: "Dev GraphQL outages today",
@@ -231,6 +239,7 @@ class DevProbe:
         async def logged_post(
             operation: str, document: str, variables: dict[str, Any] | None = None
         ) -> dict[str, Any]:
+            label = _DOCUMENT_LABELS.get(document, operation)
             start = time.monotonic()
             self._last_graphql = start
             try:
@@ -239,10 +248,10 @@ class DevProbe:
                 raise
             except Exception as err:
                 self._exchange(
-                    API_GRAPHQL, operation, False, time.monotonic() - start, error_kind(err)
+                    API_GRAPHQL, label, False, time.monotonic() - start, error_kind(err)
                 )
                 raise
-            self._exchange(API_GRAPHQL, operation, True, time.monotonic() - start, None)
+            self._exchange(API_GRAPHQL, label, True, time.monotonic() - start, None)
             return data
 
         async def probing_refresh() -> None:

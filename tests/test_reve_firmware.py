@@ -438,10 +438,14 @@ class _Charger:
                 if "chargingCommand" in change:
                     self.charging_command = change["chargingCommand"]
                 return _Response(200, {"data": {"updateStationData": {"__typename": "UpdateStationData", "success": True}}})
-            return _Response(200, {"data": {"stationData": {
+            # Like the real server: only the fields the document asks for.
+            station = {
                 "scheduleV2": self.schedules,
                 "ratesV2": self.rates,
                 "chargingCommand": self.charging_command,
+            }
+            return _Response(200, {"data": {"stationData": {
+                key: value for key, value in station.items() if key in body["query"]
             }}})
         self.calls.append((path, kwargs.get("data")))
         if path == "/main":
@@ -450,6 +454,13 @@ class _Charger:
 
     def paths(self) -> list[str]:
         return [path for path, _ in self.calls]
+
+    def reads(self) -> int:
+        """GraphQL reads started: each one opens with the schedules document."""
+        return sum(
+            1 for path, body in self.calls
+            if path == "/graphql" and body["query"] == reve.SCHEDULES_QUERY
+        )
 
 
 def _updater(monkeypatch: pytest.MonkeyPatch, charger: _Charger) -> EveusUpdater:
@@ -469,7 +480,9 @@ def test_a_reve_poll_reads_graphql_once_per_refresh_window(monkeypatch: pytest.M
     data = asyncio.run(updater._async_update_data())
     asyncio.run(updater._async_update_data())
 
-    assert charger.paths() == ["/main", "/graphql", "/main"]
+    # One read (three small documents) after the first /main, none after the second.
+    assert charger.paths() == ["/main", "/graphql", "/graphql", "/graphql", "/main"]
+    assert charger.reads() == 1
     assert data["sh1Start"] == 1380
     assert "leakValue" not in data
     assert updater.snapshot.supports("sh1Start") is True
@@ -696,7 +709,7 @@ def test_a_failed_read_is_retried_after_the_back_off(monkeypatch: pytest.MonkeyP
     now[0] += 2
     asyncio.run(updater._async_update_data())
     assert updater.snapshot.supports("sh1Enabled") is True
-    assert charger.paths().count("/graphql") == 2
+    assert charger.reads() == 2
 
 
 @pytest.mark.parametrize(
@@ -808,7 +821,10 @@ def test_graphql_requests_carry_the_session_auth_timeout_and_operation(
     asyncio.run(updater._async_update_data())
     asyncio.run(updater._command_manager.send_command("currentSet", 8))
 
-    read, write = seen
+    *reads, write = seen
+    assert len(reads) == 3
+    read = reads[0]
+    assert all(json.loads(item["data"])["operationName"] == "StationData" for item in reads)
     assert read["auth"] is updater.basic_auth
     assert read["timeout"] is GRAPHQL_TIMEOUT_OBJ
     assert read["allow_redirects"] is False
@@ -826,14 +842,14 @@ def test_reads_refresh_exactly_at_the_window_and_retry_exactly_at_the_back_off(
     asyncio.run(updater._async_update_data())
     now[0] += reve.EXTRAS_REFRESH_SECONDS
     asyncio.run(updater._async_update_data())
-    assert charger.paths().count("/graphql") == 2
+    assert charger.reads() == 2
 
     charger.graphql_status = 500
     now[0] += reve.EXTRAS_REFRESH_SECONDS
     asyncio.run(updater._async_update_data())
     now[0] += reve.EXTRAS_RETRY_SECONDS
     asyncio.run(updater._async_update_data())
-    assert charger.paths().count("/graphql") == 4
+    assert charger.reads() == 4
     assert updater.reve_diagnostics()["read_failures"] == 2
 
 
@@ -990,7 +1006,7 @@ def test_graphql_is_read_every_five_minutes_while_healthy(monkeypatch: pytest.Mo
     for _ in range(10):  # ten polls a minute apart
         asyncio.run(updater._async_update_data())
         now[0] += 60
-    assert charger.paths().count("/graphql") == 2
+    assert charger.reads() == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1106,7 +1122,7 @@ def test_main_latency_leaves_out_the_graphql_read(monkeypatch: pytest.MonkeyPatc
     updater = _updater(monkeypatch, charger)
     asyncio.run(updater._async_update_data())
 
-    assert charger.paths() == ["/main", "/graphql"]
+    assert charger.paths() == ["/main", "/graphql", "/graphql", "/graphql"]
     assert updater.connection_quality["latency_avg"] < 1.0
 
 
@@ -1267,3 +1283,70 @@ def test_the_active_rate_needs_a_sane_charger_clock(changes: dict[str, Any], kno
     if main["timeZone"] is None:
         del main["timeZone"]
     assert (_wall_clock(main) is not None) is known
+
+
+
+# ---------------------------------------------------------------------------
+# The read as the vendor app makes it: one small document per setting
+# ---------------------------------------------------------------------------
+
+
+def _graphql_queries(charger: _Charger) -> list[str]:
+    return [body["query"] for path, body in charger.calls if path == "/graphql"]
+
+
+def test_a_refresh_sends_the_app_documents_one_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+
+    assert _graphql_queries(charger) == [
+        reve.SCHEDULES_QUERY, reve.RATES_QUERY, reve.COMMAND_QUERY,
+    ]
+    # Each document asks for one setting only, as the app's ScheduleV2 and
+    # RatesV2 queries do.
+    assert "ratesV2" not in reve.SCHEDULES_QUERY and "chargingCommand" not in reve.SCHEDULES_QUERY
+    assert "scheduleV2" not in reve.RATES_QUERY and "chargingCommand" not in reve.RATES_QUERY
+    assert "scheduleV2" not in reve.COMMAND_QUERY and "ratesV2" not in reve.COMMAND_QUERY
+    assert updater.snapshot.supports("sh1Enabled") is True
+    assert updater.snapshot.supports("tarif") is True
+    assert updater.snapshot.supports("evseEnabled") is True
+
+
+def test_a_failing_read_stops_at_the_first_refused_document(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main(), graphql_status=500)
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+
+    assert _graphql_queries(charger) == [reve.SCHEDULES_QUERY]
+    assert updater.reve_api_answering is False
+
+
+def test_a_schedule_write_rereads_only_the_schedules(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    charger.calls.clear()
+
+    asyncio.run(updater._reve.write_schedule("sh1Enabled", 1))
+
+    queries = _graphql_queries(charger)
+    assert queries[0] == reve.SCHEDULES_QUERY
+    assert queries[1].lstrip().startswith("mutation")
+    assert len(queries) == 2
+    # Rates and Stop are kept from the last read.
+    assert updater._reve.extras.base_rate == _reve_extras().base_rate
+    assert updater._reve.extras.charging_command == _reve_extras().charging_command
+    assert updater._reve.extras.schedules[0]["enabled"] is True
+
+
+def test_a_schedule_write_with_nothing_read_yet_reads_everything(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    updater._reve_seen = True
+
+    asyncio.run(updater._reve.write_schedule("sh1Enabled", 1))
+
+    queries = _graphql_queries(charger)
+    assert queries[:3] == [reve.SCHEDULES_QUERY, reve.RATES_QUERY, reve.COMMAND_QUERY]
+    assert updater._reve.extras is not None

@@ -130,20 +130,29 @@ def test_live_reve_graphql_schedules_and_rates_parse() -> None:
     """On REVE, the integration's own GraphQL read must still parse."""
     import urllib.request
 
-    from custom_components.eveus.reve import EXTRAS_QUERY, is_reve_payload, parse_extras
+    from custom_components.eveus.reve import (
+        COMMAND_QUERY,
+        RATES_QUERY,
+        SCHEDULES_QUERY,
+        is_reve_payload,
+        parse_extras,
+    )
 
     if not is_reve_payload(_fetch_live()):
         pytest.skip("the live charger is not on REVE firmware")
-    body = json.dumps(
-        {"operationName": "StationData", "variables": {}, "query": EXTRAS_QUERY}
-    ).encode()
-    request = urllib.request.Request(
-        f"http://{HOST}/graphql",
-        data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
-        result = json.loads(response.read().decode("utf-8", "replace"))
-    extras = parse_extras(result["data"])
+    station: dict = {}
+    for document in (SCHEDULES_QUERY, RATES_QUERY, COMMAND_QUERY):
+        body = json.dumps(
+            {"operationName": "StationData", "variables": {}, "query": document}
+        ).encode()
+        request = urllib.request.Request(
+            f"http://{HOST}/graphql",
+            data=body,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+            result = json.loads(response.read().decode("utf-8", "replace"))
+        station.update(result["data"]["stationData"])
+    extras = parse_extras({"stationData": station})
     assert len(extras.schedules) >= 1

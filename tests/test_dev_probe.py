@@ -198,15 +198,17 @@ def test_every_exchange_is_logged_with_its_outcome(tmp_path: Path, monkeypatch: 
     assert [line.get("event") or line["api"] for line in lines] == [
         # The GraphQL read completes inside the poll, before /main's outcome
         # is recorded; the firmware is known from that /main reply.
-        "start", API_GRAPHQL, "firmware", API_MAIN,
+        "start", API_GRAPHQL, API_GRAPHQL, API_GRAPHQL, "firmware", API_MAIN,
     ]
     assert lines[0]["graphql_probe_s"] == GRAPHQL_PROBE_SECONDS
-    assert lines[2]["wifi"] == "REVE_PLUS_1.0.0"
-    graphql, main = lines[1], lines[3]
+    assert lines[4]["wifi"] == "REVE_PLUS_1.0.0"
+    # Each read document is named: they all share the operation StationData.
+    assert [line["op"] for line in lines[1:4]] == ["ScheduleV2", "RatesV2", "ChargingCommand"]
+    graphql, main = lines[1], lines[5]
     assert main["ok"] is True and main["op"] == "poll"
     assert main["st"] == _reve_main()["state"]
     assert isinstance(main["ms"], int)
-    assert graphql == {**graphql, "op": "StationData", "ok": True}
+    assert graphql == {**graphql, "op": "ScheduleV2", "ok": True}
     assert all(isinstance(datetime.fromisoformat(line["ts"]), datetime) for line in lines)
 
 
@@ -241,9 +243,9 @@ def test_graphql_is_read_every_minute_and_while_main_fails(
     exchanges = [(line["api"], line["ok"]) for line in _lines(tmp_path) if "api" in line]
 
     assert exchanges == [
-        (API_GRAPHQL, True), (API_MAIN, True),
-        (API_GRAPHQL, True), (API_MAIN, True),
-        (API_MAIN, False), (API_GRAPHQL, True),
+        *[(API_GRAPHQL, True)] * 3, (API_MAIN, True),
+        *[(API_GRAPHQL, True)] * 3, (API_MAIN, True),
+        (API_MAIN, False), *[(API_GRAPHQL, True)] * 3,
     ]
     main_failure = [line for line in _lines(tmp_path) if line.get("api") == API_MAIN][-1]
     assert main_failure["err"] == "TimeoutError"
@@ -278,8 +280,10 @@ def test_graphql_failures_count_as_outages_and_reach_the_sensor(
 
     sensors = asyncio.run(scenario())
     graphql_lines = [line for line in _lines(tmp_path) if line.get("api") == API_GRAPHQL]
-    assert [line["ok"] for line in graphql_lines] == [True, False, False, False, True]
-    assert graphql_lines[1]["err"] == "ClientResponseError 500"
+    # A refused read stops at its first document: one request a minute.
+    assert [line["ok"] for line in graphql_lines] == [True] * 3 + [False] * 3 + [True] * 3
+    assert graphql_lines[3]["err"] == "ClientResponseError 500"
+    assert graphql_lines[3]["op"] == "ScheduleV2"
 
     main_sensor, graphql_sensor = sensors
     assert main_sensor.unique_id == "eveus_dev_main_outages_today"
