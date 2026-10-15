@@ -101,13 +101,17 @@ _CHARGING_COMMANDS: Final = frozenset({0, _COMMAND_START, _COMMAND_STOP})
 
 _MINUTES_PER_DAY: Final = 1440
 
-# How often the schedules and rates are re-read, how long a failed read waits
-# before the next attempt, and how long a last good read stays in force. The
-# 15-minute limit is what turns a GraphQL server that has stopped answering
-# into honestly unavailable schedule and tariff entities.
-EXTRAS_REFRESH_SECONDS: Final = 60
+# How often the schedules, rates and Stop are re-read, how long a failed read
+# waits before the next attempt, and how long a last good read stays in force.
+# They are settings: they change in the app rarely, and a write from Home
+# Assistant updates the cached read at once. REVE's GraphQL server is fragile —
+# with only Home Assistant polling it stopped answering for ~20, ~38 and ~5
+# minutes within two hours (2026-10-15) — so it is read sparingly, and a last
+# good read stands through such a window instead of flapping every entity it
+# feeds to unavailable. A server silent for an hour makes them unavailable.
+EXTRAS_REFRESH_SECONDS: Final = 300
 EXTRAS_RETRY_SECONDS: Final = 300
-EXTRAS_MAX_AGE_SECONDS: Final = 900
+EXTRAS_MAX_AGE_SECONDS: Final = 3600
 
 EXTRAS_QUERY: Final = """query StationData {
         stationData {

@@ -670,7 +670,7 @@ def test_a_stale_read_stops_standing_for_the_schedule(monkeypatch: pytest.Monkey
     asyncio.run(updater._async_update_data())
     assert updater.snapshot.supports("sh1Enabled") is True
 
-    # GraphQL stops answering; the last read holds for 15 minutes, then the
+    # GraphQL stops answering; the last read holds for an hour, then the
     # schedule entities go unavailable instead of showing an old value.
     charger.graphql_status = 500
     now[0] += reve.EXTRAS_REFRESH_SECONDS + 1
@@ -962,3 +962,30 @@ def test_the_stop_written_is_what_the_next_poll_shows(monkeypatch: pytest.Monkey
 
     assert data["evseEnabled"] == 1
     assert charger.paths() == ["/main"]
+
+
+def test_a_long_graphql_outage_does_not_blank_the_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Measured on REVE_PLUS_1.0.0 (2026-10-15, only Home Assistant polling):
+    # GraphQL stopped answering for ~20, ~38 and ~5 minutes within two hours.
+    # Schedules, rates and Stop are settings, so the last good read stands
+    # through such a window instead of flapping ~30 entities to unavailable.
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    charger.graphql_status = 500
+    for _ in range(8):  # 40 minutes of polls
+        now[0] += 300
+        asyncio.run(updater._async_update_data())
+    assert updater.snapshot.supports("sh1Enabled") is True
+    assert updater.snapshot.supports("evseEnabled") is True
+
+
+def test_graphql_is_read_every_five_minutes_while_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    for _ in range(10):  # ten polls a minute apart
+        asyncio.run(updater._async_update_data())
+        now[0] += 60
+    assert charger.paths().count("/graphql") == 2
