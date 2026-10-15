@@ -15,6 +15,9 @@ While enabled it:
 * reads REVE's GraphQL every ``GRAPHQL_PROBE_SECONDS`` instead of every five
   minutes, also while ``/main`` is failing, so outage windows are known to the
   minute;
+* while a car is in, reads REVE's session from GraphQL once a minute and logs
+  it next to ``/main``'s session fields from the same poll (``"event":
+  "session"``), to decide which source the session sensors should read;
 * adds two diagnostic sensors, one per API, counting today's outages (a run of
   failed requests ended by a success). They have no ``state_class`` (no
   long-term statistics) and change only when an outage starts or ends or the
@@ -50,6 +53,7 @@ from homeassistant.util import dt as dt_util
 from . import reve
 from ._payload import PayloadError
 from .common_base import BaseEveusEntity
+from .const import CONNECTED_STATES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,12 +65,36 @@ GRAPHQL_PROBE_SECONDS = 60
 _DUE_SLACK = 5
 API_MAIN = "main"
 API_GRAPHQL = "graphql"
+# Read only while a car is in (CONNECTED_STATES), next to /main's session
+# fields from the same poll: on REVE /main's looked frozen, or they keep the
+# last session as classic firmware does. Only fields REVE answered live.
+_SESSION_QUERY = """query StationData {
+        stationData {
+            stationState
+            stationSubState
+            isSessionStarted
+            chargingCommand
+            session {
+                sessionTime
+                sessionEnergy
+                sessionCost
+                energyLimit
+                costLimit
+                timeLimit
+            }
+            measurements {
+                powerMeasurement
+            }
+        }
+    }"""
+
 # Every read document shares the operation name StationData; the log names
 # which one it was, so a refusal shows which document the server refused.
 _DOCUMENT_LABELS = {
     reve.SCHEDULES_QUERY: "ScheduleV2",
     reve.RATES_QUERY: "RatesV2",
     reve.COMMAND_QUERY: "ChargingCommand",
+    _SESSION_QUERY: "Session",
 }
 _SENSOR_NAMES = {
     API_MAIN: "Dev /main outages today",
@@ -184,6 +212,7 @@ class DevProbe:
         self._writer: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         self._last_graphql: float | None = None
+        self._last_session: float | None = None
         self._firmware: tuple[Any, Any] | None = None
         self._unsub_midnight: Callable[[], None] | None = None
 
@@ -291,6 +320,62 @@ class DevProbe:
             API_MAIN, "poll", True, response_time, None,
             st=data.get("state"), sub=data.get("subState"), rssi=data.get("RSSI"),
         )
+        self._compare_session_soon(data)
+
+    def _compare_session_soon(self, data: dict[str, Any]) -> None:
+        if data.get("state") not in CONNECTED_STATES or not getattr(
+            self._updater, "_reve_seen", False
+        ):
+            return
+        now = time.monotonic()
+        if (
+            self._last_session is not None
+            and now - self._last_session < GRAPHQL_PROBE_SECONDS - _DUE_SLACK
+        ):
+            return
+        self._last_session = now
+        main = {
+            "state": data.get("state"),
+            "sub": data.get("subState"),
+            "started": data.get("sessionStarted"),
+            "time": data.get("sessionTime"),
+            "energy": data.get("sessionEnergy"),
+            "cost": data.get("sessionMoney"),
+            "power": data.get("powerMeas"),
+        }
+        task = self._hass.async_create_background_task(
+            self._compare_session(main), "eveus dev probe session read"
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _compare_session(self, main: dict[str, Any]) -> None:
+        try:
+            data = await self._updater._reve._post("StationData", _SESSION_QUERY)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - the failure is already in the log
+            return
+        station = data.get("stationData") if isinstance(data, dict) else None
+        station = station if isinstance(station, dict) else {}
+        session = station.get("session") if isinstance(station.get("session"), dict) else {}
+        measurements = (
+            station.get("measurements") if isinstance(station.get("measurements"), dict) else {}
+        )
+        gql = {
+            "state": station.get("stationState"),
+            "sub": station.get("stationSubState"),
+            "started": station.get("isSessionStarted"),
+            "command": station.get("chargingCommand"),
+            "time": session.get("sessionTime"),
+            "energy": session.get("sessionEnergy"),
+            "cost": session.get("sessionCost"),
+            "energy_limit": session.get("energyLimit"),
+            "cost_limit": session.get("costLimit"),
+            "time_limit": session.get("timeLimit"),
+            "power": measurements.get("powerMeasurement"),
+        }
+        self._log({"event": "session", "gql": gql, "main": main})
 
     # -- records ---------------------------------------------------------------
 

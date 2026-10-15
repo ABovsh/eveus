@@ -8,6 +8,7 @@ Reads ``eveus_probe/<YYYY-MM>.jsonl`` from the Home Assistant config folder.
     python3 tools/reve_probe_report.py --days 30            # trend
     python3 tools/reve_probe_report.py --since 2026-10-15 --windows
     python3 tools/reve_probe_report.py --windows --min-seconds 60
+    python3 tools/reve_probe_report.py --sessions           # GraphQL vs /main while charging
 
 An outage runs from an API's first failed request to its next success. When
 the other API was down for most of the same time, the window is marked
@@ -204,6 +205,34 @@ def render(records: list[dict[str, Any]], *, windows: bool, min_seconds: float) 
     return "\n".join(out)
 
 
+def _fmt(value: Any, digits: int | None = None) -> str:
+    if value is None:
+        return "—"
+    if digits is not None and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value:.{digits}f}"
+    return str(value)
+
+
+def render_sessions(records: list[dict[str, Any]]) -> str:
+    """The session as GraphQL and /main reported it, minute by minute."""
+    out = [
+        "Час               стан g/m  час g    час m    кВт·год g  кВт·год m  грн g   грн m   Вт g   Вт m"
+    ]
+    for record in records:
+        if record.get("event") != "session":
+            continue
+        gql, main = record.get("gql") or {}, record.get("main") or {}
+        out.append(
+            f"{record['_ts']:%Y-%m-%d %H:%M}  "
+            f"{_fmt(gql.get('state'))}/{_fmt(gql.get('sub'))} {_fmt(main.get('state'))}/{_fmt(main.get('sub'))}  "
+            f"{_fmt(gql.get('time')):>7}  {_fmt(main.get('time')):>7}  "
+            f"{_fmt(gql.get('energy'), 3):>9}  {_fmt(main.get('energy'), 3):>9}  "
+            f"{_fmt(gql.get('cost'), 2):>6}  {_fmt(main.get('cost'), 2):>6}  "
+            f"{_fmt(gql.get('power')):>5}  {_fmt(main.get('power')):>5}"
+        )
+    return "\n".join(out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dir", type=Path, default=DEFAULT_DIR)
@@ -211,9 +240,14 @@ def main() -> None:
     parser.add_argument("--since", type=date.fromisoformat)
     parser.add_argument("--windows", action="store_true", help="list every outage window")
     parser.add_argument("--min-seconds", type=float, default=0, help="hide shorter windows")
+    parser.add_argument("--sessions", action="store_true", help="GraphQL vs /main session, per minute")
     args = parser.parse_args()
     since = args.since or (date.today() - timedelta(days=args.days - 1))
-    print(render(read_records(args.dir, since), windows=args.windows, min_seconds=args.min_seconds))
+    records = read_records(args.dir, since)
+    if args.sessions:
+        print(render_sessions(records))
+        return
+    print(render(records, windows=args.windows, min_seconds=args.min_seconds))
 
 
 if __name__ == "__main__":

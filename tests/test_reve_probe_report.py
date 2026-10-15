@@ -98,3 +98,19 @@ def test_report_renders_daily_figures(tmp_path: Path) -> None:
     row = next(line for line in text.splitlines() if line.startswith("2026-10-15  /main"))
     assert row.split()[2:6] == ["3", "1", "66.7%", "1"]
     assert "2026-10-15 09:01:00–09:01:15  /main    15 с" in text
+
+
+def test_report_lists_the_session_comparison_side_by_side(tmp_path: Path) -> None:
+    report = _report_module()
+    folder = tmp_path / "eveus_probe"
+    folder.mkdir()
+    line = {
+        "ts": "2026-10-16T22:01:00+03:00", "event": "session",
+        "gql": {"state": 4, "sub": 0, "started": True, "time": 600, "energy": 1.5, "cost": 6.48, "power": 3600},
+        "main": {"state": 4, "sub": 0, "started": 1, "time": 52745, "energy": 2.638, "cost": 11.396, "power": 3500},
+    }
+    (folder / "2026-10.jsonl").write_text(json.dumps(line) + "\n")
+
+    text = report.render_sessions(report.read_records(folder, datetime(2026, 10, 1).date()))
+    row = next(row for row in text.splitlines() if row.startswith("2026-10-16 22:01"))
+    assert row.split()[2:] == ["4/0", "4/0", "600", "52745", "1.500", "2.638", "6.48", "11.40", "3600", "3500"]

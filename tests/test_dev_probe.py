@@ -360,3 +360,78 @@ def test_the_probe_never_stands_in_the_way_of_setup(monkeypatch: pytest.MonkeyPa
     # A Home Assistant (or test double) whose config path cannot be read.
     updater = _updater(monkeypatch, _Charger(_reve_main()))
     assert asyncio.run(dev_probe.async_attach(SimpleNamespace(), _Entry(), updater)) is None
+
+
+# ---------------------------------------------------------------------------
+# Session comparison: GraphQL session fields next to /main's, while a car is in
+# ---------------------------------------------------------------------------
+# /main's session fields looked frozen on REVE (sessionTime 52745 while GraphQL
+# said 0) -- or they keep the last session, as classic firmware does. One
+# charge with both side by side decides which source the session sensors read.
+
+
+class _SessionCharger(_Charger):
+    """Answers the session document too (fields REVE answered live 2026-10-15)."""
+
+    def post(self, url: str, **kwargs: Any) -> Any:
+        if url.endswith("/graphql") and "isSessionStarted" in json.loads(kwargs["data"])["query"]:
+            from test_reve_firmware import _Response
+
+            self.calls.append(("/graphql", json.loads(kwargs["data"])))
+            return _Response(200, {"data": {"stationData": {
+                "stationState": self.main["state"],
+                "stationSubState": self.main["subState"],
+                "isSessionStarted": True,
+                "chargingCommand": 1,
+                "session": {"sessionTime": 600, "sessionEnergy": 1.5, "sessionCost": 6.48,
+                            "energyLimit": None, "costLimit": None, "timeLimit": None},
+                "measurements": {"powerMeasurement": 3600},
+            }}})
+        return super().post(url, **kwargs)
+
+
+def _session_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: int, polls: int) -> list[dict[str, Any]]:
+    (tmp_path / dev_probe.PROBE_DIR).mkdir()
+    now = _clock(monkeypatch)
+    main = _reve_main()
+    main.update(state=state, subState=0, sessionTime=52745, sessionEnergy=2.638,
+                sessionMoney=11.396, sessionStarted=1, powerMeas=3500)
+    charger = _SessionCharger(main)
+    updater = _updater(monkeypatch, charger)
+    hass, entry = _Hass(tmp_path), _Entry()
+
+    async def scenario() -> None:
+        await dev_probe.async_attach(hass, entry, updater)
+        for _ in range(polls):
+            await _poll(updater)
+            await _settle(hass)
+            now[0] += 30  # the charging cadence
+        await entry.unload()
+
+    asyncio.run(scenario())
+    return _lines(tmp_path)
+
+
+def test_while_a_car_is_in_the_session_is_compared_once_a_minute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lines = _session_run(tmp_path, monkeypatch, state=4, polls=4)  # two minutes
+    compares = [line for line in lines if line.get("event") == "session"]
+
+    assert len(compares) == 2
+    assert compares[0]["gql"] == {
+        "state": 4, "sub": 0, "started": True, "command": 1,
+        "time": 600, "energy": 1.5, "cost": 6.48,
+        "energy_limit": None, "cost_limit": None, "time_limit": None, "power": 3600,
+    }
+    assert compares[0]["main"] == {
+        "state": 4, "sub": 0, "started": 1, "time": 52745, "energy": 2.638,
+        "cost": 11.396, "power": 3500,
+    }
+    session_reads = [line for line in lines if line.get("op") == "Session"]
+    assert len(session_reads) == 2 and all(line["ok"] for line in session_reads)
+
+
+def test_without_a_car_the_session_is_not_asked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lines = _session_run(tmp_path, monkeypatch, state=2, polls=4)
+    assert not [line for line in lines if line.get("event") == "session" or line.get("op") == "Session"]
