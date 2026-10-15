@@ -41,7 +41,7 @@ import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import partial
 from typing import Any, Final
 
@@ -434,8 +434,11 @@ class ReveApi:
         """Stop (1) or release (0) charging the way the vendor app does."""
         command = _COMMAND_STOP if _bool(value) else _COMMAND_START
         await self._mutate({"chargingCommand": command})
-        if self._extras is not None:
-            self._store(replace(self._extras, charging_command=command))
+        extras = self._extras
+        if extras is not None:
+            self._store(
+                ReveExtras(extras.schedules, extras.base_rate, extras.rates, command)
+            )
 
     async def write_schedule(self, command: str, value: Any) -> None:
         # Read right before writing: the list is replaced whole, and the app
@@ -443,7 +446,11 @@ class ReveApi:
         current = await self._read_extras()
         updated = apply_schedule_command(list(current.schedules), command, value)
         await self._mutate({"scheduleV2": updated})
-        self._store(replace(current, schedules=tuple(updated)))
+        self._store(
+            ReveExtras(
+                tuple(updated), current.base_rate, current.rates, current.charging_command
+            )
+        )
 
     async def _refuse(self, command: str, _value: Any) -> None:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged

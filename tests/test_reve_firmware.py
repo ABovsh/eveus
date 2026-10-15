@@ -417,6 +417,7 @@ class _Charger:
         self.graphql_status = graphql_status
         self.schedules = copy.deepcopy(_reve_extras_body()["data"]["stationData"]["scheduleV2"])
         self.rates = copy.deepcopy(_reve_extras_body()["data"]["stationData"]["ratesV2"])
+        self.charging_command = 1
         self.calls: list[tuple[str, Any]] = []
 
     def post(self, url: str, **kwargs: Any) -> _Response:
@@ -432,8 +433,14 @@ class _Charger:
                     self.schedules = change["scheduleV2"]
                 if "stationCurrent" in change:
                     self.main["currentSet"] = change["stationCurrent"]
+                if "chargingCommand" in change:
+                    self.charging_command = change["chargingCommand"]
                 return _Response(200, {"data": {"updateStationData": {"__typename": "UpdateStationData", "success": True}}})
-            return _Response(200, {"data": {"stationData": {"scheduleV2": self.schedules, "ratesV2": self.rates}}})
+            return _Response(200, {"data": {"stationData": {
+                "scheduleV2": self.schedules,
+                "ratesV2": self.rates,
+                "chargingCommand": self.charging_command,
+            }}})
         self.calls.append((path, kwargs.get("data")))
         if path == "/main":
             return _Response(200, self.main)
@@ -527,10 +534,13 @@ def test_reve_schedule_write_rereads_then_replaces_the_whole_list(monkeypatch: p
     read, write = (body for _, body in charger.calls)
     assert read["query"].lstrip().startswith("query")
     assert write["variables"] == {"input": {"scheduleV2": [before[0], {**before[1], "enabled": True}]}}
-    # The written list is what the next poll shows, without another read.
+    # The written list is what the next poll shows, without another read —
+    # and Stop, read alongside the schedules, is kept.
     charger.calls.clear()
     data = asyncio.run(updater._async_update_data())
     assert data["sh2Enabled"] == 1
+    assert data["evseEnabled"] == 0
+    assert updater.snapshot.supports("evseEnabled") is True
     assert charger.paths() == ["/main"]
 
 
