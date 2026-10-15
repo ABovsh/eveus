@@ -1,0 +1,70 @@
+{
+    "data": {
+        "stationData": {
+            "designedCurrent": 16,
+            "minCurrent": 7,
+            "vendor": 2,
+            "model": 0,
+            "mainFWVersion": "          2.4.0 ",
+            "displayedVersion": "1.0.0",
+            "wifiFWVersion": "REVE_PLUS_1.0.0",
+            "pilotStatus": 0,
+            "stationState": 2,
+            "stationSubState": 0,
+            "isSessionStarted": false,
+            "stationCurrent": 7,
+            "minVoltage": 200,
+            "RSSI": -66,
+            "chargerType": 2,
+            "releType": 0,
+            "adaptiveModeStatus": 1,
+            "voltageThreshold": 210,
+            "adaptiveModePercentDrop": 0,
+            "gridRange": 0,
+            "ground": 1,
+            "isGroundConnected": 1,
+            "isChargerEnabled": false,
+            "isSuspendError": false,
+            "isOneChargeEnabled": true,
+            "totalEnergy": 5385.92578125,
+            "adapter": 255,
+            "language": 1,
+            "authorizeCharging": false,
+            "chargingAuthorized": true,
+            "chargingCommand": 1,
+            "timeSettings": {
+                "timeZone": 3,
+                "systemTime": "2026-10-14T22:06:54Z"
+            },
+            "session": {
+                "sessionTime": 0,
+                "sessionEnergy": 0,
+                "sessionCost": 0,
+                "timeLimit": null,
+                "energyLimit": null,
+                "costLimit": null
+            },
+            "iem": {
+                "IEM1": 1044.8719482421875,
+                "IEM2": 3790.572021484375,
+                "IEM1_money": 3346.699951171875,
+                "IEM2_money": 12983.0908203125
+            },
+            "measurements": {
+                "batteryVoltage": 2.7899999618530273,
+                "curMeasurement1": 0,
+                "voltMeasurement1": 227,
+                "powerMeasurement": 0,
+                "temperature": {
+                    "temperature1": 9,
+                    "temperature2": -60
+                }
+            },
+            "supportRfid": false,
+            "isGFCITestDisabled": true,
+            "isRelayTestDisabled": true,
+            "isDiodeControlDisabled": false,
+            "apiVersion": "2.1"
+        }
+    }
+}
