@@ -411,6 +411,11 @@ class ReveApi:
             return
         if now < self._retry_at:
             return
+        await self.refresh()
+
+    async def refresh(self) -> None:
+        """Re-read schedules and rates now; a failure only schedules the retry."""
+        now = time.monotonic()
         try:
             self._store(await self._read_extras())
         except asyncio.CancelledError:
