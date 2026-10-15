@@ -64,6 +64,9 @@ PROBE_DIR = "eveus_probe"
 # A request 5 s short of the interval is due, so a poll or tick landing a
 # moment early does not skip a turn.
 GRAPHQL_PROBE_SECONDS = 30
+# A whole number of seconds in this file (in the probe folder) replaces the
+# interval when the probe starts, so a test can switch it with an entry reload.
+INTERVAL_FILE = "interval_seconds"
 _DUE_SLACK = 5
 # The session is compared once a minute whatever the read interval is.
 SESSION_COMPARE_SECONDS = 60
@@ -185,6 +188,14 @@ def _append(folder: Path, batch: list[tuple[str, str]]) -> None:
             handle.write(line + "\n")
 
 
+def _read_interval(folder: Path) -> int:
+    try:
+        seconds = int((folder / INTERVAL_FILE).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return GRAPHQL_PROBE_SECONDS
+    return seconds if 10 <= seconds <= 3600 else GRAPHQL_PROBE_SECONDS
+
+
 def _read_day(folder: Path, day: date) -> list[dict[str, Any]]:
     path = folder / f"{day:%Y-%m}.jsonl"
     if not path.is_file():
@@ -220,6 +231,7 @@ class DevProbe:
         self._firmware: tuple[Any, Any] | None = None
         self._unsub_midnight: Callable[[], None] | None = None
         self._unsub_reads: Callable[[], None] | None = None
+        self._interval = GRAPHQL_PROBE_SECONDS
 
     async def async_start(self) -> None:
         today = dt_util.now().date()
@@ -229,13 +241,14 @@ class DevProbe:
             self._replay(record)
         for outages in self.outages.values():
             outages.interrupt()
-        self._log({"event": "start", "graphql_probe_s": GRAPHQL_PROBE_SECONDS})
+        self._interval = await self._hass.async_add_executor_job(_read_interval, self._folder)
+        self._log({"event": "start", "graphql_probe_s": self._interval})
         self._wrap()
         self._unsub_midnight = async_track_time_change(
             self._hass, self._midnight, hour=0, minute=0, second=0
         )
         self._unsub_reads = async_track_time_interval(
-            self._hass, self._read_tick, timedelta(seconds=GRAPHQL_PROBE_SECONDS)
+            self._hass, self._read_tick, timedelta(seconds=self._interval)
         )
 
     async def async_close(self) -> None:
@@ -305,7 +318,7 @@ class DevProbe:
     def _graphql_due(self) -> bool:
         return (
             self._last_graphql is None
-            or time.monotonic() - self._last_graphql >= GRAPHQL_PROBE_SECONDS - _DUE_SLACK
+            or time.monotonic() - self._last_graphql >= self._interval - _DUE_SLACK
         )
 
     @callback
@@ -531,6 +544,7 @@ __all__ = [
     "API_GRAPHQL",
     "API_MAIN",
     "GRAPHQL_PROBE_SECONDS",
+    "INTERVAL_FILE",
     "PROBE_DIR",
     "DevProbe",
     "Outages",

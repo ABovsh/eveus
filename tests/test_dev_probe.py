@@ -300,6 +300,56 @@ def test_graphql_is_read_every_thirty_seconds_between_main_polls(
     assert _read_timer == []  # the timer stops with the entry
 
 
+def test_a_file_in_the_probe_folder_sets_the_read_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _read_timer: list[Any]
+) -> None:
+    # The Wi-Fi test switches between 30 s and 5 min without a deploy: the
+    # interval is read when the probe starts (an entry reload restarts it).
+    folder = tmp_path / dev_probe.PROBE_DIR
+    folder.mkdir()
+    (folder / dev_probe.INTERVAL_FILE).write_text("300\n")
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    hass, entry = _Hass(tmp_path), _Entry()
+
+    async def scenario() -> None:
+        await dev_probe.async_attach(hass, entry, updater)
+        await _poll(updater)
+        tick, interval = _read_timer
+        assert interval == timedelta(seconds=300)
+        now[0] += 60
+        await _poll(updater)  # a minute later: not due at 5 min
+        now[0] += 240
+        tick(None)  # five minutes after the first read: due
+        await _settle(hass)
+        await entry.unload()
+
+    asyncio.run(scenario())
+    lines = _lines(tmp_path)
+    assert lines[0]["graphql_probe_s"] == 300
+    exchanges = [line["api"] for line in lines if "api" in line]
+    assert exchanges == [API_GRAPHQL] * 3 + [API_MAIN] * 2 + [API_GRAPHQL] * 3
+
+
+def test_an_unreadable_interval_file_keeps_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _read_timer: list[Any]
+) -> None:
+    folder = tmp_path / dev_probe.PROBE_DIR
+    folder.mkdir()
+    (folder / dev_probe.INTERVAL_FILE).write_text("often")
+    _clock(monkeypatch)
+    updater = _updater(monkeypatch, _Charger(_reve_main()))
+    hass, entry = _Hass(tmp_path), _Entry()
+
+    async def scenario() -> None:
+        await dev_probe.async_attach(hass, entry, updater)
+        await entry.unload()
+
+    asyncio.run(scenario())
+    assert _lines(tmp_path)[0]["graphql_probe_s"] == GRAPHQL_PROBE_SECONDS
+
+
 def test_graphql_failures_count_as_outages_and_reach_the_sensor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
