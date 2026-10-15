@@ -942,8 +942,8 @@ class EveusCard extends HTMLElement {
   }
   // A reading or setting the charger's firmware does not provide at all: the
   // integration publishes it `unavailable` while the charger itself answers (REVE
-  // has no leakage current in mA, no schedule energy cap, and a unit without a
-  // plug sensor no plug temperature). An outage makes every entity unavailable at
+  // has no leakage current in mA, no schedule energy cap, and reports the plug
+  // temperature as -60). An outage makes every entity unavailable at
   // once; the card then shows the charger offline instead.
   _unsupported(key) { return Boolean(key) && this._online && this._state(key)?.state === 'unavailable'; }
   get _charging() { return this._state('state')?.state === 'Charging'; }

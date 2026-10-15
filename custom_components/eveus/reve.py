@@ -20,7 +20,8 @@ projection the firmware no longer maintains — verified on a live REVE Plus on
   waiting for activation, until 1 (start) or 0 (charge now) releases it.
 * ``leakValue`` / ``leakValueH`` are raw ADC counts — the same numbers ``/debug``
   shows as ``cll`` / ``clh`` — not milliamps.
-* ``temperature2`` reads -60 on a unit without a plug sensor.
+* ``temperature2`` reads -60, where the same charger on classic firmware
+  reported a real plug temperature.
 
 Everything else written through ``/pageEvent`` (One Charge, adaptive mode and
 threshold, minimum voltage) reaches the charger's real state.
@@ -74,7 +75,8 @@ REVE_UNRELIABLE_FIELDS: Final[frozenset[str]] = frozenset(
         ),
     }
 )
-# temperature2 on a unit with no plug sensor.
+# temperature2 as REVE reports it; the same charger on classic firmware
+# reported a real plug temperature there.
 _NO_PLUG_SENSOR: Final = -60
 
 # Legacy schedule key suffix -> scheduleV2 item field.

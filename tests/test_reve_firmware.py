@@ -10,7 +10,7 @@ REVE_PLUS_1.0.0 / 2.4.0, 2026-10-15):
 * the schedule fields mirror a legacy copy: writing them changes ``/main`` but
   not the schedule the charger runs, and ``sh*Enabled`` reverts within seconds;
 * ``currentSet`` written through ``/pageEvent`` reverts within a second;
-* ``temperature2`` reads -60 on a unit without a plug sensor.
+* ``temperature2`` reads -60, where classic firmware reported a real plug temperature;
 
 The real schedules and tariffs, and the charging current, live in the local
 GraphQL API (``scheduleV2``, ``ratesV2``, ``stationCurrent``). These tests pin
