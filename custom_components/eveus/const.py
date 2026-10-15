@@ -11,6 +11,12 @@ IDLE_UPDATE_INTERVAL: Final[int] = 60
 # one offline cycle (worst case 60 s). A refused LAN request once a minute
 # is negligible load.
 OFFLINE_UPDATE_INTERVAL: Final[int] = 60
+# The poll after a single miss. Home Assistant schedules a poll at a whole
+# second plus a per-coordinator offset, so the ordinary next one landed 59-62 s
+# after the miss, racing the 60 s grace window; every miss then published a
+# zero-length `unavailable` on every entity (REVE misses one /main reply about
+# every 40 minutes). A retry well inside the 30 s control grace covers it.
+FIRST_FAILURE_RETRY_INTERVAL: Final[int] = 15
 # Request timeouts. Measured /main latency is p99 0.36 s, max 0.41 s over 200
 # polls on one charger with good Wi-Fi; 10 s keeps wide headroom for weak links
 # and older firmware, which that sample did not cover, and a command gets two

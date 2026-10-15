@@ -43,6 +43,7 @@ from .const import (
     EVENT_CHARGING_STARTED,
     EVENT_ERROR,
     get_error_state,
+    FIRST_FAILURE_RETRY_INTERVAL,
     IDLE_UPDATE_INTERVAL,
     OFFLINE_UPDATE_INTERVAL,
     PLUG_UNKNOWN_STATES,
@@ -219,6 +220,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # Successful polls still owed at the offline cadence after an outage,
         # so a single recovered tick can't snap straight back to fast polling.
         self._offline_probation = 0
+        # The cadence a quick retry after one missed poll replaced; see
+        # FIRST_FAILURE_RETRY_INTERVAL.
+        self._interval_before_retry: timedelta | None = None
         self._last_observed_state: int | None = None
         self._last_burst_monotonic: float | None = None
         # Transition-event memory, separate from the burst tracker above:
@@ -635,6 +639,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)
         self._consecutive_failures = 0
+        self._interval_before_retry = None
         self._device_available = True
         self._ever_succeeded = True
         self._stop_outage_clock()
@@ -902,6 +907,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if self._consecutive_failures > 20:
             self._silent_mode = True
+
+        # One miss is retried quickly, so it is answered inside the grace
+        # windows; a second miss is an outage and keeps the ordinary cadence.
+        if self._consecutive_failures == 1:
+            self._interval_before_retry = self.update_interval
+            self._set_update_interval(FIRST_FAILURE_RETRY_INTERVAL)
+        elif self._interval_before_retry is not None:
+            self.update_interval = self._interval_before_retry
+            self._interval_before_retry = None
 
         if self.is_likely_offline:
             # Monotonic, like every other deadline in this module: an NTP step

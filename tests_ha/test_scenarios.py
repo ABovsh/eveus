@@ -322,13 +322,14 @@ async def test_outage(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     await scenario.fail()  # failure 1 (edge): held
     assert hass.states.get(VOLTAGE).state == "226.0"
     await scenario.advance(third)
-    await scenario.fail()  # failure 2 (repeated, no re-notify): still held
+    await scenario.fail()  # failure 3 (repeated, no re-notify): still held
     assert hass.states.get(VOLTAGE).state == "226.0"
-    # HA re-notifies nothing on a repeated failure, but Connection Quality
-    # describes the failing link itself: 1 success of 3 polls is 33 %, not
-    # the 50 % the first failure left (live 2026-09-19: froze at 95 "Good"
-    # through a five-minute outage).
-    assert hass.states.get(QUALITY).state == "33"
+    # The quick retry FIRST_FAILURE_RETRY_INTERVAL after failure 1 failed too
+    # inside that advance (failure 2). HA re-notifies nothing on a repeated
+    # failure, but Connection Quality describes the failing link itself:
+    # 1 success of 4 polls is 25 %, not the 50 % the first failure left (live
+    # 2026-09-19: froze at 95 "Good" through a five-minute outage).
+    assert hass.states.get(QUALITY).state == "25"
     await scenario.advance(third)
     await scenario.fail()  # failure 3: still held (< grace so far)
     assert hass.states.get(VOLTAGE).state == "226.0"

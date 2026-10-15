@@ -373,6 +373,7 @@ def test_fires_after_three_polls_above_ten_minutes() -> None:
 
 
 def test_failure_during_probation_resets_counter() -> None:
+    from datetime import timedelta
     from types import SimpleNamespace
     from custom_components.eveus.common_network import EveusUpdater
 
@@ -391,6 +392,8 @@ def test_failure_during_probation_resets_counter() -> None:
     updater._offline_probation = 1
     updater._first_failure_monotonic = None
     updater._grace_timer_unsubs = []
+    updater._interval_before_retry = None
+    updater.update_interval = timedelta(seconds=60)
     updater.hass = None
 
     updater._record_failure(ValueError("boom"))

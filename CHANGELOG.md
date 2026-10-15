@@ -8,6 +8,7 @@
 
 ### 🐛 Fixed
 
+- **A single missed reply no longer flashes every entity unavailable.** After one missed poll the charger is asked again in 15 seconds, inside the grace window, instead of a minute later, when the window was already closing.
 - **Card error messages no longer stay for good.** A refused or unconfirmed change is shown for 30 seconds or until tapped.
 - **Scrolling the page keeps a pending current increase.** A touch scroll over the card no longer cancels the Confirm button of a raised **Current**.
 - **While One charge is on, the card no longer predicts a schedule.** The battery section drops the schedule's energy estimate, the status no longer names the next start or blames a schedule's current limit for a slow charge, and no schedule glows as running.
