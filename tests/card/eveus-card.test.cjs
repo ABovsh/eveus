@@ -68,9 +68,30 @@ test('actual-current tick shows only while charging with a non-zero current; dra
 test('disconnect cancels confirmation and draft',async()=>{
   const {card,slide,calls}=setup();slide(14);card.disconnectedCallback();await card._confirm();assert.equal(calls.length,0);
 });
-test('rejected service restores actual setting and shows an error',async()=>{
+test('rejected service restores actual setting and shows a dismissible error',async()=>{
   const {card,slide,hass}=setup();hass.callService=async()=>{throw Error('rejected');};slide(14);await card._confirm();
-  assert.equal(card._draft,null);assert.match(card.shadowRoot.innerHTML,/Could not set current/);
+  assert.equal(card._draft,null);
+  assert.match(card.shadowRoot.innerHTML,/<button class=\"message cmd-error\" role=\"alert\" data-dismiss-error[^>]*>Could not set current<\/button>/);
+  card._onClick({target:{closest:(s) => s === '[data-dismiss-error]' ? {} : null}});
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/Could not set current/);
+});
+test('a refused current change error clears itself',async()=>{
+  const {card,slide,hass,timers}=setup();hass.callService=async()=>{throw Error('rejected');};slide(14);await card._confirm();
+  assert.match(card.shadowRoot.innerHTML,/Could not set current/);
+  for(const fn of [...timers.values()]) fn();
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/Could not set current/);
+});
+test('moving the current slider preserves the refused-change timeout; a committed change clears it',async()=>{
+  const first=setup();first.hass.callService=async()=>{throw Error('rejected');};first.slide(14);await first.card._confirm();
+  first.slide(13,false);
+  assert.match(first.card.shadowRoot.innerHTML,/Could not set current/);
+  for(const fn of [...first.timers.values()]) fn();
+  assert.doesNotMatch(first.card.shadowRoot.innerHTML,/Could not set current/);
+
+  const next=setup();next.hass.callService=async()=>{throw Error('rejected');};next.slide(14);await next.card._confirm();
+  next.slide(13);
+  assert.equal(next.card._asking,true);
+  assert.doesNotMatch(next.card.shadowRoot.innerHTML,/Could not set current/);
 });
 
 test('module label stays Current and actual reading is only a scale marker',()=>{

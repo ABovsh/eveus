@@ -619,7 +619,6 @@ class EveusCard extends HTMLElement {
     this._asking = false;
     this._sliding = false;
     this._sent = false;
-    this._error = false;
     this._request = (this._request || 0) + 1;
   }
   _expire() {
@@ -635,7 +634,6 @@ class EveusCard extends HTMLElement {
       return;
     }
     clearTimeout(this._timer);
-    this._error = false;
     this._draft = value;
     this._sliding = !commit;
     const out = this.shadowRoot.querySelector('.cv');
@@ -643,6 +641,7 @@ class EveusCard extends HTMLElement {
     const b = this._bounds;
     if (b && e.target.style?.setProperty) e.target.style.setProperty('--fill', `${100 * (value - b.min) / (b.max - b.min)}%`);
     if (!commit) return;
+    if (this._commandError === 'current') this._showError(false);
     const current = currentNumber(this._state('charging_current'));
     if (value > current) {
       this._asking = true;
@@ -674,7 +673,7 @@ class EveusCard extends HTMLElement {
     } catch {
       if (request !== this._request) return;
       this._reset();
-      this._error = true;
+      this._showError('current');
       this._render();
     }
   }
@@ -746,8 +745,10 @@ class EveusCard extends HTMLElement {
     const ask = this._guardAsk;
     const labels = {limit_soc_enabled: t.soc, limit_energy_enabled: t.energy, limit_time_enabled: t.time, limit_cost_enabled: t.cost};
     const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
+    const error = this._commandError === 'timeout' ? t.commandTimeout
+      : this._commandError === 'current' ? t.setFailed : t.commandFailed;
     return (ask ? `<div class="message guard-ask" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
-      + (this._commandError ? `<button class="message cmd-error" role="alert" data-dismiss-error title="${t.dismiss}">${this._commandError === 'timeout' ? t.commandTimeout : t.commandFailed}</button>` : '');
+      + (this._commandError ? `<button class="message cmd-error" role="alert" data-dismiss-error title="${t.dismiss}">${error}</button>` : '');
   }
   async _toggleLimit(key, confirmed = false) {
     const entity = this._state(key);
@@ -1481,7 +1482,7 @@ class EveusCard extends HTMLElement {
       <ha-icon icon="mdi:current-ac"></ha-icon><span class="label">${label}</span>
       <div class="rw"><div class="markers">${this._actualMarker()}</div><input aria-label="${t.requestedCharging}" type="range" data-slide="current" ${range} value="${value ?? bounds?.min ?? 0}" style="--fill:${bounds && value !== null ? Math.max(0, Math.min(100, 100 * (value - bounds.min) / (bounds.max - bounds.min))) : 0}%" ${disabled ? 'disabled' : ''}></div>
       <div class="readout">${output}</div>
-      </section>${this._error ? `<div class="error" role="alert">${t.setFailed}</div>` : ''}`;
+      </section>`;
   }
   // ---- Folding: a long card shows its settings as one-line summaries that open on tap. ----
   get _folding() {
