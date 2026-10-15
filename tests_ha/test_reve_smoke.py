@@ -58,6 +58,7 @@ async def test_reve_charger_publishes_its_real_settings(
 
     assert state(f"switch.{_PREFIX}_schedule_1_enabled") == "off"
     assert state(f"switch.{_PREFIX}_stop_charging") == "off"
+    assert state(f"binary_sensor.{_PREFIX}_reve_api") == "on"
     assert state(f"time.{_PREFIX}_schedule_1_start") == "23:00:00"
     assert state(f"time.{_PREFIX}_schedule_2_stop") == "18:00:00"
     assert float(state(f"sensor.{_PREFIX}_primary_rate_cost")) == 0

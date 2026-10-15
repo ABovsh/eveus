@@ -505,6 +505,7 @@ The integration recognizes REVE firmware by itself; no setup change is needed.
 - **Charging Current** and the schedules are written where REVE keeps them, so a change made in Home Assistant stays in effect. **Stop Charging** uses REVE's own start/stop command, the one the charger's app sends. Schedule 1 and Schedule 2 are the first two schedules in the charger's app; the days of the week set there are kept.
 - Schedules and tariffs changed in the charger's app appear in Home Assistant within about five minutes.
 - **Primary Rate Cost** shows REVE's base price; the Rate 2 and Rate 3 sensors show its first two rates.
+- **REVE API** (diagnostic) shows whether that interface answers. It stops answering at times for minutes; meanwhile the schedules and tariffs keep their last known values, and changing them, Charging Current or Stop Charging fails with an error until it answers again.
 - REVE does not report these readings, so they stay unavailable: **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, **Active Rate Cost**, **Cost to Target SOC**, the schedule energy limits, and **Plug Temperature** on a charger without a plug sensor.
 
 ### Older charger firmware
@@ -540,6 +541,7 @@ Normal updates retain entity identity and history.
 | `binary_sensor.eveus_ev_charger_car_connected` | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Reported OCPP connection state (diagnostic) |
+| `binary_sensor.eveus_ev_charger_reve_api` | Whether the charger's REVE interface for schedules, tariffs, Charging Current and Stop answers (diagnostic; REVE firmware only) |
 | `number.eveus_ev_charger_charging_current` | Current limit (A); bounds depend on the charger model |
 | `number.eveus_ev_charger_limit_time` | **Limit: Time** session limit (min) |
 | `number.eveus_ev_charger_limit_energy` | **Limit: Energy** session limit (kWh) |

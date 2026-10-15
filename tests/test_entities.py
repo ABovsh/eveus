@@ -1439,7 +1439,8 @@ def test_binary_sensor_setup_entry_wires_updater_and_device_number() -> None:
     runtime_data - not silently pass None through."""
     updater = EveusTestUpdater({"state": 4, "ocppconnected": 1})
     entry = SimpleNamespace(
-        runtime_data=SimpleNamespace(updater=updater, device_number=2)
+        runtime_data=SimpleNamespace(updater=updater, device_number=2),
+        async_on_unload=lambda _unsub: None,
     )
     added: list[object] = []
 

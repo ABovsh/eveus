@@ -989,3 +989,99 @@ def test_graphql_is_read_every_five_minutes_while_healthy(monkeypatch: pytest.Mo
         asyncio.run(updater._async_update_data())
         now[0] += 60
     assert charger.paths().count("/graphql") == 2
+
+
+# ---------------------------------------------------------------------------
+# REVE API diagnostic sensor
+# ---------------------------------------------------------------------------
+
+
+def _binary_setup(updater: Any) -> tuple[list[Any], list[Any]]:
+    from types import SimpleNamespace
+
+    # The real coordinator schedules its next poll when a listener is added;
+    # these tests drive the polls themselves.
+    updater._schedule_refresh = lambda: None
+
+    from custom_components.eveus import EveusRuntimeData
+    from custom_components.eveus.binary_sensor import async_setup_entry
+
+    added: list[Any] = []
+    unloads: list[Any] = []
+    entry = SimpleNamespace(
+        runtime_data=EveusRuntimeData(
+            updater=updater, device_number=1, title="Eveus Charger",
+            soc_calculator=None, soc_limit=None, phases=1,
+        ),
+        async_on_unload=unloads.append,
+    )
+    asyncio.run(async_setup_entry(None, entry, lambda entities, **_kw: added.extend(entities)))
+    return added, unloads
+
+
+def test_reve_api_sensor_reports_whether_graphql_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    added, _ = _binary_setup(updater)
+    api = next(e for e in added if e.unique_id == "eveus_reve_api")
+    disable_state_writes(api)
+    api._maybe_finalize_device_info = lambda: None
+
+    assert api.available is True
+    assert api.is_on is True
+    assert api.entity_category == "diagnostic"
+    assert api.device_class == "connectivity"
+
+    charger.graphql_status = 500
+    now[0] += reve.EXTRAS_REFRESH_SECONDS
+    asyncio.run(updater._async_update_data())
+    assert api.is_on is False
+    # The settings it feeds still stand on the last read meanwhile.
+    assert updater.snapshot.supports("sh1Enabled") is True
+
+
+def test_classic_chargers_get_no_reve_api_sensor(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_classic_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    added, unloads = _binary_setup(updater)
+    assert "eveus_reve_api" not in {e.unique_id for e in added}
+    assert len(added) == 3
+    # Waiting for a REVE reply that never comes costs one listener, removed on unload.
+    assert len(unloads) == 1
+
+
+def test_reve_api_sensor_appears_when_the_charger_first_answers_as_reve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Set up while the charger was switched off: the family is unknown yet.
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    added, _ = _binary_setup(updater)
+    assert "eveus_reve_api" not in {e.unique_id for e in added}
+
+    asyncio.run(updater._async_update_data())
+    updater.async_update_listeners()
+    updater.async_update_listeners()
+
+    assert [e.unique_id for e in added].count("eveus_reve_api") == 1
+
+
+def test_reve_api_sensor_belongs_to_its_own_charger(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from custom_components.eveus.binary_sensor import async_setup_entry
+
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    updater._schedule_refresh = lambda: None
+    added: list[Any] = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(updater=updater, device_number=2),
+        async_on_unload=lambda _unsub: None,
+    )
+    asyncio.run(async_setup_entry(None, entry, lambda entities, **_kw: added.extend(entities)))
+    assert "eveus2_reve_api" in {e.unique_id for e in added}

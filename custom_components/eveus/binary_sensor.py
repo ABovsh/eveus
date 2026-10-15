@@ -16,6 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, WriteOnChangeMixin
+from .reve import FAMILY_CLASSIC, FAMILY_REVE
 from .snapshot import EveusSnapshot
 
 _LOGGER = logging.getLogger(__name__)
@@ -135,6 +136,37 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
         self._write_if_changed(self.is_on)
 
 
+class EveusReveApiBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
+    """Whether a REVE charger's GraphQL interface answers.
+
+    REVE keeps the schedules, the tariffs, Charging Current and Stop only in its
+    GraphQL interface, and that interface drops out on its own for minutes at a
+    time. While it does, the last good read keeps those entities showing, and
+    this is where the outage itself is visible. Created only for REVE.
+    """
+
+    ENTITY_NAME = "REVE API"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:api"
+
+    def __init__(self, updater, device_number: int = 1) -> None:
+        super().__init__(updater, device_number)
+        self._init_write_on_change()
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.available:
+            return None
+        return self._updater.reve_api_answering
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        self._write_if_changed(self.is_on)
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -150,3 +182,20 @@ async def async_setup_entry(
             for description in BINARY_SENSORS
         ]
     )
+
+    # REVE is known only once the charger has answered, which may be long after
+    # setup (an entry can be set up with the charger switched off), so the REVE
+    # API sensor is added on the first poll that identifies it.
+    added = False  # pragma: no mutate - only read for truthiness
+
+    @callback
+    def _add_reve_api_sensor() -> None:
+        nonlocal added
+        if added or getattr(updater, "firmware_family", FAMILY_CLASSIC) != FAMILY_REVE:
+            return
+        added = True
+        async_add_entities([EveusReveApiBinarySensor(updater, device_number)])
+
+    _add_reve_api_sensor()
+    if not added:
+        entry.async_on_unload(updater.async_add_listener(_add_reve_api_sensor))

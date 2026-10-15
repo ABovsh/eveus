@@ -459,6 +459,13 @@ class ReveApi:
     async def _refuse(self, command: str, _value: Any) -> None:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged
 
+    @property
+    def answering(self) -> bool | None:
+        """Whether the last GraphQL read succeeded; ``None`` before the first."""
+        if self._last_error is not None:
+            return False
+        return None if self._fetched_at is None else True
+
     def diagnostics(self) -> dict[str, Any]:
         extras = self.extras
         return {

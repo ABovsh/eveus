@@ -174,6 +174,7 @@ def _entry() -> SimpleNamespace:
             CONF_MODEL: MODEL_16A,
         },
         runtime_data=runtime_data,
+        async_on_unload=lambda _unsub: None,
     )
 
 

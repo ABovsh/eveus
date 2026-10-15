@@ -331,6 +331,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """The GraphQL write REVE needs for this command, or ``None`` for ``/pageEvent``."""
         return self._reve.route(command) if self._reve_seen else None
 
+    @property
+    def reve_api_answering(self) -> bool | None:
+        """Whether REVE's GraphQL answered the last read; ``None`` if unknown."""
+        return self._reve.answering if self._reve_seen else None
+
     def reve_diagnostics(self) -> dict[str, Any] | None:
         """REVE's GraphQL side and the fields it cannot provide; ``None`` otherwise."""
         if not self._reve_seen:

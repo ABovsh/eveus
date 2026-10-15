@@ -305,6 +305,9 @@
       },
       "ocpp_connected": {
         "name": "OCPP Connected"
+      },
+      "reve_api": {
+        "name": "REVE API"
       }
     },
     "switch": {

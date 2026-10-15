@@ -4,7 +4,7 @@
 
 ### ✨ New
 
-- **REVE firmware support.** On REVE chargers, **Charging Current** and the schedules set in Home Assistant now stay in effect, **Stop Charging** uses REVE's own start/stop command, and the tariff sensors show REVE's own prices. Readings and settings REVE does not have are unavailable instead of showing random numbers, and the card leaves them out. [Details](README.md#reve-firmware)
+- **REVE firmware support.** On REVE chargers, **Charging Current** and the schedules set in Home Assistant now stay in effect, **Stop Charging** uses REVE's own start/stop command, and the tariff sensors show REVE's own prices. Readings and settings REVE does not have are unavailable instead of showing random numbers, and the card leaves them out. A diagnostic **REVE API** sensor shows when REVE's interface does not answer. [Details](README.md#reve-firmware)
 - **The card tells you when One charge overrides your schedules and limits.** One charge makes the charger start at once and ignore every schedule and limit, so a schedule set while it is on seemed not to work. Schedules and Limits now say so in an amber note with a **Turn off** button; the ignored schedule windows are struck through and the limits shown as suspended, also on a folded row.
 
 ### 🐛 Fixed
