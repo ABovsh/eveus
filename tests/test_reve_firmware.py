@@ -41,6 +41,7 @@ import test_entity_inventory as inventory
 from custom_components.eveus import common_network
 from custom_components.eveus import reve
 from custom_components.eveus.client import GRAPHQL_TIMEOUT_OBJ
+from custom_components.eveus.const import MAX_VALID_SYSTEM_TIME
 from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.diagnostics import async_get_config_entry_diagnostics
 from custom_components.eveus.reve import (
@@ -153,9 +154,11 @@ def test_graphql_schedules_and_rates_replace_the_projection() -> None:
     assert payload["tarifAValue"] == 0
     assert payload["tarifBEnable"] == 0
     assert not (_SCHEDULE_KEYS | _RATE_KEYS) & unsupported
-    # No REVE equivalent: schedule energy caps and the active-rate index.
+    # No REVE equivalent: schedule energy caps. The active rate is worked out
+    # from ratesV2: every rate is disabled here, so the base price applies.
     assert _SCHEDULE_ENERGY_KEYS <= unsupported
-    assert "activeTarif" in unsupported
+    assert payload["activeTarif"] == 0
+    assert "activeTarif" not in unsupported
 
 
 def test_rates_convert_currency_units_to_the_legacy_hundredths() -> None:
@@ -248,8 +251,6 @@ _NO_REVE_SOURCE = {
     "eveus_leakage_current_peak",
     "eveus_plug_temperature",
     "eveus_ocpp_connected",
-    "eveus_active_rate_cost",
-    "eveus_cost_to_target_soc",
     "eveus_schedule_1_energy_limit",
     "eveus_schedule_2_energy_limit",
     "eveus_schedule_1_energy_limit_enabled",
@@ -265,6 +266,7 @@ _FROM_GRAPHQL = {
     "eveus_schedule_1_current_limit_enabled", "eveus_schedule_2_current_limit_enabled",
     "eveus_primary_rate_cost", "eveus_rate_2_cost", "eveus_rate_3_cost",
     "eveus_rate_2_status", "eveus_rate_3_status",
+    "eveus_active_rate_cost",
 }
 
 
@@ -1106,3 +1108,162 @@ def test_main_latency_leaves_out_the_graphql_read(monkeypatch: pytest.MonkeyPatc
 
     assert charger.paths() == ["/main", "/graphql"]
     assert updater.connection_quality["latency_avg"] < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Active rate: worked out from ratesV2, the way the vendor app does
+# ---------------------------------------------------------------------------
+# REVE keeps no active-rate field (vendor, 2026-10-15: the app overlays the
+# rates itself). The charger's wall clock (`systemTime`, already shifted by
+# `timeZone`) is the clock its windows run on.
+
+
+def _wall(day: int, hour: int, minute: int = 0) -> int:
+    """Charger wall clock on 2026-10-<day>; the 15th is a Thursday (REVE weekday 4)."""
+    from datetime import datetime, timezone
+
+    return int(datetime(2026, 10, day, hour, minute, tzinfo=timezone.utc).timestamp())
+
+
+def _rate(start: int, end: int, value: float, *, enabled: bool = True,
+          weekdays: Any = (0, 1, 2, 3, 4, 5, 6)) -> dict[str, Any]:
+    return {"enabled": enabled, "currentLimitEnabled": False, "start": start, "end": end,
+            "value": value, "name": "Rate", "weekdays": list(weekdays)
+            if isinstance(weekdays, tuple) else weekdays}
+
+
+def _active(rates: list[dict[str, Any]], clock: int | None, base: float = 4.32) -> dict[str, Any]:
+    extras = parse_extras(_extras_with(ratesV2={"base": base, "rates": rates}))
+    main = _reve_main()
+    if clock is None:
+        del main["systemTime"]
+    else:
+        main["systemTime"] = clock
+    payload, unsupported = normalize_reve_payload(main, extras)
+    return {"activeTarif": payload.get("activeTarif"), "unsupported": "activeTarif" in unsupported}
+
+
+_NIGHT = _rate(23 * 60, 7 * 60, 2.16)  # Anton's night rate, every day
+
+
+def test_outside_every_window_the_base_price_is_active() -> None:
+    assert _active([_NIGHT], _wall(15, 14, 24)) == {"activeTarif": 0, "unsupported": False}
+
+
+def test_inside_a_window_that_rate_is_active_including_past_midnight() -> None:
+    assert _active([_NIGHT], _wall(15, 23, 0))["activeTarif"] == 1
+    assert _active([_NIGHT], _wall(16, 2, 0))["activeTarif"] == 1
+    assert _active([_NIGHT], _wall(16, 6, 59))["activeTarif"] == 1
+    # The end minute belongs to the next rate.
+    assert _active([_NIGHT], _wall(16, 7, 0))["activeTarif"] == 0
+    assert _active([_NIGHT], _wall(15, 22, 59))["activeTarif"] == 0
+
+
+def test_the_second_rate_maps_to_rate_3() -> None:
+    day = _rate(9 * 60, 18 * 60, 5.0)
+    assert _active([_NIGHT, day], _wall(15, 12, 0))["activeTarif"] == 2
+
+
+def test_a_disabled_rate_never_applies() -> None:
+    assert _active([_rate(0, 1439, 1.0, enabled=False)], _wall(15, 12, 0))["activeTarif"] == 0
+
+
+def test_a_rate_applies_only_on_its_weekdays() -> None:
+    weekdays_only = _rate(9 * 60, 18 * 60, 5.0, weekdays=(1, 2, 3, 4, 5))
+    assert _active([weekdays_only], _wall(16, 12, 0))["activeTarif"] == 1  # Friday
+    assert _active([weekdays_only], _wall(17, 12, 0))["activeTarif"] == 0  # Saturday
+
+
+def test_past_midnight_a_window_belongs_to_the_day_it_started() -> None:
+    friday_night = _rate(23 * 60, 7 * 60, 2.0, weekdays=(5,))
+    assert _active([friday_night], _wall(16, 23, 30))["activeTarif"] == 1  # Friday 23:30
+    assert _active([friday_night], _wall(17, 2, 0))["activeTarif"] == 1  # Saturday 02:00, Friday's night
+    assert _active([friday_night], _wall(15, 2, 0))["activeTarif"] == 0  # Thursday 02:00, Wednesday's night
+
+
+def test_weekdays_given_as_a_bitmask_count_the_same() -> None:
+    weekdays_only = _rate(9 * 60, 18 * 60, 5.0, weekdays=0b0111110)  # Monday-Friday
+    assert _active([weekdays_only], _wall(16, 12, 0))["activeTarif"] == 1
+    assert _active([weekdays_only], _wall(17, 12, 0))["activeTarif"] == 0
+
+
+def test_overlapping_windows_resolve_to_the_first_rate() -> None:
+    # The vendor has not said how the app resolves an overlap; the first
+    # enabled rate in the list wins, as the classic windows model does.
+    wide = _rate(8 * 60, 20 * 60, 5.0)
+    narrow = _rate(10 * 60, 12 * 60, 1.0)
+    assert _active([wide, narrow], _wall(15, 11, 0))["activeTarif"] == 1
+    assert _active([narrow, wide], _wall(15, 11, 0))["activeTarif"] == 1
+
+
+def test_a_third_or_fourth_rate_has_no_entity_so_the_active_rate_is_unknown() -> None:
+    off = _rate(0, 0, 0, enabled=False)
+    third = _rate(9 * 60, 18 * 60, 5.0)
+    assert _active([off, off, third], _wall(15, 12, 0)) == {"activeTarif": None, "unsupported": True}
+    assert _active([off, off, third], _wall(15, 20, 0))["activeTarif"] == 0
+
+
+def test_a_zero_length_window_makes_the_active_rate_unknown() -> None:
+    # Whole day or never: the app's meaning is unknown, so no guess.
+    assert _active([_rate(600, 600, 5.0)], _wall(15, 12, 0))["unsupported"] is True
+
+
+def test_without_the_charger_clock_the_active_rate_is_unknown() -> None:
+    assert _active([_NIGHT], None)["unsupported"] is True
+
+
+def test_unreadable_weekdays_leave_the_tariffs_but_not_the_active_rate() -> None:
+    extras = parse_extras(_extras_with(ratesV2={"base": 4.32, "rates": [
+        {**_NIGHT, "weekdays": "every day"},
+    ]}))
+    main = _reve_main()
+    main["systemTime"] = _wall(15, 14, 0)
+    payload, unsupported = normalize_reve_payload(main, extras)
+    assert payload["tarif"] == 432
+    assert payload["tarifAValue"] == 216
+    assert "activeTarif" in unsupported
+
+
+def test_active_rate_cost_and_cost_to_target_follow_the_reve_rates() -> None:
+    extras = parse_extras(_extras_with(ratesV2={"base": 4.32, "rates": [_NIGHT]}))
+    main = _reve_main()
+    main["systemTime"] = _wall(16, 2, 0)
+    payload, unsupported = normalize_reve_payload(main, extras)
+    entities = asyncio.run(_entities(payload, unsupported))
+
+    assert entities["eveus_active_rate_cost"].available is True
+    assert entities["eveus_active_rate_cost"].native_value == 2.16
+    assert entities["eveus_active_rate_cost"].extra_state_attributes == {"rate_name": "Rate 2"}
+    assert entities["eveus_cost_to_target_soc"].available is True
+
+
+def test_a_daytime_window_starts_on_its_start_minute_and_ends_before_its_end() -> None:
+    day = _rate(9 * 60, 18 * 60, 5.0)
+    assert _active([day], _wall(15, 9, 0))["activeTarif"] == 1
+    assert _active([day], _wall(15, 8, 59))["activeTarif"] == 0
+    assert _active([day], _wall(15, 18, 0))["activeTarif"] == 0
+
+
+def test_saturday_night_runs_into_sunday_morning() -> None:
+    saturday_night = _rate(23 * 60, 7 * 60, 2.0, weekdays=(6,))
+    assert _active([saturday_night], _wall(18, 2, 0))["activeTarif"] == 1  # Sunday 02:00
+
+
+@pytest.mark.parametrize(
+    ("changes", "known"),
+    [
+        ({"timeZone": None}, False),
+        ({"systemTime": True}, False),
+        ({"systemTime": 0}, False),
+        ({"systemTime": 1}, True),
+        ({"systemTime": MAX_VALID_SYSTEM_TIME - 1}, True),
+        ({"systemTime": MAX_VALID_SYSTEM_TIME}, False),
+    ],
+)
+def test_the_active_rate_needs_a_sane_charger_clock(changes: dict[str, Any], known: bool) -> None:
+    from custom_components.eveus.reve import _wall_clock
+
+    main = {"systemTime": _wall(15, 12, 0), "timeZone": 3, **changes}
+    if main["timeZone"] is None:
+        del main["timeZone"]
+    assert (_wall_clock(main) is not None) is known

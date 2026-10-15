@@ -49,6 +49,7 @@ from typing import Any, Final
 import aiohttp
 
 from .client import GraphQLError, post_graphql
+from .const import MAX_VALID_SYSTEM_TIME
 from .snapshot import FIELD_KEYS
 
 _LOGGER = logging.getLogger(__name__)
@@ -78,6 +79,8 @@ REVE_UNRELIABLE_FIELDS: Final[frozenset[str]] = frozenset(
 # temperature2 as REVE reports it; the same charger on classic firmware
 # reported a real plug temperature there.
 _NO_PLUG_SENSOR: Final = -60
+# REVE rates that have entities of their own (Rate 2 and Rate 3).
+_RATE_SLOTS: Final = 2
 
 # Legacy schedule key suffix -> scheduleV2 item field.
 _SLOT_FIELDS: Final[dict[str, str]] = {
@@ -247,15 +250,21 @@ def _schedule_item(raw: Any) -> dict[str, Any]:
 
 
 def _rate_item(raw: Any) -> dict[str, Any]:
-    """The fields the tariff sensors read. Names and weekdays are not read, so
-    a format change in them cannot take the tariffs away."""
+    """The fields the tariff sensors read. Names are not read and weekdays that
+    cannot be read become ``None``, so a format change in them cannot take the
+    tariffs away; only the active rate then stays unknown."""
     if not isinstance(raw, dict):
         raise ValueError("rate is not an object")  # pragma: no mutate - message text; only the exception type is ever logged
+    try:
+        weekdays: list[int] | None = _weekdays(raw.get("weekdays"))
+    except (TypeError, ValueError):
+        weekdays = None
     return {
         "start": _minute(raw.get("start")),
         "end": _minute(raw.get("end")),
         "enabled": _bool(raw.get("enabled")),
         "value": _number(raw.get("value")),
+        "weekdays": weekdays,
     }
 
 
@@ -317,6 +326,44 @@ def _rate_projection(extras: ReveExtras) -> dict[str, Any]:
     return projection
 
 
+def _wall_clock(main: Mapping[str, Any]) -> int | None:
+    """The charger's wall clock (``systemTime``, shifted by ``timeZone``)."""
+    clock = main.get("systemTime")
+    if main.get("timeZone") is None or isinstance(clock, bool) or not isinstance(clock, int):
+        return None
+    return clock if 0 < clock < MAX_VALID_SYSTEM_TIME else None
+
+
+def active_rate_index(rates: tuple[dict[str, Any], ...], clock: int) -> int | None:
+    """``activeTarif`` for REVE, which keeps none: 0 the base price, 1 and 2
+    the first and second rate.
+
+    The first enabled rate whose window holds the clock's minute, on one of its
+    weekdays, applies; a window past midnight belongs to the day it started.
+    ``None`` when that cannot be known or has no entity: a zero-length window,
+    unreadable weekdays, or a third or fourth rate.
+    """
+    day, second = divmod(clock, 86400)
+    minute = second // 60  # pragma: no mutate - window edges are whole minutes, so a fractional minute compares the same
+    weekday = (day + 4) % 7  # 1970-01-01 was a Thursday; 0 = Sunday, as REVE counts
+    for index, item in enumerate(rates, start=1):
+        if not item["enabled"]:
+            continue
+        start, end = item["start"], item["end"]
+        if start == end or item["weekdays"] is None:
+            return None
+        if start < end:  # pragma: no mutate - start == end returned above
+            started = weekday if start <= minute < end else None
+        elif minute >= start:
+            started = weekday
+        else:
+            started = (weekday - 1) % 7 if minute < end else None
+        if started is None or started not in item["weekdays"]:
+            continue
+        return index if index <= _RATE_SLOTS else None
+    return 0
+
+
 def _is_no_sensor_reading(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
@@ -340,6 +387,10 @@ def normalize_reve_payload(
     if extras is not None:
         payload.update(_schedule_projection(extras.schedules))
         payload.update(_rate_projection(extras))
+        clock = _wall_clock(main)
+        active = None if clock is None else active_rate_index(extras.rates, clock)
+        if active is not None:
+            payload["activeTarif"] = active
         if extras.charging_command is not None:
             payload[STOP_COMMAND] = int(extras.charging_command == _COMMAND_STOP)
     unsupported = frozenset(key for key in FIELD_KEYS if key not in payload)

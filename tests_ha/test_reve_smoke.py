@@ -49,7 +49,6 @@ async def test_reve_charger_publishes_its_real_settings(
         f"sensor.{_PREFIX}_leakage_current",
         f"sensor.{_PREFIX}_leakage_current_peak",
         f"sensor.{_PREFIX}_plug_temperature",
-        f"sensor.{_PREFIX}_active_rate_cost",
         f"number.{_PREFIX}_schedule_1_energy_limit",
         f"switch.{_PREFIX}_schedule_1_energy_limit_enabled",
         f"binary_sensor.{_PREFIX}_ocpp_connected",
@@ -62,6 +61,8 @@ async def test_reve_charger_publishes_its_real_settings(
     assert state(f"time.{_PREFIX}_schedule_1_start") == "23:00:00"
     assert state(f"time.{_PREFIX}_schedule_2_stop") == "18:00:00"
     assert float(state(f"sensor.{_PREFIX}_primary_rate_cost")) == 0
+    # Every recorded rate is disabled: the base price is the active one.
+    assert float(state(f"sensor.{_PREFIX}_active_rate_cost")) == 0
     assert state(f"sensor.{_PREFIX}_rate_2_status") == "Disabled"
     assert float(state(f"number.{_PREFIX}_charging_current")) == 7
     assert state(f"sensor.{_PREFIX}_state") == "Standby"

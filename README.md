@@ -505,8 +505,9 @@ The integration recognizes REVE firmware by itself; no setup change is needed.
 - **Charging Current** and the schedules are written where REVE keeps them, so a change made in Home Assistant stays in effect. **Stop Charging** uses REVE's own start/stop command, the one the charger's app sends. Schedule 1 and Schedule 2 are the first two schedules in the charger's app; the days of the week set there are kept.
 - Schedules and tariffs changed in the charger's app appear in Home Assistant within about five minutes.
 - **Primary Rate Cost** shows REVE's base price; the Rate 2 and Rate 3 sensors show its first two rates.
+- **Active Rate Cost** is the price in effect by the charger's clock: the first enabled rate whose window and days of the week include the current time, otherwise the base price. While REVE's third or fourth rate is in effect it is unavailable, because the integration has no sensors for those rates. **Cost to Target SOC** follows the windows of the first two rates but not their days of the week.
 - **REVE API** (diagnostic) shows whether that interface answers. It stops answering at times for minutes; meanwhile the schedules and tariffs keep their last known values, and changing them, Charging Current or Stop Charging fails with an error until it answers again.
-- REVE does not report these readings, so they stay unavailable: **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, **Active Rate Cost**, **Cost to Target SOC**, the schedule energy limits, and **Plug Temperature** (REVE reports it as -60).
+- REVE does not report these readings, so they stay unavailable: **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, the schedule energy limits, and **Plug Temperature** (REVE reports it as -60).
 
 ### Older charger firmware
 
