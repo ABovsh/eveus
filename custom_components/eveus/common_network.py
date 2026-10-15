@@ -1121,6 +1121,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 timeout=_UPDATE_TIMEOUT_OBJ,
                 on_unauthorized=self._reject_credentials,
             )
+            # Latency is /main's own: the GraphQL read a REVE poll makes below
+            # takes up to its own timeout when that server hangs.
+            response_time = time.monotonic() - start_monotonic
             # Shared validator retains the historical common-network guards:
             # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
             # Passing the configured model bounds currentSet to this charger's
@@ -1144,7 +1147,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 new_data, self._model, unsupported=unsupported
             )
 
-            self._record_success(time.monotonic() - start_monotonic, new_data)
+            self._record_success(response_time, new_data)
             return new_data
 
         except ConfigEntryAuthFailed:

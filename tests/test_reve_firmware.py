@@ -1085,3 +1085,24 @@ def test_reve_api_sensor_belongs_to_its_own_charger(monkeypatch: pytest.MonkeyPa
     )
     asyncio.run(async_setup_entry(None, entry, lambda entities, **_kw: added.extend(entities)))
     assert "eveus2_reve_api" in {e.unique_id for e in added}
+
+
+def test_main_latency_leaves_out_the_graphql_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Connection Quality's latency describes /main. The GraphQL read that a
+    # REVE poll makes after /main (up to GRAPHQL_TIMEOUT when it hangs) was
+    # counted into it, so a hung GraphQL inflated the /main latency.
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    real_post = charger.post
+
+    def slow_graphql(url: str, **kwargs: Any) -> _Response:
+        if url.endswith("/graphql"):
+            now[0] += 5.0
+        return real_post(url, **kwargs)
+
+    charger.post = slow_graphql
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+
+    assert charger.paths() == ["/main", "/graphql"]
+    assert updater.connection_quality["latency_avg"] < 1.0
