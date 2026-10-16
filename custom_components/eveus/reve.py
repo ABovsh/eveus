@@ -31,9 +31,11 @@ the GraphQL schedules and rates over the legacy keys the entities already read,
 and marks every field left without a source unsupported. The entities, their
 unique IDs and every other firmware's payload stay exactly as they were.
 
-The GraphQL documents below are copied from the charger maker's own app. The
-REVE server stops answering every query after a few malformed ones until the
-charger is power-cycled, so no query text is ever built at runtime.
+The GraphQL documents below are copied from the charger maker's own app, and
+no query text is ever built at runtime. The server silently drops a field it
+does not know (checked 2026-10-16), so only fields of the app's own documents
+are asked for. Its HTTP 500 windows of up to ~18 minutes follow the charger's
+Wi-Fi reconnects, which happen only while it has internet access.
 """
 from __future__ import annotations
 

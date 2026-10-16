@@ -142,9 +142,11 @@ async def post_graphql(
     """Run one GraphQL operation and return its ``data`` object.
 
     Only fixed documents are ever sent (the caller passes a module constant and
-    plain ``variables``): the REVE server stops answering every query after a
-    few malformed ones until the charger is power-cycled, so nothing here may
-    build query text at runtime.
+    plain ``variables``), copied from the charger maker's own apps. The REVE
+    server silently drops a field it does not know and answers 500 to a body
+    without ``operationName`` (checked 2026-10-16), so a missing key in the
+    reply may mean an unknown field; building no query text at runtime keeps
+    every document one the server is known to answer.
     """
     body = json.dumps(
         {"operationName": operation, "variables": variables or {}, "query": document}

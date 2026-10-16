@@ -7,8 +7,8 @@ place that says which is which, so a GraphQL reply can be turned into the very
 
 Every GraphQL field named here comes from the ``StationData`` document of the
 web app REVE serves itself (at ``/``; it polls that document every 4 s). The
-REVE server stops answering after a query with a field it does not know, so a
-field outside that document is never sent. Checked against live captures of
+REVE server silently drops a field it does not know, so a field outside that
+document would only ever read as missing; none is sent. Checked against live captures of
 ``/main`` and ``stationData`` from a REVE Plus (REVE_PLUS_1.0.0 / 2.4.0) on
 2026-10-15: every field the two shared carried the same value, except the
 session ones ``/main`` reports frozen.
