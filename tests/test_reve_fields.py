@@ -84,6 +84,15 @@ def test_compared_fields_cover_the_live_capture() -> None:
         assert converted[key] == MAIN[key], key
 
 
+def test_power_is_watts_like_main_though_graphql_reports_kilowatts() -> None:
+    # Charging, 16.10 22:30: /main powerMeas 3590 (W), GraphQL powerMeasurement 3.59 (kW).
+    station = {"measurements": {"powerMeasurement": 3.597}}
+
+    assert reve_fields.station_to_main(station)["powerMeas"] == pytest.approx(3597)
+    assert station["measurements"]["powerMeasurement"] == 3.597
+    assert reve_fields.station_to_main({"measurements": {"powerMeasurement": 0}})["powerMeas"] == 0
+
+
 def test_flags_become_the_integers_main_reports() -> None:
     converted = reve_fields.station_to_main(
         {"isChargerEnabled": True, "isOneChargeEnabled": False, "isGroundConnected": 1}

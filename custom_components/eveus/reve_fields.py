@@ -183,6 +183,9 @@ def station_to_main(station: Mapping[str, Any]) -> dict[str, Any]:
         value = _convert(key, raw)
         if value is not None:
             main[key] = value
+    if "powerMeas" in main:
+        # GraphQL reports kW where /main reports W.
+        main["powerMeas"] = round(main["powerMeas"] * 1000, 3)
     clock = _local_seconds(_lookup(station, _SYSTEM_TIME), main.get("timeZone"))
     if clock is not None:
         main["systemTime"] = clock
