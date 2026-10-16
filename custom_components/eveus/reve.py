@@ -127,11 +127,14 @@ _LIMIT_WRITES: Final[tuple[tuple[str, str, str, int], ...]] = (
     ("timeLimit", "timeLimitS", "timeLimit", 1),
     ("moneyLimit", "moneyLimitS", "costLimit", 1),
 )
+# Counter resets as the app sends them: the counter's own field set to 1
+# (Counter A checked live 2026-10-17).
+_RESET_WRITES: Final[dict[str, str]] = {"rstEM1": "IEM1"}
 # Still written through /pageEvent on REVE until decided: the limits' master
 # switch (REVE has none), OCPP (its write carries the whole object, auth key
-# included) and the counter resets (irreversible, untested live).
+# included) and the Counter B reset (irreversible, untested live).
 PAGE_EVENT_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"suspendLimits", "ocppEnabled", "rstEM1", "rstEM2"}
+    {"suspendLimits", "ocppEnabled", "rstEM2"}
 )
 
 # How often the schedules, rates and Stop are re-read, how long a failed read
@@ -786,6 +789,8 @@ class ReveApi:
             return self.set_time_zone
         if command == "systemTime":
             return self.set_system_time
+        if command in _RESET_WRITES:
+            return partial(self.reset_counter, _RESET_WRITES[command])
         for key, flag, field, factor in _LIMIT_WRITES:
             if command == key:
                 return partial(self.set_limit, key, flag, field, factor)
@@ -803,6 +808,9 @@ class ReveApi:
         """Set the clock to a UTC instant (seconds), as the app sends it: ISO text."""
         instant = datetime.fromtimestamp(_whole(value), tz=timezone.utc)
         await self._mutate({"timeSettings": {"systemTime": instant.strftime("%Y-%m-%dT%H:%M:%SZ")}})
+
+    async def reset_counter(self, field: str, _value: Any) -> None:
+        await self._mutate({"iem": {field: 1}})
 
     async def set_limit(self, key: str, flag: str, field: str, factor: int, value: Any) -> None:
         """A limit's value (write units). REVE has no on/off flag: writing a

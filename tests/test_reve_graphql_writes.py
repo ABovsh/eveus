@@ -7,8 +7,9 @@ number (adaptive mode 0 off, 1 on, 2 percent), the time settings and session
 limits nested objects. Session limits have no on/off flag on REVE: a limit is
 on while it has a value and off when it is ``null``.
 
-Still on ``/pageEvent`` until decided: "disable all limits", OCPP and the
-counter resets (irreversible).
+Counter A resets as the app does it, ``{iem: {IEM1: 1}}`` (checked live
+2026-10-17). Still on ``/pageEvent`` until decided: "disable all limits", OCPP
+and the Counter B reset (irreversible, not tried live).
 """
 from __future__ import annotations
 
@@ -99,6 +100,7 @@ def _inputs(charger: _Charger) -> list[dict[str, Any]]:
         ("timeZone", -5, {"timeSettings": {"timeZone": -5}}),
         ("groundCtrl", 1, {"isGroundConnected": 1}),
         ("groundCtrl", 0, {"isGroundConnected": 0}),
+        ("rstEM1", 0, {"iem": {"IEM1": 1}}),
     ],
 )
 def test_each_setting_is_one_graphql_write_in_the_apps_own_shape(
@@ -282,7 +284,7 @@ def test_a_limit_set_in_the_app_is_switched_back_on_with_its_own_value(
 
 
 @pytest.mark.parametrize(("command", "value"), [
-    ("suspendLimits", 1), ("ocppEnabled", 1), ("rstEM1", 0), ("rstEM2", 0),
+    ("suspendLimits", 1), ("ocppEnabled", 1), ("rstEM2", 0),
 ])
 def test_undecided_commands_stay_on_page_event(
     monkeypatch: pytest.MonkeyPatch, command: str, value: Any
@@ -296,7 +298,7 @@ def test_undecided_commands_stay_on_page_event(
 
 @pytest.mark.parametrize(("command", "value"), [
     ("oneCharge", 1), ("aiMode", 3), ("energyLimit", 5000), ("energyLimitS", 1),
-    ("timeZone", 3), ("groundCtrl", 0), ("systemTime", 1792026414),
+    ("timeZone", 3), ("groundCtrl", 0), ("systemTime", 1792026414), ("rstEM1", 0),
 ])
 def test_classic_firmware_writes_every_setting_through_page_event(
     monkeypatch: pytest.MonkeyPatch, command: str, value: Any
@@ -317,11 +319,11 @@ def test_every_command_an_entity_sends_has_a_decided_route() -> None:
     api = reve.ReveApi(object())
     routed = {
         "currentSet", "evseEnabled", "oneCharge", "aiMode", "aiVoltage", "minVoltage",
-        "timeZone", "systemTime", "groundCtrl",
+        "timeZone", "systemTime", "groundCtrl", "rstEM1",
         "energyLimit", "energyLimitS", "timeLimit", "timeLimitS", "moneyLimit", "moneyLimitS",
     }
     for command in routed:
         assert api.route(command) is not None, command
     for command in reve.PAGE_EVENT_COMMANDS:
         assert api.route(command) is None, command
-    assert reve.PAGE_EVENT_COMMANDS == frozenset({"suspendLimits", "ocppEnabled", "rstEM1", "rstEM2"})
+    assert reve.PAGE_EVENT_COMMANDS == frozenset({"suspendLimits", "ocppEnabled", "rstEM2"})

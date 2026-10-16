@@ -597,7 +597,7 @@ def test_reve_settings_not_yet_moved_to_graphql_still_use_page_event(monkeypatch
     asyncio.run(updater._async_update_data())
     charger.calls.clear()
 
-    for command, value in (("suspendLimits", 0), ("ocppEnabled", 0), ("rstEM1", 0)):
+    for command, value in (("suspendLimits", 0), ("ocppEnabled", 0), ("rstEM2", 0)):
         assert asyncio.run(updater._command_manager.send_command(command, value)) is True
 
     assert charger.paths() == ["/pageEvent"] * 3
