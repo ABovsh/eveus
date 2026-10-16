@@ -420,6 +420,10 @@ class _Charger:
         self.schedules = copy.deepcopy(_reve_extras_body()["data"]["stationData"]["scheduleV2"])
         self.rates = copy.deepcopy(_reve_extras_body()["data"]["stationData"]["ratesV2"])
         self.charging_command = 1
+        # The measurements document answers from the live GraphQL capture.
+        self.station = copy.deepcopy(_load("reve_graphql_station.json")["data"]["stationData"])
+        self.measurements_status = 200
+        self.main_status = 200
         self.calls: list[tuple[str, Any]] = []
 
     def post(self, url: str, **kwargs: Any) -> _Response:
@@ -435,9 +439,16 @@ class _Charger:
                     self.schedules = change["scheduleV2"]
                 if "stationCurrent" in change:
                     self.main["currentSet"] = change["stationCurrent"]
+                    self.station["stationCurrent"] = change["stationCurrent"]
                 if "chargingCommand" in change:
                     self.charging_command = change["chargingCommand"]
                 return _Response(200, {"data": {"updateStationData": {"__typename": "UpdateStationData", "success": True}}})
+            if body["query"] == getattr(reve, "MEASUREMENTS_QUERY", None):
+                if self.measurements_status != 200:
+                    return _Response(self.measurements_status, "Server has encountered an unexpected error")
+                return _Response(200, {"data": {"stationData": {
+                    **self.station, "chargingCommand": self.charging_command,
+                }}})
             # Like the real server: only the fields the document asks for.
             station = {
                 "scheduleV2": self.schedules,
@@ -449,6 +460,8 @@ class _Charger:
             }}})
         self.calls.append((path, kwargs.get("data")))
         if path == "/main":
+            if self.main_status != 200:
+                return _Response(self.main_status, "")
             return _Response(200, self.main)
         return _Response(200, "OK")
 
@@ -480,8 +493,10 @@ def test_a_reve_poll_reads_graphql_once_per_refresh_window(monkeypatch: pytest.M
     data = asyncio.run(updater._async_update_data())
     asyncio.run(updater._async_update_data())
 
-    # One read (three small documents) after the first /main, none after the second.
-    assert charger.paths() == ["/main", "/graphql", "/graphql", "/graphql", "/main"]
+    # The first poll: /main recognises the firmware, then the measurements and
+    # one settings read (three small documents); the second poll reads only
+    # the measurements.
+    assert charger.paths() == ["/main"] + ["/graphql"] * 4 + ["/graphql"]
     assert charger.reads() == 1
     assert data["sh1Start"] == 1380
     assert "leakValue" not in data
@@ -497,7 +512,8 @@ def test_a_failing_graphql_never_fails_the_poll_and_backs_off(monkeypatch: pytes
     data = asyncio.run(updater._async_update_data())
     asyncio.run(updater._async_update_data())
 
-    assert charger.paths() == ["/main", "/graphql", "/main"]
+    # The second poll tries the measurements, then falls back to /main.
+    assert charger.paths() == ["/main", "/graphql", "/graphql", "/main"]
     assert data["state"] == 2
     assert updater.snapshot.supports("sh1Enabled") is False
     assert updater.last_update_success is True
@@ -556,7 +572,8 @@ def test_reve_schedule_write_rereads_then_replaces_the_whole_list(monkeypatch: p
     assert data["sh2Enabled"] == 1
     assert data["evseEnabled"] == 0
     assert updater.snapshot.supports("evseEnabled") is True
-    assert charger.paths() == ["/main"]
+    assert charger.paths() == ["/graphql"]
+    assert charger.calls[0][1]["query"] == reve.MEASUREMENTS_QUERY
 
 
 def test_reve_schedule_energy_writes_are_refused_without_a_request(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -822,7 +839,7 @@ def test_graphql_requests_carry_the_session_auth_timeout_and_operation(
     asyncio.run(updater._command_manager.send_command("currentSet", 8))
 
     *reads, write = seen
-    assert len(reads) == 3
+    assert len(reads) == 4  # the measurements, then the three settings documents
     read = reads[0]
     assert all(json.loads(item["data"])["operationName"] == "StationData" for item in reads)
     assert read["auth"] is updater.basic_auth
@@ -869,6 +886,14 @@ def test_reve_diagnostics_report_the_read_exactly(monkeypatch: pytest.MonkeyPatc
         "read_age_seconds": 7,
         "read_failures": 0,
         "last_error": None,
+        # The first poll read /main to recognise the firmware, then GraphQL.
+        "measurements": {
+            "graphql_reads": 1,
+            "graphql_failures": 0,
+            "main_fallbacks": 0,
+            "last_source": "graphql",
+            "main_residue_age_seconds": 7,
+        },
     }
     assert "leakValue" in unsupported
     assert unsupported == sorted(unsupported)
@@ -979,7 +1004,7 @@ def test_the_stop_written_is_what_the_next_poll_shows(monkeypatch: pytest.Monkey
     data = asyncio.run(updater._async_update_data())
 
     assert data["evseEnabled"] == 1
-    assert charger.paths() == ["/main"]
+    assert charger.paths() == ["/graphql"]
 
 
 def test_a_long_graphql_outage_does_not_blank_the_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1122,7 +1147,7 @@ def test_main_latency_leaves_out_the_graphql_read(monkeypatch: pytest.MonkeyPatc
     updater = _updater(monkeypatch, charger)
     asyncio.run(updater._async_update_data())
 
-    assert charger.paths() == ["/main", "/graphql", "/graphql", "/graphql"]
+    assert charger.paths() == ["/main"] + ["/graphql"] * 4
     assert updater.connection_quality["latency_avg"] < 1.0
 
 
@@ -1301,7 +1326,7 @@ def test_a_refresh_sends_the_app_documents_one_at_a_time(monkeypatch: pytest.Mon
     asyncio.run(updater._async_update_data())
 
     assert _graphql_queries(charger) == [
-        reve.SCHEDULES_QUERY, reve.RATES_QUERY, reve.COMMAND_QUERY,
+        reve.MEASUREMENTS_QUERY, reve.SCHEDULES_QUERY, reve.RATES_QUERY, reve.COMMAND_QUERY,
     ]
     # Each document asks for one setting only, as the app's ScheduleV2 and
     # RatesV2 queries do.
@@ -1318,7 +1343,7 @@ def test_a_failing_read_stops_at_the_first_refused_document(monkeypatch: pytest.
     updater = _updater(monkeypatch, charger)
     asyncio.run(updater._async_update_data())
 
-    assert _graphql_queries(charger) == [reve.SCHEDULES_QUERY]
+    assert _graphql_queries(charger) == [reve.MEASUREMENTS_QUERY, reve.SCHEDULES_QUERY]
     assert updater.reve_api_answering is False
 
 

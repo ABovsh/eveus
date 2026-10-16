@@ -44,7 +44,7 @@ import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Final
 
@@ -52,6 +52,7 @@ import aiohttp
 
 from .client import GraphQLError, post_graphql
 from .const import MAX_VALID_SYSTEM_TIME
+from .reve_fields import station_to_main
 from .snapshot import FIELD_KEYS
 
 _LOGGER = logging.getLogger(__name__)
@@ -159,6 +160,96 @@ COMMAND_QUERY: Final = """query StationData {
             chargingCommand
         }
     }"""
+
+# Once a charger is known to be REVE, every poll reads its measurements with
+# this document: the charger app's own StationData, cut down to the fields
+# reve_fields maps to /main keys, plus chargingCommand so Stop shows at once.
+# /main is read only when it does not answer (MEASUREMENTS_RETRY_SECONDS keeps
+# a server that times out from delaying every poll by its whole timeout).
+MEASUREMENTS_QUERY: Final = """query StationData {
+        stationData {
+            designedCurrent
+            minCurrent
+            mainFWVersion
+            wifiFWVersion
+            pilotStatus
+            stationState
+            stationSubState
+            isSessionStarted
+            stationCurrent
+            gridRange
+            minVoltage
+            RSSI
+            chargerType
+            releType
+            adaptiveModeStatus
+            voltageThreshold
+            ground
+            isGroundConnected
+            timeSettings {
+                timeZone
+                systemTime
+            }
+            isChargerEnabled
+            isSuspendError
+            isOneChargeEnabled
+            totalEnergy
+            session {
+                sessionTime
+                sessionEnergy
+                sessionCost
+                energyLimit
+                costLimit
+                timeLimit
+            }
+            ocpp {
+                ocppEnabled
+                stationId
+            }
+            iem {
+                IEM1
+                IEM2
+                IEM1_money
+                IEM2_money
+            }
+            measurements {
+                batteryVoltage
+                curMeasurement1
+                curMeasurement2
+                curMeasurement3
+                voltMeasurement1
+                voltMeasurement2
+                voltMeasurement3
+                powerMeasurement
+                temperature {
+                    temperature1
+                    temperature2
+                }
+            }
+            language
+            STA_IP_Addres
+            chargingCommand
+        }
+    }"""
+MEASUREMENTS_RETRY_SECONDS: Final = 60
+
+# What only /main carries on REVE, kept from the last /main read between
+# GraphQL polls: the device-registry strings (for as long as the integration
+# runs) and the few entity fields GraphQL has no place for (refreshed every
+# five minutes, dropped after an hour without /main). A limit value GraphQL
+# reports wins; /main's stands in while GraphQL reports the limit off.
+MAIN_IDENTITY_FIELDS: Final[frozenset[str]] = frozenset({"manufacturer", "model", "serialNum"})
+MAIN_ONLY_FIELDS: Final[frozenset[str]] = frozenset(
+    {"suspendLimits", "aiModecurrent", "energyLimit", "moneyLimit", "timeLimit"}
+)
+MAIN_RESIDUE_REFRESH_SECONDS: Final = 300
+MAIN_RESIDUE_MAX_AGE_SECONDS: Final = 3600
+
+# /main reports the session frozen from the old firmware (sessionTime 52745
+# on an idle charger); GraphQL reports it live. A poll served by /main shows
+# the last GraphQL session for a few minutes, then none.
+SESSION_FIELDS: Final = ("sessionTime", "sessionEnergy", "sessionMoney")
+SESSION_HOLD_SECONDS: Final = 300
 
 UPDATE_MUTATION: Final = """mutation UpdateStationData($input: StationDataInput!) {
         updateStationData(input: $input)
@@ -469,6 +560,14 @@ class ReveApi:
         self._retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
         self._failures = 0
         self._last_error: str | None = None  # pragma: no mutate - only read once a read has set or cleared it
+        self._measurements_retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
+        self._measurement_reads = 0
+        self._measurement_failures = 0
+        self._main_fallbacks = 0
+        self._last_source: str | None = None
+        self._residue: dict[str, Any] = {}
+        self._residue_at: float | None = None
+        self._session: tuple[dict[str, Any], float] | None = None
 
     @property
     def extras(self) -> ReveExtras | None:
@@ -501,6 +600,92 @@ class ReveApi:
             self._last_error = type(err).__name__
             self._retry_at = now + EXTRAS_RETRY_SECONDS
             _LOGGER.debug("REVE schedules/rates read failed: %s", type(err).__name__)
+
+    # -- measurements --------------------------------------------------------
+
+    def measurements_due(self) -> bool:
+        """Whether this poll should try GraphQL (not while backing off)."""
+        return time.monotonic() >= self._measurements_retry_at
+
+    async def read_measurements(
+        self, validate: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """This poll's measurements in ``/main`` keys. Raises when GraphQL gives
+        no usable reply, or one ``validate`` (the ``/main`` rules) rejects."""
+        try:
+            station = await self._station(MEASUREMENTS_QUERY)
+            main = station_to_main(station)
+            if "state" not in main:
+                raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
+            if validate is not None:
+                main = validate(main)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            self._measurement_failures += 1
+            self._last_error = type(err).__name__
+            self._measurements_retry_at = time.monotonic() + MEASUREMENTS_RETRY_SECONDS
+            _LOGGER.debug("REVE measurements read failed: %s", type(err).__name__)
+            raise
+        self._measurement_reads += 1
+        self._last_error = None
+        self._last_source = "graphql"
+        self._session = (
+            {key: main[key] for key in SESSION_FIELDS if key in main},
+            time.monotonic(),
+        )
+        self._note_charging_command(station.get("chargingCommand"))
+        return main
+
+    def with_main_residue(self, measurements: Mapping[str, Any]) -> dict[str, Any]:
+        """The measurements with what only ``/main`` carries laid under them."""
+        payload = dict(measurements)
+        fresh = self._residue_fresh(time.monotonic())
+        for key, value in self._residue.items():
+            if key in MAIN_IDENTITY_FIELDS or fresh:
+                payload.setdefault(key, value)
+        return payload
+
+    @property
+    def last_source(self) -> str | None:
+        """Which API answered the last poll: ``graphql`` or ``main``."""
+        return self._last_source
+
+    def main_residue_due(self) -> bool:
+        """Whether a GraphQL poll should also read ``/main`` for its own fields."""
+        return (
+            self._residue_at is None
+            or time.monotonic() - self._residue_at >= MAIN_RESIDUE_REFRESH_SECONDS
+        )
+
+    def keep_main_residue(self, main: Mapping[str, Any]) -> None:
+        """Keep what only ``/main`` carries from a ``/main`` reply."""
+        self._residue = {
+            key: main[key]
+            for key in MAIN_IDENTITY_FIELDS | MAIN_ONLY_FIELDS
+            if key in main
+        }
+        self._residue_at = time.monotonic()
+
+    def from_main(self, main: Mapping[str, Any], *, fallback: bool) -> dict[str, Any]:
+        """A REVE ``/main`` payload as a poll shows it: the frozen session
+        replaced by the last GraphQL one while that is recent, else left out."""
+        self.keep_main_residue(main)
+        self._last_source = "main"
+        if fallback:
+            self._main_fallbacks += 1
+        payload = {key: value for key, value in main.items() if key not in SESSION_FIELDS}
+        held = self._session
+        if held is not None and time.monotonic() - held[1] <= SESSION_HOLD_SECONDS:
+            payload.update(held[0])
+        return payload
+
+    def _residue_fresh(self, now: float) -> bool:
+        return self._residue_at is not None and now - self._residue_at <= MAIN_RESIDUE_MAX_AGE_SECONDS
+
+    def _note_charging_command(self, command: Any) -> None:
+        extras = self._extras
+        if extras is None or type(command) is not int or command not in _CHARGING_COMMANDS:
+            return
+        self._extras = replace(extras, charging_command=command)
 
     def route(self, command: str) -> Callable[[Any], Awaitable[None]] | None:
         """The GraphQL write for a command, or ``None`` to keep ``/pageEvent``."""
@@ -568,6 +753,17 @@ class ReveApi:
             ),
             "read_failures": self._failures,
             "last_error": self._last_error,
+            "measurements": {
+                "graphql_reads": self._measurement_reads,
+                "graphql_failures": self._measurement_failures,
+                "main_fallbacks": self._main_fallbacks,
+                "last_source": self._last_source,
+                "main_residue_age_seconds": (
+                    None
+                    if self._residue_at is None
+                    else round(time.monotonic() - self._residue_at)
+                ),
+            },
         }
 
     def _store(self, extras: ReveExtras) -> None:

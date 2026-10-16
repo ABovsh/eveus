@@ -209,15 +209,18 @@ def test_every_exchange_is_logged_with_its_outcome(tmp_path: Path, monkeypatch: 
     lines = _lines(tmp_path)
 
     assert [line.get("event") or line["api"] for line in lines] == [
-        # The GraphQL read completes inside the poll, before /main's outcome
-        # is recorded; the firmware is known from that /main reply.
-        "start", API_GRAPHQL, API_GRAPHQL, API_GRAPHQL, "firmware", API_MAIN,
+        # The GraphQL reads (the measurements, then the settings) complete
+        # inside the poll, before /main's outcome is recorded; the firmware is
+        # known from that poll's reply.
+        "start", API_GRAPHQL, API_GRAPHQL, API_GRAPHQL, API_GRAPHQL, "firmware", API_MAIN,
     ]
     assert lines[0]["graphql_probe_s"] == GRAPHQL_PROBE_SECONDS
-    assert lines[4]["wifi"] == "REVE_PLUS_1.0.0"
+    assert lines[5]["wifi"] == "REVE_PLUS_1.0.0"
     # Each read document is named: they all share the operation StationData.
-    assert [line["op"] for line in lines[1:4]] == ["ScheduleV2", "RatesV2", "ChargingCommand"]
-    graphql, main = lines[1], lines[5]
+    assert [line["op"] for line in lines[1:5]] == [
+        "Measurements", "ScheduleV2", "RatesV2", "ChargingCommand",
+    ]
+    graphql, main = lines[2], lines[6]
     assert main["ok"] is True and main["op"] == "poll"
     assert main["st"] == _reve_main()["state"]
     assert isinstance(main["ms"], int)
@@ -225,7 +228,7 @@ def test_every_exchange_is_logged_with_its_outcome(tmp_path: Path, monkeypatch: 
     assert all(isinstance(datetime.fromisoformat(line["ts"]), datetime) for line in lines)
 
 
-def test_graphql_is_read_every_minute_and_while_main_fails(
+def test_every_poll_of_a_known_reve_charger_is_a_graphql_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / dev_probe.PROBE_DIR).mkdir()
@@ -248,17 +251,22 @@ def test_graphql_is_read_every_minute_and_while_main_fails(
             return real_post(url, **kwargs)
 
         charger.post = main_down
-        await _poll(updater)  # /main fails: GraphQL is still asked
+        await _poll(updater)  # /main down, GraphQL answers: the poll succeeds
+        charger.graphql_status = 500
+        now[0] += GRAPHQL_PROBE_SECONDS
+        await _poll(updater)  # both down: a failed poll
         await _settle(hass)
         await entry.unload()
 
     asyncio.run(scenario())
     exchanges = [(line["api"], line["ok"]) for line in _lines(tmp_path) if "api" in line]
 
+    # Once the charger is known to be REVE every poll is a GraphQL read (its
+    # Measurements document), and a /main that times out no longer fails it.
     assert exchanges == [
-        *[(API_GRAPHQL, True)] * 3, (API_MAIN, True),
-        *[(API_GRAPHQL, True)] * 3, (API_MAIN, True),
-        (API_MAIN, False), *[(API_GRAPHQL, True)] * 3,
+        *[(API_GRAPHQL, True)] * 4, (API_MAIN, True),
+        (API_GRAPHQL, True), (API_GRAPHQL, True),
+        (API_GRAPHQL, False), (API_MAIN, False),
     ]
     main_failure = [line for line in _lines(tmp_path) if line.get("api") == API_MAIN][-1]
     assert main_failure["err"] == "TimeoutError"
@@ -294,7 +302,7 @@ def test_graphql_is_read_every_thirty_seconds_between_main_polls(
 
     assert GRAPHQL_PROBE_SECONDS == 30
     assert exchanges == [
-        *[(API_GRAPHQL, True)] * 3, (API_MAIN, True),
+        *[(API_GRAPHQL, True)] * 4, (API_MAIN, True),
         *[(API_GRAPHQL, True)] * 3,
     ]
     assert _read_timer == []  # the timer stops with the entry
@@ -329,7 +337,9 @@ def test_a_file_in_the_probe_folder_sets_the_read_interval(
     lines = _lines(tmp_path)
     assert lines[0]["graphql_probe_s"] == 300
     exchanges = [line["api"] for line in lines if "api" in line]
-    assert exchanges == [API_GRAPHQL] * 3 + [API_MAIN] * 2 + [API_GRAPHQL] * 3
+    # The Measurements read of the second poll is a GraphQL read too, so the
+    # settings are next due five minutes after it, not after the first poll.
+    assert exchanges == [API_GRAPHQL] * 4 + [API_MAIN] + [API_GRAPHQL]
 
 
 def test_an_unreadable_interval_file_keeps_the_default(
@@ -379,9 +389,9 @@ def test_graphql_failures_count_as_outages_and_reach_the_sensor(
     sensors = asyncio.run(scenario())
     graphql_lines = [line for line in _lines(tmp_path) if line.get("api") == API_GRAPHQL]
     # A refused read stops at its first document: one request a minute.
-    assert [line["ok"] for line in graphql_lines] == [True] * 3 + [False] * 3 + [True] * 3
-    assert graphql_lines[3]["err"] == "ClientResponseError 500"
-    assert graphql_lines[3]["op"] == "ScheduleV2"
+    assert [line["ok"] for line in graphql_lines] == [True] * 4 + [False] * 3 + [True] * 3
+    assert graphql_lines[4]["err"] == "ClientResponseError 500"
+    assert graphql_lines[4]["op"] == "Measurements"
 
     main_sensor, graphql_sensor = sensors
     assert main_sensor.unique_id == "eveus_dev_main_outages_today"
@@ -458,78 +468,3 @@ def test_the_probe_never_stands_in_the_way_of_setup(monkeypatch: pytest.MonkeyPa
     # A Home Assistant (or test double) whose config path cannot be read.
     updater = _updater(monkeypatch, _Charger(_reve_main()))
     assert asyncio.run(dev_probe.async_attach(SimpleNamespace(), _Entry(), updater)) is None
-
-
-# ---------------------------------------------------------------------------
-# Session comparison: GraphQL session fields next to /main's, while a car is in
-# ---------------------------------------------------------------------------
-# /main's session fields looked frozen on REVE (sessionTime 52745 while GraphQL
-# said 0) -- or they keep the last session, as classic firmware does. One
-# charge with both side by side decides which source the session sensors read.
-
-
-class _SessionCharger(_Charger):
-    """Answers the session document too (fields REVE answered live 2026-10-15)."""
-
-    def post(self, url: str, **kwargs: Any) -> Any:
-        if url.endswith("/graphql") and "isSessionStarted" in json.loads(kwargs["data"])["query"]:
-            from test_reve_firmware import _Response
-
-            self.calls.append(("/graphql", json.loads(kwargs["data"])))
-            return _Response(200, {"data": {"stationData": {
-                "stationState": self.main["state"],
-                "stationSubState": self.main["subState"],
-                "isSessionStarted": True,
-                "chargingCommand": 1,
-                "session": {"sessionTime": 600, "sessionEnergy": 1.5, "sessionCost": 6.48,
-                            "energyLimit": None, "costLimit": None, "timeLimit": None},
-                "measurements": {"powerMeasurement": 3600},
-            }}})
-        return super().post(url, **kwargs)
-
-
-def _session_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: int, polls: int) -> list[dict[str, Any]]:
-    (tmp_path / dev_probe.PROBE_DIR).mkdir()
-    now = _clock(monkeypatch)
-    main = _reve_main()
-    main.update(state=state, subState=0, sessionTime=52745, sessionEnergy=2.638,
-                sessionMoney=11.396, sessionStarted=1, powerMeas=3500)
-    charger = _SessionCharger(main)
-    updater = _updater(monkeypatch, charger)
-    hass, entry = _Hass(tmp_path), _Entry()
-
-    async def scenario() -> None:
-        await dev_probe.async_attach(hass, entry, updater)
-        for _ in range(polls):
-            await _poll(updater)
-            await _settle(hass)
-            now[0] += 30  # the charging cadence
-        await entry.unload()
-
-    asyncio.run(scenario())
-    return _lines(tmp_path)
-
-
-def test_while_a_car_is_in_the_session_is_compared_once_a_minute(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    lines = _session_run(tmp_path, monkeypatch, state=4, polls=4)  # two minutes
-    compares = [line for line in lines if line.get("event") == "session"]
-
-    assert len(compares) == 2
-    assert compares[0]["gql"] == {
-        "state": 4, "sub": 0, "started": True, "command": 1,
-        "time": 600, "energy": 1.5, "cost": 6.48,
-        "energy_limit": None, "cost_limit": None, "time_limit": None, "power": 3600,
-    }
-    assert compares[0]["main"] == {
-        "state": 4, "sub": 0, "started": 1, "time": 52745, "energy": 2.638,
-        "cost": 11.396, "power": 3500,
-    }
-    session_reads = [line for line in lines if line.get("op") == "Session"]
-    assert len(session_reads) == 2 and all(line["ok"] for line in session_reads)
-
-
-def test_without_a_car_the_session_is_not_asked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    lines = _session_run(tmp_path, monkeypatch, state=2, polls=4)
-    assert not [line for line in lines if line.get("event") == "session" or line.get("op") == "Session"]

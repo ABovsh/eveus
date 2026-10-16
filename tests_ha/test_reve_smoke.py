@@ -26,13 +26,20 @@ HOST = "192.168.1.62"  # NOSONAR(python:S1313) - RFC 1918 test fixture
 _FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures"
 REVE_MAIN = json.loads((_FIXTURES / "reve_main_response.json").read_text(encoding="utf-8"))
 REVE_EXTRAS = json.loads((_FIXTURES / "reve_graphql_extras.json").read_text(encoding="utf-8"))
+REVE_STATION = json.loads((_FIXTURES / "reve_graphql_station.json").read_text(encoding="utf-8"))
+# One reply for every read document: the settings and the measurements
+# captured live (the mock cannot answer by request body; extra fields are
+# harmless to every reader).
+REVE_GRAPHQL = {"data": {"stationData": {
+    **REVE_STATION["data"]["stationData"], **REVE_EXTRAS["data"]["stationData"],
+}}}
 
 _PREFIX = "eveus_ev_charger"
 
 
 async def _setup_reve(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     aioclient_mock.post(f"http://{HOST}/main", json=REVE_MAIN)
-    aioclient_mock.post(f"http://{HOST}/graphql", json=REVE_EXTRAS)
+    aioclient_mock.post(f"http://{HOST}/graphql", json=REVE_GRAPHQL)
     aioclient_mock.post(f"http://{HOST}/pageEvent", text="ok")
     await _setup(hass, _entry(hass, HOST))
 
@@ -67,8 +74,10 @@ async def test_reve_charger_publishes_its_real_settings(
     assert float(state(f"number.{_PREFIX}_charging_current")) == 7
     assert state(f"sensor.{_PREFIX}_state") == "Standby"
     graphql_calls = [call for call in aioclient_mock.mock_calls if str(call[1]).endswith("/graphql")]
-    # One read: the schedules, the rates and Stop, one small document each.
-    assert len(graphql_calls) == 3
+    # The measurements, right after /main recognised the firmware, then one
+    # settings read: the schedules, the rates and Stop, one small document each.
+    assert len(graphql_calls) == 4
+    assert json.loads(graphql_calls[0][2])["query"].count("stationState") == 1
 
 
 async def test_reve_raw_leak_counts_raise_no_repair(

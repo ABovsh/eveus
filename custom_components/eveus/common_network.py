@@ -291,6 +291,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # tariff/schedule/leak fields REVE reports.
         self._reve_seen = False
         self._reve = ReveApi(self)
+        # Which request a poll was first answered by: "main" or "graphql".
+        self._last_poll_source: str | None = None
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
         # availability grace window keeps republishing the reading behind it.
@@ -321,6 +323,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def is_modern_firmware(self) -> bool:
         """Whether this charger's codes follow the modern state/substate maps."""
         return self._modern_firmware_seen or is_modern_firmware_payload(self.data or {})
+
+    @property
+    def last_poll_source(self) -> str | None:
+        """``main`` or ``graphql``: which request the last poll was answered by
+        first (``None`` before the first poll)."""
+        return self._last_poll_source
 
     @property
     def firmware_family(self) -> str:
@@ -1111,19 +1119,71 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         async with self._poll_lock:
             return await self._poll_charger(start_monotonic)
 
-    async def _poll_charger(self, start_monotonic: float) -> dict[str, Any]:
-        """Request /main, validate it and record the outcome (one poll at a time)."""
+    def _validate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return validate_main_payload(payload, self._model)
+
+    async def _read_reve_measurements(self) -> tuple[dict[str, Any], float] | None:
+        """A known REVE charger's measurements from GraphQL and their latency,
+        or ``None`` to read ``/main`` instead. Never raises for a charger that
+        does not answer, or answers with a reply ``/main``'s rules reject."""
+        if not self._reve_seen or not self._reve.measurements_due():
+            return None
+        start = time.monotonic()
         try:
-            new_data = await fetch_json(
-                self.get_session(),
-                self.url_for("/main"),
-                auth=self._basic_auth,
-                timeout=_UPDATE_TIMEOUT_OBJ,
-                on_unauthorized=self._reject_credentials,
-            )
-            # Latency is /main's own: the GraphQL read a REVE poll makes below
-            # takes up to its own timeout when that server hangs.
-            response_time = time.monotonic() - start_monotonic
+            measurements = await self._reve.read_measurements(self._validate)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            return None
+        latency = time.monotonic() - start
+        if self._reve.main_residue_due():
+            # What only /main carries; a /main that does not answer leaves the
+            # kept values standing until they age out.
+            try:
+                main = await fetch_json(
+                    self.get_session(),
+                    self.url_for("/main"),
+                    auth=self._basic_auth,
+                    timeout=_UPDATE_TIMEOUT_OBJ,
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                pass
+            else:
+                if isinstance(main, dict):
+                    self._reve.keep_main_residue(main)
+        return self._reve.with_main_residue(measurements), latency
+
+    async def _first_reve_measurements(self, main: dict[str, Any]) -> dict[str, Any]:
+        """The poll that first recognises REVE from ``/main`` shows GraphQL's
+        measurements when they answer and pass validation, else ``main``."""
+        try:
+            measurements = await self._reve.read_measurements(self._validate)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            return main
+        return self._reve.with_main_residue(measurements)
+
+    async def _poll_charger(self, start_monotonic: float) -> dict[str, Any]:
+        """Read the charger, validate the reply and record the outcome (one poll
+        at a time): ``/main``, or GraphQL first once the charger is known to be
+        REVE."""
+        try:
+            measured = await self._read_reve_measurements()
+            from_graphql = measured is not None
+            self._last_poll_source = "graphql" if from_graphql else "main"
+            new_data: Any
+            if measured is not None:
+                new_data, response_time = measured
+            else:
+                main_start = time.monotonic()
+                new_data = await fetch_json(
+                    self.get_session(),
+                    self.url_for("/main"),
+                    auth=self._basic_auth,
+                    timeout=_UPDATE_TIMEOUT_OBJ,
+                    on_unauthorized=self._reject_credentials,
+                )
+                # Latency is the answering source's own: a GraphQL read that
+                # failed first, or the one a REVE poll makes below, takes up to
+                # its own timeout when that server hangs.
+                response_time = time.monotonic() - main_start
             # Shared validator retains the historical common-network guards:
             # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
             # Passing the configured model bounds currentSet to this charger's
@@ -1132,7 +1192,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             new_data = validate_main_payload(new_data, self._model)
             new_data = self._normalize_legacy_device_state(new_data)
             unsupported: frozenset[str] = frozenset()
-            if self._reve_seen or is_reve_payload(new_data):
+            if from_graphql or self._reve_seen or is_reve_payload(new_data):
+                if not from_graphql:
+                    first = not self._reve_seen
+                    new_data = self._reve.from_main(new_data, fallback=not first)
+                    if first:
+                        new_data = await self._first_reve_measurements(new_data)
                 self._reve_seen = True
                 # Never raises: a GraphQL read that fails leaves the schedule
                 # and tariff fields unsupported, it does not fail this poll.
