@@ -551,10 +551,6 @@ def normalize_reve_payload(
     payload = {key: value for key, value in main.items() if key not in REVE_UNRELIABLE_FIELDS}
     if _is_no_sensor_reading(payload.get("temperature2")):
         del payload["temperature2"]
-    # REVE reports power in kW (3.597 at 15.9 A and 226 V); the entities read W.
-    power = payload.get("powerMeas")
-    if isinstance(power, (int, float)) and not isinstance(power, bool):
-        payload["powerMeas"] = power * 1000
     if extras is not None:
         payload.update(_schedule_projection(extras.schedules))
         payload.update(_rate_projection(extras))
