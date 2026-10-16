@@ -618,6 +618,7 @@ class ReveApi:
         self._last_source: str | None = None
         self._residue: dict[str, Any] = {}
         self._residue_at: float | None = None
+        self._residue_tried_at: float | None = None
         self._session: tuple[dict[str, Any], float] | None = None
         # A limit's value in /main read units, kept while the limit is off
         # (REVE then reports null) so its number shows what switching it back
@@ -711,11 +712,13 @@ class ReveApi:
         return self._last_source
 
     def main_residue_due(self) -> bool:
-        """Whether a GraphQL poll should also read ``/main`` for its own fields."""
-        return (
-            self._residue_at is None
-            or time.monotonic() - self._residue_at >= MAIN_RESIDUE_REFRESH_SECONDS
-        )
+        """Whether a GraphQL poll should also read ``/main`` for its own fields:
+        every five minutes, whether or not the last try found ``/main``."""
+        tried = self._residue_tried_at
+        return tried is None or time.monotonic() - tried >= MAIN_RESIDUE_REFRESH_SECONDS
+
+    def main_residue_tried(self) -> None:
+        self._residue_tried_at = time.monotonic()
 
     def keep_main_residue(self, main: Mapping[str, Any]) -> None:
         """Keep what only ``/main`` carries from a ``/main`` reply."""
@@ -724,7 +727,7 @@ class ReveApi:
             for key in MAIN_IDENTITY_FIELDS | MAIN_ONLY_FIELDS
             if key in main
         }
-        self._residue_at = time.monotonic()
+        self._residue_at = self._residue_tried_at = time.monotonic()
 
     def from_main(self, main: Mapping[str, Any], *, fallback: bool) -> dict[str, Any]:
         """A REVE ``/main`` payload as a poll shows it: the frozen session

@@ -61,7 +61,9 @@ from ._payload import (
     decode_json_body,
     read_body_capped,
 )
-from .client import UPDATE_TIMEOUT_OBJ, charger_post
+from .client import UPDATE_TIMEOUT_OBJ, charger_post, post_graphql
+from .reve import MEASUREMENTS_QUERY, is_reve_payload
+from .reve_fields import station_to_main
 from .utils import normalize_soc_input
 from . import CONFIG_ENTRY_VERSION
 
@@ -464,6 +466,36 @@ def build_reauth_data_schema(defaults: Mapping[str, Any] | None = None) -> vol.S
     )
 
 
+async def _reve_without_main(
+    hass: HomeAssistant, normalized_data: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Set up a charger whose ``/main`` is missing or not JSON when its local
+    GraphQL answers as REVE (the vendor calls ``/main`` a leftover); else
+    ``None``, and the ``/main`` error stands."""
+    host = normalized_data[CONF_HOST]
+    try:
+        data = await post_graphql(
+            aiohttp_client.async_get_clientsession(hass),
+            f"{normalized_data[CONF_SCHEME]}://{host}/graphql",
+            auth=aiohttp.BasicAuth(normalized_data[CONF_USERNAME], normalized_data[CONF_PASSWORD]),
+            operation="StationData",
+            document=MEASUREMENTS_QUERY,
+        )
+        station = data.get("stationData")
+        main = station_to_main(station) if isinstance(station, dict) else {}
+        if not is_reve_payload(main):
+            return None
+        device_info = validate_device_response(main, normalized_data[CONF_MODEL])
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, InvalidResponse):
+        return None
+    _LOGGER.info("Eveus charger has no usable /main; set up through its REVE GraphQL")
+    return {
+        "title": f"Eveus Charger ({host})",
+        "data": normalized_data,
+        "device_info": device_info,
+    }
+
+
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
     try:
@@ -550,8 +582,17 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except aiohttp.ClientResponseError as err:
         if err.status == 401:
             raise InvalidAuth from err
+        # Never after a redirect, which may point at another host.
+        reve = await _reve_without_main(hass, normalized_data) if err.status >= 400 else None
+        if reve is not None:
+            return reve
         _LOGGER.debug("Eveus charger returned HTTP %s for /main", err.status)
         raise CannotConnect(f"HTTP {err.status}") from err
+    except InvalidResponse:
+        reve = await _reve_without_main(hass, normalized_data)
+        if reve is not None:
+            return reve
+        raise
     except (asyncio.TimeoutError, aiohttp.ClientError) as err:
         _LOGGER.debug("Eveus charger is unreachable (%s)", type(err).__name__)
         raise CannotConnect(f"Connection error: {type(err).__name__}") from err

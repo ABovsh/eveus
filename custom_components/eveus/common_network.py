@@ -1137,6 +1137,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if self._reve.main_residue_due():
             # What only /main carries; a /main that does not answer leaves the
             # kept values standing until they age out.
+            self._reve.main_residue_tried()
             try:
                 main = await fetch_json(
                     self.get_session(),
@@ -1150,6 +1151,21 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(main, dict):
                     self._reve.keep_main_residue(main)
         return self._reve.with_main_residue(measurements), latency
+
+    async def _reve_without_main(self) -> tuple[dict[str, Any], float] | None:
+        """A charger whose ``/main`` answers with an HTTP error or not JSON,
+        read through GraphQL when it answers as REVE; else ``None``."""
+        # This poll asked /main already: the next try for its own fields is
+        # five minutes away.
+        self._reve.main_residue_tried()
+        start = time.monotonic()
+        try:
+            measurements = await self._reve.read_measurements(self._validate)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            return None
+        if not is_reve_payload(measurements):
+            return None
+        return self._reve.with_main_residue(measurements), time.monotonic() - start
 
     async def _first_reve_measurements(self, main: dict[str, Any]) -> dict[str, Any]:
         """The poll that first recognises REVE from ``/main`` shows GraphQL's
@@ -1173,17 +1189,33 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 new_data, response_time = measured
             else:
                 main_start = time.monotonic()
-                new_data = await fetch_json(
-                    self.get_session(),
-                    self.url_for("/main"),
-                    auth=self._basic_auth,
-                    timeout=_UPDATE_TIMEOUT_OBJ,
-                    on_unauthorized=self._reject_credentials,
-                )
-                # Latency is the answering source's own: a GraphQL read that
-                # failed first, or the one a REVE poll makes below, takes up to
-                # its own timeout when that server hangs.
-                response_time = time.monotonic() - main_start
+                try:
+                    new_data = await fetch_json(
+                        self.get_session(),
+                        self.url_for("/main"),
+                        auth=self._basic_auth,
+                        timeout=_UPDATE_TIMEOUT_OBJ,
+                        on_unauthorized=self._reject_credentials,
+                    )
+                except (aiohttp.ClientResponseError, ValueError) as err:
+                    # The charger is there but /main is not: REVE without it?
+                    # Never after a redirect, which may point at another host.
+                    missing = not isinstance(err, aiohttp.ClientResponseError) or err.status >= 400
+                    found = (
+                        await self._reve_without_main()
+                        if missing and not self._reve_seen
+                        else None
+                    )
+                    if found is None:
+                        raise
+                    new_data, response_time = found
+                    from_graphql = True
+                    self._last_poll_source = "graphql"
+                else:
+                    # Latency is the answering source's own: a GraphQL read
+                    # that failed first, or the one a REVE poll makes below,
+                    # takes up to its own timeout when that server hangs.
+                    response_time = time.monotonic() - main_start
             # Shared validator retains the historical common-network guards:
             # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
             # Passing the configured model bounds currentSet to this charger's
