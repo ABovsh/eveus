@@ -140,6 +140,17 @@ def test_unreliable_main_fields_are_dropped_without_graphql_data() -> None:
     assert main["tarif"] == 2281701420
 
 
+def test_power_is_converted_from_the_kilowatts_reve_reports_to_watts() -> None:
+    # Measured on hardware 16.10: 3.597 kW reported at 15.9 A and 226 V.
+    main = {**_reve_main(), "powerMeas": 3.597}
+    payload, _ = normalize_reve_payload(main, None)
+
+    assert payload["powerMeas"] == pytest.approx(3597)
+    assert main["powerMeas"] == 3.597
+    zero, _ = normalize_reve_payload({**_reve_main(), "powerMeas": 0}, None)
+    assert zero["powerMeas"] == 0
+
+
 def test_graphql_schedules_and_rates_replace_the_projection() -> None:
     payload, unsupported = normalize_reve_payload(_reve_main(), _reve_extras())
 
