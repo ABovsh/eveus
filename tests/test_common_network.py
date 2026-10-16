@@ -1150,6 +1150,21 @@ def test_emit_transition_events_charging_finished_falls_back_to_stopped_reason()
     assert reasons[common_network.EVENT_CHARGING_FINISHED]["reason"] == "stopped"
 
 
+def test_emit_transition_events_names_a_stop_held_in_substate_9_stopped() -> None:
+    """REVE answers Stop with state 5 / subState 9; that finish is the user's
+    Stop, as subState 1 is on classic firmware, not a completed charge."""
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_CHARGING
+    updater._event_charging_payload = {"state": common_network.DEVICE_STATE_CHARGING}
+
+    updater._emit_transition_events(
+        {"state": 5, "subState": 9, "evseEnabled": 1, "verFWMain": "REVE_PLUS_1.0.0"}
+    )
+
+    reasons = dict(bus.fired)
+    assert reasons[common_network.EVENT_CHARGING_FINISHED]["reason"] == "stopped"
+
+
 def test_emit_transition_events_requires_previous_charging_for_finished_event() -> None:
     """Regression guard for an and/or flip: a transition into a non-error
     state must NOT fire charging_finished unless the PREVIOUS state was

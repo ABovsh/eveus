@@ -854,6 +854,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                         modern=self._modern_firmware_seen
                         or is_modern_firmware_payload(new_data),
                         ocpp=bool(get_safe_value(new_data, "ocppEnabled", int)),
+                        stopped=get_safe_value(new_data, "evseEnabled", int) == 1,
                     ),
                     "session_energy_kwh": _bounded(
                         get_safe_value(snapshot, "sessionEnergy", float), MAX_ENERGY_KWH

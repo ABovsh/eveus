@@ -49,6 +49,21 @@ def test_reason_mapping(payload, expected):
     assert get_not_charging_reason(_modern(**payload), None) == expected
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # REVE's Stop holds the charger in subState 9; classic firmware's Stop
+        # reads subState 1. Either way the user's Stop is what holds it.
+        ({"state": 5, "subState": 9, "evseEnabled": 1}, "Stopped by User"),
+        ({"state": 3, "subState": 9, "evseEnabled": 1}, "Stopped by User"),
+        ({"state": 5, "subState": 9, "evseEnabled": 0}, "Waiting for Activation"),
+        ({"state": 3, "subState": 1, "evseEnabled": 1}, "Stopped by User"),
+    ],
+)
+def test_a_charger_held_while_stop_is_on_is_stopped_by_user(payload, expected):
+    assert get_not_charging_reason(_modern(**payload), None) == expected
+
+
 def test_reason_none_without_state():
     assert get_not_charging_reason(_modern(), None) is None
 

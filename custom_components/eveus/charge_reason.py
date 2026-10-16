@@ -85,6 +85,7 @@ def not_charging_reason(
     modern: bool,
     ocpp: bool,
     completed: bool,
+    stopped: bool = False,
 ) -> Optional[str]:
     """Fold state and subState into one closed set of reasons.
 
@@ -93,6 +94,10 @@ def not_charging_reason(
     signal, not the stop cause: it reads "Schedule 1 Limit" all day outside
     the window, so a car that finished at 03:00 sees it flip at 07:00 while
     the state stays 5. Without that record, subState is what stopped it.
+
+    ``stopped`` is the Stop switch. REVE holds a stopped charger in subState 9,
+    which otherwise means waiting for an external start; classic firmware
+    reads subState 1 there.
     """
     if state is None:
         return None
@@ -124,7 +129,7 @@ def not_charging_reason(
     # 9 is the charger holding for an external start command — a live setting,
     # so it wins even over a completion seen earlier.
     if substate == _SUBSTATE_ACTIVATION:
-        return SUBSTATE_REASONS[_SUBSTATE_ACTIVATION]
+        return _REASON_STOPPED_BY_USER if stopped else SUBSTATE_REASONS[_SUBSTATE_ACTIVATION]
     if state == DEVICE_STATE_COMPLETE and (completed or substate in (None, 0)):
         return _REASON_CHARGE_COMPLETE
     reason = SUBSTATE_REASONS.get(substate)
@@ -147,6 +152,7 @@ def finish_reason(
     *,
     modern: bool,
     ocpp: bool,
+    stopped: bool = False,
 ) -> str:
     """The ``reason`` of an ``eveus_charging_finished`` event.
 
@@ -154,6 +160,7 @@ def finish_reason(
     have been seen in it yet: subState on that poll is the whole answer.
     """
     reason = not_charging_reason(
-        state, substate, modern=modern, ocpp=ocpp, completed=False  # pragma: no mutate - False and None are equally falsy; only read for truthiness
+        state, substate, modern=modern, ocpp=ocpp, completed=False,  # pragma: no mutate - False and None are equally falsy; only read for truthiness
+        stopped=stopped,
     )
     return SUBSTATE_FINISH_REASONS.get(reason) or FINISHED_REASONS.get(state, "stopped")
