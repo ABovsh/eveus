@@ -476,6 +476,7 @@ More help: [integration website](https://abovsh.github.io/eveus/) · [community 
 | SOC sensors are missing | Set the integration mode to Advanced under **Configure**; the integration reloads automatically after saving |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
 | Charger is powered off | This is normal: the integration polls less often and does not fill the log with errors |
+| REVE charger reconnects to Wi-Fi about every 15 minutes | See [REVE firmware](#reve-firmware): internet through a VPN or tunnel with a small MTU |
 | A Repairs notice appeared | See [Safety notices](#-safety-notices) for what each one means and what to do |
 | The charger is nowhere in Devices | See [The charger does not appear after installing](#the-charger-does-not-appear-after-installing) |
 
@@ -502,11 +503,15 @@ The number of entities depends on the integration mode and phase count.
 
 The integration recognizes REVE firmware by itself; no setup change is needed.
 
-- **Charging Current** and the schedules are written where REVE keeps them, so a change made in Home Assistant stays in effect. **Stop Charging** uses REVE's own start/stop command, the one the charger's app sends. Schedule 1 and Schedule 2 are the first two schedules in the charger's app; the days of the week set there are kept.
+- Readings, the charging session and the settings go through REVE's own interface, the one the charger's app uses. The charger's `/main` page serves as a backup when that interface does not answer, and for a few details only it reports (manufacturer, model, serial number). While only `/main` answers, the session shows the last values from REVE's interface for up to five minutes, then becomes unavailable.
+- A change made in Home Assistant stays in effect: **Charging Current**, the schedules, **One Charge**, **Adaptive Mode**, **Undervoltage threshold**, **Minimum Voltage**, **Time Zone**, **Sync Time**, **Ground Protection** and the charging limits. **Adaptive Mode** has the options Off, Voltage and Auto; REVE has no Power option, so choosing it is refused. **Stop Charging** uses REVE's own start/stop command, the one the charger's app sends. Schedule 1 and Schedule 2 are the first two schedules in the charger's app; the days of the week set there are kept.
+- **Limit: Time enabled**, **Limit: Energy enabled** and **Limit: Cost enabled** set the limit to the value of their number when switched on and remove it when switched off; the number keeps the value. REVE 2.4.0 stores these limits but does not stop charging when one is reached. Stopping at Target SOC is done by Home Assistant and works while **Limit: disable all** is off.
+- **Limit: disable all**, **Connect to OCPP** and the counter resets still use the charger's older route.
 - Schedules and tariffs changed in the charger's app appear in Home Assistant within about five minutes.
 - **Primary Rate Cost** shows REVE's base price; the Rate 2 and Rate 3 sensors show its first two rates.
 - **Active Rate Cost** is the price in effect by the charger's clock: the first enabled rate whose window and days of the week include the current time, otherwise the base price. While REVE's third or fourth rate is in effect it is unavailable, because the integration has no sensors for those rates. **Cost to Target SOC** follows the windows of the first two rates but not their days of the week.
-- **REVE API** (diagnostic) shows whether that interface answers. It stops answering at times for minutes; meanwhile the schedules and tariffs keep their last known values, and changing them, Charging Current or Stop Charging fails with an error until it answers again.
+- **REVE API** (diagnostic) shows whether that interface answers. It stops answering at times for minutes; meanwhile the readings come from `/main`, the schedules and tariffs keep their last known values, and changing settings fails with an error until it answers again.
+- **Wi-Fi drops about every 15 minutes.** REVE does not reduce its packet size on a link with an MTU below 1500, so its connection to the maker's cloud hangs and the charger restarts its Wi-Fi module. This happens when the charger reaches the internet through a VPN or tunnel with a smaller MTU. Set the maximum segment size (MSS) on that tunnel on the router, for example 1284 for an MTU of 1324 (Keenetic: `ip tcp adjust-mss 1284` on the tunnel interface; automatic `pmtu` did not help), or give the charger internet access outside the tunnel.
 - REVE does not report these readings, so they stay unavailable: **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, the schedule energy limits, and **Plug Temperature** (REVE reports it as -60).
 
 ### Older charger firmware
