@@ -588,13 +588,15 @@ def test_reve_schedule_energy_writes_are_refused_without_a_request(monkeypatch: 
     assert charger.calls == []
 
 
-def test_reve_settings_with_a_working_page_event_still_use_it(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reve_settings_not_yet_moved_to_graphql_still_use_page_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    # One Charge, adaptive mode and minimum voltage moved to GraphQL
+    # (test_reve_graphql_writes); these wait for a decision.
     charger = _Charger(_reve_main())
     updater = _updater(monkeypatch, charger)
     asyncio.run(updater._async_update_data())
     charger.calls.clear()
 
-    for command, value in (("aiMode", 0), ("oneCharge", 0), ("minVoltage", 180)):
+    for command, value in (("suspendLimits", 0), ("ocppEnabled", 0), ("rstEM1", 0)):
         assert asyncio.run(updater._command_manager.send_command(command, value)) is True
 
     assert charger.paths() == ["/pageEvent"] * 3
@@ -818,7 +820,7 @@ def test_energy_routes_refuse_with_their_own_error() -> None:
     handler = api.route("sh2EnergyValue")
     with pytest.raises(ReveCommandUnsupported):
         asyncio.run(handler(5))
-    assert api.route("aiMode") is None
+    assert api.route("suspendLimits") is None
 
 
 def test_graphql_requests_carry_the_session_auth_timeout_and_operation(

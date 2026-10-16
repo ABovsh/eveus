@@ -45,6 +45,7 @@ import math
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Final
 
@@ -108,6 +109,30 @@ _COMMAND_STOP: Final = 2
 _CHARGING_COMMANDS: Final = frozenset({0, _COMMAND_START, _COMMAND_STOP})
 
 _MINUTES_PER_DAY: Final = 1440
+
+# Settings written through GraphQL updateStationData, in the shape the
+# maker's apps send them: the local app's generic toggle sends 0/1 (PE
+# control), its dedicated switches a boolean (One Charge), a list its number.
+_FLAG_WRITES: Final[dict[str, str]] = {"oneCharge": "isOneChargeEnabled"}
+_TOGGLE_WRITES: Final[dict[str, str]] = {"groundCtrl": "isGroundConnected"}
+_NUMBER_WRITES: Final[dict[str, str]] = {"aiVoltage": "voltageThreshold", "minVoltage": "minVoltage"}
+# Adaptive mode: the integration's 0 Off, 1 Voltage, 2 Auto (percent drop);
+# REVE has no 3 Power.
+_ADAPTIVE_MODES: Final[frozenset[int]] = frozenset({0, 1, 2})
+# Session limits: the /main number key, its on/off key, the GraphQL session
+# field, and the factor from /main read units to write units (the energy
+# limit reads in kWh and is written in Wh, as /pageEvent takes it too).
+_LIMIT_WRITES: Final[tuple[tuple[str, str, str, int], ...]] = (
+    ("energyLimit", "energyLimitS", "energyLimit", 1000),
+    ("timeLimit", "timeLimitS", "timeLimit", 1),
+    ("moneyLimit", "moneyLimitS", "costLimit", 1),
+)
+# Still written through /pageEvent on REVE until decided: the limits' master
+# switch (REVE has none), OCPP (its write carries the whole object, auth key
+# included) and the counter resets (irreversible, untested live).
+PAGE_EVENT_COMMANDS: Final[frozenset[str]] = frozenset(
+    {"suspendLimits", "ocppEnabled", "rstEM1", "rstEM2"}
+)
 
 # How often the schedules, rates and Stop are re-read, how long a failed read
 # waits before the next attempt, and how long a last good read stays in force.
@@ -332,6 +357,32 @@ def _weekdays(value: Any) -> list[int]:
     if mask > 127:
         raise ValueError("weekday mask out of range")  # pragma: no mutate - message text; only the exception type is ever logged
     return [day for day in range(7) if mask & (1 << day)]  # pragma: no mutate - a mask of at most 127 has no bit 7
+
+
+def _limit_reading(value: Any) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return value
+
+
+def _toggle(value: Any) -> int:
+    """0/1, as the app's generic toggle sends it."""
+    return int(_bool(value))
+
+
+def _signed_whole(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("not a number")  # pragma: no mutate - message text; only the exception type is ever logged
+    if not math.isfinite(value) or not float(value).is_integer():
+        raise ValueError("not a whole number")  # pragma: no mutate - message text; only the exception type is ever logged
+    return int(value)
+
+
+def _adaptive_mode(value: Any) -> int:
+    mode = _whole(value)
+    if mode not in _ADAPTIVE_MODES:
+        raise ReveCommandUnsupported(f"adaptive mode {mode}")  # pragma: no mutate - message text; only the exception type is ever logged
+    return mode
 
 
 def _name(value: Any) -> str:
@@ -568,6 +619,10 @@ class ReveApi:
         self._residue: dict[str, Any] = {}
         self._residue_at: float | None = None
         self._session: tuple[dict[str, Any], float] | None = None
+        # A limit's value in /main read units, kept while the limit is off
+        # (REVE then reports null) so its number shows what switching it back
+        # on would apply.
+        self._limit_values: dict[str, int | float] = {}
 
     @property
     def extras(self) -> ReveExtras | None:
@@ -636,8 +691,14 @@ class ReveApi:
         return main
 
     def with_main_residue(self, measurements: Mapping[str, Any]) -> dict[str, Any]:
-        """The measurements with what only ``/main`` carries laid under them."""
+        """The measurements with what only ``/main`` carries laid under them,
+        and a limit that is off showing the value it was last set to."""
         payload = dict(measurements)
+        for key, _flag, _field, _factor in _LIMIT_WRITES:
+            if key in payload:
+                self._limit_values[key] = payload[key]
+            elif key in self._limit_values:
+                payload[key] = self._limit_values[key]
         fresh = self._residue_fresh(time.monotonic())
         for key, value in self._residue.items():
             if key in MAIN_IDENTITY_FIELDS or fresh:
@@ -697,7 +758,59 @@ class ReveApi:
             return partial(self.write_schedule, command)
         if command in SCHEDULE_ENERGY_COMMANDS:
             return partial(self._refuse, command)  # pragma: no mutate - the command only names the refusal
+        if command in _FLAG_WRITES:
+            return partial(self._write_value, _FLAG_WRITES[command], _bool)
+        if command in _TOGGLE_WRITES:
+            return partial(self._write_value, _TOGGLE_WRITES[command], _toggle)
+        if command in _NUMBER_WRITES:
+            return partial(self._write_value, _NUMBER_WRITES[command], _whole)
+        if command == "aiMode":
+            return partial(self._write_value, "adaptiveModeStatus", _adaptive_mode)
+        if command == "timeZone":
+            return self.set_time_zone
+        if command == "systemTime":
+            return self.set_system_time
+        for key, flag, field, factor in _LIMIT_WRITES:
+            if command == key:
+                return partial(self.set_limit, key, flag, field, factor)
+            if command == flag:
+                return partial(self.switch_limit, key, flag, field, factor)
         return None
+
+    async def _write_value(self, field: str, coerce: Callable[[Any], Any], value: Any) -> None:
+        await self._mutate({field: coerce(value)})
+
+    async def set_time_zone(self, value: Any) -> None:
+        await self._mutate({"timeSettings": {"timeZone": _signed_whole(value)}})
+
+    async def set_system_time(self, value: Any) -> None:
+        """Set the clock to a UTC instant (seconds), as the app sends it: ISO text."""
+        instant = datetime.fromtimestamp(_whole(value), tz=timezone.utc)
+        await self._mutate({"timeSettings": {"systemTime": instant.strftime("%Y-%m-%dT%H:%M:%SZ")}})
+
+    async def set_limit(self, key: str, flag: str, field: str, factor: int, value: Any) -> None:
+        """A limit's value (write units). REVE has no on/off flag: writing a
+        value switches the limit on, so while it is off the value is only kept
+        for when it is switched on."""
+        written = _whole(value)
+        if self._updater.snapshot.get_int(flag) == 1:
+            await self._mutate({"session": {field: written}})
+        self._limit_values[key] = written / factor if factor != 1 else written
+
+    async def switch_limit(self, key: str, flag: str, field: str, factor: int, value: Any) -> None:
+        """Switch a limit on with its kept (or current) value, or off: ``null``."""
+        if not _bool(value):
+            current = _limit_reading(self._updater.snapshot.get(key))
+            if current is not None and current > 0:
+                self._limit_values.setdefault(key, current)
+            await self._mutate({"session": {field: None}})
+            return
+        read = self._limit_values.get(key)
+        if read is None:
+            read = _limit_reading(self._updater.snapshot.get(key))
+        if read is None or read <= 0:
+            raise ReveCommandUnsupported(f"{key} has no value to switch on with")  # pragma: no mutate - message text; only the exception type is ever logged
+        await self._mutate({"session": {field: round(read * factor)}})
 
     async def set_station_current(self, value: Any) -> None:
         await self._mutate({"stationCurrent": _whole(value)})
