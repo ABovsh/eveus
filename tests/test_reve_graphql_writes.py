@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from custom_components.eveus import reve
-from test_reve_firmware import _Charger, _reve_main, _updater
+from test_reve_firmware import _Charger, _Response, _no_sleep, _reve_main, _updater
 
 
 class _WritableCharger(_Charger):
@@ -32,6 +32,28 @@ class _WritableCharger(_Charger):
             body = json.loads(kwargs["data"])
             if body["query"].lstrip().startswith("mutation"):
                 _merge(self.station, body["variables"]["input"])
+        return super().post(url, **kwargs)
+
+
+class _NullRefusingCharger(_WritableCharger):
+    """Like the real REVE: answers a limit's ``null`` with ``success: false``,
+    and (``drops_limit``) drops the limit anyway."""
+
+    drops_limit = True
+
+    def post(self, url: str, **kwargs: Any) -> Any:
+        import json
+
+        if url.endswith("/graphql"):
+            body = json.loads(kwargs["data"])
+            if body["query"].lstrip().startswith("mutation"):
+                change = body["variables"]["input"]
+                if None in (change.get("session") or {}).values():
+                    self.calls.append(("/graphql", body))
+                    if self.drops_limit:
+                        _merge(self.station, change)
+                    return _Response(200, {"data": {"updateStationData": {
+                        "__typename": "UpdateStationData", "success": False}}})
         return super().post(url, **kwargs)
 
 
@@ -182,6 +204,37 @@ def test_a_limit_switched_off_is_null_and_its_value_still_shows(
     assert data[switch] == 0
     # The number keeps showing the limit it would switch back on with.
     assert data[command] == read
+
+
+@pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
+def test_a_limit_reve_refuses_to_clear_but_drops_counts_as_switched_off(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
+) -> None:
+    # Measured on hardware 16.10: null answers success:false, the limit goes.
+    monkeypatch.setattr(reve.asyncio, "sleep", _no_sleep)
+    charger, updater = _known(monkeypatch, _NullRefusingCharger(_reve_main()))
+    _send(updater, command, value)
+    _send(updater, switch, 1)
+    asyncio.run(updater._async_update_data())
+
+    assert _send(updater, switch, 0) is True
+
+    assert asyncio.run(updater._async_update_data())[switch] == 0
+
+
+@pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
+def test_a_limit_that_stays_after_a_refused_clear_is_a_failed_command(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
+) -> None:
+    monkeypatch.setattr(reve.asyncio, "sleep", _no_sleep)
+    charger = _NullRefusingCharger(_reve_main())
+    charger.drops_limit = False
+    charger, updater = _known(monkeypatch, charger)
+    _send(updater, command, value)
+    _send(updater, switch, 1)
+    asyncio.run(updater._async_update_data())
+
+    assert _send(updater, switch, 0) is False
 
 
 @pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)

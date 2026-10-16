@@ -454,6 +454,7 @@ class _Charger:
                 "scheduleV2": self.schedules,
                 "ratesV2": self.rates,
                 "chargingCommand": self.charging_command,
+                "session": self.station.get("session"),
             }
             return _Response(200, {"data": {"stationData": {
                 key: value for key, value in station.items() if key in body["query"]

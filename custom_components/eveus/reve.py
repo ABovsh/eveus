@@ -258,6 +258,19 @@ MEASUREMENTS_QUERY: Final = """query StationData {
     }"""
 MEASUREMENTS_RETRY_SECONDS: Final = 60
 
+# The session limits alone, to check a limit the charger refused to clear.
+SESSION_LIMITS_QUERY: Final = """query StationData {
+        stationData {
+            session {
+                energyLimit
+                costLimit
+                timeLimit
+            }
+        }
+    }"""
+LIMIT_CLEAR_CHECKS: Final = 5
+LIMIT_CLEAR_WAIT_SECONDS: Final = 1.5
+
 # What only /main carries on REVE, kept from the last /main read between
 # GraphQL polls: the device-registry strings (for as long as the integration
 # runs) and the few entity fields GraphQL has no place for (refreshed every
@@ -806,7 +819,7 @@ class ReveApi:
             current = _limit_reading(self._updater.snapshot.get(key))
             if current is not None and current > 0:
                 self._limit_values.setdefault(key, current)
-            await self._mutate({"session": {field: None}})
+            await self._clear_limit(field)
             return
         read = self._limit_values.get(key)
         if read is None:
@@ -814,6 +827,25 @@ class ReveApi:
         if read is None or read <= 0:
             raise ReveCommandUnsupported(f"{key} has no value to switch on with")  # pragma: no mutate - message text; only the exception type is ever logged
         await self._mutate({"session": {field: round(read * factor)}})
+
+    async def _clear_limit(self, field: str) -> None:
+        """Clear a session limit with ``null``.
+
+        REVE answers that write with ``success: false`` and drops the limit
+        all the same (seen for all three limits on 2.4.0), so a refusal is
+        settled by what the charger reports a moment later.
+        """
+        try:
+            await self._mutate({"session": {field: None}})
+            return
+        except GraphQLError:
+            pass
+        for _ in range(LIMIT_CLEAR_CHECKS):
+            await asyncio.sleep(LIMIT_CLEAR_WAIT_SECONDS)
+            session = (await self._station(SESSION_LIMITS_QUERY)).get("session")
+            if isinstance(session, dict) and field in session and session[field] is None:
+                return
+        raise GraphQLError("REVE did not clear the limit")  # pragma: no mutate - message text; only the exception type is ever logged
 
     async def set_station_current(self, value: Any) -> None:
         await self._mutate({"stationCurrent": _whole(value)})
