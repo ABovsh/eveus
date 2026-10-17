@@ -1759,6 +1759,36 @@ test('Manual mode on: no schedule plan', () => {
   assert.doesNotMatch(setupAll({sections:['advanced_info'], charging:false, over:plan(MANUAL('on'))}).html(), /soc-plan/);
 });
 
+// ---- REVE: a limit is switched on only while charging, outside manual mode ----
+const ENERGY_OFF = {limit_energy_enabled:['switch.lee','off']};
+test('REVE idle: the limit switches that are off are disabled and the section says when they work', () => {
+  const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
+  assert.match(h, /none on · switch on while charging/);
+  assert.match(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+  assert.match(h, /data-limit-toggle="limit_cost_enabled"[^>]*disabled/);
+  assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled/, 'Target SOC is stopped by Home Assistant');
+  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /усі вимкнено · вмикаються під час зарядки/);
+});
+test('REVE charging: the limit switches can be turned on', () => {
+  const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('off'), ...ENERGY_OFF}}).html();
+  assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+  assert.doesNotMatch(h, /switch on while charging/);
+});
+test('REVE manual mode while charging: the limit switches stay disabled and say why', () => {
+  const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('on'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
+  assert.match(h, /none on · not in manual mode/);
+  assert.match(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+});
+test('REVE: a limit that is already on can still be switched off in any state', () => {
+  const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('on'), limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+});
+test('a charger without Manual Mode (other firmware) keeps every limit switch enabled', () => {
+  const h = setupAll({sections:['limits'], charging:false, over:ENERGY_OFF}).html();
+  assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+  assert.doesNotMatch(h, /switch on while charging/);
+});
+
 // ---- Polish pass: errors that outlive their moment, gestures, empty grids ----
 test('a command error can be tapped away and clears itself; it never stays on the card for good', async () => {
   const x = setupAll({sections:['time'], over:TIME});
