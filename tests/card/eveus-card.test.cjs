@@ -1719,16 +1719,16 @@ test('One charge on: no schedule plan, and a schedule current cap is not blamed 
   assert.doesNotMatch(x.html(), /Schedule 1 limit/);
 });
 
-// ---- REVE manual mode: schedules and limits are ignored until the car is unplugged ----
+// ---- REVE manual mode: schedules and limits are ignored until the car is reconnected ----
 const MANUAL = (state) => ({manual_mode:['binary_sensor.manual', state]});
 test('Manual mode on: Schedules says so, strikes the windows through, and has nothing to turn off', () => {
   const x = setupAll({sections:['schedules'], charging:false, over:{...SCHED, ...MANUAL('on')}});
   const h = x.html();
   assert.match(h, /class="panel sched overridden"/);
-  assert.match(h, /class="override" role="note"[^]*mdi:hand-back-right[^]*REVE manual mode ignores the schedules until the car is unplugged/);
+  assert.match(h, /class="override" role="note"[^]*mdi:hand-back-right[^]*REVE manual mode ignores the schedules until the car is reconnected/);
   assert.doesNotMatch(h, /override-off|data-status-toggle="one_charge"/);
   assert.doesNotMatch(rowOf(h, 1), /^ on now"/);
-  assert.match(setupAll({sections:['schedules'], locale:'uk', over:{...SCHED, ...MANUAL('on')}}).html(), /Ручний режим REVE ігнорує розклади до відключення авто/);
+  assert.match(setupAll({sections:['schedules'], locale:'uk', over:{...SCHED, ...MANUAL('on')}}).html(), /Ручний режим REVE ігнорує розклади до перепідключення авто/);
 });
 test('Manual mode notice: only when it is on, a schedule is on, and the charger answers', () => {
   assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...MANUAL('off')}}).html(), /class="override"|overridden/);
@@ -1743,12 +1743,12 @@ test('One charge with manual mode on keeps its own notice and Turn off button', 
 });
 test('Manual mode on: a folded Schedules row strikes the windows through and says why', () => {
   const x = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...MANUAL('on')}});
-  assert.match(x.html(), /class="fold-sum overridden" title="REVE manual mode ignores the schedules until the car is unplugged"[^]*<s>1 23:00→07:00<\/s>/);
+  assert.match(x.html(), /class="fold-sum overridden" title="REVE manual mode ignores the schedules until the car is reconnected"[^]*<s>1 23:00→07:00<\/s>/);
 });
 test('Manual mode on: the charger limits read as suspended, Target SOC stays on', () => {
   const on = {...MANUAL('on'), limit_energy_enabled:['switch.lee','on']};
   const h = setupAll({sections:['limits'], over:on}).html();
-  assert.match(h, /REVE manual mode ignores the limits until the car is unplugged/);
+  assert.match(h, /REVE manual mode ignores the limits until the car is reconnected/);
   assert.match(h, /limits-grid four suspended/);
   assert.match(h, /limit-tile saved[^]*data-limit-toggle="limit_energy_enabled"/);
   assert.match(h, /limit-tile active[^]*data-limit-toggle="limit_soc_enabled"/);
