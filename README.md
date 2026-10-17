@@ -471,7 +471,7 @@ More help: [integration website](https://abovsh.github.io/eveus/) · [community 
 
 | Problem | What to check |
 | --- | --- |
-| Setup cannot connect | Read the error in the setup dialog; check power, network access from HA, credentials and charger model |
+| Setup cannot connect | Read the error in the setup dialog. "Refused the connection": the IP address belongs to another device. "Cannot reach the network": put the charger and HA on the same network. Otherwise check power, credentials and charger model |
 | Controls do not respond | Check **Connection Quality**, whether the charger is reachable, and the credentials via **Reconfigure**; then wait for the next poll |
 | SOC sensors are missing | Set the integration mode to Advanced under **Configure**; the integration reloads automatically after saving |
 | SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |

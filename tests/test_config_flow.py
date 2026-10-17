@@ -2659,3 +2659,108 @@ def test_logged_media_type_keeps_only_a_bare_type(header, expected) -> None:
 
     headers = {} if header is None else {"Content-Type": header}
     assert config_flow._safe_media_type(SimpleNamespace(headers=headers)) == expected
+
+
+# --- Connection failures name the OS reason without the user's address ---
+
+import errno as _errno
+
+
+def _connector_error(code: int) -> aiohttp.ClientConnectorError:
+    # Real aiohttp puts "Connect call failed ('<host>', 80)" in strerror, so the
+    # sentinel proves the address never reaches the dialog.
+    key = SimpleNamespace(host="leak-host-sentinel.lan", port=80, ssl=True)
+    return aiohttp.ClientConnectorError(
+        key, OSError(code, "Connect call failed ('leak-host-sentinel.lan', 80)")
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [
+        (_errno.ECONNREFUSED, "ECONNREFUSED"),
+        (_errno.EHOSTUNREACH, "EHOSTUNREACH"),
+        (_errno.ENETUNREACH, "ENETUNREACH"),
+        (_errno.ETIMEDOUT, "ETIMEDOUT"),
+    ],
+)
+def test_validate_input_names_the_os_error_code(code: int, name: str) -> None:
+    hass = _Hass(_Session(_Response(raise_status=_connector_error(code))))
+
+    with pytest.raises(CannotConnect) as err:
+        asyncio.run(validate_input(hass, _input()))
+
+    assert str(err.value) == f"Connection error: ClientConnectorError, {name}"
+    assert "leak-host-sentinel" not in str(err.value)
+
+
+def test_validate_input_without_os_error_code_keeps_the_class_only() -> None:
+    # aiohttp raises an errno-less OSError when several addresses all fail.
+    error = aiohttp.ClientConnectorError(
+        SimpleNamespace(host="h", port=80, ssl=True), OSError("Multiple exceptions")
+    )
+    hass = _Hass(_Session(_Response(raise_status=error)))
+
+    with pytest.raises(CannotConnect) as err:
+        asyncio.run(validate_input(hass, _input()))
+
+    assert str(err.value) == "Connection error: ClientConnectorError"
+
+
+def test_validate_input_ignores_an_os_error_code_it_cannot_name() -> None:
+    # An errno outside errno.errorcode (e.g. a platform-specific code) must not
+    # turn a connect failure into a KeyError and the dialog's "unknown".
+    hass = _Hass(_Session(_Response(raise_status=_connector_error(99999))))
+
+    with pytest.raises(CannotConnect) as err:
+        asyncio.run(validate_input(hass, _input()))
+
+    assert str(err.value) == "Connection error: ClientConnectorError"
+
+
+def _cannot_connect_caused_by(cause: BaseException | None) -> CannotConnect:
+    err = CannotConnect("Connection error: ClientConnectorError, X")
+    err.__cause__ = cause
+    return err
+
+
+@pytest.mark.parametrize(
+    ("cause", "base"),
+    [
+        (OSError(_errno.ECONNREFUSED, "refused"), "connection_refused"),
+        (OSError(_errno.EHOSTUNREACH, "no route"), "host_unreachable"),
+        (OSError(_errno.ENETUNREACH, "net down"), "host_unreachable"),
+        (OSError(_errno.ETIMEDOUT, "timed out"), "cannot_connect"),
+        (asyncio.TimeoutError(), "cannot_connect"),
+        (OSError("Multiple exceptions"), "cannot_connect"),
+        (None, "cannot_connect"),
+    ],
+)
+@pytest.mark.parametrize("step", ["user", "reconfigure", "reauth"])
+def test_flow_steps_explain_refused_and_unreachable(
+    monkeypatch: pytest.MonkeyPatch, step: str, cause, base: str
+) -> None:
+    failure = _cannot_connect_caused_by(cause)
+
+    result = _run_flow_step(step, monkeypatch, failure)
+
+    assert result["errors"] == {"base": base}
+    assert result["description_placeholders"] == {
+        "error_detail": "Connection error: ClientConnectorError, X"
+    }
+
+
+def test_refused_error_after_validate_input_reaches_the_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # End to end through the real validate_input: the cause survives the re-raise.
+    hass = _Hass(_Session(_Response(raise_status=_connector_error(_errno.ECONNREFUSED))))
+    flow = config_flow.ConfigFlow()
+    flow.hass = hass
+
+    result = asyncio.run(flow.async_step_user(_input()))
+
+    assert result["errors"] == {"base": "connection_refused"}
+    assert result["description_placeholders"] == {
+        "error_detail": "Connection error: ClientConnectorError, ECONNREFUSED"
+    }

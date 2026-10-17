@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import errno
 import ipaddress
 import re
 from collections.abc import Mapping
@@ -74,6 +75,12 @@ _LOGGER = logging.getLogger(__name__)
 _UPDATE_TIMEOUT_OBJ = UPDATE_TIMEOUT_OBJ
 
 _INVALID_HOST_MSG = "Invalid IP address or hostname"
+
+# OS connect failures that have a clearer message than cannot_connect: refused
+# means something else answers at that address, unreachable means HA has no
+# route to the charger's network.
+_REFUSED_ERRNOS = frozenset({errno.ECONNREFUSED})
+_UNREACHABLE_ERRNOS = frozenset({errno.EHOSTUNREACH, errno.ENETUNREACH})
 
 # Keys outside the user-editable form that must survive reconfigure/reauth/repair.
 _PRESERVED_ENTRY_KEYS: tuple[str, ...] = (
@@ -594,13 +601,24 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             return reve
         raise
     except (asyncio.TimeoutError, aiohttp.ClientError) as err:
-        _LOGGER.debug("Eveus charger is unreachable (%s)", type(err).__name__)
-        raise CannotConnect(f"Connection error: {type(err).__name__}") from err
+        # Only the errno name: aiohttp's strerror carries the user's host.
+        detail = type(err).__name__
+        code = _os_errno(err)
+        if code is not None:
+            detail = f"{detail}, {errno.errorcode[code]}"
+        _LOGGER.debug("Eveus charger is unreachable (%s)", detail)
+        raise CannotConnect(f"Connection error: {detail}") from err
     except (InvalidAuth, InvalidDevice, InvalidResponse, InvalidInput, CannotConnect):
         raise
     except Exception as err:
         _LOGGER.error("Unexpected Eveus setup error: %s", type(err).__name__)
         raise CannotConnect(f"Unexpected error: {type(err).__name__}") from err
+
+
+def _os_errno(err: BaseException | None) -> int | None:
+    """Return the OS error code behind a connect failure, if it has a known one."""
+    code = getattr(err, "errno", None)
+    return code if isinstance(code, int) and code in errno.errorcode else None
 
 
 def _flow_error(err: Exception, step: str) -> tuple[str, dict[str, str]]:
@@ -611,6 +629,11 @@ def _flow_error(err: Exception, step: str) -> tuple[str, dict[str, str]]:
     errors carry fixed messages; anything else is logged by class only.
     """
     if isinstance(err, CannotConnect):
+        code = _os_errno(err.__cause__)
+        if code in _REFUSED_ERRNOS:
+            return "connection_refused", _cannot_connect_placeholders(err)
+        if code in _UNREACHABLE_ERRNOS:
+            return "host_unreachable", _cannot_connect_placeholders(err)
         return "cannot_connect", _cannot_connect_placeholders(err)
     if isinstance(err, InvalidAuth):
         return "invalid_auth", {}

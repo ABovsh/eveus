@@ -9,6 +9,10 @@
 - **Manual Mode (REVE).** A new binary sensor shows when the charger is in REVE's own manual mode, where it ignores schedules and limits until the connector is replugged. The charger does not report this, so it turns on when the integration sees or sends Stop or the app's "ignore schedule" and off when the connector is pulled out or the charger restarts. The card shows its schedules and limits as ignored while it is on.
 - **The card tells you when One charge overrides your schedules and limits.** One charge makes the charger start at once and ignore every schedule and limit, so a schedule set while it is on seemed not to work. Schedules and Limits now say so in an amber note with a **Turn off** button; the ignored schedule windows are struck through and the limits shown as suspended, also on a folded row.
 
+### 🔧 Changed
+
+- **Setup says why it cannot reach the charger.** When the address refuses the connection, the dialog says the device there is probably not the charger; when Home Assistant has no route to the address, it says the charger and Home Assistant must be on the same network. The error detail now names the system error, for example `ECONNREFUSED`.
+
 ### 🐛 Fixed
 
 - **A single missed reply no longer flashes every entity unavailable.** After one missed poll the charger is asked again in 15 seconds, inside the grace window, instead of a minute later, when the window was already closing.
