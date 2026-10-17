@@ -177,9 +177,10 @@ def test_no_source_list_holds_only_entity_fields() -> None:
 
 
 def test_unreliable_main_fields_are_not_taken_from_graphql_as_is() -> None:
-    # Stop is the one unreliable /main field GraphQL reports raw too; REVE's
-    # real Stop is chargingCommand, laid over by normalize_reve_payload.
-    assert reve_fields.MAIN_KEYS & REVE_UNRELIABLE_FIELDS == {"evseEnabled"}
+    # Stop and One Charge are the unreliable /main fields GraphQL reports raw
+    # too; REVE's real ones are chargingCommand, laid over by
+    # normalize_reve_payload.
+    assert reve_fields.MAIN_KEYS & REVE_UNRELIABLE_FIELDS == {"evseEnabled", "oneCharge"}
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), True, "16"])

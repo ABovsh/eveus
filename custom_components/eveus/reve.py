@@ -22,9 +22,14 @@ projection the firmware no longer maintains — verified on a live REVE Plus on
   shows as ``cll`` / ``clh`` — not milliamps.
 * ``temperature2`` reads -60, where the same charger on classic firmware
   reported a real plug temperature.
+* One Charge is ``chargingCommand`` 0, "charge now": the app's Start outside a
+  schedule window (verified live 2026-10-17). The station's own
+  ``isOneChargeEnabled`` flag is not used; it was never seen starting a charge.
+  The session then runs in manual mode: the schedules and every limit are
+  ignored until the car is unplugged.
 
-Everything else written through ``/pageEvent`` (One Charge, adaptive mode and
-threshold, minimum voltage) reaches the charger's real state.
+Everything else written through ``/pageEvent`` (adaptive mode and threshold,
+minimum voltage) reaches the charger's real state.
 
 So the coordinator, for a REVE charger only, drops the unreliable fields, lays
 the GraphQL schedules and rates over the legacy keys the entities already read,
@@ -68,8 +73,9 @@ REVE_UNRELIABLE_FIELDS: Final[frozenset[str]] = frozenset(
         "tarifAEnable", "tarifAValue", "tarifAStart", "tarifAStop",
         "tarifBEnable", "tarifBValue", "tarifBStart", "tarifBStop",
         "leakValue", "leakValueH",
-        # Stop is read from chargingCommand instead; see the docstring.
-        "evseEnabled",
+        # Stop and One Charge are read from chargingCommand instead; see the
+        # docstring.
+        "evseEnabled", "oneCharge",
         *(
             f"sh{slot}{field}"
             for slot in (1, 2)
@@ -103,17 +109,18 @@ SCHEDULE_ENERGY_COMMANDS: Final[frozenset[str]] = frozenset(
 )
 CURRENT_COMMAND: Final = "currentSet"
 STOP_COMMAND: Final = "evseEnabled"
+ONE_CHARGE_COMMAND: Final = "oneCharge"
 # chargingCommand values, as the vendor app sends them.
+_COMMAND_CHARGE_NOW: Final = 0
 _COMMAND_START: Final = 1
 _COMMAND_STOP: Final = 2
-_CHARGING_COMMANDS: Final = frozenset({0, _COMMAND_START, _COMMAND_STOP})
+_CHARGING_COMMANDS: Final = frozenset({_COMMAND_CHARGE_NOW, _COMMAND_START, _COMMAND_STOP})
 
 _MINUTES_PER_DAY: Final = 1440
 
 # Settings written through GraphQL updateStationData, in the shape the
 # maker's apps send them: the local app's generic toggle sends 0/1 (PE
-# control), its dedicated switches a boolean (One Charge), a list its number.
-_FLAG_WRITES: Final[dict[str, str]] = {"oneCharge": "isOneChargeEnabled"}
+# control), a list its number.
 _TOGGLE_WRITES: Final[dict[str, str]] = {"groundCtrl": "isGroundConnected"}
 _NUMBER_WRITES: Final[dict[str, str]] = {"aiVoltage": "voltageThreshold", "minVoltage": "minVoltage"}
 # Adaptive mode: the integration's 0 Off, 1 Voltage, 2 Auto (percent drop);
@@ -581,6 +588,7 @@ def normalize_reve_payload(
                 payload["activeTarifName"] = extras.rates[active - 1]["name"]
         if extras.charging_command is not None:
             payload[STOP_COMMAND] = int(extras.charging_command == _COMMAND_STOP)
+            payload[ONE_CHARGE_COMMAND] = int(extras.charging_command == _COMMAND_CHARGE_NOW)
     unsupported = frozenset(key for key in FIELD_KEYS if key not in payload)
     return payload, unsupported
 
@@ -782,8 +790,8 @@ class ReveApi:
             return partial(self.write_schedule, command)
         if command in SCHEDULE_ENERGY_COMMANDS:
             return partial(self._refuse, command)  # pragma: no mutate - the command only names the refusal
-        if command in _FLAG_WRITES:
-            return partial(self._write_value, _FLAG_WRITES[command], _bool)
+        if command == ONE_CHARGE_COMMAND:
+            return self.set_one_charge
         if command in _TOGGLE_WRITES:
             return partial(self._write_value, _TOGGLE_WRITES[command], _toggle)
         if command in _NUMBER_WRITES:
@@ -865,7 +873,20 @@ class ReveApi:
 
     async def set_stop(self, value: Any) -> None:
         """Stop (1) or release (0) charging the way the vendor app does."""
-        command = _COMMAND_STOP if _bool(value) else _COMMAND_START
+        await self._write_charging_command(_COMMAND_STOP if _bool(value) else _COMMAND_START)
+
+    async def set_one_charge(self, value: Any) -> None:
+        """Charge now, ignoring the schedules, the way the vendor app's Start
+        does (0); off releases it (1). Stop shares the command, so off leaves
+        a stopped charge stopped and writes nothing unless it is known to be 0."""
+        if _bool(value):
+            await self._write_charging_command(_COMMAND_CHARGE_NOW)
+            return
+        extras = self._extras
+        if extras is not None and extras.charging_command == _COMMAND_CHARGE_NOW:
+            await self._write_charging_command(_COMMAND_START)
+
+    async def _write_charging_command(self, command: int) -> None:
         await self._mutate({"chargingCommand": command})
         extras = self._extras
         if extras is not None:

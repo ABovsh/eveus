@@ -2,7 +2,7 @@
 
 The input field and value type of every write come from the charger maker's
 own apps (the local web app the charger serves, and my.ladergy.com): a toggle
-sends 0/1 (PE control), a dedicated switch a boolean (One Charge), a list its
+sends 0/1 (PE control), a list its
 number (adaptive mode 0 off, 1 on, 2 percent), the time settings and session
 limits nested objects. Session limits have no on/off flag on REVE: a limit is
 on while it has a value and off when it is ``null``.
@@ -89,8 +89,6 @@ def _inputs(charger: _Charger) -> list[dict[str, Any]]:
 @pytest.mark.parametrize(
     ("command", "value", "written"),
     [
-        ("oneCharge", 1, {"isOneChargeEnabled": True}),
-        ("oneCharge", 0, {"isOneChargeEnabled": False}),
         ("aiMode", 0, {"adaptiveModeStatus": 0}),
         ("aiMode", 1, {"adaptiveModeStatus": 1}),
         ("aiMode", 2, {"adaptiveModeStatus": 2}),
@@ -113,6 +111,53 @@ def test_each_setting_is_one_graphql_write_in_the_apps_own_shape(
 
     assert charger.paths() == ["/graphql"]
     assert _inputs(charger) == [written]
+
+
+def test_one_charge_is_the_apps_start_command_that_ignores_the_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # REVE's app "Start" outside a schedule window writes chargingCommand 0
+    # (verified live 2026-10-17); the isOneChargeEnabled flag is not used.
+    charger, updater = _known(monkeypatch)
+
+    assert _send(updater, "oneCharge", 1) is True
+    assert _send(updater, "oneCharge", 0) is True
+
+    assert charger.paths() == ["/graphql", "/graphql"]
+    assert _inputs(charger) == [{"chargingCommand": 0}, {"chargingCommand": 1}]
+
+
+def test_one_charge_off_does_not_release_a_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Stop and One Charge share chargingCommand: releasing "One Charge" with
+    # the command at 2 would also resume a stopped charge.
+    charger, updater = _known(monkeypatch)
+    assert _send(updater, "evseEnabled", 1) is True
+    charger.calls.clear()
+
+    assert _send(updater, "oneCharge", 0) is True
+
+    assert charger.calls == []
+
+
+def test_one_charge_off_writes_nothing_when_the_command_is_unknown_to_be_0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    charger, updater = _known(monkeypatch)
+
+    assert _send(updater, "oneCharge", 0) is True
+
+    assert charger.calls == []
+
+
+def test_one_charge_shows_at_once_after_it_is_written(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _known(monkeypatch)
+    assert _send(updater, "oneCharge", 1) is True
+    charger.calls.clear()
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["oneCharge"] == 1
+    assert data["evseEnabled"] == 0
 
 
 def test_time_sync_sends_the_utc_instant_as_iso_text(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -125,7 +125,7 @@ def test_unreliable_main_fields_are_dropped_without_graphql_data() -> None:
     payload, unsupported = normalize_reve_payload(main, None)
 
     for key in _RATE_KEYS | _SCHEDULE_KEYS | _SCHEDULE_ENERGY_KEYS | {
-        "activeTarif", "leakValue", "leakValueH", "temperature2", "evseEnabled"
+        "activeTarif", "leakValue", "leakValueH", "temperature2", "evseEnabled", "oneCharge"
     }:
         assert key not in payload, key
         assert key in unsupported, key
@@ -133,7 +133,7 @@ def test_unreliable_main_fields_are_dropped_without_graphql_data() -> None:
     assert "ocppconnected" in unsupported
     # Everything else passes through untouched.
     for key in ("state", "subState", "currentSet", "voltMeas1", "totalEnergy",
-                "oneCharge", "aiStatus", "temperature1", "verFWWifi"):
+                "aiStatus", "temperature1", "verFWWifi"):
         assert payload[key] == main[key]
         assert key not in unsupported
     # The caller's payload is not mutated.
@@ -965,6 +965,36 @@ def test_stop_reads_the_charging_command(command: int, stopped: int) -> None:
     payload, unsupported = normalize_reve_payload(_reve_main(), parse_extras(body))
     assert payload["evseEnabled"] == stopped
     assert "evseEnabled" not in unsupported
+
+
+@pytest.mark.parametrize(("command", "one_charge"), [(2, 0), (1, 0), (0, 1)])
+def test_one_charge_reads_the_charging_command(command: int, one_charge: int) -> None:
+    # The app's "ignore schedule" Start is chargingCommand 0; the station's
+    # own isOneChargeEnabled flag (what /main reports) is not what it runs on.
+    body = copy.deepcopy(_reve_extras_body()["data"])
+    body["stationData"]["chargingCommand"] = command
+    main = {**_reve_main(), "oneCharge": 1 - one_charge}
+    payload, unsupported = normalize_reve_payload(main, parse_extras(body))
+    assert payload["oneCharge"] == one_charge
+    assert "oneCharge" not in unsupported
+
+
+@pytest.mark.parametrize("command", [None, 3, -1, "2", True])
+def test_an_unusable_charging_command_leaves_one_charge_unsupported(command: Any) -> None:
+    body = copy.deepcopy(_reve_extras_body()["data"])
+    if command is None:
+        del body["stationData"]["chargingCommand"]
+    else:
+        body["stationData"]["chargingCommand"] = command
+    payload, unsupported = normalize_reve_payload(_reve_main(), parse_extras(body))
+    assert "oneCharge" not in payload
+    assert "oneCharge" in unsupported
+
+
+def test_one_charge_without_the_graphql_read_is_unsupported() -> None:
+    payload, unsupported = normalize_reve_payload(_reve_main(), None)
+    assert "oneCharge" not in payload
+    assert "oneCharge" in unsupported
 
 
 @pytest.mark.parametrize("command", [None, 3, -1, "2", True])
