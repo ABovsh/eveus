@@ -149,7 +149,7 @@ const I18N = {
     faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
-    noneOn: 'none on', lockedIdle: 'switch on while charging', lockedManual: 'manual mode until the connector is replugged', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
+    noneOn: 'none on', lockedIdle: 'switch on while charging', lockedManual: 'manual mode', lockedManualTitle: 'REVE manual mode: limits can be switched on after the connector is replugged', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
     slowCar: 'the car takes less', until: 'until',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
@@ -215,7 +215,7 @@ const I18N = {
     faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
-    noneOn: 'усі вимкнено', lockedIdle: 'вмикаються під час заряджання', lockedManual: 'ручний режим до повторного підключення конектора', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
+    noneOn: 'усі вимкнено', lockedIdle: 'вмикаються під час заряджання', lockedManual: 'ручний режим', lockedManualTitle: 'Ручний режим REVE: ліміти можна ввімкнути після повторного підключення конектора', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
     slowCar: 'авто приймає менше', until: 'до',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
@@ -880,12 +880,15 @@ class EveusCard extends HTMLElement {
     const ignored = !suspended && this._ignoring
       && (this._oneCharge ? anyOn : items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle)));
     const closed = fold && !fold.open;
-    // REVE switches a limit on only while charging and outside manual mode; say so when nothing is on.
+    // REVE switches a limit on only while charging and outside manual mode; with none of its limits on, say
+    // why the switches are disabled instead of "none on". Short: the note shares a row with the title.
     const stationOn = items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle));
-    const lockHint = this._limitsLocked && !stationOn && !suspended && !ignored ? (this._manualMode ? t.lockedManual : t.lockedIdle) : '';
-    const noteText = [anyOn ? '' : t.noneOn, lockHint].filter(Boolean).join(' · ');
-    const note = noteText && !suspended ? `<small class="limits-note">${noteText}</small>`
-      : ignored && closed ? this._overrideFlag('limits') : '';
+    const locked = this._limitsLocked && !stationOn && !suspended && !ignored;
+    const lockNote = !locked ? '' : this._manualMode
+      ? `<small class="limits-note" title="${t.lockedManualTitle}">${t.lockedManual}</small><ha-icon class="override-flag" icon="mdi:hand-back-right" title="${t.lockedManualTitle}" aria-label="${t.lockedManualTitle}"></ha-icon>`
+      : `<small class="limits-note">${t.lockedIdle}</small>`;
+    const note = suspended ? '' : lockNote || (!anyOn ? `<small class="limits-note">${t.noneOn}</small>`
+      : ignored && closed ? this._overrideFlag('limits') : '');
     const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
     const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
     const disable = anyOn || suspended ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
