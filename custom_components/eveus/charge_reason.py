@@ -6,7 +6,7 @@ the same stop differently.
 """
 from __future__ import annotations
 
-from typing import Dict, Final, Optional
+from typing import Callable, Dict, Final, Optional
 
 from .const import (
     CHARGING_STATES,
@@ -78,6 +78,31 @@ SUBSTATE_FINISH_REASONS: Final[Dict[str, str]] = {
 }
 
 
+# REVE stops at a session limit in subState 9 (the code for waiting on an
+# external start) instead of classic firmware's 2, 3 and 4, so the limit has to
+# be read off the session: its on/off flag, its value, the session's own
+# figure, and how far short of it a rounded reading may fall.
+_LIMIT_CHECKS: Final[tuple[tuple[str, str, str, float, str], ...]] = (
+    ("energyLimitS", "energyLimit", "sessionEnergy", 0.005, _REASON_ENERGY_LIMIT),
+    ("timeLimitS", "timeLimit", "sessionTime", 1.0, _REASON_TIME_LIMIT),
+    ("moneyLimitS", "moneyLimit", "sessionMoney", 0.005, _REASON_COST_LIMIT),
+)
+
+
+def reached_limit(read: Callable[[str], Optional[float]]) -> Optional[str]:
+    """The reason for the first enabled session limit the session has reached.
+
+    ``read`` answers a ``/main`` key (a number, or ``None`` when unreadable).
+    Meant for REVE only: callers do not ask it on firmware that reports
+    subState 2, 3 or 4 for the same event.
+    """
+    for flag, limit_key, session_key, tolerance, reason in _LIMIT_CHECKS:
+        limit, session = read(limit_key), read(session_key)
+        if read(flag) == 1 and limit and session is not None and session >= limit - tolerance:
+            return reason
+    return None
+
+
 def not_charging_reason(
     state: Optional[int],
     substate: Optional[int],
@@ -86,6 +111,7 @@ def not_charging_reason(
     ocpp: bool,
     completed: bool,
     stopped: bool = False,
+    limit_reached: Optional[str] = None,
 ) -> Optional[str]:
     """Fold state and subState into one closed set of reasons.
 
@@ -97,7 +123,8 @@ def not_charging_reason(
 
     ``stopped`` is the Stop switch. REVE holds a stopped charger in subState 9,
     which otherwise means waiting for an external start; classic firmware
-    reads subState 1 there.
+    reads subState 1 there. ``limit_reached`` is the session limit REVE's
+    subState 9 stands for when the session has reached one (``reached_limit``).
     """
     if state is None:
         return None
@@ -129,7 +156,9 @@ def not_charging_reason(
     # 9 is the charger holding for an external start command — a live setting,
     # so it wins even over a completion seen earlier.
     if substate == _SUBSTATE_ACTIVATION:
-        return _REASON_STOPPED_BY_USER if stopped else SUBSTATE_REASONS[_SUBSTATE_ACTIVATION]
+        if stopped:
+            return _REASON_STOPPED_BY_USER
+        return limit_reached or SUBSTATE_REASONS[_SUBSTATE_ACTIVATION]
     if state == DEVICE_STATE_COMPLETE and (completed or substate in (None, 0)):
         return _REASON_CHARGE_COMPLETE
     reason = SUBSTATE_REASONS.get(substate)
@@ -153,6 +182,7 @@ def finish_reason(
     modern: bool,
     ocpp: bool,
     stopped: bool = False,
+    limit_reached: Optional[str] = None,
 ) -> str:
     """The ``reason`` of an ``eveus_charging_finished`` event.
 
@@ -161,6 +191,6 @@ def finish_reason(
     """
     reason = not_charging_reason(
         state, substate, modern=modern, ocpp=ocpp, completed=False,  # pragma: no mutate - False and None are equally falsy; only read for truthiness
-        stopped=stopped,
+        stopped=stopped, limit_reached=limit_reached,
     )
     return SUBSTATE_FINISH_REASONS.get(reason) or FINISHED_REASONS.get(state, "stopped")

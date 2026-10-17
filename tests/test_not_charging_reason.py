@@ -288,3 +288,38 @@ def test_error_substate_zero_is_the_only_code_that_names_no_error():
     assert get_not_charging_reason_attrs(_modern(state=7, subState=1), None) == {
         "error": get_error_state(1)
     }
+
+
+_REVE = {"verFWWifi": "REVE_PLUS_1.0.0", "verFWMain": "          2.4.0 "}
+
+
+def _reve(**payload) -> EveusTestUpdater:
+    updater = EveusTestUpdater({**_REVE, **payload})
+    updater.firmware_family = "reve"
+    return updater
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # REVE holds a charger that reached a session limit in subState 9, the
+        # same code it uses for waiting on an external start.
+        ({"energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 1.0}, "Energy Limit Reached"),
+        ({"energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 0.9996}, "Energy Limit Reached"),
+        ({"timeLimitS": 1, "timeLimit": 600, "sessionTime": 600}, "Time Limit Reached"),
+        ({"moneyLimitS": 1, "moneyLimit": 50, "sessionMoney": 50.01}, "Cost Limit Reached"),
+        # A limit that is off, or not yet reached, is not the cause.
+        ({"energyLimitS": 0, "energyLimit": 1.0, "sessionEnergy": 5.0}, "Waiting for Activation"),
+        ({"energyLimitS": 1, "energyLimit": 28.0, "sessionEnergy": 27.0}, "Waiting for Activation"),
+        ({"sessionEnergy": 5.0}, "Waiting for Activation"),
+        # The user's Stop outranks a limit that happens to be reached too.
+        ({"energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 1.0, "evseEnabled": 1}, "Stopped by User"),
+    ],
+)
+def test_reve_names_the_session_limit_that_held_the_charge(payload, expected):
+    assert get_not_charging_reason(_reve(state=5, subState=9, **payload), None) == expected
+
+
+def test_a_classic_charger_in_substate_9_is_never_given_a_limit_reason():
+    classic = _modern(state=5, subState=9, energyLimitS=1, energyLimit=1.0, sessionEnergy=1.0)
+    assert get_not_charging_reason(classic, None) == "Waiting for Activation"

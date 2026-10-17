@@ -50,7 +50,7 @@ from .const import (
     SESSION_ACTIVE_STATES,
 )
 from ._payload import PayloadError, validate_main_payload
-from .charge_reason import finish_reason
+from .charge_reason import finish_reason, reached_limit
 from .client import UPDATE_TIMEOUT_OBJ, fetch_json
 from .reve import (
     FAMILY_CLASSIC,
@@ -855,6 +855,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                         or is_modern_firmware_payload(new_data),
                         ocpp=bool(get_safe_value(new_data, "ocppEnabled", int)),
                         stopped=get_safe_value(new_data, "evseEnabled", int) == 1,
+                        limit_reached=(
+                            reached_limit(lambda key: get_safe_value(new_data, key, float))
+                            if self._reve_seen or is_reve_payload(new_data)
+                            else None
+                        ),
                     ),
                     "session_energy_kwh": _bounded(
                         get_safe_value(snapshot, "sessionEnergy", float), MAX_ENERGY_KWH

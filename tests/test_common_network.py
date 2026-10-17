@@ -1165,6 +1165,22 @@ def test_emit_transition_events_names_a_stop_held_in_substate_9_stopped() -> Non
     assert reasons[common_network.EVENT_CHARGING_FINISHED]["reason"] == "stopped"
 
 
+def test_emit_transition_events_names_a_session_limit_held_in_substate_9_limit() -> None:
+    """REVE reports a reached session limit as state 5 / subState 9."""
+    updater, bus = _updater_with_bus()
+    updater._event_prev_state = common_network.DEVICE_STATE_CHARGING
+    updater._event_charging_payload = {"state": common_network.DEVICE_STATE_CHARGING}
+
+    updater._emit_transition_events(
+        {
+            "state": 5, "subState": 9, "evseEnabled": 0, "verFWMain": "REVE_PLUS_1.0.0", "verFWWifi": "REVE_PLUS_1.0.0",
+            "energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 1.0,
+        }
+    )
+
+    assert dict(bus.fired)[common_network.EVENT_CHARGING_FINISHED]["reason"] == "limit"
+
+
 def test_emit_transition_events_requires_previous_charging_for_finished_event() -> None:
     """Regression guard for an and/or flip: a transition into a non-error
     state must NOT fire charging_finished unless the PREVIOUS state was

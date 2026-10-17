@@ -28,7 +28,8 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.util import dt as dt_util
 
-from .charge_reason import NOT_CHARGING_REASON_OPTIONS, not_charging_reason
+from .charge_reason import NOT_CHARGING_REASON_OPTIONS, not_charging_reason, reached_limit
+from .reve import FAMILY_CLASSIC, FAMILY_REVE
 from .common_base import EveusSensorBase
 from .const import (
     MAX_COST_VALUE,
@@ -707,6 +708,11 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
         # A bare test double has no coordinator memory: nothing completed.
         completed=getattr(updater, "charge_completed", False),  # pragma: no mutate - False and None are equally falsy; only read for truthiness
         stopped=_read_int(updater, "evseEnabled") == 1,
+        limit_reached=(
+            reached_limit(updater.snapshot.get)
+            if getattr(updater, "firmware_family", FAMILY_CLASSIC) == FAMILY_REVE
+            else None
+        ),
     )
 
 
