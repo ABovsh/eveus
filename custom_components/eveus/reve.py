@@ -128,14 +128,13 @@ _LIMIT_WRITES: Final[tuple[tuple[str, str, str, int], ...]] = (
     ("moneyLimit", "moneyLimitS", "costLimit", 1),
 )
 # Counter resets as the app sends them: the counter's own field set to 1
-# (Counter A checked live 2026-10-17).
-_RESET_WRITES: Final[dict[str, str]] = {"rstEM1": "IEM1"}
+# (Counter A checked live 2026-10-17; Counter B follows the same shape and has
+# not been reset on a charger yet).
+_RESET_WRITES: Final[dict[str, str]] = {"rstEM1": "IEM1", "rstEM2": "IEM2"}
 # Still written through /pageEvent on REVE until decided: the limits' master
-# switch (REVE has none), OCPP (its write carries the whole object, auth key
-# included) and the Counter B reset (irreversible, untested live).
-PAGE_EVENT_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"suspendLimits", "ocppEnabled", "rstEM2"}
-)
+# switch (REVE has none) and OCPP (its write carries the whole object, auth
+# key included).
+PAGE_EVENT_COMMANDS: Final[frozenset[str]] = frozenset({"suspendLimits", "ocppEnabled"})
 
 # How often the schedules, rates and Stop are re-read, how long a failed read
 # waits before the next attempt, and how long a last good read stays in force.
