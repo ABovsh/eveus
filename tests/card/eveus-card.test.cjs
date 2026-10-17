@@ -1198,7 +1198,9 @@ test('updates from other entities do not re-render the card; its own entities an
   x.states['sensor.se'] = {state:'16.2', attributes:{unit_of_measurement:'kWh'}}; x.card.hass = x.hass;
   assert.match(x.card.shadowRoot.innerHTML, /16\.2<small>kWh/);
   x.card.shadowRoot.innerHTML = 'SENTINEL';
-  x.card._nowHM = () => '23:59'; x.card.hass = x.hass;
+  // A minute other than the real one: a fixed '23:59' failed when the suite ran at 23:59.
+  const next = x.card._nowHM() === '12:00' ? '12:01' : '12:00';
+  x.card._nowHM = () => next; x.card.hass = x.hass;
   assert.notEqual(x.card.shadowRoot.innerHTML, 'SENTINEL', 'a new minute re-renders (offline age, running schedule)');
 });
 test('a config change from the editor re-renders even when no state changed', async () => {
