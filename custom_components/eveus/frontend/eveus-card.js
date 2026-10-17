@@ -149,7 +149,7 @@ const I18N = {
     faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
-    noneOn: 'none on', lockedIdle: 'switch on while charging', lockedManual: 'not in manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
+    noneOn: 'none on', lockedIdle: 'switch on while charging', lockedManual: 'manual mode until the connector is replugged', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
     slowCar: 'the car takes less', until: 'until',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
@@ -215,7 +215,7 @@ const I18N = {
     faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
-    noneOn: 'усі вимкнено', lockedIdle: 'вмикаються під час зарядки', lockedManual: 'не в ручному режимі', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
+    noneOn: 'усі вимкнено', lockedIdle: 'вмикаються під час заряджання', lockedManual: 'ручний режим до повторного підключення конектора', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
     slowCar: 'авто приймає менше', until: 'до',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
@@ -882,8 +882,9 @@ class EveusCard extends HTMLElement {
     const closed = fold && !fold.open;
     // REVE switches a limit on only while charging and outside manual mode; say so when nothing is on.
     const stationOn = items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle));
-    const lockHint = this._limitsLocked && !stationOn && !suspended && !ignored ? ` · ${this._manualMode ? t.lockedManual : t.lockedIdle}` : '';
-    const note = (!anyOn || lockHint) && !suspended ? `<small class="limits-note">${t.noneOn}${lockHint}</small>`
+    const lockHint = this._limitsLocked && !stationOn && !suspended && !ignored ? (this._manualMode ? t.lockedManual : t.lockedIdle) : '';
+    const noteText = [anyOn ? '' : t.noneOn, lockHint].filter(Boolean).join(' · ');
+    const note = noteText && !suspended ? `<small class="limits-note">${noteText}</small>`
       : ignored && closed ? this._overrideFlag('limits') : '';
     const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
     const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
@@ -1839,7 +1840,7 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--primary-color,#
 .limits-grid{display:grid;gap:1px;min-width:0}.limits-grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}.limits-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}.limits-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.limits-grid.one{grid-template-columns:minmax(0,1fr)}
 .limit-tile{box-sizing:border-box;min-width:0;padding:1px 1px 0;border:1px solid rgba(127,127,127,.18);border-radius:8px;background:rgba(127,127,127,.06)}
 .limit-tile.active{border-color:#2ecc7188;background:#2ecc7118}.limit-tile.active .limit-toggle{color:#2ecc71}.limit-tile.active .limit-toggle i{background:#2ecc71;opacity:1}
-.limits-grid.suspended .limit-tile{border-color:rgba(127,127,127,.18);background:rgba(127,127,127,.035)}.limits-grid.suspended .limit-tile.saved .limit-toggle i{background:#f39c12;opacity:.7}
+.limits-grid.suspended .limit-tile:not(.active){border-color:rgba(127,127,127,.18);background:rgba(127,127,127,.035)}.limits-grid.suspended .limit-tile.saved .limit-toggle i{background:#f39c12;opacity:.7}
 .limit-toggle{display:flex;align-items:center;width:100%;min-width:0;height:14px;padding:0 2px;background:transparent;font-size:10px;font-weight:600;gap:2px}
 .limit-toggle span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.limit-toggle i{margin-left:auto;flex:none;width:6px;height:6px}
 .limit-value{display:grid;grid-template-columns:15px minmax(0,1fr) 15px;align-items:center;min-width:0;height:21px}

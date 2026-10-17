@@ -13,6 +13,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, WriteOnChangeMixin
@@ -139,10 +140,10 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
 class EveusReveApiBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
     """Whether a REVE charger's GraphQL interface answers.
 
-    REVE keeps the schedules, the tariffs, Charging Current and Stop only in its
-    GraphQL interface, and that interface drops out on its own for minutes at a
-    time. While it does, the last good read keeps those entities showing, and
-    this is where the outage itself is visible. Created only for REVE.
+    REVE is read and written through its GraphQL interface, which drops out on
+    its own for minutes at a time. While it does, readings come from ``/main``
+    and the last good read keeps the schedules and tariffs showing, so this is
+    where the outage itself is visible. Created only for REVE.
     """
 
     ENTITY_NAME = "REVE API"
@@ -190,10 +191,12 @@ class EveusManualModeBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySen
         return self._updater.reve_manual_mode
 
     async def _async_restore_state(self, state) -> None:
-        """A restart must not end manual mode while the car stays plugged in;
-        the first poll still clears it if the car is gone."""
+        """A restart must not end manual mode while the connector stays
+        plugged in; the station's state and session age settle the rest."""
         if state.state == "on":
-            self._updater.reve_restore_manual_mode()
+            since = getattr(state, "last_changed", None)
+            on_for = None if since is None else (dt_util.utcnow() - since).total_seconds()
+            self._updater.reve_restore_manual_mode(on_for)
 
     @callback
     def _handle_coordinator_update(self) -> None:

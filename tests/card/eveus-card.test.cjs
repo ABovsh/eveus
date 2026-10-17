@@ -1788,7 +1788,12 @@ test('REVE idle: the limit switches that are off are disabled and the section sa
   assert.match(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
   assert.match(h, /data-limit-toggle="limit_cost_enabled"[^>]*disabled/);
   assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled/, 'Target SOC is stopped by Home Assistant');
-  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /усі вимкнено · вмикаються під час зарядки/);
+  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /усі вимкнено · вмикаються під час заряджання/);
+});
+test('REVE idle with Target SOC on: the note gives the reason without claiming none is on', () => {
+  const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), ...ENERGY_OFF}}).html();
+  assert.match(h, /<small class="limits-note">switch on while charging<\/small>/);
+  assert.doesNotMatch(h, /none on/);
 });
 test('REVE charging: the limit switches can be turned on', () => {
   const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('off'), ...ENERGY_OFF}}).html();
@@ -1797,8 +1802,10 @@ test('REVE charging: the limit switches can be turned on', () => {
 });
 test('REVE manual mode while charging: the limit switches stay disabled and say why', () => {
   const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('on'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
-  assert.match(h, /none on · not in manual mode/);
+  assert.match(h, /none on · manual mode until the connector is replugged/);
+  assert.doesNotMatch(h, /not in manual mode/, 'reads as if the charger were not in manual mode');
   assert.match(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+  assert.match(setupAll({sections:['limits'], charging:true, locale:'uk', over:{...MANUAL('on'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /усі вимкнено · ручний режим до повторного підключення конектора/);
 });
 test('REVE: a limit that is already on can still be switched off in any state', () => {
   const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('on'), limit_energy_enabled:['switch.lee','on']}}).html();

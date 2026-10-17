@@ -105,6 +105,39 @@ def test_a_restored_manual_mode_is_kept_until_the_car_is_unplugged() -> None:
     assert manual.on is False
 
 
+
+def test_a_restore_after_the_connector_was_pulled_out_is_dropped() -> None:
+    """The sensor is added after the first poll; a car gone by then is not
+    put back into manual mode until the next poll."""
+    manual = reve.ManualMode()
+    manual.observe(_payload(state=2, sessionTime=0))
+    manual.restore(on_for=600)
+    assert manual.on is False
+
+
+def test_a_restore_into_a_session_younger_than_manual_mode_is_dropped() -> None:
+    """Replugged while Home Assistant was down: the new session has not been
+    in manual mode, and nothing else would end it before the next unplug."""
+    manual = reve.ManualMode()
+    manual.observe(_payload(sessionTime=300))
+    manual.restore(on_for=3600)
+    assert manual.on is False
+
+
+def test_a_restore_into_the_same_session_is_kept() -> None:
+    manual = reve.ManualMode()
+    manual.observe(_payload(sessionTime=7200))
+    manual.restore(on_for=3600)
+    assert manual.on is True
+    manual = reve.ManualMode()
+    manual.observe(_payload(sessionTime=3590))
+    manual.restore(on_for=3600)
+    assert manual.on is True, "a few seconds of clock skew are not a new session"
+    manual = reve.ManualMode()
+    manual.observe({"state": 4})
+    manual.restore(on_for=3600)
+    assert manual.on is True, "an unknown session age keeps the restored state"
+
 # ---------------------------------------------------------------------------
 # Through the coordinator and the entity
 # ---------------------------------------------------------------------------
@@ -179,6 +212,7 @@ def test_the_manual_mode_sensor_restores_its_last_state(monkeypatch: pytest.Monk
     from types import SimpleNamespace
 
     charger = _WritableCharger(_reve_main())
+    _plugged(charger, state=5)
     updater = _updater(monkeypatch, charger)
     asyncio.run(updater._async_update_data())
     added, _ = _binary_setup(updater)
@@ -188,3 +222,20 @@ def test_the_manual_mode_sensor_restores_its_last_state(monkeypatch: pytest.Monk
     assert updater.reve_manual_mode is False
     asyncio.run(sensor._async_restore_state(SimpleNamespace(state="on")))
     assert updater.reve_manual_mode is True
+
+
+def test_the_manual_mode_sensor_passes_how_long_it_was_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from homeassistant.util import dt as dt_util
+
+    charger = _WritableCharger(_reve_main())
+    _plugged(charger, state=5, session_time=300)
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    added, _ = _binary_setup(updater)
+    sensor = next(e for e in added if e.unique_id == "eveus_manual_mode")
+    on_since = dt_util.utcnow() - timedelta(hours=2)
+    asyncio.run(sensor._async_restore_state(SimpleNamespace(state="on", last_changed=on_since)))
+    assert updater.reve_manual_mode is False

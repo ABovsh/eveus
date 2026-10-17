@@ -122,6 +122,9 @@ _COMMAND_STOP: Final = 2
 _CHARGING_COMMANDS: Final = frozenset({_COMMAND_CHARGE_NOW, _COMMAND_START, _COMMAND_STOP})
 
 _MINUTES_PER_DAY: Final = 1440
+# How far the station's session clock may trail Home Assistant's before a
+# restored manual mode is taken to belong to an older session.
+_RESTORE_SLACK_SECONDS: Final = 60
 
 # Settings written through GraphQL updateStationData, in the shape the
 # maker's apps send them: the local app's generic toggle sends 0/1 (PE
@@ -648,6 +651,7 @@ class ManualMode:
     def __init__(self) -> None:
         self._on = False
         self._session_time: float | None = None
+        self._unplugged = False
 
     @property
     def on(self) -> bool:
@@ -658,14 +662,25 @@ class ManualMode:
         if command != _COMMAND_START:
             self._on = True
 
-    def restore(self) -> None:
-        """Manual mode as it stood before Home Assistant restarted."""
+    def restore(self, on_for: float | None = None) -> None:
+        """Manual mode as it stood before Home Assistant restarted, ``on_for``
+        seconds ago, unless the station already shows it ended: the connector
+        is out, or the session is younger than manual mode (replugged while
+        Home Assistant was down)."""
+        if self._unplugged:
+            return
+        session = self._session_time
+        if on_for is not None and session is not None and session + _RESTORE_SLACK_SECONDS < on_for:
+            return
         self._on = True
 
     def observe(self, payload: Mapping[str, Any]) -> None:
         """One poll's normalized payload (Stop and One Charge read the command)."""
         state = payload.get("state")
-        if type(state) is int and state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES:
+        self._unplugged = (
+            type(state) is int and state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES
+        )
+        if self._unplugged:
             self._on = False
             self._session_time = None
             return

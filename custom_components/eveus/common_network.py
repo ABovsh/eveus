@@ -349,9 +349,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Whether a REVE station is in manual mode (see ``ManualMode``); ``None`` otherwise."""
         return self._reve.manual_mode.on if self._reve_seen else None
 
-    def reve_restore_manual_mode(self) -> None:
+    def reve_restore_manual_mode(self, on_for: float | None = None) -> None:
         """Take manual mode over from before a Home Assistant restart."""
-        self._reve.manual_mode.restore()
+        self._reve.manual_mode.restore(on_for)
 
     def reve_diagnostics(self) -> dict[str, Any] | None:
         """REVE's GraphQL side and the fields it cannot provide; ``None`` otherwise."""
