@@ -57,7 +57,12 @@ from typing import Any, Final
 import aiohttp
 
 from .client import GraphQLError, post_graphql
-from .const import CONNECTED_STATES, MAX_VALID_SYSTEM_TIME, PLUG_UNKNOWN_STATES
+from .const import (
+    CONNECTED_STATES,
+    DEVICE_STATE_CHARGING,
+    MAX_VALID_SYSTEM_TIME,
+    PLUG_UNKNOWN_STATES,
+)
 from .reve_fields import station_to_main
 from .snapshot import FIELD_KEYS
 
@@ -886,6 +891,12 @@ class ReveApi:
                 self._limit_values.setdefault(key, current)
             await self._clear_limit(field)
             return
+        # The charger ignores a limit outside a charge it runs itself (manual
+        # mode) and drops it when the car is unplugged, so one can be switched
+        # on only while the car is charging. A limit already on stays
+        # changeable and removable in any state.
+        if self._updater.snapshot.get_int("state") != DEVICE_STATE_CHARGING or self.manual_mode.on:
+            raise ReveCommandUnsupported(f"{key} can be switched on only while charging, outside manual mode")  # pragma: no mutate - message text; only the exception type is ever logged
         read = self._limit_values.get(key)
         if read is None:
             read = _limit_reading(self._updater.snapshot.get(key))

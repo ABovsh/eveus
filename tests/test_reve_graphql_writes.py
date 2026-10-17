@@ -74,6 +74,19 @@ def _known(monkeypatch: pytest.MonkeyPatch, charger: _Charger | None = None):
     return charger, updater
 
 
+def _known_charging(monkeypatch: pytest.MonkeyPatch, charger: _Charger | None = None):
+    """A known REVE charger whose car is charging (state 4), the only time a limit can be switched on."""
+    charger, updater = _known(monkeypatch, charger)
+    _set_state(charger, updater, 4)
+    return charger, updater
+
+
+def _set_state(charger: _Charger, updater: Any, state: int) -> None:
+    charger.station["stationState"] = state
+    asyncio.run(updater._async_update_data())
+    charger.calls.clear()
+
+
 def _send(updater: Any, command: str, value: Any) -> bool:
     return asyncio.run(updater._command_manager.send_command(command, value))
 
@@ -208,7 +221,7 @@ _LIMITS = [
 def test_a_limit_switched_on_writes_its_value(
     monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
 ) -> None:
-    charger, updater = _known(monkeypatch)
+    charger, updater = _known_charging(monkeypatch)
     assert _send(updater, command, value) is True  # off: kept, not written
     assert charger.calls == []
 
@@ -224,7 +237,7 @@ def test_a_limit_switched_on_writes_its_value(
 def test_a_limit_value_changed_while_on_is_written(
     monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
 ) -> None:
-    charger, updater = _known(monkeypatch)
+    charger, updater = _known_charging(monkeypatch)
     _send(updater, command, value)
     _send(updater, switch, 1)
     asyncio.run(updater._async_update_data())
@@ -239,7 +252,7 @@ def test_a_limit_value_changed_while_on_is_written(
 def test_a_limit_switched_off_is_null_and_its_value_still_shows(
     monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
 ) -> None:
-    charger, updater = _known(monkeypatch)
+    charger, updater = _known_charging(monkeypatch)
     _send(updater, command, value)
     _send(updater, switch, 1)
     asyncio.run(updater._async_update_data())
@@ -260,7 +273,7 @@ def test_a_limit_reve_refuses_to_clear_but_drops_counts_as_switched_off(
 ) -> None:
     # Measured on hardware 16.10: null answers success:false, the limit goes.
     monkeypatch.setattr(reve.asyncio, "sleep", _no_sleep)
-    charger, updater = _known(monkeypatch, _NullRefusingCharger(_reve_main()))
+    charger, updater = _known_charging(monkeypatch, _NullRefusingCharger(_reve_main()))
     _send(updater, command, value)
     _send(updater, switch, 1)
     asyncio.run(updater._async_update_data())
@@ -277,7 +290,7 @@ def test_a_limit_that_stays_after_a_refused_clear_is_a_failed_command(
     monkeypatch.setattr(reve.asyncio, "sleep", _no_sleep)
     charger = _NullRefusingCharger(_reve_main())
     charger.drops_limit = False
-    charger, updater = _known(monkeypatch, charger)
+    charger, updater = _known_charging(monkeypatch, charger)
     _send(updater, command, value)
     _send(updater, switch, 1)
     asyncio.run(updater._async_update_data())
@@ -289,7 +302,7 @@ def test_a_limit_that_stays_after_a_refused_clear_is_a_failed_command(
 def test_a_value_kept_while_off_is_shown_until_switched_on(
     monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
 ) -> None:
-    charger, updater = _known(monkeypatch)
+    charger, updater = _known_charging(monkeypatch)
 
     _send(updater, command, value)
     data = asyncio.run(updater._async_update_data())
@@ -303,7 +316,7 @@ def test_switching_on_a_limit_without_a_value_is_refused(
     monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
 ) -> None:
     # /main reports 0 for every limit here: a zero limit would stop at once.
-    charger, updater = _known(monkeypatch)
+    charger, updater = _known_charging(monkeypatch)
 
     assert _send(updater, switch, 1) is False
 
@@ -313,7 +326,7 @@ def test_switching_on_a_limit_without_a_value_is_refused(
 def test_a_limit_set_in_the_app_is_switched_back_on_with_its_own_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    charger, updater = _known(monkeypatch)
+    charger, updater = _known_charging(monkeypatch)
     charger.station["session"]["energyLimit"] = 7000  # set in the vendor app
     asyncio.run(updater._async_update_data())
     _send(updater, "energyLimitS", 0)
@@ -322,6 +335,72 @@ def test_a_limit_set_in_the_app_is_switched_back_on_with_its_own_value(
     assert _send(updater, "energyLimitS", 1) is True
 
     assert _inputs(charger) == [{"session": {"energyLimit": 7000}}]
+
+
+@pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
+@pytest.mark.parametrize("state", [2, 3, 5, 6, 7])
+def test_a_limit_is_switched_on_only_while_charging(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any, state: int
+) -> None:
+    charger, updater = _known(monkeypatch)
+    _send(updater, command, value)
+    _set_state(charger, updater, state)
+
+    assert _send(updater, switch, 1) is False
+
+    assert charger.calls == []
+
+
+@pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
+@pytest.mark.parametrize("stopper", ["oneCharge", "evseEnabled"])
+def test_a_limit_is_not_switched_on_in_manual_mode_even_while_charging(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any, stopper: str
+) -> None:
+    charger, updater = _known_charging(monkeypatch)
+    _send(updater, command, value)
+    assert _send(updater, stopper, 1) is True
+    _set_state(charger, updater, 4)
+
+    assert updater.reve_manual_mode is True
+    assert _send(updater, switch, 1) is False
+
+    assert charger.calls == []
+
+
+@pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
+def test_a_limit_on_can_always_be_switched_off_and_changed(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
+) -> None:
+    # A limit that was reached parks the charge in state 5; raising it is how
+    # the charge resumes, and a limit nobody wants must always be removable.
+    charger, updater = _known_charging(monkeypatch)
+    _send(updater, command, value)
+    _send(updater, switch, 1)
+    asyncio.run(updater._async_update_data())
+    _send(updater, "evseEnabled", 1)
+    _set_state(charger, updater, 5)
+    assert updater.reve_manual_mode is True
+
+    assert _send(updater, command, value * 2) is True
+    assert _send(updater, switch, 0) is True
+
+    assert _inputs(charger) == [{"session": {field: value * 2}}, {"session": {field: None}}]
+
+
+@pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
+def test_classic_firmware_switches_a_limit_on_in_any_state(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
+) -> None:
+    from test_reve_firmware import _classic_main
+
+    charger = _Charger(_classic_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    charger.calls.clear()
+
+    assert _send(updater, switch, 1) is True
+
+    assert charger.paths() == ["/pageEvent"]
 
 
 # ---------------------------------------------------------------------------
