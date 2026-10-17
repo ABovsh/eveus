@@ -805,10 +805,16 @@ def test_phase_getters_key_precision_and_minimum_boundary() -> None:
             assert getter(_updater({key: "5.6"}), None) == 6
 
 
-def test_charger_state_logs_warning_only_for_unmapped_states(caplog) -> None:
+def test_charger_state_logs_warning_only_for_unmapped_states(caplog, monkeypatch) -> None:
     """`state_value not in CHARGING_STATES` gates the once-per-value warning
     log; a mapped state must never trigger it, and an unmapped one must."""
     import logging
+
+    from custom_components.eveus.utils import RateLog
+
+    # The module's limiter is shared: a test that logged state 20 earlier (in
+    # another order, as mutmut runs them) would silence this one.
+    monkeypatch.setattr(sensors, "_SENSOR_FUNCTION_LOG", RateLog(max_keys=sensors._MAX_ERROR_LOG_KEYS))
 
     mapped_state = next(iter(sensors.CHARGING_STATES))
     with caplog.at_level(logging.WARNING, logger="custom_components.eveus.sensor_definitions"):
