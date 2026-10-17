@@ -81,6 +81,7 @@ def test_a_reve_charger_without_main_is_set_up_through_graphql(main: Any) -> Non
     result = asyncio.run(validate_input(_Hass(session), _input()))
 
     assert session.paths == ["/main", "/graphql"]
+    assert result["title"] == f"Eveus Charger ({TEST_HOST})"
     assert result["data"]["host"] == TEST_HOST
     assert result["device_info"]["current_set"] == 7
     assert "2.4.0" in result["device_info"]["firmware"]
@@ -101,6 +102,8 @@ def test_the_graphql_setup_read_is_the_measurements_document(monkeypatch: pytest
     body = json.loads(seen[1]["data"])
     assert body["query"] == reve.MEASUREMENTS_QUERY
     assert body["operationName"] == "StationData"
+    entered = _input()
+    assert (seen[1]["auth"].login, seen[1]["auth"].password) == (entered["username"], entered["password"])
 
 
 def test_main_missing_and_graphql_not_reve_keeps_the_main_error() -> None:
@@ -161,7 +164,10 @@ def test_the_first_poll_without_main_recognises_reve_through_graphql(monkeypatch
     assert updater.last_update_success is True
     assert data["state"] == 2
     assert data["sh1Start"] == 1380  # the settings read follows in the same poll
-    assert updater.last_poll_source == "graphql"
+    measurements = [body for path, body in charger.calls if path == "/graphql" and body["query"] == reve.MEASUREMENTS_QUERY]
+    assert len(measurements) == 1, "GraphQL already answered for this poll; it is not read again as a first REVE poll"
+    assert updater.reve_diagnostics()["measurements"]["last_source"] == "graphql"
+    assert updater.connection_quality["latency_avg"] < 1.0
 
 
 def test_a_charger_without_main_keeps_polling_through_graphql(monkeypatch: pytest.MonkeyPatch) -> None:

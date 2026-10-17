@@ -292,8 +292,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # tariff/schedule/leak fields REVE reports.
         self._reve_seen = False
         self._reve = ReveApi(self)
-        # Which request a poll was first answered by: "main" or "graphql".
-        self._last_poll_source: str | None = None
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
         # availability grace window keeps republishing the reading behind it.
@@ -324,12 +322,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def is_modern_firmware(self) -> bool:
         """Whether this charger's codes follow the modern state/substate maps."""
         return self._modern_firmware_seen or is_modern_firmware_payload(self.data or {})
-
-    @property
-    def last_poll_source(self) -> str | None:
-        """``main`` or ``graphql``: which request the last poll was answered by
-        first (``None`` before the first poll)."""
-        return self._last_poll_source
 
     @property
     def firmware_family(self) -> str:
@@ -1206,7 +1198,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         try:
             measured = await self._read_reve_measurements()
             from_graphql = measured is not None
-            self._last_poll_source = "graphql" if from_graphql else "main"
             new_data: Any
             if measured is not None:
                 new_data, response_time = measured
@@ -1233,7 +1224,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                         raise
                     new_data, response_time = found
                     from_graphql = True
-                    self._last_poll_source = "graphql"
                 else:
                     # Latency is the answering source's own: a GraphQL read
                     # that failed first, or the one a REVE poll makes below,

@@ -477,10 +477,12 @@ class _Charger:
         )
 
 
-def _updater(monkeypatch: pytest.MonkeyPatch, charger: _Charger) -> EveusUpdater:
+def _updater(
+    monkeypatch: pytest.MonkeyPatch, charger: _Charger, model: str | None = None
+) -> EveusUpdater:
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: charger)
     monkeypatch.setattr("custom_components.eveus.common_command.asyncio.sleep", _no_sleep)
-    return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    return EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model=model)
 
 
 async def _no_sleep(*_args: object) -> None:
@@ -1324,6 +1326,7 @@ def test_the_active_rate_carries_the_name_the_station_gives_it() -> None:
 
     assert named([night, day], _wall(16, 2, 0)) == "Rate 1 - Night"
     assert named([night, day], _wall(16, 12, 0)) == "Rate 2 - Day"
+    assert named([{**night, "name": ""}, day], _wall(16, 12, 0)) == "Rate 2 - Day", "rate 1 unnamed"
     # The base price has no name of its own; an unnamed or unreadable name adds nothing.
     assert named([night], _wall(15, 14, 24)) is None
     assert named([{**night, "name": ""}], _wall(16, 2, 0)) is None

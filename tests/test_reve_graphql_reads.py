@@ -366,14 +366,17 @@ def test_stop_set_in_the_app_shows_on_the_next_poll(monkeypatch: pytest.MonkeyPa
     assert data["evseEnabled"] == 1
 
 
-def test_an_unusable_charging_command_keeps_the_last_read(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("unusable", [7, -1, "2", None, True])
+def test_an_unusable_charging_command_keeps_the_last_read(monkeypatch: pytest.MonkeyPatch, unusable: Any) -> None:
     charger = _Charger(_reve_main())
     updater = _known_reve(monkeypatch, charger)
-    charger.charging_command = 7
+    charger.charging_command = 2
+    assert asyncio.run(updater._async_update_data())["evseEnabled"] == 1
+    charger.charging_command = unusable
 
     data = asyncio.run(updater._async_update_data())
 
-    assert data["evseEnabled"] == 0
+    assert data["evseEnabled"] == 1, "Stop stays as last read"
 
 
 def test_diagnostics_count_where_the_reads_came_from(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -389,3 +392,36 @@ def test_diagnostics_count_where_the_reads_came_from(monkeypatch: pytest.MonkeyP
     assert measurements["graphql_failures"] == 1
     assert measurements["main_fallbacks"] == 1
     assert measurements["last_source"] == "main"
+
+
+def test_measurements_above_this_models_current_fall_back_to_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 20 A passes the largest model's bound, not this 16 A charger's: the
+    # GraphQL read is checked against the configured model, so the poll falls
+    # back to /main instead of failing as a whole.
+    from custom_components.eveus.const import MODEL_16A
+
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger, MODEL_16A)
+    asyncio.run(updater._async_update_data())
+    charger.calls.clear()
+    charger.station["stationCurrent"] = 20
+    charger.main["voltMeas1"] = 229
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert updater.last_update_success is True
+    assert charger.paths() == ["/graphql", "/main"]
+    assert data["voltMeas1"] == 229
+
+
+def test_a_known_reve_charger_stays_reve_on_a_main_without_its_markers(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    charger.measurements_status = 500
+    for marker in ("manufacturer", "verFWWifi"):
+        charger.main.pop(marker, None)
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert "leakValue" not in data, "REVE's raw leakage counts are still dropped"
+    assert updater.firmware_family == "reve"

@@ -307,6 +307,9 @@ def _reve(**payload) -> EveusTestUpdater:
         ({"energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 1.0}, "Energy Limit Reached"),
         ({"energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 0.9996}, "Energy Limit Reached"),
         ({"timeLimitS": 1, "timeLimit": 600, "sessionTime": 600}, "Time Limit Reached"),
+        # A rounded reading may fall short by the tolerance (1 s here) and still counts.
+        ({"timeLimitS": 1, "timeLimit": 600, "sessionTime": 599}, "Time Limit Reached"),
+        ({"timeLimitS": 1, "timeLimit": 600, "sessionTime": 598}, "Waiting for Activation"),
         ({"moneyLimitS": 1, "moneyLimit": 50, "sessionMoney": 50.01}, "Cost Limit Reached"),
         # A limit that is off, or not yet reached, is not the cause.
         ({"energyLimitS": 0, "energyLimit": 1.0, "sessionEnergy": 5.0}, "Waiting for Activation"),

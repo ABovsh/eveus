@@ -499,3 +499,52 @@ def test_every_command_an_entity_sends_has_a_decided_route() -> None:
     for command in reve.PAGE_EVENT_COMMANDS:
         assert api.route(command) is None, command
     assert reve.PAGE_EVENT_COMMANDS == frozenset({"suspendLimits", "ocppEnabled"})
+
+
+def test_no_refusal_while_charging_outside_manual_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    _charger, updater = _known_charging(monkeypatch)
+
+    for command in reve.LIMIT_COMMANDS:
+        assert updater.command_refusal(command) is None, command
+
+
+def test_a_limit_known_only_from_main_is_switched_on_with_that_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    # After a restart nothing is kept yet; /main still reports the last value.
+    charger = _WritableCharger({**_reve_main(), "energyLimit": 1, "energyLimitS": 0})
+    charger.station["stationState"] = 4
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    charger.calls.clear()
+
+    assert _send(updater, "energyLimitS", 1) is True
+
+    assert _inputs(charger) == [{"session": {"energyLimit": 1000}}]
+
+
+def test_a_limit_switched_off_while_graphql_was_silent_keeps_its_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_reve_firmware import _clock
+
+    now = _clock(monkeypatch)
+    charger = _WritableCharger({**_reve_main(), "state": 4, "energyLimit": 5, "energyLimitS": 1})
+    charger.station["stationState"] = 4
+    charger.measurements_status = 500
+    updater = _updater(monkeypatch, charger)
+    assert asyncio.run(updater._async_update_data())["energyLimit"] == 5  # from /main
+
+    assert _send(updater, "energyLimitS", 0) is True
+    charger.measurements_status = 200
+    now[0] += reve.MEASUREMENTS_RETRY_SECONDS
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["energyLimitS"] == 0
+    assert data["energyLimit"] == 5, "the number still shows what switching it on would apply"
+
+
+def test_the_reve_sensors_of_a_second_charger_have_their_own_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_components.eveus.binary_sensor import EveusManualModeBinarySensor, EveusReveApiBinarySensor
+    from custom_components.eveus.utils import get_device_suffix
+
+    _charger, updater = _known(monkeypatch)
+    for cls in (EveusReveApiBinarySensor, EveusManualModeBinarySensor):
+        first, second = cls(updater, 1).unique_id, cls(updater, 2).unique_id
+        assert second == first.replace("eveus", f"eveus{get_device_suffix(2)}", 1) != first

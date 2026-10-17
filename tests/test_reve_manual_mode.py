@@ -239,3 +239,10 @@ def test_the_manual_mode_sensor_passes_how_long_it_was_on(monkeypatch: pytest.Mo
     on_since = dt_util.utcnow() - timedelta(hours=2)
     asyncio.run(sensor._async_restore_state(SimpleNamespace(state="on", last_changed=on_since)))
     assert updater.reve_manual_mode is False
+
+
+def test_a_restore_exactly_at_the_slack_is_kept() -> None:
+    manual = reve.ManualMode()
+    manual.observe(_payload(sessionTime=3600 - reve._RESTORE_SLACK_SECONDS))
+    manual.restore(on_for=3600)
+    assert manual.on is True
