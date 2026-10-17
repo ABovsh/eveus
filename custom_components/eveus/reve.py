@@ -931,9 +931,8 @@ class ReveApi:
         """Switch a limit on with its kept (or current) value, or off: ``null``."""
         self._require_limit_window(flag)
         if not _bool(value):
-            current = _limit_reading(self._updater.snapshot.get(key))
-            if current is not None and current > 0:
-                self._limit_values.setdefault(key, current)
+            # The value stays shown: every GraphQL read of a limit that is on
+            # keeps it (``with_main_residue``), and /main carries it meanwhile.
             await self._clear_limit(field)
             return
         read = self._limit_values.get(key)
