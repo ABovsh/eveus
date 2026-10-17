@@ -167,6 +167,41 @@ class EveusReveApiBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensor
         self._write_if_changed(self.is_on)
 
 
+class EveusManualModeBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
+    """Whether a REVE station is in manual mode.
+
+    The app's "ignore schedule" Start, One Charge and any Stop put the station
+    in manual mode until the car is unplugged: it ignores the schedules and
+    every limit. The station reports no flag, so the integration infers it;
+    see ``reve.ManualMode``. Created only for REVE.
+    """
+
+    ENTITY_NAME = "Manual Mode"
+    _attr_icon = "mdi:hand-back-right"
+
+    def __init__(self, updater, device_number: int = 1) -> None:
+        super().__init__(updater, device_number)
+        self._init_write_on_change()
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.available:
+            return None
+        return self._updater.reve_manual_mode
+
+    async def _async_restore_state(self, state) -> None:
+        """A restart must not end manual mode while the car stays plugged in;
+        the first poll still clears it if the car is gone."""
+        if state.state == "on":
+            self._updater.reve_restore_manual_mode()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        self._write_if_changed(self.is_on)
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -194,7 +229,12 @@ async def async_setup_entry(
         if added or getattr(updater, "firmware_family", FAMILY_CLASSIC) != FAMILY_REVE:
             return
         added = True
-        async_add_entities([EveusReveApiBinarySensor(updater, device_number)])
+        async_add_entities(
+            [
+                EveusReveApiBinarySensor(updater, device_number),
+                EveusManualModeBinarySensor(updater, device_number),
+            ]
+        )
 
     _add_reve_api_sensor()
     if not added:

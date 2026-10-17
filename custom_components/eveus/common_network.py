@@ -344,6 +344,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Whether REVE's GraphQL answered the last read; ``None`` if unknown."""
         return self._reve.answering if self._reve_seen else None
 
+    @property
+    def reve_manual_mode(self) -> bool | None:
+        """Whether a REVE station is in manual mode (see ``ManualMode``); ``None`` otherwise."""
+        return self._reve.manual_mode.on if self._reve_seen else None
+
+    def reve_restore_manual_mode(self) -> None:
+        """Take manual mode over from before a Home Assistant restart."""
+        self._reve.manual_mode.restore()
+
     def reve_diagnostics(self) -> dict[str, Any] | None:
         """REVE's GraphQL side and the fields it cannot provide; ``None`` otherwise."""
         if not self._reve_seen:
@@ -1243,6 +1252,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 new_data, unsupported = normalize_reve_payload(
                     new_data, self._reve.extras
                 )
+                self._reve.manual_mode.observe(new_data)
             # Parse AFTER the legacy translation (this coordinator owns the
             # fw-1.x latch), and BEFORE _record_success, which notifies the
             # listeners that read the snapshot.

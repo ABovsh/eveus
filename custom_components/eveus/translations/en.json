@@ -308,6 +308,9 @@
       },
       "reve_api": {
         "name": "REVE API"
+      },
+      "manual_mode": {
+        "name": "Manual Mode"
       }
     },
     "switch": {

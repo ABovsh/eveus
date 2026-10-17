@@ -57,7 +57,7 @@ from typing import Any, Final
 import aiohttp
 
 from .client import GraphQLError, post_graphql
-from .const import MAX_VALID_SYSTEM_TIME
+from .const import CONNECTED_STATES, MAX_VALID_SYSTEM_TIME, PLUG_UNKNOWN_STATES
 from .reve_fields import station_to_main
 from .snapshot import FIELD_KEYS
 
@@ -630,6 +630,49 @@ def apply_schedule_command(
 # ---------------------------------------------------------------------------
 
 
+class ManualMode:
+    """Whether the station is in manual mode, which it does not report.
+
+    From the app's "ignore schedule" Start (``chargingCommand`` 0) or any Stop
+    (2) until the car is unplugged, the station ignores the schedules and every
+    limit, and releasing the command changes nothing. So it is latched: on at a
+    0 or 2, read or written, and off when the car is unplugged or the session
+    counters start over (a station restart under a plugged-in car).
+    """
+
+    def __init__(self) -> None:
+        self._on = False
+        self._session_time: float | None = None
+
+    @property
+    def on(self) -> bool:
+        return self._on
+
+    def command(self, command: int) -> None:
+        """A chargingCommand just written from Home Assistant."""
+        if command != _COMMAND_START:
+            self._on = True
+
+    def restore(self) -> None:
+        """Manual mode as it stood before Home Assistant restarted."""
+        self._on = True
+
+    def observe(self, payload: Mapping[str, Any]) -> None:
+        """One poll's normalized payload (Stop and One Charge read the command)."""
+        state = payload.get("state")
+        if type(state) is int and state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES:
+            self._on = False
+            self._session_time = None
+            return
+        elapsed = payload.get("sessionTime")
+        if type(elapsed) in (int, float):
+            if self._session_time is not None and elapsed < self._session_time:
+                self._on = False
+            self._session_time = elapsed
+        if payload.get(ONE_CHARGE_COMMAND) == 1 or payload.get(STOP_COMMAND) == 1:
+            self._on = True
+
+
 class ReveApi:
     """Reads and writes the settings REVE keeps only in GraphQL."""
 
@@ -653,6 +696,7 @@ class ReveApi:
         # (REVE then reports null) so its number shows what switching it back
         # on would apply.
         self._limit_values: dict[str, int | float] = {}
+        self.manual_mode = ManualMode()
 
     @property
     def extras(self) -> ReveExtras | None:
@@ -888,6 +932,7 @@ class ReveApi:
 
     async def _write_charging_command(self, command: int) -> None:
         await self._mutate({"chargingCommand": command})
+        self.manual_mode.command(command)
         extras = self._extras
         if extras is not None:
             self._store(
