@@ -1719,6 +1719,46 @@ test('One charge on: no schedule plan, and a schedule current cap is not blamed 
   assert.doesNotMatch(x.html(), /Schedule 1 limit/);
 });
 
+// ---- REVE manual mode: schedules and limits are ignored until the car is unplugged ----
+const MANUAL = (state) => ({manual_mode:['binary_sensor.manual', state]});
+test('Manual mode on: Schedules says so, strikes the windows through, and has nothing to turn off', () => {
+  const x = setupAll({sections:['schedules'], charging:false, over:{...SCHED, ...MANUAL('on')}});
+  const h = x.html();
+  assert.match(h, /class="panel sched overridden"/);
+  assert.match(h, /class="override" role="note"[^]*mdi:hand-back-right[^]*Manual mode ignores the schedules until the car is unplugged/);
+  assert.doesNotMatch(h, /override-off|data-status-toggle="one_charge"/);
+  assert.doesNotMatch(rowOf(h, 1), /^ on now"/);
+  assert.match(setupAll({sections:['schedules'], locale:'uk', over:{...SCHED, ...MANUAL('on')}}).html(), /Ручний режим ігнорує розклади до відключення авто/);
+});
+test('Manual mode notice: only when it is on, a schedule is on, and the charger answers', () => {
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...MANUAL('off')}}).html(), /class="override"|overridden/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...MANUAL('on'), schedule_1_enabled:['switch.s1','off']}}).html(), /class="override"/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...MANUAL('on'), state:['sensor.state','unavailable']}}).html(), /class="override"/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED}}).html(), /class="override"/, 'a charger without the sensor says nothing');
+});
+test('One charge with manual mode on keeps its own notice and Turn off button', () => {
+  const h = setupAll({sections:['schedules'], over:{...SCHED, ...ONE('on'), ...MANUAL('on')}}).html();
+  assert.match(h, /One charge ignores the schedules[^]*data-status-toggle="one_charge"[^>]*>Turn off</);
+  assert.doesNotMatch(h, /Manual mode ignores/);
+});
+test('Manual mode on: a folded Schedules row strikes the windows through and says why', () => {
+  const x = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...MANUAL('on')}});
+  assert.match(x.html(), /class="fold-sum overridden" title="Manual mode ignores the schedules until the car is unplugged"[^]*<s>1 23:00→07:00<\/s>/);
+});
+test('Manual mode on: the charger limits read as suspended, Target SOC stays on', () => {
+  const on = {...MANUAL('on'), limit_energy_enabled:['switch.lee','on']};
+  const h = setupAll({sections:['limits'], over:on}).html();
+  assert.match(h, /Manual mode ignores the limits until the car is unplugged/);
+  assert.match(h, /limits-grid four suspended/);
+  assert.match(h, /limit-tile saved[^]*data-limit-toggle="limit_energy_enabled"/);
+  assert.match(h, /limit-tile active[^]*data-limit-toggle="limit_soc_enabled"/);
+  assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, limit_energy_enabled:['switch.lee','off']}}).html(), /class="override"/, 'only Target SOC is on, and manual mode leaves it alone');
+  assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, limit_disable_all:['switch.dis','on']}}).html(), /class="override"/, 'Disable all already says it');
+});
+test('Manual mode on: no schedule plan', () => {
+  assert.doesNotMatch(setupAll({sections:['advanced_info'], charging:false, over:plan(MANUAL('on'))}).html(), /soc-plan/);
+});
+
 // ---- Polish pass: errors that outlive their moment, gestures, empty grids ----
 test('a command error can be tapped away and clears itself; it never stays on the card for good', async () => {
   const x = setupAll({sections:['time'], over:TIME});

@@ -159,6 +159,7 @@ const I18N = {
     tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
     monthTitle: 'Energy this month and last month (Home Assistant statistics)',
     oneOverrides: {schedules: 'One charge ignores the schedules', limits: 'One charge ignores the limits'}, turnOff: 'Turn off',
+    manualOverrides: {schedules: 'Manual mode ignores the schedules until the car is unplugged', limits: 'Manual mode ignores the limits until the car is unplugged'},
     states: {},
   },
   uk: {
@@ -224,6 +225,7 @@ const I18N = {
     tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
     monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
     oneOverrides: {schedules: '«Один заряд» ігнорує розклади', limits: '«Один заряд» ігнорує ліміти'}, turnOff: 'Вимкнути',
+    manualOverrides: {schedules: 'Ручний режим ігнорує розклади до відключення авто', limits: 'Ручний режим ігнорує ліміти до відключення авто'},
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
       'Startup': 'Запуск', 'System Test': 'Самотестування', 'Standby': 'Очікування', 'Connected': 'Підключено',
@@ -873,7 +875,9 @@ class EveusCard extends HTMLElement {
     // With nothing on, "Disable all" has nothing to disable; suspended, it is how the limits come back.
     const anyOn = items.some((item) => this._limitOn(item.toggle));
     // One charge ignores the limits that are on: they read as suspended, like Disable all.
-    const ignored = anyOn && !suspended && this._oneCharge;
+    // Manual mode ignores the charger's own limits only; Target SOC is stopped by Home Assistant.
+    const ignored = !suspended && this._ignoring
+      && (this._oneCharge ? anyOn : items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle)));
     const closed = fold && !fold.open;
     const note = !anyOn && !suspended ? `<small class="limits-note">${t.noneOn}</small>`
       : ignored && closed ? this._overrideFlag('limits') : '';
@@ -883,7 +887,7 @@ class EveusCard extends HTMLElement {
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
     const held = suspended || ignored;
-    const grid = !closed ? `${ignored ? this._override('limits') : ''}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held)).join('')}</div>` : '';
+    const grid = !closed ? `${ignored ? this._override('limits') : ''}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held && (suspended || this._oneCharge || item.key !== 'target_soc'))).join('')}</div>` : '';
     return `<section class="${['limits', this._online ? '' : 'off', fold && !fold.open ? 'folded' : ''].filter(Boolean).join(' ')}" aria-label="${t.aria.limits}">
       <div class="limits-head">${head}${disable}${fold ? this._foldChev('limits', fold.open) : ''}</div>${grid}
     </section>`;
@@ -1288,7 +1292,7 @@ class EveusCard extends HTMLElement {
     }
   }
   _scheduleNow(n) {
-    if (this._oneCharge) return false;
+    if (this._ignoring) return false;
     const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
     if (!this._online || !this._limitOn(`schedule_${n}_enabled`) || start === null || stop === null || start === stop) return false;
     const now = this._scheduleHM();
@@ -1297,7 +1301,7 @@ class EveusCard extends HTMLElement {
   }
   // The start of the enabled schedule that comes next, for "Waiting for Schedule · from 23:00".
   _nextScheduleStart() {
-    if (this._oneCharge) return null;
+    if (this._ignoring) return null;
     const n = this._nextSchedule();
     return n ? this._timeShown(`schedule_${n}_start`) : null;
   }
@@ -1312,7 +1316,7 @@ class EveusCard extends HTMLElement {
   }
   _schedulesShown() { return [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._shows('schedules', `schedule_${n}`)); }
   // One charge charges at once whatever the schedules say; only worth saying while one is on.
-  get _schedulesIgnored() { return this._oneCharge && this._schedulesShown().some((n) => this._limitOn(`schedule_${n}_enabled`)); }
+  get _schedulesIgnored() { return this._ignoring && this._schedulesShown().some((n) => this._limitOn(`schedule_${n}_enabled`)); }
   _schedulesSection() {
     const t = this._t;
     const rows = this._schedulesShown().map((n) => this._scheduleRow(n)).join('');
@@ -1322,13 +1326,20 @@ class EveusCard extends HTMLElement {
   }
   // ---- One charge: the charger's "charge now" ignores every schedule and limit. ----
   get _oneCharge() { return this._online && !!this._ids?.one_charge && this._limitOn('one_charge'); }
+  // REVE: the charger is in manual mode (Stop, or the app's "ignore schedule") until the car is unplugged.
+  get _manualMode() { return this._online && !!this._ids?.manual_mode && this._limitOn('manual_mode'); }
+  get _ignoring() { return this._oneCharge || this._manualMode; }
+  // One charge, while it is on, has the button; manual mode alone has nothing to turn off.
+  _overrideText(kind) { return (this._oneCharge ? this._t.oneOverrides : this._t.manualOverrides)[kind]; }
+  _overrideIcon() { return this._oneCharge ? 'mdi:lightning-bolt-circle' : 'mdi:hand-back-right'; }
   _override(kind) {
     const t = this._t;
-    return `<div class="override" role="note"><ha-icon icon="mdi:lightning-bolt-circle"></ha-icon><span>${t.oneOverrides[kind]}</span><button class="override-off" data-status-toggle="one_charge" title="${t.oneTitle}">${t.turnOff}</button></div>`;
+    const off = this._oneCharge ? `<button class="override-off" data-status-toggle="one_charge" title="${t.oneTitle}">${t.turnOff}</button>` : '';
+    return `<div class="override" role="note"><ha-icon icon="${this._overrideIcon()}"></ha-icon><span>${this._overrideText(kind)}</span>${off}</div>`;
   }
   _overrideFlag(kind) {
-    const text = this._t.oneOverrides[kind];
-    return `<ha-icon class="override-flag" icon="mdi:lightning-bolt-circle" title="${text}" aria-label="${text}"></ha-icon>`;
+    const text = this._overrideText(kind);
+    return `<ha-icon class="override-flag" icon="${this._overrideIcon()}" title="${text}" aria-label="${text}"></ha-icon>`;
   }
   // ---- Charger clock: the zone it runs on, how far it is off, and a one-tap sync. ----
   _driftText(seconds) {
@@ -1560,7 +1571,7 @@ class EveusCard extends HTMLElement {
         if (!this._limitOn(`schedule_${n}_enabled`) || !start || !stop) return `${n} ${t.off}`;
         return ignored ? `<s>${n} ${start}→${stop}</s>` : `${n} ${start}→${stop}`;
       });
-      if (ignored) return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sumCls: 'overridden', sumTitle: t.oneOverrides.schedules, flag: this._overrideFlag('schedules'), sum: rows.join(sep)};
+      if (ignored) return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sumCls: 'overridden', sumTitle: this._overrideText('schedules'), flag: this._overrideFlag('schedules'), sum: rows.join(sep)};
       return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sum: rows.join(sep)};
     }
     const total = this._online ? currentNumber(this._state('total_energy')) : null;
@@ -1636,7 +1647,7 @@ class EveusCard extends HTMLElement {
   // ---- Battery: plugged in and waiting, how far the next schedule gets it — energy and percent, never a time. ----
   _plan() {
     // Only while the car waits for its charge: a fault, a pause or a finished charge has nothing to plan.
-    if (!this._advanced || !this._online || this._unplugged || this._state('state')?.state !== 'Connected' || this._oneCharge) return null;
+    if (!this._advanced || !this._online || this._unplugged || this._state('state')?.state !== 'Connected' || this._ignoring) return null;
     const need = currentNumber(this._state('energy_to_target_soc')), soc = currentNumber(this._state('soc_percent'));
     const target = currentNumber(this._state('target_soc')), capacity = currentNumber(this._state('battery_capacity'));
     const loss = currentNumber(this._state('soc_correction')) ?? 0;
