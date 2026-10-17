@@ -1780,41 +1780,52 @@ test('Manual mode on: no schedule plan', () => {
   assert.doesNotMatch(setupAll({sections:['advanced_info'], charging:false, over:plan(MANUAL('on'))}).html(), /soc-plan/);
 });
 
-// ---- REVE: a limit is switched on only while charging, outside manual mode ----
+// ---- REVE: a limit is set, changed or switched only while charging, outside manual mode ----
 const ENERGY_OFF = {limit_energy_enabled:['switch.lee','off']};
-test('REVE idle: the limit switches that are off are disabled and the section says when they work', () => {
+const LOCKED = (h, key) => /disabled/.test(h.match(new RegExp(`data-limit-toggle="${key}_enabled"[^>]*>`))[0])
+  && [`data-limit-step="${key}" data-dir="-1"`, `data-limit-edit-trigger="${key}"`, `data-limit-step="${key}" data-dir="1"`]
+    .every((attr) => /disabled/.test(h.match(new RegExp(`${attr}[^>]*>`))[0]));
+test('REVE idle: the charger limits are locked, Target SOC is not, and the section says when they work', () => {
   const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
-  assert.match(h, /<small class="limits-note">switch on while charging<\/small>/);
-  assert.match(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
-  assert.match(h, /data-limit-toggle="limit_cost_enabled"[^>]*disabled/);
-  assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled/, 'Target SOC is stopped by Home Assistant');
-  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /<small class="limits-note">вмикаються під час заряджання<\/small>/);
+  assert.match(h, /<small class="limits-note">change while charging<\/small>/);
+  for (const key of ['limit_energy', 'limit_time', 'limit_cost']) assert.ok(LOCKED(h, key), key);
+  assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled|data-limit-step="target_soc"[^>]*disabled/, 'Target SOC is stopped by Home Assistant');
+  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /<small class="limits-note">змінюються під час заряджання<\/small>/);
 });
 test('REVE idle with Target SOC on: the note gives the reason without claiming none is on', () => {
   const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), ...ENERGY_OFF}}).html();
-  assert.match(h, /<small class="limits-note">switch on while charging<\/small>/);
+  assert.match(h, /<small class="limits-note">change while charging<\/small>/);
   assert.doesNotMatch(h, /none on/);
 });
-test('REVE charging: the limit switches can be turned on', () => {
-  const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('off'), ...ENERGY_OFF}}).html();
-  assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
-  assert.doesNotMatch(h, /switch on while charging/);
+test('REVE: a limit that is on is locked outside a charge too, and the section says why', () => {
+  const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.ok(LOCKED(h, 'limit_energy'));
+  assert.match(h, /<small class="limits-note">change while charging<\/small>/);
 });
-test('REVE manual mode while charging: the limit switches stay disabled and say why', () => {
+test('REVE charging outside manual mode: every limit can be set and switched', () => {
+  for (const on of ['off', 'on']) {
+    const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee', on]}}).html();
+    assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+    assert.doesNotMatch(h, /data-limit-step="limit_energy"[^>]*disabled|data-limit-edit-trigger="limit_energy"[^>]*disabled/);
+    assert.doesNotMatch(h, /change while charging|manual mode/);
+  }
+});
+test('REVE manual mode while charging: the limits stay locked and say why', () => {
   const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('on'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
-  assert.match(h, /<small class="limits-note" title="REVE manual mode: limits can be switched on after the connector is replugged">manual mode<\/small><ha-icon class="override-flag" icon="mdi:hand-back-right"/);
+  assert.match(h, /<small class="limits-note" title="REVE manual mode: limits can be changed after the connector is replugged">manual mode<\/small><ha-icon class="override-flag" icon="mdi:hand-back-right"/);
   assert.doesNotMatch(h, /not in manual mode|none on/, 'the note says the charger is in manual mode');
-  assert.match(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
-  assert.match(setupAll({sections:['limits'], charging:true, locale:'uk', over:{...MANUAL('on'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /title="Ручний режим REVE: ліміти можна ввімкнути після повторного підключення конектора">ручний режим</);
+  assert.ok(LOCKED(h, 'limit_energy'));
+  assert.match(setupAll({sections:['limits'], charging:true, locale:'uk', over:{...MANUAL('on'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /title="Ручний режим REVE: ліміти можна змінити після повторного підключення конектора">ручний режим</);
 });
-test('REVE: a limit that is already on can still be switched off in any state', () => {
-  const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('on'), limit_energy_enabled:['switch.lee','on']}}).html();
-  assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+test('REVE manual mode with a limit on: locked, and the ignored-limits note explains it', () => {
+  const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('on'), limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.ok(LOCKED(h, 'limit_energy'));
+  assert.match(h, /REVE manual mode ignores the limits until the connector is replugged/);
 });
-test('a charger without Manual Mode (other firmware) keeps every limit switch enabled', () => {
+test('a charger without Manual Mode (other firmware) keeps every limit enabled', () => {
   const h = setupAll({sections:['limits'], charging:false, over:ENERGY_OFF}).html();
-  assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
-  assert.doesNotMatch(h, /switch on while charging/);
+  assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled|data-limit-step="limit_energy"[^>]*disabled/);
+  assert.doesNotMatch(h, /change while charging/);
 });
 
 // ---- Polish pass: errors that outlive their moment, gestures, empty grids ----

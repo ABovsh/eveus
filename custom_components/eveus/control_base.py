@@ -79,6 +79,12 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         re-resolved, so an older write can never leave its value behind.
         ``extra`` rides along as sibling form fields (e.g. OCPP's `ocppVendor`).
         """
+        # A write the charger would ignore or drop is refused with its reason
+        # before anything is shown or sent (REVE's session limits).
+        refusal = getattr(self._updater, "command_refusal", None)
+        reason = refusal(self._command) if callable(refusal) else None
+        if isinstance(reason, str):
+            raise HomeAssistantError(reason)
         self._set_pending(pending)
         self._set_display_value(shown)
         self._write_if_changed(shown)  # type: ignore[attr-defined]

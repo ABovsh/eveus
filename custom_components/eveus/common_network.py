@@ -57,6 +57,7 @@ from .reve import (
     FAMILY_REVE,
     ReveApi,
     is_reve_payload,
+    limit_refusal,
     normalize_reve_payload,
 )
 from .snapshot import EveusSnapshot
@@ -338,6 +339,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def reve_command_route(self, command: str) -> Callable[[Any], Any] | None:
         """The GraphQL write REVE needs for this command, or ``None`` for ``/pageEvent``."""
         return self._reve.route(command) if self._reve_seen else None
+
+    def command_refusal(self, command: str) -> str | None:
+        """Why this charger cannot take the command now, said before it is sent;
+        ``None`` to send it (always, except REVE's session limits)."""
+        if not self._reve_seen:
+            return None
+        return limit_refusal(command, self._snapshot.get_int("state"), self._reve.manual_mode)
 
     @property
     def reve_api_answering(self) -> bool | None:

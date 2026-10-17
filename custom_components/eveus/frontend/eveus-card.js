@@ -149,7 +149,7 @@ const I18N = {
     faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
-    noneOn: 'none on', lockedIdle: 'switch on while charging', lockedManual: 'manual mode', lockedManualTitle: 'REVE manual mode: limits can be switched on after the connector is replugged', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
+    noneOn: 'none on', lockedIdle: 'change while charging', lockedManual: 'manual mode', lockedManualTitle: 'REVE manual mode: limits can be changed after the connector is replugged', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
     slowCar: 'the car takes less', until: 'until',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
@@ -215,7 +215,7 @@ const I18N = {
     faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
-    noneOn: 'усі вимкнено', lockedIdle: 'вмикаються під час заряджання', lockedManual: 'ручний режим', lockedManualTitle: 'Ручний режим REVE: ліміти можна ввімкнути після повторного підключення конектора', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
+    noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedManual: 'ручний режим', lockedManualTitle: 'Ручний режим REVE: ліміти можна змінити після повторного підключення конектора', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
     slowCar: 'авто приймає менше', until: 'до',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
@@ -823,11 +823,11 @@ class EveusCard extends HTMLElement {
     // Time units have words in the card's language; kWh, V, A and currencies stay symbols.
     return CURRENCY[rawUnit] || this._t.units[rawUnit] || rawUnit;
   }
-  _numberValue({key, label, fallbackUnit, readonly = false, unit: showUnit = true}) {
+  _numberValue({key, label, fallbackUnit, readonly = false, unit: showUnit = true}, locked = false) {
     const entity = this._state(key), attrs = entity?.attributes || {};
     const value = this._limitValue(key);
     const unit = showUnit ? `<small>${this._unit(key, fallbackUnit)}</small>` : '';
-    const disabled = !this._online || value === null || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite);
+    const disabled = !this._online || locked || value === null || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite);
     const shown = value === null ? '—' : Number(value.toFixed(attrs.step < 1 ? 1 : 0));
     if (readonly) return `<div class="limit-value readonly"><b data-fit>${shown}${unit}</b></div>`;
     const editing = this._editingLimit === key;
@@ -849,10 +849,10 @@ class EveusCard extends HTMLElement {
     const enabled = this._limitOn(toggle);
     const cls = ['limit-tile', enabled ? '' : 'inactive', enabled && !suspended ? 'active' : '', enabled && suspended ? 'saved' : ''].filter(Boolean).join(' ');
     return `<div class="${cls}">
-      <button class="limit-toggle" data-limit-toggle="${toggle}" role="switch" aria-checked="${enabled}" aria-label="${label}: ${this._t.limit}" ${!this._online || (locked && !enabled) ? 'disabled' : ''}>
+      <button class="limit-toggle" data-limit-toggle="${toggle}" role="switch" aria-checked="${enabled}" aria-label="${label}: ${this._t.limit}" ${!this._online || locked ? 'disabled' : ''}>
         <span data-fit="10.5">${label}<small class="tile-unit">${this._unit(key, fallbackUnit)}</small></span><i></i>
       </button>
-      ${this._numberValue({key, label, fallbackUnit, readonly, unit: false})}
+      ${this._numberValue({key, label, fallbackUnit, readonly, unit: false}, locked)}
     </div>`;
   }
   _limitsSection(fold = null) {
@@ -880,10 +880,9 @@ class EveusCard extends HTMLElement {
     const ignored = !suspended && this._ignoring
       && (this._oneCharge ? anyOn : items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle)));
     const closed = fold && !fold.open;
-    // REVE switches a limit on only while charging and outside manual mode; with none of its limits on, say
-    // why the switches are disabled instead of "none on". Short: the note shares a row with the title.
-    const stationOn = items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle));
-    const locked = this._limitsLocked && !stationOn && !suspended && !ignored;
+    // REVE takes a limit only while charging outside manual mode; say why its limits are locked instead of
+    // "none on" (the ignored-limits note already says it in manual mode). Short: it shares a row with the title.
+    const locked = this._limitsLocked && !suspended && !ignored;
     const lockNote = !locked ? '' : this._manualMode
       ? `<small class="limits-note" title="${t.lockedManualTitle}">${t.lockedManual}</small><ha-icon class="override-flag" icon="mdi:hand-back-right" title="${t.lockedManualTitle}" aria-label="${t.lockedManualTitle}"></ha-icon>`
       : `<small class="limits-note">${t.lockedIdle}</small>`;
@@ -1337,7 +1336,7 @@ class EveusCard extends HTMLElement {
   // REVE: the charger is in manual mode (Stop, or the app's "ignore schedule") until the connector is replugged.
   get _manualMode() { return this._online && !!this._ids?.manual_mode && this._limitOn('manual_mode'); }
   get _ignoring() { return this._oneCharge || this._manualMode; }
-  // REVE only (it has Manual Mode): a limit can be switched on while charging, outside manual mode.
+  // REVE only (it has Manual Mode): a limit can be set, changed or switched while charging, outside manual mode.
   get _limitsLocked() { return this._online && !!this._ids?.manual_mode && (this._manualMode || !this._charging); }
   // One charge, while it is on, has the button; manual mode alone has nothing to turn off.
   _overrideText(kind) { return (this._oneCharge ? this._t.oneOverrides : this._t.manualOverrides)[kind]; }

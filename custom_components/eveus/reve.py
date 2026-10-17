@@ -693,6 +693,29 @@ class ManualMode:
             self._on = True
 
 
+# The session limits' number and on/off commands.
+LIMIT_COMMANDS: Final[frozenset[str]] = frozenset(
+    key for limit in _LIMIT_WRITES for key in limit[:2]
+)
+
+
+def limit_refusal(command: str, state: int | None, manual_mode: ManualMode) -> str | None:
+    """Why a REVE session limit cannot be set, changed or switched now;
+    ``None`` when it can, or for any other command.
+
+    REVE ignores a limit in manual mode and drops it when the connector is
+    pulled out, so a limit is touched only while the car is charging outside
+    manual mode (Anton's rule, 2026-10-18), even after a limit stopped a charge.
+    """
+    if command not in LIMIT_COMMANDS:
+        return None
+    if manual_mode.on:
+        return "The charger is in REVE manual mode: limits can be changed after the connector is replugged"  # pragma: no mutate - message text
+    if state != DEVICE_STATE_CHARGING:
+        return "REVE limits can be changed only while the car is charging"  # pragma: no mutate - message text
+    return None
+
+
 class ReveApi:
     """Reads and writes the settings REVE keeps only in GraphQL."""
 
@@ -889,10 +912,16 @@ class ReveApi:
     async def reset_counter(self, field: str, _value: Any) -> None:
         await self._mutate({"iem": {field: 1}})
 
+    def _require_limit_window(self, command: str) -> None:
+        reason = limit_refusal(command, self._updater.snapshot.get_int("state"), self.manual_mode)
+        if reason is not None:
+            raise ReveCommandUnsupported(reason)
+
     async def set_limit(self, key: str, flag: str, field: str, factor: int, value: Any) -> None:
         """A limit's value (write units). REVE has no on/off flag: writing a
         value switches the limit on, so while it is off the value is only kept
         for when it is switched on."""
+        self._require_limit_window(key)
         written = _whole(value)
         if self._updater.snapshot.get_int(flag) == 1:
             await self._mutate({"session": {field: written}})
@@ -900,18 +929,13 @@ class ReveApi:
 
     async def switch_limit(self, key: str, flag: str, field: str, factor: int, value: Any) -> None:
         """Switch a limit on with its kept (or current) value, or off: ``null``."""
+        self._require_limit_window(flag)
         if not _bool(value):
             current = _limit_reading(self._updater.snapshot.get(key))
             if current is not None and current > 0:
                 self._limit_values.setdefault(key, current)
             await self._clear_limit(field)
             return
-        # The charger ignores a limit outside a charge it runs itself (manual
-        # mode) and drops it when the car is unplugged, so one can be switched
-        # on only while the car is charging. A limit already on stays
-        # changeable and removable in any state.
-        if self._updater.snapshot.get_int("state") != DEVICE_STATE_CHARGING or self.manual_mode.on:
-            raise ReveCommandUnsupported(f"{key} can be switched on only while charging, outside manual mode")  # pragma: no mutate - message text; only the exception type is ever logged
         read = self._limit_values.get(key)
         if read is None:
             read = _limit_reading(self._updater.snapshot.get(key))

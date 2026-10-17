@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -339,21 +340,23 @@ def test_a_limit_set_in_the_app_is_switched_back_on_with_its_own_value(
 
 @pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
 @pytest.mark.parametrize("state", [2, 3, 5, 6, 7])
-def test_a_limit_is_switched_on_only_while_charging(
+def test_a_limit_is_set_or_switched_on_only_while_charging(
     monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any, state: int
 ) -> None:
-    charger, updater = _known(monkeypatch)
+    charger, updater = _known_charging(monkeypatch)
     _send(updater, command, value)
     _set_state(charger, updater, state)
 
+    assert _send(updater, command, value * 2) is False
     assert _send(updater, switch, 1) is False
 
     assert charger.calls == []
+    assert asyncio.run(updater._async_update_data())[command] == read, "the refused value is not kept either"
 
 
 @pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
 @pytest.mark.parametrize("stopper", ["oneCharge", "evseEnabled"])
-def test_a_limit_is_not_switched_on_in_manual_mode_even_while_charging(
+def test_a_limit_is_not_set_or_switched_on_in_manual_mode_even_while_charging(
     monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any, stopper: str
 ) -> None:
     charger, updater = _known_charging(monkeypatch)
@@ -362,29 +365,73 @@ def test_a_limit_is_not_switched_on_in_manual_mode_even_while_charging(
     _set_state(charger, updater, 4)
 
     assert updater.reve_manual_mode is True
+    assert _send(updater, command, value * 2) is False
     assert _send(updater, switch, 1) is False
 
     assert charger.calls == []
 
 
 @pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
-def test_a_limit_on_can_always_be_switched_off_and_changed(
-    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
+@pytest.mark.parametrize("manual", [False, True])
+def test_a_limit_that_is_on_is_locked_outside_a_charge_too(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any, manual: bool
 ) -> None:
-    # A limit that was reached parks the charge in state 5; raising it is how
-    # the charge resumes, and a limit nobody wants must always be removable.
+    # Anton's rule (2026-10-18): no limit changes at all outside a normal
+    # charge, even after a limit stopped one; replugging the connector is how
+    # the next charge gets new limits.
     charger, updater = _known_charging(monkeypatch)
     _send(updater, command, value)
     _send(updater, switch, 1)
     asyncio.run(updater._async_update_data())
-    _send(updater, "evseEnabled", 1)
+    if manual:
+        _send(updater, "evseEnabled", 1)
     _set_state(charger, updater, 5)
-    assert updater.reve_manual_mode is True
+    assert updater.reve_manual_mode is manual
 
-    assert _send(updater, command, value * 2) is True
-    assert _send(updater, switch, 0) is True
+    assert _send(updater, command, value * 2) is False
+    assert _send(updater, switch, 0) is False
 
-    assert _inputs(charger) == [{"session": {field: value * 2}}, {"session": {field: None}}]
+    assert charger.calls == []
+
+
+def test_the_refusal_names_the_reason() -> None:
+    charging = SimpleNamespace(state=4)
+    manual = reve.ManualMode()
+    assert reve.limit_refusal("energyLimit", 4, manual) is None
+    assert reve.limit_refusal("currentSet", 2, manual) is None
+    assert "only while the car is charging" in reve.limit_refusal("timeLimitS", 5, manual)
+    manual.restore()
+    assert "connector is replugged" in reve.limit_refusal("moneyLimit", charging.state, manual)
+
+
+def test_a_limit_entity_refuses_with_that_reason_and_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    charger, updater = _known(monkeypatch)
+    switch = next(e for e in _switches(updater) if e._command == "energyLimitS")
+
+    with pytest.raises(HomeAssistantError, match="only while the car is charging"):
+        asyncio.run(switch.async_turn_on())
+
+    assert charger.calls == []
+
+
+def test_classic_firmware_has_no_limit_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_reve_firmware import _classic_main
+
+    updater = _updater(monkeypatch, _Charger(_classic_main()))
+    asyncio.run(updater._async_update_data())
+
+    assert updater.command_refusal("energyLimitS") is None
+
+
+def _switches(updater: Any) -> list[Any]:
+    from custom_components.eveus.switch import SWITCH_DESCRIPTIONS, BaseSwitchEntity
+
+    switches = [BaseSwitchEntity(updater, description, 1) for description in SWITCH_DESCRIPTIONS]
+    for entity in switches:
+        entity.async_write_ha_state = lambda: None
+    return switches
 
 
 @pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
