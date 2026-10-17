@@ -36,7 +36,6 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
-from . import dev_probe  # DEV-PROBE
 from .const import (
     DOMAIN,
     MODEL_MAX_CURRENT,
@@ -649,7 +648,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # for an outage mid-session, and the first poll that lands fills them.
         # Every other failure still fails setup -- bad credentials, or a reply
         # this firmware cannot produce, are not fixed by polling again.
-        await dev_probe.async_attach(hass, entry, updater)  # DEV-PROBE
         try:
             await updater.async_config_entry_first_refresh()
         except ConfigEntryNotReady as err:
