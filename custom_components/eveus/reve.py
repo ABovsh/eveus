@@ -423,9 +423,10 @@ def _schedule_item(raw: Any) -> dict[str, Any]:
 
 
 def _rate_item(raw: Any) -> dict[str, Any]:
-    """The fields the tariff sensors read. Names are not read and weekdays that
-    cannot be read become ``None``, so a format change in them cannot take the
-    tariffs away; only the active rate then stays unknown."""
+    """The fields the tariff sensors read. A name or weekdays that cannot be
+    read become empty / ``None``, so a format change in them cannot take the
+    tariffs away; only the active rate's name or the active rate then stays
+    unknown."""
     if not isinstance(raw, dict):
         raise ValueError("rate is not an object")  # pragma: no mutate - message text; only the exception type is ever logged
     try:
@@ -438,6 +439,7 @@ def _rate_item(raw: Any) -> dict[str, Any]:
         "enabled": _bool(raw.get("enabled")),
         "value": _number(raw.get("value")),
         "weekdays": weekdays,
+        "name": raw["name"] if isinstance(raw.get("name"), str) else "",
     }
 
 
@@ -573,6 +575,10 @@ def normalize_reve_payload(
         active = None if clock is None else active_rate_index(extras.rates, clock)
         if active is not None:
             payload["activeTarif"] = active
+            # The name its owner gave the rate in the charger's app; the base
+            # price (0) has none.
+            if active and extras.rates[active - 1]["name"]:
+                payload["activeTarifName"] = extras.rates[active - 1]["name"]
         if extras.charging_command is not None:
             payload[STOP_COMMAND] = int(extras.charging_command == _COMMAND_STOP)
     unsupported = frozenset(key for key in FIELD_KEYS if key not in payload)

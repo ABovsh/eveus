@@ -1277,8 +1277,27 @@ def test_active_rate_cost_and_cost_to_target_follow_the_reve_rates() -> None:
 
     assert entities["eveus_active_rate_cost"].available is True
     assert entities["eveus_active_rate_cost"].native_value == 2.16
-    assert entities["eveus_active_rate_cost"].extra_state_attributes == {"rate_name": "Rate 2"}
+    assert entities["eveus_active_rate_cost"].extra_state_attributes == {"rate_name": "Rate"}
     assert entities["eveus_cost_to_target_soc"].available is True
+
+
+def test_the_active_rate_carries_the_name_the_station_gives_it() -> None:
+    night = {**_NIGHT, "name": "Rate 1 - Night"}
+    day = {**_rate(7 * 60, 23 * 60, 4.32), "name": "Rate 2 - Day"}
+
+    def named(rates: list[dict[str, Any]], clock: int) -> Any:
+        extras = parse_extras(_extras_with(ratesV2={"base": 4.32, "rates": rates}))
+        main = _reve_main()
+        main["systemTime"] = clock
+        payload, _ = normalize_reve_payload(main, extras)
+        return payload.get("activeTarifName")
+
+    assert named([night, day], _wall(16, 2, 0)) == "Rate 1 - Night"
+    assert named([night, day], _wall(16, 12, 0)) == "Rate 2 - Day"
+    # The base price has no name of its own; an unnamed or unreadable name adds nothing.
+    assert named([night], _wall(15, 14, 24)) is None
+    assert named([{**night, "name": ""}], _wall(16, 2, 0)) is None
+    assert named([{**night, "name": 7}], _wall(16, 2, 0)) is None
 
 
 def test_a_daytime_window_starts_on_its_start_minute_and_ends_before_its_end() -> None:

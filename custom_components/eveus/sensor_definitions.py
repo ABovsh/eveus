@@ -879,7 +879,14 @@ def get_active_rate_attrs(updater, hass) -> dict:
     if not updater.available:
         return {}
     active_rate = _read_int(updater, "activeTarif")
-    return {"rate_name": RATE_STATES.get(active_rate, "Unknown")} if active_rate is not None else {}
+    if active_rate is None:
+        return {}
+    # REVE reports the rate's own name, as set in the charger's app; a classic
+    # charger has none and keeps the fixed labels.
+    name = updater.snapshot.raw.get("activeTarifName")
+    if isinstance(name, str) and name:
+        return {"rate_name": name}
+    return {"rate_name": RATE_STATES.get(active_rate, "Unknown")}
 
 
 def _make_rate_status_getter(rate_key: str):

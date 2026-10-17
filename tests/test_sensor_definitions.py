@@ -344,6 +344,16 @@ def test_session_time_and_active_rate_attributes_handle_edge_cases() -> None:
     assert sensors.get_active_rate_attrs(_updater({}, available=False), None) == {}
 
 
+def test_active_rate_name_is_the_stations_own_when_it_reports_one() -> None:
+    # REVE names its rates in the charger's app; a classic charger reports no name.
+    named = _updater({"activeTarif": 2, "activeTarifName": "Rate 2 - Day"})
+    assert sensors.get_active_rate_attrs(named, None) == {"rate_name": "Rate 2 - Day"}
+    for name in ("", None, 5):
+        unnamed = _updater({"activeTarif": 2, "activeTarifName": name})
+        assert sensors.get_active_rate_attrs(unnamed, None) == {"rate_name": "Rate 3"}
+    assert sensors.get_active_rate_attrs(_updater({"activeTarif": 1}), None) == {"rate_name": "Rate 2"}
+
+
 def test_adaptive_and_schedule_helpers_cover_invalid_and_cap_paths() -> None:
     assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "0"}), None) == "Off"
     assert sensors.get_adaptive_charging_state(_updater({"aiStatus": "1"}), None) == "Voltage"
