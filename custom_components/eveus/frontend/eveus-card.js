@@ -159,7 +159,7 @@ const I18N = {
     tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
     monthTitle: 'Energy this month and last month (Home Assistant statistics)',
     oneOverrides: {schedules: 'One charge ignores the schedules', limits: 'One charge ignores the limits'}, turnOff: 'Turn off',
-    manualOverrides: {schedules: 'REVE manual mode ignores the schedules until the car is reconnected', limits: 'REVE manual mode ignores the limits until the car is reconnected'},
+    manualOverrides: {schedules: 'REVE manual mode ignores the schedules until the connector is replugged', limits: 'REVE manual mode ignores the limits until the connector is replugged'},
     states: {},
   },
   uk: {
@@ -225,7 +225,7 @@ const I18N = {
     tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
     monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
     oneOverrides: {schedules: '«Один заряд» ігнорує розклади', limits: '«Один заряд» ігнорує ліміти'}, turnOff: 'Вимкнути',
-    manualOverrides: {schedules: 'Ручний режим REVE ігнорує розклади до перепідключення авто', limits: 'Ручний режим REVE ігнорує ліміти до перепідключення авто'},
+    manualOverrides: {schedules: 'Ручний режим REVE ігнорує розклади до повторного підключення конектора', limits: 'Ручний режим REVE ігнорує ліміти до повторного підключення конектора'},
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
       'Startup': 'Запуск', 'System Test': 'Самотестування', 'Standby': 'Очікування', 'Connected': 'Підключено',
@@ -1329,7 +1329,7 @@ class EveusCard extends HTMLElement {
   }
   // ---- One charge: the charger's "charge now" ignores every schedule and limit. ----
   get _oneCharge() { return this._online && !!this._ids?.one_charge && this._limitOn('one_charge'); }
-  // REVE: the charger is in manual mode (Stop, or the app's "ignore schedule") until the car is reconnected.
+  // REVE: the charger is in manual mode (Stop, or the app's "ignore schedule") until the connector is replugged.
   get _manualMode() { return this._online && !!this._ids?.manual_mode && this._limitOn('manual_mode'); }
   get _ignoring() { return this._oneCharge || this._manualMode; }
   // REVE only (it has Manual Mode): a limit can be switched on while charging, outside manual mode.
