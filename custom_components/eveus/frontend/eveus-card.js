@@ -149,7 +149,7 @@ const I18N = {
     faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
-    noneOn: 'none on', lockedIdle: 'change while charging', lockedManual: 'manual mode', lockedManualTitle: 'REVE manual mode: limits can be changed after the connector is replugged', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
+    noneOn: 'none on', lockedIdle: 'change while charging', lockedIdleNote: 'REVE keeps limits only for a running charge: change them while the car is charging', lockedManual: 'manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
     slowCar: 'the car takes less', until: 'until',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
@@ -159,7 +159,7 @@ const I18N = {
     tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
     monthTitle: 'Energy this month and last month (Home Assistant statistics)',
     oneOverrides: {schedules: 'One charge ignores the schedules', limits: 'One charge ignores the limits'}, turnOff: 'Turn off',
-    manualOverrides: {schedules: 'REVE manual mode ignores the schedules until the connector is replugged', limits: 'REVE manual mode ignores the limits until the connector is replugged'},
+    manualOverrides: {schedules: 'REVE manual mode ignores the schedules until the connector is replugged', limits: 'REVE manual mode ignores the limits until the connector is replugged; they can be changed after that'},
     states: {},
   },
   uk: {
@@ -215,7 +215,7 @@ const I18N = {
     faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
-    noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedManual: 'ручний режим', lockedManualTitle: 'Ручний режим REVE: ліміти можна змінити після повторного підключення конектора', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
+    noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedIdleNote: 'REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається', lockedManual: 'ручний режим', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
     slowCar: 'авто приймає менше', until: 'до',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
@@ -225,7 +225,7 @@ const I18N = {
     tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
     monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
     oneOverrides: {schedules: '«Один заряд» ігнорує розклади', limits: '«Один заряд» ігнорує ліміти'}, turnOff: 'Вимкнути',
-    manualOverrides: {schedules: 'Ручний режим REVE ігнорує розклади до повторного підключення конектора', limits: 'Ручний режим REVE ігнорує ліміти до повторного підключення конектора'},
+    manualOverrides: {schedules: 'Ручний режим REVE ігнорує розклади до повторного підключення конектора', limits: 'Ручний режим REVE ігнорує ліміти до повторного підключення конектора; змінити їх можна після цього'},
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
       'Startup': 'Запуск', 'System Test': 'Самотестування', 'Standby': 'Очікування', 'Connected': 'Підключено',
@@ -880,21 +880,25 @@ class EveusCard extends HTMLElement {
     const ignored = !suspended && this._ignoring
       && (this._oneCharge ? anyOn : items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle)));
     const closed = fold && !fold.open;
-    // REVE takes a limit only while charging outside manual mode; say why its limits are locked instead of
-    // "none on" (the ignored-limits note already says it in manual mode). Short: it shares a row with the title.
-    const locked = this._limitsLocked && !suspended && !ignored;
-    const lockNote = !locked ? '' : this._manualMode
-      ? `<small class="limits-note" title="${t.lockedManualTitle}">${t.lockedManual}</small><ha-icon class="override-flag" icon="mdi:hand-back-right" title="${t.lockedManualTitle}" aria-label="${t.lockedManualTitle}"></ha-icon>`
-      : `<small class="limits-note">${t.lockedIdle}</small>`;
-    const note = suspended ? '' : lockNote || (!anyOn ? `<small class="limits-note">${t.noneOn}</small>`
-      : ignored && closed ? this._overrideFlag('limits') : '');
+    // REVE takes a limit only while charging outside manual mode, so its limits are locked otherwise and a
+    // note under the title says why and until when; a folded row keeps a short form with the full text as a tooltip.
+    const manualLock = !suspended && !this._oneCharge && this._manualMode;
+    const idleLock = !suspended && !this._ignoring && this._limitsLocked;
+    const shortNote = (text, title) => `<small class="limits-note" title="${title}">${text}</small>`;
+    const note = suspended ? ''
+      : closed && manualLock ? shortNote(t.lockedManual, t.manualOverrides.limits) + this._overrideFlag('limits')
+      : closed && idleLock ? shortNote(t.lockedIdle, t.lockedIdleNote)
+      : closed && ignored ? this._overrideFlag('limits')
+      : !anyOn ? `<small class="limits-note">${t.noneOn}</small>` : '';
+    const lockNote = manualLock || ignored ? this._override('limits')
+      : idleLock ? `<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"></ha-icon><span>${t.lockedIdleNote}</span></div>` : '';
     const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
     const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
     const disable = anyOn || suspended ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
     const held = suspended || ignored;
-    const grid = !closed ? `${ignored ? this._override('limits') : ''}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held && (suspended || this._oneCharge || item.key !== 'target_soc'), this._limitsLocked && item.key !== 'target_soc')).join('')}</div>` : '';
+    const grid = !closed ? `${lockNote}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held && (suspended || this._oneCharge || item.key !== 'target_soc'), this._limitsLocked && item.key !== 'target_soc')).join('')}</div>` : '';
     return `<section class="${['limits', this._online ? '' : 'off', fold && !fold.open ? 'folded' : ''].filter(Boolean).join(' ')}" aria-label="${t.aria.limits}">
       <div class="limits-head">${head}${disable}${fold ? this._foldChev('limits', fold.open) : ''}</div>${grid}
     </section>`;
@@ -2213,6 +2217,7 @@ ha-card[data-theme=light] :is(.sl.session,.panel.history,.sl.fold-history){--h:#
 .override-off{flex:none;height:28px;padding:0 10px;margin:0;border:1px solid color-mix(in srgb,#f39c12 60%,transparent);border-radius:9px;background:color-mix(in srgb,#f39c12 24%,transparent);font-family:inherit;font-size:12.5px;font-weight:700;color:var(--primary-text-color);white-space:nowrap;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .override-off:active{transform:scale(.96)}
 .limits>.override{margin:0 0 1px}
+.override.quiet{border-color:rgba(127,127,127,.25);background:rgba(127,127,127,.06);font-weight:500;color:var(--secondary-text-color)}.override.quiet>ha-icon{color:var(--secondary-text-color)}
 .panel.sched.overridden .sched-row.on{border-color:color-mix(in srgb,var(--h) 22%,transparent);background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(127,127,127,.04))}
 .panel.sched.overridden .sched-row.on .sched-toggle ha-icon{color:var(--h);background:color-mix(in srgb,var(--h) 20%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--h) 28%,transparent)}
 .panel.sched.overridden .sched-row.on .sched-time{text-decoration:line-through;text-decoration-color:color-mix(in srgb,#f39c12 80%,transparent);text-decoration-thickness:1.5px}
