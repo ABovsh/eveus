@@ -17,19 +17,16 @@ While enabled it:
 * reads REVE's GraphQL every ``GRAPHQL_PROBE_SECONDS`` instead of every five
   minutes, on a timer of its own (so independently of ``/main``'s cadence) and
   also while ``/main`` is failing, so outage windows are known to the minute;
-* adds two diagnostic sensors, one per API, counting today's outages (a run of
-  failed requests ended by a success). They have no ``state_class`` (no
-  long-term statistics) and change only when an outage starts or ends or the
-  day turns, so their recorder rows are few and age out with
-  ``purge_keep_days``.
+* counts today's outages per API (a run of failed requests ended by a
+  success) for its own bookkeeping. It adds no entities: two outage sensors
+  that did so were retired 2026-10-17.
 
 The log is the record; ``tools/reve_probe_report.py`` turns it into daily
 figures and outage windows.
 
 REMOVAL (before REVE support is released): delete this file,
 ``tests/test_dev_probe.py`` and ``tools/reve_probe_report.py``, and every line
-marked ``DEV-PROBE`` (``git grep -n DEV-PROBE``). Then remove the two
-``*_dev_*_outages_today`` entities from the entity registry, and the
+marked ``DEV-PROBE`` (``git grep -n DEV-PROBE``). Then remove the
 ``eveus_probe`` folder once its log is archived.
 """
 from __future__ import annotations
@@ -43,15 +40,12 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_time_change, async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from . import reve
 from ._payload import PayloadError
-from .common_base import BaseEveusEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,10 +70,6 @@ _DOCUMENT_LABELS = {
     reve.RATES_QUERY: "RatesV2",
     reve.COMMAND_QUERY: "ChargingCommand",
     reve.MEASUREMENTS_QUERY: "Measurements",
-}
-_SENSOR_NAMES = {
-    API_MAIN: "Dev /main outages today",
-    API_GRAPHQL: "Dev GraphQL outages today",
 }
 
 
@@ -196,7 +186,6 @@ class DevProbe:
         self._folder = folder
         today = dt_util.now().date()
         self.outages = {API_MAIN: Outages(today), API_GRAPHQL: Outages(today)}
-        self._listeners: list[Callable[[], None]] = []
         self._buffer: list[tuple[str, str]] = []
         self._writer: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[None]] = set()
@@ -233,10 +222,6 @@ class DevProbe:
             task.cancel()
         while self._writer is not None and not self._writer.done():
             await self._writer
-
-    def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
-        self._listeners.append(listener)
-        return lambda: self._listeners.remove(listener)
 
     # -- hooks on the coordinator --------------------------------------------
 
@@ -350,8 +335,7 @@ class DevProbe:
             record["err"] = err
         record.update({key: value for key, value in extra.items() if value is not None})
         self._log(record, ts)
-        if self.outages[api].record(ts, ok, err):
-            self._notify()
+        self.outages[api].record(ts, ok, err)
 
     def _replay(self, record: dict[str, Any]) -> None:
         if record.get("event") == "start":
@@ -391,12 +375,8 @@ class DevProbe:
 
     @callback
     def _midnight(self, now: datetime) -> None:
-        if any([outages.roll(now.date()) for outages in self.outages.values()]):
-            self._notify()
-
-    def _notify(self) -> None:
-        for listener in list(self._listeners):
-            listener()
+        for outages in self.outages.values():
+            outages.roll(now.date())
 
 
 async def async_attach(hass: Any, entry: Any, updater: Any) -> DevProbe | None:
@@ -416,51 +396,6 @@ async def async_attach(hass: Any, entry: Any, updater: Any) -> DevProbe | None:
     return probe
 
 
-class DevOutagesSensor(BaseEveusEntity, SensorEntity):
-    """Today's outages of one of the charger's APIs (developer probe)."""
-
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:lan-disconnect"
-
-    def __init__(self, updater: Any, device_number: int, probe: DevProbe, api: str) -> None:
-        self.ENTITY_NAME = _SENSOR_NAMES[api]
-        super().__init__(updater, device_number)
-        self._attr_translation_key = None
-        self._attr_name = self.ENTITY_NAME
-        self._outages = probe.outages[api]
-        self._probe = probe
-
-    @property
-    def available(self) -> bool:
-        return True
-
-    @property
-    def native_value(self) -> int:
-        return self._outages.count
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return self._outages.attributes()
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self.async_on_remove(self._probe.add_listener(self.async_write_ha_state))
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Written by the probe, never per poll."""
-
-
-def create_sensors(updater: Any, device_number: int) -> list[DevOutagesSensor]:
-    probe = getattr(updater, "dev_probe", None)
-    if probe is None:
-        return []
-    return [
-        DevOutagesSensor(updater, device_number, probe, api)
-        for api in (API_MAIN, API_GRAPHQL)
-    ]
-
-
 __all__ = [
     "API_GRAPHQL",
     "API_MAIN",
@@ -470,6 +405,5 @@ __all__ = [
     "DevProbe",
     "Outages",
     "async_attach",
-    "create_sensors",
     "error_kind",
 ]

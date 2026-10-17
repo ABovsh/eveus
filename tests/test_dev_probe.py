@@ -188,7 +188,6 @@ def test_without_the_folder_the_probe_does_nothing(tmp_path: Path, monkeypatch: 
     assert probe is None
     assert entry.unloads == []
     assert updater._record_success == record_success
-    assert dev_probe.create_sensors(updater, 1) == []
     assert not (tmp_path / dev_probe.PROBE_DIR).exists()
 
 
@@ -360,7 +359,7 @@ def test_an_unreadable_interval_file_keeps_the_default(
     assert _lines(tmp_path)[0]["graphql_probe_s"] == GRAPHQL_PROBE_SECONDS
 
 
-def test_graphql_failures_count_as_outages_and_reach_the_sensor(
+def test_graphql_failures_are_counted_as_outages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / dev_probe.PROBE_DIR).mkdir()
@@ -368,12 +367,9 @@ def test_graphql_failures_count_as_outages_and_reach_the_sensor(
     charger = _Charger(_reve_main())
     updater = _updater(monkeypatch, charger)
     hass, entry = _Hass(tmp_path), _Entry()
-    writes: list[int] = []
 
-    async def scenario() -> list[Any]:
-        await dev_probe.async_attach(hass, entry, updater)
-        sensors = dev_probe.create_sensors(updater, 1)
-        updater.dev_probe.add_listener(lambda: writes.append(sensors[1].native_value))
+    async def scenario() -> Any:
+        probe = await dev_probe.async_attach(hass, entry, updater)
         await _poll(updater)
         charger.graphql_status = 500
         for _ in range(3):
@@ -384,45 +380,23 @@ def test_graphql_failures_count_as_outages_and_reach_the_sensor(
         await _poll(updater)
         await _settle(hass)
         await entry.unload()
-        return sensors
+        return probe
 
-    sensors = asyncio.run(scenario())
+    probe = asyncio.run(scenario())
     graphql_lines = [line for line in _lines(tmp_path) if line.get("api") == API_GRAPHQL]
     # A refused read stops at its first document: one request a minute.
     assert [line["ok"] for line in graphql_lines] == [True] * 4 + [False] * 3 + [True] * 3
     assert graphql_lines[4]["err"] == "ClientResponseError 500"
     assert graphql_lines[4]["op"] == "Measurements"
 
-    main_sensor, graphql_sensor = sensors
-    assert main_sensor.unique_id == "eveus_dev_main_outages_today"
-    assert graphql_sensor.unique_id == "eveus_dev_graphql_outages_today"
-    assert graphql_sensor.native_value == 1
-    assert main_sensor.native_value == 0
-    # Written when the outage starts and when it ends, not on every request.
-    assert writes == [1, 1]
-    assert graphql_sensor.extra_state_attributes["last_outage"].endswith(
-        "s, ClientResponseError 500)"
-    )
+    assert probe.outages[API_GRAPHQL].count == 1
+    assert probe.outages[API_MAIN].count == 0
 
 
-def test_the_sensors_record_no_statistics_and_stay_available(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (tmp_path / dev_probe.PROBE_DIR).mkdir()
-    charger = _Charger(_reve_main())
-    updater = _updater(monkeypatch, charger)
-    hass, entry = _Hass(tmp_path), _Entry()
-    asyncio.run(dev_probe.async_attach(hass, entry, updater))
-
-    sensors = dev_probe.create_sensors(updater, 2)
-    assert len(sensors) == 2
-    for sensor in sensors:
-        assert sensor.state_class is None
-        assert sensor.entity_category == "diagnostic"
-        assert sensor.unique_id.startswith("eveus2_dev_")
-        # The charger never answered: the outage counters still read.
-        assert sensor.available is True
-        assert sensor.native_value == 0
+def test_the_probe_adds_no_entities() -> None:
+    # The outage sensors were retired 2026-10-17: the log is the record.
+    assert not hasattr(dev_probe, "create_sensors")
+    assert not hasattr(dev_probe, "DevOutagesSensor")
 
 
 def test_todays_figures_survive_a_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

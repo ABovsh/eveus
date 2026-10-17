@@ -33,18 +33,15 @@ async def test_without_the_folder_there_are_no_probe_entities(
     ]
 
 
-async def test_the_probe_publishes_its_sensors_and_logs(
+async def test_the_probe_logs_and_adds_no_entities(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
     folder = Path(hass.config.path(PROBE_DIR))
     await hass.async_add_executor_job(lambda: folder.mkdir(exist_ok=True))
     try:
         await _setup_reve(hass, aioclient_mock)
-        main = hass.states.get(f"sensor.{_PREFIX}_dev_main_outages_today")
-        graphql = hass.states.get(f"sensor.{_PREFIX}_dev_graphql_outages_today")
-        assert main.state == "0" and graphql.state == "0"
-        assert "state_class" not in main.attributes
-        assert main.attributes["down_seconds_today"] == 0
+        assert hass.states.get(f"sensor.{_PREFIX}_dev_main_outages_today") is None
+        assert hass.states.get(f"sensor.{_PREFIX}_dev_graphql_outages_today") is None
 
         entry = hass.config_entries.async_entries(DOMAIN)[0]
         await hass.config_entries.async_unload(entry.entry_id)
