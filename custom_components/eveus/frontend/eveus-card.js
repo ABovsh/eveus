@@ -159,7 +159,7 @@ const I18N = {
     tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
     monthTitle: 'Energy this month and last month (Home Assistant statistics)',
     oneOverrides: {schedules: 'One charge ignores the schedules', limits: 'One charge ignores the limits'}, turnOff: 'Turn off',
-    manualOverrides: {schedules: 'REVE manual mode (the charger\'s own): schedules are ignored until the car is unplugged', limits: 'REVE manual mode (the charger\'s own): limits are ignored until the car is unplugged'},
+    manualOverrides: {schedules: 'REVE manual mode ignores the schedules until the car is unplugged', limits: 'REVE manual mode ignores the limits until the car is unplugged'},
     states: {},
   },
   uk: {
@@ -225,7 +225,7 @@ const I18N = {
     tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
     monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
     oneOverrides: {schedules: '«Один заряд» ігнорує розклади', limits: '«Один заряд» ігнорує ліміти'}, turnOff: 'Вимкнути',
-    manualOverrides: {schedules: 'Ручний режим REVE (власний режим станції): розклади ігноруються до відключення авто', limits: 'Ручний режим REVE (власний режим станції): ліміти ігноруються до відключення авто'},
+    manualOverrides: {schedules: 'Ручний режим REVE ігнорує розклади до відключення авто', limits: 'Ручний режим REVE ігнорує ліміти до відключення авто'},
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
       'Startup': 'Запуск', 'System Test': 'Самотестування', 'Standby': 'Очікування', 'Connected': 'Підключено',
