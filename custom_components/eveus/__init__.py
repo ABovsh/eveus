@@ -66,9 +66,11 @@ from .issues import (
     battery_low_issue_id,
     clock_drift_issue_id,
     ocpp_issue_id,
+    reve_fields_issue_id,
     update_battery_low_issue,
     update_clock_drift_issue,
     update_ocpp_issue,
+    update_reve_fields_issue,
 )
 from .utils import (
     get_device_suffix,
@@ -472,8 +474,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
     """Set up Eveus from a config entry."""
     try:
         host = entry.data.get(CONF_HOST)
-        username = entry.data.get(CONF_USERNAME)
-        password = entry.data.get(CONF_PASSWORD)
+        # Either may be empty: a charger without a password (REVE has none).
+        username = entry.data.get(CONF_USERNAME) or ""
+        password = entry.data.get(CONF_PASSWORD) or ""
         model = entry.data.get(CONF_MODEL)
         scheme = entry.data.get(CONF_SCHEME, DEFAULT_SCHEME)
 
@@ -491,12 +494,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         except vol.Invalid as err:
             _create_invalid_config_issue(hass, entry, "invalid_host")
             raise ConfigEntryError(f"Invalid host: {err}") from err
-        if not username:
-            _create_invalid_config_issue(hass, entry, "missing_username")
-            raise ConfigEntryError("No username specified")
-        if not password:
-            _create_invalid_config_issue(hass, entry, "missing_password")
-            raise ConfigEntryError("No password specified")
 
         from .config_flow import validate_credentials
 
@@ -735,6 +732,11 @@ async def _finish_setup(
     # toggles made from the charger UI or mobile app, not just from HA.
     follow_polls(lambda: update_ocpp_issue(hass, entry, updater))
 
+    # Name the fields a REVE firmware update stopped reporting: the server
+    # answers an unknown field with nothing, so their entities would
+    # otherwise lose their values without a word.
+    follow_polls(lambda: update_reve_fields_issue(hass, entry, updater))
+
     # Track the CR2032 coin cell (vBat) across polls and warn when it is
     # depleted, with debounce/hysteresis held in the tracker.
     battery_tracker = BatteryLowTracker()
@@ -815,6 +817,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, battery_low_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, reve_fields_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, f"soc_dashboard_update_{entry.entry_id}")
     for policy in POLICIES:
         ir.async_delete_issue(hass, DOMAIN, safety_issue_id(entry, policy.key))
@@ -839,4 +842,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bo
         ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
         ir.async_delete_issue(hass, DOMAIN, battery_low_issue_id(entry))
         ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, reve_fields_issue_id(entry))
     return unloaded

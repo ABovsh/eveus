@@ -62,7 +62,7 @@ from ._payload import (
     decode_json_body,
     read_body_capped,
 )
-from .client import UPDATE_TIMEOUT_OBJ, charger_post, post_graphql
+from .client import UPDATE_TIMEOUT_OBJ, basic_auth, charger_post, post_graphql
 from .reve import MEASUREMENTS_QUERY, is_reve_payload
 from .reve_fields import station_to_main
 from .utils import normalize_soc_input
@@ -178,13 +178,14 @@ def _merge_entry_data(
     return merged
 
 
-def _warn_if_plaintext(scheme: str | None) -> None:
-    """Warn once when credentials will be sent over plain HTTP."""
-    if scheme == "http":
+def _warn_if_plaintext(scheme: str | None, password: str) -> None:
+    """Warn once when a password will be sent over plain HTTP. The charger
+    serves nothing else, so there is no safer setting to recommend."""
+    if scheme == "http" and password:
         _LOGGER.warning(
-            "Eveus is configured over HTTP; Basic Auth credentials will be "
-            "sent in cleartext on every poll. Use HTTPS on a LAN-trusted "
-            "network or accept the exposure risk."
+            "Eveus is configured over HTTP; the charger password will be "
+            "sent in cleartext on every poll. Keep the charger on a trusted "
+            "network."
         )
 
 
@@ -300,8 +301,6 @@ def validate_credentials(username: str, password: str) -> tuple[str, str]:
         raise vol.Invalid("Username and password must be strings")
     username = username.strip()
 
-    if not username or not password:
-        raise vol.Invalid("Username and password cannot be empty")
     if len(username) > 32 or len(password) > 32:
         raise vol.Invalid("Username and password must be less than 32 characters")
     if ":" in username:
@@ -363,7 +362,10 @@ def normalize_user_input(data: dict[str, Any]) -> dict[str, Any]:
         data[CONF_HOST],
         data.get(CONF_SCHEME, DEFAULT_SCHEME),
     )
-    username, password = validate_credentials(data[CONF_USERNAME], data[CONF_PASSWORD])
+    # Both may be left empty: a charger without a password (REVE has none).
+    username, password = validate_credentials(
+        data.get(CONF_USERNAME, ""), data.get(CONF_PASSWORD, "")
+    )
     model = data.get(CONF_MODEL)
     if model not in MODELS:
         raise vol.Invalid("Invalid charger model")
@@ -431,8 +433,8 @@ def build_user_data_schema(
         host_default = f"https://{host_default}"
     schema: dict[Any, Any] = {
         vol.Required(CONF_HOST, default=host_default): str,
-        vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME)): str,
-        vol.Required(CONF_PASSWORD): TextSelector(
+        vol.Optional(CONF_USERNAME, default=defaults.get(CONF_USERNAME) or ""): str,
+        vol.Optional(CONF_PASSWORD, default=""): TextSelector(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
         vol.Required(
@@ -484,7 +486,7 @@ async def _reve_without_main(
         data = await post_graphql(
             aiohttp_client.async_get_clientsession(hass),
             f"{normalized_data[CONF_SCHEME]}://{host}/graphql",
-            auth=aiohttp.BasicAuth(normalized_data[CONF_USERNAME], normalized_data[CONF_PASSWORD]),
+            auth=basic_auth(normalized_data[CONF_USERNAME], normalized_data[CONF_PASSWORD]),
             operation="StationData",
             document=MEASUREMENTS_QUERY,
         )
@@ -513,7 +515,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     # Warn before connecting: credentials are sent in cleartext over HTTP on the
     # very first request, so the warning must fire even when the attempt fails
     # and for every flow that validates (setup, reconfigure, reauth, repair).
-    _warn_if_plaintext(normalized_data[CONF_SCHEME])
+    _warn_if_plaintext(normalized_data[CONF_SCHEME], normalized_data[CONF_PASSWORD])
 
     try:
         session = aiohttp_client.async_get_clientsession(hass)
@@ -528,7 +530,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         async with charger_post(
             session,
             f"{normalized_data[CONF_SCHEME]}://{normalized_data[CONF_HOST]}/main",
-            auth=aiohttp.BasicAuth(
+            auth=basic_auth(
                 normalized_data[CONF_USERNAME],
                 normalized_data[CONF_PASSWORD],
             ),

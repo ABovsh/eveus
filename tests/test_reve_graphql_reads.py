@@ -112,7 +112,7 @@ def test_the_first_poll_reads_main_then_the_measurements_at_once(monkeypatch: py
     data = asyncio.run(updater._async_update_data())
 
     assert charger.paths()[:2] == ["/main", "/graphql"]
-    assert charger.calls[1][1]["query"] == reve.MEASUREMENTS_QUERY
+    assert charger.calls[1][1]["query"] == reve.MEASUREMENTS_AND_SETTINGS_QUERY
     assert data["sessionTime"] == 120
     assert data["manufacturer"] == "Reve"
     assert updater.reve_diagnostics()["measurements"]["last_source"] == "graphql"
@@ -153,7 +153,8 @@ def test_a_graphql_outage_falls_back_to_main_in_the_same_poll(monkeypatch: pytes
     assert data["voltMeas1"] == 229
     assert updater.last_update_success is True
     assert updater.reve_diagnostics()["measurements"]["main_fallbacks"] == 1
-    assert updater.reve_api_answering is False
+    # One missed reply from a server that has answered before.
+    assert updater.reve_api_answering is True
 
 
 def test_a_reply_without_the_state_is_a_failed_read(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -457,6 +458,10 @@ def test_reve_api_stays_off_while_only_the_settings_read_fails(monkeypatch: pyte
 
     charger.schedules = "not a list"
     now[0] += reve.EXTRAS_REFRESH_SECONDS
+    asyncio.run(updater._async_update_data())
+    # One failed read is tolerated; the settings retry failing as well is not.
+    assert updater.reve_api_answering is True
+    now[0] += reve.EXTRAS_RETRY_SECONDS
     asyncio.run(updater._async_update_data())
     assert updater.reve_api_answering is False
 

@@ -24,6 +24,8 @@ _LOGGER = logging.getLogger(__name__)
 # rejections, so a tiny backoff window dramatically improves perceived
 # reliability without making real failures slow to surface.
 _COMMAND_RETRY_ATTEMPTS = 2
+# CommandManager.last_failure for a REVE GraphQL write that got no reply.
+REVE_NOT_ANSWERING = "reve_not_answering"
 _COMMAND_RETRY_BACKOFF: tuple[float, ...] = (0.5, 1.5)
 _COMMAND_RETRY_JITTER = 0.25
 
@@ -80,11 +82,22 @@ class CommandManager:
         self._last_command_time: float | None = None
         self._consecutive_failures = 0
         self._error_log = RateLog()
+        # Why the last command failed, when it is something the user should
+        # be told rather than "the charger did not accept it". Whether the
+        # attempt went to REVE's GraphQL decides it.
+        self._last_failure: str | None = None
+        self._graphql_write = False
 
     @property
     def consecutive_failures(self) -> int:
         """Return consecutive command failures."""
         return self._consecutive_failures
+
+    @property
+    def last_failure(self) -> str | None:
+        """``REVE_NOT_ANSWERING`` when the last command was a REVE GraphQL
+        write that got no usable reply after its retries, else ``None``."""
+        return self._last_failure
 
     def _should_log_error(self) -> bool:
         """Rate limit error logging."""
@@ -132,6 +145,8 @@ class CommandManager:
             # Only a real attempt paces the next command: a preflight veto
             # touches no network, so it must not delay a user's next write.
             attempted = False
+            self._last_failure = None
+            self._graphql_write = False
             try:
                 last_error: Exception | None = None
                 retry_attempts = _COMMAND_RETRY_ATTEMPTS if retry else 0
@@ -167,6 +182,10 @@ class CommandManager:
                         await self._sleep_backoff(attempt)
 
                 self._consecutive_failures += 1
+                if self._graphql_write:
+                    # A refusal is a reply (GraphQLError, the path below);
+                    # this is a server that timed out or answered HTTP 5xx.
+                    self._last_failure = REVE_NOT_ANSWERING
                 if self._consecutive_failures <= 5 and self._should_log_error():
                     # Log only the error type — ClientResponseError.__str__ embeds
                     # the request URL (the charger host), which we scrub elsewhere.
@@ -215,6 +234,7 @@ class CommandManager:
         route = getattr(self._updater, "reve_command_route", None)
         write = route(command) if route is not None else None
         if write is not None:
+            self._graphql_write = True
             await write(value)
             self._consecutive_failures = 0
             return True

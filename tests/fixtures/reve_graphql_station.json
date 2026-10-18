@@ -58,13 +58,22 @@
                 "temperature": {
                     "temperature1": 9,
                     "temperature2": -60
-                }
+                },
+                "curMeasurement2": 0,
+                "curMeasurement3": 0,
+                "voltMeasurement2": 0,
+                "voltMeasurement3": 0
             },
             "supportRfid": false,
             "isGFCITestDisabled": true,
             "isRelayTestDisabled": true,
             "isDiodeControlDisabled": false,
-            "apiVersion": "2.1"
+            "apiVersion": "2.1",
+            "STA_IP_Addres": "192.168.3.39",
+            "ocpp": {
+                "ocppEnabled": 0,
+                "stationId": "EVS-1M00000K3897"
+            }
         }
     }
 }

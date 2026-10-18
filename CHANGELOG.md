@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### ✨ New
+
+- **A charger without a password can be added with the username and password left empty.** REVE has no web-interface password; with both fields empty the integration sends no credentials.
+- **A repair notice names any reading a REVE firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
+
+### 🔧 Changed
+
+- **REVE: a third fewer requests to the charger.** Schedules and tariffs come in the same request as the readings: 72 instead of 108 requests an hour while idle.
+- **REVE API turns off only when REVE's interface stops answering.** One missed reply turned it off for 30 seconds several times a day; it now takes two failed reads in a row.
+- **A setting REVE's interface did not answer says so.** The error asks to try again in a few minutes instead of saying the charger did not accept the change.
+- **The log warns about a password sent over HTTP only when a password is set,** and no longer suggests HTTPS, which the charger does not serve.
+
+### 🐛 Fixed
+
+- **REVE: Adaptive Current Limit follows an adaptive charge.** It lagged up to five minutes behind the charger; it is now read on every poll while such a charge runs.
+
 ## 4.28.0 - 2026-10-18
 
 ### ✨ New

@@ -164,7 +164,7 @@ def test_the_first_poll_without_main_recognises_reve_through_graphql(monkeypatch
     assert updater.last_update_success is True
     assert data["state"] == 2
     assert data["sh1Start"] == 1380  # the settings read follows in the same poll
-    measurements = [body for path, body in charger.calls if path == "/graphql" and body["query"] == reve.MEASUREMENTS_QUERY]
+    measurements = [body for path, body in charger.calls if path == "/graphql" and "measurements {" in body["query"]]
     assert len(measurements) == 1, "GraphQL already answered for this poll; it is not read again as a first REVE poll"
     assert updater.reve_diagnostics()["measurements"]["last_source"] == "graphql"
     assert updater.connection_quality["latency_avg"] < 1.0

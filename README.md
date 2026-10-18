@@ -89,7 +89,7 @@ Also supported: **several chargers**, **English and Ukrainian**, and older firmw
 | Charger | Eveus 16A, 32A, 40A or 48A, reachable from Home Assistant |
 | Charger firmware | Verified on R3.05.x and [REVE](#reve-firmware); [R3.01.x and 1.x](#older-charger-firmware) have fewer readings |
 | Network | Local network access to the charger's web interface |
-| Setup details | Charger IP address, hostname or URL; username, password and model |
+| Setup details | Charger IP address, hostname or URL and model; username and password if the charger has them |
 
 ## Installation
 
@@ -116,7 +116,7 @@ Or in HACS:
 
 1. Go to **Settings → Devices & Services → Add Integration** and search for **Eveus EV Charger**.
 2. Enter the charger address: IP, hostname or full URL (a custom port, `http://` and `https://` all work).
-3. Enter the username and password of the charger's own web interface, **not** your Home Assistant login.
+3. Enter the username and password of the charger's own web interface, **not** your Home Assistant login. Leave both empty if the charger has no password; REVE has none.
 4. Pick the charger model: **16A**, **32A**, **40A** or **48A**. A model that does not match the hardware stops the charger from reporting.
 5. Pick the integration mode:
    - **Basic:** charging control and monitoring.
@@ -412,6 +412,7 @@ Ground notices clear after recovery. Serious fault notices also need
 | Charger setup needs attention | Open the notice and re-enter the connection details |
 | OCPP is enabled | For local control only, turn off **Connect to OCPP** |
 | Charger clock is off by more than 10 minutes | Check **Time Zone**, then press **Sync Time** |
+| REVE firmware stopped reporting some readings | Update the integration when a new version is out; if the notice stays, open a GitHub issue with the diagnostics |
 | Update SOC cards and automations | Replace `input_number.ev_*` with the integration's SOC entities; see [migration](#battery-level-soc) |
 
 ## Charger firmware
@@ -454,7 +455,7 @@ What this means in practice:
 - **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app; the days of the week set there are kept. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
 - **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. It is unavailable while REVE's third or fourth rate is in effect. **Cost to Target SOC** follows the first two rates' hours, not their days of the week.
 - **Counter A Cost** and **Counter B Cost** do not increase on REVE: the charger counts the energy of counters A and B, but not their cost. After a counter is reset its cost stays at 0; without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
-- **REVE API** (diagnostic) shows whether REVE's interface answers. It sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with an error.
+- **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
 - REVE does not report **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, the schedules' energy limits or **Plug Temperature**, so they stay unavailable.
 
 #### Wi-Fi drops about every 15 minutes

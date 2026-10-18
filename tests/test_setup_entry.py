@@ -102,6 +102,7 @@ class _Updater(OutageClock):
         self.last_update_success = True
         self.data = {"currentSet": "16"}
         self.listeners: list[object] = []
+        self.reve_missing_fields: tuple[str, ...] = ()
 
     @property
     def snapshot(self):
@@ -435,12 +436,23 @@ def test_async_setup_entry_prunes_orphans_after_successful_setup(
     assert "sensor.eveus_soc_energy" in registry.removed
 
 
+def test_async_setup_entry_accepts_an_entry_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A charger without a password: REVE has none.
+    hass = _hass()
+    entry = _Entry({**_data(), CONF_USERNAME: "", CONF_PASSWORD: ""})
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    kwargs = entry.runtime_data.updater.kwargs
+    assert (kwargs["username"], kwargs["password"]) == ("", "")
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
         {CONF_HOST: ""},
-        {CONF_USERNAME: ""},
-        {CONF_PASSWORD: ""},
         {CONF_MODEL: "bad"},
     ],
 )
@@ -1319,8 +1331,6 @@ def test_runtime_data_is_exactly_none_after_unexpected_finish_setup_failure(
     ("overrides", "reason", "message"),
     [
         ({CONF_HOST: ""}, "missing_host", "No host specified"),
-        ({CONF_USERNAME: ""}, "missing_username", "No username specified"),
-        ({CONF_PASSWORD: ""}, "missing_password", "No password specified"),
         ({CONF_MODEL: "bad"}, "invalid_model", "Invalid model specified"),
     ],
 )

@@ -46,12 +46,20 @@ class GraphQLError(ValueError):
     """
 
 
+def basic_auth(username: str, password: str) -> aiohttp.BasicAuth | None:
+    """The charger's Basic Auth, or ``None`` to send no credentials at all:
+    REVE has no web-interface password, and ``/main`` answers without one."""
+    if not username and not password:
+        return None
+    return aiohttp.BasicAuth(username, password)
+
+
 @asynccontextmanager
 async def charger_post(
     session: Any,
     url: str,
     *,
-    auth: aiohttp.BasicAuth,
+    auth: aiohttp.BasicAuth | None,
     timeout: aiohttp.ClientTimeout | None,
     data: Any = None,
     headers: dict[str, str] | None = None,
@@ -91,7 +99,7 @@ async def fetch_json(
     session: Any,
     url: str,
     *,
-    auth: aiohttp.BasicAuth,
+    auth: aiohttp.BasicAuth | None,
     timeout: aiohttp.ClientTimeout | None,
     on_unauthorized: Callable[[], None] | None = None,
 ) -> Any:
@@ -110,7 +118,7 @@ async def post_page_event(
     session: Any,
     url: str,
     *,
-    auth: aiohttp.BasicAuth,
+    auth: aiohttp.BasicAuth | None,
     timeout: aiohttp.ClientTimeout | None,
     fields: dict[str, Any],
 ) -> None:
@@ -134,7 +142,7 @@ async def post_graphql(
     session: Any,
     url: str,
     *,
-    auth: aiohttp.BasicAuth,
+    auth: aiohttp.BasicAuth | None,
     operation: str,
     document: str,
     variables: dict[str, Any] | None = None,

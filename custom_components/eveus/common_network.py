@@ -51,7 +51,7 @@ from .const import (
 )
 from ._payload import PayloadError, validate_main_payload
 from .charge_reason import finish_reason, reached_limit
-from .client import UPDATE_TIMEOUT_OBJ, fetch_json
+from .client import UPDATE_TIMEOUT_OBJ, basic_auth, fetch_json
 from .reve import (
     FAMILY_CLASSIC,
     FAMILY_REVE,
@@ -214,7 +214,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # THIS model's maximum (a wrong-host/corrupt payload) instead of only the
         # largest supported model's maximum.
         self._model = model
-        self._basic_auth = aiohttp.BasicAuth(username, password)
+        self._basic_auth = basic_auth(username or "", password or "")
         self._command_manager = CommandManager(self)
 
         self._poll_results: deque[bool] = deque(maxlen=20)
@@ -364,6 +364,17 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Take manual mode over from before a Home Assistant restart."""
         self._reve.manual_mode.restore(on_for)
 
+    @property
+    def last_command_failure(self) -> str | None:
+        """Why the last command failed, when the user should hear it (REVE's
+        interface not answering); ``None`` otherwise."""
+        return self._command_manager.last_failure
+
+    @property
+    def reve_missing_fields(self) -> tuple[str, ...]:
+        """Fields a REVE charger's firmware stopped reporting; empty otherwise."""
+        return self._reve.missing_fields if self._reve_seen else ()
+
     def reve_diagnostics(self) -> dict[str, Any] | None:
         """REVE's GraphQL side and the fields it cannot provide; ``None`` otherwise."""
         if not self._reve_seen:
@@ -444,7 +455,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         return data
 
     @property
-    def basic_auth(self) -> aiohttp.BasicAuth:
+    def basic_auth(self) -> aiohttp.BasicAuth | None:
         """Cached Basic Auth credentials for charger requests."""
         return self._basic_auth
 
@@ -1160,7 +1171,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             return None
         latency = time.monotonic() - start
-        if self._reve.main_residue_due():
+        if self._reve.main_residue_due(measurements):
             # What only /main carries; a /main that does not answer leaves the
             # kept values standing until they age out.
             self._reve.main_residue_tried()

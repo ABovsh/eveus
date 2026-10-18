@@ -372,3 +372,42 @@ def update_ocpp_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None:
         # ocppEnabled (None) means the firmware dropped/garbled the field — leave
         # the prior issue state untouched rather than falsely dismissing it.
         ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
+
+
+# ---------------------------------------------------------------------------
+# REVE fields the firmware stopped reporting
+# ---------------------------------------------------------------------------
+
+
+def reve_fields_issue_id(entry: ConfigEntry) -> str:
+    """Return the repair issue id for REVE fields that went missing."""
+    return f"reve_fields_missing_{entry.entry_id}"
+
+
+def update_reve_fields_issue(hass: HomeAssistant, entry: ConfigEntry, updater) -> None:
+    """Raise or clear the notice for fields a REVE firmware stopped reporting.
+
+    The debounce lives in ``ReveApi`` (several measurements reads in a row);
+    here a failed poll is skipped like the other notices, and an empty list —
+    every field back, or not REVE at all — clears it.
+    """
+    if not updater.available or not updater.last_update_success:
+        return
+    missing = updater.reve_missing_fields
+    if not missing:
+        ir.async_delete_issue(hass, DOMAIN, reve_fields_issue_id(entry))
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        reve_fields_issue_id(entry),
+        is_fixable=False,
+        is_persistent=False,
+        issue_domain=DOMAIN,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="reve_fields_missing",
+        translation_placeholders={
+            "fields": ", ".join(missing),
+            "firmware": str((updater.data or {}).get("verFWWifi") or "?").strip(),
+        },
+    )

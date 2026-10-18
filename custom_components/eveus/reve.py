@@ -64,8 +64,9 @@ from .const import (
     DEVICE_STATE_COMPLETE,
     MAX_VALID_SYSTEM_TIME,
     PLUG_UNKNOWN_STATES,
+    SESSION_ACTIVE_STATES,
 )
-from .reve_fields import station_to_main
+from .reve_fields import graphql_paths, station_to_main
 from .snapshot import FIELD_KEYS
 
 _LOGGER = logging.getLogger(__name__)
@@ -169,12 +170,9 @@ EXTRAS_REFRESH_SECONDS: Final = 300
 EXTRAS_RETRY_SECONDS: Final = 300
 EXTRAS_MAX_AGE_SECONDS: Final = 3600
 
-# The vendor app reads each setting with its own small document; these are
-# its ScheduleV2 and RatesV2 queries as the local interface takes them (no
-# stationId), and a document of the same shape for chargingCommand. Sent one
-# at a time, in this order, stopping at the first refused one.
-SCHEDULES_QUERY: Final = """query StationData {
-        stationData {
+# The settings, as the vendor app's ScheduleV2 and RatesV2 queries ask for
+# them (no stationId on the local interface).
+_SCHEDULE_FIELDS: Final = """
             scheduleV2 {
                 name
                 start
@@ -183,12 +181,8 @@ SCHEDULES_QUERY: Final = """query StationData {
                 enabled
                 value
                 currentLimitEnabled
-            }
-        }
-    }"""
-
-RATES_QUERY: Final = """query StationData {
-        stationData {
+            }"""
+_RATE_FIELDS: Final = """
             ratesV2 {
                 base
                 rates {
@@ -199,23 +193,14 @@ RATES_QUERY: Final = """query StationData {
                     enabled
                     value
                 }
-            }
-        }
-    }"""
-
-COMMAND_QUERY: Final = """query StationData {
-        stationData {
-            chargingCommand
-        }
-    }"""
+            }"""
 
 # Once a charger is known to be REVE, every poll reads its measurements with
-# this document: the charger app's own StationData, cut down to the fields
+# these fields: the charger app's own StationData, cut down to the fields
 # reve_fields maps to /main keys, plus chargingCommand so Stop shows at once.
 # /main is read only when it does not answer (MEASUREMENTS_RETRY_SECONDS keeps
 # a server that times out from delaying every poll by its whole timeout).
-MEASUREMENTS_QUERY: Final = """query StationData {
-        stationData {
+_MEASUREMENT_FIELDS: Final = """
             designedCurrent
             minCurrent
             mainFWVersion
@@ -276,9 +261,31 @@ MEASUREMENTS_QUERY: Final = """query StationData {
             }
             language
             STA_IP_Addres
-            chargingCommand
-        }
-    }"""
+            chargingCommand"""
+
+
+def _station_query(fields: str) -> str:
+    """A ``StationData`` read of fixed fields; every document is built once,
+    at import, from the constants above."""
+    return f"query StationData {{\n        stationData {{{fields}\n        }}\n    }}"
+
+
+MEASUREMENTS_QUERY: Final = _station_query(_MEASUREMENT_FIELDS)
+# A poll that is due for the settings asks for them in its measurements read:
+# one request answered in ~90 ms against ~80 ms for the measurements alone
+# (live, 2026-10-18), where the settings used to take three more.
+MEASUREMENTS_AND_SETTINGS_QUERY: Final = _station_query(
+    _MEASUREMENT_FIELDS + _SCHEDULE_FIELDS + _RATE_FIELDS
+)
+# The settings alone: read while /main serves the polls, or before a schedule
+# write when nothing has been read yet. Splitting the request into one
+# document per setting changed nothing about the server's HTTP 500 windows
+# (2026-10-15/16), which follow its Wi-Fi reconnects.
+SETTINGS_QUERY: Final = _station_query(_SCHEDULE_FIELDS + _RATE_FIELDS + """
+            chargingCommand""")
+# The schedules alone, re-read right before a schedule write.
+SCHEDULES_QUERY: Final = _station_query(_SCHEDULE_FIELDS)
+
 MEASUREMENTS_RETRY_SECONDS: Final = 60
 
 # The session limits alone, to check a limit the charger refused to clear.
@@ -305,6 +312,24 @@ MAIN_ONLY_FIELDS: Final[frozenset[str]] = frozenset(
 )
 MAIN_RESIDUE_REFRESH_SECONDS: Final = 300
 MAIN_RESIDUE_MAX_AGE_SECONDS: Final = 3600
+# The adaptive current is one of them, and it moves while an adaptive charge
+# runs (7 -> 11 -> 16 -> 10 A on 2026-10-16/17, each change landing on the
+# five-minute read). During such a session /main is read on every poll, as on
+# classic firmware, for as long as its last read answered.
+
+# How many GraphQL reads in a row must fail before REVE API reports the
+# server down: one missed reply turned it off for 30 s seven times on
+# 2026-10-17, while the next read, a minute later, answered.
+API_DOWN_AFTER_FAILURES: Final = 2
+
+# Every field a measurements read asks for. The server answers a field it does
+# not know with nothing (checked 2026-10-16), so a field a firmware update
+# renamed would leave its entities quietly without a value: one missing from
+# this many reads in a row is reported (diagnostics and a repair notice).
+_EXPECTED_PATHS: Final[tuple[tuple[str, ...], ...]] = tuple(
+    sorted(graphql_paths() | {("chargingCommand",)})
+)
+FIELDS_MISSING_READS: Final = 3
 
 # /main reports the session frozen from the old firmware (sessionTime 52745
 # on an idle charger); GraphQL reports it live. A poll served by /main shows
@@ -569,6 +594,19 @@ def active_rate_index(rates: tuple[dict[str, Any], ...], clock: int) -> int | No
     return 0
 
 
+def _reported(station: Mapping[str, Any], path: tuple[str, ...]) -> bool:
+    """Whether the reply has the field: present, or under an object the
+    server reported as ``null``."""
+    node: Any = station
+    for name in path:
+        if node is None:
+            return True
+        if not isinstance(node, Mapping) or name not in node:
+            return False
+        node = node[name]
+    return True
+
+
 def _is_no_sensor_reading(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
@@ -752,11 +790,18 @@ class ReveApi:
         self._retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
         self._failures = 0
         self._last_error: str | None = None  # pragma: no mutate - only read once a read has set or cleared it
-        # Whether the last schedules/rates read failed. Kept apart from
-        # `_last_error`, which every good measurements read clears, so REVE API
-        # stays off until a settings read succeeds instead of flipping between
-        # retries.
-        self._settings_failing = False  # pragma: no mutate - the first REVE poll always reads the settings, which sets or clears it
+        # GraphQL reads failed in a row, of any document, and settings reads
+        # failed in a row. The second is kept apart because every good
+        # measurements read clears the first: with only the settings read
+        # failing, REVE API stays off until a settings read succeeds instead of
+        # flipping between retries.
+        self._failure_streak = 0
+        self._settings_streak = 0
+        # Whether any GraphQL read has succeeded: the tolerance for a missed
+        # reply needs a server seen answering first.
+        self._answered = False
+        self._missing: tuple[str, ...] = ()
+        self._missing_reads = 0
         self._measurements_retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
         self._measurement_reads = 0
         self._measurement_failures = 0
@@ -765,6 +810,7 @@ class ReveApi:
         self._residue: dict[str, Any] = {}
         self._residue_at: float | None = None
         self._residue_tried_at: float | None = None
+        self._residue_answered = False
         self._session: tuple[dict[str, Any], float] | None = None
         # A limit's value in /main read units, kept while the limit is off
         # (REVE then reports null) so its number shows what switching it back
@@ -784,26 +830,36 @@ class ReveApi:
     async def refresh_if_due(self) -> None:
         """Re-read schedules and rates when due. Never raises: ``/main`` decides
         whether a poll succeeded, and a failed read only waits for its retry."""
-        now = time.monotonic()
-        if self._fetched_at is not None and now - self._fetched_at < EXTRAS_REFRESH_SECONDS:
-            return
+        if self._settings_due(time.monotonic()):
+            await self.refresh()
+
+    def _settings_due(self, now: float) -> bool:
         if now < self._retry_at:
-            return
-        await self.refresh()
+            return False
+        return self._fetched_at is None or now - self._fetched_at >= EXTRAS_REFRESH_SECONDS
 
     async def refresh(self) -> None:
         """Re-read schedules and rates now; a failure only schedules the retry."""
-        now = time.monotonic()
         try:
             self._store(await self._read_extras())
         except asyncio.CancelledError:
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
-            self._failures += 1
-            self._last_error = type(err).__name__
-            self._settings_failing = True
-            self._retry_at = now + EXTRAS_RETRY_SECONDS
-            _LOGGER.debug("REVE schedules/rates read failed: %s", type(err).__name__)
+            self._settings_failed(err)
+
+    def _read_failed(self, err: BaseException) -> None:
+        self._failure_streak += 1
+        self._last_error = type(err).__name__
+
+    def _settings_failed(self, err: BaseException) -> None:
+        """A read that asked for the settings failed: retry them alone, after
+        the back-off. Until one succeeds, the measurements are read without
+        them, so a server that refuses only the settings keeps its readings."""
+        self._read_failed(err)
+        self._failures += 1
+        self._settings_streak += 1
+        self._retry_at = time.monotonic() + EXTRAS_RETRY_SECONDS
+        _LOGGER.debug("REVE schedules/rates read failed: %s", type(err).__name__)
 
     # -- measurements --------------------------------------------------------
 
@@ -815,29 +871,56 @@ class ReveApi:
         self, validate: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     ) -> dict[str, Any]:
         """This poll's measurements in ``/main`` keys. Raises when GraphQL gives
-        no usable reply, or one ``validate`` (the ``/main`` rules) rejects."""
+        no usable reply, or one ``validate`` (the ``/main`` rules) rejects.
+        Asks for the settings too when they are due and the last read of them
+        did not fail."""
+        with_settings = self._settings_streak == 0 and self._settings_due(time.monotonic())
         try:
-            station = await self._station(MEASUREMENTS_QUERY)
+            station = await self._station(
+                MEASUREMENTS_AND_SETTINGS_QUERY if with_settings else MEASUREMENTS_QUERY
+            )
             main = station_to_main(station)
             if "state" not in main:
                 raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
             if validate is not None:
                 main = validate(main)
+            extras = parse_extras({"stationData": station}) if with_settings else None
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             self._measurement_failures += 1
-            self._last_error = type(err).__name__
             self._measurements_retry_at = time.monotonic() + MEASUREMENTS_RETRY_SECONDS
             _LOGGER.debug("REVE measurements read failed: %s", type(err).__name__)
+            if with_settings:
+                self._settings_failed(err)
+            else:
+                self._read_failed(err)
             raise
         self._measurement_reads += 1
+        self._failure_streak = 0
+        self._answered = True
+        self._check_fields(station)
         self._last_error = None
         self._last_source = "graphql"
+        if extras is not None:
+            self._store(extras)
         self._session = (
             {key: main[key] for key in SESSION_FIELDS if key in main},
             time.monotonic(),
         )
         self._note_charging_command(station.get("chargingCommand"))
         return main
+
+    def _check_fields(self, station: Mapping[str, Any]) -> None:
+        missing = tuple(
+            ".".join(path) for path in _EXPECTED_PATHS if not _reported(station, path)
+        )
+        self._missing_reads = self._missing_reads + 1 if missing else 0
+        self._missing = missing
+
+    @property
+    def missing_fields(self) -> tuple[str, ...]:
+        """Fields the last ``FIELDS_MISSING_READS`` measurements reads all
+        lacked, as the last one lacked them; empty once a read has them all."""
+        return self._missing if self._missing_reads >= FIELDS_MISSING_READS else ()
 
     def with_main_residue(self, measurements: Mapping[str, Any]) -> dict[str, Any]:
         """The measurements with what only ``/main`` carries laid under them,
@@ -859,14 +942,23 @@ class ReveApi:
         """Which API answered the last poll: ``graphql`` or ``main``."""
         return self._last_source
 
-    def main_residue_due(self) -> bool:
+    def main_residue_due(self, measurements: Mapping[str, Any] | None = None) -> bool:
         """Whether a GraphQL poll should also read ``/main`` for its own fields:
-        every five minutes, whether or not the last try found ``/main``."""
+        every five minutes, whether or not the last try found ``/main``, and
+        on every poll of an adaptive session while ``/main`` answers."""
         tried = self._residue_tried_at
-        return tried is None or time.monotonic() - tried >= MAIN_RESIDUE_REFRESH_SECONDS
+        if tried is None or time.monotonic() - tried >= MAIN_RESIDUE_REFRESH_SECONDS:
+            return True
+        return (
+            self._residue_answered
+            and measurements is not None
+            and measurements.get("state") in SESSION_ACTIVE_STATES
+            and measurements.get("aiStatus") not in (None, 0)
+        )
 
     def main_residue_tried(self) -> None:
         self._residue_tried_at = time.monotonic()
+        self._residue_answered = False
 
     def keep_main_residue(self, main: Mapping[str, Any]) -> None:
         """Keep what only ``/main`` carries from a ``/main`` reply."""
@@ -876,6 +968,7 @@ class ReveApi:
             if key in main
         }
         self._residue_at = self._residue_tried_at = time.monotonic()
+        self._residue_answered = True
 
     def from_main(self, main: Mapping[str, Any], *, fallback: bool) -> dict[str, Any]:
         """A REVE ``/main`` payload as a poll shows it: the frozen session
@@ -1043,10 +1136,14 @@ class ReveApi:
 
     @property
     def answering(self) -> bool | None:
-        """Whether the last GraphQL read succeeded; ``None`` before the first."""
-        if self._last_error is not None or self._settings_failing:
+        """Whether GraphQL answers: off once ``API_DOWN_AFTER_FAILURES`` reads
+        in a row failed, or as many settings reads, and after any failure
+        before the first good read; ``None`` before the first read."""
+        if max(self._failure_streak, self._settings_streak) >= API_DOWN_AFTER_FAILURES:
             return False
-        return None if self._fetched_at is None else True
+        if self._answered:
+            return True
+        return False if self._failure_streak else None
 
     def diagnostics(self) -> dict[str, Any]:
         extras = self.extras
@@ -1061,6 +1158,7 @@ class ReveApi:
             ),
             "read_failures": self._failures,
             "last_error": self._last_error,
+            "missing_fields": list(self.missing_fields),
             "measurements": {
                 "graphql_reads": self._measurement_reads,
                 "graphql_failures": self._measurement_failures,
@@ -1079,13 +1177,12 @@ class ReveApi:
         self._fetched_at = time.monotonic()
         self._retry_at = 0.0  # pragma: no mutate - any value below the monotonic clock is equivalent
         self._last_error = None
-        self._settings_failing = False
+        self._failure_streak = 0
+        self._settings_streak = 0
+        self._answered = True
 
     async def _read_extras(self) -> ReveExtras:
-        station: dict[str, Any] = {}
-        for document in (SCHEDULES_QUERY, RATES_QUERY, COMMAND_QUERY):
-            station.update(await self._station(document))
-        return parse_extras({"stationData": station})
+        return parse_extras({"stationData": await self._station(SETTINGS_QUERY)})
 
     async def _station(self, document: str) -> dict[str, Any]:
         data = await self._post("StationData", document)

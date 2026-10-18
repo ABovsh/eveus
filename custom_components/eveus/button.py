@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity
+from .control_base import command_failure
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,8 +68,8 @@ class _EveusResetCounterButton(BaseEveusEntity, ButtonEntity):
         async with self._reset_lock:
             success = await self._updater.send_command(self._command, 0, retry=False)
             if not success:
-                raise HomeAssistantError(
-                    f"Eveus charger did not accept '{self.name}' reset command"
+                raise command_failure(
+                    self._updater, f"Eveus charger did not accept '{self.name}' reset command"
                 )
             _LOGGER.debug("Reset command %s acknowledged", self._command)
 
@@ -111,8 +112,8 @@ class EveusSyncTimeButton(BaseEveusEntity, ButtonEntity):
             "systemTime", lambda: int(time.time())
         )
         if not success:
-            raise HomeAssistantError(
-                "Eveus charger did not accept the time-sync command"
+            raise command_failure(
+                self._updater, "Eveus charger did not accept the time-sync command"
             )
         _LOGGER.debug("Time sync sent: systemTime command issued")
 
