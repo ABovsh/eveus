@@ -80,6 +80,8 @@ REVE_UNRELIABLE_FIELDS: Final[frozenset[str]] = frozenset(
         "tarifAEnable", "tarifAValue", "tarifAStart", "tarifAStop",
         "tarifBEnable", "tarifBValue", "tarifBStart", "tarifBStop",
         "leakValue", "leakValueH",
+        # Disable all: REVE drops a write within seconds (measured 18.10).
+        "suspendLimits",
         # Stop and One Charge are read from chargingCommand instead; see the
         # docstring.
         "evseEnabled", "oneCharge",
@@ -148,10 +150,12 @@ _LIMIT_WRITES: Final[tuple[tuple[str, str, str, int], ...]] = (
 # (Counter A checked live 2026-10-17; Counter B follows the same shape and has
 # not been reset on a charger yet).
 _RESET_WRITES: Final[dict[str, str]] = {"rstEM1": "IEM1", "rstEM2": "IEM2"}
-# Still written through /pageEvent on REVE until decided: the limits' master
-# switch (REVE has none) and OCPP (its write carries the whole object, auth
-# key included).
-PAGE_EVENT_COMMANDS: Final[frozenset[str]] = frozenset({"suspendLimits", "ocppEnabled"})
+# Still written through /pageEvent on REVE until decided: OCPP (its write
+# carries the whole object, auth key included).
+PAGE_EVENT_COMMANDS: Final[frozenset[str]] = frozenset({"ocppEnabled"})
+# The limits' master switch: REVE has none, and drops a /pageEvent write
+# within seconds (measured 18.10), so it is refused.
+NO_MASTER_COMMAND: Final = "suspendLimits"
 
 # How often the schedules, rates and Stop are re-read, how long a failed read
 # waits before the next attempt, and how long a last good read stays in force.
@@ -297,7 +301,7 @@ LIMIT_CLEAR_WAIT_SECONDS: Final = 1.5
 # reports wins; /main's stands in while GraphQL reports the limit off.
 MAIN_IDENTITY_FIELDS: Final[frozenset[str]] = frozenset({"manufacturer", "model", "serialNum"})
 MAIN_ONLY_FIELDS: Final[frozenset[str]] = frozenset(
-    {"suspendLimits", "aiModecurrent", "energyLimit", "moneyLimit", "timeLimit"}
+    {"aiModecurrent", "energyLimit", "moneyLimit", "timeLimit"}
 )
 MAIN_RESIDUE_REFRESH_SECONDS: Final = 300
 MAIN_RESIDUE_MAX_AGE_SECONDS: Final = 3600
@@ -897,7 +901,7 @@ class ReveApi:
             return self.set_stop
         if command in SCHEDULE_COMMANDS:
             return partial(self.write_schedule, command)
-        if command in SCHEDULE_ENERGY_COMMANDS:
+        if command in SCHEDULE_ENERGY_COMMANDS or command == NO_MASTER_COMMAND:
             return partial(self._refuse, command)  # pragma: no mutate - the command only names the refusal
         if command == ONE_CHARGE_COMMAND:
             return self.set_one_charge

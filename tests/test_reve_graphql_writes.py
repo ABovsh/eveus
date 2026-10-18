@@ -501,8 +501,17 @@ def test_classic_firmware_switches_a_limit_on_in_any_state(
 # ---------------------------------------------------------------------------
 
 
+def test_disable_all_is_refused_on_reve_and_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Measured 18.10: REVE drops suspendLimits within seconds of the write.
+    charger, updater = _known(monkeypatch)
+
+    assert _send(updater, "suspendLimits", 1) is False
+
+    assert charger.calls == []
+
+
 @pytest.mark.parametrize(("command", "value"), [
-    ("suspendLimits", 1), ("ocppEnabled", 1),
+    ("ocppEnabled", 1),
 ])
 def test_undecided_commands_stay_on_page_event(
     monkeypatch: pytest.MonkeyPatch, command: str, value: Any
@@ -539,12 +548,13 @@ def test_every_command_an_entity_sends_has_a_decided_route() -> None:
         "currentSet", "evseEnabled", "oneCharge", "aiMode", "aiVoltage", "minVoltage",
         "timeZone", "systemTime", "groundCtrl", "rstEM1", "rstEM2",
         "energyLimit", "energyLimitS", "timeLimit", "timeLimitS", "moneyLimit", "moneyLimitS",
+        "suspendLimits",
     }
     for command in routed:
         assert api.route(command) is not None, command
     for command in reve.PAGE_EVENT_COMMANDS:
         assert api.route(command) is None, command
-    assert reve.PAGE_EVENT_COMMANDS == frozenset({"suspendLimits", "ocppEnabled"})
+    assert reve.PAGE_EVENT_COMMANDS == frozenset({"ocppEnabled"})
 
 
 def test_no_refusal_while_charging_outside_manual_mode(monkeypatch: pytest.MonkeyPatch) -> None:

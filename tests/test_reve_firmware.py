@@ -255,6 +255,8 @@ _NO_REVE_SOURCE = {
     "eveus_schedule_2_energy_limit",
     "eveus_schedule_1_energy_limit_enabled",
     "eveus_schedule_2_energy_limit_enabled",
+    # REVE has no Disable all: it drops the write within seconds (measured 18.10).
+    "eveus_limit_disable_all",
 }
 _FROM_GRAPHQL = {
     "eveus_stop_charging",
@@ -599,10 +601,9 @@ def test_reve_settings_not_yet_moved_to_graphql_still_use_page_event(monkeypatch
     asyncio.run(updater._async_update_data())
     charger.calls.clear()
 
-    for command, value in (("suspendLimits", 0), ("ocppEnabled", 0)):
-        assert asyncio.run(updater._command_manager.send_command(command, value)) is True
+    assert asyncio.run(updater._command_manager.send_command("ocppEnabled", 0)) is True
 
-    assert charger.paths() == ["/pageEvent"] * 2
+    assert charger.paths() == ["/pageEvent"]
 
 
 def test_a_rejected_graphql_write_fails_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -823,7 +824,7 @@ def test_energy_routes_refuse_with_their_own_error() -> None:
     handler = api.route("sh2EnergyValue")
     with pytest.raises(ReveCommandUnsupported):
         asyncio.run(handler(5))
-    assert api.route("suspendLimits") is None
+    assert api.route("ocppEnabled") is None
 
 
 def test_graphql_requests_carry_the_session_auth_timeout_and_operation(

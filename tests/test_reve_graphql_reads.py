@@ -251,9 +251,8 @@ def test_fields_only_main_carries_are_kept_from_the_last_main(monkeypatch: pytes
     assert data["manufacturer"] == "Reve"
     assert data["model"] == "Plus"
     assert data["serialNum"] == "EVS-1M00000K3897"
-    assert data["suspendLimits"] == 1
     assert data["aiModecurrent"] == 7
-    assert updater.snapshot.supports("suspendLimits") is True
+    assert updater.snapshot.supports("aiModecurrent") is True
 
 
 def test_a_value_graphql_reports_wins_over_the_kept_main_one(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -271,12 +270,12 @@ def test_the_main_only_fields_are_refreshed_every_five_minutes(monkeypatch: pyte
     now = _clock(monkeypatch)
     charger = _Charger(_reve_main())
     updater = _known_reve(monkeypatch, charger)
-    charger.main["suspendLimits"] = 0
+    charger.main["aiModecurrent"] = 9
 
     now[0] += reve.MAIN_RESIDUE_REFRESH_SECONDS - 1
     data = asyncio.run(updater._async_update_data())
     assert charger.paths() == ["/graphql"]
-    assert data["suspendLimits"] == 1
+    assert data["aiModecurrent"] == 7
 
     charger.calls.clear()
     now[0] += 1
@@ -284,7 +283,26 @@ def test_the_main_only_fields_are_refreshed_every_five_minutes(monkeypatch: pyte
     # Measurements, then /main for its own fields (the five-minute settings
     # read follows in the same poll).
     assert charger.paths()[:2] == ["/graphql", "/main"]
-    assert data["suspendLimits"] == 0
+    assert data["aiModecurrent"] == 9
+
+
+def test_reve_has_no_disable_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Measured 18.10 10:30:55: REVE drops suspendLimits written through
+    # /pageEvent within 4 s, while /main still reports the field.
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    charger.main["suspendLimits"] = 1
+    updater._reve._residue_tried_at = None
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert "suspendLimits" not in data
+    assert updater.snapshot.supports("suspendLimits") is False
+
+    charger.graphql_status = 500
+    data = asyncio.run(updater._async_update_data())
+    assert updater._reve.last_source == "main"
+    assert "suspendLimits" not in data, "nor when /main stands in for GraphQL"
 
 
 def test_a_failed_refresh_of_them_never_fails_the_poll(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -297,7 +315,7 @@ def test_a_failed_refresh_of_them_never_fails_the_poll(monkeypatch: pytest.Monke
     data = asyncio.run(updater._async_update_data())
 
     assert updater.last_update_success is True
-    assert data["suspendLimits"] == 1
+    assert data["aiModecurrent"] == 7
 
 
 def test_main_only_fields_kept_too_long_are_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,8 +327,8 @@ def test_main_only_fields_kept_too_long_are_dropped(monkeypatch: pytest.MonkeyPa
     now[0] += reve.MAIN_RESIDUE_MAX_AGE_SECONDS + 1
     data = asyncio.run(updater._async_update_data())
 
-    assert "suspendLimits" not in data
-    assert updater.snapshot.supports("suspendLimits") is False
+    assert "aiModecurrent" not in data
+    assert updater.snapshot.supports("aiModecurrent") is False
     # The device-registry strings are not entity values: they stay.
     assert data["manufacturer"] == "Reve"
 

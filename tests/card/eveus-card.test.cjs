@@ -1499,6 +1499,11 @@ test('weakening ground protection or limits needs explicit confirmation', async(
     assert.equal(x.calls.length,1);
   }
 });
+test('REVE has no Disable all: an unavailable switch shows no button', () => {
+  const h = setupAll({sections:['limits'], over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], limit_disable_all:['switch.dis','unavailable']}}).html();
+  assert.doesNotMatch(h, /data-limit-toggle="limit_disable_all"/);
+  assert.match(setupAll({sections:['limits'], over:{limit_energy_enabled:['switch.lee','on']}}).html(), /data-limit-toggle="limit_disable_all"/, 'classic keeps it');
+});
 test('the confirmation opens in the top layer, above the cards below this one', async()=>{
   // Anton, 18.10: fixed at the screen bottom, it sat under the next dashboard card, which took the taps.
   const x=setupLimits();x.states['switch.guard']={state:'off',attributes:{}};x.card._ids.limit_disable_all='switch.guard';

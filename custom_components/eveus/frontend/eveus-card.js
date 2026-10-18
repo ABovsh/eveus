@@ -896,7 +896,8 @@ class EveusCard extends HTMLElement {
       : idleLock ? `<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"></ha-icon><span>${t.lockedIdleNote}</span></div>` : '';
     const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
     const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
-    const disable = anyOn || suspended ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
+    // REVE has no Disable all: its switch is unavailable there, so there is no button.
+    const disable = (anyOn || suspended) && !this._unsupported('limit_disable_all') ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
     const held = suspended || ignored;
