@@ -442,7 +442,7 @@ What this means in practice:
 
 #### Limits on REVE
 
-- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **outside manual mode, while the car is charging or a limit has stopped the charge**. REVE drops a limit set before charging starts and when the connector is pulled out, so at other times the card locks the limits and says why, and Home Assistant refuses the change with the reason.
+- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **outside manual mode, while the car is charging or a limit has stopped the charge**. REVE drops a limit set before charging starts, and every limit when the connector is pulled out, so at other times the card locks the limits and says why, and Home Assistant refuses the change with the reason.
 - When a limit stops the charge, raise it or turn it off to charge on: the charger resumes by itself, and a raised limit stops it at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until the connector is pulled out.
 - Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value.
 - **Target SOC** can be changed at any time: Home Assistant does that stop.
