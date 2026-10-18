@@ -165,7 +165,7 @@ browser or reset the app's frontend cache.
 | **Current slider** | Charging current |
 | **Adaptive charging** | Adaptive Mode, its voltage threshold and current cap |
 | **Session** | Session energy, cost and time; with the car unplugged, the last session |
-| **Limits** | Energy, time, cost and SOC limits, **Disable all** |
+| **Limits** | Energy, time, cost and SOC limits, **Disable all** (not on REVE) |
 | **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and energy limit |
 | **Charger clock** | Time Zone, Time Drift and **Sync Time** |
 | **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy |
@@ -295,7 +295,8 @@ and automations. For example, `input_number.ev_initial_soc` becomes
 Set **Limit: Time**, **Limit: Energy** or **Limit: Cost**, then turn on its
 enable switch. **Limit: disable all** suspends all limits, including SOC, and
 keeps their values. On REVE, limits can be changed only while charging or
-stopped at a limit; see [REVE limits](#limits-on-reve).
+stopped at a limit, and there is no **Limit: disable all**; see
+[REVE limits](#limits-on-reve).
 
 ### Schedules and adaptive charging
 
@@ -362,8 +363,10 @@ automation editor to use them without YAML.
 | `eveus_car_disconnected` | The car is disconnected | — |
 | `eveus_soc_limit_reached` | Home Assistant stopped charging at Target SOC | `soc`, `target_soc` |
 
-Session values come from the last poll and may lag by one poll interval.
-Changes while Home Assistant or the charger is offline fire no events afterwards.
+Session values come from the charger's polls; when the car is unplugged
+during a charge, they may miss the last poll interval. Changes while Home
+Assistant or the charger is offline fire no events afterwards, and neither
+does a replug quicker than one poll (up to a minute while the charger is idle).
 
 ```yaml
 automation:
@@ -439,10 +442,11 @@ What this means in practice:
 
 #### Limits on REVE
 
-- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **outside manual mode, while the car is charging or a limit has stopped the charge**. REVE keeps limits only for the current charge, so at other times the card locks them and says why, and Home Assistant refuses the change with the reason.
-- When a limit stops the charge, raise it to charge on: the charger resumes by itself and stops at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until the connector is pulled out.
+- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **outside manual mode, while the car is charging or a limit has stopped the charge**. REVE drops a limit set before charging starts and when the connector is pulled out, so at other times the card locks the limits and says why, and Home Assistant refuses the change with the reason.
+- When a limit stops the charge, raise it or turn it off to charge on: the charger resumes by itself, and a raised limit stops it at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until the connector is pulled out.
 - Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value.
-- **Target SOC** can be changed at any time: Home Assistant does that stop. It works while **Limit: disable all** is off.
+- **Target SOC** can be changed at any time: Home Assistant does that stop.
+- REVE has no **Limit: disable all**: the charger drops that setting within seconds, so the switch is unavailable and the card does not show it.
 
 #### Other differences
 
@@ -537,7 +541,7 @@ no long-term statistics.
 | `switch.eveus_ev_charger_limit_time_enabled` | **Limit: Time enabled** |
 | `switch.eveus_ev_charger_limit_energy_enabled` | **Limit: Energy enabled** |
 | `switch.eveus_ev_charger_limit_cost_enabled` | **Limit: Cost enabled** |
-| `switch.eveus_ev_charger_limit_disable_all` | **Limit: disable all** |
+| `switch.eveus_ev_charger_limit_disable_all` | **Limit: disable all**; unavailable on REVE |
 | `switch.eveus_ev_charger_limit_soc_enabled` | **Limit: SOC enabled** (Advanced mode only) |
 | `button.eveus_ev_charger_force_refresh` | Poll the charger immediately |
 
