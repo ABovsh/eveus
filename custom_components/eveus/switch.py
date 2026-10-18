@@ -19,9 +19,12 @@ from .common_base import (
 )
 from .control_base import CommandBackedEntity
 from .const import (
+    CONF_FIRMWARE_FAMILY,
+    EVEUS_FIRMWARE_ONLY_ENTITIES,
     SOC_MODE_ADVANCED,
     get_soc_mode,
 )
+from .reve import FAMILY_REVE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -362,9 +365,15 @@ async def async_setup_entry(
     updater = runtime_data.updater
     device_number = runtime_data.device_number
 
+    skipped = (
+        {key for platform, key in EVEUS_FIRMWARE_ONLY_ENTITIES if platform == "switch"}
+        if entry.data.get(CONF_FIRMWARE_FAMILY) == FAMILY_REVE
+        else set()
+    )
     entities = [
         BaseSwitchEntity(updater, description, device_number)
         for description in SWITCH_DESCRIPTIONS
+        if description.key not in skipped
     ]
     if get_soc_mode(entry) == SOC_MODE_ADVANCED:
         entities.append(

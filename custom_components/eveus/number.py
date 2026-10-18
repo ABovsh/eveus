@@ -27,6 +27,8 @@ from homeassistant.const import (
 
 from . import EveusConfigEntry
 from .const import (
+    CONF_FIRMWARE_FAMILY,
+    EVEUS_FIRMWARE_ONLY_ENTITIES,
     MODEL_MAX_CURRENT,
     MIN_CURRENT,
     MIN_VOLTAGE_OPTIONS,
@@ -55,6 +57,7 @@ from .common_base import (
     WriteOnChangeMixin,
 )
 from .control_base import CommandBackedEntity
+from .reve import FAMILY_REVE
 from .utils import normalize_soc_input
 
 _LOGGER = logging.getLogger(__name__)
@@ -899,7 +902,14 @@ async def async_setup_entry(
             for desc in GLOBAL_LIMIT_NUMBERS
         ]
         model_max = float(MODEL_MAX_CURRENT[model])
+        skipped = (
+            {key for platform, key in EVEUS_FIRMWARE_ONLY_ENTITIES if platform == "number"}
+            if entry.data.get(CONF_FIRMWARE_FAMILY) == FAMILY_REVE
+            else set()
+        )
         for desc in SCHEDULE_LIMIT_NUMBERS:
+            if desc.key in skipped:
+                continue
             max_override = model_max if desc.native_unit_of_measurement == "A" else None
             entities.append(
                 EveusSetpointNumber(

@@ -44,6 +44,8 @@ from .const import (
     CONF_MODEL,
     CONF_SCHEME,
     DEFAULT_SCHEME,
+    CONF_FIRMWARE_FAMILY,
+    EVEUS_FIRMWARE_ONLY_ENTITIES,
     CONF_PHASES,
     DEFAULT_PHASES,
     PHASE_OPTIONS,
@@ -61,7 +63,7 @@ from .const import (
     DEFAULT_SOC_CORRECTION,
 )
 from .common_network import EveusUnreachable, EveusUpdater
-from .reve import FAMILY_REVE
+from .reve import FAMILY_CLASSIC, FAMILY_REVE
 from .issues import (
     BatteryLowTracker,
     ClockDriftTracker,
@@ -216,8 +218,39 @@ def _resolve_phases(raw_phases: Any) -> tuple[int, bool]:
     return phases, False
 
 
+def _remember_firmware_family(
+    hass: HomeAssistant, entry: ConfigEntry, updater: EveusUpdater
+) -> None:
+    """Store the firmware the charger answered with; the platforms build from it.
+
+    A charger that did not answer leaves the entry as it was last heard, so a
+    REVE charger switched off at setup is still built as REVE. Only REVE is
+    stored: an Eveus firmware entry keeps its data unchanged.
+    """
+    if not updater.last_update_success:
+        return
+    reve = getattr(updater, "firmware_family", FAMILY_CLASSIC) == FAMILY_REVE
+    if reve and entry.data.get(CONF_FIRMWARE_FAMILY) != FAMILY_REVE:
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_FIRMWARE_FAMILY: FAMILY_REVE}
+        )
+    elif not reve and CONF_FIRMWARE_FAMILY in entry.data:
+        data = dict(entry.data)
+        data.pop(CONF_FIRMWARE_FAMILY)
+        hass.config_entries.async_update_entry(entry, data=data)
+
+
+def built_for_reve(entry: ConfigEntry) -> bool:
+    """Whether this entry's entities are built for REVE firmware."""
+    return entry.data.get(CONF_FIRMWARE_FAMILY) == FAMILY_REVE
+
+
 def _prune_unused_entities(
-    hass: HomeAssistant, device_number: int, soc_mode: str, phases: int
+    hass: HomeAssistant,
+    device_number: int,
+    soc_mode: str,
+    phases: int,
+    firmware_family: str = FAMILY_CLASSIC,
 ) -> None:
     """Remove registry rows for entities not built under the current config."""
     stale: list[tuple[str, str]] = list(_REMOVED_ENTITIES)
@@ -225,6 +258,8 @@ def _prune_unused_entities(
         stale.extend(_ADVANCED_ONLY_ENTITIES)
     if phases != 3:
         stale.extend(_THREE_PHASE_ONLY_ENTITIES)
+    if firmware_family == FAMILY_REVE:
+        stale.extend(EVEUS_FIRMWARE_ONLY_ENTITIES)
     reg = er.async_get(hass)
     suffix = get_device_suffix(device_number)
     for platform, key in stale:
@@ -749,6 +784,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             if callable(arm_probe):
                 arm_probe()
 
+        _remember_firmware_family(hass, entry, updater)
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
             device_number=device_number,
@@ -811,6 +847,27 @@ async def _finish_setup(
     # otherwise lose their values without a word.
     follow_polls(lambda: update_reve_fields_issue(hass, entry, updater))
 
+    # A charger first heard as REVE after setup (it was switched off, or was
+    # just updated to REVE) was built with the Eveus-firmware-only entities;
+    # remember REVE and reload once so they go.
+    if not built_for_reve(entry):
+        reloading = False  # pragma: no mutate - only read for truthiness
+
+        @callback
+        def _reload_on_reve() -> None:
+            nonlocal reloading
+            if reloading or not updater.last_update_success:
+                return
+            if getattr(updater, "firmware_family", FAMILY_CLASSIC) != FAMILY_REVE:
+                return
+            reloading = True
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_FIRMWARE_FAMILY: FAMILY_REVE}
+            )
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+
+        follow_polls(_reload_on_reve)
+
     # Track the CR2032 coin cell (vBat) across polls and warn when it is
     # depleted, with debounce/hysteresis held in the tracker.
     battery_tracker = BatteryLowTracker()
@@ -866,6 +923,7 @@ async def _finish_setup(
         # An invalid stored phase count fell back to 1; don't let that
         # fallback prune the 3-phase registry rows.
         3 if phases_were_invalid else phases,
+        FAMILY_REVE if built_for_reve(entry) else FAMILY_CLASSIC,
     )
 
     return True

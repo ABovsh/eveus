@@ -56,11 +56,19 @@ async def test_reve_charger_publishes_its_real_settings(
         f"sensor.{_PREFIX}_leakage_current",
         f"sensor.{_PREFIX}_leakage_current_peak",
         f"sensor.{_PREFIX}_plug_temperature",
-        f"number.{_PREFIX}_schedule_1_energy_limit",
-        f"switch.{_PREFIX}_schedule_1_energy_limit_enabled",
         f"binary_sensor.{_PREFIX}_ocpp_connected",
     ):
         assert state(entity_id) == STATE_UNAVAILABLE, entity_id
+    # REVE has no schedule energy limit and resets "disable all limits": not built.
+    for entity_id in (
+        f"number.{_PREFIX}_schedule_1_energy_limit",
+        f"number.{_PREFIX}_schedule_2_energy_limit",
+        f"switch.{_PREFIX}_schedule_1_energy_limit_enabled",
+        f"switch.{_PREFIX}_schedule_2_energy_limit_enabled",
+        f"switch.{_PREFIX}_limit_disable_all",
+    ):
+        assert hass.states.get(entity_id) is None, entity_id
+    assert hass.config_entries.async_entries(DOMAIN)[0].data["firmware_family"] == "reve"
 
     assert state(f"switch.{_PREFIX}_schedule_1_enabled") == "off"
     assert state(f"switch.{_PREFIX}_stop_charging") == "off"

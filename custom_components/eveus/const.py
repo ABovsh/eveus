@@ -245,6 +245,19 @@ DEFAULT_SCHEME: Final[str] = "http"
 CONF_PHASES: Final[str] = "phases"
 PHASE_OPTIONS: Final[List[int]] = [1, 3]
 DEFAULT_PHASES: Final[int] = 1
+# "reve" once the charger has answered as REVE, absent otherwise: the entities
+# REVE cannot fill are built from it while the charger is switched off.
+CONF_FIRMWARE_FAMILY: Final[str] = "firmware_family"
+# Built for Eveus firmware only: REVE schedules have no energy limit and REVE
+# resets suspendLimits within seconds (hardware test 2026-10-18), so on REVE
+# these would read unavailable forever.
+EVEUS_FIRMWARE_ONLY_ENTITIES: Final[tuple[tuple[str, str], ...]] = (
+    ("switch", "limit_disable_all"),
+    ("switch", "schedule_1_energy_limit_enabled"),
+    ("switch", "schedule_2_energy_limit_enabled"),
+    ("number", "schedule_1_energy_limit"),
+    ("number", "schedule_2_energy_limit"),
+)
 
 # Integration mode (Basic / Advanced); key kept as soc_mode for entry compatibility
 CONF_SOC_MODE: Final[str] = "soc_mode"

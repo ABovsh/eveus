@@ -65,7 +65,7 @@ All SOC features require **Advanced mode**. [Set up SOC →](#battery-level-soc)
 
 ### 🕒 Schedules and adaptive charging
 
-- **Two charging schedules** with their own current and energy limits. They are stored on the charger and run without Home Assistant.
+- **Two charging schedules** with their own current limit and, on Eveus firmware, energy limit. They are stored on the charger and run without Home Assistant.
 - **Lower current when mains voltage drops:** the charger does this; the integration sets the mode and threshold and shows the current cap.
 
 ### 🔄 REVE firmware
@@ -166,7 +166,7 @@ browser or reset the app's frontend cache.
 | **Adaptive charging** | Adaptive Mode, its voltage threshold and current cap |
 | **Session** | Session energy, cost and time; with the car unplugged, the last session |
 | **Limits** | Energy, time, cost and SOC limits, **Disable all** (not on REVE) |
-| **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and energy limit. On REVE also their days of the week, which you can change, and the other schedules and the tariffs set in the charger's app, read-only |
+| **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and, on Eveus firmware, energy limit. On REVE also their days of the week, which you can change, and the other schedules and the tariffs set in the charger's app, read-only |
 | **Charger clock** | Time Zone, Time Drift and **Sync Time** |
 | **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy |
 | **Safety** | Box and plug temperature, ground, leakage current, connection quality |
@@ -453,7 +453,7 @@ What this means in practice:
 - When a limit stops the charge, raise it or turn it off to charge on: the charger resumes by itself, and a raised limit stops it at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until the connector is pulled out.
 - Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value.
 - **Target SOC** can be changed at any time: Home Assistant does that stop.
-- REVE has no **Limit: disable all**: the charger drops that setting within seconds, so the switch is unavailable and the card does not show it.
+- REVE has no **Limit: disable all**: the charger drops that setting within seconds, so the switch is not created and the card does not show it.
 
 #### Other differences
 
@@ -462,7 +462,8 @@ What this means in practice:
 - **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. It is unavailable while REVE's third or fourth rate is in effect. **Cost to Target SOC** follows the first two rates' hours, not their days of the week.
 - **Counter A Cost** and **Counter B Cost** do not increase on REVE: the charger counts the energy of counters A and B, but not their cost. After a counter is reset its cost stays at 0; without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
-- REVE does not report **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, the schedules' energy limits or **Plug Temperature**, so they stay unavailable.
+- REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
+- REVE does not report **Leakage Current**, **Leakage Current Peak**, **OCPP Connected** or **Plug Temperature**, so they stay unavailable.
 
 #### Wi-Fi drops about every 15 minutes
 
@@ -549,7 +550,7 @@ no long-term statistics.
 | `switch.eveus_ev_charger_limit_time_enabled` | **Limit: Time enabled** |
 | `switch.eveus_ev_charger_limit_energy_enabled` | **Limit: Energy enabled** |
 | `switch.eveus_ev_charger_limit_cost_enabled` | **Limit: Cost enabled** |
-| `switch.eveus_ev_charger_limit_disable_all` | **Limit: disable all**; unavailable on REVE |
+| `switch.eveus_ev_charger_limit_disable_all` | **Limit: disable all**; not created on REVE |
 | `switch.eveus_ev_charger_limit_soc_enabled` | **Limit: SOC enabled** (Advanced mode only) |
 | `button.eveus_ev_charger_force_refresh` | Poll the charger immediately |
 
@@ -640,16 +641,16 @@ Advanced mode provides four `number` entities for SOC settings.
 | `time.eveus_ev_charger_schedule_1_stop` | Time | Schedule 1 stop time |
 | `number.eveus_ev_charger_schedule_1_current_limit` | A | **Schedule 1 Current limit** |
 | `switch.eveus_ev_charger_schedule_1_current_limit_enabled` | Switch | **Schedule 1 Current limit enabled** |
-| `number.eveus_ev_charger_schedule_1_energy_limit` | kWh | **Schedule 1 Energy limit** |
-| `switch.eveus_ev_charger_schedule_1_energy_limit_enabled` | Switch | **Schedule 1 Energy limit enabled** |
+| `number.eveus_ev_charger_schedule_1_energy_limit` | kWh | **Schedule 1 Energy limit**; not created on REVE |
+| `switch.eveus_ev_charger_schedule_1_energy_limit_enabled` | Switch | **Schedule 1 Energy limit enabled**; not created on REVE |
 | `sensor.eveus_ev_charger_schedule_1` | Sensor | Schedule 1 summary and attributes |
 | `switch.eveus_ev_charger_schedule_2_enabled` | Switch | Enable or disable schedule slot 2 |
 | `time.eveus_ev_charger_schedule_2_start` | Time | Schedule 2 start time |
 | `time.eveus_ev_charger_schedule_2_stop` | Time | Schedule 2 stop time |
 | `number.eveus_ev_charger_schedule_2_current_limit` | A | **Schedule 2 Current limit** |
 | `switch.eveus_ev_charger_schedule_2_current_limit_enabled` | Switch | **Schedule 2 Current limit enabled** |
-| `number.eveus_ev_charger_schedule_2_energy_limit` | kWh | **Schedule 2 Energy limit** |
-| `switch.eveus_ev_charger_schedule_2_energy_limit_enabled` | Switch | **Schedule 2 Energy limit enabled** |
+| `number.eveus_ev_charger_schedule_2_energy_limit` | kWh | **Schedule 2 Energy limit**; not created on REVE |
+| `switch.eveus_ev_charger_schedule_2_energy_limit_enabled` | Switch | **Schedule 2 Energy limit enabled**; not created on REVE |
 | `sensor.eveus_ev_charger_schedule_2` | Sensor | Schedule 2 summary and attributes |
 
 Each schedule has its own current and energy caps with separate enable switches.
