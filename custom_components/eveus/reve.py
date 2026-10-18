@@ -113,6 +113,11 @@ _SLOT_FIELDS: Final[dict[str, str]] = {
 SCHEDULE_COMMANDS: Final[frozenset[str]] = frozenset(
     f"sh{slot}{suffix}" for slot in (1, 2) for suffix in _SLOT_FIELDS
 )
+# A schedule's days of the week: no entity of their own, written from the
+# card (a 0-6 list, 0 = Sunday, as scheduleV2 keeps them).
+SCHEDULE_WEEKDAY_COMMANDS: Final[frozenset[str]] = frozenset(
+    f"sh{slot}Weekdays" for slot in (1, 2)
+)
 # scheduleV2 has no per-schedule energy cap.
 SCHEDULE_ENERGY_COMMANDS: Final[frozenset[str]] = frozenset(
     f"sh{slot}Energy{suffix}" for slot in (1, 2) for suffix in ("Enable", "Value")
@@ -650,7 +655,18 @@ def normalize_reve_payload(
 # ---------------------------------------------------------------------------
 
 
+def _weekday_list(value: Any) -> list[int]:
+    """Days to write: a non-empty 0-6 list (0 = Sunday), sorted, once each."""
+    if not isinstance(value, list) or not value:
+        raise ValueError("weekdays must be a non-empty list")  # pragma: no mutate - message text; only the exception type is ever logged
+    if any(type(day) is not int or not 0 <= day <= 6 for day in value):
+        raise ValueError("weekday out of range")  # pragma: no mutate - message text; only the exception type is ever logged
+    return sorted(set(value))
+
+
 def _coerce_slot_value(field: str, value: Any) -> Any:
+    if field == "weekdays":
+        return _weekday_list(value)
     if field in ("enabled", "currentLimitEnabled"):
         return _bool(value)
     if field in ("start", "end"):
@@ -666,12 +682,15 @@ def apply_schedule_command(
     REVE replaces the whole list on every write, so every other schedule and
     every other field goes back exactly as it was read.
     """
-    if command not in SCHEDULE_COMMANDS:
+    if command in SCHEDULE_WEEKDAY_COMMANDS:
+        field = "weekdays"
+    elif command in SCHEDULE_COMMANDS:
+        field = _SLOT_FIELDS[command[3:]]
+    else:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged
     slot = int(command[2])
     if len(schedules) < slot:
         raise ReveCommandUnsupported(f"schedule {slot} does not exist")  # pragma: no mutate - message text; only the exception type is ever logged
-    field = _SLOT_FIELDS[command[3:]]
     updated = [dict(item) for item in schedules]
     updated[slot - 1][field] = _coerce_slot_value(field, value)
     return updated
@@ -998,7 +1017,7 @@ class ReveApi:
             return self.set_station_current
         if command == STOP_COMMAND:
             return self.set_stop
-        if command in SCHEDULE_COMMANDS:
+        if command in SCHEDULE_COMMANDS or command in SCHEDULE_WEEKDAY_COMMANDS:
             return partial(self.write_schedule, command)
         if command in SCHEDULE_ENERGY_COMMANDS or command == NO_MASTER_COMMAND:
             return partial(self._refuse, command)  # pragma: no mutate - the command only names the refusal

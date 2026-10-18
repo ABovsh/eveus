@@ -364,6 +364,52 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Take manual mode over from before a Home Assistant restart."""
         self._reve.manual_mode.restore(on_for)
 
+    def reve_schedules(self) -> tuple[dict[str, Any], ...] | None:
+        """Every REVE schedule as last read, while that read stands; ``None``
+        for classic firmware."""
+        if not self._reve_seen:
+            return None
+        extras = self._reve.extras
+        return () if extras is None else extras.schedules
+
+    def reve_card_schedules(self) -> dict[str, Any]:
+        """The schedules and rates as the card shows them, and how old the read
+        is. ``set`` marks what the owner has set up: the charger keeps empty
+        slots (off, 00:00-00:00, price 0), which the card leaves out."""
+        schedules = self.reve_schedules()
+        if schedules is None:
+            return {"reve": False}
+        extras = self._reve.extras
+        return {
+            "reve": True,
+            "schedules": [
+                {
+                    "name": item["name"],
+                    "start": item["start"],
+                    "end": item["end"],
+                    "weekdays": list(item["weekdays"]),
+                    "enabled": item["enabled"],
+                    "current_limit": item["value"] if item["currentLimitEnabled"] else None,
+                    "set": item["enabled"] or item["start"] != item["end"],
+                }
+                for item in schedules
+            ],
+            "base_rate": None if extras is None else extras.base_rate,
+            "rates": [
+                {
+                    "name": rate["name"],
+                    "start": rate["start"],
+                    "end": rate["end"],
+                    "weekdays": rate["weekdays"],
+                    "enabled": rate["enabled"],
+                    "price": rate["value"],
+                    "set": rate["enabled"] or rate["start"] != rate["end"] or rate["value"] > 0,
+                }
+                for rate in (() if extras is None else extras.rates)
+            ],
+            "read_age_seconds": self._reve.diagnostics()["read_age_seconds"],
+        }
+
     @property
     def last_command_failure(self) -> str | None:
         """Why the last command failed, when the user should hear it (REVE's

@@ -33,6 +33,11 @@ const LARGE_MAX_ITEMS = 2;
 const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
+// REVE schedules (all of them, with their days) are asked for again this often, and at once
+// when a schedule entity or REVE API changes; a change made in the charger's app shows within it.
+const REVE_SCHEDULES_REFRESH_MS = 60000;
+// Days as REVE numbers them (0 = Sunday), in the order the card shows them: Monday first.
+const WEEK = [1, 2, 3, 4, 5, 6, 0];
 // A command not confirmed by the charger's own state within this long is reported as unconfirmed.
 const COMMAND_TIMEOUT_MS = 60000;
 // A command error stays this long unless tapped away: long enough to read, not for good.
@@ -139,7 +144,9 @@ const I18N = {
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
     // The integration's "5h 30m": English keeps it as text, compact.
     duration: (text) => text.replace(/\s+/g, ''), sessionDuration: (text) => text,
-    schedule: (n) => `Schedule ${n}`, edges: {start: 'start', stop: 'stop'}, tapToggle: 'tap to turn on or off',
+    schedule: (n) => `Schedule ${n}`, tariff: 'Tariff', everyDay: 'Every day', workdays: 'Weekdays', weekends: 'Weekends', days: ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'], daysLabel: 'days',
+    reveStale: (hm) => `REVE interface not answering since ${hm}; showing the schedules last read`,
+    edges: {start: 'start', stop: 'stop'}, tapToggle: 'tap to turn on or off',
     capCurrent: 'current limit', capEnergy: 'energy limit',
     zone: 'Time zone', drift: 'Clock drift: charger clock minus Home Assistant', sync: 'Sync', synced: 'Sent',
     syncTitle: 'Sync time: set the charger clock from Home Assistant', units: {s: 's', min: 'min', h: 'h'},
@@ -205,7 +212,9 @@ const I18N = {
       return m ? `${m[1]}<small>${{d: 'д', h: 'год', m: 'хв'}[m[2]]}</small>` : part;
     }).join(' '),
     sessionDuration: (text) => I18N.uk.duration(text),
-    schedule: (n) => `Розклад ${n}`, edges: {start: 'початок', stop: 'завершення'}, tapToggle: 'натисніть, щоб увімкнути чи вимкнути',
+    schedule: (n) => `Розклад ${n}`, tariff: 'Тариф', everyDay: 'Щодня', workdays: 'Будні', weekends: 'Вихідні', days: ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'], daysLabel: 'дні',
+    reveStale: (hm) => `Інтерфейс REVE не відповідає з ${hm}; показано останні прочитані розклади`,
+    edges: {start: 'початок', stop: 'завершення'}, tapToggle: 'натисніть, щоб увімкнути чи вимкнути',
     capCurrent: 'ліміт струму', capEnergy: 'ліміт енергії',
     zone: 'Часовий пояс', drift: 'Зміщення часу: годинник станції мінус Home Assistant', sync: 'Синхр.', synced: 'Надіслано',
     syncTitle: 'Синхронізувати час: виставити годинник станції за Home Assistant', units: {s: 'с', min: 'хв', h: 'год'},
@@ -267,7 +276,7 @@ const LEGACY_LAYOUTS = {
 const ITEMS = {
   actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
   basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time', 'rate'], limits: ['soc', 'energy', 'time', 'cost'],
-  schedules: ['schedule_1', 'schedule_2'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
+  schedules: ['schedule_1', 'schedule_2', 'days', 'more', 'rates'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
   safety: ['box', 'plug', 'ground', 'leak', 'connection'],
 };
 // The entity behind each safety item, in ITEMS.safety order; null = always shown.
@@ -275,6 +284,11 @@ const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_cu
 const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
 // A grid whose stylesheet assumes `n` columns, re-spread when hidden items leave fewer.
 const columns = (count, n) => count === n ? '' : ` style="grid-template-columns:repeat(${count},minmax(0,1fr))"`;
+// Minutes from midnight as 24-hour HH:MM.
+const clock = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+// Whether the user has changed a form control inside a node away from what was drawn.
+const moved = (node) => node.nodeType === 1 && [...node.querySelectorAll('input,select')].some((el) =>
+  el.tagName === 'SELECT' ? [...el.options].some((o) => o.selected !== o.defaultSelected) : el.value !== el.defaultValue);
 const sectionsOf = (config) => config.sections ?? LEGACY_LAYOUTS[config.layout] ?? SECTIONS;
 const sizesOf = (section) => [...(FOLDABLE.includes(section) ? ['small'] : []), 'normal', ...(LARGE.has(section) ? ['large'] : [])];
 const largeFits = (config, section) => (ITEMS[section] || []).filter((i) => !config.hide?.includes(`${section}.${i}`)).length <= LARGE_MAX_ITEMS;
@@ -294,7 +308,7 @@ const EDITOR_I18N = {
       advanced_controls: {initial: 'Initial', target: 'Target', capacity: 'Capacity', loss: 'Loss'},
       basic_info: {voltage: 'Voltage', power: 'Power', current: 'Current'},
       session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
-      schedules: {schedule_1: 'Schedule 1', schedule_2: 'Schedule 2'}, time: {zone: 'Time zone', drift: 'Drift', sync: 'Sync'},
+      schedules: {schedule_1: 'Schedule 1', schedule_2: 'Schedule 2', days: 'Days (REVE)', more: 'Schedules 3–8 (REVE)', rates: 'Tariffs (REVE)'}, time: {zone: 'Time zone', drift: 'Drift', sync: 'Sync'},
       history: {month: 'This month', total: 'Total', counter_a: 'Counter A', counter_b: 'Counter B'},
       safety: {box: 'Box', plug: 'Plug', ground: 'Ground', leak: 'Leakage', connection: 'Connection'},
     },
@@ -319,7 +333,7 @@ const EDITOR_I18N = {
       advanced_controls: {initial: 'Початковий', target: 'Ціль', capacity: 'Ємність', loss: 'Втрати'},
       basic_info: {voltage: 'Напруга', power: 'Потужність', current: 'Струм'},
       session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
-      schedules: {schedule_1: 'Розклад 1', schedule_2: 'Розклад 2'}, time: {zone: 'Часовий пояс', drift: 'Зміщення', sync: 'Синхронізація'},
+      schedules: {schedule_1: 'Розклад 1', schedule_2: 'Розклад 2', days: 'Дні (REVE)', more: 'Розклади 3–8 (REVE)', rates: 'Тарифи (REVE)'}, time: {zone: 'Часовий пояс', drift: 'Зміщення', sync: 'Синхронізація'},
       history: {month: 'Цей місяць', total: 'Загалом', counter_a: 'Лічильник A', counter_b: 'Лічильник B'},
       safety: {box: 'Корпус', plug: 'Конектор', ground: 'Заземлення', leak: 'Витік', connection: "Зв'язок"},
     },
@@ -363,7 +377,7 @@ class EveusCard extends HTMLElement {
     this._config = {...config, sections: [...new Set(sections)]};
     this._ids = null;
     this._resolved = false;
-    this._lastSignature = null;
+    this._lastSignature = this._lastRefs = null;
     this._generation = (this._generation || 0) + 1;
     this._resolving = false;
     Object.values(this._limitTimers || {}).forEach(clearTimeout);
@@ -424,8 +438,9 @@ class EveusCard extends HTMLElement {
     if (this._hass) this.hass = this._hass;
   }
   _onKeyDown(e) {
-    if (e.key === 'Escape' && (this._guardAsk || this._resetAsk || this._statusAsk)) {
+    if (e.key === 'Escape' && (this._guardAsk || this._resetAsk || this._statusAsk || this._editingDays)) {
       e.preventDefault();
+      this._editingDays = null;
       this._guardAsk = null;
       this._resetAsk = null;
       this._statusAsk = null;
@@ -464,6 +479,12 @@ class EveusCard extends HTMLElement {
     else if (e.target.closest('[data-guard-cancel]')) { this._guardAsk = null; this._render(); }
     else if (fold) this._toggleFold(fold.dataset.fold);
     else if (zoneFix) void this._selectOption('time_zone', zoneFix.dataset.zoneFix);
+    else if (e.target.closest('[data-weekday]')) void this._toggleWeekday(e.target.closest('[data-weekday]').dataset.weekday);
+    else if (e.target.closest('[data-days-edit]')) {
+      const n = Number(e.target.closest('[data-days-edit]').dataset.daysEdit);
+      this._editingDays = this._editingDays === n ? null : n;
+      this._render();
+    }
     else if (reset) {
       if (reset.dataset.reset) void this._resetCounter(reset.dataset.reset);
       else if (reset.dataset.resetConfirm) void this._resetCounter(reset.dataset.resetConfirm, true);
@@ -506,6 +527,8 @@ class EveusCard extends HTMLElement {
     if ((!this._resolved || retry) && !this._resolving) void this._resolve();
     if (this._resolved) this._watchRegistry();
     if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
+    if (this._resolved && this._wantsReveSchedules && !this._reveBusy
+      && (Date.now() - (this._reveAt || 0) > REVE_SCHEDULES_REFRESH_MS || this._reveKey !== this._reveScheduleKey())) void this._fetchReveSchedules();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
       const entity = this._state(key);
       const actual = typeof pending === 'boolean' ? entity?.state === 'on' : typeof pending === 'string' ? entity?.state : currentNumber(entity);
@@ -523,10 +546,21 @@ class EveusCard extends HTMLElement {
     // Home Assistant hands over a new hass on every state change anywhere — several a second.
     // Re-render only when this charger's entities, the minute, language or theme changed:
     // each render replaces the DOM, and a tap landing on a replaced button is lost.
+    // Home Assistant replaces a state object whenever that entity changes, so the same objects
+    // as last time mean nothing of ours changed: skip serialising ~90 entities for nothing.
+    const refs = this._stateRefs();
+    if (this._lastRefs && refs.length === this._lastRefs.length && refs.every((ref, i) => ref === this._lastRefs[i])) return;
+    this._lastRefs = refs;
     const signature = this._signature();
     if (signature === this._lastSignature) return;
     this._lastSignature = signature;
     this._render();
+  }
+  // This charger's state objects, plus what else a render reads, compared by identity.
+  _stateRefs() {
+    const states = this._hass.states;
+    return [...Object.values(this._ids || {}).map((id) => states[id]), this._resolved, this._nowHM(),
+      this._hass.locale?.language, this._hass.themes?.darkMode];
   }
   _signature() {
     const states = this._hass.states;
@@ -535,7 +569,7 @@ class EveusCard extends HTMLElement {
   }
   connectedCallback() {
     this._resizeObserver?.observe(this);
-    this._lastSignature = null;
+    this._lastSignature = this._lastRefs = null;
     if (this._hass) this.hass = this._hass;
   }
   disconnectedCallback() {
@@ -577,6 +611,7 @@ class EveusCard extends HTMLElement {
       const result = await this._hass.callWS(msg);
       if (generation !== this._generation) return;
       this._ids = result.entities;
+      this._deviceId = result.device_id;
     } catch {
       if (generation !== this._generation) return;
       this._ids = null;
@@ -1268,6 +1303,8 @@ class EveusCard extends HTMLElement {
   }
   _scheduleRow(n) {
     const t = this._t, p = `schedule_${n}`, name = t.schedule(n), on = this._limitOn(`${p}_enabled`);
+    // REVE: the days of the week, as last read or as just tapped.
+    const days = this._reveSchedules?.[n - 1] && this._shows('schedules', 'days') ? this._dayPending?.[n] ?? this._reveSchedules[n - 1].weekdays : null;
     const off = this._online ? '' : ' disabled';
     const time = (edge) => {
       const key = `${p}_${edge}`, value = this._timeShown(key);
@@ -1287,8 +1324,101 @@ class EveusCard extends HTMLElement {
     return `<div class="sched-row${on ? ' on' : ''}${this._scheduleNow(n) ? ' now' : ''}">
       <button class="sched-toggle" data-limit-toggle="${p}_enabled" role="switch" aria-checked="${on}" title="${name} — ${t.tapToggle}"${off}><ha-icon icon="mdi:calendar-clock"></ha-icon><b>${n}</b></button>
       <span class="sched-window${this._editingTime?.startsWith(`${p}_`) ? ' editing' : ''}" data-fit="17">${time('start')}<i class="sched-arrow">→</i>${time('stop')}</span>
+      ${days ? `<button class="sched-days-sum" data-days-edit="${n}" aria-expanded="${this._editingDays === n}" title="${name}: ${t.daysLabel}">${this._daysText(days)}</button>` : ''}
       <span class="sched-caps">${cap('current', 'mdi:current-ac', t.capCurrent, 'A')}${cap('energy', 'mdi:lightning-bolt', t.capEnergy, 'kWh')}</span>
+      ${days && this._editingDays === n ? this._daysRow(n, days) : ''}
     </div>`;
+  }
+  // A schedule's days in a word: every day, the working week, the weekend, or the days themselves.
+  _daysText(days) {
+    const t = this._t, key = [...days].sort((a, b) => a - b).join();
+    if (key === '0,1,2,3,4,5,6') return t.everyDay;
+    if (key === '1,2,3,4,5') return t.workdays;
+    if (key === '0,6') return t.weekends;
+    return WEEK.filter((d) => days.includes(d)).map((d) => t.days[d]).join(' ');
+  }
+  // ---- REVE: every schedule and its days, read over the integration's WebSocket. ----
+  get _wantsReveSchedules() { return !!this._ids?.reve_api && this._config.sections.includes('schedules') && typeof this._hass?.callWS === 'function'; }
+  _reveScheduleKey() {
+    return JSON.stringify([1, 2].flatMap((n) => ['enabled', 'start', 'stop'].map((f) => this._state(`schedule_${n}_${f}`)?.state ?? null))
+      .concat(this._state('reve_api')?.state ?? null));
+  }
+  _daysRow(n, days) {
+    const t = this._t, off = this._online ? '' : ' disabled';
+    return `<span class="sched-days" role="group" aria-label="${t.schedule(n)}: ${t.daysLabel}">${WEEK.map((d) => {
+      const on = days.includes(d);
+      return `<button class="sched-day${on ? ' on' : ''}" data-weekday="${n}:${d}"${off} aria-pressed="${on}">${t.days[d]}</button>`;
+    }).join('')}</span>`;
+  }
+  // Schedules 3-8 have no entities: shown as they are, changed in the charger's app.
+  _extraScheduleRow(item, n) {
+    const cap = Number.isFinite(item.current_limit) ? `<span class="sched-cap">${item.current_limit}<small>A</small></span>` : '';
+    return `<div class="sched-row extra${item.enabled ? ' on' : ''}" title="${esc(item.name || this._t.schedule(n))}">
+      <span class="sched-num"><ha-icon icon="mdi:calendar-clock"></ha-icon><b>${n}</b></span>
+      <span class="sched-window">${clock(item.start)}<i class="sched-arrow">→</i>${clock(item.end)}</span>
+      ${this._daysSum(item.weekdays)}
+      <span class="sched-caps">${cap}</span>
+    </div>`;
+  }
+  // REVE's tariffs, shown as they are and changed in the charger's app; the price per kWh in
+  // the currency Active Rate Cost reports.
+  _rateRow(rate) {
+    const unit = String(this._state('active_rate_cost')?.attributes?.unit_of_measurement || '').replace(/^[A-Z]{3}(?=\/|$)/, (code) => CURRENCY[code] || code);
+    const price = Number.isFinite(rate.price) ? `<span class="sched-cap">${rate.price.toFixed(2)}${unit ? ` ${unit}` : ''}</span>` : '';
+    return `<div class="sched-row rate${rate.enabled ? ' on' : ''}" title="${esc(rate.name || this._t.tariff)}">
+      <span class="sched-num"><ha-icon icon="mdi:cash-clock"></ha-icon></span>
+      <span class="sched-window">${clock(rate.start)}<i class="sched-arrow">→</i>${clock(rate.end)}</span>
+      ${this._daysSum(rate.weekdays)}
+      <span class="sched-caps">${price}</span>
+    </div>`;
+  }
+  // Read-only days: the word, no buttons.
+  _daysSum(days) {
+    return Array.isArray(days) && days.length && this._shows('schedules', 'days') ? `<span class="sched-days-sum">${this._daysText(days)}</span>` : '';
+  }
+  async _fetchReveSchedules() {
+    const generation = this._generation;
+    this._reveBusy = true;
+    this._reveAt = Date.now();
+    this._reveKey = this._reveScheduleKey();
+    const device = this._config.device_id || this._deviceId;
+    let result = null;
+    try {
+      result = await this._hass.callWS({type: 'eveus/reve_schedules', ...(device ? {device_id: device} : {})});
+    } catch { /* kept as unknown: the rows show without days */ }
+    if (generation !== this._generation) return;
+    this._reveBusy = false;
+    this._reveSchedules = result?.reve && Array.isArray(result.schedules) ? result.schedules : null;
+    this._reveRates = result?.reve && Array.isArray(result.rates) ? result.rates : null;
+    this._lastSignature = this._lastRefs = null;
+    if (this._hass) this.hass = this._hass;
+  }
+  async _toggleWeekday(spec) {
+    const [n, day] = spec.split(':').map(Number);
+    const item = this._reveSchedules?.[n - 1];
+    if (!item || !this._online) return;
+    const days = this._dayPending?.[n] ?? item.weekdays;
+    const next = days.includes(day) ? days.filter((d) => d !== day) : [...days, day].sort((a, b) => a - b);
+    // REVE needs at least one day; the last one stays.
+    if (!next.length) { haptic('warning'); return; }
+    const token = (this._dayToken = (this._dayToken || 0) + 1);
+    this._dayPending = {...this._dayPending, [n]: next};
+    haptic('selection');
+    this._render();
+    const device = this._config.device_id || this._deviceId;
+    try {
+      const result = await this._hass.callWS({type: 'eveus/reve_schedule_weekdays', ...(device ? {device_id: device} : {}), schedule: n, weekdays: next});
+      const written = Array.isArray(result?.weekdays) ? result.weekdays : next;
+      this._reveSchedules = this._reveSchedules.map((s, i) => i === n - 1 ? {...s, weekdays: written} : s);
+    } catch {
+      this._showError(true);
+    }
+    // A later tap on the same schedule owns the pin now.
+    if (token === this._dayToken) {
+      const {[n]: _done, ...rest} = this._dayPending;
+      this._dayPending = rest;
+    }
+    this._render();
   }
   // Home Assistant's own clock and zone: the card must not trust the phone's.
   _nowHM(offsetSeconds = 0) { return this._hm(new Date(Date.now() + offsetSeconds * 1000)); }
@@ -1333,10 +1463,16 @@ class EveusCard extends HTMLElement {
   get _schedulesIgnored() { return this._ignoring && this._schedulesShown().some((n) => this._limitOn(`schedule_${n}_enabled`)); }
   _schedulesSection() {
     const t = this._t;
-    const rows = this._schedulesShown().map((n) => this._scheduleRow(n)).join('');
+    // Only what the owner has set up: REVE keeps empty slots (off, 00:00-00:00, price 0).
+    const extra = this._shows('schedules', 'more') ? (this._reveSchedules || []).map((item, i) => i >= 2 && item.set !== false ? this._extraScheduleRow(item, i + 1) : '').join('') : '';
+    const rates = this._shows('schedules', 'rates') ? (this._reveRates || []).filter((rate) => rate.set).map((rate) => this._rateRow(rate)).join('') : '';
+    const rows = this._schedulesShown().map((n) => this._scheduleRow(n)).join('') + extra + rates;
     if (!rows) return `<div class="message">${t.none.schedules}</div>`;
     const ignored = this._schedulesIgnored;
-    return `<section class="${['panel sched', ignored ? 'overridden' : '', this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.schedules}">${ignored ? this._override('schedules') : ''}${rows}</section>`;
+    const api = this._ids?.reve_api ? this._state('reve_api') : null;
+    const stale = this._online && api?.state === 'off' && api.last_changed
+      ? `<div class="override quiet" role="note"><ha-icon icon="mdi:lan-disconnect"></ha-icon><span>${t.reveStale(this._hm(new Date(api.last_changed)))}</span></div>` : '';
+    return `<section class="${['panel sched', ignored ? 'overridden' : '', this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.schedules}">${ignored ? this._override('schedules') : ''}${stale}${rows}</section>`;
   }
   // ---- One charge: the charger's "charge now" ignores every schedule and limit. ----
   get _oneCharge() { return this._online && !!this._ids?.one_charge && this._limitOn('one_charge'); }
@@ -1733,7 +1869,7 @@ class EveusCard extends HTMLElement {
       this._month = null;
     }
     this._monthBusy = false;
-    this._lastSignature = null;
+    this._lastSignature = this._lastRefs = null;
     if (this._hass) this.hass = this._hass;
   }
   // This month's and last month's names, in Home Assistant's zone and the card's language;
@@ -1777,9 +1913,10 @@ class EveusCard extends HTMLElement {
     if (haCard) {
       haCard.setAttribute('data-state', mood);
       if (light) haCard.setAttribute('data-theme', 'light'); else haCard.removeAttribute('data-theme');
-      haCard.innerHTML = body;
+      this._patch(haCard, body);
     } else {
       this.shadowRoot.innerHTML = `<style>${MODULAR_STYLE}</style><ha-card data-state="${mood}"${light ? ' data-theme="light"' : ''}>${body}</ha-card>`;
+      this._parts = null;
     }
     // The browser's top layer puts the question above every dashboard card: a fixed bar
     // still sits inside this card's stacking context, under the card below, which took the taps.
@@ -1795,6 +1932,25 @@ class EveusCard extends HTMLElement {
     if (el) { el.focus({preventScroll: true}); if (typeof el.select === 'function') el.select(); }
     // A tap on a schedule time opens the native picker straight away (still inside the tap).
     if (el && this._editingTime) try { el.showPicker?.(); } catch { /* not allowed here: the focused input is enough */ }
+  }
+  // Replace only the sections whose markup changed: a tap on a section that did not change
+  // lands on the button it was aimed at, and focus and scroll stay. Each part is compared with
+  // the markup it was last drawn from, not with the live node, which fitting has restyled.
+  // A part whose form control the user has moved is redrawn anyway, so a refused change never
+  // leaves its value showing.
+  _patch(haCard, body) {
+    if (typeof document === 'undefined') { haCard.innerHTML = body; this._parts = null; return; }
+    const template = document.createElement('template');
+    template.innerHTML = body;
+    const next = [...template.content.childNodes].filter((node) => node.nodeType === 1 || node.textContent.trim());
+    const html = next.map((node) => node.outerHTML ?? node.textContent);
+    const prev = [...haCard.childNodes];
+    if (!this._parts || this._parts.length !== next.length || prev.length !== next.length) {
+      haCard.replaceChildren(...next);
+    } else {
+      next.forEach((node, i) => { if (html[i] !== this._parts[i] || moved(prev[i])) prev[i].replaceWith(node); });
+    }
+    this._parts = html;
   }
   // Values share one column width across four tiles: shrink each reading only as
   // far as its own text needs, so a normal 85% stays big while a 1440-minute
@@ -2122,6 +2278,24 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 .sched-toggle b{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
 .sched-row.on .sched-toggle ha-icon{color:#fff;background:var(--h);box-shadow:0 0 8px color-mix(in srgb,var(--h) 45%,transparent)}
 .sched-row.on .sched-toggle b{color:var(--h)}
+.sched-row{flex-wrap:wrap}
+.sched-days{flex:1 0 100%;display:flex;gap:3px;padding:0 0 4px 4px}
+.sched-days-sum{flex:0 1 auto;min-width:0;min-height:0;height:28px;padding:0 6px;margin:0;border:0;border-radius:7px;background:transparent;font-family:inherit;font-size:12px;font-weight:600;line-height:28px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+button.sched-days-sum{background:var(--chip);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+button.sched-days-sum[aria-expanded=true]{color:var(--primary-text-color);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--h) 55%,transparent)}
+.sched-row.rate .sched-window{padding:0 2px;font-weight:750;font-variant-numeric:tabular-nums;color:var(--secondary-text-color)}
+.sched-row.rate.on .sched-window{color:var(--primary-text-color)}
+.sched-row.rate .sched-arrow,.sched-row.extra .sched-arrow{margin:0 4px}
+.sched-day{flex:1 1 0;min-width:0;min-height:0;height:26px;padding:0;margin:0;border:1px solid transparent;border-radius:7px;background:var(--chip);font-family:inherit;font-size:11.5px;font-weight:650;color:var(--secondary-text-color);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.sched-day.on{color:var(--primary-text-color);border-color:color-mix(in srgb,var(--h) 50%,transparent);background:color-mix(in srgb,var(--h) 24%,transparent)}
+.sched-day:disabled{cursor:default}
+.sched-num{flex:none;display:flex;align-items:center;gap:4px;height:38px;padding:0 4px 0 3px;color:var(--secondary-text-color)}
+.sched-num ha-icon{--mdc-icon-size:16px;box-sizing:content-box;padding:4px;border-radius:8px;color:var(--h);background:color-mix(in srgb,var(--h) 12%,transparent)}
+.sched-num b{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
+.sched-row.extra .sched-window{padding:0 2px;font-weight:750;font-variant-numeric:tabular-nums;color:var(--secondary-text-color)}
+.sched-row.extra.on .sched-window{color:var(--primary-text-color)}
+.sched-row.extra.on .sched-num b{color:var(--h)}
+.sched-cap{padding:0 6px;font-weight:700;font-variant-numeric:tabular-nums}
 .sched-row.now .sched-toggle ha-icon{animation:sched-now 2.6s ease-in-out infinite}
 @keyframes sched-now{0%,100%{box-shadow:0 0 4px color-mix(in srgb,var(--h) 40%,transparent)}50%{box-shadow:0 0 14px color-mix(in srgb,var(--h) 90%,transparent)}}
 .sched-window{display:flex;align-items:center;flex:1 1 auto;min-width:0;overflow:hidden}

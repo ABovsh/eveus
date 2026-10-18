@@ -33,6 +33,7 @@ from homeassistant.exceptions import (
     HomeAssistantError,
 )
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
@@ -60,6 +61,7 @@ from .const import (
     DEFAULT_SOC_CORRECTION,
 )
 from .common_network import EveusUnreachable, EveusUpdater
+from .reve import FAMILY_REVE
 from .issues import (
     BatteryLowTracker,
     ClockDriftTracker,
@@ -243,6 +245,8 @@ async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
             _LOGGER.warning("Eveus card was not registered: %s", type(err).__name__)
 
     websocket_api.async_register_command(hass, _ws_card_entities)
+    websocket_api.async_register_command(hass, _ws_reve_schedules)
+    websocket_api.async_register_command(hass, _ws_reve_schedule_weekdays)
     if hass.is_running:
         await _register_card()
     else:
@@ -282,6 +286,76 @@ def _ws_card_entities(
             connection.send_result(msg["id"], {"device_id": device_id, "entities": entities})
             return
     connection.send_error(msg["id"], "not_found", "No Eveus charger found")
+
+
+def _updater_for(hass: HomeAssistant, device_id: str | None) -> EveusUpdater | None:
+    """The loaded charger a card names by device, or the first one."""
+    device = dr.async_get(hass).async_get(device_id) if device_id is not None else None
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        data = getattr(entry, "runtime_data", None)
+        if data is None:
+            continue
+        if device_id is None or (device is not None and entry.entry_id in device.config_entries):
+            return data.updater
+    return None
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eveus/reve_schedules",
+        vol.Optional("device_id"): str,
+    }
+)
+@callback
+def _ws_reve_schedules(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Every REVE schedule with its days, for the card: asked for, never
+    published, so the recorder writes nothing for it."""
+    updater = _updater_for(hass, msg.get("device_id"))
+    if updater is None:
+        connection.send_error(msg["id"], "not_found", "No Eveus charger found")
+        return
+    connection.send_result(msg["id"], updater.reve_card_schedules())
+
+
+async def _async_reve_schedule_weekdays(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Set the days of REVE schedule 1 or 2 from the card."""
+    from .control_base import REVE_NOT_ANSWERING_MESSAGE
+    from .common_command import REVE_NOT_ANSWERING
+
+    updater = _updater_for(hass, msg.get("device_id"))
+    if updater is None:
+        connection.send_error(msg["id"], "not_found", "No Eveus charger found")
+        return
+    if updater.firmware_family != FAMILY_REVE:
+        connection.send_error(msg["id"], "not_supported", "Only REVE schedules have days of the week")
+        return
+    days = sorted(set(msg["weekdays"]))
+    if not days:
+        connection.send_error(msg["id"], "invalid_format", "A schedule needs at least one day")
+        return
+    if not await updater.send_command(f"sh{msg['schedule']}Weekdays", days):
+        message = (
+            REVE_NOT_ANSWERING_MESSAGE
+            if updater.last_command_failure == REVE_NOT_ANSWERING
+            else "The charger did not accept the days"
+        )
+        connection.send_error(msg["id"], "failed", message)
+        return
+    connection.send_result(msg["id"], {"weekdays": days})
+
+
+_ws_reve_schedule_weekdays = websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eveus/reve_schedule_weekdays",
+        vol.Optional("device_id"): str,
+        vol.Required("schedule"): vol.In((1, 2)),
+        vol.Required("weekdays"): [vol.All(int, vol.Range(min=0, max=6))],
+    }
+)(websocket_api.async_response(_async_reve_schedule_weekdays))
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:

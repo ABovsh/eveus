@@ -44,26 +44,26 @@ test('unanswered confirmation expires',()=>{
 });
 test('bounds update without a state change cancels unsafe confirmation',async()=>{
   const {card,slide,states,hass,calls}=setup(32);slide(24);
-  states['number.amps'].attributes.max=16;card.hass=hass;
+  states['number.amps']={...states['number.amps'],attributes:{...states['number.amps'].attributes,max:16}};card.hass=hass;
   assert.match(card.shadowRoot.innerHTML,/max="16"/);
   await card._confirm();assert.equal(calls.length,0);
 });
 test('offline or unavailable number cannot send a pending confirmation',async()=>{
   for(const id of ['sensor.state','number.amps']) {
-    const {card,slide,states,hass,calls}=setup();slide(14);states[id].state='unavailable';card.hass=hass;
+    const {card,slide,states,hass,calls}=setup();slide(14);states[id]={...states[id],state:'unavailable'};card.hass=hass;
     await card._confirm();slide(8);assert.equal(calls.length,0);assert.match(card.shadowRoot.innerHTML,/disabled/);
   }
 });
 test('missing bounds disable; fractional step is enforced',()=>{
-  const x=setup();delete x.states['number.amps'].attributes.max;x.card.hass=x.hass;x.slide(14);
+  const x=setup();{const {max:_max,...rest}=x.states['number.amps'].attributes;x.states['number.amps']={...x.states['number.amps'],attributes:rest};}x.card.hass=x.hass;x.slide(14);
   assert.equal(x.calls.length,0);assert.match(x.card.shadowRoot.innerHTML,/disabled/);
   const y=setup(16,.5);y.slide(10.2);assert.equal(y.card._draft,null);y.slide(10.5);assert.equal(y.card._asking,true);
 });
 test('actual-current tick shows only while charging with a non-zero current; draft does not replace it',()=>{
   const {card,states,hass,slide}=setup();slide(14);assert.match(card.shadowRoot.innerHTML,/title="Actual current 8.4 A"/);
-  states['sensor.amps'].state='0';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
-  states['sensor.amps'].state='unavailable';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
-  states['sensor.amps'].state='8.4';states['sensor.state'].state='Connected';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+  states['sensor.amps']={...states['sensor.amps'],state:'0'};card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+  states['sensor.amps']={...states['sensor.amps'],state:'unavailable'};card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+  states['sensor.amps']={...states['sensor.amps'],state:'8.4'};states['sensor.state']={...states['sensor.state'],state:'Connected'};card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
 });
 test('disconnect cancels confirmation and draft',async()=>{
   const {card,slide,calls}=setup();slide(14);card.disconnectedCallback();await card._confirm();assert.equal(calls.length,0);
@@ -98,7 +98,7 @@ test('module label stays Current and actual reading is only a scale marker',()=>
   const {card,states,hass}=setup();
   assert.match(card.shadowRoot.innerHTML,/class="mk"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML,/class="actual"/);
-  states['sensor.state'].state='unavailable';card.hass=hass;
+  states['sensor.state']={...states['sensor.state'],state:'unavailable'};card.hass=hass;
   assert.match(card.shadowRoot.innerHTML,/class="label">Current</);
 });
 
@@ -349,9 +349,9 @@ test('toggling ground protection uses the existing switch entity',async()=>{
 
 test('unknown readings show a dash with no color class',()=>{
   const {card,states,hass}=setupSafety();
-  states['sensor.box'].state='unknown';
-  states['sensor.ground'].state='unavailable';
-  states['switch.protection'].state='unavailable';
+  states['sensor.box']={...states['sensor.box'],state:'unknown'};
+  states['sensor.ground']={...states['sensor.ground'],state:'unavailable'};
+  states['switch.protection']={...states['switch.protection'],state:'unavailable'};
   card.hass=hass;
   const html=card.shadowRoot.innerHTML;
   assert.match(html,/safety-value ">—°/);
@@ -361,8 +361,8 @@ test('unknown readings show a dash with no color class',()=>{
 
 test('a reading the firmware does not provide is hidden while the charger answers (REVE: plug, leakage)',()=>{
   const {card,states,hass}=setupSafety();
-  states['sensor.plug'].state='unavailable';
-  states['sensor.leak'].state='unavailable';
+  states['sensor.plug']={...states['sensor.plug'],state:'unavailable'};
+  states['sensor.leak']={...states['sensor.leak'],state:'unavailable'};
   card.hass=hass;
   const html=card.shadowRoot.innerHTML;
   assert.doesNotMatch(html,/data-more-info="plug_temperature"/);
@@ -375,7 +375,7 @@ test('a reading the firmware does not provide is hidden while the charger answer
 
 test('while the charger is away every safety item stays in place, dashed',()=>{
   const {card,states,hass}=setupSafety({online:false});
-  for (const id of ['sensor.box','sensor.plug','sensor.leak']) states[id].state='unavailable';
+  for (const id of ['sensor.box','sensor.plug','sensor.leak']) states[id]={...states[id],state:'unavailable'};
   card.hass=hass;
   const html=card.shadowRoot.innerHTML;
   for (const key of ['box_temperature','plug_temperature','leakage_current']) assert.match(html,new RegExp(`data-more-info="${key}"`));
@@ -1083,10 +1083,10 @@ test('schedule predictions follow the charger clock and stop when its drift is u
   x.card.hass=x.hass;
   assert.match(rowOf(x.html(),1),/^ on now"/);
   assert.ok(offsets.includes(120),'schedule clock uses measured drift');
-  x.states['sensor.drift'].state='600';x.card.hass=x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'600'};x.card.hass=x.hass;
   assert.doesNotMatch(rowOf(x.html(),1),/^ on now"/);
   assert.doesNotMatch(x.html(),/status-note">Waiting for Schedule · from/);
-  x.states['sensor.drift'].state='unavailable';x.card.hass=x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'unavailable'};x.card.hass=x.hass;
   assert.doesNotMatch(rowOf(x.html(),1),/^ on now"/);
 });
 test('masonry size follows rendered height, with a section-based estimate before first paint',()=>{
@@ -1157,7 +1157,7 @@ test('updates keep the same ha-card and replace only what is inside it (a new ha
   const attrs = {}, inner = {html: ''};
   const haCard = {setAttribute:(k,v)=>{attrs[k]=v;}, removeAttribute:(k)=>{delete attrs[k];}, set innerHTML(v){inner.html=v;}, get innerHTML(){return inner.html;}};
   x.card.shadowRoot = {innerHTML:'<style>kept</style><ha-card></ha-card>', querySelector:(q)=>q==='ha-card'?haCard:null, querySelectorAll:()=>[], addEventListener(){}};
-  x.states['sensor.se'].state = '16'; x.card.hass = x.hass;
+  x.states['sensor.se']={...x.states['sensor.se'],state:'16'}; x.card.hass = x.hass;
   assert.equal(x.card.shadowRoot.innerHTML, '<style>kept</style><ha-card></ha-card>');
   assert.match(inner.html, /class="sl session"/);
   assert.equal(attrs['data-state'], 'charging');
@@ -1175,17 +1175,17 @@ test('an open picker (time zone, adaptive mode) is not re-rendered away by live 
   const x = setupAll({sections:['time','adaptive'], over:TIME});
   x.card._selectFocus('time_zone');
   const before = x.card.shadowRoot.innerHTML;
-  x.states['sensor.drift'].state = '30'; x.card.hass = x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'30'}; x.card.hass = x.hass;
   assert.equal(x.card.shadowRoot.innerHTML, before, 'frozen while the list is open');
   await x.card._selectOption('time_zone', '+2');
   assert.equal(JSON.stringify(x.calls.at(-1)), JSON.stringify(['select','select_option',{entity_id:'select.tz',option:'+2'}]));
   assert.match(x.html(), /\+30<small>s/, 'a choice ends the freeze');
   x.card._selectFocus('adaptive_mode'); x.card._selectBlur();
-  x.states['sensor.drift'].state = '60'; x.card.hass = x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'60'}; x.card.hass = x.hass;
   assert.match(x.html(), /\+1<small>min/, 'closing without a choice ends it too');
   x.card._selectFocus('adaptive_mode');
   for (const fn of [...x.timers.values()]) fn();
-  x.states['sensor.drift'].state = '0'; x.card.hass = x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'0'}; x.card.hass = x.hass;
   assert.match(x.html(), /time-drift good">0<small>s/, 'a forgotten focus times out');
 });
 
@@ -1523,10 +1523,10 @@ test('rejected numeric service displays an actionable error',async()=>{
 test('cancelled guard and changed switch cannot send a stale confirmation',async()=>{
   const x=setupLimits();
   await x.card._toggleLimit('limit_soc_enabled');
-  x.states['switch.soc'].state='off';
+  x.states['switch.soc']={...x.states['switch.soc'],state:'off'};
   await x.card._confirmGuard();
   assert.equal(x.calls.length,0);
-  x.states['switch.soc'].state='on';
+  x.states['switch.soc']={...x.states['switch.soc'],state:'on'};
   await x.card._toggleLimit('limit_soc_enabled');
   x.card.disconnectedCallback();
   await x.card._confirmGuard();
@@ -1895,7 +1895,7 @@ test('a scroll gesture cancels a slider drag, not an increase waiting for confir
 });
 test('Counters with only this month shown draw no empty tile grid', async () => {
   const x = setupAll({sections:['history'], hide:['history.total','history.counter_a','history.counter_b'], over:HISTORY});
-  x.card._month = {cur:12.3, prev:40}; x.card._lastSignature = null; x.card.hass = x.hass;
+  x.card._month = {cur:12.3, prev:40}; x.card._lastSignature = x.card._lastRefs = null; x.card.hass = x.hass;
   assert.match(x.html(), /hist-month/);
   assert.doesNotMatch(x.html(), /tiles undefined|class="tiles/);
 });
@@ -1934,4 +1934,147 @@ test('the folded One charge flag is its own item in the centred row, not text in
   const h = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('on')}}).html();
   assert.match(h, /<\/span><ha-icon class="override-flag"[^>]*><\/ha-icon><span class="fold-sum overridden"/);
   assert.doesNotMatch(h, /class="fold-sum[^"]*"[^>]*><ha-icon class="override-flag"/);
+});
+test('a hass update that replaced none of this charger\'s state objects is not even compared', () => {
+  // Home Assistant hands every card a new hass on any state change in the house; it replaces
+  // the state object of an entity that changed and keeps every other one.
+  const {card, states, hass} = setup();
+  let compared = 0;
+  const signature = card._signature.bind(card);
+  card._signature = () => { compared += 1; return signature(); };
+  card.hass = {...hass, states: {...states, 'light.kitchen': {state: 'on', attributes: {}}}};
+  assert.equal(compared, 0);
+  card.hass = {...hass, states: {...states, 'sensor.amps': {state: '9.1', attributes: {}}}};
+  assert.equal(compared, 1);
+  assert.match(card.shadowRoot.innerHTML, /9.1 A/);
+});
+
+// ---- REVE: every schedule with its days of the week, read over the integration's WebSocket ----
+const reveSchedules = () => ({reve: true, read_age_seconds: 12, base_rate: 4.32, schedules: [
+  {name: 'Night', start: 1380, end: 420, weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: true, current_limit: 16, set: true},
+  {name: '', start: 540, end: 1080, weekdays: [1, 2, 3, 4, 5], enabled: false, current_limit: null, set: true},
+  {name: 'Weekend', start: 600, end: 720, weekdays: [0, 6], enabled: true, current_limit: 10, set: true},
+  {name: 'Schedule 4', start: 0, end: 0, weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: false, current_limit: null, set: false},
+], rates: [
+  {name: 'Night', start: 1380, end: 420, weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: true, price: 2.16, set: true},
+  {name: 'Rate 2', start: 0, end: 0, weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: false, price: 0, set: false},
+  {name: 'Peak', start: 480, end: 660, weekdays: null, enabled: false, price: 6.5, set: true},
+]});
+const reve = (over = {}) => plan({schedule_2_enabled: ['switch.s2', 'off'], schedule_2_start: ['time.s2a', '09:00:00'], schedule_2_stop: ['time.s2b', '18:00:00'],
+  reve_api: ['binary_sensor.api', 'on'], manual_mode: ['binary_sensor.manual', 'off'], ...over});
+async function setupReve({over = {}, hide, language, answer = reveSchedules} = {}) {
+  const x = setupAll({sections: ['schedules'], charging: false, over: reve(over), hide, language});
+  x.asked = [];
+  x.hass.callWS = async (msg) => { x.asked.push(msg); return typeof answer === 'function' ? answer(msg) : answer; };
+  x.card._deviceId = 'dev1';
+  await x.card._fetchReveSchedules();
+  return x;
+}
+test('REVE: the card asks for every schedule of its charger; classic firmware asks nothing', async () => {
+  const x = await setupReve();
+  assert.deepEqual(JSON.parse(JSON.stringify(x.asked)), [{type: 'eveus/reve_schedules', device_id: 'dev1'}]);
+  const classic = setupAll({sections: ['schedules'], charging: false, over: plan()});
+  const asked = [];
+  classic.hass.callWS = async (msg) => { asked.push(msg); return {}; };
+  classic.card._lastRefs = classic.card._lastSignature = null; classic.card.hass = classic.hass;
+  await Promise.resolve();
+  assert.equal(asked.filter((m) => m.type === 'eveus/reve_schedules').length, 0);
+});
+const openDays = (x, n) => x.card._onClick({target: {closest: (s) => s === '[data-days-edit]' ? {dataset: {daysEdit: String(n)}} : null}});
+test('REVE: each schedule row says its days in a word; a tap opens them for change', async () => {
+  const x = await setupReve();
+  assert.match(x.html(), /data-days-edit="1"[^>]*>Every day</);
+  assert.match(x.html(), /data-days-edit="2"[^>]*>Weekdays</);
+  assert.doesNotMatch(x.html(), /data-weekday=/, 'closed until asked');
+  openDays(x, 2);
+  assert.match(x.html(), /data-days-edit="2" aria-expanded="true"/);
+  assert.doesNotMatch(x.html(), /data-weekday="1:/);
+  openDays(x, 2);
+  assert.doesNotMatch(x.html(), /data-weekday=/, 'a second tap closes them');
+  const uk = await setupReve({language: 'uk'});
+  assert.match(uk.html(), /data-days-edit="1"[^>]*>Щодня</);
+  assert.match(uk.html(), /data-days-edit="2"[^>]*>Будні</);
+});
+test('REVE: the open days run Monday first; days that are off are not pressed', async () => {
+  const x = await setupReve();
+  openDays(x, 2);
+  const row2 = x.html().match(/data-weekday="2:\d"[^>]*>[^<]*/g);
+  assert.deepEqual(row2.map((b) => b.match(/>(.*)$/)[1]), ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']);
+  assert.match(x.html(), /data-weekday="2:1" aria-pressed="true"/);
+  assert.match(x.html(), /data-weekday="2:0" aria-pressed="false"/);
+  const uk = await setupReve({language: 'uk'});
+  openDays(uk, 1);
+  assert.match(uk.html(), /data-weekday="1:1"[^>]*>Пн</);
+  assert.match(uk.html(), /data-weekday="1:0"[^>]*>Нд</);
+});
+test('REVE: a tapped day shows at once and is written as the whole set', async () => {
+  let release;
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? new Promise((resolve) => { release = () => resolve({weekdays: msg.weekdays}); }) : reveSchedules()});
+  openDays(x, 2);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  assert.deepEqual(JSON.parse(JSON.stringify(x.asked.at(-1))), {type: 'eveus/reve_schedule_weekdays', device_id: 'dev1', schedule: 2, weekdays: [1, 2, 3, 4, 5, 6]});
+  assert.match(x.html(), /data-weekday="2:6" aria-pressed="true"/, 'painted while the write is still pending');
+  release(); await new Promise((r) => setImmediate(r));
+  assert.match(x.html(), /data-weekday="2:6" aria-pressed="true"/);
+});
+test('REVE: the last day of a schedule cannot be turned off', async () => {
+  const x = await setupReve({answer: () => ({...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [3]}]})});
+  await x.card._fetchReveSchedules();
+  const before = x.asked.length;
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '1:3'}} : null}});
+  assert.equal(x.asked.length, before);
+});
+test('REVE: a refused day change goes back and says so', async () => {
+  const x = await setupReve({answer: (msg) => { if (msg.type === 'eveus/reve_schedule_weekdays') throw new Error('failed'); return reveSchedules(); }});
+  openDays(x, 2);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  await new Promise((r) => setImmediate(r));
+  assert.match(x.html(), /data-weekday="2:6" aria-pressed="false"/);
+  assert.match(x.html(), /cmd-error/);
+});
+test('REVE: schedules beyond the second are listed read-only, with their days in words', async () => {
+  const x = await setupReve();
+  assert.match(x.html(), /class="sched-row extra on" title="Weekend"[^]*<b>3<\/b>[^]*10:00[^]*12:00[^]*<span class="sched-days-sum">Weekends<\/span>[^]*10<small>A/);
+  assert.doesNotMatch(x.html(), /data-weekday="3:|data-days-edit="3"/);
+});
+test('REVE: days other than a whole week, the working week or the weekend are listed', async () => {
+  const x = await setupReve({answer: () => ({...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [0, 2, 4]}]})});
+  assert.match(x.html(), /data-days-edit="1"[^>]*>Tu Th Su</);
+});
+test('Escape closes the open days', async () => {
+  const x = await setupReve();
+  openDays(x, 1);
+  x.card._onKeyDown({key: 'Escape', preventDefault() {}, target: {dataset: {}}});
+  assert.doesNotMatch(x.html(), /data-weekday=/);
+});
+test('REVE: days, the extra schedules and the tariffs can be hidden', async () => {
+  const x = await setupReve({hide: ['schedules.days', 'schedules.more', 'schedules.rates']});
+  assert.doesNotMatch(x.html(), /sched-day/);
+  assert.doesNotMatch(x.html(), /sched-row extra/);
+  assert.doesNotMatch(x.html(), /sched-row rate/);
+});
+test('REVE: an empty schedule slot is not listed', async () => {
+  const x = await setupReve();
+  assert.doesNotMatch(x.html(), /<b>4<\/b>/);
+  assert.doesNotMatch(x.html(), /title="Schedule 4"/);
+});
+test('REVE: the tariffs that are set are listed read-only with their price and days', async () => {
+  const x = await setupReve({over: {active_rate_cost: ['sensor.rate', 4.32, {unit_of_measurement: 'UAH/kWh', rate_name: 'Primary Rate'}]}});
+  const h = x.html();
+  assert.match(h, /class="sched-row rate on" title="Night"[^]*23:00[^]*07:00[^]*Every day[^]*2\.16 ₴\/kWh/);
+  assert.match(h, /class="sched-row rate" title="Peak"[^]*08:00[^]*11:00[^]*6\.50 ₴\/kWh/);
+  assert.doesNotMatch(h, /title="Rate 2"/);
+  assert.doesNotMatch(h, /class="sched-days?[ "]/, 'no day buttons on a tariff');
+  // None set up: nothing about tariffs at all.
+  const none = await setupReve({answer: () => ({...reveSchedules(), rates: reveSchedules().rates.map((r) => ({...r, set: false}))})});
+  assert.doesNotMatch(none.html(), /sched-row rate/);
+});
+test('REVE: while its interface does not answer, the schedules say they are the last read', async () => {
+  const x = await setupReve({over: {reve_api: ['binary_sensor.api', 'off']}});
+  x.states['binary_sensor.api'] = {...x.states['binary_sensor.api'], last_changed: '2026-10-18T11:35:00Z'};
+  x.card._lastRefs = x.card._lastSignature = null; x.card.hass = x.hass;
+  assert.match(x.html(), /class="override quiet" role="note"[^]*REVE interface not answering since \d\d:\d\d; showing the schedules last read/);
+  const ok = await setupReve();
+  assert.doesNotMatch(ok.html(), /not answering/);
 });
