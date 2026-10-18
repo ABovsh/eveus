@@ -20,6 +20,7 @@ from .utils import (
     calculate_remaining_time,
     calculate_soc_kwh,
     calculate_soc_percent,
+    price_energy_in_schedules,
     price_energy_over_tariffs,
 )
 from .const import (
@@ -572,9 +573,11 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
     While charging, the remaining grid energy is spread over time at the
     current power and each part priced at the tariff whose window it falls in
     (charger clock, `tarif{A,B}{Enable,Start,Stop,Value}`), so a charge that
-    runs into or out of a night rate is priced as it will be billed. Without
-    power, or when the window model cannot be trusted, everything is priced at
-    the active tariff (`activeTarif`).
+    runs into or out of a night rate is priced as it will be billed. Before
+    the charge, with a schedule on, the energy is placed in the schedule
+    windows the same way, since the charger draws only there. Otherwise, or
+    when the window model cannot be trusted, everything is priced at the
+    active tariff (`activeTarif`).
     """
 
     ENTITY_NAME = "Cost to Target SOC"
@@ -591,6 +594,18 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
     # recorder row nobody could see.
     _deadband = 1.0
 
+    def __init__(
+        self,
+        updater,
+        device_number: int = 1,
+        soc_calculator: CachedSOCCalculator | None = None,
+        *,
+        phases: int = 1,
+    ) -> None:
+        """Initialize; ``phases`` sizes a scheduled charge's power."""
+        super().__init__(updater, device_number, soc_calculator)
+        self._phases = phases
+
     def _get_sensor_value(self) -> Optional[float]:
         from .sensor_definitions import get_active_rate_cost
 
@@ -605,18 +620,17 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
         if rate is None:
             return None
         windowed = self._windowed_cost(remaining)
+        if windowed is None:
+            windowed = self._scheduled_cost(remaining)
         return round(remaining * rate if windowed is None else windowed, 2)
 
-    def _windowed_cost(self, remaining: float) -> Optional[float]:
-        """Remaining energy priced per tariff window, or None to stay flat."""
+    def _tariffs(self) -> Optional[tuple[int, int, tuple[float, float, float], dict[int, tuple[int, int]]]]:
+        """Charger clock, active index, rates and enabled windows, or None."""
         snap = self._updater.snapshot
-        if snap.session_active is not True:
-            return None
         clock = snap.charger_wall_clock_s
-        power = snap.get("powerMeas")
         active = snap.get("activeTarif")
         rates = tuple(snap.get(key) for key in ("tarif", "tarifAValue", "tarifBValue"))
-        if clock is None or not power or active is None or None in rates:
+        if clock is None or active is None or None in rates:
             return None
         windows = {}
         for index, prefix in ((1, "tarifA"), (2, "tarifB")):
@@ -626,13 +640,56 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
             if start is None or stop is None:
                 return None
             windows[index] = (start, stop)
+        return clock, active, tuple(rate / 100 for rate in rates), windows
+
+    def _windowed_cost(self, remaining: float) -> Optional[float]:
+        """Remaining energy priced per tariff window, or None to stay flat."""
+        snap = self._updater.snapshot
+        if snap.session_active is not True:
+            return None
+        power = snap.get("powerMeas")
+        tariffs = self._tariffs()
+        if not power or tariffs is None:
+            return None
+        clock, active, rates, windows = tariffs
         return price_energy_over_tariffs(
-            remaining,
-            power,
-            (clock % 86400) / 60,
-            active,
-            tuple(rate / 100 for rate in rates),
-            windows,
+            remaining, power, (clock % 86400) / 60, active, rates, windows
+        )
+
+    def _scheduled_cost(self, remaining: float) -> Optional[float]:
+        """Before the charge: the energy placed in the schedule windows, or None.
+
+        None whenever the charge would not wait for a schedule: none is on, One
+        Charge or REVE manual mode ignores them, or Stop holds the charger.
+        """
+        snap = self._updater.snapshot
+        if snap.session_active is not False or snap.get("oneCharge") == 1:
+            return None
+        if snap.get("evseEnabled") == 1 or getattr(self._updater, "reve_manual_mode", None):
+            return None
+        tariffs = self._tariffs()
+        current = snap.get("currentSet")
+        if tariffs is None or not current:
+            return None
+        clock, active, rates, windows = tariffs
+        volts = snap.get("voltMeas1") or 230
+        schedules = []
+        for n in (1, 2):
+            if snap.get(f"sh{n}Enabled") != 1:
+                continue
+            start, stop = snap.get(f"sh{n}Start"), snap.get(f"sh{n}Stop")
+            if start is None or stop is None:
+                return None
+            amps = current
+            cap = snap.get(f"sh{n}CurrentValue")
+            if snap.get(f"sh{n}CurrentEnable") == 1 and cap:
+                amps = min(amps, cap)
+            schedules.append((start, stop, amps * volts * self._phases))
+        # A quarter-hour grid: inside a window the estimate shifts as the
+        # window runs out, and a poll-by-poll drift would only be recorder rows.
+        minute = (clock % 86400) // 900 * 15
+        return price_energy_in_schedules(
+            remaining, minute, active, rates, windows, tuple(schedules)
         )
 
 

@@ -627,3 +627,80 @@ def price_energy_over_tariffs(
         left -= drawn
         now = day * _MINUTES_PER_DAY + edge
     return cost
+
+
+
+def price_energy_in_schedules(
+    energy_kwh: float,
+    minute_of_day: float,
+    active_index: int,
+    rates: tuple[float, float, float],
+    windows: dict[int, tuple[int, int]],
+    schedules: tuple[tuple[int, int, float], ...],
+) -> float | None:
+    """Cost of drawing ``energy_kwh`` only inside the schedule windows.
+
+    The charger charges while a schedule's window is open, so from
+    ``minute_of_day`` on the energy is placed in ``schedules`` (start, stop,
+    power in W) and each part priced at the tariff in effect then; ``rates``
+    and ``windows`` are as in :func:`price_energy_over_tariffs`.
+
+    ``None`` when the model cannot be trusted, so the caller keeps the flat
+    active-rate price: no schedule, a schedule without length or power,
+    overlapping schedules (which one's current applies is unknown), or tariff
+    windows that :func:`price_energy_over_tariffs` would not trust either.
+    """
+    if not schedules or any(start == stop or power <= 0 for start, stop, power in schedules):
+        return None
+    for i, (a_start, a_stop, _a) in enumerate(schedules):
+        for b_start, b_stop, _b in schedules[i + 1:]:
+            if _in_window(a_start, b_start, b_stop) or _in_window(b_start, a_start, a_stop):
+                return None
+    # The tariff model, checked as for a running charge: an hour at a power
+    # high enough to finish there is priced only if the windows are trusted.
+    if price_energy_over_tariffs(1.0, 60000.0, minute_of_day, active_index, rates, windows) is None:
+        return None
+
+    def rate_at(minute: float) -> float:
+        for index, (start, stop) in windows.items():
+            if _in_window(minute % _MINUTES_PER_DAY, start, stop):
+                return rates[index]
+        return rates[0]
+
+    def power_at(minute: float) -> float:
+        for start, stop, power in schedules:
+            if _in_window(minute % _MINUTES_PER_DAY, start, stop):
+                return power
+        return 0.0
+
+    edges = sorted(
+        {edge for start, stop, _p in schedules for edge in (start, stop)}
+        | {edge for span in windows.values() for edge in span}
+    )
+
+    def segments(now: float, until: float):
+        """(minutes, power, rate) for each stretch between edges in [now, until)."""
+        while now < until:
+            day, within = divmod(now, _MINUTES_PER_DAY)
+            edge = next((e for e in edges if e > within), edges[0] + _MINUTES_PER_DAY)
+            end = min(until, day * _MINUTES_PER_DAY + edge)
+            yield end - now, power_at(now), rate_at(now)
+            now = end
+
+    # Every full day draws and costs the same; price those together, then walk
+    # the rest edge by edge (at most two days of edges).
+    day_energy = day_cost = 0.0
+    for minutes, power, rate in segments(0.0, _MINUTES_PER_DAY):
+        drawn = minutes * power / 60000
+        day_energy += drawn
+        day_cost += drawn * rate
+    days = int(energy_kwh // day_energy)
+    left = energy_kwh - days * day_energy
+    cost = days * day_cost
+    for minutes, power, rate in segments(minute_of_day, minute_of_day + 2 * _MINUTES_PER_DAY):
+        if left <= 0:
+            break
+        drawn = min(left, minutes * power / 60000)
+        cost += drawn * rate
+        left -= drawn
+    return cost

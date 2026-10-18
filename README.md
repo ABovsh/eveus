@@ -259,7 +259,10 @@ and charging losses, so it is as accurate as these inputs.
 
 **Time to Target SOC** and **Charging Finish Time** are estimates that change
 with charging power. **Energy to Target SOC** includes charging losses, and
-**Cost to Target SOC** follows the charger's tariff windows.
+**Cost to Target SOC** follows the charger's tariff windows. Before the
+charge starts, with a schedule on, it prices the energy in the schedule windows,
+where the charger will draw it: at 19:00 a charge that Schedule 1 runs from
+23:00 is priced at the night rate.
 
 Setting a target alone does not stop charging: turn on **Limit: SOC enabled**.
 Home Assistant sends that stop, so it must be running and able to reach the
@@ -459,7 +462,7 @@ What this means in practice:
 
 - **Adaptive Mode** has Off, Voltage and Auto; REVE has no Power option.
 - **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app. Their days of the week are changed on the card; the days set in the app are kept. The card also lists the other schedules and the tariffs that are set up in the app. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
-- **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. While REVE's third or fourth rate is in effect, it gives that rate's price; those rates have no entities of their own. **Cost to Target SOC** follows the first two rates' hours, not their days of the week.
+- **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. While REVE's third or fourth rate is in effect, it gives that rate's price; those rates have no entities of their own. **Cost to Target SOC** follows the first two rates' hours and the schedules' hours, not their days of the week.
 - **Counter A Cost** and **Counter B Cost** do not increase on REVE: the charger counts the energy of counters A and B, but not their cost. After a counter is reset its cost stays at 0; without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.

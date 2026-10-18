@@ -46,7 +46,9 @@ async def async_setup_entry(
             TimeToTargetSocSensor(updater, device_number, soc_calculator),
             ChargingFinishTimeSensor(updater, device_number, soc_calculator),
             EnergyToTargetSocSensor(updater, device_number, soc_calculator),
-            CostToTargetSocSensor(updater, device_number, soc_calculator),
+            CostToTargetSocSensor(
+                updater, device_number, soc_calculator, phases=runtime_data.phases
+            ),
         ]
 
     last_session_sensors = create_last_session_sensors(updater, device_number)
