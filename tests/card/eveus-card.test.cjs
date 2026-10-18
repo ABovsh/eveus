@@ -1759,10 +1759,13 @@ test('Manual mode notice: only when it is on, a schedule is on, and the charger 
   assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...MANUAL('on'), state:['sensor.state','unavailable']}}).html(), /class="override"/);
   assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED}}).html(), /class="override"/, 'a charger without the sensor says nothing');
 });
-test('One charge with manual mode on keeps its own notice and Turn off button', () => {
-  const h = setupAll({sections:['schedules'], over:{...SCHED, ...ONE('on'), ...MANUAL('on')}}).html();
-  assert.match(h, /One charge ignores the schedules[^]*data-status-toggle="one_charge"[^>]*>Turn off</);
-  assert.doesNotMatch(h, /REVE manual mode/);
+test('REVE One charge: the manual-mode notice, no Turn off (turning it off keeps manual mode)', () => {
+  // Anton, 18.10: on REVE One charge is manual mode; its Turn off brought neither schedules nor limits back.
+  const h = setupAll({sections:['schedules', 'limits'], over:{...SCHED, ...ONE('on'), ...MANUAL('on'), limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.match(h, /REVE manual mode ignores the schedules until the connector is replugged/);
+  assert.match(h, /REVE manual mode ignores the limits until the connector is replugged/);
+  assert.doesNotMatch(h, /One charge ignores|override-off|data-status-toggle="one_charge"/);
+  assert.match(h, /limit-tile active[^]*data-limit-toggle="limit_soc_enabled"/, 'Target SOC still works in manual mode');
 });
 test('Manual mode on: a folded Schedules row strikes the windows through and says why', () => {
   const x = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...MANUAL('on')}});

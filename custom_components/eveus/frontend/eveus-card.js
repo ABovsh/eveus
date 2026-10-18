@@ -880,11 +880,11 @@ class EveusCard extends HTMLElement {
     // One charge ignores the limits that are on: they read as suspended, like Disable all.
     // Manual mode ignores the charger's own limits only; Target SOC is stopped by Home Assistant.
     const ignored = !suspended && this._ignoring
-      && (this._oneCharge ? anyOn : items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle)));
+      && (this._oneChargeNote ? anyOn : items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle)));
     const closed = fold && !fold.open;
     // REVE takes a limit only while charging outside manual mode, so its limits are locked otherwise and a
     // note under the title says why and until when; a folded row keeps a short form with the full text as a tooltip.
-    const manualLock = !suspended && !this._oneCharge && this._manualMode;
+    const manualLock = !suspended && this._manualMode;
     const idleLock = !suspended && !this._ignoring && this._limitsLocked;
     const shortNote = (text, title) => `<small class="limits-note" title="${title}">${text}</small>`;
     const note = suspended ? ''
@@ -900,7 +900,7 @@ class EveusCard extends HTMLElement {
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
     const held = suspended || ignored;
-    const grid = !closed ? `${lockNote}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held && (suspended || this._oneCharge || item.key !== 'target_soc'), this._limitsLocked && item.key !== 'target_soc')).join('')}</div>` : '';
+    const grid = !closed ? `${lockNote}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held && (suspended || this._oneChargeNote || item.key !== 'target_soc'), this._limitsLocked && item.key !== 'target_soc')).join('')}</div>` : '';
     return `<section class="${['limits', this._online ? '' : 'off', fold && !fold.open ? 'folded' : ''].filter(Boolean).join(' ')}" aria-label="${t.aria.limits}">
       <div class="limits-head">${head}${disable}${fold ? this._foldChev('limits', fold.open) : ''}</div>${grid}
     </section>`;
@@ -1342,6 +1342,8 @@ class EveusCard extends HTMLElement {
   // REVE: the charger is in manual mode (Stop, or the app's "ignore schedule") until the connector is replugged.
   get _manualMode() { return this._online && !!this._ids?.manual_mode && this._limitOn('manual_mode'); }
   get _ignoring() { return this._oneCharge || this._manualMode; }
+  // REVE: One charge is manual mode, and turning it off keeps that mode, so its own notice and Turn off are classic-only.
+  get _oneChargeNote() { return this._oneCharge && !this._manualMode; }
   // REVE only (it has Manual Mode): a limit can be set, changed or switched while charging, outside manual mode.
   // REVE keeps a limit only for the current charge; a limit stop is no manual mode, so raising the limit resumes it.
   get _limitsLocked() { return this._online && !!this._ids?.manual_mode && (this._manualMode || !(this._charging || this._limitStopped)); }
@@ -1351,11 +1353,11 @@ class EveusCard extends HTMLElement {
     return LIMIT_STOPS.has(reason) || (reason === 'Waiting for Activation' && this._state('state')?.state === 'Charge Complete');
   }
   // One charge, while it is on, has the button; manual mode alone has nothing to turn off.
-  _overrideText(kind) { return (this._oneCharge ? this._t.oneOverrides : this._t.manualOverrides)[kind]; }
-  _overrideIcon() { return this._oneCharge ? 'mdi:lightning-bolt-circle' : 'mdi:hand-back-right'; }
+  _overrideText(kind) { return (this._oneChargeNote ? this._t.oneOverrides : this._t.manualOverrides)[kind]; }
+  _overrideIcon() { return this._oneChargeNote ? 'mdi:lightning-bolt-circle' : 'mdi:hand-back-right'; }
   _override(kind) {
     const t = this._t;
-    const off = this._oneCharge ? `<button class="override-off" data-status-toggle="one_charge" title="${t.oneTitle}">${t.turnOff}</button>` : '';
+    const off = this._oneChargeNote ? `<button class="override-off" data-status-toggle="one_charge" title="${t.oneTitle}">${t.turnOff}</button>` : '';
     return `<div class="override" role="note"><ha-icon icon="${this._overrideIcon()}"></ha-icon><span>${this._overrideText(kind)}</span>${off}</div>`;
   }
   _overrideFlag(kind) {
