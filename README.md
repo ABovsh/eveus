@@ -7,8 +7,9 @@
 
 **English** | [🇺🇦 Українська](README.uk.md)
 
-Home Assistant integration for **Eveus EV chargers**, including chargers on
-the new **REVE firmware**. Control the charging current, schedules and limits,
+Home Assistant integration for **Eveus EV chargers** (Energy Star), such as
+**Eveus Pro**,
+including chargers on the new **REVE firmware**. Control the charging current, schedules and limits,
 stop at a target battery level (SOC), and track energy and charging cost. The
 integration talks to the charger over your local network; no cloud account or
 internet access is needed. Install it from the **HACS default store**.
