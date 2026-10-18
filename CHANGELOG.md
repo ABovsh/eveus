@@ -14,6 +14,7 @@
 
 ### 🔧 Changed
 
+- **Cost to Target SOC before a scheduled charge uses the tariffs of the schedule windows.** It priced everything at the tariff in effect now, so at 19:00 a charge that Schedule 1 runs at night showed the day rate (235 ₴ instead of 118 ₴ in one case).
 - **The log warns about a password sent over HTTP only when a password is set,** and no longer suggests HTTPS, which the charger does not serve.
 - **REVE: a third fewer requests to the charger.** Schedules and tariffs come in the same request as the readings: 72 instead of 108 requests an hour while idle.
 - **REVE: the REVE API sensor turns off only when REVE's interface stops answering.** One missed reply turned it off for 30 seconds several times a day; it now takes two failed reads in a row.
