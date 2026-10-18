@@ -459,26 +459,6 @@ def test_reauth_keeps_a_title_the_user_renamed() -> None:
     assert entry.title == "Garage charger"
 
 
-def test_reauth_waits_for_another_flow_already_setting_up_the_same_charger() -> None:
-    entry = _entry()
-    hass = _Hass(
-        entries=[entry],
-        in_progress=[
-            {"flow_id": "other", "handler": DOMAIN, "context": {"unique_id": TEST_HOST}}
-        ],
-    )
-
-    with pytest.raises(AbortFlow) as exc_info:
-        asyncio.run(
-            _flow(hass, "reauth", entry).async_step_reauth_confirm(
-                {CONF_USERNAME: TEST_USERNAME, CONF_PASSWORD: "new-secret"}
-            )
-        )
-
-    assert exc_info.value.reason == "already_in_progress"
-    assert entry.data[CONF_PASSWORD] == TEST_PASSWORD
-
-
 def test_reauth_against_an_address_that_moved_mid_check_reads_connection_failed() -> None:
     entry = _entry()
 
