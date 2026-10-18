@@ -19,6 +19,8 @@
 - **REVE: a third fewer requests to the charger.** Schedules and tariffs come in the same request as the readings: 72 instead of 108 requests an hour while idle.
 - **REVE: the REVE API sensor turns off only when REVE's interface stops answering.** One missed reply turned it off for 30 seconds several times a day; it now takes two failed reads in a row.
 - **REVE: a setting REVE's interface did not answer says so.** The error asks to try again in a few minutes instead of saying the charger did not accept the change.
+- **Card: with nothing flowing, Meter is one slim voltage row** instead of zero power and current tiles.
+- **Card: the cost to go before a charge shows its price per kWh,** and the battery tile drops "from" until the SOC has moved.
 - **Card: the card redraws only the sections that changed,** so a tap during a charge is no longer lost to a redraw, and it does less work on each Home Assistant update.
 
 ### 🐛 Fixed

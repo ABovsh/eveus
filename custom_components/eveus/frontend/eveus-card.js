@@ -894,7 +894,8 @@ class EveusCard extends HTMLElement {
   }
   _limitsSection(fold = null) {
     const t = this._t;
-    if (!this._ids?.limit_disable_all) return `<div class="message">${t.none.limits}</div>`;
+    // REVE has no Limit: disable all, so any one limit switch is enough.
+    if (!['limit_disable_all', 'limit_energy_enabled', 'limit_time_enabled', 'limit_cost_enabled', 'limit_soc_enabled'].some((key) => this._ids?.[key])) return `<div class="message">${t.none.limits}</div>`;
     const suspended = this._limitOn('limit_disable_all');
     const items = [];
     // One Target SOC editor per card: when Advanced controls shows it, this tile keeps only the stop switch.
@@ -932,7 +933,7 @@ class EveusCard extends HTMLElement {
     const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
     const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
     // REVE has no Disable all: its switch is unavailable there, so there is no button.
-    const disable = (anyOn || suspended) && !this._unsupported('limit_disable_all') ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
+    const disable = (anyOn || suspended) && this._ids.limit_disable_all && !this._unsupported('limit_disable_all') ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
     const held = suspended || ignored;
@@ -1022,6 +1023,11 @@ class EveusCard extends HTMLElement {
     const w = on ? currentNumber(this._state('power')) : null;
     const a = on ? currentNumber(this._state('current')) : null;
     const vCls = v === null ? '' : v < VOLTAGE_LOW_V || v > VOLTAGE_HIGH_V ? 'bad' : '';
+    // Nothing flowing: power and current would be two zero tiles, so the voltage stands alone in a slim row.
+    if (on && w === 0 && a === 0 && v !== null && this._ids.voltage && this._shows('basic_info', 'voltage')) {
+      return `<section class="sl meter idle" aria-label="${t.aria.meter}"><ha-icon icon="mdi:sine-wave"></ha-icon><span class="label">${t.voltage}</span>
+        <div class="info-row"><button class="info-item" data-more-info="voltage" title="${t.voltage} — ${t.details}"><span class="${['info-value', vCls].filter(Boolean).join(' ')}">${Math.round(v)}<small>V</small></span></button></div></section>`;
+    }
     const item = (key, icon, label, value, cls = '') => this._ids[key] && this._shows('basic_info', key) ? `<button class="meter-item" data-more-info="${key}" title="${label} — ${t.details}">
         <span class="meter-head"><ha-icon icon="${icon}"></ha-icon>${label}</span><span class="${['meter-value', cls].filter(Boolean).join(' ')}" data-fit="24">${value}</span></button>` : '';
     const items = [
@@ -1098,12 +1104,16 @@ class EveusCard extends HTMLElement {
     const pc = (v) => v === null ? '—' : `${Math.round(v)}<small>%</small>`;
     const clamp = (v) => Math.max(0, Math.min(100, Math.round(v)));
     const stored = on ? currentNumber(this._state('soc_energy')) : null;
-    const batterySub = [initial === null ? '' : `${t.from} ${pc(initial)}`, stored === null ? '' : `≈${Number(stored.toFixed(stored < 100 ? 1 : 0))}<small>kWh</small>`].filter(Boolean).join('<i class="info-sep">·</i>');
+    // "from" only once the SOC has moved off the session's start: before that it repeats the big number.
+    const moved = initial !== null && (soc === null || Math.round(soc) !== Math.round(initial));
+    const batterySub = [moved ? `${t.from} ${pc(initial)}` : '', stored === null ? '' : `≈${Number(stored.toFixed(stored < 100 ? 1 : 0))}<small>kWh</small>`].filter(Boolean).join('<i class="info-sep">·</i>');
     const energy = et === null ? '' : `${Number(et.toFixed(et < 100 ? 1 : 0))}<small>kWh</small>`;
     const cost = ct === null ? '' : money(this._int(ct), this._state('cost_to_target_soc')?.attributes?.unit_of_measurement);
     const big = eta ?? (energy || '—');
     const toGo = (eta ? [energy, cost] : [cost]).filter(Boolean).join('<i class="info-sep">·</i>');
-    const goalSub = reached || !toGo ? '&nbsp;' : `${toGo} <span class="tile-note">${t.toGo}</span>`;
+    // Before the charge the cost also says its price per kWh: the tariffs the schedules will charge at.
+    const perKwh = !eta && ct !== null && et > 0 ? `<span class="per-kwh"><i class="info-sep">·</i>${money((ct / et).toFixed(2), this._state('cost_to_target_soc')?.attributes?.unit_of_measurement).replace('</small>', '/kWh</small>')}</span>` : '';
+    const goalSub = reached || !toGo ? '&nbsp;' : `<span class="nw">${toGo} <span class="tile-note">${t.toGo}</span></span>${perKwh}`;
     const base = on && soc !== null && initial !== null ? clamp(initial) : 0;
     const fill = on && soc !== null ? Math.max(0, clamp(soc) - base) : 0;
     return `<section class="${['panel soc', `soc-${color}`, on ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.battery}">
@@ -2112,7 +2122,7 @@ ha-card[data-state=paused]{--c:#f39c12}ha-card[data-state=fault]{--c:#e74c3c}ha-
 .sl,.limits,.panel{--h:#95a5a6;border-color:color-mix(in srgb,var(--h) 16%,transparent);
   background:linear-gradient(135deg,color-mix(in srgb,var(--h) 13%,transparent),color-mix(in srgb,var(--h) 3%,transparent) 65%)}
 .sl.status{--h:var(--c)}.sl.current{--h:#3498db}.sl.info.basic{--h:#f5c542}.limits{--h:#f39c12}
-.panel.adaptive{--h:#22c1c3}.panel.meter{--h:#f5c542}.panel.actions{--h:#95a5a6}.sl.safety{--h:#2ecc71}.sl.safety.safety-bad{--h:#e74c3c}
+.panel.adaptive{--h:#22c1c3}.panel.meter,.sl.meter{--h:#f5c542}.panel.actions{--h:#95a5a6}.sl.safety{--h:#2ecc71}.sl.safety.safety-bad{--h:#e74c3c}
 .panel.soc,.limits.controls{--h:#3498db}:is(.panel.soc,.limits.controls):is(.soc-low){--h:#e74c3c}:is(.panel.soc,.limits.controls):is(.soc-mid){--h:#f39c12}:is(.panel.soc,.limits.controls):is(.soc-high){--h:#2ecc71}:is(.panel.soc,.limits.controls):is(.soc-reached){--h:#a78bfa}:is(.panel.soc,.limits.controls):is(.soc-off){--h:#636e72}
 /* Icon badges: every section's lead icon sits in a tinted rounded square of its hue. */
 .sl>ha-icon,.limits-head>span ha-icon,.status-main>ha-icon,.panel-title>ha-icon{--mdc-icon-size:16px;box-sizing:content-box;padding:4px;border-radius:8px;color:var(--h,var(--c));
@@ -2159,6 +2169,7 @@ ha-card[data-state=charging] .sl.status>.status-main>ha-icon{animation:icon-glow
 .meter-value{display:block;max-width:100%;overflow:hidden;white-space:nowrap;font-size:24px;font-weight:800;line-height:1.15;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--primary-text-color)}
 .meter-value small{font-size:.58em;font-weight:600;margin-left:1px;color:var(--secondary-text-color)}
 .meter-value.bad{color:#e74c3c}
+.meter.idle .info-row{justify-content:flex-end}.meter.idle .info-value{font-size:17px;font-weight:800}.meter.idle .info-value.bad{color:#e74c3c}
 ha-card[data-state=charging] .meter-value:not(.bad){color:#2ecc71;text-shadow:0 0 12px color-mix(in srgb,#2ecc71 40%,transparent)}
 /* Session: one thin row under the meter. */
 .sl.session{gap:6px}.sl.session .info-item{flex:1;justify-content:flex-end}
@@ -2223,6 +2234,7 @@ ha-card[data-state=charging] .soc-fill{animation:icon-glow 2.6s ease-in-out infi
   .status-main{height:auto;min-height:28px}
   .status-note{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.15}
   .soc-tile .tile-sub{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.1}
+  .soc-tile .nw{white-space:nowrap}.soc-tile .per-kwh{display:block}.soc-tile .per-kwh .info-sep{display:none}
   .panel.actions:not([style]){grid-template-columns:repeat(2,minmax(0,1fr))}
   .panel.actions:not([style]) .act-btn:nth-child(3):last-child{grid-column:1/-1}
   .limits-grid.four,.limits-grid.three{grid-template-columns:repeat(2,minmax(0,1fr))}

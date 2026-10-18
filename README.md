@@ -159,9 +159,9 @@ browser or reset the app's frontend cache.
 | --- | --- |
 | **Status** | Charger state and why it is not charging |
 | **Buttons** | **OCPP**, **One charge** and **Stop** |
-| **Battery SOC** | Estimated SOC and where the session started; while charging, time left and finish time; energy and cost to target; **Advanced mode only** |
+| **Battery SOC** | Estimated SOC and where the session started; while charging, time left and finish time; energy and cost to target, and before the charge the price per kWh; **Advanced mode only** |
 | **SOC settings** | **Initial**, **Target**, **Capacity** and **Loss**; **Advanced mode only** |
-| **Meter** | Voltage, power and current |
+| **Meter** | Voltage, power and current; with nothing flowing, a slim voltage row |
 | **Current slider** | Charging current |
 | **Adaptive charging** | Adaptive Mode, its voltage threshold and current cap |
 | **Session** | Session energy, cost and time; with the car unplugged, the last session |

@@ -2078,3 +2078,34 @@ test('REVE: while its interface does not answer, the schedules say they are the 
   const ok = await setupReve();
   assert.doesNotMatch(ok.html(), /not answering/);
 });
+
+// ---- Not charging: the readings that carry nothing make room ----
+const IDLE_METER = {state:['sensor.state','Standby'], power:['sensor.power',0,{unit_of_measurement:'W'}], current:['sensor.cur',0,{unit_of_measurement:'A'}]};
+test('meter, nothing flowing: one slim voltage row instead of two zero tiles',()=>{
+  const x=setupAll({sections:['basic_info'],charging:false,over:IDLE_METER}).html();
+  assert.match(x,/class="sl meter idle"/);
+  assert.match(x,/data-more-info="voltage"[^]*>227<small>V/);
+  assert.doesNotMatch(x,/data-more-info="(power|current)"/);
+  assert.match(setupAll({sections:['basic_info'],charging:false,over:{...IDLE_METER,voltage:['sensor.voltage',200]}}).html(),/info-value bad"[^>]*>200/);
+});
+test('meter: any power or current, or a hidden voltage, keeps the three tiles',()=>{
+  assert.match(setupAll({sections:['basic_info']}).html(),/class="panel meter"/);
+  assert.match(setupAll({sections:['basic_info'],charging:false,over:{...IDLE_METER,current:['sensor.cur',2.1,{unit_of_measurement:'A'}]}}).html(),/class="panel meter"/);
+  assert.match(setupAll({sections:['basic_info'],charging:false,over:IDLE_METER,hide:['basic_info.voltage']}).html(),/class="panel meter"/);
+});
+test('battery tile: "from" only once the SOC has moved off where the session started',()=>{
+  const still=setupAll({sections:['advanced_info'],charging:false,over:{soc_percent:['sensor.soc',25.2,{unit_of_measurement:'%'}]}}).html();
+  assert.doesNotMatch(still,/from 25/);
+  assert.match(setupAll({sections:['advanced_info']}).html(),/from 25<small>%/);
+});
+test('to go before the charge: the cost with its price per kWh',()=>{
+  const idle=setupAll({sections:['advanced_info'],charging:false}).html();
+  assert.match(idle,/<span class="nw">114<small>₴<\/small> <span class="tile-note">to go<\/span><\/span><span class="per-kwh"><i class="info-sep">·<\/i>4\.32<small>₴\/kWh<\/small><\/span>/);
+  assert.doesNotMatch(setupAll({sections:['advanced_info']}).html(),/₴\/kWh/);
+});
+test('limits without Limit: disable all (REVE does not create it): the limits are there, the disable-all button is not',()=>{
+  const x=setupAll({sections:['limits'],charging:true,over:{limit_disable_all:null,limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.doesNotMatch(x,/No Eveus limit controls found/);
+  assert.match(x,/data-limit-toggle="limit_energy_enabled"/);
+  assert.doesNotMatch(x,/limit_disable_all/);
+});
