@@ -55,6 +55,7 @@ from .client import UPDATE_TIMEOUT_OBJ, fetch_json
 from .reve import (
     FAMILY_CLASSIC,
     FAMILY_REVE,
+    MAIN_ONLY_FIELDS,
     ReveApi,
     is_reve_payload,
     normalize_reve_payload,
@@ -327,6 +328,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def firmware_family(self) -> str:
         """``reve`` once this charger has identified as REVE, else ``classic``."""
         return FAMILY_REVE if self._reve_seen else FAMILY_CLASSIC
+
+    def page_event_sent(self, command: str) -> None:
+        """REVE: a setting only ``/main`` reports is read back on the next poll,
+        not up to five minutes later."""
+        if self._reve_seen and command in MAIN_ONLY_FIELDS:
+            self._reve.main_residue_stale()
 
     def reve_command_route(self, command: str) -> Callable[[Any], Any] | None:
         """The GraphQL write REVE needs for this command, or ``None`` for ``/pageEvent``."""

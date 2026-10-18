@@ -287,6 +287,25 @@ def test_the_main_only_fields_are_refreshed_every_five_minutes(monkeypatch: pyte
     assert data["suspendLimits"] == 0
 
 
+@pytest.mark.parametrize("value", [0, 1])
+def test_a_main_only_setting_written_through_page_event_is_read_back_next_poll(
+    monkeypatch: pytest.MonkeyPatch, value: int
+) -> None:
+    # Seen 18.10 10:17: Limit: disable all switched on, then showed off again
+    # 20 s later, because the next polls kept the five-minute-old /main value.
+    _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    charger.main["suspendLimits"] = 1 - value
+    updater._reve._residue_tried_at = None
+    asyncio.run(updater._async_update_data())
+
+    assert asyncio.run(updater._command_manager.send_command("suspendLimits", value)) is True
+    charger.main["suspendLimits"] = value
+
+    assert asyncio.run(updater._async_update_data())["suspendLimits"] == value
+
+
 def test_a_failed_refresh_of_them_never_fails_the_poll(monkeypatch: pytest.MonkeyPatch) -> None:
     now = _clock(monkeypatch)
     charger = _Charger(_reve_main())

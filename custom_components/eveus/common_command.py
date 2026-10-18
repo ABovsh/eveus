@@ -230,5 +230,8 @@ class CommandManager:
             timeout=_COMMAND_TIMEOUT_OBJ,
             fields=fields,
         )
+        sent = getattr(self._updater, "page_event_sent", None)
+        if sent is not None:
+            sent(command)
         self._consecutive_failures = 0
         return True
