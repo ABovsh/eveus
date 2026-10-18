@@ -1816,6 +1816,11 @@ test('REVE stopped by a limit outside manual mode: limits can be raised or switc
   }
   const manual = setupAll({sections:['limits'], charging:false, over:{...MANUAL('on'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason','Energy Limit Reached']}}).html();
   assert.ok(LOCKED(manual, 'limit_energy'), 'manual mode still locks them');
+  // After a raise REVE holds Charge Complete / Waiting for Activation until the car takes current again.
+  const raised = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], state:['sensor.state','Charge Complete'], not_charging_reason:['sensor.reason','Waiting for Activation']}}).html();
+  assert.doesNotMatch(raised, /data-limit-toggle="limit_energy_enabled"[^>]*disabled|data-limit-step="limit_energy"[^>]*disabled/, 'a raised limit stays open');
+  const waiting = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason','Waiting for Activation']}}).html();
+  assert.ok(LOCKED(waiting, 'limit_energy'), 'waiting before any charge stays locked');
   const done = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason','Charge Complete']}}).html();
   assert.ok(LOCKED(done, 'limit_energy'), 'a car that finished by itself does not unlock them');
 });

@@ -61,6 +61,7 @@ from .client import GraphQLError, post_graphql
 from .const import (
     CONNECTED_STATES,
     DEVICE_STATE_CHARGING,
+    DEVICE_STATE_COMPLETE,
     MAX_VALID_SYSTEM_TIME,
     PLUG_UNKNOWN_STATES,
 )
@@ -694,6 +695,10 @@ class ManualMode:
             self._on = True
 
 
+# REVE's subState while it holds a charge for an outside start: after a limit
+# stop, and after that limit is raised until the car takes current again.
+REVE_SUBSTATE_HELD: Final = 9
+
 # The session limits' number and on/off commands.
 LIMIT_COMMANDS: Final[frozenset[str]] = frozenset(
     key for limit in _LIMIT_WRITES for key in limit[:2]
@@ -710,6 +715,8 @@ def limit_refusal(
     pulled out, so a limit is touched only outside manual mode while the car
     is charging or a limit has stopped the charge (Anton's rule, 2026-10-18).
     A limit stop is no manual mode: raising the limit resumes the charge.
+    ``limit_reached`` also covers the 5/9 hold after such a raise, until the
+    car takes current again.
     """
     if command not in LIMIT_COMMANDS:
         return None
@@ -726,7 +733,8 @@ def snapshot_limit_refusal(command: str, snapshot: Any, manual_mode: ManualMode)
         command,
         snapshot.get_int("state"),
         manual_mode,
-        limit_reached=reached_limit(snapshot.get) is not None,
+        limit_reached=reached_limit(snapshot.get) is not None
+        or (snapshot.get_int("state") == DEVICE_STATE_COMPLETE and snapshot.get_int("subState") == REVE_SUBSTATE_HELD),
     )
 
 

@@ -430,6 +430,26 @@ def test_a_limit_that_stopped_the_charge_can_be_raised_or_switched_off(
     assert _send(updater, switch, 0) is True
 
 
+@pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
+def test_a_raised_limit_stays_open_until_the_charge_resumes(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
+) -> None:
+    # Seen 18.10 10:08: after the raise REVE holds 5/9 with the limit no longer
+    # reached for ~10 s, or for good when the car takes no current. The limit
+    # must still be changeable there, or a raise could not be undone.
+    charger, updater = _known_charging(monkeypatch)
+    _send(updater, command, value)
+    _send(updater, switch, 1)
+    asyncio.run(updater._async_update_data())
+    charger.station["stationSubState"] = 9
+    _set_state(charger, updater, 5)
+    assert updater.reve_manual_mode is False
+
+    assert updater.command_refusal(command) is None
+    assert _send(updater, command, value * 2) is True
+    assert _send(updater, switch, 0) is True
+
+
 def test_a_limit_entity_refuses_with_that_reason_and_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     from homeassistant.exceptions import HomeAssistantError
 

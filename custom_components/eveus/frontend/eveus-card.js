@@ -1345,7 +1345,11 @@ class EveusCard extends HTMLElement {
   // REVE only (it has Manual Mode): a limit can be set, changed or switched while charging, outside manual mode.
   // REVE keeps a limit only for the current charge; a limit stop is no manual mode, so raising the limit resumes it.
   get _limitsLocked() { return this._online && !!this._ids?.manual_mode && (this._manualMode || !(this._charging || this._limitStopped)); }
-  get _limitStopped() { return LIMIT_STOPS.has(this._state('not_charging_reason')?.state); }
+  // A limit stop, or REVE's hold after that limit is raised until the car takes current again.
+  get _limitStopped() {
+    const reason = this._state('not_charging_reason')?.state;
+    return LIMIT_STOPS.has(reason) || (reason === 'Waiting for Activation' && this._state('state')?.state === 'Charge Complete');
+  }
   // One charge, while it is on, has the button; manual mode alone has nothing to turn off.
   _overrideText(kind) { return (this._oneCharge ? this._t.oneOverrides : this._t.manualOverrides)[kind]; }
   _overrideIcon() { return this._oneCharge ? 'mdi:lightning-bolt-circle' : 'mdi:hand-back-right'; }
