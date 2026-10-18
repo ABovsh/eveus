@@ -376,9 +376,8 @@ def test_a_limit_is_not_set_or_switched_on_in_manual_mode_even_while_charging(
 def test_a_limit_that_is_on_is_locked_outside_a_charge_too(
     monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any, manual: bool
 ) -> None:
-    # Anton's rule (2026-10-18): no limit changes at all outside a normal
-    # charge, even after a limit stopped one; replugging the connector is how
-    # the next charge gets new limits.
+    # Outside a charge that no limit stopped (here: the car finished), and in
+    # manual mode, no limit can be touched (Anton's rule, 2026-10-18).
     charger, updater = _known_charging(monkeypatch)
     _send(updater, command, value)
     _send(updater, switch, 1)
@@ -400,8 +399,35 @@ def test_the_refusal_names_the_reason() -> None:
     assert reve.limit_refusal("energyLimit", 4, manual) is None
     assert reve.limit_refusal("currentSet", 2, manual) is None
     assert "only while the car is charging" in reve.limit_refusal("timeLimitS", 5, manual)
+    assert reve.limit_refusal("timeLimitS", 5, manual, limit_reached=True) is None
     manual.restore()
     assert "connector is replugged" in reve.limit_refusal("moneyLimit", charging.state, manual)
+    assert "connector is replugged" in reve.limit_refusal("moneyLimit", 5, manual, limit_reached=True)
+
+
+# The session figure REVE reports for each limit field, in the same units.
+_SESSION_FIGURE = {"energyLimit": "sessionEnergy", "timeLimit": "sessionTime", "costLimit": "sessionCost"}
+
+
+@pytest.mark.parametrize(("command", "switch", "field", "value", "read"), _LIMITS)
+def test_a_limit_that_stopped_the_charge_can_be_raised_or_switched_off(
+    monkeypatch: pytest.MonkeyPatch, command: str, switch: str, field: str, value: Any, read: Any
+) -> None:
+    # Measured 17.10 12:55 and 18.10 (Anton): a limit stop is no manual mode;
+    # raising the limit resumes charging until the new value (vendor: only a
+    # user's pause starts manual mode).
+    charger, updater = _known_charging(monkeypatch)
+    _send(updater, command, value)
+    _send(updater, switch, 1)
+    asyncio.run(updater._async_update_data())
+    charger.station["session"][_SESSION_FIGURE[field]] = charger.station["session"][field]
+    charger.station["stationSubState"] = 9
+    _set_state(charger, updater, 5)
+    assert updater.reve_manual_mode is False
+
+    assert updater.command_refusal(command) is None
+    assert _send(updater, command, value * 2) is True
+    assert _send(updater, switch, 0) is True
 
 
 def test_a_limit_entity_refuses_with_that_reason_and_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -149,7 +149,7 @@ const I18N = {
     faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
-    noneOn: 'none on', lockedIdle: 'change while charging', lockedIdleNote: 'REVE keeps limits only for a running charge: change them while the car is charging', lockedManual: 'manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
+    noneOn: 'none on', lockedIdle: 'change while charging', lockedIdleNote: 'REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it', lockedManual: 'manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
     slowCar: 'the car takes less', until: 'until',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
@@ -215,7 +215,7 @@ const I18N = {
     faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
-    noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedIdleNote: 'REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається', lockedManual: 'ручний режим', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
+    noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedIdleNote: 'REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт', lockedManual: 'ручний режим', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
     slowCar: 'авто приймає менше', until: 'до',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
@@ -341,6 +341,8 @@ const money = (value, rawUnit = 'UAH') => {
 const duration = (text) => typeof text === 'string' && /\d/.test(text) ? text.replace(/\s+/g, '') : null;
 // The existing card's working band for mains voltage: outside it the charger itself struggles.
 const VOLTAGE_LOW_V = 205, VOLTAGE_HIGH_V = 253;
+// Not Charging Reason states for a stop at a session limit.
+const LIMIT_STOPS = new Set(['Energy Limit Reached', 'Time Limit Reached', 'Cost Limit Reached']);
 
 const validateSectionSizes = (sizes) => {
   for (const [section, size] of Object.entries(sizes || {})) {
@@ -1341,7 +1343,9 @@ class EveusCard extends HTMLElement {
   get _manualMode() { return this._online && !!this._ids?.manual_mode && this._limitOn('manual_mode'); }
   get _ignoring() { return this._oneCharge || this._manualMode; }
   // REVE only (it has Manual Mode): a limit can be set, changed or switched while charging, outside manual mode.
-  get _limitsLocked() { return this._online && !!this._ids?.manual_mode && (this._manualMode || !this._charging); }
+  // REVE keeps a limit only for the current charge; a limit stop is no manual mode, so raising the limit resumes it.
+  get _limitsLocked() { return this._online && !!this._ids?.manual_mode && (this._manualMode || !(this._charging || this._limitStopped)); }
+  get _limitStopped() { return LIMIT_STOPS.has(this._state('not_charging_reason')?.state); }
   // One charge, while it is on, has the button; manual mode alone has nothing to turn off.
   _overrideText(kind) { return (this._oneCharge ? this._t.oneOverrides : this._t.manualOverrides)[kind]; }
   _overrideIcon() { return this._oneCharge ? 'mdi:lightning-bolt-circle' : 'mdi:hand-back-right'; }

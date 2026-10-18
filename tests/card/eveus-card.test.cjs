@@ -1789,24 +1789,35 @@ const ENERGY_OFF = {limit_energy_enabled:['switch.lee','off']};
 const LOCKED = (h, key) => /disabled/.test(h.match(new RegExp(`data-limit-toggle="${key}_enabled"[^>]*>`))[0])
   && [`data-limit-step="${key}" data-dir="-1"`, `data-limit-edit-trigger="${key}"`, `data-limit-step="${key}" data-dir="1"`]
     .every((attr) => /disabled/.test(h.match(new RegExp(`${attr}[^>]*>`))[0]));
-const IDLE_NOTE = /<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"><\/ha-icon><span>REVE keeps limits only for a running charge: change them while the car is charging<\/span><\/div>/;
+const IDLE_NOTE = /<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"><\/ha-icon><span>REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it<\/span><\/div>/;
 const MANUAL_NOTE = /<div class="override" role="note"><ha-icon icon="mdi:hand-back-right"><\/ha-icon><span>REVE manual mode ignores the limits until the connector is replugged; they can be changed after that<\/span><\/div>/;
 test('REVE idle: the charger limits are locked, Target SOC is not, and a note says why and when they work', () => {
   const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
   assert.match(h, IDLE_NOTE);
   for (const key of ['limit_energy', 'limit_time', 'limit_cost']) assert.ok(LOCKED(h, key), key);
   assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled|data-limit-step="target_soc"[^>]*disabled/, 'Target SOC is stopped by Home Assistant');
-  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається/);
+  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт/);
 });
 test('REVE idle, folded: the row says briefly when the limits work', () => {
   const h = setupAll({sections:['limits'], fold:true, charging:false, over:{...MANUAL('off'), ...ENERGY_OFF}}).html();
-  assert.match(h, /<small class="limits-note" title="REVE keeps limits only for a running charge: change them while the car is charging">change while charging<\/small>/);
+  assert.match(h, /<small class="limits-note" title="REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it">change while charging<\/small>/);
   assert.doesNotMatch(h, /class="override/);
 });
 test('REVE: a limit that is on is locked outside a charge too, and the note says why', () => {
   const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on']}}).html();
   assert.ok(LOCKED(h, 'limit_energy'));
   assert.match(h, IDLE_NOTE);
+});
+test('REVE stopped by a limit outside manual mode: limits can be raised or switched, no note', () => {
+  for (const reason of ['Energy Limit Reached', 'Time Limit Reached', 'Cost Limit Reached']) {
+    const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason', reason]}}).html();
+    assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled|data-limit-step="limit_energy"[^>]*disabled/, reason);
+    assert.doesNotMatch(h, /class="override|change while charging/, reason);
+  }
+  const manual = setupAll({sections:['limits'], charging:false, over:{...MANUAL('on'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason','Energy Limit Reached']}}).html();
+  assert.ok(LOCKED(manual, 'limit_energy'), 'manual mode still locks them');
+  const done = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason','Charge Complete']}}).html();
+  assert.ok(LOCKED(done, 'limit_energy'), 'a car that finished by itself does not unlock them');
 });
 test('REVE charging outside manual mode: every limit can be set and switched, no note', () => {
   for (const on of ['off', 'on']) {

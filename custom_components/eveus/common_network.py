@@ -57,8 +57,8 @@ from .reve import (
     FAMILY_REVE,
     ReveApi,
     is_reve_payload,
-    limit_refusal,
     normalize_reve_payload,
+    snapshot_limit_refusal,
 )
 from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
@@ -337,7 +337,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         ``None`` to send it (always, except REVE's session limits)."""
         if not self._reve_seen:
             return None
-        return limit_refusal(command, self._snapshot.get_int("state"), self._reve.manual_mode)
+        return snapshot_limit_refusal(command, self._snapshot, self._reve.manual_mode)
 
     @property
     def reve_api_answering(self) -> bool | None:

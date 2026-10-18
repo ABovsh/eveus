@@ -56,6 +56,7 @@ from typing import Any, Final
 
 import aiohttp
 
+from .charge_reason import reached_limit
 from .client import GraphQLError, post_graphql
 from .const import (
     CONNECTED_STATES,
@@ -699,21 +700,34 @@ LIMIT_COMMANDS: Final[frozenset[str]] = frozenset(
 )
 
 
-def limit_refusal(command: str, state: int | None, manual_mode: ManualMode) -> str | None:
+def limit_refusal(
+    command: str, state: int | None, manual_mode: ManualMode, *, limit_reached: bool = False
+) -> str | None:
     """Why a REVE session limit cannot be set, changed or switched now;
     ``None`` when it can, or for any other command.
 
     REVE ignores a limit in manual mode and drops it when the connector is
-    pulled out, so a limit is touched only while the car is charging outside
-    manual mode (Anton's rule, 2026-10-18), even after a limit stopped a charge.
+    pulled out, so a limit is touched only outside manual mode while the car
+    is charging or a limit has stopped the charge (Anton's rule, 2026-10-18).
+    A limit stop is no manual mode: raising the limit resumes the charge.
     """
     if command not in LIMIT_COMMANDS:
         return None
     if manual_mode.on:
         return "The charger is in REVE manual mode: limits can be changed after the connector is replugged"  # pragma: no mutate - message text
-    if state != DEVICE_STATE_CHARGING:
-        return "REVE limits can be changed only while the car is charging"  # pragma: no mutate - message text
+    if state != DEVICE_STATE_CHARGING and not limit_reached:
+        return "REVE limits can be changed only while the car is charging or a limit has stopped it"  # pragma: no mutate - message text
     return None
+
+
+def snapshot_limit_refusal(command: str, snapshot: Any, manual_mode: ManualMode) -> str | None:
+    """``limit_refusal`` for the charger as the last poll left it."""
+    return limit_refusal(
+        command,
+        snapshot.get_int("state"),
+        manual_mode,
+        limit_reached=reached_limit(snapshot.get) is not None,
+    )
 
 
 class ReveApi:
@@ -913,7 +927,7 @@ class ReveApi:
         await self._mutate({"iem": {field: 1}})
 
     def _require_limit_window(self, command: str) -> None:
-        reason = limit_refusal(command, self._updater.snapshot.get_int("state"), self.manual_mode)
+        reason = snapshot_limit_refusal(command, self._updater.snapshot, self.manual_mode)
         if reason is not None:
             raise ReveCommandUnsupported(reason)
 

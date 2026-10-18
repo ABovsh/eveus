@@ -300,8 +300,8 @@ and automations. For example, `input_number.ev_initial_soc` becomes
 
 Set **Limit: Time**, **Limit: Energy** or **Limit: Cost**, then turn on its
 enable switch. **Limit: disable all** suspends all limits, including SOC, and
-keeps their values. On REVE, limits can be changed only while charging; see
-[REVE limits](#limits-on-reve).
+keeps their values. On REVE, limits can be changed only while charging or
+stopped at a limit; see [REVE limits](#limits-on-reve).
 
 ### Schedules and adaptive charging
 
@@ -445,8 +445,8 @@ What this means in practice:
 
 #### Limits on REVE
 
-- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **while the car is charging and the charger is not in manual mode**. At other times the card locks them and says why, and Home Assistant refuses the change with the reason.
-- When a limit stops a charge, pull the connector out and plug it back in to charge again.
+- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **outside manual mode, while the car is charging or a limit has stopped the charge**. REVE keeps limits only for the current charge, so at other times the card locks them and says why, and Home Assistant refuses the change with the reason.
+- When a limit stops the charge, raise it to charge on: the charger resumes by itself and stops at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until the connector is pulled out.
 - Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value.
 - **Target SOC** can be changed at any time: Home Assistant does that stop. It works while **Limit: disable all** is off.
 

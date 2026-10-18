@@ -69,7 +69,7 @@
         "name": "Does the integration work with the new REVE firmware?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. The integration recognizes REVE firmware by itself and reads and writes its settings, schedules, tariffs and charging limits through REVE's own interface. Readings REVE does not report stay unavailable. In manual mode (the charger app's \u201cignore schedule\u201d, One Charge or Stop) the charger ignores schedules and limits until the connector is replugged. See the REVE section of the documentation."
+          "text": "Yes. The integration recognizes REVE firmware by itself and reads and writes its settings, schedules, tariffs and charging limits through REVE's own interface. Readings REVE does not report stay unavailable. In manual mode (the charger app's \u201cignore schedule\u201d, One Charge or Stop) the charger ignores schedules and limits until the connector is pulled out of the car. See the REVE section of the documentation."
         }
       },
       {
@@ -167,7 +167,7 @@
         <h3>Can Home Assistant estimate the EV battery state of charge?</h3>
         <p>Yes. In Advanced mode the integration estimates battery SOC, time to target, and expected finish time from charger data and the battery details you configure (initial SOC, battery capacity, correction factor).</p>
         <h3>Does the integration work with the new REVE firmware?</h3>
-        <p>Yes. The integration recognizes REVE firmware by itself and reads and writes its settings, schedules, tariffs and charging limits through REVE's own interface. Readings REVE does not report stay unavailable. In manual mode (the charger app's “ignore schedule”, One Charge or Stop) the charger ignores schedules and limits until the connector is replugged. See the REVE section of the documentation.</p>
+        <p>Yes. The integration recognizes REVE firmware by itself and reads and writes its settings, schedules, tariffs and charging limits through REVE's own interface. Readings REVE does not report stay unavailable. In manual mode (the charger app's “ignore schedule”, One Charge or Stop) the charger ignores schedules and limits until the connector is pulled out of the car. See the REVE section of the documentation.</p>
         <h3>Why does setup fail while the charger's web page works?</h3>
         <p>Chargers on older firmware (R3.01.x has been reported) can answer their web page normally but reply to the integration's API request in a way setup can't use. Update the charger firmware: message @energy_star on Telegram to get added to the charger support channel with the firmware files and instructions — then update through the Grizzl-E app or flash the downloaded file from the charger's web interface. The setup dialog shows the concrete failure reason, and the <a href="https://github.com/ABovsh/eveus#older-charger-firmware">troubleshooting guide</a> explains what to report if the firmware can't be updated.</p>
       </div>
