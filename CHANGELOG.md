@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.28.0 - 2026-10-18
+
+### ✨ New
+
+- **REVE firmware support.** REVE chargers are recognized automatically, and settings changed in Home Assistant stay in effect. [Details](README.md#reve-firmware)
+  - Readings, the session and settings go through REVE's own interface: **Charging Current**, the schedules (their days of the week are kept), **One Charge**, **Adaptive Mode**, **Undervoltage threshold**, **Minimum Voltage**, **Time Zone**, **Sync Time**, **Ground Protection** and the charging limits.
+  - **Stop Charging** and **One Charge** send REVE's own start/stop command. The tariff sensors and **Active Rate Cost** follow REVE's rates and their days of the week. **Not Charging Reason** shows **Waiting for Schedule** while a plugged-in car waits for a schedule.
+  - Readings REVE does not report, and **Limit: disable all**, which REVE drops within seconds, are unavailable; the card leaves them out. A diagnostic **REVE API** sensor shows when REVE's interface does not answer.
+- **Manual Mode (REVE).** After any Stop, **One Charge** or the app's "ignore schedule" start, REVE ignores its schedules and limits until the connector is pulled out of the car. A new binary sensor shows this mode, which the charger does not report: it follows the commands the integration sees or sends and keeps its state through a Home Assistant restart. While it is on, Schedules and Limits on the card say they are ignored.
+- **REVE limits can be changed only outside manual mode, while charging or stopped at a limit.** REVE keeps Time, Energy and Cost limits only for the current charge. The card locks them at other times and says why, and Home Assistant refuses the change with the reason. When a limit stops the charge, raise it or turn it off to charge on. Target SOC is not affected.
+- **The card tells you when One charge overrides your schedules and limits.** One charge makes the charger start at once and ignore every schedule and limit, so a schedule set while it is on seemed not to work. Schedules and Limits now say so in an amber note with a **Turn off** button (on REVE, the manual-mode note, since turning One charge off does not end that mode); the ignored schedule windows are struck through and the limits shown as suspended, also on a folded row.
+
+### 🔧 Changed
+
+- **Setup says why it cannot reach the charger.** When the address refuses the connection, the dialog says the device there is probably not the charger; when Home Assistant has no route to the address, it says the charger and Home Assistant must be on the same network. The error detail now names the system error, for example `ECONNREFUSED`.
+
+### 🐛 Fixed
+
+- **Confirm questions on the card can always be tapped.** Shown at the bottom of the screen, a question could sit under the next dashboard card, which took the tap; it now opens above every card.
+- **Charging finished reports the whole session.** A charge that stopped between two polls lost the energy, cost and time since the last one (0.28 instead of 0.30 kWh), in the event and in the Last Session sensors.
+- **A single missed reply no longer flashes every entity unavailable.** After one missed poll the charger is asked again in 15 seconds, inside the grace window, instead of a minute later, when the window was already closing.
+- **No false Leakage detected notice on REVE.** REVE reports raw sensor counts in place of the leakage current, which raised the notice on an idle charger. A notice raised before this update stays until you press **Ignore**.
+- **Card error messages no longer stay for good.** A refused or unconfirmed change is shown for 30 seconds or until tapped.
+- **Scrolling the page keeps a pending current increase.** A touch scroll over the card no longer cancels the Confirm button of a raised **Current**.
+- **While One charge is on, the card no longer predicts a schedule.** The battery section drops the schedule's energy estimate, the status no longer names the next start or blames a schedule's current limit for a slow charge, and no schedule glows as running.
+- **The schedule time picker is readable in light themes.**
+- **Escape closes every question on the card,** including a counter reset and a stop that asks first.
+- **The session tariff shows the currency symbol for every currency,** not only for UAH.
+- **Counters showing only this month draw no empty row.**
+- **The Stop button's state fits on narrow cards.** "Tap to resume" was cut off in a three-button row about 360 px wide.
+
 ## 4.27.0 - 2026-10-11
 
 ### ✨ New

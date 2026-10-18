@@ -1,0 +1,116 @@
+{
+    "data": {
+        "stationData": {
+            "ratesV2": {
+                "base": 0,
+                "rates": [
+                    {
+                        "enabled": false,
+                        "currentLimitEnabled": false,
+                        "start": 0,
+                        "end": 0,
+                        "value": 0,
+                        "name": "Rate 1",
+                        "weekdays": [
+                            0,
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6
+                        ]
+                    },
+                    {
+                        "enabled": false,
+                        "currentLimitEnabled": false,
+                        "start": 0,
+                        "end": 0,
+                        "value": 0,
+                        "name": "Rate 2",
+                        "weekdays": [
+                            0,
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6
+                        ]
+                    },
+                    {
+                        "enabled": false,
+                        "currentLimitEnabled": false,
+                        "start": 0,
+                        "end": 0,
+                        "value": 0,
+                        "name": "Rate 3",
+                        "weekdays": [
+                            0,
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6
+                        ]
+                    },
+                    {
+                        "enabled": false,
+                        "currentLimitEnabled": false,
+                        "start": 0,
+                        "end": 0,
+                        "value": 0,
+                        "name": "Rate 4",
+                        "weekdays": [
+                            0,
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6
+                        ]
+                    }
+                ]
+            },
+            "scheduleV2": [
+                {
+                    "enabled": false,
+                    "currentLimitEnabled": true,
+                    "start": 1380,
+                    "end": 420,
+                    "value": 16,
+                    "name": "Schedule 2",
+                    "weekdays": [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6
+                    ]
+                },
+                {
+                    "enabled": false,
+                    "currentLimitEnabled": true,
+                    "start": 540,
+                    "end": 1080,
+                    "value": 16,
+                    "name": "",
+                    "weekdays": [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6
+                    ]
+                }
+            ],
+            "chargingCommand": 1
+        }
+    }
+}

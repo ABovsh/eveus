@@ -16,6 +16,10 @@ all-absent across five back-to-back polls, so it is phased rather than random â€
 sampling more does not fix it). Fields the firmware may legitimately omit are
 named in `_OPTIONAL_FIELDS` with the reason; everything else is required.
 
+Each firmware family is compared with its own capture: REVE reports a
+different field set (and its GraphQL schedules and rates are read with the
+exact query the integration sends).
+
 Run it with:
     EVEUS_LIVE_HOST=192.168.3.39 .venv/bin/pytest tests/test_firmware_drift_live.py -v -m live
 """
@@ -27,7 +31,9 @@ from pathlib import Path
 
 import pytest
 
-FIXTURE = Path(__file__).parent / "fixtures" / "real_main_response.json"
+_FIXTURE_DIR = Path(__file__).parent / "fixtures"
+FIXTURE = _FIXTURE_DIR / "real_main_response.json"
+REVE_FIXTURE = _FIXTURE_DIR / "reve_main_response.json"
 
 HOST = os.environ.get("EVEUS_LIVE_HOST")
 PASSWORD = os.environ.get("EVEUS_PASS")
@@ -70,11 +76,18 @@ _OPTIONAL_FIELDS = frozenset({
 })
 
 
-def test_optional_fields_are_all_in_the_fixture() -> None:
+@pytest.mark.parametrize("fixture_path", [FIXTURE, REVE_FIXTURE], ids=["classic", "reve"])
+def test_optional_fields_are_all_in_the_fixture(fixture_path: Path) -> None:
     """An excuse for a field the fixture never had would hide a real gap."""
-    fixture = json.loads(FIXTURE.read_text())
+    fixture = json.loads(fixture_path.read_text())
     missing = sorted(_OPTIONAL_FIELDS - set(fixture))
     assert not missing, f"_OPTIONAL_FIELDS names fields the fixture lacks: {missing}"
+
+
+def _fixture_for(live: dict) -> Path:
+    from custom_components.eveus.reve import is_reve_payload
+
+    return REVE_FIXTURE if is_reve_payload(live) else FIXTURE
 
 
 @pytest.mark.live
@@ -88,7 +101,8 @@ def test_live_charger_field_set_matches_the_fixture() -> None:
     goes unknown. A new field is a capability nobody has looked at yet.
     """
     live = _fetch_live()
-    fixture = json.loads(FIXTURE.read_text())
+    fixture_path = _fixture_for(live)
+    fixture = json.loads(fixture_path.read_text())
     version = str(live.get("verFWMain", "?")).strip()
 
     dropped = sorted(set(fixture) - set(live) - _OPTIONAL_FIELDS)
@@ -97,12 +111,48 @@ def test_live_charger_field_set_matches_the_fixture() -> None:
     assert not dropped, (
         f"firmware {version} no longer reports {dropped} â€” every getter reading "
         f"those fields now returns None. Refresh "
-        f"tests/fixtures/real_main_response.json and fix the getters. (A field "
+        f"tests/fixtures/{fixture_path.name} and fix the getters. (A field "
         f"the firmware merely sends intermittently belongs in _OPTIONAL_FIELDS "
         f"with its reason, not in the fixture's required set.)"
     )
     assert not added, (
         f"firmware {version} reports new fields {added}. Refresh "
-        f"tests/fixtures/real_main_response.json; decide separately whether any "
+        f"tests/fixtures/{fixture_path.name}; decide separately whether any "
         f"of them is worth exposing."
     )
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not HOST, reason="set EVEUS_LIVE_HOST to run the live firmware-drift check"
+)
+def test_live_reve_graphql_schedules_and_rates_parse() -> None:
+    """On REVE, the integration's own GraphQL read must still parse."""
+    import urllib.request
+
+    from custom_components.eveus.reve import (
+        COMMAND_QUERY,
+        RATES_QUERY,
+        SCHEDULES_QUERY,
+        is_reve_payload,
+        parse_extras,
+    )
+
+    if not is_reve_payload(_fetch_live()):
+        pytest.skip("the live charger is not on REVE firmware")
+    station: dict = {}
+    for document in (SCHEDULES_QUERY, RATES_QUERY, COMMAND_QUERY):
+        body = json.dumps(
+            {"operationName": "StationData", "variables": {}, "query": document}
+        ).encode()
+        request = urllib.request.Request(
+            f"http://{HOST}/graphql",
+            data=body,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+            result = json.loads(response.read().decode("utf-8", "replace"))
+        station.update(result["data"]["stationData"])
+    extras = parse_extras({"stationData": station})
+    assert len(extras.schedules) >= 1

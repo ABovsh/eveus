@@ -1,14 +1,15 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.27.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.28.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
 **English** | [🇺🇦 Українська](README.uk.md)
 
 Home Assistant integration for **Eveus EV chargers** (Energy Star), such as
-**Eveus Pro**. Control the charging current, schedules and limits,
+**Eveus Pro**,
+including chargers on the new **REVE firmware**. Control the charging current, schedules and limits,
 stop at a target battery level (SOC), and track energy and charging cost. The
 integration talks to the charger over your local network; no cloud account or
 internet access is needed. Install it from the **HACS default store**.
@@ -20,7 +21,8 @@ internet access is needed. Install it from the **HACS default store**.
 
 **Contents:** [Install](#installation) · [Setup](#setup) · [First charge](#first-charge) ·
 [Card](#eveus-card) · [SOC](#battery-level-soc) · [Limits and schedules](#limits-schedules-and-cost) ·
-[Automations](#blueprints) · [Help](#troubleshooting) · [Entities](#entity-ids) · [Changelog](CHANGELOG.md)
+[Automations](#blueprints) · [REVE](#reve-firmware) · [Help](#troubleshooting) ·
+[Entities](#entity-ids) · [Changelog](CHANGELOG.md)
 
 ## Features
 
@@ -28,70 +30,76 @@ internet access is needed. Install it from the **HACS default store**.
 
 - Adjust current, allow or stop charging from dashboards and automations.
 - Enable one-charge mode and set time, energy and cost limits.
-- The integration checks that the charger accepts commands; Home Assistant shows errors.
+- The integration checks that the charger accepts each command; Home Assistant shows an error when it does not.
 
 ### 🔋 SOC and charging to a target
 
-- **Battery and finish-time estimates** account for battery capacity and charging losses; see energy and cost to target too.
-- **Initial SOC from your car sensor** is filled automatically when charging starts. The session calculation continues after pauses and Home Assistant restarts.
-- **Stop at your target SOC** by enabling its limit. The integration handles the stop: Home Assistant must be running and able to reach the charger.
+- **Battery and finish-time estimates** account for battery capacity and charging losses; energy and cost to the target are shown too.
+- **Initial SOC from your car's sensor** is filled in when charging starts. The estimate continues through pauses and Home Assistant restarts.
+- **Stop at your target SOC** by turning on its limit. Home Assistant sends the stop, so it must be running and able to reach the charger.
 
 All SOC features require **Advanced mode**. [Set up SOC →](#battery-level-soc)
 
 ### 💰 Energy and charging cost
 
-- **Costs from the charger** account for tariff changes during a session, including night-to-day rates.
-- **Consumption tracking** covers the current session, lifetime total and separately resettable A/B counters; view history in the Energy dashboard.
-- **Last-session summary** keeps energy, cost and duration available after Home Assistant restarts and while the charger is off.
+- **Costs from the charger** follow its tariffs, including a change from night to day rate during a session.
+- **Consumption tracking:** current session, lifetime total and two resettable counters, A and B; history in the Energy dashboard.
+- **Last-session summary:** energy, cost and duration stay available after Home Assistant restarts and while the charger is off.
 
 ### 📱 A ready-made card
 
-- **Readings and controls in one card,** built from sections you tick and reorder in the card editor: status, buttons, battery SOC and its settings, voltage, power and current, current slider, adaptive charging, session, limits, schedules, charger clock, counters and safety.
-- The card displays faults and asks before it stops a charge, raises the current or resets a counter.
-- A [ready-made dashboard](#dashboard) provides separate cards and graphs. [Add the Eveus card →](#eveus-card)
+- **Readings and controls in one card,** built from sections you tick and reorder in the card editor.
+- The card shows faults and asks before it stops a charge, raises the current or resets a counter.
+- A [ready-made dashboard](#dashboard) offers separate cards and graphs instead. [Add the Eveus card →](#eveus-card)
 
 ### 🧩 Automations
 
-- **Device triggers** cover car connection, charging start and finish, and charger errors.
-- **Data for your own automations** includes finished-session energy, cost and duration; reaching the SOC limit has a separate event.
-- **Two ready-made blueprints:** session notifications and stopping charging when your home inverter battery is low. [Import a blueprint →](#blueprints)
+- **Device triggers** for car connection, charging start and finish, and charger errors.
+- **Session data for your own automations:** energy, cost and duration of a finished session, and an event when the target SOC is reached.
+- **Two ready-made blueprints:** session notifications, and stopping charging when your home inverter battery is low. [Import a blueprint →](#blueprints)
 
 ### ⚡ Charger readings
 
-- **Voltage, current and power**, box and plug temperatures, ground status and leakage current; three-phase setups include individual phase current and voltage.
-- **Not Charging Reason** explains what is holding up charging: the car, a schedule, a limit or OCPP control.
+- **Voltage, current and power**, box and plug temperatures, ground status and leakage current; three-phase setups add each phase's current and voltage.
+- **Not Charging Reason** says what is holding charging up: the car, a schedule, a limit or OCPP.
 
 ### 🕒 Schedules and adaptive charging
 
-- **Two charging windows** with separate current and energy limits. Stored on the charger, they run independently of Home Assistant.
-- **Reduced current when mains voltage drops** is handled by the charger; the integration exposes the mode and threshold settings and shows the current cap.
+- **Two charging schedules** with their own current and energy limits. They are stored on the charger and run without Home Assistant.
+- **Lower current when mains voltage drops:** the charger does this; the integration sets the mode and threshold and shows the current cap.
+
+### 🔄 REVE firmware
+
+- **Recognized automatically:** no setup change after the charger updates to REVE.
+- **Reads and writes through REVE's local interface,** the one the charger's app uses: current, schedules with their days of the week, tariffs and limits.
+- **Manual Mode** sensor and card notes show when REVE ignores its schedules and limits. [More about REVE →](#reve-firmware)
 
 ### 🛡️ Faults and conflicting controls
 
-- **Repairs notices** explain ground faults, overheating, leakage and other problems, with suggested next steps.
-- **OCPP control and connection status** are available in Home Assistant. While OCPP is enabled, the integration warns that the server or app may change settings.
+- **Repairs notices** explain ground faults, overheating, leakage and other problems, with what to do next.
+- **OCPP control and connection status** in Home Assistant. While OCPP is on, a notice warns that the server or app may change settings.
 
-Also supported: **multiple chargers**, **English and Ukrainian**, automatic reconnection and older firmware within the capabilities of its available data.
+Also supported: **several chargers**, **English and Ukrainian**, and older firmware with fewer readings.
 
 ## Requirements
 
 | Requirement | Details |
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
-| Charger | Eveus 16A, 32A, 40A, or 48A charger reachable from Home Assistant |
-| Charger firmware | Verified on R3.05.x; [R3.01.x and 1.x](#older-charger-firmware) have fewer available readings |
-| Network | Local LAN access to the charger HTTP API |
-| Setup details | Charger IP/hostname or URL, username, password, model |
+| Charger | Eveus 16A, 32A, 40A or 48A, reachable from Home Assistant |
+| Charger firmware | Verified on R3.05.x and [REVE](#reve-firmware); [R3.01.x and 1.x](#older-charger-firmware) have fewer readings |
+| Network | Local network access to the charger's web interface |
+| Setup details | Charger IP address, hostname or URL; username, password and model |
 
 ## Installation
 
 ### HACS
 
-The integration is in the **HACS default store** — no custom repository needed.
+The integration is in the **HACS default store**; no custom repository is needed.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&repository=eveus&category=integration)
 
-Or find it in HACS:
+Or in HACS:
 
 1. Open **HACS** and search for **Eveus EV Charger**.
 2. Install it.
@@ -107,35 +115,43 @@ Or find it in HACS:
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=eveus)
 
 1. Go to **Settings → Devices & Services → Add Integration** and search for **Eveus EV Charger**.
-2. Enter the charger address — IP, hostname, or full URL (custom port, `http://`, and `https://` all work).
-3. Enter the username and password. These are the charger's own web-interface credentials, **not** your Home Assistant login.
-4. Pick the charger model: **16A**, **32A**, **40A**, or **48A**. Pick the one that matches your hardware — a mismatch stops the charger from reporting.
+2. Enter the charger address: IP, hostname or full URL (a custom port, `http://` and `https://` all work).
+3. Enter the username and password of the charger's own web interface, **not** your Home Assistant login.
+4. Pick the charger model: **16A**, **32A**, **40A** or **48A**. A model that does not match the hardware stops the charger from reporting.
 5. Pick the integration mode:
-   - **Basic** — charging control and monitoring only.
-   - **Advanced** — adds the SOC inputs and SOC/ETA sensors.
-6. **Advanced only:** a second screen asks for your EV's **battery capacity (kWh)** and **charging efficiency loss (%)**. Both can be changed later from the entities themselves.
+   - **Basic:** charging control and monitoring.
+   - **Advanced:** adds the SOC settings and SOC/finish-time sensors.
+6. **Advanced only:** a second screen asks for your car's **battery capacity (kWh)** and **charging efficiency loss (%)**. Both can be changed later from their entities.
 
 To change settings later, open the integration:
 
-- **Configure** — mode and optional car SOC sensor; first-time Advanced setup also asks for battery capacity and losses.
-- **Reconfigure** — address, credentials, model and phase count.
+- **Configure:** mode and the optional car SOC sensor.
+- **Reconfigure:** address, credentials, model and phase count.
 
 ## First charge
 
-1. Open the **Eveus EV Charger** device under **Settings → Devices & Services**. Check that **State** and **Voltage** have current values.
+1. Open the **Eveus EV Charger** device under **Settings → Devices & Services**. Check that **State** and **Voltage** show current values.
 2. Set **Charging Current** to suit your electrical installation.
-3. In Advanced mode, set **Initial SOC** to the car's current battery level or configure [automatic filling from the car](#filling-initial-soc-from-your-car-optional).
-4. Connect the car. **Stop Charging** must be off to allow charging. If the charger waits, check **Not Charging Reason**: a schedule, limit, the car or OCPP may be delaying the start.
-5. Check **State**, **Power** and **Session Energy**. To stop charging, turn on **Stop Charging**.
+3. In Advanced mode, set **Initial SOC** to the car's battery level, or let the integration [fill it from the car](#filling-initial-soc-from-your-car-optional).
+4. Plug the connector into the car. **Stop Charging** must be off. If the charger waits, **Not Charging Reason** says why: a schedule, a limit, the car or OCPP.
+5. Check **State**, **Power** and **Session Energy**. To stop charging, turn on **Stop Charging**. On REVE, a stop puts the charger in [manual mode](#manual-mode).
 
-For everyday use, add the [Eveus card](#eveus-card).
-Use the [ready-made dashboard](#dashboard) if you want separate cards and graphs.
+For everyday use, add the [Eveus card](#eveus-card), or the
+[ready-made dashboard](#dashboard) for separate cards and graphs.
 
 ## Eveus card
 
-The card is included with the integration. Each copy you add shows the
-sections you choose, in the order you choose, and follows your Home Assistant
-language (English or Ukrainian).
+The card comes with the integration. Each copy shows the sections you choose,
+in your order, in your Home Assistant language (English or Ukrainian).
+
+### How to add the card
+
+1. Restart Home Assistant after installing or updating the integration, then refresh the browser. In the mobile app: **Settings → Companion app → Troubleshooting → Reset frontend cache**, then restart the app.
+2. Open your dashboard → **Edit dashboard → Add card → Eveus EV Charger**.
+3. Tick the sections you want, reorder them with the arrows and **Save**. A section's settings icon hides single items, e.g. Schedule 2, and sets the section's size. Set **Charger** if you have several.
+
+If **Custom element doesn't exist** appears after an update, refresh the
+browser or reset the app's frontend cache.
 
 ### Sections
 
@@ -148,33 +164,21 @@ language (English or Ukrainian).
 | **Meter** | Voltage, power and current |
 | **Current slider** | Charging current |
 | **Adaptive charging** | Adaptive Mode, its voltage threshold and current cap |
-| **Session** | Session energy, cost and time |
-| **Limits** | Energy, time, cost and SOC limits, **Disable all** |
+| **Session** | Session energy, cost and time; with the car unplugged, the last session |
+| **Limits** | Energy, time, cost and SOC limits, **Disable all** (not on REVE) |
 | **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and energy limit |
 | **Charger clock** | Time Zone, Time Drift and **Sync Time** |
-| **Counters** | Total Energy, Counter A and Counter B, each with a reset |
+| **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy |
 | **Safety** | Box and plug temperature, ground, leakage current, connection quality |
 
-In Basic mode the two SOC sections are hidden, and Limits has no SOC limit.
-The card follows the integration mode; `mode: basic` simplifies it, while
-`mode: advanced` requires Advanced integration mode.
+In Basic mode the two SOC sections are hidden and Limits has no SOC limit.
+A reading the charger's firmware does not report is not shown.
 
-- **Warnings:** voltage is red below 205 V or above 253 V; temperatures are red from 80 °C and leakage current from 30 mA, the charger's own fault limits; Time Drift is red from 10 minutes, when Home Assistant raises its clock Repairs notice. Faults and reasons for not charging appear in **Status**.
-- **Offline:** shows the age of the last reading and disables controls.
-- **Folding:** a card with six or more sections shows SOC settings, Adaptive charging, Limits, Schedules and Counters as one-line summaries; tap one to open it. `fold: false` keeps them open.
-- **Size:** each section's settings icon sets its size. **Small** folds that section into one line on any card; **Normal** keeps it open on a folding card. **Large** shows bigger readings in Battery SOC, Meter, Session and Counters once the section shows two items or fewer. Adding more than two items returns a Large section to Normal.
-- **Hints:** a fault shows the reading behind it and what to do. While the charge runs below the set current, **Status** says why: adaptive mode, a schedule's current limit, or the car taking less. With the car plugged in and waiting for a schedule, the battery section shows how much energy that schedule can add. A charger clock that is off by whole hours gets a button for the matching time zone instead of **Sync**.
-- **Session and counters:** with the car unplugged, **Session** shows the last session and when it ended; plugged in, it shows the active tariff price. **Counters** add this month's and last month's energy from Home Assistant statistics.
-- **Interaction:** tap a reading to open its entity. Long-press the battery tile, or focus it and press Alt+Enter, to set Initial SOC; use the target tile the same way for Target SOC. To stop an active charge, tap **Stop** again within four seconds. Raising **Current** asks as well: tap the new value within four seconds to apply it; lowering it applies at once. With no charge running, **Stop** blocks charging until you tap it again. Resetting a counter, disabling ground protection or turning off a charging limit asks for confirmation. Clearing a numeric input cancels editing. A refused or unconfirmed change shows a message. In **Schedules**, tap a time to pick a new one, tap a limit's icon to turn it on or off, and tap its value to type a new one. A schedule's badge glows while the charger's clock places it in its window. The card omits that glow and the next-start time when Time Drift is unknown or at least 10 minutes.
-
-### How to add the card
-
-1. Restart Home Assistant after installing or updating the integration, then refresh your browser.
-2. Open your dashboard → **Edit dashboard → Add card → Eveus EV Charger**.
-3. Tick the sections you want, reorder them with the arrows, and **Save**. Tap a section's settings icon to hide single items, e.g. Schedule 2, or to set its size. **Default order** restores all sections. Set **Charger** if you have several; **Mode** and **Language** are optional.
-
-In the mobile app, refresh through **Settings → Companion app → Troubleshooting →
-Reset frontend cache**, then restart the app.
+- **Red values:** voltage below 205 V or above 253 V; temperature from 80 °C and leakage from 30 mA, where the charger's own protection trips; Time Drift from 10 minutes.
+- **Offline:** the card shows how old the last reading is and disables the controls.
+- **Folding:** a card with six or more sections shows SOC settings, Adaptive charging, Limits, Schedules and Counters as one-line rows; tap a row to open it. A section's size **Small** always folds it, **Normal** keeps it open, **Large** shows bigger readings in a section with two items or fewer.
+- **Hints:** a fault shows the reading behind it and what to do. **Status** says why the charge runs below the set current. While **One charge** is on, Schedules and Limits say it ignores them, with a **Turn off** button. On REVE, One charge starts [manual mode](#manual-mode), so they show the manual-mode note instead, without a button: turning One charge off does not end that mode.
+- **Taps:** tap a reading to open its entity. Long-press the battery tile to set Initial SOC, the target tile for Target SOC. Stopping a charge, raising the current, resetting a counter, turning off ground protection or a limit ask you to confirm. A refused change shows a message for 30 seconds.
 
 ### Card in YAML
 
@@ -206,29 +210,24 @@ sections:            # any of these, in any order; omit for all of them
 #   schedules: small
 ```
 
-Cards saved with the earlier `layout:` option keep working: `compact`,
-`status`, `control` and `full` open as the matching sections.
-
-If **Custom element doesn't exist** appears after an update, refresh the browser or reset the app's frontend cache.
+Cards saved with the earlier `layout:` option keep working.
 
 ## Dashboard
 
 For separate cards and graphs, use the **Sections** view in
 [`docs/dashboard.yaml`](docs/dashboard.yaml) ([Ukrainian](docs/dashboard-uk.yaml)).
-Install [`mini-graph-card`](https://github.com/kalkih/mini-graph-card) from HACS
-for its two graphs; the other cards are standard Home Assistant cards.
+Its two graphs need [`mini-graph-card`](https://github.com/kalkih/mini-graph-card)
+from HACS; the other cards are standard Home Assistant cards.
 
 [Preview](https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039)
 
 > [!IMPORTANT]
-> This file is a **whole dashboard view**. Add it under `views:` in the raw
+> The file is a **whole dashboard view**. Add it under `views:` in the raw
 > configuration editor, not through **Add card → Manual**.
-
-### How to add the dashboard
 
 1. Open or create a dashboard under **Settings → Dashboards**.
 2. Choose **Edit dashboard → ⋮ → Raw configuration editor**.
-3. Paste the entire [`docs/dashboard.yaml`](docs/dashboard.yaml) as a new item under `views:`, with this indentation:
+3. Paste the whole file as a new item under `views:`, with this indentation:
 
    ```yaml
    views:
@@ -247,46 +246,45 @@ to the view.
 
 ## Battery level (SOC)
 
-SOC is the car battery's state of charge, expressed as a percentage. In
-**Advanced** mode, the integration estimates it from initial SOC, session
-energy, battery capacity and charging losses. Accuracy depends on these inputs.
+SOC is the car battery's charge level in percent. In **Advanced** mode the
+integration estimates it from the initial SOC, session energy, battery capacity
+and charging losses, so it is as accurate as these inputs.
 
 | Setting | What to enter |
 | --- | --- |
-| **Initial SOC** | Battery level before the current plug-in; set manually or filled from a car sensor |
-| **Target SOC** | Desired battery level for forecasts and the SOC stop limit |
+| **Initial SOC** | Battery level when the connector was plugged in; set by hand or filled from a car sensor |
+| **Target SOC** | Battery level to charge to, for the forecasts and the SOC limit |
 | **Battery Capacity** | Your car's battery capacity in kWh |
-| **SOC Correction** | Percentage of delivered energy lost during charging |
+| **SOC Correction** | Percentage of delivered energy lost while charging |
 
-**Time to Target SOC** and **Charging Finish Time** are estimates and may change
-as charging power changes. **Energy to Target SOC** includes charging losses;
-**Cost to Target SOC** prices each part of a running charge at the tariff of
-the window it falls in, and uses the current tariff when no charge is running,
-even if the charger still reports residual power. Very low power readings do
-not slow down the forecast calculation.
-Setting a target alone does not
-stop charging — turn on **Limit: SOC enabled** to enable that behavior.
+**Time to Target SOC** and **Charging Finish Time** are estimates that change
+with charging power. **Energy to Target SOC** includes charging losses, and
+**Cost to Target SOC** follows the charger's tariff windows.
 
-The integration enforces the SOC limit: Home Assistant must be running and able
-to reach the charger. The charger itself enforces time, energy and cost limits.
+Setting a target alone does not stop charging: turn on **Limit: SOC enabled**.
+Home Assistant sends that stop, so it must be running and able to reach the
+charger. The charger itself enforces the time, energy and cost limits.
 
 ### Filling Initial SOC from your car (optional)
 
-In Advanced mode, **Initial SOC** can be filled from a car sensor provided by another integration.
+In Advanced mode, **Initial SOC** can be filled from your car's battery sensor
+provided by another integration.
 
-1. Pick the car battery sensor during SOC setup, or later under **Settings → Devices & Services → Eveus EV Charger → Configure**.
-2. Use a `sensor` with device class `battery`, unit `%` and a value from 0 to 100. If it is missing from the list, check its domain and device class.
-3. If no sensor is selected, set **Initial SOC** manually before charging.
+1. Pick the sensor during SOC setup, or later under **Settings → Devices & Services → Eveus EV Charger → Configure**.
+2. It must be a `sensor` with device class `battery`, unit `%` and a value from 0 to 100; others are not listed.
+3. Without a sensor, set **Initial SOC** by hand before charging.
 
-- The car sensor is read once per plug-in when charging starts. If unavailable, the integration retries and accounts for energy already delivered when a reading arrives.
-- Pauses and Home Assistant restarts retain the current calculation. After unplugging and reconnecting, a new initial value is needed.
-- A manually entered value takes priority until the next plug-in.
-- To check the source or a failed reading, see the `soc_anchor` attribute of **SOC Percent**, the integration log or the `soc` section of **Download diagnostics**.
+- The sensor is read once per plug-in, when charging starts. If it is unavailable then, the integration retries and counts the energy already delivered.
+- A value you enter by hand wins until the next plug-in.
+- After you pull the connector out and plug it in again, a new initial value is needed.
+- The source and any failed reading are in the `soc_anchor` attribute of **SOC Percent**.
 
 <details>
 <summary>Migrating from legacy SOC helpers</summary>
 
-Migration from old helpers is intentionally simple: replace the prefix `input_number.ev_` with `number.eveus_ev_charger_` in cards and automations. For example, `input_number.ev_initial_soc` becomes `number.eveus_ev_charger_initial_soc`.
+Replace the prefix `input_number.ev_` with `number.eveus_ev_charger_` in cards
+and automations. For example, `input_number.ev_initial_soc` becomes
+`number.eveus_ev_charger_initial_soc`.
 
 </details>
 
@@ -295,100 +293,80 @@ Migration from old helpers is intentionally simple: replace the prefix `input_nu
 ### Charging limits
 
 Set **Limit: Time**, **Limit: Energy** or **Limit: Cost**, then turn on its
-corresponding enable switch. **Limit: disable all** suspends the limits,
-including SOC, while retaining their values.
+enable switch. **Limit: disable all** suspends all limits, including SOC, and
+keeps their values. On REVE, limits can be changed only while charging or
+stopped at a limit, and there is no **Limit: disable all**; see
+[REVE limits](#limits-on-reve).
 
 ### Schedules and adaptive charging
 
-The charger has two schedule slots. Set start and stop times, enable the slot
-and optionally enable its own current and energy limits. Schedules are stored
-on the charger and run independently of Home Assistant. If a schedule runs at
-the wrong time, check **Time Zone** and press **Sync Time**.
+The charger has two schedules. Set the start and stop times, turn the schedule
+on, and optionally turn on its own current and energy limits. If a schedule
+runs at the wrong time, check **Time Zone** and press **Sync Time**. While
+**One Charge** is on, the charger charges at once and ignores every schedule
+and limit.
 
-**Adaptive Mode** offers Off / Voltage / Auto / Power. In Voltage mode, the
-charger reduces current when voltage drops; **Undervoltage threshold** can be
-set from 210 to 220 V. **Adaptive Current Limit** shows the cap selected by the
-charger. **Minimum voltage** is a separate lower voltage limit for charging,
-from 150 to 200 V.
+**Adaptive Mode** offers Off / Voltage / Auto / Power. In Voltage mode the
+charger lowers the current when the voltage drops below the
+**Undervoltage threshold** (210–220 V). **Adaptive Current Limit** shows the
+cap the charger chose. **Minimum voltage** (150–200 V) is a separate lower
+voltage limit for charging.
 
 ### Energy and cost tracking
 
-The integration shows current and last sessions, total consumption and counters
-A/B, which can be reset separately. The charger calculates session and counter
-costs using its configured tariffs, including tariff changes during a session.
-Tariff rates are available as sensors in Home Assistant; change them on the
-charger. For consumption history, add the charger to the [Energy dashboard](#energy-dashboard).
+The charger calculates session and counter costs with its own tariffs; change
+the tariffs on the charger. The integration shows the current and last session,
+the lifetime total and counters A and B, which reset separately. For
+consumption history, add the charger to the [Energy dashboard](#energy-dashboard).
 
-Energy and cost sensors publish ordinary growth once per minute to reduce
-history writes. Session changes, counter resets and availability changes publish
-immediately; the latest observed value is flushed before a reset or orderly
-unload. Automations using these sensors receive ordinary growth at this cadence.
-SOC enforcement continues to use every fresh charger poll. Its reached event
-reports the target and SOC checked before the Stop was sent; a manual stop
-cannot confirm a SOC command still waiting in the queue. Stop takes priority
-over waiting settings, and numerical controls keep the latest waiting value,
-including while another control holds the command queue. A missing energy or
-cost reading keeps its sensor unavailable, including through a connection loss,
-until a valid reading returns; a valid zero remains available.
-WiFi Signal, Connection Quality, Current Set, Adaptive Current Limit, Active
-Rate Cost, Energy to Target SOC and SOC Energy use ordinary history only.
-Graphs based on their long-term statistics stop receiving new data; ordinary
-history follows the recorder retention period, and existing statistics stay
-stored.
+While charging, energy and cost sensors update once a minute to keep the
+database small; a new session, a counter reset or the charger going offline
+shows at once. The SOC limit checks every poll.
 
 ### OCPP control
 
-**Connect to OCPP** allows the charger to connect to its OCPP server, used by
-apps such as Grizzl-E Connect. **OCPP Connected** shows the connection status.
-The server or app may change current, limits and schedules, so the integration
-shows a **Repairs** notice while OCPP is enabled. Turn off **Connect to OCPP**
-to control the charger only through its local interface and Home Assistant.
-A remote OCPP server may require internet access.
+**Connect to OCPP** lets the charger connect to its OCPP server, used by apps
+such as Grizzl-E Connect; **OCPP Connected** shows the connection. The server
+or app may change the current, limits and schedules, so a **Repairs** notice
+appears while OCPP is on. Turn off **Connect to OCPP** to control the charger
+only locally.
 
 ## Energy Dashboard
-
-To add EV charging to Home Assistant's Energy dashboard:
 
 1. Go to **Settings → Energy** (before Home Assistant 2026: **Settings → Dashboards → Energy**).
 2. Under **Individual devices**, click **Add device**.
 3. Pick `sensor.eveus_ev_charger_total_energy` and save.
 
-See charging consumption by day or month. Session and counter costs use the
-tariffs configured on the charger.
-
 ## Blueprints
 
-Two ready-made automations ship with the integration. Import either one from
+Two ready-made automations ship with the integration. Import one from
 **Settings → Automations & Scenes → Blueprints → Import Blueprint**, paste the
-URL, then fill in the two or three fields it asks for — no YAML.
+URL, then fill in the two or three fields it asks for.
 
 | Blueprint | What it does | URL |
 | --- | --- | --- |
-| Charging session notification | Notifies on start and finish through the action of your choice; the finish message includes session energy, cost and duration | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
-| Stop charging on low house battery | When your inverter's battery stays below a threshold for two minutes, stops charging with the charger's own **Stop Charging** switch, not by cutting its power. Does not automatically resume charging after recovery | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
-
-In the session notification blueprint, add one or more notification actions and use `{{ message }}` for their text.
+| Charging session notification | Notifies on start and finish through the action of your choice; the finish message includes session energy, cost and duration. Use `{{ message }}` as the notification text | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
+| Stop charging on low house battery | When your inverter's battery stays below a threshold for two minutes, turns on **Stop Charging**. It does not resume charging afterwards | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
 
 ## Events & Device Triggers
 
-The integration fires events on the Home Assistant event bus for charger state transitions. Every payload includes `device_number`:
+The integration fires these events; every payload includes `device_number`.
+The first five are also **device triggers**: pick the Eveus device in the
+automation editor to use them without YAML.
 
 | Event | Fires when | Extra payload fields |
 | --- | --- | --- |
 | `eveus_charging_started` | A charging session begins | — |
-| `eveus_charging_finished` | A charging session ends | `reason` (`complete`, `schedule`, `limit`, `unplugged`, `stopped`, or `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
+| `eveus_charging_finished` | A charging session ends | `reason` (`complete`, `schedule`, `limit`, `unplugged`, `stopped` or `paused`), `session_energy_kwh`, `session_cost`, `session_duration_s` |
 | `eveus_error` | The charger enters the error state | `error_code`, `error_text` |
-| `eveus_car_connected` | The car is electrically connected | — |
+| `eveus_car_connected` | The car is connected | — |
 | `eveus_car_disconnected` | The car is disconnected | — |
+| `eveus_soc_limit_reached` | Home Assistant stopped charging at Target SOC | `soc`, `target_soc` |
 
-Finished-session values come from the last charging poll and may lag final
-values by one poll interval. Changes while HA or the charger is offline do not
-produce events after reconnection.
-
-For these five events, select the Eveus device in the automation editor to use
-its matching **device triggers** without YAML.
-
-For automations that need the event payload, trigger on the event directly:
+Session values come from the charger's polls; when the car is unplugged
+during a charge, they may miss the last poll interval. Changes while Home
+Assistant or the charger is offline fire no events afterwards, and neither
+does a replug quicker than one poll (up to a minute while the charger is idle).
 
 ```yaml
 automation:
@@ -405,55 +383,97 @@ automation:
             {{ trigger.event.data.session_cost }} UAH
 ```
 
-### Reaching Target SOC
-
-When the integration confirms a stop at the SOC limit, it fires
-`eveus_soc_limit_reached` with `device_number`, `soc` and `target_soc`.
-
-You can route that event to your own notification automation:
-
-```yaml
-automation:
-  - alias: Eveus SOC limit reached
-    triggers:
-      - trigger: event
-        event_type: eveus_soc_limit_reached
-    actions:
-      - action: notify.notify
-        data:
-          message: "Eveus reached target SOC: {{ trigger.event.data.soc }}%"
-```
-
 ## 🛡️ Safety notices
 
-Open **Settings → System → Repairs** for the cause and suggested action.
-These notices report problems; they do not replace the charger's hardware protection.
-Temperature, leakage and ground readings require repeated confirmation;
-known charger fault codes trigger a notice immediately.
+Open **Settings → System → Repairs** for the cause and what to do. These
+notices report problems; they do not replace the charger's own protection.
+Temperature, leakage and ground readings must repeat before a notice appears;
+known charger fault codes raise one at once.
 
 ### Safety conditions
 
 | Notice | Action |
 | --- | --- |
 | Ground is missing | Stop charging and have an electrician check the grounding |
-| Ground protection is disabled | Enable **Ground Protection**; disabling it allows charging without confirmed ground |
-| Box or plug overheating | Stop using the charger and let it cool; contact the manufacturer if it repeats. The integration warns at sustained **80 °C or higher** or a charger overheat fault |
-| Current leakage (GFCI) | Stop using the charger and contact the manufacturer; triggered by a fault or sustained leakage of **30 mA or more** |
+| Ground protection is disabled | Turn on **Ground Protection**; without it the charger charges without confirmed ground |
+| Box or plug overheating | Stop using the charger and let it cool; contact the manufacturer if it repeats. Raised at a sustained **80 °C or higher** or a charger overheat fault |
+| Current leakage (GFCI) | Stop using the charger and contact the manufacturer. Raised by a fault or a sustained leakage of **30 mA or more** |
 | Charger protection fault | Stop or avoid charging and contact the manufacturer |
-| Charger error with unknown cause | Check the charger's display/app; include the error in a support request if it persists |
+| Charger error with unknown cause | Check the charger's display or app; include the error in a support request if it persists |
 | Charger backup battery is low | Replace the internal CR2032 cell |
 
-Ground notices clear after recovery. Serious fault notices also require
-**Ignore**; after recovery, a new incident can notify you again.
+Ground notices clear after recovery. Serious fault notices also need
+**Ignore**; a new incident after recovery notifies you again.
 
 ### Configuration notices
 
 | Notice | Action |
 | --- | --- |
-| Charger setup needs attention | Open the notice and re-enter connection details |
-| OCPP is enabled | If you want local control only, turn off **Connect to OCPP** |
+| Charger setup needs attention | Open the notice and re-enter the connection details |
+| OCPP is enabled | For local control only, turn off **Connect to OCPP** |
 | Charger clock is off by more than 10 minutes | Check **Time Zone**, then press **Sync Time** |
-| Update SOC cards and automations | Replace `input_number.ev_*` references with the native SOC entities; see [migration](#battery-level-soc) |
+| Update SOC cards and automations | Replace `input_number.ev_*` with the integration's SOC entities; see [migration](#battery-level-soc) |
+
+## Charger firmware
+
+### REVE firmware
+
+REVE is the newer Eveus firmware; the device page shows it as `REVE_PLUS`. The
+integration recognizes it by itself; no setup change is needed. Everything
+above works the same, except as described here.
+
+#### Manual mode
+
+REVE has a **manual mode** in which it ignores its schedules and its time,
+energy and cost limits. The charger enters it after:
+
+- any stop: **Stop Charging** in Home Assistant or the app, the Target SOC stop, or the low-battery blueprint;
+- **One Charge**, or a start with "ignore schedule" in the charger's app.
+
+A limit that stops charging by itself does not start manual mode. Manual mode
+ends when you pull the connector out of the car. After you plug it back in,
+the schedules and limits apply again.
+
+What this means in practice:
+
+- Turning **Stop Charging** or **One Charge** off does not end manual mode: the charger keeps ignoring its schedules and limits until the connector is pulled out.
+- The charger does not report the mode, so the **Manual Mode** sensor follows the commands the integration sees or sends, and turns off when the connector is pulled out. It keeps its state through a Home Assistant restart, unless the connector was pulled out meanwhile.
+- While **Manual Mode** is on, the card says that schedules and limits are ignored.
+
+#### Limits on REVE
+
+- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **outside manual mode, while the car is charging or a limit has stopped the charge**. REVE drops a limit set before charging starts, and every limit when the connector is pulled out, so at other times the card locks the limits and says why, and Home Assistant refuses the change with the reason.
+- When a limit stops the charge, raise it or turn it off to charge on: the charger resumes by itself, and a raised limit stops it at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until the connector is pulled out.
+- Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value.
+- **Target SOC** can be changed at any time: Home Assistant does that stop.
+- REVE has no **Limit: disable all**: the charger drops that setting within seconds, so the switch is unavailable and the card does not show it.
+
+#### Other differences
+
+- **Adaptive Mode** has Off, Voltage and Auto; REVE has no Power option.
+- **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app; the days of the week set there are kept. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
+- **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. It is unavailable while REVE's third or fourth rate is in effect. **Cost to Target SOC** follows the first two rates' hours, not their days of the week.
+- **REVE API** (diagnostic) shows whether REVE's interface answers. It sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with an error.
+- REVE does not report **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, the schedules' energy limits or **Plug Temperature**, so they stay unavailable.
+
+#### Wi-Fi drops about every 15 minutes
+
+REVE does not lower its packet size on a link with an MTU below 1500. When the
+charger reaches the internet through a VPN or tunnel with a smaller MTU, its
+connection to the maker's cloud hangs and the charger restarts its Wi-Fi.
+Set the maximum segment size (MSS) of that tunnel on the router, e.g. 1284 for
+an MTU of 1324 (Keenetic: `ip tcp adjust-mss 1284` on the tunnel interface), or
+let the charger reach the internet outside the tunnel.
+
+### Older charger firmware
+
+R3.01.x and firmware 1.x (EnergyStar V-series) are supported with fewer
+readings; the ones the charger does not report stay unavailable. An unknown
+state shows `Unknown`, with its code in the **State** sensor's `raw_state`
+attribute.
+
+For firmware updates, message **@energy_star** on Telegram; install the file
+through the charger's web interface.
 
 ## Troubleshooting
 
@@ -461,52 +481,38 @@ More help: [integration website](https://abovsh.github.io/eveus/) · [community 
 
 | Problem | What to check |
 | --- | --- |
-| Setup cannot connect | Read the error in the setup dialog; check power, network access from HA, credentials and charger model |
-| Controls do not respond | Check **Connection Quality**, whether the charger is reachable, and the credentials via **Reconfigure**; then wait for the next poll |
-| SOC sensors are missing | Set the integration mode to Advanced under **Configure**; the integration reloads automatically after saving |
-| SOC looks wrong after unplug/replug | Update `number.eveus_ev_charger_initial_soc` to the real battery percentage before starting the next session |
-| Charger is powered off | This is normal: the integration polls less often and does not fill the log with errors |
-| A Repairs notice appeared | See [Safety notices](#-safety-notices) for what each one means and what to do |
-| The charger is nowhere in Devices | See [The charger does not appear after installing](#the-charger-does-not-appear-after-installing) |
+| Setup cannot connect | Read the error in the setup dialog. "Refused the connection": the address belongs to another device. "Cannot reach the network": Home Assistant has no route to the charger's network. Otherwise check power, credentials and model |
+| The charger is not in Devices | See [below](#the-charger-does-not-appear-after-installing) |
+| Controls do not respond | Check **Connection Quality**, that the charger is reachable, and the credentials under **Reconfigure** |
+| SOC sensors are missing | Switch the mode to Advanced under **Configure** |
+| SOC is wrong after replugging | Set **Initial SOC** to the real battery level before the next charge |
+| On REVE, the charger ignores a schedule or limit | It is in [manual mode](#manual-mode): pull the connector out and plug it back in |
+| REVE reconnects to Wi-Fi about every 15 minutes | See [Wi-Fi drops](#wi-fi-drops-about-every-15-minutes) |
+| The charger is off | Normal: the integration polls less often and does not fill the log with errors; readings return within a minute after power comes back |
+| A Repairs notice appeared | See [Safety notices](#-safety-notices) |
 
-### Charger connection
-
-The integration polls more often while charging and less often when idle.
-After power and network connectivity return, readings normally recover within
-a minute — whether the charger was switched off during a session or before
-Home Assistant started. Command acceptance and setting changes are checked; Home Assistant
-shows errors. If the charger rejects credentials after a password change, the
+If the charger rejects the credentials after a password change, the
 integration asks you to enter them again.
 
 ### The charger does not appear after installing
 
-Work through these in order:
-
-1. **Add the integration after installing through HACS.** Restart Home Assistant, then open **Settings → Devices & Services → Add Integration → Eveus EV Charger**. A single update entity means you are viewing the HACS entry, not the charger.
+1. **Add the integration after installing it through HACS.** Restart Home Assistant, then open **Settings → Devices & Services → Add Integration → Eveus EV Charger**. A single update entity means you are looking at the HACS entry, not the charger.
 2. **Check disabled integrations.** At the bottom of the **Integrations** tab, click **Show disabled integrations** and enable Eveus if listed.
-3. **Open the Eveus card on the Integrations tab.** If it shows **Failed setup, will retry**, open the error details. The error also appears in **Settings → System → Logs**. The device only appears after setup succeeds.
+3. **Open the Eveus card on the Integrations tab.** If it shows **Failed setup, will retry**, open the error details; they are also in **Settings → System → Logs**.
 
-The number of entities depends on the integration mode and phase count.
-
-### Older charger firmware
-
-R3.01.x and firmware 1.x (EnergyStar V-series) are supported, with fewer
-available readings. Fields the charger does not report remain unavailable.
-Unrecognized states show `Unknown`; the numeric code is in the **State**
-sensor's `raw_state` attribute.
-
-For firmware files, contact **@energy_star** on Telegram; install them through
-the charger's web interface.
-
-If setup fails, [report an issue](https://github.com/ABovsh/eveus/issues) with
-the firmware version, setup error and the Eveus warning from
-**Settings → System → Logs**. Remove IP addresses and serial numbers before sharing.
+When reporting a problem, include the firmware version, the setup error and the
+Eveus warning from **Settings → System → Logs**. Remove IP addresses and serial
+numbers first.
 
 ## Entity IDs
 
-Default IDs below assume a charger named **Eveus EV Charger**. Check your
-device page for actual IDs if you renamed entities or added several chargers.
-Normal updates retain entity identity and history.
+Default IDs below assume a charger named **Eveus EV Charger**. If you renamed
+entities or added several chargers, check the device page. The number of
+entities depends on the mode, the phase count and the firmware.
+
+WiFi Signal, Connection Quality, Current Set, Adaptive Current Limit, Active
+Rate Cost, Energy to Target SOC and SOC Energy keep ordinary history only, with
+no long-term statistics.
 
 ### Charging State And Controls
 
@@ -521,6 +527,8 @@ Normal updates retain entity identity and history.
 | `binary_sensor.eveus_ev_charger_car_connected` | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Reported OCPP connection state (diagnostic) |
+| `binary_sensor.eveus_ev_charger_reve_api` | Whether the charger's REVE interface answers (diagnostic; REVE firmware only) |
+| `binary_sensor.eveus_ev_charger_manual_mode` | On while the charger is in [manual mode](#manual-mode) and ignores its schedules and limits (REVE firmware only) |
 | `number.eveus_ev_charger_charging_current` | Current limit (A); bounds depend on the charger model |
 | `number.eveus_ev_charger_limit_time` | **Limit: Time** session limit (min) |
 | `number.eveus_ev_charger_limit_energy` | **Limit: Energy** session limit (kWh) |
@@ -533,7 +541,7 @@ Normal updates retain entity identity and history.
 | `switch.eveus_ev_charger_limit_time_enabled` | **Limit: Time enabled** |
 | `switch.eveus_ev_charger_limit_energy_enabled` | **Limit: Energy enabled** |
 | `switch.eveus_ev_charger_limit_cost_enabled` | **Limit: Cost enabled** |
-| `switch.eveus_ev_charger_limit_disable_all` | **Limit: disable all** |
+| `switch.eveus_ev_charger_limit_disable_all` | **Limit: disable all**; unavailable on REVE |
 | `switch.eveus_ev_charger_limit_soc_enabled` | **Limit: SOC enabled** (Advanced mode only) |
 | `button.eveus_ev_charger_force_refresh` | Poll the charger immediately |
 

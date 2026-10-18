@@ -122,6 +122,26 @@ def test_issue_translation_keys_are_translated(filename: str) -> None:
     assert not missing, f"{filename} lacks Repairs issue translations for: {sorted(missing)}"
 
 
+@pytest.mark.parametrize("filename", sorted(_TRANSLATION_FILES))
+def test_repair_form_translates_every_flow_error(filename: str) -> None:
+    """The repair form shares the flow error mapper, so it needs every key too."""
+    repair_errors = _load(filename)["issues"]["invalid_config"]["fix_flow"]["error"]
+    missing = _error_keys_in_code() - set(repair_errors)
+    assert not missing, f"{filename} lacks repair-form error translations for: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("filename", sorted(_TRANSLATION_FILES))
+@pytest.mark.parametrize("key", ["connection_refused", "host_unreachable"])
+def test_connection_reason_messages_show_the_detail_only_where_it_is_given(
+    filename: str, key: str
+) -> None:
+    """Flow dialogs pass error_detail; the repair form passes no placeholders,
+    and HA would print a missing one as a literal "{error_detail}"."""
+    data = _load(filename)
+    assert "{error_detail}" in data["config"]["error"][key]
+    assert "{" not in data["issues"]["invalid_config"]["fix_flow"]["error"][key]
+
+
 def test_en_json_mirrors_strings_json_exactly() -> None:
     """HA convention: en.json is a byte-for-byte semantic copy of strings.json."""
     assert _load("strings.json") == _load("en.json")

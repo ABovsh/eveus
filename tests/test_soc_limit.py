@@ -1286,3 +1286,24 @@ def test_wire_guard_session_identity_and_optional_fields(monkeypatch, change, ex
     asyncio.run(scenario())
     assert len(_stop_posts(session)) == expected
     assert events == []
+
+
+def test_reve_enforces_without_suspendlimits():
+    # REVE has no Disable all (measured 18.10): the field is absent there, and
+    # the Target SOC stop must still work.
+    updater = _MockUpdater()
+    updater.available = True
+    updater.last_update_success = True
+    updater.device_number = 1
+    updater.firmware_family = "reve"
+    updater.data = {"state": 4, "sessionEnergy": 30.0, "evseEnabled": 0}
+    updater.send_command = AsyncMock(return_value=True)
+
+    hass = MagicMock()
+    hass.async_create_task = lambda coro: asyncio.run(coro)
+    hass.bus.async_fire = MagicMock()
+
+    ctrl = SocLimitController(hass, updater, _calc(target=80, initial=20, cap=50, corr=0))
+    ctrl.set_enabled(True)
+    ctrl.process()
+    updater.send_command.assert_called()

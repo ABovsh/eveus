@@ -61,6 +61,9 @@ class _EveusIntegerSelect(
         self._init_write_on_change()
         self._command_pending = False
 
+    def _source_keys(self) -> tuple[str, ...]:
+        return (self.READ_KEY,)
+
     def _device_value(self) -> int | None:
         """The charger's setting, only when it maps to an offered option."""
         if not self._updater.available:

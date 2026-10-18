@@ -2,7 +2,8 @@
 
 Four call sites reach the firmware: the coordinator's ``/main`` poll, the
 one-shot ``/init`` firmware probe, every command's ``/pageEvent`` form, and the
-config flow's setup validation. Each used to spell out the transport rules
+config flow's setup validation. REVE firmware adds a fifth, its local
+``/graphql`` endpoint, under the same transport rules. Each used to spell out the transport rules
 itself — opt out of redirects, reject a 3xx rather than follow it, raise on an
 HTTP error, cap the body, decode it leniently, then JSON-decode — and that
 divergence is why setup once ran on a shorter timeout than steady-state
@@ -16,6 +17,7 @@ HTTP error for its own handler to map. So the caller passes
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -24,14 +26,24 @@ from urllib.parse import urlencode
 import aiohttp
 
 from ._payload import raise_for_redirect, read_json_capped
-from .const import COMMAND_TIMEOUT, UPDATE_TIMEOUT
+from .const import COMMAND_TIMEOUT, GRAPHQL_TIMEOUT, UPDATE_TIMEOUT
 
 # Built once and shared, so the poll and the setup validation cannot drift onto
 # two different budgets again.
 UPDATE_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=UPDATE_TIMEOUT)
 COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=COMMAND_TIMEOUT)
+GRAPHQL_TIMEOUT_OBJ: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=GRAPHQL_TIMEOUT)
 
 _FORM_HEADERS = {"Content-type": "application/x-www-form-urlencoded"}
+_GRAPHQL_HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
+
+
+class GraphQLError(ValueError):
+    """The charger answered ``/graphql``, but not with a usable result.
+
+    A ``ValueError`` so the poll and command paths treat it exactly like a
+    malformed ``/main`` body.
+    """
 
 
 @asynccontextmanager
@@ -116,3 +128,43 @@ async def post_page_event(
         headers=dict(_FORM_HEADERS),
     ):
         return
+
+
+async def post_graphql(
+    session: Any,
+    url: str,
+    *,
+    auth: aiohttp.BasicAuth,
+    operation: str,
+    document: str,
+    variables: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run one GraphQL operation and return its ``data`` object.
+
+    Only fixed documents are ever sent (the caller passes a module constant and
+    plain ``variables``), copied from the charger maker's own apps. The REVE
+    server silently drops a field it does not know and answers 500 to a body
+    without ``operationName`` (checked 2026-10-16), so a missing key in the
+    reply may mean an unknown field; building no query text at runtime keeps
+    every document one the server is known to answer.
+    """
+    body = json.dumps(
+        {"operationName": operation, "variables": variables or {}, "query": document}
+    )
+    async with charger_post(
+        session,
+        url,
+        auth=auth,
+        timeout=GRAPHQL_TIMEOUT_OBJ,
+        data=body,
+        headers=dict(_GRAPHQL_HEADERS),
+    ) as response:
+        result = await read_json_capped(response)
+    if not isinstance(result, dict):
+        raise GraphQLError("GraphQL reply is not an object")  # pragma: no mutate - message text; only the exception type is ever logged
+    if result.get("errors"):
+        raise GraphQLError("GraphQL reply reports errors")  # pragma: no mutate - message text; only the exception type is ever logged
+    data = result.get("data")
+    if not isinstance(data, dict):
+        raise GraphQLError("GraphQL reply has no data")  # pragma: no mutate - message text; only the exception type is ever logged
+    return data

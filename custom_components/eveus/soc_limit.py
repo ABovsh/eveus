@@ -17,6 +17,7 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
+from .reve import FAMILY_REVE
 from .snapshot import EveusSnapshot
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ EVENT_SOC_LIMIT_REACHED = "eveus_soc_limit_reached"
 _SESSION_RESET_EPS_KWH = 0.5
 
 
-def _limits_suspended(snapshot: EveusSnapshot) -> bool | None:
+def _limits_suspended(snapshot: EveusSnapshot, *, no_master: bool = False) -> bool | None:
     """Tri-state read of the charger's master "Disable limits" switch.
 
     ``None`` means the field is missing or unusable, i.e. the master state is
@@ -39,13 +40,23 @@ def _limits_suspended(snapshot: EveusSnapshot) -> bool | None:
     risk stopping a charge while the master may actually be active. Spelled
     once so the three places that consult it (the poll, the pre-lock re-read
     and the at-the-wire re-check) cannot answer it differently.
+
+    ``no_master``: REVE has no such switch, so its absence there means the
+    limits are not suspended.
     """
     value = snapshot.get_int("suspendLimits")
-    return None if value is None else value != 0
+    if value is None:
+        return False if no_master else None
+    return value != 0
 
 
 class SocLimitController:
     """Stop charging at Target SOC by reusing the Stop Charging command."""
+
+    @property
+    def _no_master(self) -> bool:
+        """REVE has no "Disable limits" master switch."""
+        return getattr(self._updater, "firmware_family", None) == FAMILY_REVE
 
     def __init__(self, hass: HomeAssistant, updater, soc_calculator) -> None:
         self._hass = hass
@@ -149,7 +160,7 @@ class SocLimitController:
         # suspendLimits means the master state is unknown, and the conservative
         # safety contract is to stand down rather than risk stopping while the
         # master may actually be active.
-        if _limits_suspended(snapshot) is not False:
+        if _limits_suspended(snapshot, no_master=self._no_master) is not False:
             return
         # `session_active is True` is exactly the old `state in
         # SESSION_ACTIVE_STATES`: the Error state and an unmapped firmware code
@@ -267,7 +278,7 @@ class SocLimitController:
         clock = snapshot.session_time_s
         target = self._calc.target_soc
         if (
-            _limits_suspended(snapshot) is not False
+            _limits_suspended(snapshot, no_master=self._no_master) is not False
             or snapshot.session_active is not True
             or snapshot.get_int("evseEnabled") != 0
             or energy is None
@@ -338,7 +349,7 @@ class SocLimitController:
         # would otherwise never be re-consulted, and the command below would
         # violate the same stand-down contract process() enforces on every
         # other poll. Re-read the latest data right before POSTing.
-        if _limits_suspended(self._updater.snapshot) is True:
+        if _limits_suspended(self._updater.snapshot, no_master=self._no_master) is True:
             if not self._fired:
                 self._pending = None
                 self._pending_energy = None

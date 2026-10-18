@@ -68,9 +68,30 @@ test('actual-current tick shows only while charging with a non-zero current; dra
 test('disconnect cancels confirmation and draft',async()=>{
   const {card,slide,calls}=setup();slide(14);card.disconnectedCallback();await card._confirm();assert.equal(calls.length,0);
 });
-test('rejected service restores actual setting and shows an error',async()=>{
+test('rejected service restores actual setting and shows a dismissible error',async()=>{
   const {card,slide,hass}=setup();hass.callService=async()=>{throw Error('rejected');};slide(14);await card._confirm();
-  assert.equal(card._draft,null);assert.match(card.shadowRoot.innerHTML,/Could not set current/);
+  assert.equal(card._draft,null);
+  assert.match(card.shadowRoot.innerHTML,/<button class=\"message cmd-error\" role=\"alert\" data-dismiss-error[^>]*>Could not set current<\/button>/);
+  card._onClick({target:{closest:(s) => s === '[data-dismiss-error]' ? {} : null}});
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/Could not set current/);
+});
+test('a refused current change error clears itself',async()=>{
+  const {card,slide,hass,timers}=setup();hass.callService=async()=>{throw Error('rejected');};slide(14);await card._confirm();
+  assert.match(card.shadowRoot.innerHTML,/Could not set current/);
+  for(const fn of [...timers.values()]) fn();
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/Could not set current/);
+});
+test('moving the current slider preserves the refused-change timeout; a committed change clears it',async()=>{
+  const first=setup();first.hass.callService=async()=>{throw Error('rejected');};first.slide(14);await first.card._confirm();
+  first.slide(13,false);
+  assert.match(first.card.shadowRoot.innerHTML,/Could not set current/);
+  for(const fn of [...first.timers.values()]) fn();
+  assert.doesNotMatch(first.card.shadowRoot.innerHTML,/Could not set current/);
+
+  const next=setup();next.hass.callService=async()=>{throw Error('rejected');};next.slide(14);await next.card._confirm();
+  next.slide(13);
+  assert.equal(next.card._asking,true);
+  assert.doesNotMatch(next.card.shadowRoot.innerHTML,/Could not set current/);
 });
 
 test('module label stays Current and actual reading is only a scale marker',()=>{
@@ -328,7 +349,7 @@ test('toggling ground protection uses the existing switch entity',async()=>{
 
 test('unknown readings show a dash with no color class',()=>{
   const {card,states,hass}=setupSafety();
-  states['sensor.box'].state='unavailable';
+  states['sensor.box'].state='unknown';
   states['sensor.ground'].state='unavailable';
   states['switch.protection'].state='unavailable';
   card.hass=hass;
@@ -336,6 +357,28 @@ test('unknown readings show a dash with no color class',()=>{
   assert.match(html,/safety-value ">—°/);
   assert.match(html,/safety-value ">—</);
   assert.match(html,/aria-label="Ground protection"[^>]*\bdisabled\b/);
+});
+
+test('a reading the firmware does not provide is hidden while the charger answers (REVE: plug, leakage)',()=>{
+  const {card,states,hass}=setupSafety();
+  states['sensor.plug'].state='unavailable';
+  states['sensor.leak'].state='unavailable';
+  card.hass=hass;
+  const html=card.shadowRoot.innerHTML;
+  assert.doesNotMatch(html,/data-more-info="plug_temperature"/);
+  assert.doesNotMatch(html,/data-more-info="leakage_current"/);
+  assert.match(html,/data-more-info="box_temperature"/);
+  assert.match(html,/data-limit-toggle="ground_protection"/);
+  assert.match(html,/data-more-info="connection_quality"/);
+  assert.match(html,/class="sl safety safety-good"/);
+});
+
+test('while the charger is away every safety item stays in place, dashed',()=>{
+  const {card,states,hass}=setupSafety({online:false});
+  for (const id of ['sensor.box','sensor.plug','sensor.leak']) states[id].state='unavailable';
+  card.hass=hass;
+  const html=card.shadowRoot.innerHTML;
+  for (const key of ['box_temperature','plug_temperature','leakage_current']) assert.match(html,new RegExp(`data-more-info="${key}"`));
 });
 
 test('offline safety row is visibly disabled and cannot toggle',async()=>{
@@ -937,6 +980,17 @@ test('schedules: one row per schedule with its window, current cap and energy ca
   assert.match(two, /class="sched-lim saved"/, 'cap on inside a disabled schedule is only saved');
   assert.match(two, />09:00<[\s\S]*>18:00</);
 });
+test('schedules: a cap the firmware does not have is left out (REVE: no energy cap)', () => {
+  const over = {...SCHED};
+  for (const n of [1, 2]) {
+    over[`schedule_${n}_energy_limit`] = [SCHED[`schedule_${n}_energy_limit`][0], 'unavailable'];
+    over[`schedule_${n}_energy_limit_enabled`] = [SCHED[`schedule_${n}_energy_limit_enabled`][0], 'unavailable'];
+  }
+  const {html} = setupAll({sections:['schedules'], over});
+  const one = rowOf(html(), 1);
+  assert.doesNotMatch(one, /schedule_1_energy_limit/);
+  assert.match(one, /data-limit-edit-trigger="schedule_1_current_limit"[\s\S]*?16<small>A<\/small>/);
+});
 test('schedules: toggles and caps use their own switch and number entities', async () => {
   const {card, calls} = setupAll({sections:['schedules'], over:SCHED});
   await card._toggleLimit('schedule_2_enabled');
@@ -1144,7 +1198,9 @@ test('updates from other entities do not re-render the card; its own entities an
   x.states['sensor.se'] = {state:'16.2', attributes:{unit_of_measurement:'kWh'}}; x.card.hass = x.hass;
   assert.match(x.card.shadowRoot.innerHTML, /16\.2<small>kWh/);
   x.card.shadowRoot.innerHTML = 'SENTINEL';
-  x.card._nowHM = () => '23:59'; x.card.hass = x.hass;
+  // A minute other than the real one: a fixed '23:59' failed when the suite ran at 23:59.
+  const next = x.card._nowHM() === '12:00' ? '12:01' : '12:00';
+  x.card._nowHM = () => next; x.card.hass = x.hass;
   assert.notEqual(x.card.shadowRoot.innerHTML, 'SENTINEL', 'a new minute re-renders (offline age, running schedule)');
 });
 test('a config change from the editor re-renders even when no state changed', async () => {
@@ -1443,6 +1499,21 @@ test('weakening ground protection or limits needs explicit confirmation', async(
     assert.equal(x.calls.length,1);
   }
 });
+test('REVE has no Disable all: an unavailable switch shows no button', () => {
+  const h = setupAll({sections:['limits'], over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], limit_disable_all:['switch.dis','unavailable']}}).html();
+  assert.doesNotMatch(h, /data-limit-toggle="limit_disable_all"/);
+  assert.match(setupAll({sections:['limits'], over:{limit_energy_enabled:['switch.lee','on']}}).html(), /data-limit-toggle="limit_disable_all"/, 'classic keeps it');
+});
+test('the confirmation opens in the top layer, above the cards below this one', async()=>{
+  // Anton, 18.10: fixed at the screen bottom, it sat under the next dashboard card, which took the taps.
+  const x=setupLimits();x.states['switch.guard']={state:'off',attributes:{}};x.card._ids.limit_disable_all='switch.guard';
+  let shown=0;
+  const ask={matches:()=>false,showPopover:()=>{shown++;},focus(){},select:undefined};
+  x.card.shadowRoot.querySelector=(q)=>q==='.guard-ask'?ask:q==='[data-guard-confirm]'?{focus(){}}:null;
+  await x.card._toggleLimit('limit_disable_all');
+  assert.match(x.card.shadowRoot.innerHTML,/<div class="message guard-ask" popover="manual" role="alertdialog"/);
+  assert.ok(shown>0,'shown as a popover');
+});
 test('rejected numeric service displays an actionable error',async()=>{
   const x=setupLimits();x.hass.callService=async()=>{throw Error('rejected');};
   await x.card._stepLimit('limit_time',1);
@@ -1552,11 +1623,11 @@ test('every control reports a refused command', async () => {
   const reset = setupAll({sections:['history'], over:HISTORY});
   reset.hass.callService = fail;
   await reset.card._resetCounter('reset_counter_a'); await reset.card._resetCounter('reset_counter_a', true);
-  assert.match(reset.html(), /role="alert">Command failed/);
+  assert.match(reset.html(), /role="alert"[^>]*>Command failed/);
   const sync = setupAll({sections:['time'], over:TIME});
   sync.hass.callService = fail;
   await sync.card._syncTime();
-  assert.match(sync.html(), /role="alert">Command failed/);
+  assert.match(sync.html(), /role="alert"[^>]*>Command failed/);
   assert.doesNotMatch(sync.html(), /time-sync done/);
 });
 test('an unconfirmed current change is reported instead of silently reverting', async () => {
@@ -1639,4 +1710,228 @@ test('a failed old registry subscription does not orphan the current one', async
   x.card.disconnectedCallback();
   await new Promise((r) => setImmediate(r));
   assert.equal(unsubscribed, 1);
+});
+
+// ---- One charge overrides schedules and limits ----
+// The charger's "charge now" ignores every limit and schedule, so a user who sets a schedule
+// with One charge left on sees the car charge at once and the schedule apparently ignored.
+const ONE = (state) => ({one_charge:['switch.one', state]});
+test('One charge on: Schedules says the schedules are ignored and offers to turn it off', async () => {
+  const x = setupAll({sections:['schedules'], charging:false, over:{...SCHED, ...ONE('on')}});
+  const h = x.html();
+  assert.match(h, /class="panel sched overridden"/);
+  assert.match(h, /class="override" role="note"[^]*One charge ignores the schedules[^]*<button class="override-off" data-status-toggle="one_charge"[^>]*>Turn off</);
+  assert.doesNotMatch(rowOf(h, 1), /^ on now"/, 'a window One charge ignores is not marked running');
+  // The tap paints at once (the notice goes) and sends the One charge switch, nothing else.
+  let release; x.hass.callService = (...args) => { x.calls.push(args); return new Promise((r) => { release = r; }); };
+  x.card._onClick({target:{closest:(s) => s === '[data-status-toggle]' ? {dataset:{statusToggle:'one_charge'}} : null}});
+  assert.doesNotMatch(x.html(), /class="override"/, 'the notice goes on tap, before Home Assistant answers');
+  assert.equal(JSON.stringify(x.calls), JSON.stringify([['switch','turn_off',{entity_id:'switch.one'}]]));
+  release();
+});
+test('One charge notice: only when it is on, a schedule is on, and the charger answers', () => {
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...ONE('off')}}).html(), /class="override"|overridden/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...ONE('on'), schedule_1_enabled:['switch.s1','off']}}).html(), /class="override"/, 'no schedule on, nothing ignored');
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...ONE('on'), state:['sensor.state','unavailable']}}).html(), /class="override"/);
+  assert.match(setupAll({sections:['schedules'], locale:'uk', over:{...SCHED, ...ONE('on')}}).html(), /«Один заряд» ігнорує розклади[^]*>Вимкнути</);
+});
+test('One charge on: a folded Schedules row strikes the ignored windows through and says why', () => {
+  const x = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('on')}});
+  assert.match(x.html(), /data-fold="schedules"[^]*class="fold-sum overridden" title="One charge ignores the schedules"[^]*1 23:00→07:00/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('off')}}).html(), /overridden/);
+});
+test('One charge on: Limits shows the saved limits as suspended and says so', () => {
+  const on = {...ONE('on'), limit_energy_enabled:['switch.lee','on']};
+  const h = setupAll({sections:['limits'], over:on}).html();
+  assert.match(h, /One charge ignores the limits/);
+  assert.match(h, /limits-grid four suspended/);
+  assert.doesNotMatch(h, /limit-tile active/);
+  assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, ...ONE('off')}}).html(), /class="override"/);
+  assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, limit_disable_all:['switch.dis','on']}}).html(), /class="override"/, 'Disable all already says it');
+});
+test('One charge on: no schedule plan, and a schedule current cap is not blamed for a slow charge', () => {
+  assert.doesNotMatch(setupAll({sections:['advanced_info'], charging:false, over:plan(ONE('on'))}).html(), /soc-plan/);
+  const slow = {...SCHED, ...ONE('on'), current:['sensor.cur',9.9], charging_current:['number.cc',16,{min:6,max:16,step:1}],
+    schedule_1_current_limit:['number.s1c',10,{min:7,max:16,step:1}], adaptive_mode:['select.am','Off',{options:['Off','Voltage']}]};
+  const x = setupAll({sections:['status'], over:slow}); x.card._nowHM = () => '23:30'; x.card.hass = x.hass;
+  assert.doesNotMatch(x.html(), /Schedule 1 limit/);
+});
+
+// ---- REVE manual mode: schedules and limits are ignored until the connector is replugged ----
+const MANUAL = (state) => ({manual_mode:['binary_sensor.manual', state]});
+test('Manual mode on: Schedules says so, strikes the windows through, and has nothing to turn off', () => {
+  const x = setupAll({sections:['schedules'], charging:false, over:{...SCHED, ...MANUAL('on')}});
+  const h = x.html();
+  assert.match(h, /class="panel sched overridden"/);
+  assert.match(h, /class="override" role="note"[^]*mdi:hand-back-right[^]*REVE manual mode ignores the schedules until the connector is replugged/);
+  assert.doesNotMatch(h, /override-off|data-status-toggle="one_charge"/);
+  assert.doesNotMatch(rowOf(h, 1), /^ on now"/);
+  assert.match(setupAll({sections:['schedules'], locale:'uk', over:{...SCHED, ...MANUAL('on')}}).html(), /Ручний режим REVE ігнорує розклади до повторного підключення конектора/);
+});
+test('Manual mode notice: only when it is on, a schedule is on, and the charger answers', () => {
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...MANUAL('off')}}).html(), /class="override"|overridden/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...MANUAL('on'), schedule_1_enabled:['switch.s1','off']}}).html(), /class="override"/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...MANUAL('on'), state:['sensor.state','unavailable']}}).html(), /class="override"/);
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED}}).html(), /class="override"/, 'a charger without the sensor says nothing');
+});
+test('REVE One charge: the manual-mode notice, no Turn off (turning it off keeps manual mode)', () => {
+  // Anton, 18.10: on REVE One charge is manual mode; its Turn off brought neither schedules nor limits back.
+  const h = setupAll({sections:['schedules', 'limits'], over:{...SCHED, ...ONE('on'), ...MANUAL('on'), limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.match(h, /REVE manual mode ignores the schedules until the connector is replugged/);
+  assert.match(h, /REVE manual mode ignores the limits until the connector is replugged/);
+  assert.doesNotMatch(h, /One charge ignores|override-off|data-status-toggle="one_charge"/);
+  assert.match(h, /limit-tile active[^]*data-limit-toggle="limit_soc_enabled"/, 'Target SOC still works in manual mode');
+});
+test('Manual mode on: a folded Schedules row strikes the windows through and says why', () => {
+  const x = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...MANUAL('on')}});
+  assert.match(x.html(), /class="fold-sum overridden" title="REVE manual mode ignores the schedules until the connector is replugged"[^]*<s>1 23:00→07:00<\/s>/);
+});
+test('Manual mode on: the charger limits read as suspended, Target SOC stays on', () => {
+  const on = {...MANUAL('on'), limit_energy_enabled:['switch.lee','on']};
+  const h = setupAll({sections:['limits'], over:on}).html();
+  assert.match(h, /REVE manual mode ignores the limits until the connector is replugged; they can be changed after that/);
+  assert.match(h, /limits-grid four suspended/);
+  assert.match(h, /limit-tile saved[^]*data-limit-toggle="limit_energy_enabled"/);
+  assert.match(h, /limit-tile active[^]*data-limit-toggle="limit_soc_enabled"/);
+  const socOnly = setupAll({sections:['limits'], over:{...on, limit_energy_enabled:['switch.lee','off']}}).html();
+  assert.match(socOnly, /limit-tile active[^]*data-limit-toggle="limit_soc_enabled"/, 'manual mode leaves Target SOC alone');
+  assert.match(socOnly, /class="override" role="note"[^]*they can be changed after that/, 'and says why the charger limits are locked');
+  assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, limit_disable_all:['switch.dis','on']}}).html(), /class="override"/, 'Disable all already says it');
+});
+test('Manual mode on: no schedule plan', () => {
+  assert.doesNotMatch(setupAll({sections:['advanced_info'], charging:false, over:plan(MANUAL('on'))}).html(), /soc-plan/);
+});
+
+// ---- REVE: a limit is set, changed or switched only while charging, outside manual mode ----
+const ENERGY_OFF = {limit_energy_enabled:['switch.lee','off']};
+const LOCKED = (h, key) => /disabled/.test(h.match(new RegExp(`data-limit-toggle="${key}_enabled"[^>]*>`))[0])
+  && [`data-limit-step="${key}" data-dir="-1"`, `data-limit-edit-trigger="${key}"`, `data-limit-step="${key}" data-dir="1"`]
+    .every((attr) => /disabled/.test(h.match(new RegExp(`${attr}[^>]*>`))[0]));
+const IDLE_NOTE = /<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"><\/ha-icon><span>REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it<\/span><\/div>/;
+const MANUAL_NOTE = /<div class="override" role="note"><ha-icon icon="mdi:hand-back-right"><\/ha-icon><span>REVE manual mode ignores the limits until the connector is replugged; they can be changed after that<\/span><\/div>/;
+test('REVE idle: the charger limits are locked, Target SOC is not, and a note says why and when they work', () => {
+  const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
+  assert.match(h, IDLE_NOTE);
+  for (const key of ['limit_energy', 'limit_time', 'limit_cost']) assert.ok(LOCKED(h, key), key);
+  assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled|data-limit-step="target_soc"[^>]*disabled/, 'Target SOC is stopped by Home Assistant');
+  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт/);
+});
+test('REVE idle, folded: the row says briefly when the limits work', () => {
+  const h = setupAll({sections:['limits'], fold:true, charging:false, over:{...MANUAL('off'), ...ENERGY_OFF}}).html();
+  assert.match(h, /<small class="limits-note" title="REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it">change while charging<\/small>/);
+  assert.doesNotMatch(h, /class="override/);
+});
+test('REVE: a limit that is on is locked outside a charge too, and the note says why', () => {
+  const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.ok(LOCKED(h, 'limit_energy'));
+  assert.match(h, IDLE_NOTE);
+});
+test('REVE stopped by a limit outside manual mode: limits can be raised or switched, no note', () => {
+  for (const reason of ['Energy Limit Reached', 'Time Limit Reached', 'Cost Limit Reached']) {
+    const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason', reason]}}).html();
+    assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled|data-limit-step="limit_energy"[^>]*disabled/, reason);
+    assert.doesNotMatch(h, /class="override|change while charging/, reason);
+  }
+  const manual = setupAll({sections:['limits'], charging:false, over:{...MANUAL('on'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason','Energy Limit Reached']}}).html();
+  assert.ok(LOCKED(manual, 'limit_energy'), 'manual mode still locks them');
+  // After a raise REVE holds Charge Complete / Waiting for Activation until the car takes current again.
+  const raised = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], state:['sensor.state','Charge Complete'], not_charging_reason:['sensor.reason','Waiting for Activation']}}).html();
+  assert.doesNotMatch(raised, /data-limit-toggle="limit_energy_enabled"[^>]*disabled|data-limit-step="limit_energy"[^>]*disabled/, 'a raised limit stays open');
+  const waiting = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason','Waiting for Activation']}}).html();
+  assert.ok(LOCKED(waiting, 'limit_energy'), 'waiting before any charge stays locked');
+  const done = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee','on'], not_charging_reason:['sensor.reason','Charge Complete']}}).html();
+  assert.ok(LOCKED(done, 'limit_energy'), 'a car that finished by itself does not unlock them');
+});
+test('REVE charging outside manual mode: every limit can be set and switched, no note', () => {
+  for (const on of ['off', 'on']) {
+    const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('off'), limit_energy_enabled:['switch.lee', on]}}).html();
+    assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled/);
+    assert.doesNotMatch(h, /data-limit-step="limit_energy"[^>]*disabled|data-limit-edit-trigger="limit_energy"[^>]*disabled/);
+    assert.doesNotMatch(h, /class="override|change while charging|manual mode/);
+  }
+});
+test('REVE manual mode: the limits are locked and the note says why and until when', () => {
+  for (const on of ['off', 'on']) {
+    const h = setupAll({sections:['limits'], charging:true, over:{...MANUAL('on'), limit_energy_enabled:['switch.lee', on], limit_soc_enabled:['switch.socen','off']}}).html();
+    assert.match(h, MANUAL_NOTE, on);
+    assert.ok(LOCKED(h, 'limit_energy'));
+    assert.doesNotMatch(h, /not in manual mode/);
+  }
+  assert.match(setupAll({sections:['limits'], charging:true, locale:'uk', over:{...MANUAL('on'), ...ENERGY_OFF}}).html(), /Ручний режим REVE ігнорує ліміти до повторного підключення конектора; змінити їх можна після цього/);
+});
+test('REVE manual mode, folded: the row says manual mode with the hand flag', () => {
+  const h = setupAll({sections:['limits'], fold:true, charging:true, over:{...MANUAL('on'), ...ENERGY_OFF}}).html();
+  assert.match(h, /<small class="limits-note" title="REVE manual mode ignores the limits until the connector is replugged; they can be changed after that">manual mode<\/small><ha-icon class="override-flag" icon="mdi:hand-back-right"/);
+});
+test('a charger without Manual Mode (other firmware) keeps every limit enabled', () => {
+  const h = setupAll({sections:['limits'], charging:false, over:ENERGY_OFF}).html();
+  assert.doesNotMatch(h, /data-limit-toggle="limit_energy_enabled"[^>]*disabled|data-limit-step="limit_energy"[^>]*disabled/);
+  assert.doesNotMatch(h, /change while charging|class="override/);
+});
+
+// ---- Polish pass: errors that outlive their moment, gestures, empty grids ----
+test('a command error can be tapped away and clears itself; it never stays on the card for good', async () => {
+  const x = setupAll({sections:['time'], over:TIME});
+  x.hass.callService = async () => { throw Error('refused'); };
+  await x.card._syncTime();
+  assert.match(x.html(), /<button class="message cmd-error" role="alert" data-dismiss-error[^>]*>Command failed/);
+  x.card._onClick({target:{closest:(s) => s === '[data-dismiss-error]' ? {} : null}});
+  assert.doesNotMatch(x.html(), /Command failed/, 'a tap dismisses it');
+  await x.card._syncTime();
+  assert.match(x.html(), /Command failed/);
+  for (const fn of [...x.timers.values()]) fn();
+  assert.doesNotMatch(x.html(), /Command failed/, 'and it clears on its own');
+});
+test('a scroll gesture cancels a slider drag, not an increase waiting for confirmation', () => {
+  const {card, slide} = setup(32);
+  slide(24);
+  assert.equal(card._asking, true);
+  card._onPointerCancel();
+  assert.equal(card._asking, true, 'scrolling the page keeps the Confirm button');
+  slide(20, false);
+  card._onPointerCancel();
+  assert.equal(card._draft, null, 'a drag the browser took over is dropped');
+  assert.equal(card._sliding, false);
+});
+test('Counters with only this month shown draw no empty tile grid', async () => {
+  const x = setupAll({sections:['history'], hide:['history.total','history.counter_a','history.counter_b'], over:HISTORY});
+  x.card._month = {cur:12.3, prev:40}; x.card._lastSignature = null; x.card.hass = x.hass;
+  assert.match(x.html(), /hist-month/);
+  assert.doesNotMatch(x.html(), /tiles undefined|class="tiles/);
+});
+test('the session tariff writes its currency as a symbol, whatever the currency', () => {
+  const rate = (unit) => setupAll({sections:['session'], over:{car_connected:['binary_sensor.car','on'], active_rate_cost:['sensor.rate',0.25,{unit_of_measurement:unit, rate_name:'Primary Rate'}]}}).html();
+  assert.match(rate('UAH/kWh'), /class="session-rate"[^>]*>0\.25 ₴\/kWh</);
+  assert.match(rate('EUR/kWh'), /class="session-rate"[^>]*>0\.25 €\/kWh</);
+});
+test('the schedule time picker follows the theme: a dark picker on a light card hides its own icons', () => {
+  const style = source.match(/const MODULAR_STYLE = `([^`]*)`/)[1];
+  assert.match(style, /\.sched-time-input\{[^}]*color-scheme:dark/);
+  assert.match(style, /ha-card\[data-theme=light\] \.sched-time-input\{color-scheme:light\}/);
+});
+test('Escape closes any open question: a counter reset or a stop that asks first', async () => {
+  const esc = (card) => card._onKeyDown({key:'Escape', target:{dataset:{}}, preventDefault(){}});
+  const r = setupAll({sections:['history'], over:HISTORY});
+  await r.card._resetCounter('reset_counter_a');
+  assert.match(r.html(), /reset-ask/);
+  esc(r.card);
+  assert.doesNotMatch(r.html(), /reset-ask/);
+  const s = setupStatus({state:'Charging', sections:['actions']});
+  await s.card._statusToggle('stop_charging');
+  assert.match(s.html(), />Sure\?</);
+  esc(s.card);
+  assert.doesNotMatch(s.html(), />Sure\?</);
+  assert.equal(s.calls.length, 0);
+});
+test('One charge on: only the schedules it ignores are struck through, and no next start is promised', () => {
+  const x = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('on')}});
+  assert.match(x.html(), /<s>1 23:00→07:00<\/s><i class="info-sep">·<\/i>2 Off/);
+  const s = setupAll({sections:['status'], charging:false, over:{...SCHED, ...ONE('on'), not_charging_reason:['sensor.reason','Waiting for Schedule']}});
+  s.card._nowHM = () => '20:00'; s.card.hass = s.hass;
+  assert.doesNotMatch(s.html(), /from 23:00/);
+});
+test('the folded One charge flag is its own item in the centred row, not text inside the summary', () => {
+  const h = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('on')}}).html();
+  assert.match(h, /<\/span><ha-icon class="override-flag"[^>]*><\/ha-icon><span class="fold-sum overridden"/);
+  assert.doesNotMatch(h, /class="fold-sum[^"]*"[^>]*><ha-icon class="override-flag"/);
 });

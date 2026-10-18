@@ -57,6 +57,8 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to charger ({error_detail}), please verify the IP address",
+      "connection_refused": "A device at this address refused the connection; it is probably not the charger. Check the IP address ({error_detail})",
+      "host_unreachable": "Home Assistant cannot reach the network of this address. The charger and Home Assistant must be on the same network ({error_detail})",
       "invalid_auth": "Invalid username or password",
       "invalid_input": "Invalid input provided, please check your entries",
       "invalid_device": "Device validation failed, please check the charger model",
@@ -305,6 +307,12 @@
       },
       "ocpp_connected": {
         "name": "OCPP Connected"
+      },
+      "reve_api": {
+        "name": "REVE API"
+      },
+      "manual_mode": {
+        "name": "Manual Mode"
       }
     },
     "switch": {
@@ -414,6 +422,8 @@
         },
         "error": {
           "cannot_connect": "Failed to connect to charger, please verify the IP address",
+          "connection_refused": "A device at this address refused the connection; it is probably not the charger. Check the IP address",
+          "host_unreachable": "Home Assistant cannot reach the network of this address. The charger and Home Assistant must be on the same network",
           "invalid_auth": "Invalid username or password",
           "invalid_input": "Invalid input provided, please check your entries",
           "invalid_device": "Device validation failed, please check the charger model",

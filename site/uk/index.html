@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Інтеграція Eveus EV Charger для Home Assistant (Eveus Pro, Energy Star) | HACS</title>
-  <meta name="description" content="Інтеграція Home Assistant для зарядних станцій Eveus (Energy Star), зокрема Eveus Pro: локальне керування струмом, розкладами й лімітами, зупинка на цільовому SOC, облік енергії та вартості. У стандартному каталозі HACS.">
+  <title>Інтеграція Eveus EV Charger для Home Assistant (Eveus Pro, Energy Star, REVE) | HACS</title>
+  <meta name="description" content="Інтеграція Home Assistant для зарядних станцій Eveus (Energy Star), зокрема Eveus Pro і станцій на прошивці REVE: локальне керування струмом, розкладами й лімітами, зупинка на цільовому SOC, облік енергії та вартості. У стандартному каталозі HACS.">
   <link rel="canonical" href="https://abovsh.github.io/eveus/uk/">
   <link rel="alternate" hreflang="en" href="https://abovsh.github.io/eveus/">
   <link rel="alternate" hreflang="uk" href="https://abovsh.github.io/eveus/uk/">
@@ -12,12 +12,12 @@
   <link rel="stylesheet" href="../assets/style.css">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Eveus EV Charger для Home Assistant">
-  <meta property="og:description" content="Локальне керування зарядними станціями Eveus (Energy Star), зокрема Eveus Pro, у Home Assistant. У стандартному каталозі HACS.">
+  <meta property="og:description" content="Локальне керування зарядними станціями Eveus (Energy Star), зокрема Eveus Pro і станціями на прошивці REVE, у Home Assistant. У стандартному каталозі HACS.">
   <meta property="og:url" content="https://abovsh.github.io/eveus/uk/">
   <meta property="og:image" content="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Eveus EV Charger для Home Assistant">
-  <meta name="twitter:description" content="Локальне керування зарядними станціями Eveus (Energy Star), зокрема Eveus Pro, у Home Assistant. У стандартному каталозі HACS.">
+  <meta name="twitter:description" content="Локальне керування зарядними станціями Eveus (Energy Star), зокрема Eveus Pro і станціями на прошивці REVE, у Home Assistant. У стандартному каталозі HACS.">
   <meta name="twitter:image" content="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039">
   <script type="application/ld+json">
   {
@@ -26,7 +26,7 @@
     "name": "Eveus EV Charger для Home Assistant",
     "applicationCategory": "HomeAutomationApplication",
     "operatingSystem": "Home Assistant",
-    "description": "Інтеграція Home Assistant, яка керує зарядними станціями Eveus (Energy Star), зокрема Eveus Pro, через локальну мережу. Встановлюється через HACS.",
+    "description": "Інтеграція Home Assistant, яка керує зарядними станціями Eveus (Energy Star), зокрема Eveus Pro і станціями на прошивці REVE, через локальну мережу. Встановлюється через HACS.",
     "inLanguage": ["uk", "en"],
     "screenshot": "https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039",
     "url": "https://abovsh.github.io/eveus/uk/",
@@ -62,6 +62,14 @@
         "acceptedAnswer": {
           "@type": "Answer",
           "text": "Так. У Розширеному режимі інтеграція оцінює SOC батареї, час до цільового рівня та очікуваний час завершення на основі даних станції та параметрів батареї, які ви вказуєте (початковий SOC, ємність батареї, коефіцієнт корекції)."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Чи працює інтеграція з новою прошивкою REVE?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Так. Інтеграція сама розпізнає прошивку REVE і читає та записує налаштування, розклади, тарифи й ліміти заряджання через власний інтерфейс REVE. Показники, яких REVE не передає, лишаються недоступними. У ручному режимі (кнопка «ігнорувати розклад» у застосунку станції, «Одноразове заряджання» або «Стоп») станція ігнорує розклади й ліміти, доки конектор не витягнуть з авто. Деталі — у розділі про REVE в документації."
         }
       },
       {
@@ -158,6 +166,8 @@
         <p>Ні. Інтеграція обмінюється даними зі станцією лише через вашу локальну мережу — без хмарного облікового запису й телеметрії. Власне OCPP-підключення станції — окрема функція, яка може використовувати віддалений сервер.</p>
         <h3>Чи може Home Assistant оцінювати рівень заряду батареї електромобіля?</h3>
         <p>Так. У Розширеному режимі інтеграція оцінює SOC батареї, час до цільового рівня та очікуваний час завершення на основі даних станції та параметрів батареї, які ви вказуєте (початковий SOC, ємність батареї, коефіцієнт корекції).</p>
+        <h3>Чи працює інтеграція з новою прошивкою REVE?</h3>
+        <p>Так. Інтеграція сама розпізнає прошивку REVE і читає та записує налаштування, розклади, тарифи й ліміти заряджання через власний інтерфейс REVE. Показники, яких REVE не передає, лишаються недоступними. У ручному режимі (кнопка «ігнорувати розклад» у застосунку станції, «Одноразове заряджання» або «Стоп») станція ігнорує розклади й ліміти, доки конектор не витягнуть з авто. Деталі — у розділі про REVE в документації.</p>
         <h3>Чому налаштування не вдається, хоча вебсторінка станції працює?</h3>
         <p>Станції зі старішою прошивкою (є повідомлення про R3.01.x) можуть нормально відкривати власну вебсторінку, але відповідати на API-запит інтеграції так, що налаштування не може використати відповідь. Оновіть прошивку: напишіть @energy_star у Telegram, щоб отримати доступ до каналу підтримки станції з файлами прошивок та інструкціями, — далі оновіть через застосунок Grizzl-E або прошийте завантажений файл через вебінтерфейс станції. Діалог налаштування показує конкретну причину помилки, а <a href="https://github.com/ABovsh/eveus/blob/main/README.uk.md#старіша-прошивка-станції">посібник з усунення несправностей</a> пояснює, що повідомити, якщо прошивку оновити неможливо.</p>
       </div>

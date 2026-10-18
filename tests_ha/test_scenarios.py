@@ -283,7 +283,10 @@ async def test_charge_session(hass, aioclient_mock, monkeypatch, snapshot) -> No
         sessionTime=1800,
         sessionMoney=17.5,
     )  # Charging
-    await scenario.poll(state=5, subState=0)  # Car completed the charge
+    # The charger still reports the finished session when it completes.
+    await scenario.poll(
+        state=5, subState=0, sessionEnergy=3.5, sessionTime=1800, sessionMoney=17.5
+    )  # Car completed the charge
     await scenario.poll(state=2)  # Unplug
 
     assert [event_type for event_type, _ in fired] == [
@@ -322,13 +325,14 @@ async def test_outage(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     await scenario.fail()  # failure 1 (edge): held
     assert hass.states.get(VOLTAGE).state == "226.0"
     await scenario.advance(third)
-    await scenario.fail()  # failure 2 (repeated, no re-notify): still held
+    await scenario.fail()  # failure 3 (repeated, no re-notify): still held
     assert hass.states.get(VOLTAGE).state == "226.0"
-    # HA re-notifies nothing on a repeated failure, but Connection Quality
-    # describes the failing link itself: 1 success of 3 polls is 33 %, not
-    # the 50 % the first failure left (live 2026-09-19: froze at 95 "Good"
-    # through a five-minute outage).
-    assert hass.states.get(QUALITY).state == "33"
+    # The quick retry FIRST_FAILURE_RETRY_INTERVAL after failure 1 failed too
+    # inside that advance (failure 2). HA re-notifies nothing on a repeated
+    # failure, but Connection Quality describes the failing link itself:
+    # 1 success of 4 polls is 25 %, not the 50 % the first failure left (live
+    # 2026-09-19: froze at 95 "Good" through a five-minute outage).
+    assert hass.states.get(QUALITY).state == "25"
     await scenario.advance(third)
     await scenario.fail()  # failure 3: still held (< grace so far)
     assert hass.states.get(VOLTAGE).state == "226.0"
@@ -405,7 +409,9 @@ async def test_restart_restore(hass, aioclient_mock, monkeypatch, snapshot) -> N
         sessionTime=1500,
         sessionMoney=20.0,
     )
-    await scenario.poll(state=5, subState=0)
+    await scenario.poll(
+        state=5, subState=0, sessionEnergy=4.2, sessionTime=1500, sessionMoney=20.0
+    )
 
     assert float(hass.states.get(LAST_SESSION_ENERGY).state) == 4.2
 

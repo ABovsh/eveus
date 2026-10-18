@@ -305,7 +305,7 @@ def test_offline_poll_cycle_is_at_most_sixty_seconds():
     _make_offline(updater)
     for _ in range(6):
         updater._record_failure(TimeoutError())
-        delay = updater._next_poll_attempt - time.time()
+        delay = updater._next_poll_attempt - time.monotonic()
         assert delay <= OFFLINE_UPDATE_INTERVAL
     assert updater.update_interval.total_seconds() == OFFLINE_UPDATE_INTERVAL
 
@@ -326,10 +326,10 @@ def test_backoff_does_not_escalate_with_continued_failures():
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     _make_offline(updater)
     updater._record_failure(TimeoutError())
-    first = updater._next_poll_attempt - time.time()
+    first = updater._next_poll_attempt - time.monotonic()
     for _ in range(5):
         updater._record_failure(TimeoutError())
-    assert updater._next_poll_attempt - time.time() == pytest.approx(first, abs=1.0)
+    assert updater._next_poll_attempt - time.monotonic() == pytest.approx(first, abs=1.0)
 
 
 def test_recovery_needs_two_successes_before_fast_cadence():
@@ -373,6 +373,7 @@ def test_fires_after_three_polls_above_ten_minutes() -> None:
 
 
 def test_failure_during_probation_resets_counter() -> None:
+    from datetime import timedelta
     from types import SimpleNamespace
     from custom_components.eveus.common_network import EveusUpdater
 
@@ -391,6 +392,8 @@ def test_failure_during_probation_resets_counter() -> None:
     updater._offline_probation = 1
     updater._first_failure_monotonic = None
     updater._grace_timer_unsubs = []
+    updater._interval_before_retry = None
+    updater.update_interval = timedelta(seconds=60)
     updater.hass = None
 
     updater._record_failure(ValueError("boom"))

@@ -1131,7 +1131,8 @@ def test_binary_sensor_setup_entry_adds_all_status_entities() -> None:
         runtime_data=SimpleNamespace(
             updater=EveusTestUpdater({}),
             device_number=2,
-        )
+        ),
+        async_on_unload=lambda _unsub: None,
     )
 
     asyncio.run(bs.async_setup_entry(None, entry, lambda entities: added.extend(entities)))

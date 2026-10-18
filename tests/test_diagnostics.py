@@ -97,6 +97,7 @@ def test_diagnostics_handles_missing_device_data_and_update_interval() -> None:
         "current_set": None,
         "model": None,
         "manufacturer": None,
+        "firmware_family": "classic",
     }
     assert diagnostics["raw_main"] == {}
 

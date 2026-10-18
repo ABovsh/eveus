@@ -49,6 +49,21 @@ def test_reason_mapping(payload, expected):
     assert get_not_charging_reason(_modern(**payload), None) == expected
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # REVE's Stop holds the charger in subState 9; classic firmware's Stop
+        # reads subState 1. Either way the user's Stop is what holds it.
+        ({"state": 5, "subState": 9, "evseEnabled": 1}, "Stopped by User"),
+        ({"state": 3, "subState": 9, "evseEnabled": 1}, "Stopped by User"),
+        ({"state": 5, "subState": 9, "evseEnabled": 0}, "Waiting for Activation"),
+        ({"state": 3, "subState": 1, "evseEnabled": 1}, "Stopped by User"),
+    ],
+)
+def test_a_charger_held_while_stop_is_on_is_stopped_by_user(payload, expected):
+    assert get_not_charging_reason(_modern(**payload), None) == expected
+
+
 def test_reason_none_without_state():
     assert get_not_charging_reason(_modern(), None) is None
 
@@ -273,3 +288,63 @@ def test_error_substate_zero_is_the_only_code_that_names_no_error():
     assert get_not_charging_reason_attrs(_modern(state=7, subState=1), None) == {
         "error": get_error_state(1)
     }
+
+
+_REVE = {"verFWWifi": "REVE_PLUS_1.0.0", "verFWMain": "          2.4.0 "}
+
+
+def _reve(**payload) -> EveusTestUpdater:
+    updater = EveusTestUpdater({**_REVE, **payload})
+    updater.firmware_family = "reve"
+    return updater
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # REVE holds a charger that reached a session limit in subState 9, the
+        # same code it uses for waiting on an external start.
+        ({"energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 1.0}, "Energy Limit Reached"),
+        ({"energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 0.9996}, "Energy Limit Reached"),
+        ({"timeLimitS": 1, "timeLimit": 600, "sessionTime": 600}, "Time Limit Reached"),
+        # A rounded reading may fall short by the tolerance (1 s here) and still counts.
+        ({"timeLimitS": 1, "timeLimit": 600, "sessionTime": 599}, "Time Limit Reached"),
+        ({"timeLimitS": 1, "timeLimit": 600, "sessionTime": 598}, "Waiting for Activation"),
+        ({"moneyLimitS": 1, "moneyLimit": 50, "sessionMoney": 50.01}, "Cost Limit Reached"),
+        # A limit that is off, or not yet reached, is not the cause.
+        ({"energyLimitS": 0, "energyLimit": 1.0, "sessionEnergy": 5.0}, "Waiting for Activation"),
+        ({"energyLimitS": 1, "energyLimit": 28.0, "sessionEnergy": 27.0}, "Waiting for Activation"),
+        ({"sessionEnergy": 5.0}, "Waiting for Activation"),
+        # The user's Stop outranks a limit that happens to be reached too.
+        ({"energyLimitS": 1, "energyLimit": 1.0, "sessionEnergy": 1.0, "evseEnabled": 1}, "Stopped by User"),
+    ],
+)
+def test_reve_names_the_session_limit_that_held_the_charge(payload, expected):
+    assert get_not_charging_reason(_reve(state=5, subState=9, **payload), None) == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # Seen 18.10 09:57 and 11:04: plugged in outside the enabled schedule's
+        # window, REVE waits in 3/9 — the code it also uses for Stop.
+        ({"sh1Enabled": 1}, "Waiting for Schedule"),
+        ({"sh1Enabled": 0, "sh2Enabled": 1}, "Waiting for Schedule"),
+        ({"sh1Enabled": 1, "evseEnabled": 1}, "Stopped by User"),
+        # No schedule on: nothing says what it waits for.
+        ({"sh1Enabled": 0, "sh2Enabled": 0}, "Waiting for Activation"),
+        ({}, "Waiting for Activation"),
+    ],
+)
+def test_reve_plugged_in_outside_a_schedule_waits_for_it(payload, expected):
+    assert get_not_charging_reason(_reve(state=3, subState=9, **payload), None) == expected
+
+
+def test_a_classic_charger_waiting_in_substate_9_is_not_given_a_schedule_reason():
+    classic = _modern(state=3, subState=9, sh1Enabled=1)
+    assert get_not_charging_reason(classic, None) == "Waiting for Activation"
+
+
+def test_a_classic_charger_in_substate_9_is_never_given_a_limit_reason():
+    classic = _modern(state=5, subState=9, energyLimitS=1, energyLimit=1.0, sessionEnergy=1.0)
+    assert get_not_charging_reason(classic, None) == "Waiting for Activation"

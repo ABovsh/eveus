@@ -187,6 +187,13 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
         expected["select"].add(_slug(name))
     for name in ("Car Connected", "Session Active", "OCPP Connected"):
         expected["binary_sensor"].add(_slug(name))
+    # Added for REVE chargers only, once the first poll identifies one.
+    from custom_components.eveus.binary_sensor import (
+        EveusManualModeBinarySensor,
+        EveusReveApiBinarySensor,
+    )
+    expected["binary_sensor"].add(_slug(EveusReveApiBinarySensor.ENTITY_NAME))
+    expected["binary_sensor"].add(_slug(EveusManualModeBinarySensor.ENTITY_NAME))
     return expected
 
 

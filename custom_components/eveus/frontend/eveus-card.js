@@ -35,6 +35,8 @@ const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 const MONTH_REFRESH_MS = 15 * 60000;
 // A command not confirmed by the charger's own state within this long is reported as unconfirmed.
 const COMMAND_TIMEOUT_MS = 60000;
+// A command error stays this long unless tapped away: long enough to read, not for good.
+const ERROR_SHOW_MS = 30000;
 // Text from entity attributes goes into markup; quote it.
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 // Mirrors const.py CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS: a drift this close to whole hours is a wrong time zone.
@@ -131,7 +133,7 @@ const I18N = {
     total: 'Total', allTime: 'all time', counterA: 'Counter A', counterB: 'Counter B', reset: 'Reset',
     resetQ: (label) => `Reset ${label}?`, toZero: 'will be set to 0', cancel: 'Cancel',
     confirm: 'Confirm',
-    disableGroundQ: 'Disable ground protection?', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.',
+    disableGroundQ: 'Disable ground protection?', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
     socFromCar: (detail) => `Initial SOC from the car: ${detail}`, socManual: 'Initial SOC set manually', socNotUsed: (detail) => `Car SOC not used (${detail}); the manual value applies`,
     safety: 'Safety', box: 'Box temperature', plug: 'Plug temperature', groundProt: 'Ground protection',
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
@@ -147,7 +149,7 @@ const I18N = {
     faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
-    noneOn: 'none on', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
+    noneOn: 'none on', lockedIdle: 'change while charging', lockedIdleNote: 'REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it', lockedManual: 'manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
     slowCar: 'the car takes less', until: 'until',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
@@ -156,6 +158,8 @@ const I18N = {
     socSettings: 'SOC settings', schedules: 'Schedules', counters: 'Counters',
     tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
     monthTitle: 'Energy this month and last month (Home Assistant statistics)',
+    oneOverrides: {schedules: 'One charge ignores the schedules', limits: 'One charge ignores the limits'}, turnOff: 'Turn off',
+    manualOverrides: {schedules: 'REVE manual mode ignores the schedules until the connector is replugged', limits: 'REVE manual mode ignores the limits until the connector is replugged; they can be changed after that'},
     states: {},
   },
   uk: {
@@ -191,7 +195,7 @@ const I18N = {
     total: 'Загалом', allTime: 'за весь час', counterA: 'Лічильник A', counterB: 'Лічильник B', reset: 'Скинути',
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
     confirm: 'Підтвердити',
-    disableGroundQ: 'Вимкнути захист заземлення?', disableAllQ: 'Вимкнути всі ліміти зарядки?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.',
+    disableGroundQ: 'Вимкнути захист заземлення?', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
     socFromCar: (detail) => `Початковий SOC з авто: ${detail}`, socManual: 'Початковий SOC задано вручну', socNotUsed: (detail) => `SOC авто не використано (${detail}); діє значення, задане вручну`,
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
@@ -211,7 +215,7 @@ const I18N = {
     faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
-    noneOn: 'усі вимкнено', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
+    noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedIdleNote: 'REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт', lockedManual: 'ручний режим', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
     slowCar: 'авто приймає менше', until: 'до',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
@@ -220,6 +224,8 @@ const I18N = {
     socSettings: 'SOC', schedules: 'Розклади', counters: 'Лічильники',
     tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
     monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
+    oneOverrides: {schedules: '«Один заряд» ігнорує розклади', limits: '«Один заряд» ігнорує ліміти'}, turnOff: 'Вимкнути',
+    manualOverrides: {schedules: 'Ручний режим REVE ігнорує розклади до повторного підключення конектора', limits: 'Ручний режим REVE ігнорує ліміти до повторного підключення конектора; змінити їх можна після цього'},
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
       'Startup': 'Запуск', 'System Test': 'Самотестування', 'Standby': 'Очікування', 'Connected': 'Підключено',
@@ -264,6 +270,8 @@ const ITEMS = {
   schedules: ['schedule_1', 'schedule_2'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
   safety: ['box', 'plug', 'ground', 'leak', 'connection'],
 };
+// The entity behind each safety item, in ITEMS.safety order; null = always shown.
+const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_current', null];
 const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
 // A grid whose stylesheet assumes `n` columns, re-spread when hidden items leave fewer.
 const columns = (count, n) => count === n ? '' : ` style="grid-template-columns:repeat(${count},minmax(0,1fr))"`;
@@ -333,6 +341,8 @@ const money = (value, rawUnit = 'UAH') => {
 const duration = (text) => typeof text === 'string' && /\d/.test(text) ? text.replace(/\s+/g, '') : null;
 // The existing card's working band for mains voltage: outside it the charger itself struggles.
 const VOLTAGE_LOW_V = 205, VOLTAGE_HIGH_V = 253;
+// Not Charging Reason states for a stop at a session limit.
+const LIMIT_STOPS = new Set(['Energy Limit Reached', 'Time Limit Reached', 'Cost Limit Reached']);
 
 const validateSectionSizes = (sizes) => {
   for (const [section, size] of Object.entries(sizes || {})) {
@@ -361,7 +371,7 @@ class EveusCard extends HTMLElement {
     this._limitTimers = {};
     this._editingLimit = null;
     this._guardAsk = null;
-    this._commandError = false;
+    this._showError(false);
     this._resolveAgain = false;
     this._month = null;
     this._monthAt = 0;
@@ -396,7 +406,7 @@ class EveusCard extends HTMLElement {
         if (this._holdAt && Math.hypot(e.clientX - this._holdAt[0], e.clientY - this._holdAt[1]) > 10) this._holdEnd();
       });
       this.shadowRoot.addEventListener('contextmenu', (e) => { if (e.target.closest?.('[data-hold]')) e.preventDefault(); });
-      this.shadowRoot.addEventListener('pointercancel', () => { this._holdEnd(); this._reset(); this._render(); });
+      this.shadowRoot.addEventListener('pointercancel', () => this._onPointerCancel());
       // A dashboard/grid resize (e.g. rotation, editor column change) does not
       // touch hass, so refitting must react to width changes on its own.
       if (typeof ResizeObserver !== 'undefined') {
@@ -414,7 +424,16 @@ class EveusCard extends HTMLElement {
     if (this._hass) this.hass = this._hass;
   }
   _onKeyDown(e) {
-    if (e.key === 'Escape' && this._guardAsk) { e.preventDefault(); this._guardAsk = null; this._render(); return; }
+    if (e.key === 'Escape' && (this._guardAsk || this._resetAsk || this._statusAsk)) {
+      e.preventDefault();
+      this._guardAsk = null;
+      this._resetAsk = null;
+      this._statusAsk = null;
+      clearTimeout(this._resetTimer);
+      clearTimeout(this._statusTimer);
+      this._render();
+      return;
+    }
     if (e.key === 'Enter' && e.altKey) {
       const tile = e.target.closest?.('[data-hold]');
       if (tile) { e.preventDefault(); this._moreInfo(tile.dataset.hold); return; }
@@ -440,7 +459,8 @@ class EveusCard extends HTMLElement {
     const reset = e.target.closest('[data-reset],[data-reset-confirm],[data-reset-cancel]');
     const fold = e.target.closest('[data-fold]');
     const zoneFix = e.target.closest('[data-zone-fix]');
-    if (e.target.closest('[data-guard-confirm]')) void this._confirmGuard();
+    if (e.target.closest('[data-dismiss-error]')) { this._showError(false); this._render(); }
+    else if (e.target.closest('[data-guard-confirm]')) void this._confirmGuard();
     else if (e.target.closest('[data-guard-cancel]')) { this._guardAsk = null; this._render(); }
     else if (fold) this._toggleFold(fold.dataset.fold);
     else if (zoneFix) void this._selectOption('time_zone', zoneFix.dataset.zoneFix);
@@ -464,6 +484,14 @@ class EveusCard extends HTMLElement {
     if (!el) return;
     this._holdAt = [e.clientX, e.clientY];
     this._holdTimer = setTimeout(() => { this._held = true; this._holdAt = null; this._moreInfo(el.dataset.hold); }, 500);
+  }
+  // The browser cancels a pointer when it takes the touch over to scroll the page. That ends a
+  // slider drag (no change event follows), but must not drop a Confirm waiting for its tap.
+  _onPointerCancel() {
+    this._holdEnd();
+    if (!this._sliding) return;
+    this._reset();
+    this._render();
   }
   _holdEnd() {
     clearTimeout(this._holdTimer);
@@ -526,6 +554,7 @@ class EveusCard extends HTMLElement {
     this._timeValue = null;
     clearTimeout(this._syncTimer);
     this._syncDone = false;
+    this._showError(false);
     clearTimeout(this._selectTimer);
     this._editingSelect = null;
     this._resizeObserver?.disconnect();
@@ -596,7 +625,6 @@ class EveusCard extends HTMLElement {
     this._asking = false;
     this._sliding = false;
     this._sent = false;
-    this._error = false;
     this._request = (this._request || 0) + 1;
   }
   _expire() {
@@ -612,7 +640,6 @@ class EveusCard extends HTMLElement {
       return;
     }
     clearTimeout(this._timer);
-    this._error = false;
     this._draft = value;
     this._sliding = !commit;
     const out = this.shadowRoot.querySelector('.cv');
@@ -620,6 +647,7 @@ class EveusCard extends HTMLElement {
     const b = this._bounds;
     if (b && e.target.style?.setProperty) e.target.style.setProperty('--fill', `${100 * (value - b.min) / (b.max - b.min)}%`);
     if (!commit) return;
+    if (this._commandError === 'current') this._showError(false);
     const current = currentNumber(this._state('charging_current'));
     if (value > current) {
       this._asking = true;
@@ -644,14 +672,14 @@ class EveusCard extends HTMLElement {
     this._render();
     // Finite feedback even when HA never answers. Each response belongs to its
     // own request, so a late failure cannot undo a newer interaction.
-    this._commandError = false;
-    this._timer = setTimeout(() => { this._reset(); this._commandError = 'timeout'; this._render(); }, COMMAND_TIMEOUT_MS);
+    this._showError(false);
+    this._timer = setTimeout(() => { this._reset(); this._showError('timeout'); this._render(); }, COMMAND_TIMEOUT_MS);
     try {
       await this._hass.callService('number', 'set_value', {entity_id: this._ids.charging_current, value});
     } catch {
       if (request !== this._request) return;
       this._reset();
-      this._error = true;
+      this._showError('current');
       this._render();
     }
   }
@@ -678,23 +706,29 @@ class EveusCard extends HTMLElement {
   }
   _setLimitPending(key, value) {
     clearTimeout(this._limitTimers[key]);
-    this._commandError = false;
+    this._showError(false);
     this._limitPending[key] = value;
     this._limitTimers[key] = setTimeout(() => {
       delete this._limitPending[key];
       delete this._limitTimers[key];
-      this._commandError = 'timeout';
+      this._showError('timeout');
       this._render();
     }, COMMAND_TIMEOUT_MS);
     this._limitTimers[key]?.unref?.();
     return this._limitTimers[key];
+  }
+  // Shown until tapped away, a newer command starts, or ERROR_SHOW_MS pass. Callers render.
+  _showError(kind) {
+    clearTimeout(this._errorTimer);
+    this._commandError = kind;
+    if (kind) this._errorTimer = setTimeout(() => { this._commandError = false; this._render(); }, ERROR_SHOW_MS);
   }
   _rejectLimitPending(key, timer) {
     if (this._limitTimers[key] !== timer) return;
     clearTimeout(timer);
     delete this._limitTimers[key];
     delete this._limitPending[key];
-    this._commandError = true;
+    this._showError(true);
     this._render();
   }
   // Standard HA custom-card pattern: a bubbling, shadow-boundary-crossing event that the
@@ -717,8 +751,10 @@ class EveusCard extends HTMLElement {
     const ask = this._guardAsk;
     const labels = {limit_soc_enabled: t.soc, limit_energy_enabled: t.energy, limit_time_enabled: t.time, limit_cost_enabled: t.cost};
     const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
-    return (ask ? `<div class="message guard-ask" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
-      + (this._commandError ? `<div class="message" role="alert">${this._commandError === 'timeout' ? t.commandTimeout : t.commandFailed}</div>` : '');
+    const error = this._commandError === 'timeout' ? t.commandTimeout
+      : this._commandError === 'current' ? t.setFailed : t.commandFailed;
+    return (ask ? `<div class="message guard-ask" popover="manual" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
+      + (this._commandError ? `<button class="message cmd-error" role="alert" data-dismiss-error title="${t.dismiss}">${error}</button>` : '');
   }
   async _toggleLimit(key, confirmed = false) {
     const entity = this._state(key);
@@ -789,11 +825,11 @@ class EveusCard extends HTMLElement {
     // Time units have words in the card's language; kWh, V, A and currencies stay symbols.
     return CURRENCY[rawUnit] || this._t.units[rawUnit] || rawUnit;
   }
-  _numberValue({key, label, fallbackUnit, readonly = false, unit: showUnit = true}) {
+  _numberValue({key, label, fallbackUnit, readonly = false, unit: showUnit = true}, locked = false) {
     const entity = this._state(key), attrs = entity?.attributes || {};
     const value = this._limitValue(key);
     const unit = showUnit ? `<small>${this._unit(key, fallbackUnit)}</small>` : '';
-    const disabled = !this._online || value === null || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite);
+    const disabled = !this._online || locked || value === null || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite);
     const shown = value === null ? '—' : Number(value.toFixed(attrs.step < 1 ? 1 : 0));
     if (readonly) return `<div class="limit-value readonly"><b data-fit>${shown}${unit}</b></div>`;
     const editing = this._editingLimit === key;
@@ -811,15 +847,14 @@ class EveusCard extends HTMLElement {
   _numberInput(key, label, value, attrs, disabled) {
     return `<input type="number" class="limit-edit-input" data-limit-edit="${key}" value="${value ?? ''}" min="${attrs.min ?? ''}" max="${attrs.max ?? ''}" step="${attrs.step ?? 1}" inputmode="decimal" aria-label="${this._t.set}: ${label}" ${disabled ? 'disabled' : ''}>`;
   }
-  _limitTile({key, toggle, label, fallbackUnit, readonly = false}) {
+  _limitTile({key, toggle, label, fallbackUnit, readonly = false}, suspended, locked = false) {
     const enabled = this._limitOn(toggle);
-    const suspended = this._limitOn('limit_disable_all');
     const cls = ['limit-tile', enabled ? '' : 'inactive', enabled && !suspended ? 'active' : '', enabled && suspended ? 'saved' : ''].filter(Boolean).join(' ');
     return `<div class="${cls}">
-      <button class="limit-toggle" data-limit-toggle="${toggle}" role="switch" aria-checked="${enabled}" aria-label="${label}: ${this._t.limit}" ${!this._online ? 'disabled' : ''}>
+      <button class="limit-toggle" data-limit-toggle="${toggle}" role="switch" aria-checked="${enabled}" aria-label="${label}: ${this._t.limit}" ${!this._online || locked ? 'disabled' : ''}>
         <span data-fit="10.5">${label}<small class="tile-unit">${this._unit(key, fallbackUnit)}</small></span><i></i>
       </button>
-      ${this._numberValue({key, label, fallbackUnit, readonly, unit: false})}
+      ${this._numberValue({key, label, fallbackUnit, readonly, unit: false}, locked)}
     </div>`;
   }
   _limitsSection(fold = null) {
@@ -842,13 +877,31 @@ class EveusCard extends HTMLElement {
     );
     // With nothing on, "Disable all" has nothing to disable; suspended, it is how the limits come back.
     const anyOn = items.some((item) => this._limitOn(item.toggle));
-    const note = !anyOn && !suspended ? `<small class="limits-note">${t.noneOn}</small>` : '';
+    // One charge ignores the limits that are on: they read as suspended, like Disable all.
+    // Manual mode ignores the charger's own limits only; Target SOC is stopped by Home Assistant.
+    const ignored = !suspended && this._ignoring
+      && (this._oneChargeNote ? anyOn : items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle)));
+    const closed = fold && !fold.open;
+    // REVE takes a limit only while charging outside manual mode, so its limits are locked otherwise and a
+    // note under the title says why and until when; a folded row keeps a short form with the full text as a tooltip.
+    const manualLock = !suspended && this._manualMode;
+    const idleLock = !suspended && !this._ignoring && this._limitsLocked;
+    const shortNote = (text, title) => `<small class="limits-note" title="${title}">${text}</small>`;
+    const note = suspended ? ''
+      : closed && manualLock ? shortNote(t.lockedManual, t.manualOverrides.limits) + this._overrideFlag('limits')
+      : closed && idleLock ? shortNote(t.lockedIdle, t.lockedIdleNote)
+      : closed && ignored ? this._overrideFlag('limits')
+      : !anyOn ? `<small class="limits-note">${t.noneOn}</small>` : '';
+    const lockNote = manualLock || ignored ? this._override('limits')
+      : idleLock ? `<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"></ha-icon><span>${t.lockedIdleNote}</span></div>` : '';
     const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
     const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
-    const disable = anyOn || suspended ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
+    // REVE has no Disable all: its switch is unavailable there, so there is no button.
+    const disable = (anyOn || suspended) && !this._unsupported('limit_disable_all') ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
-    const grid = !fold || fold.open ? `<div class="limits-grid ${GRID[items.length] || 'four'} ${suspended ? 'suspended' : ''}">${items.map((item) => this._limitTile(item)).join('')}</div>` : '';
+    const held = suspended || ignored;
+    const grid = !closed ? `${lockNote}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held && (suspended || this._oneChargeNote || item.key !== 'target_soc'), this._limitsLocked && item.key !== 'target_soc')).join('')}</div>` : '';
     return `<section class="${['limits', this._online ? '' : 'off', fold && !fold.open ? 'folded' : ''].filter(Boolean).join(' ')}" aria-label="${t.aria.limits}">
       <div class="limits-head">${head}${disable}${fold ? this._foldChev('limits', fold.open) : ''}</div>${grid}
     </section>`;
@@ -902,9 +955,15 @@ class EveusCard extends HTMLElement {
         </button>`,
         `<button class="safety-item" data-more-info="leakage_current" title="${t.leak} — ${d}"><ha-icon icon="mdi:current-dc"></ha-icon><span class="safety-value ${r.leakCls}">${r.leak === null ? '—' : Math.round(r.leak)}<small>mA</small></span></button>`,
         `<button class="safety-item" data-more-info="connection_quality" title="${t.conn} — ${d}"><ha-icon icon="${connectionIcon(r.conn)}"></ha-icon><span class="safety-value ${r.connCls}">${r.conn === null ? '—' : Math.round(r.conn)}<small>%</small></span></button>`,
-      ].filter((_, i) => this._shows('safety', ITEMS.safety[i])).join('')}</div>
+      ].filter((_, i) => this._shows('safety', ITEMS.safety[i]) && !this._unsupported(SAFETY_SOURCES[i])).join('')}</div>
     </section>`;
   }
+  // A reading or setting the charger's firmware does not provide at all: the
+  // integration publishes it `unavailable` while the charger itself answers (REVE
+  // has no leakage current in mA, no schedule energy cap, and reports the plug
+  // temperature as -60). An outage makes every entity unavailable at
+  // once; the card then shows the charger offline instead.
+  _unsupported(key) { return Boolean(key) && this._online && this._state(key)?.state === 'unavailable'; }
   get _charging() { return this._state('state')?.state === 'Charging'; }
   get _t() { return I18N[langOf(this._config, this._hass)]; }
   _shows(section, item) { return !this._config.hide?.includes(`${section}.${item}`); }
@@ -950,7 +1009,7 @@ class EveusCard extends HTMLElement {
     const rateEntity = this._ids.active_rate_cost && this._shows('session', 'rate') ? this._state('active_rate_cost') : null;
     const rate = on ? currentNumber(rateEntity) : null;
     const rateName = rateEntity?.attributes?.rate_name;
-    const rateUnit = String(rateEntity?.attributes?.unit_of_measurement || '').replace('UAH', '₴');
+    const rateUnit = String(rateEntity?.attributes?.unit_of_measurement || '').replace(/^[A-Z]{3}(?=\/|$)/, (code) => CURRENCY[code] || code);
     const label = rate === null ? t.session
       : `${t.session}<small class="session-rate" title="${t.rateNames[rateName] ?? rateName ?? ''}">${rate.toFixed(2)} ${rateUnit}</small>`;
     const e = on ? currentNumber(this._state('session_energy')) : null;
@@ -1069,7 +1128,7 @@ class EveusCard extends HTMLElement {
       </div>`;
     }).join('');
     return `<section class="${['panel history', this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.history}">
-      ${month}<div class="tiles ${GRID[items.length]}">${tiles}</div>
+      ${month}${items.length ? `<div class="tiles ${GRID[items.length]}">${tiles}</div>` : ''}
     </section>`;
   }
   // First call asks (8 s to answer); `confirmed` presses the integration's own reset button.
@@ -1091,7 +1150,7 @@ class EveusCard extends HTMLElement {
     try {
       await this._hass.callService('button', 'press', {entity_id: this._ids[key]});
     } catch {
-      this._commandError = true;
+      this._showError(true);
       this._render();
     }
   }
@@ -1217,7 +1276,7 @@ class EveusCard extends HTMLElement {
     };
     const cap = (kind, icon, label, fallbackUnit) => {
       const key = `${p}_${kind}_limit`, toggle = `${key}_enabled`;
-      if (!this._ids[key] || !this._ids[toggle]) return '';
+      if (!this._ids[key] || !this._ids[toggle] || this._unsupported(key)) return '';
       const capOn = this._limitOn(toggle), value = this._limitValue(key), attrs = this._state(key)?.attributes || {};
       const disabled = !this._online || value === null || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite);
       const shown = value === null ? '—' : `${Number(value.toFixed(attrs.step < 1 ? 1 : 0))}<small>${this._unit(key, fallbackUnit)}</small>`;
@@ -1247,6 +1306,7 @@ class EveusCard extends HTMLElement {
     }
   }
   _scheduleNow(n) {
+    if (this._ignoring) return false;
     const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
     if (!this._online || !this._limitOn(`schedule_${n}_enabled`) || start === null || stop === null || start === stop) return false;
     const now = this._scheduleHM();
@@ -1255,6 +1315,7 @@ class EveusCard extends HTMLElement {
   }
   // The start of the enabled schedule that comes next, for "Waiting for Schedule · from 23:00".
   _nextScheduleStart() {
+    if (this._ignoring) return null;
     const n = this._nextSchedule();
     return n ? this._timeShown(`schedule_${n}_start`) : null;
   }
@@ -1267,11 +1328,42 @@ class EveusCard extends HTMLElement {
       .sort((a, b) => (minutesOf(this._timeShown(`schedule_${a}_start`)) - now + 1440) % 1440 - (minutesOf(this._timeShown(`schedule_${b}_start`)) - now + 1440) % 1440);
     return next[0] ?? null;
   }
+  _schedulesShown() { return [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._shows('schedules', `schedule_${n}`)); }
+  // One charge charges at once whatever the schedules say; only worth saying while one is on.
+  get _schedulesIgnored() { return this._ignoring && this._schedulesShown().some((n) => this._limitOn(`schedule_${n}_enabled`)); }
   _schedulesSection() {
     const t = this._t;
-    const rows = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._shows('schedules', `schedule_${n}`)).map((n) => this._scheduleRow(n)).join('');
+    const rows = this._schedulesShown().map((n) => this._scheduleRow(n)).join('');
     if (!rows) return `<div class="message">${t.none.schedules}</div>`;
-    return `<section class="${['panel sched', this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.schedules}">${rows}</section>`;
+    const ignored = this._schedulesIgnored;
+    return `<section class="${['panel sched', ignored ? 'overridden' : '', this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.schedules}">${ignored ? this._override('schedules') : ''}${rows}</section>`;
+  }
+  // ---- One charge: the charger's "charge now" ignores every schedule and limit. ----
+  get _oneCharge() { return this._online && !!this._ids?.one_charge && this._limitOn('one_charge'); }
+  // REVE: the charger is in manual mode (Stop, or the app's "ignore schedule") until the connector is replugged.
+  get _manualMode() { return this._online && !!this._ids?.manual_mode && this._limitOn('manual_mode'); }
+  get _ignoring() { return this._oneCharge || this._manualMode; }
+  // REVE: One charge is manual mode, and turning it off keeps that mode, so its own notice and Turn off are classic-only.
+  get _oneChargeNote() { return this._oneCharge && !this._manualMode; }
+  // REVE only (it has Manual Mode): a limit can be set, changed or switched while charging, outside manual mode.
+  // REVE keeps a limit only for the current charge; a limit stop is no manual mode, so raising the limit resumes it.
+  get _limitsLocked() { return this._online && !!this._ids?.manual_mode && (this._manualMode || !(this._charging || this._limitStopped)); }
+  // A limit stop, or REVE's hold after that limit is raised until the car takes current again.
+  get _limitStopped() {
+    const reason = this._state('not_charging_reason')?.state;
+    return LIMIT_STOPS.has(reason) || (reason === 'Waiting for Activation' && this._state('state')?.state === 'Charge Complete');
+  }
+  // One charge, while it is on, has the button; manual mode alone has nothing to turn off.
+  _overrideText(kind) { return (this._oneChargeNote ? this._t.oneOverrides : this._t.manualOverrides)[kind]; }
+  _overrideIcon() { return this._oneChargeNote ? 'mdi:lightning-bolt-circle' : 'mdi:hand-back-right'; }
+  _override(kind) {
+    const t = this._t;
+    const off = this._oneChargeNote ? `<button class="override-off" data-status-toggle="one_charge" title="${t.oneTitle}">${t.turnOff}</button>` : '';
+    return `<div class="override" role="note"><ha-icon icon="${this._overrideIcon()}"></ha-icon><span>${this._overrideText(kind)}</span>${off}</div>`;
+  }
+  _overrideFlag(kind) {
+    const text = this._overrideText(kind);
+    return `<ha-icon class="override-flag" icon="${this._overrideIcon()}" title="${text}" aria-label="${text}"></ha-icon>`;
   }
   // ---- Charger clock: the zone it runs on, how far it is off, and a one-tap sync. ----
   _driftText(seconds) {
@@ -1294,7 +1386,7 @@ class EveusCard extends HTMLElement {
     } catch {
       clearTimeout(this._syncTimer);
       this._syncDone = false;
-      this._commandError = true;
+      this._showError(true);
       this._render();
     }
   }
@@ -1432,7 +1524,7 @@ class EveusCard extends HTMLElement {
       <ha-icon icon="mdi:current-ac"></ha-icon><span class="label">${label}</span>
       <div class="rw"><div class="markers">${this._actualMarker()}</div><input aria-label="${t.requestedCharging}" type="range" data-slide="current" ${range} value="${value ?? bounds?.min ?? 0}" style="--fill:${bounds && value !== null ? Math.max(0, Math.min(100, 100 * (value - bounds.min) / (bounds.max - bounds.min))) : 0}%" ${disabled ? 'disabled' : ''}></div>
       <div class="readout">${output}</div>
-      </section>${this._error ? `<div class="error" role="alert">${t.setFailed}</div>` : ''}`;
+      </section>`;
   }
   // ---- Folding: a long card shows its settings as one-line summaries that open on tap. ----
   get _folding() {
@@ -1462,12 +1554,12 @@ class EveusCard extends HTMLElement {
     if (section === 'limits' || section === 'adaptive') return this[`_${section}Section`]({open});
     const html = this[`_${section}Section`]();
     if (!html.trimStart().startsWith('<section')) return html;
-    const {label, icon, cls, sum} = this._foldInfo(section);
+    const {label, icon, cls, sum, sumCls, sumTitle, flag = ''} = this._foldInfo(section);
     if (open) {
       return html.replace(/<section[^>]*>/, (tag) => `${tag}<button class="fold-head" data-fold="${section}" aria-expanded="true"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><ha-icon class="fold-chev" icon="mdi:chevron-up"></ha-icon></button>`);
     }
     return `<section class="${['sl fold', `fold-${section}`, cls, this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${label}">
-      <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><span class="fold-sum">${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
+      <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span>${flag}<span class="${['fold-sum', sumCls].filter(Boolean).join(' ')}"${sumTitle ? ` title="${sumTitle}"` : ''}>${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
     </section>`;
   }
   // Large: the same section, its fitted values started bigger (the fit still shrinks what clips).
@@ -1497,10 +1589,13 @@ class EveusCard extends HTMLElement {
         sum: `${pc('initial_soc')} → ${pc('target_soc')}${sep}${cap === null ? '—' : Number(cap.toFixed(1))}<small>kWh</small>${sep}${t.loss} ${pc('soc_correction')}`};
     }
     if (section === 'schedules') {
-      const rows = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._shows('schedules', `schedule_${n}`)).map((n) => {
+      const ignored = this._schedulesIgnored;
+      const rows = this._schedulesShown().map((n) => {
         const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
-        return this._limitOn(`schedule_${n}_enabled`) && start && stop ? `${n} ${start}→${stop}` : `${n} ${t.off}`;
+        if (!this._limitOn(`schedule_${n}_enabled`) || !start || !stop) return `${n} ${t.off}`;
+        return ignored ? `<s>${n} ${start}→${stop}</s>` : `${n} ${start}→${stop}`;
       });
+      if (ignored) return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sumCls: 'overridden', sumTitle: this._overrideText('schedules'), flag: this._overrideFlag('schedules'), sum: rows.join(sep)};
       return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sum: rows.join(sep)};
     }
     const total = this._online ? currentNumber(this._state('total_energy')) : null;
@@ -1576,7 +1671,7 @@ class EveusCard extends HTMLElement {
   // ---- Battery: plugged in and waiting, how far the next schedule gets it — energy and percent, never a time. ----
   _plan() {
     // Only while the car waits for its charge: a fault, a pause or a finished charge has nothing to plan.
-    if (!this._advanced || !this._online || this._unplugged || this._state('state')?.state !== 'Connected') return null;
+    if (!this._advanced || !this._online || this._unplugged || this._state('state')?.state !== 'Connected' || this._ignoring) return null;
     const need = currentNumber(this._state('energy_to_target_soc')), soc = currentNumber(this._state('soc_percent'));
     const target = currentNumber(this._state('target_soc')), capacity = currentNumber(this._state('battery_capacity'));
     const loss = currentNumber(this._state('soc_correction')) ?? 0;
@@ -1686,6 +1781,10 @@ class EveusCard extends HTMLElement {
     } else {
       this.shadowRoot.innerHTML = `<style>${MODULAR_STYLE}</style><ha-card data-state="${mood}"${light ? ' data-theme="light"' : ''}>${body}</ha-card>`;
     }
+    // The browser's top layer puts the question above every dashboard card: a fixed bar
+    // still sits inside this card's stacking context, under the card below, which took the taps.
+    const ask = this._guardAsk ? this.shadowRoot.querySelector('.guard-ask') : null;
+    if (ask?.showPopover && !ask.matches(':popover-open')) try { ask.showPopover(); } catch { /* not in the document yet: the fixed bar stays */ }
     this._fitLimitValues();
     // A synchronous read right after a full innerHTML replacement can land before
     // the nested CSS Grid has finished sizing (observed live: a widened reading
@@ -1730,7 +1829,7 @@ class EveusCard extends HTMLElement {
 const MODULAR_STYLE = `
 :host{display:block}
 ha-card{box-sizing:border-box;display:flex;flex-direction:column;gap:1px;padding:2px 4px 1px;border-radius:14px;overflow:hidden;line-height:1.2}
-.guard-ask{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:10;box-sizing:border-box;max-width:480px;margin:auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px;border:1px solid #f39c12;border-radius:10px;background:var(--ha-card-background,var(--card-background-color,#1c1c1c));box-shadow:0 4px 12px #0006}.guard-ask span{flex:1 1 180px}.guard-ask button{min-height:32px;cursor:pointer}
+.guard-ask{position:fixed;inset:auto 12px calc(12px + env(safe-area-inset-bottom));z-index:10;box-sizing:border-box;width:auto;height:auto;max-width:480px;margin:0 auto;overflow:visible;color:var(--primary-text-color);display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px;border:1px solid #f39c12;border-radius:10px;background:var(--ha-card-background,var(--card-background-color,#1c1c1c));box-shadow:0 4px 12px #0006}.guard-ask span{flex:1 1 180px}.guard-ask button{min-height:32px;cursor:pointer}
 .sl{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;padding:1px 8px;border:1px solid rgba(127,127,127,.16);border-radius:10px;background:rgba(127,127,127,.05)}
 ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color);flex:none}
 .label{font-size:13px;font-weight:600;white-space:nowrap;color:var(--primary-text-color)}
@@ -1751,6 +1850,7 @@ input:disabled{cursor:not-allowed;opacity:.45}
 .mk{position:absolute;top:4px;width:3px;height:18px;border-radius:2px;background:#f39c12;box-shadow:0 0 0 1px #332000,0 0 4px #f39c1280;transform:translateX(-50%)}
 input:focus-visible,button:focus-visible{outline:2px solid var(--primary-color,#3498db);outline-offset:2px}
 .message,.error{font-size:12px;padding:2px 8px;color:var(--secondary-text-color)}.error{color:var(--error-color,#e74c3c)}
+.cmd-error{display:block;width:100%;margin:0;border:0;background:transparent;font-family:inherit;text-align:left;color:var(--error-color,#e74c3c);cursor:pointer}
 .limits{box-sizing:border-box;display:flex;flex-direction:column;gap:1px;min-width:0;padding:2px 2px 0;border:1px solid rgba(127,127,127,.16);border-radius:10px;background:rgba(127,127,127,.04)}
 .limits-head{display:flex;align-items:center;justify-content:space-between;min-height:16px;padding:0 3px;gap:6px}
 .limits-head>span{display:flex;align-items:center;gap:5px;font-size:13px}.limits-head>span ha-icon{color:var(--primary-color,#3498db)}
@@ -1761,7 +1861,7 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--primary-color,#
 .limits-grid{display:grid;gap:1px;min-width:0}.limits-grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}.limits-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}.limits-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.limits-grid.one{grid-template-columns:minmax(0,1fr)}
 .limit-tile{box-sizing:border-box;min-width:0;padding:1px 1px 0;border:1px solid rgba(127,127,127,.18);border-radius:8px;background:rgba(127,127,127,.06)}
 .limit-tile.active{border-color:#2ecc7188;background:#2ecc7118}.limit-tile.active .limit-toggle{color:#2ecc71}.limit-tile.active .limit-toggle i{background:#2ecc71;opacity:1}
-.limits-grid.suspended .limit-tile{border-color:rgba(127,127,127,.18);background:rgba(127,127,127,.035)}.limits-grid.suspended .limit-tile.saved .limit-toggle i{background:#f39c12;opacity:.7}
+.limits-grid.suspended .limit-tile:not(.active){border-color:rgba(127,127,127,.18);background:rgba(127,127,127,.035)}.limits-grid.suspended .limit-tile.saved .limit-toggle i{background:#f39c12;opacity:.7}
 .limit-toggle{display:flex;align-items:center;width:100%;min-width:0;height:14px;padding:0 2px;background:transparent;font-size:10px;font-weight:600;gap:2px}
 .limit-toggle span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.limit-toggle i{margin-left:auto;flex:none;width:6px;height:6px}
 .limit-value{display:grid;grid-template-columns:15px minmax(0,1fr) 15px;align-items:center;min-width:0;height:21px}
@@ -1999,6 +2099,8 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 .act-text{display:flex;flex-direction:column;align-items:flex-start;flex:1;min-width:0;line-height:1.2}
 .act-label,.act-state{display:block;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:clip}
 .act-label{font-size:14px}
+/* A third of a narrow card: a smaller icon and tighter padding leave the state line ("Tap to resume") room. */
+@container (max-width:380px){.act-btn{gap:5px;padding:4px 5px}.act-icon ha-icon{--mdc-icon-size:22px}.act-stop-icon{width:22px;height:22px}}
 .meter-item{align-items:center;text-align:center;padding:3px 4px 4px}
 .meter-head{justify-content:center}
 .sl.session{gap:6px}.session-row{flex:1;justify-content:space-around;gap:4px}
@@ -2028,6 +2130,7 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 .sched-time:hover,.sched-time:focus-visible{background:rgba(127,127,127,.14)}
 .sched-window.editing>:not(.sched-time-input){display:none}
 .sched-time-input{box-sizing:border-box;flex:1 1 auto;min-width:0;width:100%;height:36px;padding:0 2px;border:1px solid var(--h);border-radius:7px;background:transparent;color:inherit;color-scheme:dark;font-family:inherit;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+ha-card[data-theme=light] .sched-time-input{color-scheme:light}
 .sched-arrow{flex:none;font-style:normal;font-size:.76em;color:var(--secondary-text-color);margin:0 1px}
 .sched-caps{display:flex;align-items:center;gap:3px;flex:none;margin-left:auto}
 .sched-lim{display:flex;align-items:center;height:38px;border:1px solid transparent;border-radius:9px;background:var(--chip)}
@@ -2121,6 +2224,22 @@ ha-card[data-theme=light] :is(.sl.session,.panel.history,.sl.fold-history){--h:#
 .big .info-item{height:auto}.big .session-row .info-item ha-icon{--mdc-icon-size:20px}
 .big .soc-bar{height:12px;border-radius:6px}
 .big .hist-month{min-height:30px}.big .hist-month-cur,.big .hist-month-prev{font-size:15px}.big .hist-month-cur b{font-size:21px}.big .hist-month ha-icon{--mdc-icon-size:19px}
+/* One charge: the charger ignores schedules and limits, so where they are set the card says so
+   in the amber that already means "kept, not applied" (Disable all), and offers the way back. */
+.override{display:flex;align-items:center;gap:6px;min-height:34px;padding:2px 3px 2px 6px;border:1px solid color-mix(in srgb,#f39c12 45%,transparent);border-radius:10px;background:color-mix(in srgb,#f39c12 14%,transparent);font-size:12.5px;font-weight:600;line-height:1.25;color:var(--primary-text-color)}
+.override>ha-icon{--mdc-icon-size:18px;color:#f39c12}
+.override>span{flex:1;min-width:0}
+.override-off{flex:none;height:28px;padding:0 10px;margin:0;border:1px solid color-mix(in srgb,#f39c12 60%,transparent);border-radius:9px;background:color-mix(in srgb,#f39c12 24%,transparent);font-family:inherit;font-size:12.5px;font-weight:700;color:var(--primary-text-color);white-space:nowrap;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.override-off:active{transform:scale(.96)}
+.limits>.override{margin:0 0 1px}
+.override.quiet{border-color:rgba(127,127,127,.25);background:rgba(127,127,127,.06);font-weight:500;color:var(--secondary-text-color)}.override.quiet>ha-icon{color:var(--secondary-text-color)}
+.panel.sched.overridden .sched-row.on{border-color:color-mix(in srgb,var(--h) 22%,transparent);background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(127,127,127,.04))}
+.panel.sched.overridden .sched-row.on .sched-toggle ha-icon{color:var(--h);background:color-mix(in srgb,var(--h) 20%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--h) 28%,transparent)}
+.panel.sched.overridden .sched-row.on .sched-time{text-decoration:line-through;text-decoration-color:color-mix(in srgb,#f39c12 80%,transparent);text-decoration-thickness:1.5px}
+.limits-head ha-icon.override-flag,ha-icon.override-flag{--mdc-icon-size:15px;padding:0;margin:0 4px 0 0;background:none;box-shadow:none;color:#f39c12;vertical-align:-3px}
+.limits-head .override-flag{margin-left:6px}
+.fold-btn>.override-flag{margin:0 -2px 0 auto;vertical-align:baseline}.fold-sum.overridden{flex:0 1 auto}
+.fold-sum.overridden s{text-decoration-color:color-mix(in srgb,#f39c12 80%,transparent);text-decoration-thickness:1.5px;color:var(--secondary-text-color)}
 `;
 
 const ADVANCED_SECTIONS = ['advanced_info', 'advanced_controls'];

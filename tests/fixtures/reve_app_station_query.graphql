@@ -1,0 +1,120 @@
+query StationData {
+    stationData {
+        designedCurrent
+        minCurrent
+        chargerSsidName
+        chargerSsidPassword
+        stationKey
+        extSrvrEnabled
+        ssidName
+        chargerMAC
+        routerMAC
+        mainFWVersion
+        wifiFWVersion
+        serialInt
+        pilotStatus
+        stationState
+        stationSubState
+        isServerConnected
+        isSessionStarted
+        adaptiveModePercentDrop
+        stationCurrent
+        gridRange
+        minVoltage
+        RSSI
+        vendor
+        model
+        chargerType
+        releType
+        adaptiveModeStatus
+        voltageThreshold
+        ground
+        isGroundConnected
+        timeSettings {
+            timerType
+            timeZone
+            systemTime
+        }
+        isChargerEnabled
+        isSuspendError
+        isOneChargeEnabled
+        totalEnergy
+        session {
+            sessionTime
+            sessionEnergy
+            sessionCost
+            energyLimit
+            costLimit
+            timeLimit
+        }
+        ocpp {
+            ocppState
+            ocppEnabled
+            ocppWorkOffline
+            ocppOfflineCharge
+            ocppURL
+            ocppAuthKey
+            stationId
+        }
+        iem {
+            IEM1
+            IEM2
+            IEM1_money
+            IEM2_money
+        }
+        measurements {
+            batteryVoltage
+            curMeasurement1
+            curMeasurement2
+            curMeasurement3
+            voltMeasurement1
+            voltMeasurement2
+            voltMeasurement3
+            powerMeasurement
+            temperature {
+                temperature1
+                temperature2
+            }
+        }
+        adapter
+        language
+        STA_IP_Addres
+        locker {
+            isLockerLocked
+            isLockerAlwaysOn
+            isLockerAlwaysOff
+        }
+        backlightSettings {
+            isIndicatorOffOnCharge
+            backlightEnabled
+            indicatorLevel
+            ledLevelInt
+            ledLevelExt
+        }
+        modem {
+            modemAPN
+            modemPIN
+            modemEnabled
+            modemStatus
+        }
+        isGFCITestDisabled
+        isRelayTestDisabled
+        isDiodeControlDisabled
+        selectedModel
+        dataPointsSaveInterval
+        supportRfid
+        rfidAddMode
+        rfidCardAdded
+        standbyBacklightConfig
+        chargingAuthorized
+        authorizeCharging
+        chargingCommand
+        rfidReady
+        displayedVersion
+        firmwareUpdate {
+            status
+            progress
+            latestVersion
+        }
+    }
+}

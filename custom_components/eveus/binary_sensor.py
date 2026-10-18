@@ -13,9 +13,11 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from . import EveusConfigEntry
 from .common_base import BaseEveusEntity, WriteOnChangeMixin
+from .reve import FAMILY_CLASSIC, FAMILY_REVE
 from .snapshot import EveusSnapshot
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +32,8 @@ class EveusBinaryDescription:
     icon: str
     is_on_fn: Callable[[EveusSnapshot], bool | None]
     entity_category: EntityCategory | None = None
+    # Payload fields the reading comes from; see `BaseEveusEntity._firmware_source_keys`.
+    source_keys: tuple[str, ...] = ()
 
 
 def _car_connected_is_on(snapshot: EveusSnapshot) -> bool | None:
@@ -78,6 +82,7 @@ BINARY_SENSORS: Final[tuple[EveusBinaryDescription, ...]] = (
         icon="mdi:cloud-check",
         entity_category=EntityCategory.DIAGNOSTIC,
         is_on_fn=_ocpp_connected_is_on,
+        source_keys=("ocppconnected",),
     ),
 )
 
@@ -101,6 +106,7 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
         self._attr_device_class = description.device_class
         self._attr_icon = description.icon
         self._attr_entity_category = description.entity_category
+        self._firmware_source_keys = description.source_keys
         # Last reading taken from a SUCCESSFUL poll, republished through the
         # grace window. Kept here rather than derived in the coordinator
         # callback so `is_on` still answers before the first update, the way
@@ -131,6 +137,74 @@ class EveusBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity)
         self._write_if_changed(self.is_on)
 
 
+class EveusReveApiBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
+    """Whether a REVE charger's GraphQL interface answers.
+
+    REVE is read and written through its GraphQL interface, which drops out on
+    its own for minutes at a time. While it does, readings come from ``/main``
+    and the last good read keeps the schedules and tariffs showing, so this is
+    where the outage itself is visible. Created only for REVE.
+    """
+
+    ENTITY_NAME = "REVE API"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:api"
+
+    def __init__(self, updater, device_number: int = 1) -> None:
+        super().__init__(updater, device_number)
+        self._init_write_on_change()
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.available:
+            return None
+        return self._updater.reve_api_answering
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        self._write_if_changed(self.is_on)
+
+
+class EveusManualModeBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySensorEntity):
+    """Whether a REVE station is in manual mode.
+
+    The app's "ignore schedule" Start, One Charge and any Stop put the station
+    in manual mode until the car is unplugged: it ignores the schedules and
+    every limit. The station reports no flag, so the integration infers it;
+    see ``reve.ManualMode``. Created only for REVE.
+    """
+
+    ENTITY_NAME = "Manual Mode"
+    _attr_icon = "mdi:hand-back-right"
+
+    def __init__(self, updater, device_number: int = 1) -> None:
+        super().__init__(updater, device_number)
+        self._init_write_on_change()
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.available:
+            return None
+        return self._updater.reve_manual_mode
+
+    async def _async_restore_state(self, state) -> None:
+        """A restart must not end manual mode while the connector stays
+        plugged in; the station's state and session age settle the rest."""
+        if state.state == "on":
+            since = getattr(state, "last_changed", None)
+            on_for = None if since is None else (dt_util.utcnow() - since).total_seconds()
+            self._updater.reve_restore_manual_mode(on_for)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._maybe_finalize_device_info()
+        self._update_availability_state()
+        self._write_if_changed(self.is_on)
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -146,3 +220,25 @@ async def async_setup_entry(
             for description in BINARY_SENSORS
         ]
     )
+
+    # REVE is known only once the charger has answered, which may be long after
+    # setup (an entry can be set up with the charger switched off), so the REVE
+    # API sensor is added on the first poll that identifies it.
+    added = False  # pragma: no mutate - only read for truthiness
+
+    @callback
+    def _add_reve_api_sensor() -> None:
+        nonlocal added
+        if added or getattr(updater, "firmware_family", FAMILY_CLASSIC) != FAMILY_REVE:
+            return
+        added = True
+        async_add_entities(
+            [
+                EveusReveApiBinarySensor(updater, device_number),
+                EveusManualModeBinarySensor(updater, device_number),
+            ]
+        )
+
+    _add_reve_api_sensor()
+    if not added:
+        entry.async_on_unload(updater.async_add_listener(_add_reve_api_sensor))

@@ -28,7 +28,8 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import ExtraStoredData
 from homeassistant.util import dt as dt_util
 
-from .charge_reason import NOT_CHARGING_REASON_OPTIONS, not_charging_reason
+from .charge_reason import NOT_CHARGING_REASON_OPTIONS, not_charging_reason, reached_limit
+from .reve import FAMILY_CLASSIC, FAMILY_REVE
 from .common_base import EveusSensorBase
 from .const import (
     MAX_COST_VALUE,
@@ -128,6 +129,7 @@ class OptimizedEveusSensor(EveusSensorBase):
         self.entity_description = spec
         self._error_log = RateLog(max_keys=_MAX_ERROR_LOG_KEYS)
         self._deadband = spec.deadband
+        self._firmware_source_keys = tuple(getattr(spec.value_fn, "source_keys", ()))
         self._attr_extra_state_attributes = {}
         self._meter_latest = None
         self._meter_context = None
@@ -489,6 +491,7 @@ def _make_value_getter(
         if transform:
             value = transform(value)
         return round(value, precision)
+    getter.source_keys = (key,)
     return getter
 
 
@@ -510,6 +513,7 @@ def _make_enum_getter(key: str, mapping: dict[int, str]):
     def getter(updater, hass) -> Optional[str]:
         return mapping.get(_read_int(updater, key))
     getter.options = tuple(dict.fromkeys(mapping.values()))
+    getter.source_keys = (key,)
     return getter
 
 
@@ -696,6 +700,7 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
     state = _read_int(updater, "state")
     if state is None:
         return None
+    reve = getattr(updater, "firmware_family", FAMILY_CLASSIC) == FAMILY_REVE
     return not_charging_reason(
         state,
         _read_int(updater, "subState"),
@@ -703,6 +708,11 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
         ocpp=bool(_read_int(updater, "ocppEnabled")),
         # A bare test double has no coordinator memory: nothing completed.
         completed=getattr(updater, "charge_completed", False),  # pragma: no mutate - False and None are equally falsy; only read for truthiness
+        stopped=_read_int(updater, "evseEnabled") == 1,
+        limit_reached=reached_limit(updater.snapshot.get) if reve else None,
+        schedule_waiting=reve and state == 3 and any(
+            _read_int(updater, key) == 1 for key in ("sh1Enabled", "sh2Enabled")
+        ),
     )
 
 
@@ -866,12 +876,23 @@ def get_active_rate_cost(updater, hass) -> Optional[float]:
     return round(value / 100, 2)
 
 
+# Priced by the active-rate index; a firmware without one has no active rate.
+get_active_rate_cost.source_keys = ("activeTarif",)
+
+
 def get_active_rate_attrs(updater, hass) -> dict:
     """Get active rate attributes."""
     if not updater.available:
         return {}
     active_rate = _read_int(updater, "activeTarif")
-    return {"rate_name": RATE_STATES.get(active_rate, "Unknown")} if active_rate is not None else {}
+    if active_rate is None:
+        return {}
+    # REVE reports the rate's own name, as set in the charger's app; a classic
+    # charger has none and keeps the fixed labels.
+    name = updater.snapshot.raw.get("activeTarifName")
+    if isinstance(name, str) and name:
+        return {"rate_name": name}
+    return {"rate_name": RATE_STATES.get(active_rate, "Unknown")}
 
 
 def _make_rate_status_getter(rate_key: str):

@@ -43,14 +43,23 @@ from .const import (
     EVENT_CHARGING_STARTED,
     EVENT_ERROR,
     get_error_state,
+    FIRST_FAILURE_RETRY_INTERVAL,
     IDLE_UPDATE_INTERVAL,
     OFFLINE_UPDATE_INTERVAL,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
 )
 from ._payload import PayloadError, validate_main_payload
-from .charge_reason import finish_reason
+from .charge_reason import finish_reason, reached_limit
 from .client import UPDATE_TIMEOUT_OBJ, fetch_json
+from .reve import (
+    FAMILY_CLASSIC,
+    FAMILY_REVE,
+    ReveApi,
+    is_reve_payload,
+    normalize_reve_payload,
+    snapshot_limit_refusal,
+)
 from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
 
@@ -103,6 +112,17 @@ class EveusUnreachable(UpdateFailed):
     network. Setup reads the type, not the message, to decide whether an entry
     may start without a first reading (see ``async_setup_entry``).
     """
+
+
+def _final(charging: Any, stopped: Any, key: str, kind: type) -> Any:
+    """A session figure as the charge ended: the stop poll's when it grew past
+    the last charging poll (the charge ran on between them), else the last
+    charging poll's (a reset to 0 on unplug or completion never wins)."""
+    last = get_safe_value(charging, key, kind)
+    end = get_safe_value(stopped, key, kind)
+    if last is None or (end is not None and end > last):
+        return end
+    return last
 
 
 def _bounded(value: float | int | None, maximum: float) -> float | int | None:
@@ -219,6 +239,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # Successful polls still owed at the offline cadence after an outage,
         # so a single recovered tick can't snap straight back to fast polling.
         self._offline_probation = 0
+        # The cadence a quick retry after one missed poll replaced; see
+        # FIRST_FAILURE_RETRY_INTERVAL.
+        self._interval_before_retry: timedelta | None = None
         self._last_observed_state: int | None = None
         self._last_burst_monotonic: float | None = None
         # Transition-event memory, separate from the burst tracker above:
@@ -275,6 +298,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # so one degraded reply that omits it must not demote a modern charger
         # to the 1.x code translation for that poll.
         self._modern_firmware_seen = False
+        # Sticky like the marker above, for the same reason: one reply that
+        # omits the REVE markers must not hand that poll the unreliable
+        # tariff/schedule/leak fields REVE reports.
+        self._reve_seen = False
+        self._reve = ReveApi(self)
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
         # availability grace window keeps republishing the reading behind it.
@@ -305,6 +333,45 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def is_modern_firmware(self) -> bool:
         """Whether this charger's codes follow the modern state/substate maps."""
         return self._modern_firmware_seen or is_modern_firmware_payload(self.data or {})
+
+    @property
+    def firmware_family(self) -> str:
+        """``reve`` once this charger has identified as REVE, else ``classic``."""
+        return FAMILY_REVE if self._reve_seen else FAMILY_CLASSIC
+
+    def reve_command_route(self, command: str) -> Callable[[Any], Any] | None:
+        """The GraphQL write REVE needs for this command, or ``None`` for ``/pageEvent``."""
+        return self._reve.route(command) if self._reve_seen else None
+
+    def command_refusal(self, command: str) -> str | None:
+        """Why this charger cannot take the command now, said before it is sent;
+        ``None`` to send it (always, except REVE's session limits)."""
+        if not self._reve_seen:
+            return None
+        return snapshot_limit_refusal(command, self._snapshot, self._reve.manual_mode)
+
+    @property
+    def reve_api_answering(self) -> bool | None:
+        """Whether REVE's GraphQL answered the last read; ``None`` if unknown."""
+        return self._reve.answering if self._reve_seen else None
+
+    @property
+    def reve_manual_mode(self) -> bool | None:
+        """Whether a REVE station is in manual mode (see ``ManualMode``); ``None`` otherwise."""
+        return self._reve.manual_mode.on if self._reve_seen else None
+
+    def reve_restore_manual_mode(self, on_for: float | None = None) -> None:
+        """Take manual mode over from before a Home Assistant restart."""
+        self._reve.manual_mode.restore(on_for)
+
+    def reve_diagnostics(self) -> dict[str, Any] | None:
+        """REVE's GraphQL side and the fields it cannot provide; ``None`` otherwise."""
+        if not self._reve_seen:
+            return None
+        return {
+            **self._reve.diagnostics(),
+            "unsupported_fields": sorted(self._snapshot.unsupported),
+        }
 
     def _reset_legacy_charging_latch(self) -> None:
         self._legacy_charging_latched = False
@@ -635,6 +702,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)
         self._consecutive_failures = 0
+        self._interval_before_retry = None
         self._device_available = True
         self._ever_succeeded = True
         self._stop_outage_clock()
@@ -806,15 +874,21 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                         modern=self._modern_firmware_seen
                         or is_modern_firmware_payload(new_data),
                         ocpp=bool(get_safe_value(new_data, "ocppEnabled", int)),
+                        stopped=get_safe_value(new_data, "evseEnabled", int) == 1,
+                        limit_reached=(
+                            reached_limit(lambda key: get_safe_value(new_data, key, float))
+                            if self._reve_seen or is_reve_payload(new_data)
+                            else None
+                        ),
                     ),
                     "session_energy_kwh": _bounded(
-                        get_safe_value(snapshot, "sessionEnergy", float), MAX_ENERGY_KWH
+                        _final(snapshot, new_data, "sessionEnergy", float), MAX_ENERGY_KWH
                     ),
                     "session_cost": _bounded(
-                        get_safe_value(snapshot, "sessionMoney", float), MAX_COST_VALUE
+                        _final(snapshot, new_data, "sessionMoney", float), MAX_COST_VALUE
                     ),
                     "session_duration_s": _bounded(
-                        get_safe_value(snapshot, "sessionTime", int),
+                        _final(snapshot, new_data, "sessionTime", int),
                         MAX_SESSION_TIME_SECONDS,
                     ),
                 },
@@ -902,6 +976,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if self._consecutive_failures > 20:
             self._silent_mode = True
+
+        # One miss is retried quickly, so it is answered inside the grace
+        # windows; a second miss is an outage and keeps the ordinary cadence.
+        if self._consecutive_failures == 1:
+            self._interval_before_retry = self.update_interval
+            self._set_update_interval(FIRST_FAILURE_RETRY_INTERVAL)
+        elif self._interval_before_retry is not None:
+            self.update_interval = self._interval_before_retry
+            self._interval_before_retry = None
 
         if self.is_likely_offline:
             # Monotonic, like every other deadline in this module: an NTP step
@@ -1062,16 +1145,101 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         async with self._poll_lock:
             return await self._poll_charger(start_monotonic)
 
-    async def _poll_charger(self, start_monotonic: float) -> dict[str, Any]:
-        """Request /main, validate it and record the outcome (one poll at a time)."""
+    def _validate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return validate_main_payload(payload, self._model)
+
+    async def _read_reve_measurements(self) -> tuple[dict[str, Any], float] | None:
+        """A known REVE charger's measurements from GraphQL and their latency,
+        or ``None`` to read ``/main`` instead. Never raises for a charger that
+        does not answer, or answers with a reply ``/main``'s rules reject."""
+        if not self._reve_seen or not self._reve.measurements_due():
+            return None
+        start = time.monotonic()
         try:
-            new_data = await fetch_json(
-                self.get_session(),
-                self.url_for("/main"),
-                auth=self._basic_auth,
-                timeout=_UPDATE_TIMEOUT_OBJ,
-                on_unauthorized=self._reject_credentials,
-            )
+            measurements = await self._reve.read_measurements(self._validate)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            return None
+        latency = time.monotonic() - start
+        if self._reve.main_residue_due():
+            # What only /main carries; a /main that does not answer leaves the
+            # kept values standing until they age out.
+            self._reve.main_residue_tried()
+            try:
+                main = await fetch_json(
+                    self.get_session(),
+                    self.url_for("/main"),
+                    auth=self._basic_auth,
+                    timeout=_UPDATE_TIMEOUT_OBJ,
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                pass
+            else:
+                if isinstance(main, dict):
+                    self._reve.keep_main_residue(main)
+        return self._reve.with_main_residue(measurements), latency
+
+    async def _reve_without_main(self) -> tuple[dict[str, Any], float] | None:
+        """A charger whose ``/main`` answers with an HTTP error or not JSON,
+        read through GraphQL when it answers as REVE; else ``None``."""
+        # This poll asked /main already: the next try for its own fields is
+        # five minutes away.
+        self._reve.main_residue_tried()
+        start = time.monotonic()
+        try:
+            measurements = await self._reve.read_measurements(self._validate)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            return None
+        if not is_reve_payload(measurements):
+            return None
+        return self._reve.with_main_residue(measurements), time.monotonic() - start
+
+    async def _first_reve_measurements(self, main: dict[str, Any]) -> dict[str, Any]:
+        """The poll that first recognises REVE from ``/main`` shows GraphQL's
+        measurements when they answer and pass validation, else ``main``."""
+        try:
+            measurements = await self._reve.read_measurements(self._validate)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            return main
+        return self._reve.with_main_residue(measurements)
+
+    async def _poll_charger(self, start_monotonic: float) -> dict[str, Any]:
+        """Read the charger, validate the reply and record the outcome (one poll
+        at a time): ``/main``, or GraphQL first once the charger is known to be
+        REVE."""
+        try:
+            measured = await self._read_reve_measurements()
+            from_graphql = measured is not None
+            new_data: Any
+            if measured is not None:
+                new_data, response_time = measured
+            else:
+                main_start = time.monotonic()
+                try:
+                    new_data = await fetch_json(
+                        self.get_session(),
+                        self.url_for("/main"),
+                        auth=self._basic_auth,
+                        timeout=_UPDATE_TIMEOUT_OBJ,
+                        on_unauthorized=self._reject_credentials,
+                    )
+                except (aiohttp.ClientResponseError, ValueError) as err:
+                    # The charger is there but /main is not: REVE without it?
+                    # Never after a redirect, which may point at another host.
+                    missing = not isinstance(err, aiohttp.ClientResponseError) or err.status >= 400
+                    found = (
+                        await self._reve_without_main()
+                        if missing and not self._reve_seen
+                        else None
+                    )
+                    if found is None:
+                        raise
+                    new_data, response_time = found
+                    from_graphql = True
+                else:
+                    # Latency is the answering source's own: a GraphQL read
+                    # that failed first, or the one a REVE poll makes below,
+                    # takes up to its own timeout when that server hangs.
+                    response_time = time.monotonic() - main_start
             # Shared validator retains the historical common-network guards:
             # "Eveus 'state' field is boolean" / "Eveus 'state' field is not finite".
             # Passing the configured model bounds currentSet to this charger's
@@ -1079,12 +1247,29 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # rather than being published as healthy.
             new_data = validate_main_payload(new_data, self._model)
             new_data = self._normalize_legacy_device_state(new_data)
+            unsupported: frozenset[str] = frozenset()
+            if from_graphql or self._reve_seen or is_reve_payload(new_data):
+                if not from_graphql:
+                    first = not self._reve_seen
+                    new_data = self._reve.from_main(new_data, fallback=not first)
+                    if first:
+                        new_data = await self._first_reve_measurements(new_data)
+                self._reve_seen = True
+                # Never raises: a GraphQL read that fails leaves the schedule
+                # and tariff fields unsupported, it does not fail this poll.
+                await self._reve.refresh_if_due()
+                new_data, unsupported = normalize_reve_payload(
+                    new_data, self._reve.extras
+                )
+                self._reve.manual_mode.observe(new_data)
             # Parse AFTER the legacy translation (this coordinator owns the
             # fw-1.x latch), and BEFORE _record_success, which notifies the
             # listeners that read the snapshot.
-            self._snapshot = EveusSnapshot.parse(new_data, self._model)
+            self._snapshot = EveusSnapshot.parse(
+                new_data, self._model, unsupported=unsupported
+            )
 
-            self._record_success(time.monotonic() - start_monotonic, new_data)
+            self._record_success(response_time, new_data)
             return new_data
 
         except ConfigEntryAuthFailed:

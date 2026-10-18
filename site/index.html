@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Eveus EV Charger for Home Assistant (Eveus Pro, Energy Star) | HACS</title>
-  <meta name="description" content="Home Assistant integration for Eveus (Energy Star) EV chargers such as Eveus Pro: local control of charging current, schedules and limits, stop at a target SOC, energy and cost tracking. In the HACS default store.">
+  <title>Eveus EV Charger for Home Assistant (Eveus Pro, Energy Star, REVE) | HACS</title>
+  <meta name="description" content="Home Assistant integration for Eveus (Energy Star) EV chargers such as Eveus Pro, including REVE firmware: local control of charging current, schedules and limits, stop at a target SOC, energy and cost tracking. In the HACS default store.">
   <link rel="canonical" href="https://abovsh.github.io/eveus/">
   <link rel="alternate" hreflang="en" href="https://abovsh.github.io/eveus/">
   <link rel="alternate" hreflang="uk" href="https://abovsh.github.io/eveus/uk/">
@@ -12,12 +12,12 @@
   <link rel="stylesheet" href="assets/style.css">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Eveus EV Charger for Home Assistant">
-  <meta property="og:description" content="Local Home Assistant control of Eveus (Energy Star) EV chargers such as Eveus Pro. In the HACS default store.">
+  <meta property="og:description" content="Local Home Assistant control of Eveus (Energy Star) EV chargers such as Eveus Pro, including REVE firmware. In the HACS default store.">
   <meta property="og:url" content="https://abovsh.github.io/eveus/">
   <meta property="og:image" content="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Eveus EV Charger for Home Assistant">
-  <meta name="twitter:description" content="Local Home Assistant control of Eveus (Energy Star) EV chargers such as Eveus Pro. In the HACS default store.">
+  <meta name="twitter:description" content="Local Home Assistant control of Eveus (Energy Star) EV chargers such as Eveus Pro, including REVE firmware. In the HACS default store.">
   <meta name="twitter:image" content="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039">
   <script type="application/ld+json">
   {
@@ -26,7 +26,7 @@
     "name": "Eveus EV Charger for Home Assistant",
     "applicationCategory": "HomeAutomationApplication",
     "operatingSystem": "Home Assistant",
-    "description": "Home Assistant integration that controls Eveus (Energy Star) EV chargers such as Eveus Pro over the local network. Installable through HACS.",
+    "description": "Home Assistant integration that controls Eveus (Energy Star) EV chargers such as Eveus Pro, including REVE firmware, over the local network. Installable through HACS.",
     "inLanguage": ["en", "uk"],
     "screenshot": "https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039",
     "url": "https://abovsh.github.io/eveus/",
@@ -62,6 +62,14 @@
         "acceptedAnswer": {
           "@type": "Answer",
           "text": "Yes. In Advanced mode the integration estimates battery SOC, time to target, and expected finish time from charger data and the battery details you configure (initial SOC, battery capacity, correction factor)."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does the integration work with the new REVE firmware?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. The integration recognizes REVE firmware by itself and reads and writes its settings, schedules, tariffs and charging limits through REVE's own interface. Readings REVE does not report stay unavailable. In manual mode (the charger app's \u201cignore schedule\u201d, One Charge or Stop) the charger ignores schedules and limits until the connector is pulled out of the car. See the REVE section of the documentation."
         }
       },
       {
@@ -158,6 +166,8 @@
         <p>No. The integration communicates with the charger only over your local network — no cloud account and no telemetry. The charger's own optional OCPP connection is a separate feature and may use a remote backend.</p>
         <h3>Can Home Assistant estimate the EV battery state of charge?</h3>
         <p>Yes. In Advanced mode the integration estimates battery SOC, time to target, and expected finish time from charger data and the battery details you configure (initial SOC, battery capacity, correction factor).</p>
+        <h3>Does the integration work with the new REVE firmware?</h3>
+        <p>Yes. The integration recognizes REVE firmware by itself and reads and writes its settings, schedules, tariffs and charging limits through REVE's own interface. Readings REVE does not report stay unavailable. In manual mode (the charger app's “ignore schedule”, One Charge or Stop) the charger ignores schedules and limits until the connector is pulled out of the car. See the REVE section of the documentation.</p>
         <h3>Why does setup fail while the charger's web page works?</h3>
         <p>Chargers on older firmware (R3.01.x has been reported) can answer their web page normally but reply to the integration's API request in a way setup can't use. Update the charger firmware: message @energy_star on Telegram to get added to the charger support channel with the firmware files and instructions — then update through the Grizzl-E app or flash the downloaded file from the charger's web interface. The setup dialog shows the concrete failure reason, and the <a href="https://github.com/ABovsh/eveus#older-charger-firmware">troubleshooting guide</a> explains what to report if the firmware can't be updated.</p>
       </div>
