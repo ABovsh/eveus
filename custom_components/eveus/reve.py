@@ -99,8 +99,6 @@ REVE_UNRELIABLE_FIELDS: Final[frozenset[str]] = frozenset(
 # temperature2 as REVE reports it; the same charger on classic firmware
 # reported a real plug temperature there.
 _NO_PLUG_SENSOR: Final = -60
-# REVE rates that have entities of their own (Rate 2 and Rate 3).
-_RATE_SLOTS: Final = 2
 
 # Legacy schedule key suffix -> scheduleV2 item field.
 _SLOT_FIELDS: Final[dict[str, str]] = {
@@ -558,6 +556,10 @@ def _rate_projection(extras: ReveExtras) -> dict[str, Any]:
         projection[f"tarif{letter}Value"] = _hundredths(item["value"])
         projection[f"tarif{letter}Start"] = item["start"]
         projection[f"tarif{letter}Stop"] = item["end"]
+    # The third and fourth rates have no entities, only a price for Active
+    # Rate Cost while one of them is in effect.
+    for letter, item in zip("CD", extras.rates[2:]):
+        projection[f"tarif{letter}Value"] = _hundredths(item["value"])
     return projection
 
 
@@ -570,13 +572,13 @@ def _wall_clock(main: Mapping[str, Any]) -> int | None:
 
 
 def active_rate_index(rates: tuple[dict[str, Any], ...], clock: int) -> int | None:
-    """``activeTarif`` for REVE, which keeps none: 0 the base price, 1 and 2
-    the first and second rate.
+    """``activeTarif`` for REVE, which keeps none: 0 the base price, 1 to 4
+    the charger's rates in order (1 and 2 have rate entities of their own).
 
     The first enabled rate whose window holds the clock's minute, on one of its
     weekdays, applies; a window past midnight belongs to the day it started.
-    ``None`` when that cannot be known or has no entity: a zero-length window,
-    unreadable weekdays, or a third or fourth rate.
+    ``None`` when that cannot be known: a zero-length window or unreadable
+    weekdays.
     """
     day, second = divmod(clock, 86400)
     minute = second // 60  # pragma: no mutate - window edges are whole minutes, so a fractional minute compares the same
@@ -595,7 +597,7 @@ def active_rate_index(rates: tuple[dict[str, Any], ...], clock: int) -> int | No
             started = (weekday - 1) % 7 if minute < end else None
         if started is None or started not in item["weekdays"]:
             continue
-        return index if index <= _RATE_SLOTS else None
+        return index
     return 0
 
 

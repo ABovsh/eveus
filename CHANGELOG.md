@@ -22,6 +22,7 @@
 
 ### 🐛 Fixed
 
+- **REVE: Active Rate Cost gives the price while REVE's third or fourth rate is in effect.** It was unavailable then, and so was Cost to Target SOC.
 - **REVE: Adaptive Current Limit follows an adaptive charge.** It lagged up to five minutes behind the charger; it is now read on every poll while such a charge runs.
 
 ## 4.28.0 - 2026-10-18

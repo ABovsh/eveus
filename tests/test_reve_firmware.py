@@ -23,6 +23,7 @@ import asyncio
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import aiohttp
@@ -1288,11 +1289,27 @@ def test_overlapping_windows_resolve_to_the_first_rate() -> None:
     assert _active([narrow, wide], _wall(15, 11, 0))["activeTarif"] == 1
 
 
-def test_a_third_or_fourth_rate_has_no_entity_so_the_active_rate_is_unknown() -> None:
+def test_a_third_or_fourth_rate_is_active_with_its_own_price_and_name() -> None:
+    # Rates 2 and 3 are REVE's first two; its third and fourth have no rate
+    # entities of their own, but Active Rate Cost still prices them.
+    from custom_components.eveus.sensor_definitions import get_active_rate_attrs, get_active_rate_cost
+
     off = _rate(0, 0, 0, enabled=False)
-    third = _rate(9 * 60, 18 * 60, 5.0)
-    assert _active([off, off, third], _wall(15, 12, 0)) == {"activeTarif": None, "unsupported": True}
-    assert _active([off, off, third], _wall(15, 20, 0))["activeTarif"] == 0
+    third = {**_rate(9 * 60, 18 * 60, 5.0), "name": "Peak"}
+    fourth = {**_rate(20 * 60, 22 * 60, 1.25), "name": ""}
+    assert _active([off, off, third, fourth], _wall(15, 12, 0)) == {"activeTarif": 3, "unsupported": False}
+    assert _active([off, off, third, fourth], _wall(15, 21, 0))["activeTarif"] == 4
+    assert _active([off, off, third, fourth], _wall(15, 23, 0))["activeTarif"] == 0
+
+    def priced(clock: int) -> tuple[Any, Any]:
+        extras = parse_extras(_extras_with(ratesV2={"base": 4.32, "rates": [off, off, third, fourth]}))
+        main = {**_reve_main(), "systemTime": clock}
+        payload, _unsupported = normalize_reve_payload(main, extras)
+        updater = SimpleNamespace(available=True, snapshot=EveusSnapshot.parse(payload, None))
+        return get_active_rate_cost(updater, None), get_active_rate_attrs(updater, None)
+
+    assert priced(_wall(15, 12, 0)) == (5.0, {"rate_name": "Peak"})
+    assert priced(_wall(15, 21, 0)) == (1.25, {"rate_name": "Rate 5"})
 
 
 def test_a_zero_length_window_makes_the_active_rate_unknown() -> None:

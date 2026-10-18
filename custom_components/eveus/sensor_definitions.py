@@ -72,7 +72,9 @@ UNIT_UAH = "UAH"
 # parsed. A getter below states presentation only — precision, a unit
 # transform, a display deadband.
 _MAX_SCHEDULE_KWH = MAX_SCHEDULE_ENERGY_KWH
-_RATE_COST_KEYS: Final = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
+_RATE_COST_KEYS: Final = {
+    0: "tarif", 1: "tarifAValue", 2: "tarifBValue", 3: "tarifCValue", 4: "tarifDValue",
+}
 
 
 def _should_log_error(function_name: str) -> bool:

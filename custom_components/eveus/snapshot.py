@@ -108,6 +108,9 @@ _FIELDS: Final[dict[str, _Field]] = {
     "tarif": _f(0, MAX_RATE_HUNDREDTHS),
     "tarifAValue": _f(0, MAX_RATE_HUNDREDTHS),
     "tarifBValue": _f(0, MAX_RATE_HUNDREDTHS),
+    # REVE only: the price of its third and fourth rates.
+    "tarifCValue": _f(0, MAX_RATE_HUNDREDTHS),
+    "tarifDValue": _f(0, MAX_RATE_HUNDREDTHS),
     "tarifAEnable": _i(),
     "tarifBEnable": _i(),
     # Rate 2/3 windows, charger-local minutes of day.

@@ -315,6 +315,9 @@ RATE_STATES: Final[Dict[int, str]] = {
     0: "Primary Rate",
     1: "Rate 2",
     2: "Rate 3",
+    # REVE only: its third and fourth rates, named in its app.
+    3: "Rate 4",
+    4: "Rate 5",
 }
 
 # State Mappings

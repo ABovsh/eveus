@@ -161,7 +161,8 @@ def _settings_keys() -> set[str]:
         "value": 16, "currentLimitEnabled": False,
     }
     rate = {"name": "", "start": 0, "end": 60, "weekdays": [0], "enabled": False, "value": 1.0}
-    extras = ReveExtras((schedule, schedule), 4.32, (rate, rate), 1)
+    # Four rates, as REVE keeps: the third and fourth carry a price only.
+    extras = ReveExtras((schedule, schedule), 4.32, (rate, rate, rate, rate), 1)
     payload, _ = normalize_reve_payload({"systemTime": 1792015614, "timeZone": 3}, extras)
     return set(payload) - {"systemTime", "timeZone"}
 
