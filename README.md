@@ -453,6 +453,7 @@ What this means in practice:
 - **Adaptive Mode** has Off, Voltage and Auto; REVE has no Power option.
 - **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app; the days of the week set there are kept. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
 - **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. It is unavailable while REVE's third or fourth rate is in effect. **Cost to Target SOC** follows the first two rates' hours, not their days of the week.
+- **Counter A Cost** and **Counter B Cost** do not increase on REVE: the charger counts the energy of counters A and B, but not their cost. After a counter is reset its cost stays at 0; without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
 - **REVE API** (diagnostic) shows whether REVE's interface answers. It sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with an error.
 - REVE does not report **Leakage Current**, **Leakage Current Peak**, **OCPP Connected**, the schedules' energy limits or **Plug Temperature**, so they stay unavailable.
 
