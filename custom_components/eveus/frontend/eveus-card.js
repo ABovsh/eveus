@@ -753,7 +753,7 @@ class EveusCard extends HTMLElement {
     const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
     const error = this._commandError === 'timeout' ? t.commandTimeout
       : this._commandError === 'current' ? t.setFailed : t.commandFailed;
-    return (ask ? `<div class="message guard-ask" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
+    return (ask ? `<div class="message guard-ask" popover="manual" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
       + (this._commandError ? `<button class="message cmd-error" role="alert" data-dismiss-error title="${t.dismiss}">${error}</button>` : '');
   }
   async _toggleLimit(key, confirmed = false) {
@@ -1780,6 +1780,10 @@ class EveusCard extends HTMLElement {
     } else {
       this.shadowRoot.innerHTML = `<style>${MODULAR_STYLE}</style><ha-card data-state="${mood}"${light ? ' data-theme="light"' : ''}>${body}</ha-card>`;
     }
+    // The browser's top layer puts the question above every dashboard card: a fixed bar
+    // still sits inside this card's stacking context, under the card below, which took the taps.
+    const ask = this._guardAsk ? this.shadowRoot.querySelector('.guard-ask') : null;
+    if (ask?.showPopover && !ask.matches(':popover-open')) try { ask.showPopover(); } catch { /* not in the document yet: the fixed bar stays */ }
     this._fitLimitValues();
     // A synchronous read right after a full innerHTML replacement can land before
     // the nested CSS Grid has finished sizing (observed live: a widened reading
@@ -1824,7 +1828,7 @@ class EveusCard extends HTMLElement {
 const MODULAR_STYLE = `
 :host{display:block}
 ha-card{box-sizing:border-box;display:flex;flex-direction:column;gap:1px;padding:2px 4px 1px;border-radius:14px;overflow:hidden;line-height:1.2}
-.guard-ask{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:10;box-sizing:border-box;max-width:480px;margin:auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px;border:1px solid #f39c12;border-radius:10px;background:var(--ha-card-background,var(--card-background-color,#1c1c1c));box-shadow:0 4px 12px #0006}.guard-ask span{flex:1 1 180px}.guard-ask button{min-height:32px;cursor:pointer}
+.guard-ask{position:fixed;inset:auto 12px calc(12px + env(safe-area-inset-bottom));z-index:10;box-sizing:border-box;width:auto;height:auto;max-width:480px;margin:0 auto;overflow:visible;color:var(--primary-text-color);display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px;border:1px solid #f39c12;border-radius:10px;background:var(--ha-card-background,var(--card-background-color,#1c1c1c));box-shadow:0 4px 12px #0006}.guard-ask span{flex:1 1 180px}.guard-ask button{min-height:32px;cursor:pointer}
 .sl{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;padding:1px 8px;border:1px solid rgba(127,127,127,.16);border-radius:10px;background:rgba(127,127,127,.05)}
 ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color);flex:none}
 .label{font-size:13px;font-weight:600;white-space:nowrap;color:var(--primary-text-color)}

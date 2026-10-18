@@ -1499,6 +1499,16 @@ test('weakening ground protection or limits needs explicit confirmation', async(
     assert.equal(x.calls.length,1);
   }
 });
+test('the confirmation opens in the top layer, above the cards below this one', async()=>{
+  // Anton, 18.10: fixed at the screen bottom, it sat under the next dashboard card, which took the taps.
+  const x=setupLimits();x.states['switch.guard']={state:'off',attributes:{}};x.card._ids.limit_disable_all='switch.guard';
+  let shown=0;
+  const ask={matches:()=>false,showPopover:()=>{shown++;},focus(){},select:undefined};
+  x.card.shadowRoot.querySelector=(q)=>q==='.guard-ask'?ask:q==='[data-guard-confirm]'?{focus(){}}:null;
+  await x.card._toggleLimit('limit_disable_all');
+  assert.match(x.card.shadowRoot.innerHTML,/<div class="message guard-ask" popover="manual" role="alertdialog"/);
+  assert.ok(shown>0,'shown as a popover');
+});
 test('rejected numeric service displays an actionable error',async()=>{
   const x=setupLimits();x.hass.callService=async()=>{throw Error('rejected');};
   await x.card._stepLimit('limit_time',1);
