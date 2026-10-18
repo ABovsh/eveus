@@ -608,7 +608,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             detail = f"{detail}, {errno.errorcode[code]}"
         _LOGGER.debug("Eveus charger is unreachable (%s)", detail)
         raise CannotConnect(f"Connection error: {detail}") from err
-    except (InvalidAuth, InvalidDevice, InvalidResponse, InvalidInput, CannotConnect):
+    except (InvalidAuth, InvalidDevice, InvalidInput, CannotConnect):
         raise
     except Exception as err:
         _LOGGER.error("Unexpected Eveus setup error: %s", type(err).__name__)
