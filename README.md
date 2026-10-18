@@ -7,10 +7,11 @@
 
 **English** | [🇺🇦 Українська](README.uk.md)
 
-Control your Eveus charger from Home Assistant: adjust charging current, set
-schedules and limits, and view charger readings, energy use and charging cost.
-The integration communicates with the charger over its local HTTP API without
-requiring internet access.
+Home Assistant integration for **Eveus EV chargers** (Energy Star), such as
+**Eveus Pro**. Control the charging current, schedules and limits,
+stop at a target battery level (SOC), and track energy and charging cost. The
+integration talks to the charger over your local network; no cloud account or
+internet access is needed. Install it from the **HACS default store**.
 
 <p align="center">
   <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
