@@ -112,6 +112,7 @@ def not_charging_reason(
     completed: bool,
     stopped: bool = False,
     limit_reached: Optional[str] = None,
+    schedule_waiting: bool = False,
 ) -> Optional[str]:
     """Fold state and subState into one closed set of reasons.
 
@@ -125,6 +126,8 @@ def not_charging_reason(
     which otherwise means waiting for an external start; classic firmware
     reads subState 1 there. ``limit_reached`` is the session limit REVE's
     subState 9 stands for when the session has reached one (``reached_limit``).
+    ``schedule_waiting`` is REVE waiting in subState 9 with a schedule on: a
+    plugged-in car outside the schedule's window.
     """
     if state is None:
         return None
@@ -158,7 +161,11 @@ def not_charging_reason(
     if substate == _SUBSTATE_ACTIVATION:
         if stopped:
             return _REASON_STOPPED_BY_USER
-        return limit_reached or SUBSTATE_REASONS[_SUBSTATE_ACTIVATION]
+        if limit_reached:
+            return limit_reached
+        if schedule_waiting:
+            return _REASON_WAITING_FOR_SCHEDULE
+        return SUBSTATE_REASONS[_SUBSTATE_ACTIVATION]
     if state == DEVICE_STATE_COMPLETE and (completed or substate in (None, 0)):
         return _REASON_CHARGE_COMPLETE
     reason = SUBSTATE_REASONS.get(substate)

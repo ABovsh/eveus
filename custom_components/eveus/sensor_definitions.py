@@ -700,6 +700,7 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
     state = _read_int(updater, "state")
     if state is None:
         return None
+    reve = getattr(updater, "firmware_family", FAMILY_CLASSIC) == FAMILY_REVE
     return not_charging_reason(
         state,
         _read_int(updater, "subState"),
@@ -708,10 +709,9 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
         # A bare test double has no coordinator memory: nothing completed.
         completed=getattr(updater, "charge_completed", False),  # pragma: no mutate - False and None are equally falsy; only read for truthiness
         stopped=_read_int(updater, "evseEnabled") == 1,
-        limit_reached=(
-            reached_limit(updater.snapshot.get)
-            if getattr(updater, "firmware_family", FAMILY_CLASSIC) == FAMILY_REVE
-            else None
+        limit_reached=reached_limit(updater.snapshot.get) if reve else None,
+        schedule_waiting=reve and state == 3 and any(
+            _read_int(updater, key) == 1 for key in ("sh1Enabled", "sh2Enabled")
         ),
     )
 

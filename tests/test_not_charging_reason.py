@@ -323,6 +323,28 @@ def test_reve_names_the_session_limit_that_held_the_charge(payload, expected):
     assert get_not_charging_reason(_reve(state=5, subState=9, **payload), None) == expected
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        # Seen 18.10 09:57 and 11:04: plugged in outside the enabled schedule's
+        # window, REVE waits in 3/9 — the code it also uses for Stop.
+        ({"sh1Enabled": 1}, "Waiting for Schedule"),
+        ({"sh1Enabled": 0, "sh2Enabled": 1}, "Waiting for Schedule"),
+        ({"sh1Enabled": 1, "evseEnabled": 1}, "Stopped by User"),
+        # No schedule on: nothing says what it waits for.
+        ({"sh1Enabled": 0, "sh2Enabled": 0}, "Waiting for Activation"),
+        ({}, "Waiting for Activation"),
+    ],
+)
+def test_reve_plugged_in_outside_a_schedule_waits_for_it(payload, expected):
+    assert get_not_charging_reason(_reve(state=3, subState=9, **payload), None) == expected
+
+
+def test_a_classic_charger_waiting_in_substate_9_is_not_given_a_schedule_reason():
+    classic = _modern(state=3, subState=9, sh1Enabled=1)
+    assert get_not_charging_reason(classic, None) == "Waiting for Activation"
+
+
 def test_a_classic_charger_in_substate_9_is_never_given_a_limit_reason():
     classic = _modern(state=5, subState=9, energyLimitS=1, energyLimit=1.0, sessionEnergy=1.0)
     assert get_not_charging_reason(classic, None) == "Waiting for Activation"
