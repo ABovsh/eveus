@@ -5,16 +5,16 @@
 ### ✨ New
 
 - **A charger without a password can be added with the username and password left empty.** REVE has no web-interface password; with both fields empty the integration sends no credentials.
-- **REVE: the card shows and changes the days of the week of Schedule 1 and Schedule 2.** It also lists the charger's other schedules and its tariffs, read-only and only those set up in the app. While REVE's interface does not answer, the schedules say they are the last read.
-- **A repair notice names any reading a REVE firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
+- **REVE: a repair notice names any reading a firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
+- **Card, REVE: the card shows and changes the days of the week of Schedule 1 and Schedule 2.** It also lists the charger's other schedules and its tariffs, read-only and only those set up in the app. While REVE's interface does not answer, the schedules say they are the last read.
 
 ### 🔧 Changed
 
-- **REVE: a third fewer requests to the charger.** Schedules and tariffs come in the same request as the readings: 72 instead of 108 requests an hour while idle.
-- **REVE API turns off only when REVE's interface stops answering.** One missed reply turned it off for 30 seconds several times a day; it now takes two failed reads in a row.
-- **A setting REVE's interface did not answer says so.** The error asks to try again in a few minutes instead of saying the charger did not accept the change.
 - **The log warns about a password sent over HTTP only when a password is set,** and no longer suggests HTTPS, which the charger does not serve.
-- **The card redraws only the sections that changed,** so a tap during a charge is no longer lost to a redraw, and it does less work on each Home Assistant update.
+- **REVE: a third fewer requests to the charger.** Schedules and tariffs come in the same request as the readings: 72 instead of 108 requests an hour while idle.
+- **REVE: the REVE API sensor turns off only when REVE's interface stops answering.** One missed reply turned it off for 30 seconds several times a day; it now takes two failed reads in a row.
+- **REVE: a setting REVE's interface did not answer says so.** The error asks to try again in a few minutes instead of saying the charger did not accept the change.
+- **Card: the card redraws only the sections that changed,** so a tap during a charge is no longer lost to a redraw, and it does less work on each Home Assistant update.
 
 ### 🐛 Fixed
 

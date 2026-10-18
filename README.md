@@ -87,7 +87,7 @@ Also supported: **several chargers**, **English and Ukrainian**, and older firmw
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A or 48A, reachable from Home Assistant |
-| Charger firmware | Verified on R3.05.x and [REVE](#reve-firmware); [R3.01.x and 1.x](#older-charger-firmware) have fewer readings |
+| Charger firmware | [Eveus firmware](#charger-firmware) R3.05.x or [REVE firmware](#reve-firmware), both verified; Eveus firmware [R3.01.x and 1.x](#older-charger-firmware) has fewer readings |
 | Network | Local network access to the charger's web interface |
 | Setup details | Charger IP address, hostname or URL and model; username and password if the charger has them |
 
@@ -417,9 +417,15 @@ Ground notices clear after recovery. Serious fault notices also need
 
 ## Charger firmware
 
+Eveus chargers run one of two firmwares: **Eveus firmware** (R3.x and 1.x) or
+**REVE firmware**. The device page shows which one: a firmware version that
+starts with `REVE_PLUS` is REVE; anything else is Eveus firmware. In the
+CHANGELOG, `Eveus:` and `REVE:` mark a change for one firmware only; a change
+without either applies to both.
+
 ### REVE firmware
 
-REVE is the newer Eveus firmware; the device page shows it as `REVE_PLUS`. The
+REVE is a newer firmware for Eveus chargers; the device page shows it as `REVE_PLUS`. The
 integration recognizes it by itself; no setup change is needed. Everything
 above works the same, except as described here.
 
