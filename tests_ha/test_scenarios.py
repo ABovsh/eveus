@@ -283,7 +283,10 @@ async def test_charge_session(hass, aioclient_mock, monkeypatch, snapshot) -> No
         sessionTime=1800,
         sessionMoney=17.5,
     )  # Charging
-    await scenario.poll(state=5, subState=0)  # Car completed the charge
+    # The charger still reports the finished session when it completes.
+    await scenario.poll(
+        state=5, subState=0, sessionEnergy=3.5, sessionTime=1800, sessionMoney=17.5
+    )  # Car completed the charge
     await scenario.poll(state=2)  # Unplug
 
     assert [event_type for event_type, _ in fired] == [
@@ -406,7 +409,9 @@ async def test_restart_restore(hass, aioclient_mock, monkeypatch, snapshot) -> N
         sessionTime=1500,
         sessionMoney=20.0,
     )
-    await scenario.poll(state=5, subState=0)
+    await scenario.poll(
+        state=5, subState=0, sessionEnergy=4.2, sessionTime=1500, sessionMoney=20.0
+    )
 
     assert float(hass.states.get(LAST_SESSION_ENERGY).state) == 4.2
 

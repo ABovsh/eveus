@@ -2920,7 +2920,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_session_cost': tuple(
-        '44.57',
+        '17.5',
         dict({
           'device_class': 'monetary',
           'friendly_name': 'Eveus EV Charger Session Cost',
@@ -2931,7 +2931,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_session_energy': tuple(
-        '20.63',
+        '3.5',
         dict({
           'friendly_name': 'Eveus EV Charger Session Energy',
           'icon': 'mdi:transmission-tower-export',
@@ -2940,9 +2940,9 @@
         }),
       ),
       'sensor.eveus_ev_charger_session_time': tuple(
-        '20h 00m',
+        '30m',
         dict({
-          'duration_seconds': 72000,
+          'duration_seconds': 1800,
           'friendly_name': 'Eveus EV Charger Session Time',
           'icon': 'mdi:timer',
         }),
@@ -17147,7 +17147,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_session_cost': tuple(
-        '44.57',
+        '20.0',
         dict({
           'device_class': 'monetary',
           'friendly_name': 'Eveus EV Charger Session Cost',
@@ -17158,7 +17158,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_session_energy': tuple(
-        '20.63',
+        '4.2',
         dict({
           'friendly_name': 'Eveus EV Charger Session Energy',
           'icon': 'mdi:transmission-tower-export',
@@ -17167,9 +17167,9 @@
         }),
       ),
       'sensor.eveus_ev_charger_session_time': tuple(
-        '20h 00m',
+        '25m',
         dict({
-          'duration_seconds': 72000,
+          'duration_seconds': 1500,
           'friendly_name': 'Eveus EV Charger Session Time',
           'icon': 'mdi:timer',
         }),
