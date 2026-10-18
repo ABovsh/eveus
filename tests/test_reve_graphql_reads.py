@@ -443,3 +443,42 @@ def test_a_known_reve_charger_stays_reve_on_a_main_without_its_markers(monkeypat
 
     assert "leakValue" not in data, "REVE's raw leakage counts are still dropped"
     assert updater.firmware_family == "reve"
+
+
+def test_reve_api_stays_off_while_only_the_settings_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The measurements answer every poll, the schedules read keeps failing
+    # (a shape the integration cannot read): REVE API must not flip back on
+    # between two settings retries, five minutes apart.
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_api_answering is True
+
+    charger.schedules = "not a list"
+    now[0] += reve.EXTRAS_REFRESH_SECONDS
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_api_answering is False
+
+    now[0] += 30
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_api_answering is False
+
+    # A good settings read turns it back on.
+    charger.schedules = copy.deepcopy(_Charger(_reve_main()).schedules)
+    now[0] += reve.EXTRAS_RETRY_SECONDS
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_api_answering is True
+
+
+def test_reve_api_stays_off_when_the_first_settings_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    charger.schedules = "not a list"
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_api_answering is False
+
+    now[0] += 30
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_api_answering is False

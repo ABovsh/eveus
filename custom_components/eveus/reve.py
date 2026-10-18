@@ -752,6 +752,11 @@ class ReveApi:
         self._retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
         self._failures = 0
         self._last_error: str | None = None  # pragma: no mutate - only read once a read has set or cleared it
+        # Whether the last schedules/rates read failed. Kept apart from
+        # `_last_error`, which every good measurements read clears, so REVE API
+        # stays off until a settings read succeeds instead of flipping between
+        # retries.
+        self._settings_failing = False  # pragma: no mutate - the first REVE poll always reads the settings, which sets or clears it
         self._measurements_retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
         self._measurement_reads = 0
         self._measurement_failures = 0
@@ -796,6 +801,7 @@ class ReveApi:
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             self._failures += 1
             self._last_error = type(err).__name__
+            self._settings_failing = True
             self._retry_at = now + EXTRAS_RETRY_SECONDS
             _LOGGER.debug("REVE schedules/rates read failed: %s", type(err).__name__)
 
@@ -1038,14 +1044,14 @@ class ReveApi:
     @property
     def answering(self) -> bool | None:
         """Whether the last GraphQL read succeeded; ``None`` before the first."""
-        if self._last_error is not None:
+        if self._last_error is not None or self._settings_failing:
             return False
         return None if self._fetched_at is None else True
 
     def diagnostics(self) -> dict[str, Any]:
         extras = self.extras
         return {
-            "graphql_ok": extras is not None and self._last_error is None,
+            "graphql_ok": extras is not None and self.answering is True,
             "schedules": None if extras is None else len(extras.schedules),
             "rates": None if extras is None else len(extras.rates),
             "read_age_seconds": (
@@ -1073,6 +1079,7 @@ class ReveApi:
         self._fetched_at = time.monotonic()
         self._retry_at = 0.0  # pragma: no mutate - any value below the monotonic clock is equivalent
         self._last_error = None
+        self._settings_failing = False
 
     async def _read_extras(self) -> ReveExtras:
         station: dict[str, Any] = {}
