@@ -92,6 +92,20 @@ def test_finished_complete_carries_session_snapshot_from_last_charging_poll() ->
     assert evt["device_number"] == 2
 
 
+def test_finished_takes_what_the_stop_poll_adds_to_the_session() -> None:
+    # Seen 18.10 10:06 on REVE: the charger stopped at a 0.30 kWh limit, the
+    # last charging poll read 0.28, and the event said 0.28.
+    hass = _Hass()
+    updater = _updater(hass)
+    _poll(updater, {"state": 3})
+    _poll(updater, {"state": 4, "sessionEnergy": 0.28, "sessionMoney": 1.21, "sessionTime": 297})
+    _poll(updater, {"state": 5, "sessionEnergy": 0.30, "sessionMoney": 1.30, "sessionTime": 301})
+    evt = _fired(hass, EVENT_CHARGING_FINISHED)[0]
+    assert evt["session_energy_kwh"] == pytest.approx(0.30)
+    assert evt["session_cost"] == pytest.approx(1.30)
+    assert evt["session_duration_s"] == 301
+
+
 @pytest.mark.parametrize(
     ("new_state", "reason"),
     [(2, "unplugged"), (3, "stopped"), (6, "paused")],

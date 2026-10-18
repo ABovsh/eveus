@@ -858,10 +858,6 @@ class ReveApi:
     def main_residue_tried(self) -> None:
         self._residue_tried_at = time.monotonic()
 
-    def main_residue_stale(self) -> None:
-        """Read ``/main``'s own fields again on the next poll."""
-        self._residue_tried_at = None
-
     def keep_main_residue(self, main: Mapping[str, Any]) -> None:
         """Keep what only ``/main`` carries from a ``/main`` reply."""
         self._residue = {

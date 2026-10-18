@@ -55,7 +55,6 @@ from .client import UPDATE_TIMEOUT_OBJ, fetch_json
 from .reve import (
     FAMILY_CLASSIC,
     FAMILY_REVE,
-    MAIN_ONLY_FIELDS,
     ReveApi,
     is_reve_payload,
     normalize_reve_payload,
@@ -113,6 +112,17 @@ class EveusUnreachable(UpdateFailed):
     network. Setup reads the type, not the message, to decide whether an entry
     may start without a first reading (see ``async_setup_entry``).
     """
+
+
+def _final(charging: Any, stopped: Any, key: str, kind: type) -> Any:
+    """A session figure as the charge ended: the stop poll's when it grew past
+    the last charging poll (the charge ran on between them), else the last
+    charging poll's (a reset to 0 on unplug or completion never wins)."""
+    last = get_safe_value(charging, key, kind)
+    end = get_safe_value(stopped, key, kind)
+    if last is None or (end is not None and end > last):
+        return end
+    return last
 
 
 def _bounded(value: float | int | None, maximum: float) -> float | int | None:
@@ -328,12 +338,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def firmware_family(self) -> str:
         """``reve`` once this charger has identified as REVE, else ``classic``."""
         return FAMILY_REVE if self._reve_seen else FAMILY_CLASSIC
-
-    def page_event_sent(self, command: str) -> None:
-        """REVE: a setting only ``/main`` reports is read back on the next poll,
-        not up to five minutes later."""
-        if self._reve_seen and command in MAIN_ONLY_FIELDS:
-            self._reve.main_residue_stale()
 
     def reve_command_route(self, command: str) -> Callable[[Any], Any] | None:
         """The GraphQL write REVE needs for this command, or ``None`` for ``/pageEvent``."""
@@ -878,13 +882,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                         ),
                     ),
                     "session_energy_kwh": _bounded(
-                        get_safe_value(snapshot, "sessionEnergy", float), MAX_ENERGY_KWH
+                        _final(snapshot, new_data, "sessionEnergy", float), MAX_ENERGY_KWH
                     ),
                     "session_cost": _bounded(
-                        get_safe_value(snapshot, "sessionMoney", float), MAX_COST_VALUE
+                        _final(snapshot, new_data, "sessionMoney", float), MAX_COST_VALUE
                     ),
                     "session_duration_s": _bounded(
-                        get_safe_value(snapshot, "sessionTime", int),
+                        _final(snapshot, new_data, "sessionTime", int),
                         MAX_SESSION_TIME_SECONDS,
                     ),
                 },
