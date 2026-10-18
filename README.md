@@ -167,7 +167,7 @@ browser or reset the app's frontend cache.
 | **Session** | Session energy, cost and time; with the car unplugged, the last session |
 | **Limits** | Energy, time, cost and SOC limits, **Disable all** (not on REVE) |
 | **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and, on Eveus firmware, energy limit. On REVE also their days of the week, which you can change, and the other schedules and the tariffs set in the charger's app, read-only |
-| **Charger clock** | Time Zone, Time Drift and **Sync Time** |
+| **Charger clock** | Time Zone, the charger's time (Time Drift instead when the clock is 10 minutes or more off) and **Sync Time** |
 | **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy |
 | **Safety** | Box and plug temperature, ground, leakage current, connection quality |
 
@@ -195,7 +195,7 @@ sections:            # any of these, in any order; omit for all of them
   - session
   - limits
   - schedules        # schedule 1 · 2
-  - time             # time zone · drift · sync
+  - time             # time zone · clock or drift · sync
   - history          # this month · counters
   - safety
 # hide:              # single items: section.item

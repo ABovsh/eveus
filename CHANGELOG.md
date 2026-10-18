@@ -21,6 +21,7 @@
 - **REVE: a setting REVE's interface did not answer says so.** The error asks to try again in a few minutes instead of saying the charger did not accept the change.
 - **Card: with nothing flowing, Meter is one slim voltage row** instead of zero power and current tiles.
 - **Card: the cost to go before a charge shows its price per kWh,** and the battery tile drops "from" until the SOC has moved.
+- **Card: Charger clock shows the charger's time while its clock is right,** instead of a drift of a few seconds. From 10 minutes off it shows the drift in red, next to Sync.
 - **Card: the card redraws only the sections that changed,** so a tap during a charge is no longer lost to a redraw, and it does less work on each Home Assistant update.
 
 ### 🐛 Fixed

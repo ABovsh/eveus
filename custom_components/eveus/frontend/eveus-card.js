@@ -148,7 +148,7 @@ const I18N = {
     reveStale: (hm) => `REVE interface not answering since ${hm}; showing the schedules last read`,
     edges: {start: 'start', stop: 'stop'}, tapToggle: 'tap to turn on or off',
     capCurrent: 'current limit', capEnergy: 'energy limit',
-    zone: 'Time zone', drift: 'Clock drift: charger clock minus Home Assistant', sync: 'Sync', synced: 'Sent',
+    zone: 'Time zone', clock: 'Charger clock', drift: 'Clock drift: charger clock minus Home Assistant', sync: 'Sync', synced: 'Sent',
     syncTitle: 'Sync time: set the charger clock from Home Assistant', units: {s: 's', min: 'min', h: 'h'},
     lastSession: 'Last session', rateNames: {'Primary Rate': 'Primary rate'},
     faultLabels: {plug_temperature: 'plug', box_temperature: 'box', voltage: 'mains', leakage_current: 'leakage', current: 'current'},
@@ -216,7 +216,7 @@ const I18N = {
     reveStale: (hm) => `Інтерфейс REVE не відповідає з ${hm}; показано останні прочитані розклади`,
     edges: {start: 'початок', stop: 'завершення'}, tapToggle: 'натисніть, щоб увімкнути чи вимкнути',
     capCurrent: 'ліміт струму', capEnergy: 'ліміт енергії',
-    zone: 'Часовий пояс', drift: 'Зміщення часу: годинник станції мінус Home Assistant', sync: 'Синхр.', synced: 'Надіслано',
+    zone: 'Часовий пояс', clock: 'Годинник станції', drift: 'Зміщення часу: годинник станції мінус Home Assistant', sync: 'Синхр.', synced: 'Надіслано',
     syncTitle: 'Синхронізувати час: виставити годинник станції за Home Assistant', units: {s: 'с', min: 'хв', h: 'год'},
     lastSession: 'Остання сесія', rateNames: {'Primary Rate': 'Основний тариф', 'Rate 2': 'Тариф 2', 'Rate 3': 'Тариф 3'},
     faultLabels: {plug_temperature: 'конектор', box_temperature: 'корпус', voltage: 'мережа', leakage_current: 'витік', current: 'струм'},
@@ -301,14 +301,14 @@ const EDITOR_I18N = {
       basic_info: ['Meter', 'voltage · power · current'], current: ['Current slider', ''],
       adaptive: ['Adaptive charging', ''], session: ['Session', 'energy · cost · time'],
       limits: ['Limits', 'energy · time · cost'], schedules: ['Schedules', '1 · 2: window · current · energy'],
-      time: ['Charger clock', 'time zone · drift · sync'], history: ['Counters', 'total · A · B'], safety: ['Safety', ''],
+      time: ['Charger clock', 'time zone · clock or drift · sync'], history: ['Counters', 'total · A · B'], safety: ['Safety', ''],
     },
     items: {
       actions: {ocpp: 'OCPP', one_charge: 'One charge', stop: 'Stop'},
       advanced_controls: {initial: 'Initial', target: 'Target', capacity: 'Capacity', loss: 'Loss'},
       basic_info: {voltage: 'Voltage', power: 'Power', current: 'Current'},
       session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
-      schedules: {schedule_1: 'Schedule 1', schedule_2: 'Schedule 2', days: 'Days (REVE)', more: 'Schedules 3–8 (REVE)', rates: 'Tariffs (REVE)'}, time: {zone: 'Time zone', drift: 'Drift', sync: 'Sync'},
+      schedules: {schedule_1: 'Schedule 1', schedule_2: 'Schedule 2', days: 'Days (REVE)', more: 'Schedules 3–8 (REVE)', rates: 'Tariffs (REVE)'}, time: {zone: 'Time zone', drift: 'Clock or drift', sync: 'Sync'},
       history: {month: 'This month', total: 'Total', counter_a: 'Counter A', counter_b: 'Counter B'},
       safety: {box: 'Box', plug: 'Plug', ground: 'Ground', leak: 'Leakage', connection: 'Connection'},
     },
@@ -326,14 +326,14 @@ const EDITOR_I18N = {
       basic_info: ['Показники', 'напруга · потужність · струм'], current: ['Повзунок струму', ''],
       adaptive: ['Адаптивне заряджання', ''], session: ['Сесія', 'енергія · вартість · час'],
       limits: ['Ліміти', 'енергія · час · вартість'], schedules: ['Розклади', '1 · 2: інтервал · струм · енергія'],
-      time: ['Годинник станції', 'часовий пояс · зміщення · синхронізація'], history: ['Лічильники', 'загалом · A · B'], safety: ['Безпека', ''],
+      time: ['Годинник станції', 'часовий пояс · час або зміщення · синхронізація'], history: ['Лічильники', 'загалом · A · B'], safety: ['Безпека', ''],
     },
     items: {
       actions: {ocpp: 'OCPP', one_charge: 'Один заряд', stop: 'Стоп'},
       advanced_controls: {initial: 'Початковий', target: 'Ціль', capacity: 'Ємність', loss: 'Втрати'},
       basic_info: {voltage: 'Напруга', power: 'Потужність', current: 'Струм'},
       session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
-      schedules: {schedule_1: 'Розклад 1', schedule_2: 'Розклад 2', days: 'Дні (REVE)', more: 'Розклади 3–8 (REVE)', rates: 'Тарифи (REVE)'}, time: {zone: 'Часовий пояс', drift: 'Зміщення', sync: 'Синхронізація'},
+      schedules: {schedule_1: 'Розклад 1', schedule_2: 'Розклад 2', days: 'Дні (REVE)', more: 'Розклади 3–8 (REVE)', rates: 'Тарифи (REVE)'}, time: {zone: 'Часовий пояс', drift: 'Час або зміщення', sync: 'Синхронізація'},
       history: {month: 'Цей місяць', total: 'Загалом', counter_a: 'Лічильник A', counter_b: 'Лічильник B'},
       safety: {box: 'Корпус', plug: 'Конектор', ground: 'Заземлення', leak: 'Витік', connection: "Зв'язок"},
     },
@@ -559,13 +559,13 @@ class EveusCard extends HTMLElement {
   // This charger's state objects, plus what else a render reads, compared by identity.
   _stateRefs() {
     const states = this._hass.states;
-    return [...Object.values(this._ids || {}).map((id) => states[id]), this._resolved, this._nowHM(),
+    return [...Object.values(this._ids || {}).map((id) => states[id]), this._resolved, this._nowHM(), this._scheduleHM(),
       this._hass.locale?.language, this._hass.themes?.darkMode];
   }
   _signature() {
     const states = this._hass.states;
     return JSON.stringify([Object.values(this._ids || {}).map((id) => { const e = states[id]; return e ? [e.state, e.attributes, e.last_changed] : null; }),
-      this._resolved, this._nowHM(), this._hass.locale?.language, this._hass.themes?.darkMode]);
+      this._resolved, this._nowHM(), this._scheduleHM(), this._hass.locale?.language, this._hass.themes?.darkMode]);
   }
   connectedCallback() {
     this._resizeObserver?.observe(this);
@@ -1546,7 +1546,9 @@ class EveusCard extends HTMLElement {
       ${known ? '' : '<option selected>—</option>'}${options.map((o) => `<option value="${o}"${o === zone ? ' selected' : ''}>${o === '0' ? 'UTC' : `UTC${o}`}</option>`).join('')}</select></label>` : '';
     const drift = on ? currentNumber(this._state('time_drift')) : null;
     const driftCls = drift === null ? '' : Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S ? 'bad' : 'good';
-    const driftEl = this._ids.time_drift && this._shows('time', 'drift') ? `<button class="time-item" data-more-info="time_drift" title="${t.drift} — ${t.details}"><ha-icon icon="mdi:clock-alert-outline"></ha-icon><span class="${['time-drift', driftCls].filter(Boolean).join(' ')}">${this._driftText(drift)}</span></button>` : '';
+    // A right clock shows the charger's own time; a wrong one how far it is off, next to Sync.
+    const clock = this._scheduleHM();
+    const driftEl = this._ids.time_drift && this._shows('time', 'drift') ? `<button class="time-item" data-more-info="time_drift" title="${clock ? t.clock : t.drift} — ${t.details}"><ha-icon icon="${clock ? 'mdi:alarm' : 'mdi:clock-alert-outline'}"></ha-icon><span class="${['time-drift', driftCls].filter(Boolean).join(' ')}">${clock ?? this._driftText(drift)}</span></button>` : '';
     const syncOk = on && this._state('sync_time') && this._state('sync_time').state !== 'unavailable';
     const fix = known ? this._zoneFix(zone, drift, options) : null;
     const syncEl = fix && this._shows('time', 'zone')

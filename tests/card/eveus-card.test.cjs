@@ -1031,16 +1031,33 @@ test('time: zone picker, clock drift coloured by the Repairs threshold, and a sy
   assert.match(html(), /class="sl time/);
   assert.match(html(), /<option value="\+3" selected>UTC\+3<\/option>/);
   assert.match(html(), /<option value="0">UTC<\/option>/);
-  assert.match(html(), /data-more-info="time_drift"[\s\S]*?class="time-drift good">0<small>s<\/small>/);
+  assert.match(html(), /data-more-info="time_drift"[\s\S]*?class="time-drift good">\d{2}:\d{2}<\/span>/);
   await card._selectOption('time_zone', '+2');
   await card._syncTime();
   assert.equal(JSON.stringify(calls), JSON.stringify([['select','select_option',{entity_id:'select.tz',option:'+2'}], ['button','press',{entity_id:'button.sync'}]]));
   assert.match(html(), /class="time-sync done"/, 'the tap is acknowledged');
-  const drift = (v) => setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',v,{unit_of_measurement:'s'}]}}).html();
-  assert.match(drift(90), /class="time-drift good">\+2<small>min<\/small>/);
-  assert.match(drift(900), /class="time-drift bad">\+15<small>min<\/small>/);
-  assert.match(drift(-3600), /class="time-drift bad">−1<small>h<\/small>/);
-  assert.match(drift('unavailable'), /class="time-drift">—/);
+});
+test('time: a correct charger clock shows its own time, a wrong one its drift in red, an unknown one a dash', () => {
+  // The charger's clock is Home Assistant's shifted by the drift; HA reads 16:03 here.
+  const clock = {0:'16:03', 120:'16:05', [-599]:'15:53'};
+  const at = (v, over = {}) => {
+    const x = setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',v,{unit_of_measurement:'s'}], ...over}});
+    x.card._nowHM = (o = 0) => clock[o] ?? '16:03'; x.card.hass = x.hass;
+    return x.html();
+  };
+  const item = (h) => h.match(/<button class="time-item"[\s\S]*?<\/button>/)?.[0] ?? '';
+  assert.match(item(at(120)), /data-more-info="time_drift"[\s\S]*icon="mdi:alarm"[\s\S]*class="time-drift good">16:05<\/span>/, 'the charger clock, still opening the drift');
+  assert.match(item(at(0)), /class="time-drift good">16:03</);
+  assert.match(item(at(-599)), /class="time-drift good">15:53</, 'just inside the threshold');
+  assert.doesNotMatch(item(at(120)), /<small>/, 'no drift unit while the clock is right');
+  assert.match(item(at(600)), /icon="mdi:clock-alert-outline"[\s\S]*class="time-drift bad">\+10<small>min<\/small>/, 'from the threshold: the drift');
+  assert.match(at(600), /class="sl time time-bad/);
+  assert.match(at(600), /data-sync/, 'next to Sync');
+  assert.match(item(at(900)), /class="time-drift bad">\+15<small>min<\/small>/);
+  assert.match(item(at(-5400)), /class="time-drift bad">−1\.5<small>h<\/small>/);
+  assert.match(item(at('unavailable')), /class="time-drift">—</);
+  assert.match(item(at(120, {state:['sensor.state','unavailable']})), /class="time-drift">—</, 'offline: a dash');
+  assert.doesNotMatch(at(120), /time-bad/);
 });
 test('time offline: nothing can be changed or pressed', async () => {
   const {card, calls, html} = setupAll({sections:['time'], over:{...TIME, state:['sensor.state','unavailable']}});
@@ -1053,7 +1070,9 @@ test('uk: schedules and time speak Ukrainian', () => {
   const {html} = setupAll({sections:['schedules','time'], over:{...SCHED, ...TIME, time_drift:['sensor.drift',-120,{unit_of_measurement:'s'}]}, locale:'uk'});
   assert.match(html(), /Розклад 1/);
   assert.match(html(), /Часовий пояс/);
-  assert.match(html(), /−2<small>хв<\/small>/);
+  assert.match(html(), /class="time-drift good">\d{2}:\d{2}</, 'a right clock shows its time');
+  const wrong = setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',-900,{unit_of_measurement:'s'}]}, locale:'uk'}).html();
+  assert.match(wrong, /−15<small>хв<\/small>/);
   assert.match(html(), /Синхр/);
 });
 
@@ -1175,18 +1194,18 @@ test('an open picker (time zone, adaptive mode) is not re-rendered away by live 
   const x = setupAll({sections:['time','adaptive'], over:TIME});
   x.card._selectFocus('time_zone');
   const before = x.card.shadowRoot.innerHTML;
-  x.states['sensor.drift']={...x.states['sensor.drift'],state:'30'}; x.card.hass = x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'700'}; x.card.hass = x.hass;
   assert.equal(x.card.shadowRoot.innerHTML, before, 'frozen while the list is open');
   await x.card._selectOption('time_zone', '+2');
   assert.equal(JSON.stringify(x.calls.at(-1)), JSON.stringify(['select','select_option',{entity_id:'select.tz',option:'+2'}]));
-  assert.match(x.html(), /\+30<small>s/, 'a choice ends the freeze');
+  assert.match(x.html(), /\+12<small>min/, 'a choice ends the freeze');
   x.card._selectFocus('adaptive_mode'); x.card._selectBlur();
-  x.states['sensor.drift']={...x.states['sensor.drift'],state:'60'}; x.card.hass = x.hass;
-  assert.match(x.html(), /\+1<small>min/, 'closing without a choice ends it too');
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'1260'}; x.card.hass = x.hass;
+  assert.match(x.html(), /\+21<small>min/, 'closing without a choice ends it too');
   x.card._selectFocus('adaptive_mode');
   for (const fn of [...x.timers.values()]) fn();
-  x.states['sensor.drift']={...x.states['sensor.drift'],state:'0'}; x.card.hass = x.hass;
-  assert.match(x.html(), /time-drift good">0<small>s/, 'a forgotten focus times out');
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'1800'}; x.card.hass = x.hass;
+  assert.match(x.html(), /time-drift bad">\+30<small>min/, 'a forgotten focus times out');
 });
 
 test('updates from other entities do not re-render the card; its own entities and the minute do', () => {
@@ -1202,6 +1221,14 @@ test('updates from other entities do not re-render the card; its own entities an
   const next = x.card._nowHM() === '12:00' ? '12:01' : '12:00';
   x.card._nowHM = () => next; x.card.hass = x.hass;
   assert.notEqual(x.card.shadowRoot.innerHTML, 'SENTINEL', 'a new minute re-renders (offline age, running schedule)');
+});
+test('the charger clock re-renders on its own minute, not only on Home Assistant\'s', () => {
+  const x = setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',30,{unit_of_measurement:'s'}]}});
+  let charger = '16:04';
+  x.card._nowHM = (o = 0) => o === 30 ? charger : '16:03'; x.card.hass = x.hass;
+  assert.match(x.html(), /time-drift good">16:04</);
+  charger = '16:05'; x.card.hass = x.hass;
+  assert.match(x.html(), /time-drift good">16:05</, 'HA still reads 16:03');
 });
 test('a config change from the editor re-renders even when no state changed', async () => {
   const x = setupAll({sections:['session']});
