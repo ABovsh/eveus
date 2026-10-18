@@ -19,9 +19,6 @@ internet access is needed. Install it from the **HACS default store**.
   <img alt="Eveus card editor — sections to tick and reorder" src="docs/images/card-editor-en.jpg" width="49%">
 </p>
 
-> [!IMPORTANT]
-> **Updating from 4.24.0 or earlier? Add the Eveus card again.** The card has been rebuilt and an existing card does not pick up the new sections. [How →](#eveus-card)
-
 **Contents:** [Install](#installation) · [Setup](#setup) · [First charge](#first-charge) ·
 [Card](#eveus-card) · [SOC](#battery-level-soc) · [Limits and schedules](#limits-schedules-and-cost) ·
 [Automations](#blueprints) · [REVE](#reve-firmware) · [Help](#troubleshooting) ·
@@ -152,9 +149,6 @@ in your order, in your Home Assistant language (English or Ukrainian).
 1. Restart Home Assistant after installing or updating the integration, then refresh the browser. In the mobile app: **Settings → Companion app → Troubleshooting → Reset frontend cache**, then restart the app.
 2. Open your dashboard → **Edit dashboard → Add card → Eveus EV Charger**.
 3. Tick the sections you want, reorder them with the arrows and **Save**. A section's settings icon hides single items, e.g. Schedule 2, and sets the section's size. Set **Charger** if you have several.
-
-**Updating from 4.24.0 or earlier:** delete each old Eveus card and add it
-again. An old card keeps only its old sections, without Schedules or Charger clock.
 
 If **Custom element doesn't exist** appears after an update, refresh the
 browser or reset the app's frontend cache.
