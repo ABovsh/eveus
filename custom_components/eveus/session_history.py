@@ -156,6 +156,7 @@ class LastSessionDurationSensor(_LastSessionSensorBase):
     _max_value = MAX_SESSION_TIME_SECONDS
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_suggested_display_precision = 0
     _attr_icon = "mdi:timer-outline"
 
 

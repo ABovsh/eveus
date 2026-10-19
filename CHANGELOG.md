@@ -27,6 +27,7 @@
 
 ### 🐛 Fixed
 
+- **Last Session Duration shows whole seconds in Home Assistant's own cards.** Home Assistant gave it two decimals (5,748.00 s); the Eveus card was not affected.
 - **The dashboard files paste whole into the raw configuration editor.** A file pasted whole was refused with "At path: views - Expected an array value", and the README's indentation steps turned the sections into broken views.
 - **The dashboard's Adaptive Mode icon shows.** `mdi:shield-flash-outline` is not in Home Assistant's icon set, so it was an empty spot and Spook raised a repair.
 - **REVE: Active Rate Cost gives the price while REVE's third or fourth rate is in effect.** It was unavailable then, and so was Cost to Target SOC.

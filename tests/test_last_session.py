@@ -131,7 +131,8 @@ def test_last_session_sensor_device_number_default_is_one() -> None:
             "Last Session Duration",
             SensorDeviceClass.DURATION,
             UnitOfTime.SECONDS,
-            None,
+            # Without it HA infers 2 decimals for seconds: "5,748.00 s".
+            0,
             "mdi:timer-outline",
         ),
     ],
