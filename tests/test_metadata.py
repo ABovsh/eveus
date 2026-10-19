@@ -492,3 +492,18 @@ def test_shipped_dashboards_only_reference_real_sensors(name: str) -> None:
         )
     }
     assert referenced <= known, f"{name} references unknown sensors: {sorted(referenced - known)}"
+
+
+@pytest.mark.parametrize("name", ["dashboard.yaml", "dashboard-uk.yaml"])
+def test_shipped_dashboards_paste_as_a_whole_raw_config(name: str) -> None:
+    """The raw configuration editor saves only a config with a `views` list
+    ("At path: views -- Expected an array value, but received: undefined"
+    otherwise), so the file pasted whole must already be a dashboard."""
+    import yaml
+
+    config = yaml.safe_load((ROOT / "docs" / name).read_text())
+    assert isinstance(config.get("views"), list)
+    assert len(config["views"]) == 1
+    view = config["views"][0]
+    assert view["type"] == "sections"
+    assert len(view["sections"]) >= 8
