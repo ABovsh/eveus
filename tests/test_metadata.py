@@ -503,16 +503,15 @@ def test_shipped_dashboards_only_reference_real_sensors(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", SHIPPED_DASHBOARDS)
-def test_shipped_dashboards_paste_as_a_whole_raw_config(name: str) -> None:
-    """The raw configuration editor saves only a config with a `views` list
-    ("At path: views -- Expected an array value, but received: undefined"
-    otherwise), so the file pasted whole must already be a dashboard."""
+def test_shipped_dashboards_paste_as_one_view(name: str) -> None:
+    """Pasted whole into a view's "Edit in YAML", the file is that view: a
+    `views:` wrapper there leaves an empty view, and a `path` an existing
+    dashboard already uses cannot be saved."""
     import yaml
 
-    config = yaml.safe_load((ROOT / "docs" / name).read_text())
-    assert isinstance(config.get("views"), list)
-    assert len(config["views"]) == 1
-    view = config["views"][0]
+    view = yaml.safe_load((ROOT / "docs" / name).read_text())
+    assert "views" not in view
+    assert "path" not in view
     assert view["type"] == "sections"
     assert len(view["sections"]) >= 8
 

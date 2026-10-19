@@ -229,17 +229,13 @@ REVE file leaves out what REVE does not report, shows **Manual Mode** and
 <img alt="Eveus dashboard" src="docs/images/dashboard-en.jpg" width="100%">
 
 > [!IMPORTANT]
-> The file is a **whole dashboard** with one view. Paste it in the raw
-> configuration editor, not through **Add card → Manual**.
+> The file is **one dashboard view**. Add it as a view, not through
+> **Add card → Manual** or the raw configuration editor.
 
-1. Under **Settings → Dashboards**, choose **Add dashboard** and open the new dashboard.
-2. Choose **Edit dashboard → ⋮ → Raw configuration editor**.
-3. Replace all of the editor's content with the file.
+1. Open the dashboard, or create one under **Settings → Dashboards → Add dashboard**.
+2. Choose **Edit dashboard → Add view** (the **+** after the view tabs), then **⋮ → Edit in YAML**.
+3. Replace everything in the editor with the file.
 4. Replace `eveus_ev_charger` if your entity IDs use another prefix, then **Save**.
-
-To add the view to an existing dashboard instead, copy the file's item under
-`views:` — from `- title: Eveus` to the end — into that dashboard's own
-`views:` list.
 
 For three phases, set **Phases = 3** and add
 `sensor.eveus_ev_charger_current_phase_2`/`_3` and `…_voltage_phase_2`/`_3`

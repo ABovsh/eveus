@@ -350,34 +350,26 @@ def build(lang: int, reve: bool = False) -> dict:
     ]
     return {
         "title": "Eveus",
-        "views": [
-            {
-                "title": "Eveus",
-                "path": "eveus",
-                "icon": "mdi:ev-station",
-                "type": "sections",
-                "max_columns": 3,
-                "dense_section_placement": True,
-                "sections": [{"type": "grid", "cards": cards} for cards in sections],
-            }
-        ],
+        "icon": "mdi:ev-station",
+        "type": "sections",
+        "max_columns": 3,
+        "dense_section_placement": True,
+        "sections": [{"type": "grid", "cards": cards} for cards in sections],
     }
 
 
 HEADERS = (
     [
-        "# Eveus Dashboard v2.0 (EN) — Home Assistant 2025.10 or newer, standard cards only.",
-        "# A ready Lovelace dashboard with one Sections view of the Eveus entities.",
-        "# New dashboard: paste this whole file into the raw configuration editor.",
-        "# Existing dashboard: copy the item under `views:` into its own `views:` list.",
+        "# Eveus Dashboard v2.1 (EN) — Home Assistant 2025.10 or newer, standard cards only.",
+        "# One Sections view of the Eveus entities, for a new or an existing dashboard.",
+        "# Edit dashboard → Add view → ⋮ → Edit in YAML: replace everything with this file, Save.",
         "# Rows for entities your firmware does not have hide themselves.",
         "# See README → Dashboard. Ukrainian variant: docs/dashboard-uk.yaml",
     ],
     [
-        "# Eveus Dashboard v2.0 (UA) — Home Assistant 2025.10 або новіший, лише стандартні картки.",
-        "# Готова Lovelace-панель з однією вкладкою «Розділи» із сутностями Eveus.",
-        "# Нова панель: вставте весь файл у текстовий редактор панелі.",
-        "# Наявна панель: скопіюйте елемент під `views:` у її власний список `views:`.",
+        "# Eveus Dashboard v2.1 (UA) — Home Assistant 2025.10 або новіший, лише стандартні картки.",
+        "# Вкладка «Розділи» із сутностями Eveus для нової чи наявної панелі.",
+        "# Редагувати панель → Додати вкладку → ⋮ → Редагувати в YAML: замініть усе цим файлом, Зберегти.",
         "# Рядки сутностей, яких немає у вашій прошивці, ховаються самі.",
         "# Див. README → Готова панель. English variant: docs/dashboard.yaml",
     ],
@@ -386,17 +378,15 @@ HEADERS = (
 
 REVE_HEADERS = (
     [
-        "# Eveus Dashboard v2.0 for REVE firmware (EN) — Home Assistant 2025.10 or newer, standard cards only.",
+        "# Eveus Dashboard v2.1 for REVE firmware (EN) — Home Assistant 2025.10 or newer, standard cards only.",
         "# Leaves out what REVE does not report; shows Manual Mode and REVE API.",
-        "# New dashboard: paste this whole file into the raw configuration editor.",
-        "# Existing dashboard: copy the item under `views:` into its own `views:` list.",
+        "# Edit dashboard → Add view → ⋮ → Edit in YAML: replace everything with this file, Save.",
         "# See README → Dashboard. Ukrainian variant: docs/dashboard-reve-uk.yaml",
     ],
     [
-        "# Eveus Dashboard v2.0 для прошивки REVE (UA) — Home Assistant 2025.10 або новіший, лише стандартні картки.",
+        "# Eveus Dashboard v2.1 для прошивки REVE (UA) — Home Assistant 2025.10 або новіший, лише стандартні картки.",
         "# Без показників, яких REVE не надає; з ручним режимом і API REVE.",
-        "# Нова панель: вставте весь файл у текстовий редактор панелі.",
-        "# Наявна панель: скопіюйте елемент під `views:` у її власний список `views:`.",
+        "# Редагувати панель → Додати вкладку → ⋮ → Редагувати в YAML: замініть усе цим файлом, Зберегти.",
         "# Див. README → Готова панель. English variant: docs/dashboard-reve.yaml",
     ],
 )
