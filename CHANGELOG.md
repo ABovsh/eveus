@@ -14,6 +14,7 @@
 
 ### 🔧 Changed
 
+- **Dashboard 2.0: standard Home Assistant cards only, plus a REVE variant.** The power and current graphs are built-in trend graphs, so `mini-graph-card` is no longer needed; the dashboard needs Home Assistant 2025.10 or newer. `docs/dashboard.yaml` hides the cards of entities the firmware does not have; `docs/dashboard-reve.yaml` (Ukrainian: `docs/dashboard-reve-uk.yaml`) leaves them out and shows Manual Mode and REVE API. [Details](README.md#dashboard)
 - **Cost to Target SOC before a scheduled charge uses the tariffs of the schedule windows.** It priced everything at the tariff in effect now, so at 19:00 a charge that Schedule 1 runs at night showed the day rate (235 ₴ instead of 118 ₴ in one case).
 - **The log warns about a password sent over HTTP only when a password is set,** and no longer suggests HTTPS, which the charger does not serve.
 - **REVE: a third fewer requests to the charger.** Schedules and tariffs come in the same request as the readings: 72 instead of 108 requests an hour while idle.
@@ -26,6 +27,8 @@
 
 ### 🐛 Fixed
 
+- **The dashboard files paste whole into the raw configuration editor.** A file pasted whole was refused with "At path: views - Expected an array value", and the README's indentation steps turned the sections into broken views.
+- **The dashboard's Adaptive Mode icon shows.** `mdi:shield-flash-outline` is not in Home Assistant's icon set, so it was an empty spot and Spook raised a repair.
 - **REVE: Active Rate Cost gives the price while REVE's third or fourth rate is in effect.** It was unavailable then, and so was Cost to Target SOC.
 - **REVE: Adaptive Current Limit follows an adaptive charge.** It lagged up to five minutes behind the charger; it is now read on every poll while such a charge runs.
 
