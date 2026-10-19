@@ -225,12 +225,19 @@ sections:            # будь-які з цих, у будь-якому пор�
 
 ## Готова панель
 
-Для окремих карток і графіків використайте вкладку типу **Sections** з файлу
-[`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) ([англійська версія](docs/dashboard.yaml)).
-Для двох графіків потрібна [`mini-graph-card`](https://github.com/kalkih/mini-graph-card)
-з HACS; решта карток — стандартні картки Home Assistant.
+Для окремих карток і графіків використайте готову панель типу **Sections** зі
+стандартних карток Home Assistant. Потрібен Home Assistant 2025.10 або новіший.
 
-[Вигляд панелі](https://github.com/user-attachments/assets/a0a61b0b-3a2b-41e1-9ad4-ff05e8e94ec2)
+| Прошивка | Українська | Англійська |
+|---|---|---|
+| Будь-яка | [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) | [`docs/dashboard.yaml`](docs/dashboard.yaml) |
+| REVE | [`docs/dashboard-reve-uk.yaml`](docs/dashboard-reve-uk.yaml) | [`docs/dashboard-reve.yaml`](docs/dashboard-reve.yaml) |
+
+Загальний файл ховає картки й рядки сутностей, яких немає у вашій прошивці. Файл для
+REVE не містить показників, яких REVE не надає, показує **Ручний режим** і
+**API REVE** та пояснює, коли REVE приймає зміну лімітів.
+
+<img alt="Готова панель Eveus" src="docs/images/dashboard-uk.jpg" width="100%">
 
 > [!IMPORTANT]
 > Файл містить **цілу панель** з однією вкладкою. Вставте його в текстовий
@@ -243,9 +250,6 @@ sections:            # будь-які з цих, у будь-якому пор�
 
 Щоб додати вкладку до наявної панелі, скопіюйте елемент файлу під `views:` —
 від `- title: Eveus` до кінця — у список `views:` цієї панелі.
-
-З прошивкою REVE видаліть картки **Ліміт: вимкнути всі** і **Розклад 1/2: ліміт
-енергії**: у REVE цих сутностей немає.
 
 Для трьох фаз задайте **Фази = 3** і додайте до панелі
 `sensor.eveus_ev_charger_current_phase_2`/`_3` та `…_voltage_phase_2`/`_3`.

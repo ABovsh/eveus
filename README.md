@@ -214,12 +214,19 @@ Cards saved with the earlier `layout:` option keep working.
 
 ## Dashboard
 
-For separate cards and graphs, use the **Sections** view in
-[`docs/dashboard.yaml`](docs/dashboard.yaml) ([Ukrainian](docs/dashboard-uk.yaml)).
-Its two graphs need [`mini-graph-card`](https://github.com/kalkih/mini-graph-card)
-from HACS; the other cards are standard Home Assistant cards.
+For separate cards and graphs, use a ready **Sections** dashboard made of
+standard Home Assistant cards. It needs Home Assistant 2025.10 or newer.
 
-[Preview](https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039)
+| Firmware | English | Ukrainian |
+|---|---|---|
+| Any | [`docs/dashboard.yaml`](docs/dashboard.yaml) | [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) |
+| REVE | [`docs/dashboard-reve.yaml`](docs/dashboard-reve.yaml) | [`docs/dashboard-reve-uk.yaml`](docs/dashboard-reve-uk.yaml) |
+
+The general file hides the cards and rows of entities your firmware lacks. The
+REVE file leaves out what REVE does not report, shows **Manual Mode** and
+**REVE API**, and says when REVE accepts limit changes.
+
+<img alt="Eveus dashboard" src="docs/images/dashboard-en.jpg" width="100%">
 
 > [!IMPORTANT]
 > The file is a **whole dashboard** with one view. Paste it in the raw
@@ -233,9 +240,6 @@ from HACS; the other cards are standard Home Assistant cards.
 To add the view to an existing dashboard instead, copy the file's item under
 `views:` — from `- title: Eveus` to the end — into that dashboard's own
 `views:` list.
-
-With REVE firmware, remove the cards for **Limit: disable all** and the
-**Schedule 1/2 Energy limit** entities: REVE does not have them.
 
 For three phases, set **Phases = 3** and add
 `sensor.eveus_ev_charger_current_phase_2`/`_3` and `…_voltage_phase_2`/`_3`
