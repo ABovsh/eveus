@@ -29,7 +29,7 @@
 ### 🐛 Fixed
 
 - **Last Session Duration shows whole seconds in Home Assistant's own cards.** Home Assistant gave it two decimals (5,748.00 s); the Eveus card was not affected.
-- **The dashboard files paste whole into the raw configuration editor.** A file pasted whole was refused with "At path: views - Expected an array value", and the README's indentation steps turned the sections into broken views.
+- **The dashboard install steps work.** The README sent the file, one view, to the raw configuration editor, which refused it with "At path: views - Expected an array value", and its indentation steps turned the sections into broken views. The file now goes into a new view through **Add view → Edit in YAML**, on a new or an existing dashboard, and has no fixed `path` that an existing view could already use.
 - **The dashboard's Adaptive Mode icon shows.** `mdi:shield-flash-outline` is not in Home Assistant's icon set, so it was an empty spot and Spook raised a repair.
 - **REVE: Active Rate Cost gives the price while REVE's third or fourth rate is in effect.** It was unavailable then, and so was Cost to Target SOC.
 - **REVE: Adaptive Current Limit follows an adaptive charge.** It lagged up to five minutes behind the charger; it is now read on every poll while such a charge runs.
