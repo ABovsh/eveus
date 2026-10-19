@@ -58,6 +58,10 @@ const hms = (seconds) => {
   const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
   return h ? `${h}h ${m}m` : `${m}m`;
 };
+// A duration sensor's value in whole seconds, in whatever unit the user set it to show.
+const DURATION_SECONDS = {ms: 0.001, s: 1, min: 60, h: 3600, d: 86400};
+const secondsOf = (value, stateObj) =>
+  value === null ? null : Math.round(value * (DURATION_SECONDS[stateObj?.attributes?.unit_of_measurement] ?? 1));
 // The integration's Excellent/Good/Fair/Poor/Critical brackets (95/80/60/30) as MDI wifi icons.
 const connectionIcon = (pct) => {
   if (pct === null) return 'mdi:wifi-strength-outline';
@@ -1762,7 +1766,7 @@ class EveusCard extends HTMLElement {
     const t = this._t;
     const e = this._ids.last_session_energy ? currentNumber(this._state('last_session_energy')) : null;
     if (e === null) return null;
-    const c = currentNumber(this._state('last_session_cost')), s = currentNumber(this._state('last_session_duration'));
+    const c = currentNumber(this._state('last_session_cost')), s = secondsOf(currentNumber(this._state('last_session_duration')), this._state('last_session_duration'));
     const at = this._state('last_session_energy')?.attributes?.finished_at;
     const when = at && !Number.isNaN(Date.parse(at)) ? this._when(new Date(at)) : '';
     const shows = (item) => this._shows('session', item);

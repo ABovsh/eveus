@@ -14,6 +14,7 @@
 
 ### 🔧 Changed
 
+- **Card: Last Session Duration reads in any unit.** Set the sensor's unit to hours in its settings and Home Assistant's own cards show `1h 36m` instead of seconds, while the card keeps showing the same duration.
 - **Dashboard 2.0: standard Home Assistant cards only, plus a REVE variant.** The power and current graphs are built-in trend graphs, so `mini-graph-card` is no longer needed; the dashboard needs Home Assistant 2025.10 or newer. `docs/dashboard.yaml` hides the cards of entities the firmware does not have; `docs/dashboard-reve.yaml` (Ukrainian: `docs/dashboard-reve-uk.yaml`) leaves them out and shows Manual Mode and REVE API. [Details](README.md#dashboard)
 - **Cost to Target SOC before a scheduled charge uses the tariffs of the schedule windows.** It priced everything at the tariff in effect now, so at 19:00 a charge that Schedule 1 runs at night showed the day rate (235 ₴ instead of 118 ₴ in one case).
 - **The log warns about a password sent over HTTP only when a password is set,** and no longer suggests HTTPS, which the charger does not serve.

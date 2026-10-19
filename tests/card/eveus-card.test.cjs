@@ -1276,6 +1276,19 @@ test('unplugged, the Session row is the last session: its energy, cost, duration
   const on=setupAll({sections:['session'],charging:false,over:{...unplugged,car_connected:['binary_sensor.car','on'],state:['sensor.state','Connected']}});
   assert.match(on.html(),/>Session</);assert.match(on.html(),/data-more-info="session_energy"/);
 });
+test('Last Session Duration reads in whatever unit the user picked for it',()=>{
+  // HA shows a duration as "5h 31m" only in min/h/d, so a user may switch the sensor's
+  // unit in its settings; the state is then converted (and rounded) in that unit.
+  for (const [value, unit] of [[19895,'s'],[331.583333,'min'],[5.526389,'h'],[0.230266,'d'],[19895000,'ms']]) {
+    const x=setupAll({sections:['session'],charging:false,over:{...unplugged,
+      last_session_duration:['sensor.lsd',value,{unit_of_measurement:unit}]}});
+    assert.match(x.html(),/data-more-info="last_session_duration"[^]*>5h 31m</, unit);
+  }
+  // 2 h stored as 1.9999999 h is still 2h 0m, not 1h 59m.
+  const two=setupAll({sections:['session'],charging:false,over:{...unplugged,
+    last_session_duration:['sensor.lsd',1.9999999,{unit_of_measurement:'h'}]}});
+  assert.match(two.html(),/data-more-info="last_session_duration"[^]*>2h 0m</);
+});
 test('while plugged in, the Session row carries the active tariff price',()=>{
   const x=setupAll({sections:['session'],over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:'Rate 2'}]}});
   assert.match(x.html(),/>Session<small[^>]*title="Rate 2"[^>]*>2\.16 ₴\/kWh<\/small>/);

@@ -600,7 +600,7 @@ no long-term statistics.
 | `sensor.eveus_ev_charger_rate_3_status` | Sensor | Whether Rate 3 schedule is enabled |
 | `sensor.eveus_ev_charger_last_session_energy` | kWh | Last finished session energy; retained across restarts and outages |
 | `sensor.eveus_ev_charger_last_session_cost` | UAH | Cost of the most recently finished session |
-| `sensor.eveus_ev_charger_last_session_duration` | s | Duration of the most recently finished session |
+| `sensor.eveus_ev_charger_last_session_duration` | s | Duration of the most recently finished session. Home Assistant's own cards show seconds as a number; set the entity's unit to hours (h) in its settings to see `1h 36m`. The Eveus card reads any unit |
 
 Each Last Session sensor is populated when a session finishes and carries `reason` and `finished_at` attributes.
 
