@@ -2180,7 +2180,9 @@ ha-card[data-state=charging] .sl.status>.status-main>ha-icon{animation:icon-glow
 .sv{font-weight:750}
 /* ---- Bigger values and touch targets, one job per section. ---- */
 .sl{min-height:32px}
-.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1}.status-note{font-size:14px;font-weight:600;line-height:1;color:var(--primary-text-color)}
+.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1}.status-note{font-size:14px;font-weight:500;line-height:1;color:color-mix(in srgb,var(--primary-text-color) 72%,transparent)}
+.status-note::before{content:'';display:inline-block;width:1px;height:14px;margin-right:7px;vertical-align:-2px;background:currentColor;opacity:.45}
+.sl.status.status-alert-fault .status-note::before{display:none}
 /* Actions: three big buttons, icon over name over state (4.24.0 icons). */
 .panel.actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px}
 .act-btn{--b:#95a5a6;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;min-width:0;min-height:56px;padding:4px 2px 3px;margin:0;
