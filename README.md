@@ -346,7 +346,7 @@ URL, then fill in the two or three fields it asks for.
 | Blueprint | What it does | URL |
 | --- | --- | --- |
 | Charging session notification | Notifies on start and finish through the action of your choice; the finish message includes session energy, cost and duration. Use `{{ message }}` as the notification text | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
-| Stop charging on low house battery | When your inverter's battery stays below a threshold for two minutes, turns on **Stop Charging**. It does not resume charging afterwards | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
+| Stop charging on low house battery | When your inverter's battery stays below a threshold for two minutes, turns on **Stop Charging**. Choose the threshold on the battery %, on its voltage, or on whichever comes first; voltage is reliable only near empty. It does not resume charging afterwards | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
 
 ## Events & Device Triggers
 

@@ -10,6 +10,8 @@
 
 - **Card: Status says when a charge started and when it finished.** While charging it reads `since 19:05`, and a finished charge `Charge Complete · at 03:15`. A stop and a new start show the new start. The time is the `since` attribute of the **State** sensor, which Home Assistant keeps across a restart; when the charger changed state while Home Assistant could not see it, no time is shown.
 
+- **Blueprint "Stop charging on low house battery": stop on the battery voltage.** Choose **Stop when**: battery %, battery voltage, or either, whichever comes first. The % of a large LiFePO₄ battery drifts when it is rarely fully charged or emptied; voltage tells empty reliably, but not 40 % from 60 %, so set it near empty. Existing automations keep stopping on the %.
+
 ### ⚠️ Breaking
 
 - **REVE: five entities that never had a value on REVE are no longer created.** REVE schedules have no energy limit and REVE drops "disable all limits" within seconds. Remove `number.eveus_ev_charger_schedule_1_energy_limit`, `number.eveus_ev_charger_schedule_2_energy_limit`, `switch.eveus_ev_charger_schedule_1_energy_limit_enabled`, `switch.eveus_ev_charger_schedule_2_energy_limit_enabled` and `switch.eveus_ev_charger_limit_disable_all` from REVE dashboards and automations. Chargers on Eveus firmware keep them.

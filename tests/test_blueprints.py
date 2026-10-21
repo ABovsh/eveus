@@ -86,8 +86,11 @@ def test_low_house_battery_blueprint_actions_validate_after_substitution() -> No
     expanded = yaml_util.substitute(
         blueprint,
         {
+            "stop_mode": "either",
             "battery_soc": "sensor.house_battery",
             "threshold": 40,
+            "battery_voltage": "sensor.house_battery_voltage",
+            "voltage_threshold": 48,
             "stop_switch": "switch.charger_stop_charging",
         },
     )
