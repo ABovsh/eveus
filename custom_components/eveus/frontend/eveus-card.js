@@ -1640,9 +1640,12 @@ class EveusCard extends HTMLElement {
     const doneAt = raw === 'Charge Complete' && !held && !stopped ? this._stateSince() : null;
     const done = doneAt ? this._stamp(doneAt) : null;
     const reasonNote = reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
-    const note = charging ? this._chargingNote()
-      : [reasonNote, done ? (done.today ? `${this._t.at} ${done.text}` : done.text) : ''].filter(Boolean).join(' · ');
-    return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, note};
+    const note = charging ? this._chargingNote() : reasonNote;
+    // The time sits right after the state; the power, the finish or the reason follow it behind a divider.
+    const since = charging ? this._stateSince() : null;
+    const when = charging ? (since ? `${this._t.since} ${this._stamp(since).text}` : '')
+      : done ? (done.today ? `${this._t.at} ${done.text}` : done.text) : '';
+    return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, when, note};
   }
   // Stopping a running charge asks once, in the button itself; everything else is one tap.
   async _statusToggle(key) {
@@ -1668,7 +1671,7 @@ class EveusCard extends HTMLElement {
     const alert = v.cls === 'fault' || v.cls === 'offline' ? `status-alert-${v.cls}` : '';
     const rowClass = ['sl', 'status', alert, this._online ? '' : 'off'].filter(Boolean).join(' ');
     return `<section class="${rowClass}" aria-label="${t.aria.status}">
-      <button class="status-main" data-more-info="state" title="${t.stateTitle} — ${t.details}"><ha-icon icon="${v.icon}"></ha-icon><span class="status-state ${v.cls}">${v.text}</span>${v.note ? `<span class="status-note">${v.note}</span>` : ''}</button>
+      <button class="status-main" data-more-info="state" title="${t.stateTitle} — ${t.details}"><ha-icon icon="${v.icon}"></ha-icon><span class="status-state ${v.cls}">${v.text}</span>${v.when ? `<span class="status-since">${v.when}</span>` : ''}${v.note ? `<span class="status-note">${v.note}</span>` : ''}</button>
     </section>`;
   }
   // Three big buttons: icon, name, and what the switch is doing now (or what a tap will do).
@@ -1823,8 +1826,7 @@ class EveusCard extends HTMLElement {
     if (actual !== null && set !== null && set - actual >= SLOW_GAP_A) return `${t.of(amps(actual), amps(set))} · ${this._slowReason(actual, set)}`;
     const w = currentNumber(this._state('power'));
     const finish = this._advanced && this._config.sections.includes('advanced_info') ? null : this._finishHM();
-    const since = this._stateSince();
-    return [since ? `${t.since} ${this._stamp(since).text}` : '', w === null ? '' : `${(w / 1000).toFixed(1)} kW`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
+    return [w === null ? '' : `${(w / 1000).toFixed(1)} kW`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
   }
   _slowReason(actual, set) {
     const t = this._t, mode = this._state('adaptive_mode')?.state;
@@ -2180,7 +2182,8 @@ ha-card[data-state=charging] .sl.status>.status-main>ha-icon{animation:icon-glow
 .sv{font-weight:750}
 /* ---- Bigger values and touch targets, one job per section. ---- */
 .sl{min-height:32px}
-.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1}.status-note{font-size:14px;font-weight:500;line-height:1;color:color-mix(in srgb,var(--primary-text-color) 72%,transparent)}
+.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1}.status-since{flex:0 0 auto;font-size:14px;font-weight:600;line-height:1;white-space:nowrap;color:var(--primary-text-color)}
+.status-note{font-size:14px;font-weight:500;line-height:1;color:color-mix(in srgb,var(--primary-text-color) 72%,transparent)}
 .status-note::before{content:'';display:inline-block;width:1px;height:14px;margin-right:7px;vertical-align:-2px;background:currentColor;opacity:.45}
 .sl.status.status-alert-fault .status-note::before{display:none}
 /* Actions: three big buttons, icon over name over state (4.24.0 icons). */

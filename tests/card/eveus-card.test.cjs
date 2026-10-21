@@ -1328,14 +1328,14 @@ test('charging slower than set: the status says why',()=>{
   assert.match(uk.html(),/status-note">9 з 12 A · авто приймає менше</);
   // At the set current the note is the power instead.
   const full=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',11.8],power:['sensor.power',2690]}});
-  assert.match(full.html(),/status-note">2\.7 kW/);
+  assert.match(full.html(),/status-note">2\.7 kW · 11\.8 A</);
 });
-test('Basic mode or a hidden battery section: the charging status adds the finish time',()=>{
+test('while charging the status shows the power and the current; Basic mode or a hidden battery section adds the finish time',()=>{
   const cc={charging_current:['number.cc',16,{min:6,max:16,step:1}]};
   const x=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',15.9]}});
-  assert.match(x.html(),/status-note">3\.6 kW · until \d{2}:\d{2}</);
+  assert.match(x.html(),/status-note">3\.6 kW · 15\.9 A · until \d{2}:\d{2}</);
   const withBattery=setupAll({sections:['status','advanced_info'],over:{...cc,current:['sensor.cur',15.9]}});
-  assert.match(withBattery.html(),/status-note">3\.6 kW</);
+  assert.match(withBattery.html(),/status-note">3\.6 kW · 15\.9 A</);
 });
 const plan=(over={})=>({car_connected:['binary_sensor.car','on'],charging_current:['number.cc',12,{min:6,max:16,step:1}],
   schedule_1_enabled:['switch.s1','on'],schedule_1_start:['time.s1a','23:00:00'],schedule_1_stop:['time.s1b','07:00:00'],...over});
@@ -2165,16 +2165,18 @@ function setupSince({state='Charging',reason='Charging',since,stop='off',languag
 const atNow=(fn)=>{const real=Date.now;Date.now=()=>Date.parse('2026-10-21T20:30:00Z');try{return fn();}finally{Date.now=real;}};
 
 test('a charge says when it started, in Home Assistant\'s zone',()=>{
-  assert.match(atNow(()=>setupSince({since:'2026-10-21T16:05:00+00:00'}).html()),/status-note">since 19:05</);
+  const html=atNow(()=>setupSince({since:'2026-10-21T16:05:00+00:00'}).html());
+  assert.match(html,/status-since">since 19:05<\/span>/);
+  assert.doesNotMatch(html,/status-note/,'no power or finish to show: nothing beside it, so no divider either');
 });
 
-test('the start joins the power and the finish in one note',()=>{
+test('the start follows the state, and the power follows the start',()=>{
   const html=atNow(()=>{
     const x=setupSince({since:'2026-10-21T16:05:00+00:00'});
     x.states['sensor.pw']={state:'3200',attributes:{}};x.card._ids.power='sensor.pw';x.card.hass=x.hass;
     return x.html();
   });
-  assert.match(html,/status-note">since 19:05 · 3\.2 kW</);
+  assert.match(html,/status-state charging">Charging<\/span><span class="status-since">since 19:05<\/span><span class="status-note">3\.2 kW</);
 });
 
 test('the start leads the power and the finish',()=>{
@@ -2184,40 +2186,40 @@ test('the start leads the power and the finish',()=>{
     Object.assign(x.card._ids,{power:'sensor.pw',time_to_target_soc:'sensor.ttt',charging_finish_time:'sensor.fin'});x.card.hass=x.hass;
     return x.html();
   });
-  assert.match(html,/status-note">since 19:05 · 3\.2 kW · until 02:10</);
+  assert.match(html,/status-since">since 19:05<\/span><span class="status-note">3\.2 kW · until 02:10</);
 });
 
 test('a charge from yesterday says yesterday, from this week the weekday, from before it the date — always with the time',()=>{
   const note=(since,extra={})=>atNow(()=>setupSince({since,...extra}).html());
-  assert.match(note('2026-10-20T16:05:00+00:00'),/status-note">since yesterday 19:05</);
-  assert.match(note('2026-10-18T16:05:00+00:00'),/status-note">since Sun 19:05</);
-  assert.match(note('2026-10-13T16:05:00+00:00'),/status-note">since 13 Oct 19:05</);
-  assert.match(note('2026-10-20T16:05:00+00:00',{language:'uk'}),/status-note">з вчора 19:05</);
-  assert.match(note('2026-10-13T16:05:00+00:00',{language:'uk'}),/status-note">з 13 жовт\.? 19:05</);
+  assert.match(note('2026-10-20T16:05:00+00:00'),/status-since">since yesterday 19:05</);
+  assert.match(note('2026-10-18T16:05:00+00:00'),/status-since">since Sun 19:05</);
+  assert.match(note('2026-10-13T16:05:00+00:00'),/status-since">since 13 Oct 19:05</);
+  assert.match(note('2026-10-20T16:05:00+00:00',{language:'uk'}),/status-since">з вчора 19:05</);
+  assert.match(note('2026-10-13T16:05:00+00:00',{language:'uk'}),/status-since">з 13 жовт\.? 19:05</);
 });
 
 test('"yesterday" is the calendar day in Home Assistant\'s zone, not 24 hours',()=>{
   // It is 23:30 on the 21st in Kyiv.
-  assert.match(atNow(()=>setupSince({since:'2026-10-20T21:30:00+00:00'}).html()),/status-note">since 00:30</);
-  assert.match(atNow(()=>setupSince({since:'2026-10-20T20:50:00+00:00'}).html()),/status-note">since yesterday 23:50</);
+  assert.match(atNow(()=>setupSince({since:'2026-10-20T21:30:00+00:00'}).html()),/status-since">since 00:30</);
+  assert.match(atNow(()=>setupSince({since:'2026-10-20T20:50:00+00:00'}).html()),/status-since">since yesterday 23:50</);
 });
 
 test('a finished charge says when it finished',()=>{
   const html=atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since:'2026-10-21T00:15:00+00:00'}).html());
-  assert.match(html,/status-state idle">Charge Complete<[^]*status-note">at 03:15</);
+  assert.match(html,/status-state idle">Charge Complete<[^]*status-since">at 03:15</);
 });
 
 test('a charge that finished on an earlier day names the day and drops "at"',()=>{
   const done=(since,extra={})=>atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since,...extra}).html());
-  assert.match(done('2026-10-20T00:15:00+00:00'),/status-note">yesterday 03:15</);
-  assert.match(done('2026-10-18T00:15:00+00:00'),/status-note">Sun 03:15</);
-  assert.match(done('2026-10-13T00:15:00+00:00'),/status-note">13 Oct 03:15</);
-  assert.match(done('2026-10-20T00:15:00+00:00',{language:'uk'}),/status-note">вчора 03:15</);
+  assert.match(done('2026-10-20T00:15:00+00:00'),/status-since">yesterday 03:15</);
+  assert.match(done('2026-10-18T00:15:00+00:00'),/status-since">Sun 03:15</);
+  assert.match(done('2026-10-13T00:15:00+00:00'),/status-since">13 Oct 03:15</);
+  assert.match(done('2026-10-20T00:15:00+00:00',{language:'uk'}),/status-since">вчора 03:15</);
 });
 
 test('a finished charge with a reason the card cannot name still says when',()=>{
   const html=atNow(()=>setupSince({state:'Charge Complete',reason:'unavailable',since:'2026-10-21T00:15:00+00:00'}).html());
-  assert.match(html,/status-note">at 03:15</);
+  assert.match(html,/status-since">at 03:15</);
 });
 
 test('no time where the state is not a finished charge or a running one',()=>{
@@ -2231,12 +2233,12 @@ test('no time where the state is not a finished charge or a running one',()=>{
 
 test('a missing, unreadable or future time shows nothing',()=>{
   for(const since of [undefined,'','yesterday',42,null,'2026-10-22T20:30:00Z']){
-    assert.doesNotMatch(atNow(()=>setupSince({since}).html()),/status-note/,String(since));
-    assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since}).html()),/status-note/,String(since));
+    assert.doesNotMatch(atNow(()=>setupSince({since}).html()),/status-(note|since)/,String(since));
+    assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since}).html()),/status-(note|since)/,String(since));
   }
 });
 
 test('the time reads in Ukrainian',()=>{
-  assert.match(atNow(()=>setupSince({language:'uk',since:'2026-10-21T16:05:00+00:00'}).html()),/status-note">з 19:05</);
-  assert.match(atNow(()=>setupSince({language:'uk',state:'Charge Complete',reason:'Charge Complete',since:'2026-10-21T00:15:00+00:00'}).html()),/status-note">о 03:15</);
+  assert.match(atNow(()=>setupSince({language:'uk',since:'2026-10-21T16:05:00+00:00'}).html()),/status-since">з 19:05</);
+  assert.match(atNow(()=>setupSince({language:'uk',state:'Charge Complete',reason:'Charge Complete',since:'2026-10-21T00:15:00+00:00'}).html()),/status-since">о 03:15</);
 });
