@@ -1378,6 +1378,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
@@ -2168,6 +2169,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
@@ -2964,6 +2966,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
@@ -3760,6 +3763,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
@@ -6124,6 +6128,7 @@
             'Unknown',
           ]),
           'raw_state': 3,
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
@@ -15603,6 +15608,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
@@ -16395,6 +16401,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
@@ -17191,6 +17198,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_substate': tuple(
@@ -22265,6 +22273,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_2_substate': tuple(
@@ -23609,6 +23618,7 @@
             'Error',
             'Unknown',
           ]),
+          'since': '<TIMESTAMP>',
         }),
       ),
       'sensor.eveus_ev_charger_2_substate': tuple(

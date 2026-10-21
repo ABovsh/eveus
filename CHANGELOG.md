@@ -8,6 +8,8 @@
 - **REVE: a repair notice names any reading a firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
 - **Card, REVE: the card shows and changes the days of the week of Schedule 1 and Schedule 2.** It also lists the charger's other schedules and its tariffs, read-only and only those set up in the app. While REVE's interface does not answer, the schedules say they are the last read.
 
+- **Card: Status says when a charge started and when it finished.** While charging it reads `since 19:05`, and a finished charge `Charge Complete · at 03:15`. A stop and a new start show the new start. The time is the `since` attribute of the **State** sensor, which Home Assistant keeps across a restart; when the charger changed state while Home Assistant could not see it, no time is shown.
+
 ### ⚠️ Breaking
 
 - **REVE: five entities that never had a value on REVE are no longer created.** REVE schedules have no energy limit and REVE drops "disable all limits" within seconds. Remove `number.eveus_ev_charger_schedule_1_energy_limit`, `number.eveus_ev_charger_schedule_2_energy_limit`, `switch.eveus_ev_charger_schedule_1_energy_limit_enabled`, `switch.eveus_ev_charger_schedule_2_energy_limit_enabled` and `switch.eveus_ev_charger_limit_disable_all` from REVE dashboards and automations. Chargers on Eveus firmware keep them.

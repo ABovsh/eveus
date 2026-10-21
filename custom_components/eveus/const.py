@@ -235,6 +235,10 @@ MAX_VALID_RSSI_DBM: Final[int] = 0
 # anywhere near a year; the bound only rejects corrupt outliers that would
 # otherwise render an overlong HA state string.
 MAX_SESSION_TIME_SECONDS: Final[int] = 366 * 24 * 3600
+# sessionTime is floored to this step while the charger idles, so the plug-in
+# moment derived from it can read this much late. A restored "in this state
+# since" stamp is checked against that moment with this much slack.
+SESSION_TIME_IDLE_STEP_SECONDS: Final[int] = 300
 # Upper sanity cap for monetary values (session/tariff cost counters).
 MAX_COST_VALUE: Final[int] = 100_000_000
 

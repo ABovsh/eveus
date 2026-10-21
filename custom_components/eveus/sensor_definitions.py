@@ -106,6 +106,9 @@ class EveusSensorEntityDescription(SensorEntityDescription, frozen_or_thawed=Tru
     # the entity, so a restart after the schedule window closes does not
     # relabel a full car. See `EveusUpdater.seed_charge_completion`.
     restores_charge_completion: bool = False
+    # Saves when the charger entered its current state, whatever the entity's
+    # state: see `EveusUpdater.seed_state_since`.
+    restores_state_since: bool = False
     # Churn damping for a reading that dithers between polls, applied by the
     # entity (`EveusSensorBase._deadband`) rather than here — see
     # `_make_value_getter`'s docstring for why the getter itself stays pure.
@@ -215,6 +218,10 @@ class OptimizedEveusSensor(EveusSensorBase):
             stored = await self.async_get_last_extra_data()
             data = stored.as_dict() if stored is not None else {}
             self._updater.seed_charge_completion(data.get("completed_session_time"))
+        if self._spec.restores_state_since:
+            stored = await self.async_get_last_extra_data()
+            data = stored.as_dict() if stored is not None else {}
+            self._updater.seed_state_since(data.get("state"), data.get("since"))
         await super().async_added_to_hass()
         if self._spec.available_when_offline:
             # The link metric moves on every failed poll, which HA does not
@@ -236,6 +243,8 @@ class OptimizedEveusSensor(EveusSensorBase):
         attribute is a recorder row, and an `unavailable` state is saved
         without its attributes.
         """
+        if self._spec.restores_state_since:
+            return _StateSinceData(self._updater.state_since_anchor)
         if not self._spec.restores_charge_completion:
             return None
         return _ChargeCompletionData(self._updater.charge_completion_anchor)
@@ -325,6 +334,17 @@ class _ChargeCompletionData(ExtraStoredData):
 
     def as_dict(self) -> dict[str, Any]:
         return {"completed_session_time": self.session_time}
+
+
+class _StateSinceData(ExtraStoredData):
+    """The charger's state and the moment it was entered, or nothing."""
+
+    def __init__(self, anchor: Optional[tuple[int, datetime]]) -> None:
+        self.anchor = anchor
+
+    def as_dict(self) -> dict[str, Any]:
+        state, since = self.anchor or (None, None)
+        return {"state": state, "since": since.isoformat() if since else None}
 
 
 class _CostWindowData(ExtraStoredData):
@@ -639,17 +659,26 @@ def get_charger_state_attributes(updater, hass) -> dict:
     Two cases carry a code the enum value can't show: an unmapped state
     (rendered as plain "Unknown") and a firmware-1.x state translated to its
     modern equivalent by the coordinator (original kept under
-    LEGACY_RAW_STATE_KEY). A plain mapped state adds no attribute.
+    LEGACY_RAW_STATE_KEY). A plain mapped state adds no such attribute.
+
+    `since` is when the charger entered this state, from the updater's own
+    stamp; absent while that moment is not known. It changes only together
+    with the state, so it costs no recorder row of its own.
     """
     # Synthetic key, written by the coordinator's legacy translation — it is
     # not a charger field, so it is read from the raw payload, not the parse.
+    attrs: dict = {}
     raw_legacy = updater.snapshot.raw.get(LEGACY_RAW_STATE_KEY)
     if raw_legacy is not None:
-        return {"raw_state": raw_legacy}
-    state_value = _read_int(updater, "state")
-    if state_value is not None and state_value not in CHARGING_STATES:
-        return {"raw_state": state_value}
-    return {}
+        attrs["raw_state"] = raw_legacy
+    else:
+        state_value = _read_int(updater, "state")
+        if state_value is not None and state_value not in CHARGING_STATES:
+            attrs["raw_state"] = state_value
+    since = updater.state_since
+    if since is not None:
+        attrs["since"] = since.isoformat()
+    return attrs
 
 
 def get_charger_substate(updater, hass) -> Optional[str]:
@@ -1187,6 +1216,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
         EveusSensorEntityDescription(
             key="state", name="State", value_fn=get_charger_state,
             attributes_fn=get_charger_state_attributes,
+            restores_state_since=True,
             icon="mdi:state-machine",
             entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,

@@ -157,7 +157,7 @@ browser or reset the app's frontend cache.
 
 | Section | Shows |
 | --- | --- |
-| **Status** | Charger state and why it is not charging |
+| **Status** | Charger state and why it is not charging; while charging, since when, and for a finished charge, at what time |
 | **Buttons** | **OCPP**, **One charge** and **Stop** |
 | **Battery SOC** | Estimated SOC and where the session started; while charging, time left and finish time; energy and cost to target, and before the charge the price per kWh; **Advanced mode only** |
 | **SOC settings** | **Initial**, **Target**, **Capacity** and **Loss**; **Advanced mode only** |
@@ -530,7 +530,7 @@ no long-term statistics.
 
 | Entity ID | What it gives you |
 | --- | --- |
-| `sensor.eveus_ev_charger_state` | Main charger state; selectable values in automation triggers |
+| `sensor.eveus_ev_charger_state` | Main charger state; selectable values in automation triggers. The `since` attribute is when the charger entered this state; it is absent when that moment is not known |
 | `sensor.eveus_ev_charger_substate` | Detailed state or fault; selectable values in automation triggers |
 | `sensor.eveus_ev_charger_not_charging_reason` | Why charging is waiting; **Controlled by OCPP** while OCPP is on. Fault details: `error` attribute (modern firmware) |
 | `binary_sensor.eveus_ev_charger_car_connected` | Vehicle is electrically connected |

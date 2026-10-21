@@ -161,7 +161,7 @@ const I18N = {
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
     noneOn: 'none on', lockedIdle: 'change while charging', lockedIdleNote: 'REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it', lockedManual: 'manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
-    slowCar: 'the car takes less', until: 'until',
+    slowCar: 'the car takes less', until: 'until', since: 'since', at: 'at',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
     setZone: (z) => `Set ${z}`,
@@ -229,7 +229,7 @@ const I18N = {
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
     noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedIdleNote: 'REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт', lockedManual: 'ручний режим', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
-    slowCar: 'авто приймає менше', until: 'до',
+    slowCar: 'авто приймає менше', until: 'до', since: 'з', at: 'о',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
     setZone: (z) => `Обрати ${z}`,
@@ -1576,6 +1576,22 @@ class EveusCard extends HTMLElement {
     const m = Math.floor((Date.now() - t) / 60000);
     return m < 1 ? '' : this._t.ago(m);
   }
+  // When the charger entered the state it is in (the State sensor's `since`); null while that is unknown.
+  _stateSince() {
+    const raw = this._state('state')?.attributes?.since;
+    const t = typeof raw === 'string' ? Date.parse(raw) : NaN;
+    return Number.isFinite(t) && t <= Date.now() + 60000 ? new Date(t) : null;
+  }
+  // "19:05" today, the day before it otherwise ("Tue 19:05", "20 Sep"), in Home Assistant's zone.
+  _clock(date) {
+    const tz = this._hass?.config?.time_zone;
+    try {
+      const day = (d) => new Intl.DateTimeFormat('en-CA', tz ? {timeZone: tz} : undefined).format(d);
+      return day(date) === day(new Date(Date.now())) ? this._hm(date) : this._when(date);
+    } catch {
+      return this._hm(date);
+    }
+  }
   // Card-level alert: the charger is unreachable or reports a firmware fault. Only these
   // two, because every other section already colours its own abnormal readings.
   _alert() {
@@ -1613,8 +1629,12 @@ class EveusCard extends HTMLElement {
     else if (held) text = reasonLabel;
     const reasonText = held ? nextText : [reasonLabel, nextText].filter(Boolean).join(' · ');
     // "Stopped · Stopped by User" and "Charge Complete · Charge Complete" say nothing twice.
+    // A car the charger reports full says when it got there; a charge a schedule or limit parked, or one
+    // the user stopped, is not "finished" and keeps to its reason.
+    const doneAt = raw === 'Charge Complete' && !held && !stopped ? this._stateSince() : null;
+    const reasonNote = reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
     const note = charging ? this._chargingNote()
-      : reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
+      : [reasonNote, doneAt ? `${this._t.at} ${this._clock(doneAt)}` : ''].filter(Boolean).join(' · ');
     return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, note};
   }
   // Stopping a running charge asks once, in the button itself; everything else is one tap.
@@ -1796,7 +1816,8 @@ class EveusCard extends HTMLElement {
     if (actual !== null && set !== null && set - actual >= SLOW_GAP_A) return `${t.of(amps(actual), amps(set))} · ${this._slowReason(actual, set)}`;
     const w = currentNumber(this._state('power'));
     const finish = this._advanced && this._config.sections.includes('advanced_info') ? null : this._finishHM();
-    return [w === null ? '' : `${(w / 1000).toFixed(1)} kW`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
+    const since = this._stateSince();
+    return [since ? `${t.since} ${this._clock(since)}` : '', w === null ? '' : `${(w / 1000).toFixed(1)} kW`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
   }
   _slowReason(actual, set) {
     const t = this._t, mode = this._state('adaptive_mode')?.state;

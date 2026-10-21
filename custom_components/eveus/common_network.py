@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import time
 from collections.abc import Callable
@@ -17,6 +17,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .common_command import CommandManager
 from .const import (
@@ -37,6 +38,7 @@ from .const import (
     MAX_COST_VALUE,
     MAX_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
+    SESSION_TIME_IDLE_STEP_SECONDS,
     EVENT_CAR_CONNECTED,
     EVENT_CAR_DISCONNECTED,
     EVENT_CHARGING_FINISHED,
@@ -315,6 +317,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # The charger's sessionTime at the last poll that confirmed it. The
         # counter runs from plug-in, so going below it means a new plug-in.
         self._charge_completed_at: int | None = None  # pragma: no mutate - only ever read behind the completed flag, which is off here
+        # The device state the last good poll showed, and when it was entered:
+        # stamped when a change is SEEN between two consecutive good polls,
+        # restored across a restart, otherwise None (see `_track_state_since`).
+        self._state_since_state: int | None = None
+        self._state_since: datetime | None = None
+        # The (state, moment) the previous run saved, or the one a poll gap
+        # interrupted; settled against the first poll that follows.
+        self._state_since_seed: tuple[int, datetime] | None = None
         # A completion restored from the previous run, applied to the first
         # poll that can confirm it is still the same plug-in.
         self._charge_completion_seed: int | None = None
@@ -447,6 +457,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._event_prev_state = None
         self._event_prev_error_code = None
         self._event_charging_payload = None
+        self._forget_state_since()
 
     def _normalize_legacy_device_state(self, data: dict[str, Any]) -> dict[str, Any]:
         """Translate firmware-1.x state codes to their modern equivalents.
@@ -783,6 +794,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._maybe_burst_on_transition(new_data)
         self._track_charge_completion(self._snapshot)
+        self._track_state_since(self._snapshot)
         self._emit_transition_events(new_data)
 
     @property
@@ -859,6 +871,89 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._charge_completed_at = None  # pragma: no mutate - only ever read behind the completed flag, which is off here
         elif session_time is not None:
             self._charge_completed_at = session_time
+
+    @property
+    def state_since(self) -> datetime | None:
+        """When the charger entered the state it is in now; None when unknown."""
+        return self._state_since
+
+    @property
+    def state_since_anchor(self) -> tuple[int, datetime] | None:
+        """What the State sensor saves across a restart."""
+        if self._state_since_state is not None and self._state_since is not None:
+            return self._state_since_state, self._state_since
+        # Setup can remain offline: save the pending seed too, nothing has
+        # disproved it yet.
+        return self._state_since_seed
+
+    def seed_state_since(self, state: Any, since: Any) -> None:
+        """Re-arm the stamp the previous run saved.
+
+        It applies to the first poll that finds the charger in the same state
+        and the same plug-in; otherwise the moment is unknown and stays so. The
+        pair comes back from disk, so anything but a known state code with a
+        zoned ISO time is ignored.
+        """
+        if (
+            not isinstance(state, int)
+            or isinstance(state, bool)
+            or state not in CHARGING_STATES
+            or not isinstance(since, str)
+        ):
+            return
+        try:
+            moment = datetime.fromisoformat(since)
+        except ValueError:
+            return
+        if moment.tzinfo is None:
+            return
+        moment = moment.astimezone(timezone.utc).replace(microsecond=0)
+        if self._state_since_state is None:
+            self._state_since_seed = (state, moment)
+        elif self._state_since is None and self._state_since_state == state:
+            # Setup has already polled: settle it now, so the sensor's first
+            # published attributes are already right.
+            self._state_since = self._plausible_since(moment, self._snapshot)
+
+    def _forget_state_since(self) -> None:
+        """A gap in the polls: what was known waits to be confirmed afterwards."""
+        if self._state_since_state is not None and self._state_since is not None:
+            self._state_since_seed = (self._state_since_state, self._state_since)
+        self._state_since_state = None
+        self._state_since = None
+
+    def _plausible_since(self, since: datetime, snapshot: EveusSnapshot) -> datetime | None:
+        """The stamp, if it can belong to the plug-in the charger reports now."""
+        session_time = snapshot.session_time_s
+        now = dt_util.utcnow().replace(microsecond=0)
+        if session_time is None or since > now:
+            return None
+        plugged_in = now - timedelta(seconds=session_time + SESSION_TIME_IDLE_STEP_SECONDS)
+        return since if since >= plugged_in else None
+
+    def _track_state_since(self, snapshot: EveusSnapshot) -> None:
+        """Stamp the moment the charger enters a state, when it is seen.
+
+        Only a change between two consecutive good polls is a moment we know:
+        the first reading after a start, a gap or an unnameable code says
+        nothing about when the state began, so it carries no time rather than
+        the time we noticed.
+        """
+        state = snapshot.known_state
+        if state is None:
+            self._forget_state_since()
+            return
+        previous = self._state_since_state
+        if previous == state:
+            return
+        seed, self._state_since_seed = self._state_since_seed, None
+        self._state_since_state = state
+        if previous is not None:
+            self._state_since = dt_util.utcnow().replace(microsecond=0)
+        elif seed is not None and seed[0] == state:
+            self._state_since = self._plausible_since(seed[1], snapshot)
+        else:
+            self._state_since = None
 
     def _emit_transition_events(self, new_data: dict[str, Any]) -> None:
         """Fire bus events for device-state transitions between valid polls.

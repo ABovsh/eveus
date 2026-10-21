@@ -393,6 +393,9 @@ def test_failure_during_probation_resets_counter() -> None:
     updater._first_failure_monotonic = None
     updater._grace_timer_unsubs = []
     updater._interval_before_retry = None
+    updater._state_since_state = None
+    updater._state_since = None
+    updater._state_since_seed = None
     updater.update_interval = timedelta(seconds=60)
     updater.hass = None
 

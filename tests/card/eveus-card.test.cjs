@@ -2149,3 +2149,65 @@ test('limits without Limit: disable all (REVE does not create it): the limits ar
   assert.match(x,/data-limit-toggle="limit_energy_enabled"/);
   assert.doesNotMatch(x,/limit_disable_all/);
 });
+
+// ---- Status: when the charger entered its state (State sensor `since`) ----
+
+function setupSince({state='Charging',reason='Charging',since,stop='off',language,tz='Europe/Kyiv'}={}) {
+  const x=setupStatus({state,reason,stop,sections:['status']});
+  if(language){const ids=x.card._ids;x.card.setConfig({sections:['status'],language});x.card._ids=ids;x.card._resolved=true;}
+  x.hass.config={time_zone:tz};
+  // Home Assistant hands over a new state object when an entity changes; the card skips the same one.
+  x.states['sensor.state']={...x.states['sensor.state'],attributes:since===undefined?{}:{since}};
+  x.card.hass=x.hass;
+  return x;
+}
+// 2026-10-21 23:30 in Kyiv (UTC+3 until the clocks change on the 25th).
+const atNow=(fn)=>{const real=Date.now;Date.now=()=>Date.parse('2026-10-21T20:30:00Z');try{return fn();}finally{Date.now=real;}};
+
+test('a charge says when it started, in Home Assistant\'s zone',()=>{
+  assert.match(atNow(()=>setupSince({since:'2026-10-21T16:05:00+00:00'}).html()),/status-note">since 19:05</);
+});
+
+test('the start joins the power and the finish in one note',()=>{
+  const html=atNow(()=>{
+    const x=setupSince({since:'2026-10-21T16:05:00+00:00'});
+    x.states['sensor.pw']={state:'3200',attributes:{}};x.card._ids.power='sensor.pw';x.card.hass=x.hass;
+    return x.html();
+  });
+  assert.match(html,/status-note">since 19:05 · 3\.2 kW</);
+});
+
+test('a charge from an earlier day names the day',()=>{
+  assert.match(atNow(()=>setupSince({since:'2026-10-20T16:05:00+00:00'}).html()),/status-note">since Tue 19:05</);
+});
+
+test('a finished charge says when it finished',()=>{
+  const html=atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since:'2026-10-21T00:15:00+00:00'}).html());
+  assert.match(html,/status-state idle">Charge Complete<[^]*status-note">at 03:15</);
+});
+
+test('a finished charge with a reason the card cannot name still says when',()=>{
+  const html=atNow(()=>setupSince({state:'Charge Complete',reason:'unavailable',since:'2026-10-21T00:15:00+00:00'}).html());
+  assert.match(html,/status-note">at 03:15</);
+});
+
+test('no time where the state is not a finished charge or a running one',()=>{
+  const since='2026-10-21T00:15:00+00:00';
+  // A schedule or limit parked it: the reason leads and the car is not full.
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Energy Limit Reached',since}).html()),/ at |since/);
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Energy Limit Reached',stop:'on',since}).html()),/ at 0|since/);
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Connected',reason:'Waiting for Car',since}).html()),/since|at 03/);
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',since}).html()),/since|at 03/);
+});
+
+test('a missing, unreadable or future time shows nothing',()=>{
+  for(const since of [undefined,'','yesterday',42,null,'2026-10-22T20:30:00Z']){
+    assert.doesNotMatch(atNow(()=>setupSince({since}).html()),/status-note/,String(since));
+    assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since}).html()),/status-note/,String(since));
+  }
+});
+
+test('the time reads in Ukrainian',()=>{
+  assert.match(atNow(()=>setupSince({language:'uk',since:'2026-10-21T16:05:00+00:00'}).html()),/status-note">з 19:05</);
+  assert.match(atNow(()=>setupSince({language:'uk',state:'Charge Complete',reason:'Charge Complete',since:'2026-10-21T00:15:00+00:00'}).html()),/status-note">о 03:15</);
+});
