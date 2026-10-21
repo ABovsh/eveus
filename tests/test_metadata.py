@@ -460,7 +460,15 @@ def test_thermal_repair_copy_explains_early_warning_before_stop() -> None:
             assert "85 °C" in description
 
 
-@pytest.mark.parametrize("name", ["dashboard.yaml", "dashboard-uk.yaml"])
+SHIPPED_DASHBOARDS = (
+    "dashboard.yaml",
+    "dashboard-uk.yaml",
+    "dashboard-reve.yaml",
+    "dashboard-reve-uk.yaml",
+)
+
+
+@pytest.mark.parametrize("name", SHIPPED_DASHBOARDS)
 def test_shipped_dashboards_only_reference_real_sensors(name: str) -> None:
     """Users paste these files verbatim — a stale entity id renders as an
     error card in their dashboard, and nothing else in the repo would notice.
@@ -492,3 +500,145 @@ def test_shipped_dashboards_only_reference_real_sensors(name: str) -> None:
         )
     }
     assert referenced <= known, f"{name} references unknown sensors: {sorted(referenced - known)}"
+
+
+@pytest.mark.parametrize("name", SHIPPED_DASHBOARDS)
+def test_shipped_dashboards_paste_as_one_view(name: str) -> None:
+    """Pasted whole into a view's "Edit in YAML", the file is that view: a
+    `views:` wrapper there leaves an empty view, and a `path` an existing
+    dashboard already uses cannot be saved."""
+    import yaml
+
+    view = yaml.safe_load((ROOT / "docs" / name).read_text())
+    assert "views" not in view
+    assert "path" not in view
+    assert view["type"] == "sections"
+    assert len(view["sections"]) >= 8
+
+
+def _dashboard_cards(node):
+    """Every card and entities-card row in a dashboard, depth first. A
+    conditional row stands for its row; conditions are not cards."""
+    if isinstance(node, dict):
+        yield node
+        for key, value in node.items():
+            if key not in ("row", "conditions", "visibility"):
+                yield from _dashboard_cards(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _dashboard_cards(value)
+
+
+@pytest.mark.parametrize("name", SHIPPED_DASHBOARDS)
+def test_shipped_dashboards_use_icons_home_assistant_ships(name: str) -> None:
+    """An mdi:* name missing from HA's bundled set renders as an empty spot
+    (and Spook raises a repair): mdi:shield-flash-outline did both."""
+    import re
+
+    lines = (ROOT / "tests" / "fixtures" / "ha_mdi_icons.txt").read_text().splitlines()
+    known = {line for line in lines if line and not line.startswith("#")}
+    used = set(re.findall(r"mdi:([a-z0-9-]+)", (ROOT / "docs" / name).read_text()))
+    assert used - known == set()
+
+
+@pytest.mark.parametrize("name", ["dashboard.yaml", "dashboard-uk.yaml"])
+def test_shipped_dashboards_hide_firmware_specific_entities(name: str) -> None:
+    """One file serves both firmware families: an entity the charger's
+    firmware does not have (or never reports) must hide itself instead of
+    showing a warning card."""
+    import yaml
+
+    firmware_specific = {
+        f"eveus_ev_charger_{key}"
+        for key in (
+            # Eveus firmware only
+            "limit_disable_all",
+            "schedule_1_energy_limit",
+            "schedule_1_energy_limit_enabled",
+            "schedule_2_energy_limit",
+            "schedule_2_energy_limit_enabled",
+            "plug_temperature",
+            "leakage_current",
+            "leakage_current_peak",
+            "ocpp_connected",
+            # REVE only
+            "manual_mode",
+            "reve_api",
+        )
+    }
+    config = yaml.safe_load((ROOT / "docs" / name).read_text())
+    guarded, shown = set(), set()
+    for card in _dashboard_cards(config):
+        entity = card.get("entity")
+        if card.get("type") == "conditional" and "row" in card:
+            guarded.add(card["row"]["entity"])
+        elif entity and card.get("visibility"):
+            guarded.add(entity)
+        elif entity:
+            shown.add(entity)
+    object_id = lambda entity_id: entity_id.split(".", 1)[1]  # noqa: E731
+    assert firmware_specific <= {object_id(e) for e in guarded}
+    assert not firmware_specific & {object_id(e) for e in shown}
+
+
+@pytest.mark.parametrize("name", SHIPPED_DASHBOARDS)
+def test_shipped_dashboards_need_no_custom_cards(name: str) -> None:
+    import yaml
+
+    config = yaml.safe_load((ROOT / "docs" / name).read_text())
+    custom = {
+        card["type"]
+        for card in _dashboard_cards(config)
+        if str(card.get("type", "")).startswith("custom:")
+    }
+    assert custom == set()
+
+
+@pytest.mark.parametrize("name", ["dashboard-reve.yaml", "dashboard-reve-uk.yaml"])
+def test_reve_dashboards_show_only_what_reve_reports(name: str) -> None:
+    """The REVE files leave out what REVE never reports (README → REVE
+    firmware) and show its own Manual Mode and REVE API without conditions."""
+    import re
+
+    import yaml
+
+    text = (ROOT / "docs" / name).read_text()
+    referenced = set(re.findall(r"\.eveus_ev_charger_([a-z0-9_]+)", text))
+    not_on_reve = {
+        "limit_disable_all",
+        "schedule_1_energy_limit",
+        "schedule_1_energy_limit_enabled",
+        "schedule_2_energy_limit",
+        "schedule_2_energy_limit_enabled",
+        "plug_temperature",
+        "leakage_current",
+        "leakage_current_peak",
+        "ocpp_connected",
+        "counter_a_cost",
+        "counter_b_cost",
+    }
+    assert referenced & not_on_reve == set()
+    shown = {
+        card["entity"]
+        for card in _dashboard_cards(yaml.safe_load(text))
+        if card.get("entity") and not card.get("visibility")
+    }
+    assert {
+        "binary_sensor.eveus_ev_charger_manual_mode",
+        "binary_sensor.eveus_ev_charger_reve_api",
+    } <= shown
+
+
+def test_shipped_dashboards_match_their_generator(tmp_path) -> None:
+    """The four dashboards come from one layout; a hand edit to one file
+    would let the languages or firmware variants drift apart."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "generate_dashboards", ROOT / "tools" / "generate_dashboards.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.main(tmp_path)
+    for name in SHIPPED_DASHBOARDS:
+        assert (tmp_path / name).read_text() == (ROOT / "docs" / name).read_text(), name

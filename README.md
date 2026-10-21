@@ -214,30 +214,27 @@ Cards saved with the earlier `layout:` option keep working.
 
 ## Dashboard
 
-For separate cards and graphs, use the **Sections** view in
-[`docs/dashboard.yaml`](docs/dashboard.yaml) ([Ukrainian](docs/dashboard-uk.yaml)).
-Its two graphs need [`mini-graph-card`](https://github.com/kalkih/mini-graph-card)
-from HACS; the other cards are standard Home Assistant cards.
+For separate cards and graphs, use a ready **Sections** dashboard made of
+standard Home Assistant cards. It needs Home Assistant 2025.10 or newer.
 
-[Preview](https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039)
+| Firmware | English | Ukrainian |
+|---|---|---|
+| Any | [`docs/dashboard.yaml`](docs/dashboard.yaml) | [`docs/dashboard-uk.yaml`](docs/dashboard-uk.yaml) |
+| REVE | [`docs/dashboard-reve.yaml`](docs/dashboard-reve.yaml) | [`docs/dashboard-reve-uk.yaml`](docs/dashboard-reve-uk.yaml) |
+
+The general file hides the cards and rows of entities your firmware lacks. The
+REVE file leaves out what REVE does not report, shows **Manual Mode** and
+**REVE API**, and says when REVE accepts limit changes.
+
+<img alt="Eveus dashboard" src="docs/images/dashboard-en.jpg" width="100%">
 
 > [!IMPORTANT]
-> The file is a **whole dashboard view**. Add it under `views:` in the raw
-> configuration editor, not through **Add card → Manual**.
+> The file is **one dashboard view**. Add it as a view, not through
+> **Add card → Manual** or the raw configuration editor.
 
-1. Open or create a dashboard under **Settings → Dashboards**.
-2. Choose **Edit dashboard → ⋮ → Raw configuration editor**.
-3. Paste the whole file as a new item under `views:`, with this indentation:
-
-   ```yaml
-   views:
-     - title: Eveus
-       path: eveus
-       type: sections
-       sections:
-         # Remaining file content goes here; keep its original indentation.
-   ```
-
+1. Open the dashboard, or create one under **Settings → Dashboards → Add dashboard**.
+2. Choose **Edit dashboard → Add view** (the **+** after the view tabs), then **⋮ → Edit in YAML**.
+3. Replace everything in the editor with the file.
 4. Replace `eveus_ev_charger` if your entity IDs use another prefix, then **Save**.
 
 For three phases, set **Phases = 3** and add
