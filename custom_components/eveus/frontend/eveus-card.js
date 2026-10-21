@@ -1819,14 +1819,14 @@ class EveusCard extends HTMLElement {
       return this._hm(date);
     }
   }
-  // ---- Status while charging: why it is slower than set, or the power (and finish when nothing else shows it). ----
+  // ---- Status while charging: why it is slower than set, or the power and current (and finish when nothing else shows it). ----
   _chargingNote() {
     const t = this._t;
     const actual = currentNumber(this._state('current')), set = currentNumber(this._state('charging_current'));
     if (actual !== null && set !== null && set - actual >= SLOW_GAP_A) return `${t.of(amps(actual), amps(set))} · ${this._slowReason(actual, set)}`;
     const w = currentNumber(this._state('power'));
     const finish = this._advanced && this._config.sections.includes('advanced_info') ? null : this._finishHM();
-    return [w === null ? '' : `${(w / 1000).toFixed(1)} kW`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
+    return [w === null ? '' : `${(w / 1000).toFixed(1)} kW`, actual === null ? '' : `${amps(actual)} A`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
   }
   _slowReason(actual, set) {
     const t = this._t, mode = this._state('adaptive_mode')?.state;

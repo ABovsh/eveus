@@ -1327,7 +1327,7 @@ test('charging slower than set: the status says why',()=>{
   const uk=setupAll({sections:['status'],language:'uk',over:{...cc,current:['sensor.cur',9],adaptive_mode:['select.am','Off',{options:['Off','Voltage']}]}});
   assert.match(uk.html(),/status-note">9 з 12 A · авто приймає менше</);
   // At the set current the note is the power instead.
-  const full=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',11.8],power:['sensor.power',2690]}});
+  const full=setupAll({sections:['status','advanced_info'],over:{...cc,current:['sensor.cur',11.8],power:['sensor.power',2690]}});
   assert.match(full.html(),/status-note">2\.7 kW · 11\.8 A</);
 });
 test('while charging the status shows the power and the current; Basic mode or a hidden battery section adds the finish time',()=>{
@@ -2183,10 +2183,11 @@ test('the start leads the power and the finish',()=>{
   const html=atNow(()=>{
     const x=setupSince({since:'2026-10-21T16:05:00+00:00'});
     x.states['sensor.pw']={state:'3200',attributes:{}};x.states['sensor.ttt']={state:'1h 30m',attributes:{}};x.states['sensor.fin']={state:'2026-10-22T02:10:00+03:00',attributes:{}};
-    Object.assign(x.card._ids,{power:'sensor.pw',time_to_target_soc:'sensor.ttt',charging_finish_time:'sensor.fin'});x.card.hass=x.hass;
+    x.states['sensor.cur']={state:'7',attributes:{}};
+    Object.assign(x.card._ids,{power:'sensor.pw',current:'sensor.cur',time_to_target_soc:'sensor.ttt',charging_finish_time:'sensor.fin'});x.card.hass=x.hass;
     return x.html();
   });
-  assert.match(html,/status-since">since 19:05<\/span><span class="status-note">3\.2 kW · until 02:10</);
+  assert.match(html,/status-since">since 19:05<\/span><span class="status-note">3\.2 kW · 7 A · until 02:10</);
 });
 
 test('a charge from yesterday says yesterday, from this week the weekday, from before it the date — always with the time',()=>{
