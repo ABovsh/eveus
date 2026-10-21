@@ -1,4 +1,4 @@
 {
-  "_comment": "Survivor-count ratchet for the single mutmut 3 run: increases fail the job; decreases tighten this baseline. OBSERVED: 700 survivors from CI workflow_dispatch run 39114884903 on reve aebbc0a (9618 mutants, 17 timeouts), 2026-10-18. Down from 809 (rc f4da2e7, 2026-10-06). Equivalent mutants remain in the count; only verified unobservable lines use pragma: no mutate with a reason.",
-  "survivors": 700
+  "_comment": "Survivor-count ratchet for the single mutmut 3 run: increases fail the job; decreases tighten this baseline. OBSERVED: 772 survivors from a local mutmut 3.8.0 run on rc after merging main (10369 mutants, 25 timeouts), 2026-10-21. Up from 700 (reve aebbc0a, 9618 mutants) because rc added REVE schedule/tariff/field-drift code (751 new mutants); CI run 39402526611 counted 791 before the killer tests added here. Equivalent mutants remain in the count; only verified unobservable lines use pragma: no mutate with a reason.",
+  "survivors": 772
 }

@@ -261,3 +261,39 @@ def test_the_commands_are_registered_at_setup() -> None:
     registered = [call.args[1] for call in register.call_args_list]
     assert eveus._ws_reve_schedules in registered
     assert eveus._ws_reve_schedule_weekdays in registered
+
+
+# ---------------------------------------------------------------------------
+# The exact answers the card receives (ids, codes, texts, which charger)
+# ---------------------------------------------------------------------------
+
+
+def test_the_days_command_answers_with_the_exact_texts_and_request_id() -> None:
+    unknown = MagicMock()
+    with _devices({}):
+        asyncio.run(eveus._async_reve_schedule_weekdays(
+            _ws_hass({}), unknown, {"id": 9, "type": "eveus/reve_schedule_weekdays", "schedule": 1, "weekdays": [1]},
+        ))
+    unknown.send_error.assert_called_once_with(9, "not_found", "No Eveus charger found")
+
+    classic = _weekdays(_fake_updater(family="classic"))
+    classic.send_error.assert_called_once_with(9, "not_supported", "Only REVE schedules have days of the week")
+
+    empty = _weekdays(_fake_updater(), weekdays=[])
+    empty.send_error.assert_called_once_with(9, "invalid_format", "A schedule needs at least one day")
+
+    refused = _weekdays(_fake_updater(ok=False))
+    refused.send_error.assert_called_once_with(9, "failed", "The charger did not accept the days")
+
+
+def test_the_days_command_writes_to_the_charger_the_card_names() -> None:
+    first, second = _fake_updater(), _fake_updater()
+    connection = MagicMock()
+    with _devices({"dev2": "e2"}):
+        asyncio.run(eveus._async_reve_schedule_weekdays(
+            _ws_hass({"e1": first, "e2": second}), connection,
+            {"id": 3, "type": "eveus/reve_schedule_weekdays", "device_id": "dev2", "schedule": 1, "weekdays": [2, 2, 0]},
+        ))
+    assert first.sent == []
+    assert second.sent == [("sh1Weekdays", [0, 2])]
+    connection.send_result.assert_called_once_with(3, {"weekdays": [0, 2]})

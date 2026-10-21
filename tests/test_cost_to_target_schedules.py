@@ -154,3 +154,20 @@ def test_the_start_is_read_on_a_quarter_hour_grid(monkeypatch: pytest.MonkeyPatc
     for hm in ((16, 1), (16, 14), (16, 15), (16, 29)):
         _cost({**_ANTON, "sh2Enabled": 1}, hm)
     assert starts == [960, 960, 975, 975]
+
+
+def test_a_schedule_of_one_watt_is_still_a_schedule() -> None:
+    # Only a schedule without power is untrustworthy; 1 W is priced (slowly).
+    assert price_energy_in_schedules(0.001, 1380, 1, RATES, NIGHT_RATE, ((1380, 420, 1),)) == pytest.approx(0.002)
+
+
+def test_a_charge_starting_on_a_window_edge_is_priced() -> None:
+    # 23:00 exactly: the night window opens now.
+    assert price_energy_in_schedules(10, 1380, 1, RATES, NIGHT_RATE, ((1380, 420, KW),)) == pytest.approx(20)
+
+
+def test_a_charge_after_the_last_edge_of_the_day_wraps_to_the_first() -> None:
+    # 23:20, inside the night window, past the day's last edge (23:00).
+    assert price_energy_in_schedules(100, 1400, 1, RATES, NIGHT_RATE, ((1380, 420, KW),)) == pytest.approx(200)
+    # 23:20, schedule 09:00-18:00 only: waits across midnight for 09:00, day rate.
+    assert price_energy_in_schedules(100, 1400, 1, RATES, NIGHT_RATE, ((540, 1080, KW),)) == pytest.approx(400)

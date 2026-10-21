@@ -168,3 +168,42 @@ def test_the_notice_has_its_text_in_every_language() -> None:
         issue = json.loads((root / name).read_text())["issues"]["reve_fields_missing"]
         assert "{fields}" in issue["description"], name
         assert "{firmware}" in issue["description"], name
+
+
+def test_the_notice_is_filed_with_the_exact_registry_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_components.eveus.const import DOMAIN
+
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+    monkeypatch.setattr(eveus_init.ir, "async_create_issue", lambda *a, **kw: calls.append(("create", a, kw)))
+    monkeypatch.setattr(eveus_init.ir, "async_delete_issue", lambda *a, **kw: calls.append(("delete", a, kw)))
+    entry = type("E", (), {"entry_id": "abc"})()
+    hass = object()
+
+    update_reve_fields_issue(hass, entry, _Updater(("RSSI",)))
+    update_reve_fields_issue(hass, entry, _Updater(()))
+
+    (_, create_args, create_kw), (_, delete_args, _) = calls
+    assert create_args == (hass, DOMAIN, reve_fields_issue_id(entry))
+    assert create_kw["is_persistent"] is False
+    assert create_kw["issue_domain"] == DOMAIN
+    assert create_kw["severity"] is eveus_init.ir.IssueSeverity.WARNING
+    assert delete_args == (hass, DOMAIN, reve_fields_issue_id(entry))
+
+
+def test_either_half_of_a_failed_poll_leaves_the_notice_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    created, deleted = _registry(monkeypatch)
+    entry = type("E", (), {"entry_id": "abc"})()
+    for available, success in ((False, True), (True, False)):
+        updater = _Updater(("RSSI",))
+        updater.available, updater.last_update_success = available, success
+        update_reve_fields_issue(object(), entry, updater)
+    assert not created and not deleted
+
+
+def test_an_unreported_firmware_reads_as_a_question_mark(monkeypatch: pytest.MonkeyPatch) -> None:
+    created, _ = _registry(monkeypatch)
+    entry = type("E", (), {"entry_id": "abc"})()
+    updater = _Updater(("RSSI",))
+    updater.data = None
+    update_reve_fields_issue(object(), entry, updater)
+    assert created[0]["translation_placeholders"]["firmware"] == "?"
