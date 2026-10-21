@@ -8,7 +8,7 @@
 - **REVE: a repair notice names any reading a firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
 - **Card, REVE: the card shows and changes the days of the week of Schedule 1 and Schedule 2.** It also lists the charger's other schedules and its tariffs, read-only and only those set up in the app. While REVE's interface does not answer, the schedules say they are the last read.
 
-- **Card: Status says when a charge started and when it finished.** While charging it reads `since 19:05`, and a finished charge `Charge Complete · at 03:15`. A stop and a new start show the new start. The time is the `since` attribute of the **State** sensor, which Home Assistant keeps across a restart; when the charger changed state while Home Assistant could not see it, no time is shown.
+- **Card: Status says when a charge started and when it finished.** While charging it reads `since 19:05`, and a finished charge `Charge Complete · at 03:15`. A charge from an earlier day says so: `since yesterday 19:05`, `since Sun 19:05`, `since 13 Oct 19:05`. A stop and a new start show the new start. The time is the `since` attribute of the **State** sensor, which Home Assistant keeps across a restart; when the charger changed state while Home Assistant could not see it, no time is shown.
 
 - **Blueprint "Stop charging on low house battery": stop on the battery voltage.** Choose **Stop when**: battery %, battery voltage, or either, whichever comes first. The % of a large LiFePO₄ battery drifts when it is rarely fully charged or emptied; voltage tells empty reliably, but not 40 % from 60 %, so set it near empty. Existing automations keep stopping on the %.
 
@@ -18,6 +18,7 @@
 
 ### 🔧 Changed
 
+- **Card: the note beside the state in Status is larger and white,** and sits level with the state, instead of small grey text; the row keeps its height.
 - **Card: Last Session Duration reads in any unit.** Set the sensor's unit to hours in its settings and Home Assistant's own cards show `1h 36m` instead of seconds, while the card keeps showing the same duration.
 - **Dashboard 2.0: standard Home Assistant cards only, plus a REVE variant.** The power and current graphs are built-in trend graphs, so `mini-graph-card` is no longer needed; the dashboard needs Home Assistant 2025.10 or newer. `docs/dashboard.yaml` hides the cards of entities the firmware does not have; `docs/dashboard-reve.yaml` (Ukrainian: `docs/dashboard-reve-uk.yaml`) leaves them out and shows Manual Mode and REVE API. [Details](README.md#dashboard)
 - **Cost to Target SOC before a scheduled charge uses the tariffs of the schedule windows.** It priced everything at the tariff in effect now, so at 19:00 a charge that Schedule 1 runs at night showed the day rate (235 ₴ instead of 118 ₴ in one case).

@@ -161,7 +161,7 @@ const I18N = {
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
     noneOn: 'none on', lockedIdle: 'change while charging', lockedIdleNote: 'REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it', lockedManual: 'manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
-    slowCar: 'the car takes less', until: 'until', since: 'since', at: 'at',
+    slowCar: 'the car takes less', until: 'until', since: 'since', at: 'at', yesterday: 'yesterday',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
     setZone: (z) => `Set ${z}`,
@@ -229,7 +229,7 @@ const I18N = {
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
     noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedIdleNote: 'REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт', lockedManual: 'ручний режим', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
-    slowCar: 'авто приймає менше', until: 'до', since: 'з', at: 'о',
+    slowCar: 'авто приймає менше', until: 'до', since: 'з', at: 'о', yesterday: 'вчора',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
     setZone: (z) => `Обрати ${z}`,
@@ -1582,14 +1582,20 @@ class EveusCard extends HTMLElement {
     const t = typeof raw === 'string' ? Date.parse(raw) : NaN;
     return Number.isFinite(t) && t <= Date.now() + 60000 ? new Date(t) : null;
   }
-  // "19:05" today, the day before it otherwise ("Tue 19:05", "20 Sep"), in Home Assistant's zone.
-  _clock(date) {
-    const tz = this._hass?.config?.time_zone;
+  // The moment with the day it needs, in Home Assistant's zone and by calendar day, not by 24 hours:
+  // "19:05" today, "yesterday 19:05", "Sun 19:05" within the week, "13 Oct 19:05" before it.
+  _stamp(date) {
+    const tz = this._hass?.config?.time_zone, uk = langOf(this._config, this._hass) === 'uk';
     try {
-      const day = (d) => new Intl.DateTimeFormat('en-CA', tz ? {timeZone: tz} : undefined).format(d);
-      return day(date) === day(new Date(Date.now())) ? this._hm(date) : this._when(date);
+      const zone = tz ? {timeZone: tz} : {};
+      const key = (d) => Date.parse(new Intl.DateTimeFormat('en-CA', zone).format(d));
+      const days = Math.round((key(new Date(Date.now())) - key(date)) / 86400000);
+      const hm = this._hm(date), fmt = (o) => new Intl.DateTimeFormat(uk ? 'uk' : 'en-GB', {...o, ...zone}).format(date);
+      if (days <= 0) return {text: hm, today: true};
+      if (days === 1) return {text: `${this._t.yesterday} ${hm}`, today: false};
+      return {text: `${days < 7 ? fmt({weekday: 'short'}) : fmt({day: 'numeric', month: 'short'})} ${hm}`, today: false};
     } catch {
-      return this._hm(date);
+      return {text: this._hm(date), today: true};
     }
   }
   // Card-level alert: the charger is unreachable or reports a firmware fault. Only these
@@ -1632,9 +1638,10 @@ class EveusCard extends HTMLElement {
     // A car the charger reports full says when it got there; a charge a schedule or limit parked, or one
     // the user stopped, is not "finished" and keeps to its reason.
     const doneAt = raw === 'Charge Complete' && !held && !stopped ? this._stateSince() : null;
+    const done = doneAt ? this._stamp(doneAt) : null;
     const reasonNote = reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
     const note = charging ? this._chargingNote()
-      : [reasonNote, doneAt ? `${this._t.at} ${this._clock(doneAt)}` : ''].filter(Boolean).join(' · ');
+      : [reasonNote, done ? (done.today ? `${this._t.at} ${done.text}` : done.text) : ''].filter(Boolean).join(' · ');
     return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, note};
   }
   // Stopping a running charge asks once, in the button itself; everything else is one tap.
@@ -1817,7 +1824,7 @@ class EveusCard extends HTMLElement {
     const w = currentNumber(this._state('power'));
     const finish = this._advanced && this._config.sections.includes('advanced_info') ? null : this._finishHM();
     const since = this._stateSince();
-    return [since ? `${t.since} ${this._clock(since)}` : '', w === null ? '' : `${(w / 1000).toFixed(1)} kW`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
+    return [since ? `${t.since} ${this._stamp(since).text}` : '', w === null ? '' : `${(w / 1000).toFixed(1)} kW`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
   }
   _slowReason(actual, set) {
     const t = this._t, mode = this._state('adaptive_mode')?.state;
@@ -2121,7 +2128,6 @@ ha-card{--accent:var(--primary-color,#3498db);--panel:rgba(127,127,127,.075);--t
 .limit-value{height:22px}.limit-value>button[data-limit-step]{font-size:17px}
 .disable-all,.adaptive-mode{height:24px;min-height:22px;border:1px solid transparent;border-radius:12px;background:var(--chip);font-size:12px;font-weight:600}
 .status-state{font-size:14px}.status-main>ha-icon{--mdc-icon-size:17px;color:var(--accent)}
-.status-state.charging~*,.status-note{font-size:12px}
 .info-value,.sv{font-size:15px;font-weight:650}
 .safety-value{font-size:14px}
 .sl.safety>ha-icon{color:var(--accent)}.sl.safety.safety-good>ha-icon{color:#2ecc71}.sl.safety.safety-bad>ha-icon{color:#e74c3c}
@@ -2174,7 +2180,7 @@ ha-card[data-state=charging] .sl.status>.status-main>ha-icon{animation:icon-glow
 .sv{font-weight:750}
 /* ---- Bigger values and touch targets, one job per section. ---- */
 .sl{min-height:32px}
-.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700}.status-note{font-size:12.5px}
+.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1}.status-note{font-size:14px;font-weight:600;line-height:1;color:var(--primary-text-color)}
 /* Actions: three big buttons, icon over name over state (4.24.0 icons). */
 .panel.actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px}
 .act-btn{--b:#95a5a6;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;min-width:0;min-height:56px;padding:4px 2px 3px;margin:0;
