@@ -198,6 +198,21 @@ _RATE_FIELDS: Final = """
                 }
             }"""
 
+# What REVE_PLUS 1.0.3 adds to stationData: whether the station is in manual
+# mode, and its memory and uptime (diagnostics only). Older firmware answers
+# these with nothing, so they are asked for but never expected (_EXPECTED_PATHS).
+_MANUAL_CONTROL: Final = "chargingManualControl"
+_STATION_SYSTEM: Final[tuple[tuple[str, str], ...]] = (
+    ("heapFreeSize", "heap_free"),
+    ("heapMinFreeSize", "heap_min_free"),
+    ("heapLargestFreeBlock", "heap_largest_free_block"),
+    ("heapTotalSize", "heap_total"),
+)
+_UPTIME: Final = "stationUptimeMs"
+_STATION_SYSTEM_FIELDS: Final = (
+    _MANUAL_CONTROL, *(field for field, _key in _STATION_SYSTEM), _UPTIME
+)
+
 # Once a charger is known to be REVE, every poll reads its measurements with
 # these fields: the charger app's own StationData, cut down to the fields
 # reve_fields maps to /main keys, plus chargingCommand so Stop shows at once.
@@ -264,7 +279,9 @@ _MEASUREMENT_FIELDS: Final = """
             }
             language
             STA_IP_Addres
-            chargingCommand"""
+            chargingCommand""" + "".join(
+    f"\n            {name}" for name in _STATION_SYSTEM_FIELDS
+)
 
 
 def _station_query(fields: str) -> str:
@@ -614,6 +631,23 @@ def _reported(station: Mapping[str, Any], path: tuple[str, ...]) -> bool:
     return True
 
 
+def _station_system(station: Mapping[str, Any]) -> dict[str, Any]:
+    """REVE_PLUS 1.0.3's memory, uptime and manual-mode flag, for diagnostics;
+    what the firmware does not report is left out."""
+    system: dict[str, Any] = {}
+    for field, key in _STATION_SYSTEM:
+        value = station.get(field)
+        if type(value) is int:
+            system[key] = value
+    uptime = station.get(_UPTIME)
+    if type(uptime) is int:
+        system["uptime_seconds"] = uptime // 1000
+    flag = station.get(_MANUAL_CONTROL)
+    if isinstance(flag, bool):
+        system["manual_control"] = flag
+    return system
+
+
 def _is_no_sensor_reading(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
@@ -704,19 +738,28 @@ def apply_schedule_command(
 
 
 class ManualMode:
-    """Whether the station is in manual mode, which it does not report.
+    """Whether the station is in manual mode.
 
     From the app's "ignore schedule" Start (``chargingCommand`` 0) or any Stop
     (2) until the car is unplugged, the station ignores the schedules and every
-    limit, and releasing the command changes nothing. So it is latched: on at a
-    0 or 2, read or written, and off when the car is unplugged or the session
-    counters start over (a station restart under a plugged-in car).
+    limit, and releasing the command changes nothing. REVE_PLUS 1.0.3 reports
+    the mode (``chargingManualControl``) and its word is final. Older firmware
+    does not, so it is latched: on at a 0 or 2, read or written, and off when
+    the car is unplugged or the session counters start over (a station restart
+    under a plugged-in car). A poll without the flag carries the latch on from
+    the station's last word.
     """
 
     def __init__(self) -> None:
         self._on = False
         self._session_time: float | None = None
         self._unplugged = False
+        self._reported: bool | None = None
+
+    def report(self, value: Any) -> None:
+        """The station's own flag from this poll's GraphQL read; anything but a
+        boolean (older firmware, a ``/main`` poll) is no flag."""
+        self._reported = value if isinstance(value, bool) else None
 
     @property
     def on(self) -> bool:
@@ -726,13 +769,15 @@ class ManualMode:
         """A chargingCommand just written from Home Assistant."""
         if command != _COMMAND_START:
             self._on = True
+            # Shown at once; the next read says whether the station agrees.
+            self._reported = None
 
     def restore(self, on_for: float | None = None) -> None:
         """Manual mode as it stood before Home Assistant restarted, ``on_for``
         seconds ago, unless the station already shows it ended: the connector
         is out, or the session is younger than manual mode (replugged while
         Home Assistant was down)."""
-        if self._unplugged:
+        if self._unplugged or self._reported is not None:
             return
         session = self._session_time
         if on_for is not None and session is not None and session + _RESTORE_SLACK_SECONDS < on_for:
@@ -756,6 +801,8 @@ class ManualMode:
             self._session_time = elapsed
         if payload.get(ONE_CHARGE_COMMAND) == 1 or payload.get(STOP_COMMAND) == 1:
             self._on = True
+        if self._reported is not None:
+            self._on = self._reported
 
 
 # REVE's subState while it holds a charge for an outside start: after a limit
@@ -838,6 +885,7 @@ class ReveApi:
         # on would apply.
         self._limit_values: dict[str, int | float] = {}
         self.manual_mode = ManualMode()
+        self._station_system: dict[str, Any] = {}
 
     @property
     def extras(self) -> ReveExtras | None:
@@ -928,6 +976,8 @@ class ReveApi:
             time.monotonic(),
         )
         self._note_charging_command(station.get("chargingCommand"))
+        self.manual_mode.report(station.get(_MANUAL_CONTROL))
+        self._station_system = _station_system(station)
         return main
 
     def _check_fields(self, station: Mapping[str, Any]) -> None:
@@ -996,6 +1046,7 @@ class ReveApi:
         replaced by the last GraphQL one while that is recent, else left out."""
         self.keep_main_residue(main)
         self._last_source = "main"
+        self.manual_mode.report(None)
         if fallback:
             self._main_fallbacks += 1
         payload = {key: value for key, value in main.items() if key not in SESSION_FIELDS}
@@ -1180,6 +1231,7 @@ class ReveApi:
             "read_failures": self._failures,
             "last_error": self._last_error,
             "missing_fields": list(self.missing_fields),
+            "station": self._station_system,
             "measurements": {
                 "graphql_reads": self._measurement_reads,
                 "graphql_failures": self._measurement_failures,

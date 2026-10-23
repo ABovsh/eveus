@@ -898,6 +898,7 @@ def test_reve_diagnostics_report_the_read_exactly(monkeypatch: pytest.MonkeyPatc
         "read_failures": 0,
         "last_error": None,
         "missing_fields": [],
+        "station": {},
         # The first poll read /main to recognise the firmware, then GraphQL.
         "measurements": {
             "graphql_reads": 1,

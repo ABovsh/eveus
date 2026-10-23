@@ -444,7 +444,7 @@ the schedules and limits apply again.
 What this means in practice:
 
 - Turning **Stop Charging** or **One Charge** off does not end manual mode: the charger keeps ignoring its schedules and limits until the connector is pulled out.
-- The charger does not report the mode, so the **Manual Mode** sensor follows the commands the integration sees or sends, and turns off when the connector is pulled out. It keeps its state through a Home Assistant restart, unless the connector was pulled out meanwhile.
+- From REVE_PLUS 1.0.3 the charger reports the mode, and **Manual Mode** shows what it reports. Earlier REVE versions do not report it, so the sensor follows the commands the integration sees or sends, and turns off when the connector is pulled out. It keeps its state through a Home Assistant restart, unless the connector was pulled out meanwhile.
 - While **Manual Mode** is on, the card says that schedules and limits are ignored.
 
 #### Limits on REVE
@@ -463,7 +463,7 @@ What this means in practice:
 - **Counter A Cost** and **Counter B Cost** do not increase on REVE: the charger counts the energy of counters A and B, but not their cost. After a counter is reset its cost stays at 0; without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
-- REVE does not report **Leakage Current**, **Leakage Current Peak**, **OCPP Connected** or **Plug Temperature**, so they stay unavailable.
+- REVE does not report **Leakage Current**, **Leakage Current Peak** or **OCPP Connected**, so they stay unavailable. **Plug Temperature** has a value from REVE_PLUS 1.0.3; on earlier REVE versions it stays unavailable.
 
 #### Wi-Fi drops about every 15 minutes
 

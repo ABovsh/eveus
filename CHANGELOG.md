@@ -6,6 +6,9 @@
 
 - **A charger without a password can be added with the username and password left empty.** REVE has no web-interface password; with both fields empty the integration sends no credentials.
 - **REVE: a repair notice names any reading a firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
+- **REVE: Manual Mode shows the mode REVE_PLUS 1.0.3 reports.** Earlier REVE versions do not report it; there the sensor follows the commands as before.
+- **REVE: Plug Temperature has a value on REVE_PLUS 1.0.3.** Earlier REVE versions report no plug temperature, and the sensor stays unavailable there.
+- **REVE: diagnostics show the charger's free memory and uptime on REVE_PLUS 1.0.3.**
 - **Card, REVE: the card shows and changes the days of the week of Schedule 1 and Schedule 2.** It also lists the charger's other schedules and its tariffs, read-only and only those set up in the app. While REVE's interface does not answer, the schedules say they are the last read.
 
 - **Card: Status says when a charge started and when it finished.** While charging it reads `since 19:05`, and a finished charge `Charge Complete · at 03:15`. A charge from an earlier day says so: `since yesterday 19:05`, `since Sun 19:05`, `since 13 Oct 19:05`. A stop and a new start show the new start. The time is the `since` attribute of the **State** sensor, which Home Assistant keeps across a restart; when the charger changed state while Home Assistant could not see it, no time is shown.

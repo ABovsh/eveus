@@ -23,6 +23,7 @@ import pytest
 from custom_components.eveus import reve, reve_fields
 from custom_components.eveus.common_network import EveusUnreachable
 from test_reve_firmware import _Charger, _clock, _load, _reve_main, _updater
+from test_reve_graphql_writes import _known
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -69,9 +70,12 @@ def _known_reve(monkeypatch: pytest.MonkeyPatch, charger: _Charger):
 
 def test_the_measurements_document_asks_for_exactly_the_mapped_fields() -> None:
     asked = _paths(reve.MEASUREMENTS_QUERY)
-    assert asked == reve_fields.graphql_paths() | {("chargingCommand",)}
+    # REVE_PLUS 1.0.3's own additions, named by its developer (2026-10-23);
+    # the app's document predates them.
+    added = {(field,) for field in reve._STATION_SYSTEM_FIELDS}
+    assert asked == reve_fields.graphql_paths() | {("chargingCommand",)} | added
     app = _paths((_FIXTURES / "reve_app_station_query.graphql").read_text())
-    assert asked <= app
+    assert asked - added <= app
     assert reve.MEASUREMENTS_QUERY.lstrip().startswith("query StationData")
 
 
@@ -487,3 +491,27 @@ def test_reve_api_stays_off_when_the_first_settings_read_fails(monkeypatch: pyte
     now[0] += 30
     asyncio.run(updater._async_update_data())
     assert updater.reve_api_answering is False
+
+
+def test_diagnostics_show_the_station_memory_and_uptime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REVE_PLUS 1.0.3 reports its heap and uptime; diagnostics only, no entities."""
+    charger, updater = _known(monkeypatch)
+    charger.station.update({
+        "heapFreeSize": 19428, "heapMinFreeSize": 2716, "heapLargestFreeBlock": 12288,
+        "heapTotalSize": 191704, "stationUptimeMs": 839781, "chargingManualControl": False,
+    })
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_diagnostics()["station"] == {
+        "heap_free": 19428, "heap_min_free": 2716, "heap_largest_free_block": 12288,
+        "heap_total": 191704, "uptime_seconds": 839, "manual_control": False,
+    }
+    for field in ("heapFreeSize", "stationUptimeMs"):
+        assert field in reve.MEASUREMENTS_QUERY
+        assert (field,) not in reve._EXPECTED_PATHS
+
+
+def test_diagnostics_station_is_empty_on_firmware_without_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _known(monkeypatch)
+    charger.station["heapFreeSize"] = "x"
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_diagnostics()["station"] == {}

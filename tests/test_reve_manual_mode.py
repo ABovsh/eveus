@@ -246,3 +246,75 @@ def test_a_restore_exactly_at_the_slack_is_kept() -> None:
     manual.observe(_payload(sessionTime=3600 - reve._RESTORE_SLACK_SECONDS))
     manual.restore(on_for=3600)
     assert manual.on is True
+
+
+# ---------------------------------------------------------------------------
+# REVE_PLUS 1.0.3 reports the mode itself: stationData.chargingManualControl
+# ---------------------------------------------------------------------------
+
+
+def test_the_station_flag_overrides_the_latch_both_ways() -> None:
+    manual = reve.ManualMode()
+    manual.observe(_payload(evseEnabled=1))
+    manual.report(False)
+    manual.observe(_payload(evseEnabled=1))
+    assert manual.on is False, "the station says it left manual mode"
+    manual.report(True)
+    manual.observe(_payload())
+    assert manual.on is True
+
+
+def test_without_the_flag_the_latch_carries_on_from_the_last_flag() -> None:
+    manual = reve.ManualMode()
+    manual.report(False)
+    manual.observe(_payload(evseEnabled=1))
+    manual.report(None)
+    manual.observe(_payload(sessionTime=160))
+    assert manual.on is False, "a /main poll keeps the station's last word"
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true"])
+def test_anything_but_a_boolean_is_no_flag(value: Any) -> None:
+    manual = reve.ManualMode()
+    manual.observe(_payload(oneCharge=1))
+    manual.report(value)
+    manual.observe(_payload(sessionTime=160))
+    assert manual.on is True
+
+
+def test_a_command_from_home_assistant_shows_until_the_next_read() -> None:
+    manual = reve.ManualMode()
+    manual.report(False)
+    manual.observe(_payload())
+    manual.command(reve._COMMAND_STOP)
+    assert manual.on is True
+    manual.report(False)
+    manual.observe(_payload())
+    assert manual.on is False
+
+
+def test_a_restore_after_the_station_reported_is_ignored() -> None:
+    manual = reve.ManualMode()
+    manual.report(False)
+    manual.observe(_payload())
+    manual.restore()
+    assert manual.on is False
+
+
+def test_the_coordinator_reads_the_station_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _known(monkeypatch)
+    _plugged(charger)
+    charger.charging_command = 2
+    charger.station["chargingManualControl"] = False
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_manual_mode is False
+
+    charger.charging_command = 1
+    charger.station["chargingManualControl"] = True
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_manual_mode is True
+
+
+def test_the_measurements_read_asks_for_the_flag_but_does_not_require_it() -> None:
+    assert "chargingManualControl" in reve.MEASUREMENTS_QUERY
+    assert ("chargingManualControl",) not in reve._EXPECTED_PATHS
