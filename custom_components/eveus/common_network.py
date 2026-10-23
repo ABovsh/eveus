@@ -62,6 +62,7 @@ from .reve import (
     normalize_reve_payload,
     snapshot_limit_refusal,
 )
+from .meter_guard import MeterGuard
 from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
 
@@ -304,6 +305,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # omits the REVE markers must not hand that poll the unreliable
         # tariff/schedule/leak fields REVE reports.
         self._reve_seen = False
+        # A charger that is still starting reports its lifetime meters as 0.
+        self._meter_guard = MeterGuard()
         self._reve = ReveApi(self)
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
@@ -369,6 +372,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def reve_manual_mode(self) -> bool | None:
         """Whether a REVE station is in manual mode (see ``ManualMode``); ``None`` otherwise."""
         return self._reve.manual_mode.on if self._reve_seen else None
+
+    @property
+    def reve_manual_mode_can_turn_off(self) -> bool:
+        """Whether releasing Stop or One Charge ends manual mode (REVE_PLUS 1.0.3)."""
+        return self._reve_seen and self._reve.manual_mode.supported
 
     @property
     def reve_station_system(self) -> dict[str, Any]:
@@ -666,6 +674,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # so the cached consecutive_command_failures can't go stale.
             self._connection_quality_cache = None
         if success and not self._shutting_down:
+            self._meter_guard.expect_reset(command)
             self._schedule_post_command_refresh()
         return success
 
@@ -1419,6 +1428,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     new_data, self._reve.extras
                 )
                 self._reve.manual_mode.observe(new_data)
+            new_data = self._meter_guard.apply(new_data)
             # Parse AFTER the legacy translation (this coordinator owns the
             # fw-1.x latch), and BEFORE _record_success, which notifies the
             # listeners that read the snapshot.

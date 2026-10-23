@@ -190,6 +190,12 @@ class EveusManualModeBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySen
             return None
         return self._updater.reve_manual_mode
 
+    @property
+    def extra_state_attributes(self) -> dict[str, bool]:
+        """``can_turn_off`` where turning Stop or One Charge off ends manual
+        mode (REVE_PLUS 1.0.3), so the card can offer Turn off."""
+        return {"can_turn_off": True} if self._updater.reve_manual_mode_can_turn_off else {}
+
     async def _async_restore_state(self, state) -> None:
         """A restart must not end manual mode while the connector stays
         plugged in; the station's state and session age settle the rest."""
@@ -202,7 +208,7 @@ class EveusManualModeBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySen
     def _handle_coordinator_update(self) -> None:
         self._maybe_finalize_device_info()
         self._update_availability_state()
-        self._write_if_changed(self.is_on)
+        self._write_if_changed((self.is_on, self._updater.reve_manual_mode_can_turn_off))
 
 
 async def async_setup_entry(

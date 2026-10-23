@@ -383,11 +383,12 @@ async def test_meter_tail_reaches_ha_before_reset_and_cost_window_changes(
     assert rows[0].attributes['last_reset'] < rows[1].attributes['last_reset']
 
 
-@pytest.mark.parametrize("key,field", [
-    ("total_energy", "totalEnergy"), ("session_cost", "sessionMoney"),
+@pytest.mark.parametrize("key,field,recovered", [
+    # A lifetime meter never comes back lower: a drop is held (meter_guard).
+    ("total_energy", "totalEnergy", 10), ("session_cost", "sessionMoney", 0),
 ])
 async def test_missing_meter_is_unavailable_and_recovers_to_valid_zero(
-    hass, aioclient_mock, key, field
+    hass, aioclient_mock, key, field, recovered
 ):
     entry = _entry(hass, HOST_A)
     payload = {**REAL_MAIN, field: 10}
@@ -417,10 +418,10 @@ async def test_missing_meter_is_unavailable_and_recovers_to_valid_zero(
     assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
     assert rows == []
     aioclient_mock.clear_requests()
-    _mock_charger(aioclient_mock, HOST_A, json={**payload, field: 0})
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, field: recovered})
     updater._next_poll_attempt = 0
     await updater.async_refresh()
     await hass.async_block_till_done()
-    assert hass.states.get(entity_id).state == "0.0"
-    assert rows == ["0.0"]
+    assert hass.states.get(entity_id).state == f"{recovered:.1f}"
+    assert rows == [f"{recovered:.1f}"]
     unsub()

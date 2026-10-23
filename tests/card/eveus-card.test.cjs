@@ -2243,3 +2243,35 @@ test('the time reads in Ukrainian',()=>{
   assert.match(atNow(()=>setupSince({language:'uk',since:'2026-10-21T16:05:00+00:00'}).html()),/status-since">з 19:05</);
   assert.match(atNow(()=>setupSince({language:'uk',state:'Charge Complete',reason:'Charge Complete',since:'2026-10-21T00:15:00+00:00'}).html()),/status-since">о 03:15</);
 });
+
+// ---- REVE_PLUS 1.0.3: manual mode can be turned off without replugging (Anton, 23.10) ----
+// The notes read as on Eveus firmware, each with Turn off: One charge and Stop turn their own
+// switch off; manual mode from the app turns Stop off, which also takes the station out of it.
+const LEAVABLE = (state) => ({manual_mode:['binary_sensor.manual', state, {can_turn_off:true}]});
+const STOPPED = (state) => ({stop_charging:['switch.stop', state]});
+test('REVE 1.0.3 One charge: the One charge notice with Turn off, like Eveus firmware', () => {
+  const h = setupAll({sections:['schedules', 'limits'], over:{...SCHED, ...ONE('on'), ...STOPPED('off'), ...LEAVABLE('on'), limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.match(h, /One charge ignores the schedules<\/span><button class="override-off" data-status-toggle="one_charge"/);
+  assert.match(h, /One charge ignores the limits<\/span><button class="override-off" data-status-toggle="one_charge"/);
+  assert.doesNotMatch(h, /replugged/);
+});
+test('REVE 1.0.3 Stop: Stop ignores the schedules and limits, Turn off releases it', () => {
+  const x = setupAll({sections:['schedules', 'limits'], charging:false, over:{...SCHED, ...ONE('off'), ...STOPPED('on'), ...LEAVABLE('on'), limit_energy_enabled:['switch.lee','on']}});
+  const h = x.html();
+  assert.match(h, /Stop ignores the schedules<\/span><button class="override-off" data-status-toggle="stop_charging"/);
+  assert.match(h, /Stop ignores the limits<\/span><button class="override-off" data-status-toggle="stop_charging"/);
+  assert.doesNotMatch(h, /replugged/);
+  assert.match(setupAll({sections:['schedules'], locale:'uk', charging:false, over:{...SCHED, ...ONE('off'), ...STOPPED('on'), ...LEAVABLE('on')}}).html(), /«Стоп» ігнорує розклади<\/span><button class="override-off"[^>]*>Вимкнути</);
+});
+test('REVE 1.0.3 manual mode from the app: the manual-mode notice with Turn off, which turns Stop off', () => {
+  const x = setupAll({sections:['schedules'], over:{...SCHED, ...ONE('off'), ...STOPPED('off'), ...LEAVABLE('on')}});
+  const h = x.html();
+  assert.match(h, /REVE manual mode ignores the schedules<\/span><button class="override-off" data-manual-off/);
+  assert.doesNotMatch(h, /replugged/);
+  x.card._onClick({target:{closest:(s) => s === '[data-manual-off]' ? {dataset:{}} : null}});
+  assert.equal(JSON.stringify(x.calls.at(-1)), JSON.stringify(['switch', 'turn_off', {entity_id:'switch.stop'}]));
+  assert.match(setupAll({sections:['schedules'], locale:'uk', over:{...SCHED, ...ONE('off'), ...STOPPED('off'), ...LEAVABLE('on')}}).html(), /Ручний режим REVE ігнорує розклади<\/span><button class="override-off" data-manual-off[^>]*>Вимкнути</);
+});
+test('REVE 1.0.3, manual mode off: no notice', () => {
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...STOPPED('off'), ...LEAVABLE('off')}}).html(), /class="override"/);
+});

@@ -170,7 +170,9 @@ const I18N = {
     tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
     monthTitle: 'Energy this month and last month (Home Assistant statistics)',
     oneOverrides: {schedules: 'One charge ignores the schedules', limits: 'One charge ignores the limits'}, turnOff: 'Turn off',
+    stopOverrides: {schedules: 'Stop ignores the schedules', limits: 'Stop ignores the limits'},
     manualOverrides: {schedules: 'REVE manual mode ignores the schedules until the connector is replugged', limits: 'REVE manual mode ignores the limits until the connector is replugged; they can be changed after that'},
+    manualOffOverrides: {schedules: 'REVE manual mode ignores the schedules', limits: 'REVE manual mode ignores the limits'},
     states: {},
   },
   uk: {
@@ -238,7 +240,9 @@ const I18N = {
     tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
     monthTitle: 'Енергія за цей і минулий місяць (статистика Home Assistant)',
     oneOverrides: {schedules: '«Один заряд» ігнорує розклади', limits: '«Один заряд» ігнорує ліміти'}, turnOff: 'Вимкнути',
+    stopOverrides: {schedules: '«Стоп» ігнорує розклади', limits: '«Стоп» ігнорує ліміти'},
     manualOverrides: {schedules: 'Ручний режим REVE ігнорує розклади до повторного підключення конектора', limits: 'Ручний режим REVE ігнорує ліміти до повторного підключення конектора; змінити їх можна після цього'},
+    manualOffOverrides: {schedules: 'Ручний режим REVE ігнорує розклади', limits: 'Ручний режим REVE ігнорує ліміти'},
     // The integration's charger state, fault, substate and not-charging reason values.
     states: {
       'Startup': 'Запуск', 'System Test': 'Самотестування', 'Standby': 'Очікування', 'Connected': 'Підключено',
@@ -494,6 +498,7 @@ class EveusCard extends HTMLElement {
       else if (reset.dataset.resetConfirm) void this._resetCounter(reset.dataset.resetConfirm, true);
       else this._cancelReset();
     } else if (statusToggle) void this._statusToggle(statusToggle.dataset.statusToggle);
+    else if (e.target.closest('[data-manual-off]')) void this._leaveManualMode();
     else if (step) void this._stepLimit(step.dataset.limitStep, Number(step.dataset.dir));
     else if (toggle) void this._toggleLimit(toggle.dataset.limitToggle);
     else if (editTrigger) this._startLimitEdit(editTrigger.dataset.limitEditTrigger);
@@ -1493,8 +1498,13 @@ class EveusCard extends HTMLElement {
   // REVE: the charger is in manual mode (Stop, or the app's "ignore schedule") until the connector is replugged.
   get _manualMode() { return this._online && !!this._ids?.manual_mode && this._limitOn('manual_mode'); }
   get _ignoring() { return this._oneCharge || this._manualMode; }
-  // REVE: One charge is manual mode, and turning it off keeps that mode, so its own notice and Turn off are classic-only.
-  get _oneChargeNote() { return this._oneCharge && !this._manualMode; }
+  // REVE_PLUS 1.0.3 leaves manual mode when Stop or One charge is turned off and both are off
+  // (the Manual Mode sensor says so in can_turn_off); earlier REVE keeps it until the connector is replugged.
+  get _manualLeavable() { return this._manualMode && this._state('manual_mode')?.attributes?.can_turn_off === true; }
+  // One charge has its own notice and Turn off on Eveus firmware and on REVE that can leave manual mode.
+  get _oneChargeNote() { return this._oneCharge && (!this._manualMode || this._manualLeavable); }
+  // REVE that can leave manual mode: Stop says it is what ignores them, and Turn off releases it.
+  get _stopNote() { return this._manualLeavable && !this._oneCharge && this._limitOn('stop_charging'); }
   // REVE only (it has Manual Mode): a limit can be set, changed or switched while charging, outside manual mode.
   // REVE keeps a limit only for the current charge; a limit stop is no manual mode, so raising the limit resumes it.
   get _limitsLocked() { return this._online && !!this._ids?.manual_mode && (this._manualMode || !(this._charging || this._limitStopped)); }
@@ -1503,12 +1513,18 @@ class EveusCard extends HTMLElement {
     const reason = this._state('not_charging_reason')?.state;
     return LIMIT_STOPS.has(reason) || (reason === 'Waiting for Activation' && this._state('state')?.state === 'Charge Complete');
   }
-  // One charge, while it is on, has the button; manual mode alone has nothing to turn off.
-  _overrideText(kind) { return (this._oneChargeNote ? this._t.oneOverrides : this._t.manualOverrides)[kind]; }
-  _overrideIcon() { return this._oneChargeNote ? 'mdi:lightning-bolt-circle' : 'mdi:hand-back-right'; }
+  // One charge or Stop, while on, has the button; manual mode alone has one only where the charger can leave it.
+  _overrideText(kind) {
+    const t = this._t;
+    return (this._oneChargeNote ? t.oneOverrides : this._stopNote ? t.stopOverrides
+      : this._manualLeavable ? t.manualOffOverrides : t.manualOverrides)[kind];
+  }
+  _overrideIcon() { return this._oneChargeNote ? 'mdi:lightning-bolt-circle' : this._stopNote ? 'mdi:stop-circle-outline' : 'mdi:hand-back-right'; }
   _override(kind) {
     const t = this._t;
-    const off = this._oneChargeNote ? `<button class="override-off" data-status-toggle="one_charge" title="${t.oneTitle}">${t.turnOff}</button>` : '';
+    const off = this._oneChargeNote ? `<button class="override-off" data-status-toggle="one_charge" title="${t.oneTitle}">${t.turnOff}</button>`
+      : this._stopNote ? `<button class="override-off" data-status-toggle="stop_charging" title="${t.stopTitle}">${t.turnOff}</button>`
+      : this._manualLeavable ? `<button class="override-off" data-manual-off>${t.turnOff}</button>` : '';
     return `<div class="override" role="note"><ha-icon icon="${this._overrideIcon()}"></ha-icon><span>${this._overrideText(kind)}</span>${off}</div>`;
   }
   _overrideFlag(kind) {
@@ -1646,6 +1662,17 @@ class EveusCard extends HTMLElement {
     const when = charging ? (since ? `${this._t.since} ${this._stamp(since).text}` : '')
       : done ? (done.today ? `${this._t.at} ${done.text}` : done.text) : '';
     return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, when, note};
+  }
+  // Manual mode from the app, with Stop and One charge both off: turning Stop off again takes the station out of it.
+  async _leaveManualMode() {
+    if (!this._online || !this._ids?.stop_charging) return;
+    haptic('light');
+    try {
+      await this._hass.callService('switch', 'turn_off', {entity_id: this._ids.stop_charging});
+    } catch {
+      this._showError(true);
+      this._render();
+    }
   }
   // Stopping a running charge asks once, in the button itself; everything else is one tap.
   async _statusToggle(key) {

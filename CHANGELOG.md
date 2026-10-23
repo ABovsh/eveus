@@ -7,6 +7,7 @@
 - **A charger without a password can be added with the username and password left empty.** REVE has no web-interface password; with both fields empty the integration sends no credentials.
 - **REVE: a repair notice names any reading a firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
 - **REVE: turning Stop Charging or One Charge off ends manual mode on REVE_PLUS 1.0.3,** once both are off: the schedules and limits apply again without unplugging the car. Earlier REVE versions stay in manual mode until the connector is pulled out.
+- **Card, REVE: on REVE_PLUS 1.0.3 Schedules and Limits say what ignores them, with Turn off,** as on Eveus firmware: One charge or Stop turns that switch off; manual mode started in the charger's app turns Stop off. Manual Mode has a `can_turn_off` attribute there.
 - **REVE: Manual Mode shows the mode REVE_PLUS 1.0.3 reports.** Earlier REVE versions do not report it; there the sensor follows the commands as before.
 - **REVE: Active Rate Cost is the price REVE_PLUS 1.0.3 reports as in effect.** Earlier REVE versions keep the price worked out from the rate windows and the charger's clock.
 - **REVE: Plug Temperature, Counter A Cost and Counter B Cost have values on REVE_PLUS 1.0.3.**
@@ -38,6 +39,7 @@
 
 ### 🐛 Fixed
 
+- **A charger restart no longer counts Total Energy and the counters a second time.** A starting charger can report them as 0 for one poll; Home Assistant took that as a meter reset, so its energy statistics and any utility meter on Total Energy added the whole lifetime again (5,440 kWh in one day in one case). A lower reading is now kept back until it repeats in three polls; a counter reset from Home Assistant still shows at once.
 - **Last Session Duration shows whole seconds in Home Assistant's own cards.** Home Assistant gave it two decimals (5,748.00 s); the Eveus card was not affected.
 - **The dashboard install steps work.** The README sent the file, one view, to the raw configuration editor, which refused it with "At path: views - Expected an array value", and its indentation steps turned the sections into broken views. The file now goes into a new view through **Add view → Edit in YAML**, on a new or an existing dashboard, and has no fixed `path` that an existing view could already use.
 - **The dashboard's Adaptive Mode icon shows.** `mdi:shield-flash-outline` is not in Home Assistant's icon set, so it was an empty spot and Spook raised a repair.

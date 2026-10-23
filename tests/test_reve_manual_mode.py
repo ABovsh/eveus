@@ -415,3 +415,24 @@ def test_a_stop_keeps_the_station_rate(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(updater._async_update_data())
     assert _send(updater, "evseEnabled", 1) is True
     assert updater._reve.extras.active_rate == 0
+
+
+def test_the_manual_mode_sensor_says_when_it_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The card offers Turn off only where the station leaves manual mode on a release."""
+    from conftest import disable_state_writes  # noqa: PLC0415
+
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_STOP, flag=None)
+    added, _ = _binary_setup(updater)
+    sensor = next(e for e in added if e.unique_id == "eveus_manual_mode")
+    writes: list[Any] = []
+    disable_state_writes(sensor)
+    sensor.async_write_ha_state = lambda: writes.append(sensor.extra_state_attributes)
+    sensor._maybe_finalize_device_info = lambda: None
+    sensor._handle_coordinator_update()
+    assert sensor.extra_state_attributes == {}
+
+    charger.station["chargingManualControl"] = True
+    asyncio.run(updater._async_update_data())
+    sensor._handle_coordinator_update()
+    assert sensor.extra_state_attributes == {"can_turn_off": True}
+    assert writes[-1] == {"can_turn_off": True}, "the new attribute is written though the state stayed on"
