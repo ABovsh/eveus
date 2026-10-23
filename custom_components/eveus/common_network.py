@@ -370,6 +370,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Whether a REVE station is in manual mode (see ``ManualMode``); ``None`` otherwise."""
         return self._reve.manual_mode.on if self._reve_seen else None
 
+    @property
+    def reve_station_system(self) -> dict[str, Any]:
+        """REVE_PLUS 1.0.3's memory figures and start time; empty otherwise."""
+        return self._reve.station_system if self._reve_seen else {}
+
     def reve_restore_manual_mode(self, on_for: float | None = None) -> None:
         """Take manual mode over from before a Home Assistant restart."""
         self._reve.manual_mode.restore(on_for)

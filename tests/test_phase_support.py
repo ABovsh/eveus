@@ -133,6 +133,7 @@ def test_sensor_setup_includes_three_phase_sensors_when_runtime_phases_is_3() ->
             soc_calculator=object(),
             phases=3,
         ),
+        async_on_unload=lambda _unsubscribe: None,
     )
 
     asyncio.run(
@@ -160,6 +161,7 @@ def test_sensor_setup_excludes_three_phase_sensors_when_runtime_phases_is_1() ->
             soc_calculator=object(),
             phases=1,
         ),
+        async_on_unload=lambda _unsubscribe: None,
     )
 
     asyncio.run(

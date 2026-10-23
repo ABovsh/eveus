@@ -72,7 +72,7 @@ def test_the_measurements_document_asks_for_exactly_the_mapped_fields() -> None:
     asked = _paths(reve.MEASUREMENTS_QUERY)
     # REVE_PLUS 1.0.3's own additions, named by its developer (2026-10-23);
     # the app's document predates them.
-    added = {(field,) for field in reve._STATION_SYSTEM_FIELDS}
+    added = {(field,) for field in reve._STATION_SYSTEM_FIELDS} | {("ratesV2", "activeRate")}
     assert asked == reve_fields.graphql_paths() | {("chargingCommand",)} | added
     app = _paths((_FIXTURES / "reve_app_station_query.graphql").read_text())
     assert asked - added <= app

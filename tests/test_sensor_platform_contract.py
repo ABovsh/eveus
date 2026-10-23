@@ -77,6 +77,7 @@ def _set_up_sensors(data: dict | None = None, *, phases: int = 1) -> dict:
         runtime_data=SimpleNamespace(
             updater=updater, device_number=1, soc_calculator=None, phases=phases
         ),
+        async_on_unload=lambda _unsubscribe: None,
     )
     added: list = []
     asyncio.run(

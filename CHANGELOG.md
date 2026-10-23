@@ -6,9 +6,11 @@
 
 - **A charger without a password can be added with the username and password left empty.** REVE has no web-interface password; with both fields empty the integration sends no credentials.
 - **REVE: a repair notice names any reading a firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
+- **REVE: turning Stop Charging or One Charge off ends manual mode on REVE_PLUS 1.0.3,** once both are off: the schedules and limits apply again without unplugging the car. Earlier REVE versions stay in manual mode until the connector is pulled out.
 - **REVE: Manual Mode shows the mode REVE_PLUS 1.0.3 reports.** Earlier REVE versions do not report it; there the sensor follows the commands as before.
-- **REVE: Plug Temperature has a value on REVE_PLUS 1.0.3.** Earlier REVE versions report no plug temperature, and the sensor stays unavailable there.
-- **REVE: diagnostics show the charger's free memory and uptime on REVE_PLUS 1.0.3.**
+- **REVE: Active Rate Cost is the price REVE_PLUS 1.0.3 reports as in effect.** Earlier REVE versions keep the price worked out from the rate windows and the charger's clock.
+- **REVE: Plug Temperature, Counter A Cost and Counter B Cost have values on REVE_PLUS 1.0.3.**
+- **REVE: four diagnostic sensors for the charger's memory and last start, disabled by default** (REVE_PLUS 1.0.3): REVE Free Memory, REVE Min Free Memory, REVE Largest Free Block, REVE Started. Diagnostics also include them.
 - **Card, REVE: the card shows and changes the days of the week of Schedule 1 and Schedule 2.** It also lists the charger's other schedules and its tariffs, read-only and only those set up in the app. While REVE's interface does not answer, the schedules say they are the last read.
 
 - **Card: Status says when a charge started and when it finished.** While charging it reads `since 19:05`, and a finished charge `Charge Complete · at 03:15`. A charge from an earlier day says so: `since yesterday 19:05`, `since Sun 19:05`, `since 13 Oct 19:05`. A stop and a new start show the new start. The time is the `since` attribute of the **State** sensor, which Home Assistant keeps across a restart; when the charger changed state while Home Assistant could not see it, no time is shown.

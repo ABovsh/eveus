@@ -296,6 +296,18 @@
       },
       "last_session_duration": {
         "name": "Тривалість останньої сесії"
+      },
+      "reve_free_memory": {
+        "name": "REVE: вільна пам'ять"
+      },
+      "reve_min_free_memory": {
+        "name": "REVE: мінімум вільної пам'яті"
+      },
+      "reve_largest_free_block": {
+        "name": "REVE: найбільший вільний блок"
+      },
+      "reve_started": {
+        "name": "REVE: запущено"
       }
     },
     "binary_sensor": {

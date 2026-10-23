@@ -318,3 +318,100 @@ def test_the_coordinator_reads_the_station_flag(monkeypatch: pytest.MonkeyPatch)
 def test_the_measurements_read_asks_for_the_flag_but_does_not_require_it() -> None:
     assert "chargingManualControl" in reve.MEASUREMENTS_QUERY
     assert ("chargingManualControl",) not in reve._EXPECTED_PATHS
+
+
+# ---------------------------------------------------------------------------
+# Leaving manual mode (REVE_PLUS 1.0.3: write chargingManualControl false)
+# when Home Assistant turns Stop or One Charge off and both end up off
+# ---------------------------------------------------------------------------
+
+from test_reve_graphql_writes import _inputs  # noqa: E402
+
+
+def _in_manual_mode(monkeypatch: pytest.MonkeyPatch, command: int, flag: Any = True):
+    charger, updater = _known(monkeypatch)
+    _plugged(charger)
+    charger.charging_command = command
+    if flag is not None:
+        charger.station["chargingManualControl"] = flag
+    asyncio.run(updater._async_update_data())
+    charger.calls.clear()
+    return charger, updater
+
+
+def test_releasing_stop_leaves_manual_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_STOP)
+    assert updater.reve_manual_mode is True
+    assert _send(updater, "evseEnabled", 0) is True
+    assert _inputs(charger) == [{"chargingCommand": 1}, {"chargingManualControl": False}]
+    assert updater.reve_manual_mode is False
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_manual_mode is False
+
+
+def test_turning_one_charge_off_leaves_manual_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_CHARGE_NOW)
+    assert _send(updater, "oneCharge", 0) is True
+    assert _inputs(charger) == [{"chargingCommand": 1}, {"chargingManualControl": False}]
+    assert updater.reve_manual_mode is False
+
+
+def test_one_charge_off_while_stopped_stays_in_manual_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_STOP)
+    assert _send(updater, "oneCharge", 0) is True
+    assert _inputs(charger) == []
+    assert updater.reve_manual_mode is True
+
+
+def test_stopping_does_not_leave_manual_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_START)
+    assert _send(updater, "evseEnabled", 1) is True
+    assert _inputs(charger) == [{"chargingCommand": 2}]
+
+
+def test_older_reve_is_not_told_to_leave(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REVE_PLUS 1.0.0 reports no flag: only the command, as before."""
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_STOP, flag=None)
+    assert _send(updater, "evseEnabled", 0) is True
+    assert _inputs(charger) == [{"chargingCommand": 1}]
+    assert updater.reve_manual_mode is True
+
+
+def test_outside_manual_mode_nothing_more_is_written(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_START, flag=False)
+    assert _send(updater, "evseEnabled", 0) is True
+    assert _inputs(charger) == [{"chargingCommand": 1}]
+
+
+def test_a_read_alone_never_leaves_manual_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The app's Pause then Resume: both off, the station still in manual mode."""
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_START)
+    asyncio.run(updater._async_update_data())
+    assert _inputs(charger) == []
+    assert updater.reve_manual_mode is True
+
+
+def test_the_station_refusing_to_leave_shows_on_the_next_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _in_manual_mode(monkeypatch, reve._COMMAND_STOP)
+    assert _send(updater, "evseEnabled", 0) is True
+    charger.station["chargingManualControl"] = True
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_manual_mode is True
+
+
+def test_manual_control_is_supported_once_the_station_reports_it() -> None:
+    manual = reve.ManualMode()
+    assert manual.supported is False
+    manual.report(None)
+    assert manual.supported is False
+    manual.report(False)
+    manual.report(None)
+    assert manual.supported is True
+
+
+def test_a_stop_keeps_the_station_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _known(monkeypatch)
+    charger.rates["activeRate"] = 0
+    asyncio.run(updater._async_update_data())
+    assert _send(updater, "evseEnabled", 1) is True
+    assert updater._reve.extras.active_rate == 0

@@ -479,7 +479,7 @@ class _Charger:
         """GraphQL settings reads: alone or with the measurements."""
         return sum(
             1 for path, body in self.calls
-            if path == "/graphql" and "ratesV2" in body["query"]
+            if path == "/graphql" and " rates {" in body["query"]
         )
 
 

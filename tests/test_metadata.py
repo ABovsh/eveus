@@ -194,6 +194,9 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
     )
     expected["binary_sensor"].add(_slug(EveusReveApiBinarySensor.ENTITY_NAME))
     expected["binary_sensor"].add(_slug(EveusManualModeBinarySensor.ENTITY_NAME))
+    from custom_components.eveus.reve_sensors import STATION_SENSOR_NAMES
+    for name in STATION_SENSOR_NAMES:
+        expected["sensor"].add(_slug(name))
     return expected
 
 

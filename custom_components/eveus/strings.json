@@ -296,6 +296,18 @@
       },
       "last_session_duration": {
         "name": "Last Session Duration"
+      },
+      "reve_free_memory": {
+        "name": "REVE Free Memory"
+      },
+      "reve_min_free_memory": {
+        "name": "REVE Min Free Memory"
+      },
+      "reve_largest_free_block": {
+        "name": "REVE Largest Free Block"
+      },
+      "reve_started": {
+        "name": "REVE Started"
       }
     },
     "binary_sensor": {

@@ -439,11 +439,14 @@ energy and cost limits. The charger enters it after:
 
 A limit that stops charging by itself does not start manual mode. Manual mode
 ends when you pull the connector out of the car. After you plug it back in,
-the schedules and limits apply again.
+the schedules and limits apply again. From REVE_PLUS 1.0.3 it also ends when
+you turn **Stop Charging** or **One Charge** off in Home Assistant and both are
+off.
 
 What this means in practice:
 
-- Turning **Stop Charging** or **One Charge** off does not end manual mode: the charger keeps ignoring its schedules and limits until the connector is pulled out.
+- On REVE_PLUS 1.0.3, turning **Stop Charging** or **One Charge** off in Home Assistant, with the other one off too, ends manual mode: the schedules and limits apply again, so outside a schedule window the charge waits for it. A stop and resume in the charger's app leaves the charger in manual mode.
+- On earlier REVE versions, turning **Stop Charging** or **One Charge** off does not end manual mode: the charger keeps ignoring its schedules and limits until the connector is pulled out.
 - From REVE_PLUS 1.0.3 the charger reports the mode, and **Manual Mode** shows what it reports. Earlier REVE versions do not report it, so the sensor follows the commands the integration sees or sends, and turns off when the connector is pulled out. It keeps its state through a Home Assistant restart, unless the connector was pulled out meanwhile.
 - While **Manual Mode** is on, the card says that schedules and limits are ignored.
 
@@ -459,9 +462,10 @@ What this means in practice:
 
 - **Adaptive Mode** has Off, Voltage and Auto; REVE has no Power option.
 - **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app. Their days of the week are changed on the card; the days set in the app are kept. The card also lists the other schedules and the tariffs that are set up in the app. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
-- **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. While REVE's third or fourth rate is in effect, it gives that rate's price; those rates have no entities of their own. **Cost to Target SOC** follows the first two rates' hours and the schedules' hours, not their days of the week.
-- **Counter A Cost** and **Counter B Cost** do not increase on REVE: the charger counts the energy of counters A and B, but not their cost. After a counter is reset its cost stays at 0; without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
+- **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price the charger reports as in effect (REVE_PLUS 1.0.3), or on earlier versions the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. While REVE's third or fourth rate is in effect, it gives that rate's price; those rates have no entities of their own. **Cost to Target SOC** follows the first two rates' hours and the schedules' hours, not their days of the week.
+- **Counter A Cost** and **Counter B Cost** increase from REVE_PLUS 1.0.3. On earlier REVE versions the charger counts the energy of counters A and B, but not their cost: after a counter is reset its cost stays at 0, and without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
+- From REVE_PLUS 1.0.3, four diagnostic sensors show the charger's memory and when it last started: **REVE Free Memory**, **REVE Min Free Memory**, **REVE Largest Free Block** and **REVE Started**. They are for troubleshooting and are disabled by default; enable them on the device page.
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
 - REVE does not report **Leakage Current**, **Leakage Current Peak** or **OCPP Connected**, so they stay unavailable. **Plug Temperature** has a value from REVE_PLUS 1.0.3; on earlier REVE versions it stays unavailable.
 

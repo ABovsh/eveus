@@ -196,6 +196,15 @@ _RATE_FIELDS: Final = """
                     enabled
                     value
                 }
+                activeRate
+            }"""
+# The price in effect, which REVE_PLUS 1.0.3 reports (older firmware answers
+# it with nothing): read with every measurements read, so Active Rate Cost
+# turns with the station at a rate boundary rather than at the next settings
+# read.
+_ACTIVE_RATE_FIELD: Final = """
+            ratesV2 {
+                activeRate
             }"""
 
 # What REVE_PLUS 1.0.3 adds to stationData: whether the station is in manual
@@ -290,7 +299,7 @@ def _station_query(fields: str) -> str:
     return f"query StationData {{\n        stationData {{{fields}\n        }}\n    }}"
 
 
-MEASUREMENTS_QUERY: Final = _station_query(_MEASUREMENT_FIELDS)
+MEASUREMENTS_QUERY: Final = _station_query(_MEASUREMENT_FIELDS + _ACTIVE_RATE_FIELD)
 # A poll that is due for the settings asks for them in its measurements read:
 # one request answered in ~90 ms against ~80 ms for the measurements alone
 # (live, 2026-10-18), where the settings used to take three more.
@@ -394,6 +403,9 @@ class ReveExtras:
     rates: tuple[dict[str, Any], ...]
     # The last start/stop command; None when REVE did not report a usable one.
     charging_command: int | None = None
+    # The price in effect as the station reports it (REVE_PLUS 1.0.3); None
+    # when it does not.
+    active_rate: float | None = None
 
 
 def _bool(value: Any) -> bool:
@@ -438,6 +450,13 @@ def _weekdays(value: Any) -> list[int]:
     if mask > 127:
         raise ValueError("weekday mask out of range")  # pragma: no mutate - message text; only the exception type is ever logged
     return [day for day in range(7) if mask & (1 << day)]  # pragma: no mutate - a mask of at most 127 has no bit 7
+
+
+def _price(value: Any) -> float | None:
+    """A price the station reports, or ``None`` for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) and value >= 0 else None
 
 
 def _limit_reading(value: Any) -> int | float | None:
@@ -542,6 +561,7 @@ def parse_extras(data: Any) -> ReveExtras:
             if type(command) is int and command in _CHARGING_COMMANDS
             else None
         ),
+        active_rate=_price(rates.get("activeRate")),
     )
 
 
@@ -618,6 +638,23 @@ def active_rate_index(rates: tuple[dict[str, Any], ...], clock: int) -> int | No
     return 0
 
 
+def station_rate_index(extras: ReveExtras, reckoned: int | None) -> int | None:
+    """``activeTarif`` for the price the station says is in effect: the rate
+    the windows name when it has that price, else the first enabled rate with
+    it, else the base price; ``None`` when nothing has it."""
+    price = _hundredths(extras.active_rate)
+    matches = [
+        index
+        for index, item in enumerate(extras.rates, start=1)
+        if item["enabled"] and _hundredths(item["value"]) == price
+    ]
+    if _hundredths(extras.base_rate) == price:
+        matches.append(0)
+    if reckoned in matches:
+        return reckoned
+    return matches[0] if matches else None
+
+
 def _reported(station: Mapping[str, Any], path: tuple[str, ...]) -> bool:
     """Whether the reply has the field: present, or under an object the
     server reported as ``null``."""
@@ -629,6 +666,21 @@ def _reported(station: Mapping[str, Any], path: tuple[str, ...]) -> bool:
             return False
         node = node[name]
     return True
+
+
+# How far the start time computed from one read's uptime may stray from the
+# last before it counts as a restart: request latency and the poll's own
+# timing move it by a second or two, a restart by at least the boot time.
+STARTED_TOLERANCE_SECONDS: Final = 60
+
+
+def station_started(previous: float | None, now: float, uptime_ms: int) -> int:
+    """When the station started, in whole epoch seconds: ``now`` less its
+    uptime, keeping ``previous`` while the two agree within the tolerance."""
+    started = round(now - uptime_ms / 1000)
+    if previous is not None and abs(started - previous) <= STARTED_TOLERANCE_SECONDS:
+        return int(previous)
+    return started
 
 
 def _station_system(station: Mapping[str, Any]) -> dict[str, Any]:
@@ -673,6 +725,8 @@ def normalize_reve_payload(
         payload.update(_rate_projection(extras))
         clock = _wall_clock(main)
         active = None if clock is None else active_rate_index(extras.rates, clock)
+        if extras.active_rate is not None:
+            active = station_rate_index(extras, active)
         if active is not None:
             payload["activeTarif"] = active
             # The name its owner gave the rate in the charger's app; the base
@@ -755,11 +809,26 @@ class ManualMode:
         self._session_time: float | None = None
         self._unplugged = False
         self._reported: bool | None = None
+        self._supported = False
+
+    @property
+    def supported(self) -> bool:
+        """Whether the station has ever reported the flag, and so can be told
+        to leave manual mode (REVE_PLUS 1.0.3)."""
+        return self._supported
 
     def report(self, value: Any) -> None:
         """The station's own flag from this poll's GraphQL read; anything but a
         boolean (older firmware, a ``/main`` poll) is no flag."""
         self._reported = value if isinstance(value, bool) else None
+        if self._reported is not None:
+            self._supported = True
+
+    def left(self) -> None:
+        """Home Assistant told the station to leave manual mode; the next read
+        says whether it did."""
+        self._on = False
+        self._reported = None
 
     @property
     def on(self) -> bool:
@@ -886,6 +955,7 @@ class ReveApi:
         self._limit_values: dict[str, int | float] = {}
         self.manual_mode = ManualMode()
         self._station_system: dict[str, Any] = {}
+        self._started_at: int | None = None
 
     @property
     def extras(self) -> ReveExtras | None:
@@ -976,8 +1046,13 @@ class ReveApi:
             time.monotonic(),
         )
         self._note_charging_command(station.get("chargingCommand"))
+        rates = station.get("ratesV2")
+        self._note_active_rate(_price(rates.get("activeRate")) if isinstance(rates, dict) else None)
         self.manual_mode.report(station.get(_MANUAL_CONTROL))
         self._station_system = _station_system(station)
+        uptime = station.get(_UPTIME)
+        if type(uptime) is int:
+            self._started_at = station_started(self._started_at, time.time(), uptime)
         return main
 
     def _check_fields(self, station: Mapping[str, Any]) -> None:
@@ -1047,6 +1122,10 @@ class ReveApi:
         self.keep_main_residue(main)
         self._last_source = "main"
         self.manual_mode.report(None)
+        # A /main poll says nothing of the memory or the price now; the start
+        # time stands, and the rate windows decide the price.
+        self._station_system = {}
+        self._note_active_rate(None)
         if fallback:
             self._main_fallbacks += 1
         payload = {key: value for key, value in main.items() if key not in SESSION_FIELDS}
@@ -1057,6 +1136,11 @@ class ReveApi:
 
     def _residue_fresh(self, now: float) -> bool:
         return self._residue_at is not None and now - self._residue_at <= MAIN_RESIDUE_MAX_AGE_SECONDS
+
+    def _note_active_rate(self, price: float | None) -> None:
+        extras = self._extras
+        if extras is not None and extras.active_rate != price:
+            self._extras = replace(extras, active_rate=price)
 
     def _note_charging_command(self, command: Any) -> None:
         extras = self._extras
@@ -1162,8 +1246,12 @@ class ReveApi:
         await self._mutate({"stationCurrent": _whole(value)})
 
     async def set_stop(self, value: Any) -> None:
-        """Stop (1) or release (0) charging the way the vendor app does."""
-        await self._write_charging_command(_COMMAND_STOP if _bool(value) else _COMMAND_START)
+        """Stop (1) or release (0) charging the way the vendor app does; a
+        release also leaves manual mode where the station can be told to."""
+        stop = _bool(value)
+        await self._write_charging_command(_COMMAND_STOP if stop else _COMMAND_START)
+        if not stop:
+            await self._leave_manual_mode()
 
     async def set_one_charge(self, value: Any) -> None:
         """Charge now, ignoring the schedules, the way the vendor app's Start
@@ -1175,15 +1263,27 @@ class ReveApi:
         extras = self._extras
         if extras is not None and extras.charging_command == _COMMAND_CHARGE_NOW:
             await self._write_charging_command(_COMMAND_START)
+        extras = self._extras
+        if extras is not None and extras.charging_command == _COMMAND_START:
+            await self._leave_manual_mode()
+
+    async def _leave_manual_mode(self) -> None:
+        """With Stop and One Charge both off, back to the schedules and limits
+        without unplugging, as on Eveus firmware (Anton, 2026-10-23). Only
+        REVE_PLUS 1.0.3 can be told to; older REVE stays in manual mode until
+        the car is unplugged. Never done on a read alone: the app's Pause then
+        Resume also leaves both off, and its user expects the charge to go on."""
+        if not (self.manual_mode.supported and self.manual_mode.on):
+            return
+        await self._mutate({_MANUAL_CONTROL: False})
+        self.manual_mode.left()
 
     async def _write_charging_command(self, command: int) -> None:
         await self._mutate({"chargingCommand": command})
         self.manual_mode.command(command)
         extras = self._extras
         if extras is not None:
-            self._store(
-                ReveExtras(extras.schedules, extras.base_rate, extras.rates, command)
-            )
+            self._store(replace(extras, charging_command=command))
 
     async def write_schedule(self, command: str, value: Any) -> None:
         # Read right before writing: the list is replaced whole, and the app
@@ -1194,14 +1294,10 @@ class ReveApi:
             current = await self._read_extras()
         else:
             schedules = parse_schedules(await self._station(SCHEDULES_QUERY))
-            current = ReveExtras(schedules, held.base_rate, held.rates, held.charging_command)
+            current = replace(held, schedules=schedules)
         updated = apply_schedule_command(list(current.schedules), command, value)
         await self._mutate({"scheduleV2": updated})
-        self._store(
-            ReveExtras(
-                tuple(updated), current.base_rate, current.rates, current.charging_command
-            )
-        )
+        self._store(replace(current, schedules=tuple(updated)))
 
     async def _refuse(self, command: str, _value: Any) -> None:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged
@@ -1216,6 +1312,15 @@ class ReveApi:
         if self._answered:
             return True
         return False if self._failure_streak else None
+
+    @property
+    def station_system(self) -> dict[str, Any]:
+        """The last GraphQL read's memory figures (bytes) and the station's
+        start time (``started_at``, epoch seconds), as far as reported."""
+        system = dict(self._station_system)
+        if self._started_at is not None:
+            system["started_at"] = self._started_at
+        return system
 
     def diagnostics(self) -> dict[str, Any]:
         extras = self.extras
