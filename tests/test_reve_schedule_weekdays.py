@@ -297,3 +297,42 @@ def test_the_days_command_writes_to_the_charger_the_card_names() -> None:
     assert first.sent == []
     assert second.sent == [("sh1Weekdays", [0, 2])]
     connection.send_result.assert_called_once_with(3, {"weekdays": [0, 2]})
+
+
+class _NewDevice:
+    """A DeviceEntry of a Home Assistant that has ``config_entry_id``: reading
+    ``config_entries`` is deprecated there and stops working in 2027.10."""
+
+    def __init__(self, entry_id: str) -> None:
+        self.config_entry_id = entry_id
+
+    @property
+    def config_entries(self) -> set[str]:
+        raise AssertionError("DeviceEntry.config_entries is deprecated")
+
+
+def _registry(device: Any):
+    registry = SimpleNamespace(async_get=lambda device_id: device)
+    return patch.object(eveus.dr, "async_get", return_value=registry)
+
+
+def test_a_device_with_one_config_entry_id_finds_its_charger_without_the_deprecated_set() -> None:
+    first = SimpleNamespace(reve_card_schedules=lambda: {"reve": False})
+    second = SimpleNamespace(reve_card_schedules=lambda: {"reve": True, "read_age_seconds": 3})
+    connection = MagicMock()
+    with _registry(_NewDevice("e2")):
+        eveus._ws_reve_schedules(
+            _ws_hass({"e1": first, "e2": second}), connection,
+            {"id": 5, "type": "eveus/reve_schedules", "device_id": "dev2"},
+        )
+    connection.send_result.assert_called_once_with(5, {"reve": True, "read_age_seconds": 3})
+
+
+def test_a_device_of_another_integration_entry_is_not_taken_for_a_charger() -> None:
+    connection = MagicMock()
+    with _registry(_NewDevice("somebody-else")):
+        eveus._ws_reve_schedules(
+            _ws_hass({"e1": SimpleNamespace(reve_card_schedules=lambda: {"reve": False})}), connection,
+            {"id": 5, "type": "eveus/reve_schedules", "device_id": "dev9"},
+        )
+    assert connection.send_error.call_args[0][1] == "not_found"

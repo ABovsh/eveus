@@ -704,3 +704,14 @@ def price_energy_in_schedules(
         cost += drawn * rate
         left -= drawn
     return cost
+
+
+def device_entry_ids(device: Any) -> tuple[str, ...]:
+    """The config entries a registry device belongs to. A device belongs to one:
+    newer Home Assistant says so in ``config_entry_id`` and deprecates (to stop
+    in 2027.10) the ``config_entries`` set that older versions, down to the
+    manifest floor, have only."""
+    owner = getattr(device, "config_entry_id", None)
+    if owner is not None:
+        return (owner,)
+    return tuple(device.config_entries)

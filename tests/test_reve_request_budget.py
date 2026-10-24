@@ -8,9 +8,11 @@ measurements come from ``/main`` — is one document, not three.
 ``chargingCommand`` is part of every measurements read already.
 
 ``/main`` stays for the fields GraphQL has no place for. Of those, the
-adaptive current moves during a charge (7 → 11 → 16 → 10 A on 2026-10-16/17,
-each change landing on the five-minute read), so while an adaptive charge runs
-``/main`` is read on every poll, as on classic firmware.
+adaptive current moves during a charge (7 → 11 → 16 → 10 A on 2026-10-16/17),
+so while an adaptive charge runs ``/main`` is read once a minute. It changed
+2.6 times an hour over 16 charging hours (median gap 370 s, only the start ramp
+moves within seconds), so a minute loses nothing a chart can show and an
+adaptive hour costs 180 requests, not 240.
 
 REVE API reports a server that stopped answering, not a single missed reply:
 one failed read turned it off for 30 s seven times on 2026-10-17.
@@ -175,18 +177,56 @@ def _charging(charger: _Charger, *, adaptive: int = 1) -> None:
     charger.main["aiStatus"] = adaptive
 
 
-def test_an_adaptive_charge_reads_main_on_every_poll(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clock(monkeypatch)
+def test_an_adaptive_charge_reads_main_every_minute(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = _clock(monkeypatch)
     charger = _Charger(_reve_main())
     updater = _known_reve(monkeypatch, charger)
     _charging(charger)
 
-    asyncio.run(updater._async_update_data())
-    charger.main["aiModecurrent"] = 11
-    data = asyncio.run(updater._async_update_data())
+    seen = []
+    for poll in range(4):
+        now[0] += 30
+        charger.main["aiModecurrent"] = 11 + poll
+        data = asyncio.run(updater._async_update_data())
+        seen.append((charger.paths()[-1], data["aiModecurrent"]))
+        charger.calls.clear()
 
-    assert charger.paths() == ["/graphql", "/main", "/graphql", "/main"]
-    assert data["aiModecurrent"] == 11
+    # Polls at +30 and +90 s leave /main alone and show the figure of the
+    # read before (the first one's is the 7 A of the setup read); +60 and
+    # +120 s read it.
+    assert seen == [("/graphql", 7), ("/main", 12), ("/graphql", 12), ("/main", 14)]
+
+
+def test_an_adaptive_hour_costs_120_graphql_and_60_main_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    _charging(charger)
+
+    for _ in range(120):
+        now[0] += 30
+        asyncio.run(updater._async_update_data())
+
+    assert charger.paths().count("/graphql") == 120
+    assert charger.paths().count("/main") == 60
+
+
+def test_main_is_read_after_fifty_seconds_not_before(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The poll cadence wanders by a second or two; 50 s keeps every second poll
+    # on the minute without a late one skipping a whole extra cycle.
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    _charging(charger)
+
+    now[0] += reve.ADAPTIVE_MAIN_REFRESH_SECONDS - 1
+    asyncio.run(updater._async_update_data())
+    assert charger.paths() == ["/graphql"]
+    now[0] += 1
+    asyncio.run(updater._async_update_data())
+    assert charger.paths() == ["/graphql", "/graphql", "/main"]
 
 
 @pytest.mark.parametrize(("state", "adaptive"), [(4, 0), (2, 1), (5, 1)])
@@ -211,12 +251,13 @@ def test_main_waits_five_minutes_unless_an_adaptive_charge_runs(
 
 
 def test_a_paused_adaptive_session_still_reads_main(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clock(monkeypatch)
+    now = _clock(monkeypatch)
     charger = _Charger(_reve_main())
     updater = _known_reve(monkeypatch, charger)
     charger.station["stationState"] = 6
     charger.station["adaptiveModeStatus"] = 2
 
+    now[0] += 60
     asyncio.run(updater._async_update_data())
 
     assert charger.paths() == ["/graphql", "/main"]
@@ -232,13 +273,16 @@ def test_a_main_that_fails_during_an_adaptive_charge_is_asked_every_five_minutes
     _charging(charger)
     charger.main_status = 500
 
+    now[0] += 60
     asyncio.run(updater._async_update_data())
+    now[0] += 60
     asyncio.run(updater._async_update_data())
     assert charger.paths() == ["/graphql", "/main", "/graphql"]
 
     charger.main_status = 200
     now[0] += reve.MAIN_RESIDUE_REFRESH_SECONDS
     asyncio.run(updater._async_update_data())
+    now[0] += 60
     asyncio.run(updater._async_update_data())
     assert charger.paths()[3:] == ["/graphql", "/main", "/graphql", "/main"]
 
@@ -317,3 +361,9 @@ def test_settings_reads_that_keep_failing_turn_reve_api_off_and_keep_it_off(
     now[0] += reve.EXTRAS_RETRY_SECONDS
     asyncio.run(updater._async_update_data())
     assert updater.reve_api_answering is True
+
+
+def test_a_fresh_reve_api_reads_main_at_once() -> None:
+    from types import SimpleNamespace
+
+    assert reve.ReveApi(SimpleNamespace()).main_residue_due() is True

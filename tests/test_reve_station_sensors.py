@@ -153,3 +153,77 @@ def test_the_sensors_appear_when_the_charger_first_answers_as_reve(
     updater.async_update_listeners()
     ids = [e.unique_id for e in added]
     assert all(ids.count(f"eveus_{k}") == 1 for k in _KEYS)
+
+
+def _read(updater: Any, station: list[Any], charger: Any, **heap: int) -> dict[str, Any]:
+    charger.station.update(heap)
+    asyncio.run(updater._async_update_data())
+    for entity in station:
+        entity._handle_coordinator_update()
+    return _by_key(station)
+
+
+def test_free_memory_does_not_flip_between_neighbouring_kib(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 463 rows a day for 10 distinct values: the figure wanders by 1 KiB between
+    # polls, and whole-KiB rounding made every wander a row.
+    _wall(monkeypatch)
+    charger, updater = _known(monkeypatch)
+    charger.station.update(_SYSTEM)
+    asyncio.run(updater._async_update_data())
+    station, _ = _sensors(updater)
+    for entity in station:
+        entity._handle_coordinator_update()
+
+    shown = []
+    for free in (17 * 1024, 18 * 1024, 17 * 1024, 18 * 1024, 16 * 1024 + 700):
+        sensors = _read(updater, station, charger, heapFreeSize=free)
+        shown.append(sensors["reve_free_memory"].native_value)
+    # The first read moves 19 -> 17 (a step of two publishes); after it the
+    # 17 <-> 18 wander is held.
+    assert shown == [17, 17, 17, 17, 17]
+
+
+def test_free_memory_follows_a_move_of_two_kib_and_holds_from_there(monkeypatch: pytest.MonkeyPatch) -> None:
+    _wall(monkeypatch)
+    charger, updater = _known(monkeypatch)
+    charger.station.update({**_SYSTEM, "heapFreeSize": 17 * 1024})
+    asyncio.run(updater._async_update_data())
+    station, _ = _sensors(updater)
+    for entity in station:
+        entity._handle_coordinator_update()
+
+    assert _read(updater, station, charger, heapFreeSize=18 * 1024)["reve_free_memory"].native_value == 17
+    assert _read(updater, station, charger, heapFreeSize=19 * 1024)["reve_free_memory"].native_value == 19
+    assert _read(updater, station, charger, heapFreeSize=20 * 1024)["reve_free_memory"].native_value == 19
+
+
+def test_the_minimum_and_the_largest_block_are_not_held(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The minimum only ever falls and the block moves in real 2-4 KiB steps.
+    _wall(monkeypatch)
+    charger, updater = _known(monkeypatch)
+    charger.station.update(_SYSTEM)
+    asyncio.run(updater._async_update_data())
+    station, _ = _sensors(updater)
+    for entity in station:
+        entity._handle_coordinator_update()
+
+    sensors = _read(updater, station, charger, heapMinFreeSize=2 * 1024, heapLargestFreeBlock=11 * 1024)
+    assert sensors["reve_min_free_memory"].native_value == 2
+    assert sensors["reve_largest_free_block"].native_value == 11
+
+
+def test_each_station_sensor_has_its_icon_and_belongs_to_its_charger(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_components.eveus import reve_sensors
+
+    _charger, updater = _known(monkeypatch)
+    first = reve_sensors.create_reve_station_sensors(updater)
+    second = reve_sensors.create_reve_station_sensors(updater, 2)
+
+    assert [e.icon for e in first[:3]] == [icon for _name, _key, icon in reve_sensors._MEMORY]
+    assert first[3].icon == "mdi:restart"
+    assert [type(e) for e in first] == [
+        reve_sensors.ReveFreeMemorySensor, reve_sensors.ReveMemorySensor,
+        reve_sensors.ReveMemorySensor, reve_sensors.ReveStartedSensor,
+    ]
+    assert {e.unique_id for e in first}.isdisjoint({e.unique_id for e in second})
+    assert len({e.unique_id for e in second}) == 4

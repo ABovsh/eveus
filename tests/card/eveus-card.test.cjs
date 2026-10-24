@@ -437,7 +437,7 @@ test('safety row tint: good when everything is fine, bad the moment one reading 
 });
 
 // ---------- Status, Actions and the card-level alert strip ----------
-function setupStatus({state='Charging',reason='Charging',substate='No Limits',stop='off',one='off',ocpp='off',sections=['status','actions'],changed}={}) {
+function setupStatus({state='Charging',reason='Charging',substate='No Limits',stop='off',one='off',ocpp='off',sections=['status','actions'],changed,reve=false}={}) {
   const registry = {}, timers = new Map(); let timer = 0;
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
@@ -451,12 +451,27 @@ function setupStatus({state='Charging',reason='Charging',substate='No Limits',st
     'switch.stop':st(stop),'switch.one':st(one),'switch.ocpp':st(ocpp)};
   const entities = {state:'sensor.state',not_charging_reason:'sensor.reason',substate:'sensor.sub',
     stop_charging:'switch.stop',one_charge:'switch.one',connect_to_ocpp:'switch.ocpp'};
+  // REVE is the charger that has a REVE API sensor.
+  if(reve){ states['binary_sensor.api']=st('on'); entities.reve_api='binary_sensor.api'; }
   const calls=[];
   const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
   card._ids=entities;card._resolved=true;card.hass=hass;
   const html=()=>card.shadowRoot.innerHTML.replace(/<style>[\s\S]*?<\/style>/,'');
   return {card,states,calls,hass,timers,html};
 }
+
+test('REVE has no OCPP button: the card offers One charge and Stop only, and Eveus firmware keeps all three',()=>{
+  const r=setupStatus({sections:['actions'],reve:true});
+  const a=r.html();
+  assert.doesNotMatch(a,/connect_to_ocpp/);
+  assert.doesNotMatch(a,/>OCPP</);
+  for(const k of ['one_charge','stop_charging']) assert.match(a,new RegExp(`data-status-toggle="${k}"`));
+  assert.match(a,/>One charge<[^]*>Stop</);
+  // The switch is still there for anything else that uses it; the card just does not offer it.
+  assert.equal(r.card._ids.connect_to_ocpp,'switch.ocpp');
+  const e=setupStatus({sections:['actions']}).html();
+  assert.match(e,/data-status-toggle="connect_to_ocpp"/);
+});
 
 test('status is one full-width row with state and note; OCPP/One/Stop live in their own Actions section',()=>{
   const s=setupStatus({sections:['status']}).html();

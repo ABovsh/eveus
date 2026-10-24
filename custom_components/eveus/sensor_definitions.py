@@ -47,6 +47,7 @@ from .const import (
     LEGACY_RAW_STATE_KEY,
     MAX_SCHEDULE_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
+    METER_PUBLISH_BAND_KWH,
     TIME_DRIFT_TOLERANCE_SECONDS,
     TIME_DRIFT_QUANTUM_SECONDS,
 )
@@ -116,6 +117,12 @@ class EveusSensorEntityDescription(SensorEntityDescription, frozen_or_thawed=Tru
     # Raw coordinator data stays live; only these accumulated meters publish
     # ordinary growth once per UTC minute, with terminal/reset flushes.
     minute_publication: bool = False
+    # On top of the minute, ordinary growth waits until the ENERGY under
+    # `publish_band_key` has grown by `publish_band` kWh since the last write.
+    # A cost names the energy it is paid for, so it writes with that energy
+    # whatever the price. No energy reading -> the minute alone decides.
+    publish_band_key: Optional[str] = None
+    publish_band: float = METER_PUBLISH_BAND_KWH
 
 
 class OptimizedEveusSensor(EveusSensorBase):
@@ -142,6 +149,7 @@ class OptimizedEveusSensor(EveusSensorBase):
         self._meter_bucket = None
         self._publication_override = False
         self._publication_value = None
+        self._band_anchor = None
 
     def _publish_meter_value(self, value) -> None:
         """Use the normal availability, cost-reset and write-on-change path."""
@@ -173,13 +181,29 @@ class OptimizedEveusSensor(EveusSensorBase):
             # Publish the last observed tail BEFORE a reset/new window. Both
             # rows go through MonetaryCostSensor's last_reset bookkeeping.
             self._publish_meter_value(self._meter_latest)
-        publish = terminal or self._meter_bucket != bucket or self._attr_native_value is None
+        banded = snapshot.get(self._spec.publish_band_key) if self._spec.publish_band_key else None
+        publish = (
+            terminal
+            or self._attr_native_value is None
+            or (self._meter_bucket != bucket and self._band_reached(banded))
+        )
         self._publish_meter_value(value if publish else self._attr_native_value)
         if publish:
             self._meter_bucket = bucket
+            self._band_anchor = banded
         self._meter_latest = value
         self._meter_context = context
         self._meter_clock = clock
+
+    def _band_reached(self, energy: Any) -> bool:
+        """Whether the energy has grown by the band since the last write; true
+        when there is nothing to measure it against."""
+        # The snapshot hands over a bounded number or None, nothing else.
+        if self._band_anchor is None or energy is None:
+            return True
+        # Rounding absorbs float noise (10.1 - 10.0 is 0.0999...96); any digit
+        # count from 3 to 9 does the same for a 0.01 kWh meter.
+        return round(energy - self._band_anchor, 6) >= self._spec.publish_band  # pragma: no mutate
 
     async def async_will_remove_from_hass(self) -> None:
         """Flush the latest observed meter before an orderly unload/restart."""
@@ -1206,6 +1230,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             state_class=state_class,
             native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
             minute_publication=True,
+            publish_band_key=fn.source_keys[0],
             suggested_display_precision=2,
         )
         for name, fn, icon, state_class, device_class in energy_sensors
@@ -1349,6 +1374,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True, minute_publication=True,
+            publish_band_key="IEM1",
         ),
         EveusSensorEntityDescription(
             key="counter_b_cost", name="Counter B Cost", value_fn=get_counter_b_cost,
@@ -1356,6 +1382,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True, minute_publication=True,
+            publish_band_key="IEM2",
         ),
         EveusSensorEntityDescription(
             # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
@@ -1404,6 +1431,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True, minute_publication=True,
+            publish_band_key="sessionEnergy",
         ),
         EveusSensorEntityDescription(
             key="adaptive_charging", name="Adaptive Charging",

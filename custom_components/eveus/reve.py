@@ -342,9 +342,13 @@ MAIN_ONLY_FIELDS: Final[frozenset[str]] = frozenset(
 MAIN_RESIDUE_REFRESH_SECONDS: Final = 300
 MAIN_RESIDUE_MAX_AGE_SECONDS: Final = 3600
 # The adaptive current is one of them, and it moves while an adaptive charge
-# runs (7 -> 11 -> 16 -> 10 A on 2026-10-16/17, each change landing on the
-# five-minute read). During such a session /main is read on every poll, as on
-# classic firmware, for as long as its last read answered.
+# runs (7 -> 11 -> 16 -> 10 A on 2026-10-16/17). During such a session /main is
+# read about once a minute for as long as its last read answered: the current
+# changed 2.6 times an hour over 16 charging hours (median gap 370 s; only the
+# start ramp moves within seconds), so a minute shows every change a chart can
+# draw at half the requests of one read per 30 s poll. 50 s, not 60, so a poll
+# a second late does not push the read to the poll after it.
+ADAPTIVE_MAIN_REFRESH_SECONDS: Final = 50
 
 # How many GraphQL reads in a row must fail before REVE API reports the
 # server down: one missed reply turned it off for 30 s seven times on
@@ -1091,12 +1095,16 @@ class ReveApi:
     def main_residue_due(self, measurements: Mapping[str, Any] | None = None) -> bool:
         """Whether a GraphQL poll should also read ``/main`` for its own fields:
         every five minutes, whether or not the last try found ``/main``, and
-        on every poll of an adaptive session while ``/main`` answers."""
+        once a minute in an adaptive session while ``/main`` answers."""
         tried = self._residue_tried_at
-        if tried is None or time.monotonic() - tried >= MAIN_RESIDUE_REFRESH_SECONDS:
+        if tried is None:
+            return True
+        elapsed = time.monotonic() - tried
+        if elapsed >= MAIN_RESIDUE_REFRESH_SECONDS:
             return True
         return (
-            self._residue_answered
+            elapsed >= ADAPTIVE_MAIN_REFRESH_SECONDS
+            and self._residue_answered
             and measurements is not None
             and measurements.get("state") in SESSION_ACTIVE_STATES
             and measurements.get("aiStatus") not in (None, 0)

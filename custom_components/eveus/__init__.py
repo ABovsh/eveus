@@ -77,6 +77,7 @@ from .issues import (
     update_reve_fields_issue,
 )
 from .utils import (
+    device_entry_ids,
     get_device_suffix,
     get_next_device_number,
     is_device_number_taken,
@@ -330,7 +331,7 @@ def _updater_for(hass: HomeAssistant, device_id: str | None) -> EveusUpdater | N
         data = getattr(entry, "runtime_data", None)
         if data is None:
             continue
-        if device_id is None or (device is not None and entry.entry_id in device.config_entries):
+        if device_id is None or (device is not None and entry.entry_id in device_entry_ids(device)):
             return data.updater
     return None
 

@@ -29,22 +29,25 @@
 - **Dashboard 2.0: standard Home Assistant cards only, plus a REVE variant.** The power and current graphs are built-in trend graphs, so `mini-graph-card` is no longer needed; the dashboard needs Home Assistant 2025.10 or newer. `docs/dashboard.yaml` hides the cards of entities the firmware does not have; `docs/dashboard-reve.yaml` (Ukrainian: `docs/dashboard-reve-uk.yaml`) leaves them out and shows Manual Mode and REVE API. [Details](README.md#dashboard)
 - **Cost to Target SOC before a scheduled charge uses the tariffs of the schedule windows.** It priced everything at the tariff in effect now, so at 19:00 a charge that Schedule 1 runs at night showed the day rate (235 ₴ instead of 118 ₴ in one case).
 - **The log warns about a password sent over HTTP only when a password is set,** and no longer suggests HTTPS, which the charger does not serve.
+- **Energy and cost history updates only after 0.1 kWh.** Session, total and A/B energy and session and A/B cost were written once a minute while charging; they are now written at most once a minute and only after 0.1 kWh has been added since the last write (about every second minute at 3.6 kW, every minute from 6 kW). The end of a charge, a new session, a counter reset and an outage still write at once, so totals and the Energy dashboard stay exact; the hour a small amount falls into can shift by at most 0.1 kWh.
 - **REVE: a third fewer requests to the charger.** Schedules and tariffs come in the same request as the readings: 72 instead of 108 requests an hour while idle.
 - **REVE: the REVE API sensor turns off only when REVE's interface stops answering.** One missed reply turned it off for 30 seconds several times a day; it now takes two failed reads in a row.
 - **REVE: a setting REVE's interface did not answer says so.** The error asks to try again in a few minutes instead of saying the charger did not accept the change.
 - **Card: with nothing flowing, Meter is one slim voltage row** instead of zero power and current tiles.
 - **Card: the cost to go before a charge shows its price per kWh,** and the battery tile drops "from" until the SOC has moved.
 - **Card: Charger clock shows the charger's time while its clock is right,** instead of a drift of a few seconds. From 10 minutes off it shows the drift in red, next to Sync.
+- **Card, REVE: no OCPP button.** Buttons shows One charge and Stop only on REVE; the Connect to OCPP switch itself is unchanged.
 - **Card: the card redraws only the sections that changed,** so a tap during a charge is no longer lost to a redraw, and it does less work on each Home Assistant update.
 
 ### 🐛 Fixed
 
 - **A charger restart no longer counts Total Energy and the counters a second time.** A starting charger can report them as 0 for one poll; Home Assistant took that as a meter reset, so its energy statistics and any utility meter on Total Energy added the whole lifetime again (5,440 kWh in one day in one case). A lower reading is now kept back until it repeats in three polls; a counter reset from Home Assistant still shows at once.
+- **The log no longer warns about `DeviceEntry.config_entries`** when a device trigger of the charger is set up in an automation. Home Assistant 2026.10 and newer log it and stop supporting it in 2027.10.
 - **Last Session Duration shows whole seconds in Home Assistant's own cards.** Home Assistant gave it two decimals (5,748.00 s); the Eveus card was not affected.
 - **The dashboard install steps work.** The README sent the file, one view, to the raw configuration editor, which refused it with "At path: views - Expected an array value", and its indentation steps turned the sections into broken views. The file now goes into a new view through **Add view → Edit in YAML**, on a new or an existing dashboard, and has no fixed `path` that an existing view could already use.
 - **The dashboard's Adaptive Mode icon shows.** `mdi:shield-flash-outline` is not in Home Assistant's icon set, so it was an empty spot and Spook raised a repair.
 - **REVE: Active Rate Cost gives the price while REVE's third or fourth rate is in effect.** It was unavailable then, and so was Cost to Target SOC.
-- **REVE: Adaptive Current Limit follows an adaptive charge.** It lagged up to five minutes behind the charger; it is now read on every poll while such a charge runs.
+- **REVE: Adaptive Current Limit follows an adaptive charge.** It lagged up to five minutes behind the charger; it is now read once a minute while such a charge runs.
 
 ## 4.28.0 - 2026-10-18
 

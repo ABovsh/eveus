@@ -5,8 +5,10 @@ when its memory fragments, so these show how close it runs to that. They are
 created only for REVE and disabled by default: nobody needs them to charge.
 No ``state_class``: a fault is read off recent history, and long-term
 statistics would cost rows forever. Memory is published in whole KiB, so the
-byte-level churn of every poll does not reach the recorder; the start time
-moves only when the station restarts.
+byte-level churn of every poll does not reach the recorder, and Free Memory,
+which wanders by a KiB between polls, holds until it has moved by two (463 rows
+a day for 10 distinct values before); the start time moves only when the
+station restarts.
 """
 from __future__ import annotations
 
@@ -18,9 +20,14 @@ from homeassistant.const import EntityCategory, UnitOfInformation
 
 from .common_base import EveusSensorBase
 
+_FREE_MEMORY_KEY = "heap_free"
+# KiB. The minimum only falls and the largest block moves in real steps of 2-4
+# KiB, so only the free figure, which dithers, is held.
+_FREE_MEMORY_DEADBAND = 2
+
 # (name, key in the updater's reve_station_system, icon)
 _MEMORY: tuple[tuple[str, str, str], ...] = (
-    ("REVE Free Memory", "heap_free", "mdi:memory"),
+    ("REVE Free Memory", _FREE_MEMORY_KEY, "mdi:memory"),
     ("REVE Min Free Memory", "heap_min_free", "mdi:memory-arrow-down"),
     ("REVE Largest Free Block", "heap_largest_free_block", "mdi:view-grid-outline"),
 )
@@ -61,6 +68,10 @@ class ReveMemorySensor(_ReveStationSensor):
         return None if value is None else round(value / 1024)
 
 
+class ReveFreeMemorySensor(ReveMemorySensor):
+    _deadband = _FREE_MEMORY_DEADBAND
+
+
 class ReveStartedSensor(_ReveStationSensor):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
@@ -74,6 +85,11 @@ class ReveStartedSensor(_ReveStationSensor):
 
 def create_reve_station_sensors(updater, device_number: int = 1) -> list[_ReveStationSensor]:
     return [
-        *(ReveMemorySensor(updater, name, key, icon, device_number) for name, key, icon in _MEMORY),
+        *(
+            (ReveFreeMemorySensor if key == _FREE_MEMORY_KEY else ReveMemorySensor)(
+                updater, name, key, icon, device_number
+            )
+            for name, key, icon in _MEMORY
+        ),
         ReveStartedSensor(updater, device_number),
     ]

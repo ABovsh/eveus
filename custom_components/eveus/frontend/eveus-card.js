@@ -1703,7 +1703,9 @@ class EveusCard extends HTMLElement {
   }
   // Three big buttons: icon, name, and what the switch is doing now (or what a tap will do).
   _actionsSection() {
-    const buttons = STATUS_BUTTONS.filter((b) => this._ids?.[b.key] && this._shows('actions', b.item));
+    // REVE is the charger with a REVE API sensor; OCPP is not offered there.
+    const reve = Boolean(this._ids?.reve_api);
+    const buttons = STATUS_BUTTONS.filter((b) => this._ids?.[b.key] && this._shows('actions', b.item) && !(reve && b.key === 'connect_to_ocpp'));
     const t = this._t;
     if (!buttons.length) return `<div class="message">${t.none.actions}</div>`;
     return `<section class="${['panel actions', this._online ? '' : 'off'].filter(Boolean).join(' ')}"${columns(buttons.length, 3)} aria-label="${t.aria.actions}">${buttons.map((b) => {

@@ -239,6 +239,11 @@ MAX_SESSION_TIME_SECONDS: Final[int] = 366 * 24 * 3600
 # moment derived from it can read this much late. A restored "in this state
 # since" stamp is checked against that moment with this much slack.
 SESSION_TIME_IDLE_STEP_SECONDS: Final[int] = 300
+
+# An accumulated energy or cost meter writes a recorder row only after this much
+# energy has gathered since its last row (and at most once a minute). At 3.6 kW
+# that is one row every other minute; above ~6 kW the minute alone paces it.
+METER_PUBLISH_BAND_KWH: Final[float] = 0.1
 # Upper sanity cap for monetary values (session/tariff cost counters).
 MAX_COST_VALUE: Final[int] = 100_000_000
 

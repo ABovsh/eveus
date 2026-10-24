@@ -158,7 +158,7 @@ browser or reset the app's frontend cache.
 | Section | Shows |
 | --- | --- |
 | **Status** | Charger state and why it is not charging; while charging, since when, and for a finished charge, at what time |
-| **Buttons** | **OCPP**, **One charge** and **Stop** |
+| **Buttons** | **OCPP** (not shown on REVE), **One charge** and **Stop** |
 | **Battery SOC** | Estimated SOC and where the session started; while charging, time left and finish time; energy and cost to target, and before the charge the price per kWh; **Advanced mode only** |
 | **SOC settings** | **Initial**, **Target**, **Capacity** and **Loss**; **Advanced mode only** |
 | **Meter** | Voltage, power and current; with nothing flowing, a slim voltage row |
@@ -319,9 +319,11 @@ the tariffs on the charger. The integration shows the current and last session,
 the lifetime total and counters A and B, which reset separately. For
 consumption history, add the charger to the [Energy dashboard](#energy-dashboard).
 
-While charging, energy and cost sensors update once a minute to keep the
-database small; a new session, a counter reset or the charger going offline
-shows at once. The SOC limit checks every poll.
+While charging, energy and cost sensors update at most once a minute, and only
+after 0.1 kWh has been added since their last update (about every second minute
+at 3.6 kW), to keep the database small; the end of a charge, a new session, a
+counter reset or the charger going offline shows at once. The SOC limit checks
+every poll.
 
 ### OCPP control
 
@@ -464,8 +466,9 @@ What this means in practice:
 - **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app. Their days of the week are changed on the card; the days set in the app are kept. The card also lists the other schedules and the tariffs that are set up in the app. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
 - **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price the charger reports as in effect (REVE_PLUS 1.0.3), or on earlier versions the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. While REVE's third or fourth rate is in effect, it gives that rate's price; those rates have no entities of their own. **Cost to Target SOC** follows the first two rates' hours and the schedules' hours, not their days of the week.
 - **Counter A Cost** and **Counter B Cost** increase from REVE_PLUS 1.0.3. On earlier REVE versions the charger counts the energy of counters A and B, but not their cost: after a counter is reset its cost stays at 0, and without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
+- **Adaptive Current Limit** is read from the charger's older `/main` page, which REVE's own interface does not carry: once a minute while an adaptive charge runs, otherwise every five minutes.
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
-- From REVE_PLUS 1.0.3, four diagnostic sensors show the charger's memory and when it last started: **REVE Free Memory**, **REVE Min Free Memory**, **REVE Largest Free Block** and **REVE Started**. They are for troubleshooting and are disabled by default; enable them on the device page.
+- From REVE_PLUS 1.0.3, four diagnostic sensors show the charger's memory and when it last started: **REVE Free Memory**, **REVE Min Free Memory**, **REVE Largest Free Block** and **REVE Started**. They are for troubleshooting and are disabled by default; enable them on the device page. **REVE Free Memory** updates only when it has moved by 2 KiB or more.
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
 - REVE does not report **Leakage Current**, **Leakage Current Peak** or **OCPP Connected**, so they stay unavailable. **Plug Temperature** has a value from REVE_PLUS 1.0.3; on earlier REVE versions it stays unavailable.
 
