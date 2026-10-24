@@ -174,7 +174,9 @@ def test_one_charge_shows_at_once_after_it_is_written(monkeypatch: pytest.Monkey
     assert data["evseEnabled"] == 0
 
 
-def test_time_sync_sends_the_utc_instant_as_iso_text(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_time_sync_sends_the_utc_instant_as_iso_text(
+    monkeypatch: pytest.MonkeyPatch, kyiv_process_zone: None
+) -> None:
     charger, updater = _known(monkeypatch)
     instant = int(datetime(2026, 10, 16, 19, 30, 5, tzinfo=timezone.utc).timestamp())
 

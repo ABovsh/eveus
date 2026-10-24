@@ -338,6 +338,20 @@ def test_main_only_fields_kept_too_long_are_dropped(monkeypatch: pytest.MonkeyPa
     assert data["manufacturer"] == "Reve"
 
 
+def test_main_only_fields_are_kept_by_their_age_not_by_the_clock_reading(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A host that has been up for hours has a large monotonic reading; the kept
+    # fields are fresh by how long ago they were read, so a minute is no age.
+    now = _clock(monkeypatch, start=100_000.0)
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    charger.main_status = 503
+
+    now[0] += 60
+    data = asyncio.run(updater._async_update_data())
+
+    assert "aiModecurrent" in data
+
+
 # ---------------------------------------------------------------------------
 # The session /main reports frozen
 # ---------------------------------------------------------------------------
