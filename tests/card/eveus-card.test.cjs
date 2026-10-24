@@ -44,26 +44,26 @@ test('unanswered confirmation expires',()=>{
 });
 test('bounds update without a state change cancels unsafe confirmation',async()=>{
   const {card,slide,states,hass,calls}=setup(32);slide(24);
-  states['number.amps'].attributes.max=16;card.hass=hass;
+  states['number.amps']={...states['number.amps'],attributes:{...states['number.amps'].attributes,max:16}};card.hass=hass;
   assert.match(card.shadowRoot.innerHTML,/max="16"/);
   await card._confirm();assert.equal(calls.length,0);
 });
 test('offline or unavailable number cannot send a pending confirmation',async()=>{
   for(const id of ['sensor.state','number.amps']) {
-    const {card,slide,states,hass,calls}=setup();slide(14);states[id].state='unavailable';card.hass=hass;
+    const {card,slide,states,hass,calls}=setup();slide(14);states[id]={...states[id],state:'unavailable'};card.hass=hass;
     await card._confirm();slide(8);assert.equal(calls.length,0);assert.match(card.shadowRoot.innerHTML,/disabled/);
   }
 });
 test('missing bounds disable; fractional step is enforced',()=>{
-  const x=setup();delete x.states['number.amps'].attributes.max;x.card.hass=x.hass;x.slide(14);
+  const x=setup();{const {max:_max,...rest}=x.states['number.amps'].attributes;x.states['number.amps']={...x.states['number.amps'],attributes:rest};}x.card.hass=x.hass;x.slide(14);
   assert.equal(x.calls.length,0);assert.match(x.card.shadowRoot.innerHTML,/disabled/);
   const y=setup(16,.5);y.slide(10.2);assert.equal(y.card._draft,null);y.slide(10.5);assert.equal(y.card._asking,true);
 });
 test('actual-current tick shows only while charging with a non-zero current; draft does not replace it',()=>{
   const {card,states,hass,slide}=setup();slide(14);assert.match(card.shadowRoot.innerHTML,/title="Actual current 8.4 A"/);
-  states['sensor.amps'].state='0';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
-  states['sensor.amps'].state='unavailable';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
-  states['sensor.amps'].state='8.4';states['sensor.state'].state='Connected';card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+  states['sensor.amps']={...states['sensor.amps'],state:'0'};card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+  states['sensor.amps']={...states['sensor.amps'],state:'unavailable'};card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
+  states['sensor.amps']={...states['sensor.amps'],state:'8.4'};states['sensor.state']={...states['sensor.state'],state:'Connected'};card.hass=hass;assert.match(card.shadowRoot.innerHTML,/class="markers"><\/div>/);
 });
 test('disconnect cancels confirmation and draft',async()=>{
   const {card,slide,calls}=setup();slide(14);card.disconnectedCallback();await card._confirm();assert.equal(calls.length,0);
@@ -98,7 +98,7 @@ test('module label stays Current and actual reading is only a scale marker',()=>
   const {card,states,hass}=setup();
   assert.match(card.shadowRoot.innerHTML,/class="mk"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML,/class="actual"/);
-  states['sensor.state'].state='unavailable';card.hass=hass;
+  states['sensor.state']={...states['sensor.state'],state:'unavailable'};card.hass=hass;
   assert.match(card.shadowRoot.innerHTML,/class="label">Current</);
 });
 
@@ -349,9 +349,9 @@ test('toggling ground protection uses the existing switch entity',async()=>{
 
 test('unknown readings show a dash with no color class',()=>{
   const {card,states,hass}=setupSafety();
-  states['sensor.box'].state='unknown';
-  states['sensor.ground'].state='unavailable';
-  states['switch.protection'].state='unavailable';
+  states['sensor.box']={...states['sensor.box'],state:'unknown'};
+  states['sensor.ground']={...states['sensor.ground'],state:'unavailable'};
+  states['switch.protection']={...states['switch.protection'],state:'unavailable'};
   card.hass=hass;
   const html=card.shadowRoot.innerHTML;
   assert.match(html,/safety-value ">—°/);
@@ -361,8 +361,8 @@ test('unknown readings show a dash with no color class',()=>{
 
 test('a reading the firmware does not provide is hidden while the charger answers (REVE: plug, leakage)',()=>{
   const {card,states,hass}=setupSafety();
-  states['sensor.plug'].state='unavailable';
-  states['sensor.leak'].state='unavailable';
+  states['sensor.plug']={...states['sensor.plug'],state:'unavailable'};
+  states['sensor.leak']={...states['sensor.leak'],state:'unavailable'};
   card.hass=hass;
   const html=card.shadowRoot.innerHTML;
   assert.doesNotMatch(html,/data-more-info="plug_temperature"/);
@@ -375,7 +375,7 @@ test('a reading the firmware does not provide is hidden while the charger answer
 
 test('while the charger is away every safety item stays in place, dashed',()=>{
   const {card,states,hass}=setupSafety({online:false});
-  for (const id of ['sensor.box','sensor.plug','sensor.leak']) states[id].state='unavailable';
+  for (const id of ['sensor.box','sensor.plug','sensor.leak']) states[id]={...states[id],state:'unavailable'};
   card.hass=hass;
   const html=card.shadowRoot.innerHTML;
   for (const key of ['box_temperature','plug_temperature','leakage_current']) assert.match(html,new RegExp(`data-more-info="${key}"`));
@@ -437,7 +437,7 @@ test('safety row tint: good when everything is fine, bad the moment one reading 
 });
 
 // ---------- Status, Actions and the card-level alert strip ----------
-function setupStatus({state='Charging',reason='Charging',substate='No Limits',stop='off',one='off',ocpp='off',sections=['status','actions'],changed}={}) {
+function setupStatus({state='Charging',reason='Charging',substate='No Limits',stop='off',one='off',ocpp='off',sections=['status','actions'],changed,reve=false}={}) {
   const registry = {}, timers = new Map(); let timer = 0;
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
@@ -451,12 +451,27 @@ function setupStatus({state='Charging',reason='Charging',substate='No Limits',st
     'switch.stop':st(stop),'switch.one':st(one),'switch.ocpp':st(ocpp)};
   const entities = {state:'sensor.state',not_charging_reason:'sensor.reason',substate:'sensor.sub',
     stop_charging:'switch.stop',one_charge:'switch.one',connect_to_ocpp:'switch.ocpp'};
+  // REVE is the charger that has a REVE API sensor.
+  if(reve){ states['binary_sensor.api']=st('on'); entities.reve_api='binary_sensor.api'; }
   const calls=[];
   const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
   card._ids=entities;card._resolved=true;card.hass=hass;
   const html=()=>card.shadowRoot.innerHTML.replace(/<style>[\s\S]*?<\/style>/,'');
   return {card,states,calls,hass,timers,html};
 }
+
+test('REVE has no OCPP button: the card offers One charge and Stop only, and Eveus firmware keeps all three',()=>{
+  const r=setupStatus({sections:['actions'],reve:true});
+  const a=r.html();
+  assert.doesNotMatch(a,/connect_to_ocpp/);
+  assert.doesNotMatch(a,/>OCPP</);
+  for(const k of ['one_charge','stop_charging']) assert.match(a,new RegExp(`data-status-toggle="${k}"`));
+  assert.match(a,/>One charge<[^]*>Stop</);
+  // The switch is still there for anything else that uses it; the card just does not offer it.
+  assert.equal(r.card._ids.connect_to_ocpp,'switch.ocpp');
+  const e=setupStatus({sections:['actions']}).html();
+  assert.match(e,/data-status-toggle="connect_to_ocpp"/);
+});
 
 test('status is one full-width row with state and note; OCPP/One/Stop live in their own Actions section',()=>{
   const s=setupStatus({sections:['status']}).html();
@@ -1031,16 +1046,33 @@ test('time: zone picker, clock drift coloured by the Repairs threshold, and a sy
   assert.match(html(), /class="sl time/);
   assert.match(html(), /<option value="\+3" selected>UTC\+3<\/option>/);
   assert.match(html(), /<option value="0">UTC<\/option>/);
-  assert.match(html(), /data-more-info="time_drift"[\s\S]*?class="time-drift good">0<small>s<\/small>/);
+  assert.match(html(), /data-more-info="time_drift"[\s\S]*?class="time-drift good">\d{2}:\d{2}<\/span>/);
   await card._selectOption('time_zone', '+2');
   await card._syncTime();
   assert.equal(JSON.stringify(calls), JSON.stringify([['select','select_option',{entity_id:'select.tz',option:'+2'}], ['button','press',{entity_id:'button.sync'}]]));
   assert.match(html(), /class="time-sync done"/, 'the tap is acknowledged');
-  const drift = (v) => setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',v,{unit_of_measurement:'s'}]}}).html();
-  assert.match(drift(90), /class="time-drift good">\+2<small>min<\/small>/);
-  assert.match(drift(900), /class="time-drift bad">\+15<small>min<\/small>/);
-  assert.match(drift(-3600), /class="time-drift bad">−1<small>h<\/small>/);
-  assert.match(drift('unavailable'), /class="time-drift">—/);
+});
+test('time: a correct charger clock shows its own time, a wrong one its drift in red, an unknown one a dash', () => {
+  // The charger's clock is Home Assistant's shifted by the drift; HA reads 16:03 here.
+  const clock = {0:'16:03', 120:'16:05', [-599]:'15:53'};
+  const at = (v, over = {}) => {
+    const x = setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',v,{unit_of_measurement:'s'}], ...over}});
+    x.card._nowHM = (o = 0) => clock[o] ?? '16:03'; x.card.hass = x.hass;
+    return x.html();
+  };
+  const item = (h) => h.match(/<button class="time-item"[\s\S]*?<\/button>/)?.[0] ?? '';
+  assert.match(item(at(120)), /data-more-info="time_drift"[\s\S]*icon="mdi:alarm"[\s\S]*class="time-drift good">16:05<\/span>/, 'the charger clock, still opening the drift');
+  assert.match(item(at(0)), /class="time-drift good">16:03</);
+  assert.match(item(at(-599)), /class="time-drift good">15:53</, 'just inside the threshold');
+  assert.doesNotMatch(item(at(120)), /<small>/, 'no drift unit while the clock is right');
+  assert.match(item(at(600)), /icon="mdi:clock-alert-outline"[\s\S]*class="time-drift bad">\+10<small>min<\/small>/, 'from the threshold: the drift');
+  assert.match(at(600), /class="sl time time-bad/);
+  assert.match(at(600), /data-sync/, 'next to Sync');
+  assert.match(item(at(900)), /class="time-drift bad">\+15<small>min<\/small>/);
+  assert.match(item(at(-5400)), /class="time-drift bad">−1\.5<small>h<\/small>/);
+  assert.match(item(at('unavailable')), /class="time-drift">—</);
+  assert.match(item(at(120, {state:['sensor.state','unavailable']})), /class="time-drift">—</, 'offline: a dash');
+  assert.doesNotMatch(at(120), /time-bad/);
 });
 test('time offline: nothing can be changed or pressed', async () => {
   const {card, calls, html} = setupAll({sections:['time'], over:{...TIME, state:['sensor.state','unavailable']}});
@@ -1053,7 +1085,9 @@ test('uk: schedules and time speak Ukrainian', () => {
   const {html} = setupAll({sections:['schedules','time'], over:{...SCHED, ...TIME, time_drift:['sensor.drift',-120,{unit_of_measurement:'s'}]}, locale:'uk'});
   assert.match(html(), /Розклад 1/);
   assert.match(html(), /Часовий пояс/);
-  assert.match(html(), /−2<small>хв<\/small>/);
+  assert.match(html(), /class="time-drift good">\d{2}:\d{2}</, 'a right clock shows its time');
+  const wrong = setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',-900,{unit_of_measurement:'s'}]}, locale:'uk'}).html();
+  assert.match(wrong, /−15<small>хв<\/small>/);
   assert.match(html(), /Синхр/);
 });
 
@@ -1083,10 +1117,10 @@ test('schedule predictions follow the charger clock and stop when its drift is u
   x.card.hass=x.hass;
   assert.match(rowOf(x.html(),1),/^ on now"/);
   assert.ok(offsets.includes(120),'schedule clock uses measured drift');
-  x.states['sensor.drift'].state='600';x.card.hass=x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'600'};x.card.hass=x.hass;
   assert.doesNotMatch(rowOf(x.html(),1),/^ on now"/);
   assert.doesNotMatch(x.html(),/status-note">Waiting for Schedule · from/);
-  x.states['sensor.drift'].state='unavailable';x.card.hass=x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'unavailable'};x.card.hass=x.hass;
   assert.doesNotMatch(rowOf(x.html(),1),/^ on now"/);
 });
 test('masonry size follows rendered height, with a section-based estimate before first paint',()=>{
@@ -1157,7 +1191,7 @@ test('updates keep the same ha-card and replace only what is inside it (a new ha
   const attrs = {}, inner = {html: ''};
   const haCard = {setAttribute:(k,v)=>{attrs[k]=v;}, removeAttribute:(k)=>{delete attrs[k];}, set innerHTML(v){inner.html=v;}, get innerHTML(){return inner.html;}};
   x.card.shadowRoot = {innerHTML:'<style>kept</style><ha-card></ha-card>', querySelector:(q)=>q==='ha-card'?haCard:null, querySelectorAll:()=>[], addEventListener(){}};
-  x.states['sensor.se'].state = '16'; x.card.hass = x.hass;
+  x.states['sensor.se']={...x.states['sensor.se'],state:'16'}; x.card.hass = x.hass;
   assert.equal(x.card.shadowRoot.innerHTML, '<style>kept</style><ha-card></ha-card>');
   assert.match(inner.html, /class="sl session"/);
   assert.equal(attrs['data-state'], 'charging');
@@ -1175,18 +1209,18 @@ test('an open picker (time zone, adaptive mode) is not re-rendered away by live 
   const x = setupAll({sections:['time','adaptive'], over:TIME});
   x.card._selectFocus('time_zone');
   const before = x.card.shadowRoot.innerHTML;
-  x.states['sensor.drift'].state = '30'; x.card.hass = x.hass;
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'700'}; x.card.hass = x.hass;
   assert.equal(x.card.shadowRoot.innerHTML, before, 'frozen while the list is open');
   await x.card._selectOption('time_zone', '+2');
   assert.equal(JSON.stringify(x.calls.at(-1)), JSON.stringify(['select','select_option',{entity_id:'select.tz',option:'+2'}]));
-  assert.match(x.html(), /\+30<small>s/, 'a choice ends the freeze');
+  assert.match(x.html(), /\+12<small>min/, 'a choice ends the freeze');
   x.card._selectFocus('adaptive_mode'); x.card._selectBlur();
-  x.states['sensor.drift'].state = '60'; x.card.hass = x.hass;
-  assert.match(x.html(), /\+1<small>min/, 'closing without a choice ends it too');
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'1260'}; x.card.hass = x.hass;
+  assert.match(x.html(), /\+21<small>min/, 'closing without a choice ends it too');
   x.card._selectFocus('adaptive_mode');
   for (const fn of [...x.timers.values()]) fn();
-  x.states['sensor.drift'].state = '0'; x.card.hass = x.hass;
-  assert.match(x.html(), /time-drift good">0<small>s/, 'a forgotten focus times out');
+  x.states['sensor.drift']={...x.states['sensor.drift'],state:'1800'}; x.card.hass = x.hass;
+  assert.match(x.html(), /time-drift bad">\+30<small>min/, 'a forgotten focus times out');
 });
 
 test('updates from other entities do not re-render the card; its own entities and the minute do', () => {
@@ -1202,6 +1236,14 @@ test('updates from other entities do not re-render the card; its own entities an
   const next = x.card._nowHM() === '12:00' ? '12:01' : '12:00';
   x.card._nowHM = () => next; x.card.hass = x.hass;
   assert.notEqual(x.card.shadowRoot.innerHTML, 'SENTINEL', 'a new minute re-renders (offline age, running schedule)');
+});
+test('the charger clock re-renders on its own minute, not only on Home Assistant\'s', () => {
+  const x = setupAll({sections:['time'], over:{...TIME, time_drift:['sensor.drift',30,{unit_of_measurement:'s'}]}});
+  let charger = '16:04';
+  x.card._nowHM = (o = 0) => o === 30 ? charger : '16:03'; x.card.hass = x.hass;
+  assert.match(x.html(), /time-drift good">16:04</);
+  charger = '16:05'; x.card.hass = x.hass;
+  assert.match(x.html(), /time-drift good">16:05</, 'HA still reads 16:03');
 });
 test('a config change from the editor re-renders even when no state changed', async () => {
   const x = setupAll({sections:['session']});
@@ -1249,6 +1291,19 @@ test('unplugged, the Session row is the last session: its energy, cost, duration
   const on=setupAll({sections:['session'],charging:false,over:{...unplugged,car_connected:['binary_sensor.car','on'],state:['sensor.state','Connected']}});
   assert.match(on.html(),/>Session</);assert.match(on.html(),/data-more-info="session_energy"/);
 });
+test('Last Session Duration reads in whatever unit the user picked for it',()=>{
+  // HA shows a duration as "5h 31m" only in min/h/d, so a user may switch the sensor's
+  // unit in its settings; the state is then converted (and rounded) in that unit.
+  for (const [value, unit] of [[19895,'s'],[331.583333,'min'],[5.526389,'h'],[0.230266,'d'],[19895000,'ms']]) {
+    const x=setupAll({sections:['session'],charging:false,over:{...unplugged,
+      last_session_duration:['sensor.lsd',value,{unit_of_measurement:unit}]}});
+    assert.match(x.html(),/data-more-info="last_session_duration"[^]*>5h 31m</, unit);
+  }
+  // 2 h stored as 1.9999999 h is still 2h 0m, not 1h 59m.
+  const two=setupAll({sections:['session'],charging:false,over:{...unplugged,
+    last_session_duration:['sensor.lsd',1.9999999,{unit_of_measurement:'h'}]}});
+  assert.match(two.html(),/data-more-info="last_session_duration"[^]*>2h 0m</);
+});
 test('while plugged in, the Session row carries the active tariff price',()=>{
   const x=setupAll({sections:['session'],over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:'Rate 2'}]}});
   assert.match(x.html(),/>Session<small[^>]*title="Rate 2"[^>]*>2\.16 ₴\/kWh<\/small>/);
@@ -1287,15 +1342,15 @@ test('charging slower than set: the status says why',()=>{
   const uk=setupAll({sections:['status'],language:'uk',over:{...cc,current:['sensor.cur',9],adaptive_mode:['select.am','Off',{options:['Off','Voltage']}]}});
   assert.match(uk.html(),/status-note">9 з 12 A · авто приймає менше</);
   // At the set current the note is the power instead.
-  const full=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',11.8],power:['sensor.power',2690]}});
-  assert.match(full.html(),/status-note">2\.7 kW/);
+  const full=setupAll({sections:['status','advanced_info'],over:{...cc,current:['sensor.cur',11.8],power:['sensor.power',2690]}});
+  assert.match(full.html(),/status-note">2\.7 kW · 11\.8 A</);
 });
-test('Basic mode or a hidden battery section: the charging status adds the finish time',()=>{
+test('while charging the status shows the power and the current; Basic mode or a hidden battery section adds the finish time',()=>{
   const cc={charging_current:['number.cc',16,{min:6,max:16,step:1}]};
   const x=setupAll({sections:['status'],over:{...cc,current:['sensor.cur',15.9]}});
-  assert.match(x.html(),/status-note">3\.6 kW · until \d{2}:\d{2}</);
+  assert.match(x.html(),/status-note">3\.6 kW · 15\.9 A · until \d{2}:\d{2}</);
   const withBattery=setupAll({sections:['status','advanced_info'],over:{...cc,current:['sensor.cur',15.9]}});
-  assert.match(withBattery.html(),/status-note">3\.6 kW</);
+  assert.match(withBattery.html(),/status-note">3\.6 kW · 15\.9 A</);
 });
 const plan=(over={})=>({car_connected:['binary_sensor.car','on'],charging_current:['number.cc',12,{min:6,max:16,step:1}],
   schedule_1_enabled:['switch.s1','on'],schedule_1_start:['time.s1a','23:00:00'],schedule_1_stop:['time.s1b','07:00:00'],...over});
@@ -1523,10 +1578,10 @@ test('rejected numeric service displays an actionable error',async()=>{
 test('cancelled guard and changed switch cannot send a stale confirmation',async()=>{
   const x=setupLimits();
   await x.card._toggleLimit('limit_soc_enabled');
-  x.states['switch.soc'].state='off';
+  x.states['switch.soc']={...x.states['switch.soc'],state:'off'};
   await x.card._confirmGuard();
   assert.equal(x.calls.length,0);
-  x.states['switch.soc'].state='on';
+  x.states['switch.soc']={...x.states['switch.soc'],state:'on'};
   await x.card._toggleLimit('limit_soc_enabled');
   x.card.disconnectedCallback();
   await x.card._confirmGuard();
@@ -1895,7 +1950,7 @@ test('a scroll gesture cancels a slider drag, not an increase waiting for confir
 });
 test('Counters with only this month shown draw no empty tile grid', async () => {
   const x = setupAll({sections:['history'], hide:['history.total','history.counter_a','history.counter_b'], over:HISTORY});
-  x.card._month = {cur:12.3, prev:40}; x.card._lastSignature = null; x.card.hass = x.hass;
+  x.card._month = {cur:12.3, prev:40}; x.card._lastSignature = x.card._lastRefs = null; x.card.hass = x.hass;
   assert.match(x.html(), /hist-month/);
   assert.doesNotMatch(x.html(), /tiles undefined|class="tiles/);
 });
@@ -1934,4 +1989,354 @@ test('the folded One charge flag is its own item in the centred row, not text in
   const h = setupAll({sections:['schedules'], fold:true, over:{...SCHED, ...ONE('on')}}).html();
   assert.match(h, /<\/span><ha-icon class="override-flag"[^>]*><\/ha-icon><span class="fold-sum overridden"/);
   assert.doesNotMatch(h, /class="fold-sum[^"]*"[^>]*><ha-icon class="override-flag"/);
+});
+test('a hass update that replaced none of this charger\'s state objects is not even compared', () => {
+  // Home Assistant hands every card a new hass on any state change in the house; it replaces
+  // the state object of an entity that changed and keeps every other one.
+  const {card, states, hass} = setup();
+  let compared = 0;
+  const signature = card._signature.bind(card);
+  card._signature = () => { compared += 1; return signature(); };
+  card.hass = {...hass, states: {...states, 'light.kitchen': {state: 'on', attributes: {}}}};
+  assert.equal(compared, 0);
+  card.hass = {...hass, states: {...states, 'sensor.amps': {state: '9.1', attributes: {}}}};
+  assert.equal(compared, 1);
+  assert.match(card.shadowRoot.innerHTML, /9.1 A/);
+});
+
+// ---- REVE: every schedule with its days of the week, read over the integration's WebSocket ----
+const reveSchedules = () => ({reve: true, read_age_seconds: 12, base_rate: 4.32, schedules: [
+  {name: 'Night', start: 1380, end: 420, weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: true, current_limit: 16, set: true},
+  {name: '', start: 540, end: 1080, weekdays: [1, 2, 3, 4, 5], enabled: false, current_limit: null, set: true},
+  {name: 'Weekend', start: 600, end: 720, weekdays: [0, 6], enabled: true, current_limit: 10, set: true},
+  {name: 'Schedule 4', start: 0, end: 0, weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: false, current_limit: null, set: false},
+], rates: [
+  {name: 'Night', start: 1380, end: 420, weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: true, price: 2.16, set: true},
+  {name: 'Rate 2', start: 0, end: 0, weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: false, price: 0, set: false},
+  {name: 'Peak', start: 480, end: 660, weekdays: null, enabled: false, price: 6.5, set: true},
+]});
+const reve = (over = {}) => plan({schedule_2_enabled: ['switch.s2', 'off'], schedule_2_start: ['time.s2a', '09:00:00'], schedule_2_stop: ['time.s2b', '18:00:00'],
+  reve_api: ['binary_sensor.api', 'on'], manual_mode: ['binary_sensor.manual', 'off'], ...over});
+async function setupReve({over = {}, hide, language, answer = reveSchedules} = {}) {
+  const x = setupAll({sections: ['schedules'], charging: false, over: reve(over), hide, language});
+  x.asked = [];
+  x.hass.callWS = async (msg) => { x.asked.push(msg); return typeof answer === 'function' ? answer(msg) : answer; };
+  x.card._deviceId = 'dev1';
+  await x.card._fetchReveSchedules();
+  return x;
+}
+test('REVE: the card asks for every schedule of its charger; classic firmware asks nothing', async () => {
+  const x = await setupReve();
+  assert.deepEqual(JSON.parse(JSON.stringify(x.asked)), [{type: 'eveus/reve_schedules', device_id: 'dev1'}]);
+  const classic = setupAll({sections: ['schedules'], charging: false, over: plan()});
+  const asked = [];
+  classic.hass.callWS = async (msg) => { asked.push(msg); return {}; };
+  classic.card._lastRefs = classic.card._lastSignature = null; classic.card.hass = classic.hass;
+  await Promise.resolve();
+  assert.equal(asked.filter((m) => m.type === 'eveus/reve_schedules').length, 0);
+});
+const openDays = (x, n) => x.card._onClick({target: {closest: (s) => s === '[data-days-edit]' ? {dataset: {daysEdit: String(n)}} : null}});
+test('REVE: each schedule row says its days in a word; a tap opens them for change', async () => {
+  const x = await setupReve();
+  assert.match(x.html(), /data-days-edit="1"[^>]*>Every day</);
+  assert.match(x.html(), /data-days-edit="2"[^>]*>Weekdays</);
+  assert.doesNotMatch(x.html(), /data-weekday=/, 'closed until asked');
+  openDays(x, 2);
+  assert.match(x.html(), /data-days-edit="2" aria-expanded="true"/);
+  assert.doesNotMatch(x.html(), /data-weekday="1:/);
+  openDays(x, 2);
+  assert.doesNotMatch(x.html(), /data-weekday=/, 'a second tap closes them');
+  const uk = await setupReve({language: 'uk'});
+  assert.match(uk.html(), /data-days-edit="1"[^>]*>Щодня</);
+  assert.match(uk.html(), /data-days-edit="2"[^>]*>Будні</);
+});
+test('REVE: the open days run Monday first; days that are off are not pressed', async () => {
+  const x = await setupReve();
+  openDays(x, 2);
+  const row2 = x.html().match(/data-weekday="2:\d"[^>]*>[^<]*/g);
+  assert.deepEqual(row2.map((b) => b.match(/>(.*)$/)[1]), ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']);
+  assert.match(x.html(), /data-weekday="2:1" aria-pressed="true"/);
+  assert.match(x.html(), /data-weekday="2:0" aria-pressed="false"/);
+  const uk = await setupReve({language: 'uk'});
+  openDays(uk, 1);
+  assert.match(uk.html(), /data-weekday="1:1"[^>]*>Пн</);
+  assert.match(uk.html(), /data-weekday="1:0"[^>]*>Нд</);
+});
+test('REVE: a tapped day shows at once and is written as the whole set', async () => {
+  let release;
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? new Promise((resolve) => { release = () => resolve({weekdays: msg.weekdays}); }) : reveSchedules()});
+  openDays(x, 2);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  assert.deepEqual(JSON.parse(JSON.stringify(x.asked.at(-1))), {type: 'eveus/reve_schedule_weekdays', device_id: 'dev1', schedule: 2, weekdays: [1, 2, 3, 4, 5, 6]});
+  assert.match(x.html(), /data-weekday="2:6" aria-pressed="true"/, 'painted while the write is still pending');
+  release(); await new Promise((r) => setImmediate(r));
+  assert.match(x.html(), /data-weekday="2:6" aria-pressed="true"/);
+});
+test('REVE: a config change while the schedules are being read does not stop later reads', async () => {
+  const releases = [];
+  const x = await setupReve();
+  x.hass.callWS = (msg) => { x.asked.push(msg); return new Promise((resolve) => { releases.push(() => resolve(reveSchedules())); }); };
+  const reading = x.card._fetchReveSchedules();
+  assert.equal(x.card._reveBusy, true);
+  x.card.setConfig({sections: ['schedules']});
+  assert.equal(x.card._reveBusy, false, 'the answer for the old config is dropped, so nothing is left waiting for it');
+  assert.equal(x.card._reveAt, 0);
+  assert.equal(x.card._reveSchedules, null, 'the old charger\'s schedules are not shown for the new config');
+  releases.forEach((release) => release()); await reading;
+  assert.equal(x.card._reveBusy, false);
+  assert.equal(x.card._reveSchedules, null);
+});
+test('REVE: days tapped on two schedules at once both settle on what the charger holds', async () => {
+  const releases = [];
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? new Promise((resolve) => { releases.push(() => resolve({weekdays: msg.weekdays})); }) : reveSchedules()});
+  openDays(x, 1);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '1:6'}} : null}});
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  releases.forEach((release) => release());
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(JSON.parse(JSON.stringify(x.card._dayPending)), {}, 'no tap is left pinned once its write has answered');
+  // Changed in the charger\'s app afterwards: the next read shows it.
+  x.card._reveSchedules = x.card._reveSchedules.map((item, i) => i === 0 ? {...item, weekdays: [2]} : item);
+  x.card._render();
+  assert.match(x.html(), /data-days-edit="1"[^>]*>Tu</);
+});
+test('REVE: a refused day on one schedule goes back although another schedule was tapped after it', async () => {
+  const x = await setupReve({answer: (msg) => {
+    if (msg.type === 'eveus/reve_schedule_weekdays') { if (msg.schedule === 1) return Promise.reject(new Error('failed')); return {weekdays: msg.weekdays}; }
+    return reveSchedules();
+  }});
+  openDays(x, 1);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '1:6'}} : null}});
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  await new Promise((r) => setImmediate(r));
+  assert.match(x.html(), /data-weekday="1:6" aria-pressed="true"/, 'schedule 1 ran every day and the refused tap took Saturday off');
+});
+test('REVE: a write that succeeds is not reported as failed because a read failed meanwhile', async () => {
+  let release;
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? new Promise((resolve) => { release = () => resolve({weekdays: msg.weekdays}); }) : reveSchedules()});
+  openDays(x, 2);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  x.card._reveSchedules = null;
+  release(); await new Promise((r) => setImmediate(r));
+  assert.doesNotMatch(x.html(), /cmd-error/);
+});
+test('REVE: the last day of a schedule cannot be turned off', async () => {
+  const x = await setupReve({answer: () => ({...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [3]}]})});
+  await x.card._fetchReveSchedules();
+  const before = x.asked.length;
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '1:3'}} : null}});
+  assert.equal(x.asked.length, before);
+});
+test('REVE: a refused day change goes back and says so', async () => {
+  const x = await setupReve({answer: (msg) => { if (msg.type === 'eveus/reve_schedule_weekdays') throw new Error('failed'); return reveSchedules(); }});
+  openDays(x, 2);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  await new Promise((r) => setImmediate(r));
+  assert.match(x.html(), /data-weekday="2:6" aria-pressed="false"/);
+  assert.match(x.html(), /cmd-error/);
+});
+test('REVE: schedules beyond the second are listed read-only, with their days in words', async () => {
+  const x = await setupReve();
+  assert.match(x.html(), /class="sched-row extra on" title="Weekend"[^]*<b>3<\/b>[^]*10:00[^]*12:00[^]*<span class="sched-days-sum">Weekends<\/span>[^]*10<small>A/);
+  assert.doesNotMatch(x.html(), /data-weekday="3:|data-days-edit="3"/);
+});
+test('REVE: days other than a whole week, the working week or the weekend are listed', async () => {
+  const x = await setupReve({answer: () => ({...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [0, 2, 4]}]})});
+  assert.match(x.html(), /data-days-edit="1"[^>]*>Tu Th Su</);
+});
+test('Escape closes the open days', async () => {
+  const x = await setupReve();
+  openDays(x, 1);
+  x.card._onKeyDown({key: 'Escape', preventDefault() {}, target: {dataset: {}}});
+  assert.doesNotMatch(x.html(), /data-weekday=/);
+});
+test('REVE: days, the extra schedules and the tariffs can be hidden', async () => {
+  const x = await setupReve({hide: ['schedules.days', 'schedules.more', 'schedules.rates']});
+  assert.doesNotMatch(x.html(), /sched-day/);
+  assert.doesNotMatch(x.html(), /sched-row extra/);
+  assert.doesNotMatch(x.html(), /sched-row rate/);
+});
+test('REVE: an empty schedule slot is not listed', async () => {
+  const x = await setupReve();
+  assert.doesNotMatch(x.html(), /<b>4<\/b>/);
+  assert.doesNotMatch(x.html(), /title="Schedule 4"/);
+});
+test('REVE: the tariffs that are set are listed read-only with their price and days', async () => {
+  const x = await setupReve({over: {active_rate_cost: ['sensor.rate', 4.32, {unit_of_measurement: 'UAH/kWh', rate_name: 'Primary Rate'}]}});
+  const h = x.html();
+  assert.match(h, /class="sched-row rate on" title="Night"[^]*23:00[^]*07:00[^]*Every day[^]*2\.16 ₴\/kWh/);
+  assert.match(h, /class="sched-row rate" title="Peak"[^]*08:00[^]*11:00[^]*6\.50 ₴\/kWh/);
+  assert.doesNotMatch(h, /title="Rate 2"/);
+  assert.doesNotMatch(h, /class="sched-days?[ "]/, 'no day buttons on a tariff');
+  // None set up: nothing about tariffs at all.
+  const none = await setupReve({answer: () => ({...reveSchedules(), rates: reveSchedules().rates.map((r) => ({...r, set: false}))})});
+  assert.doesNotMatch(none.html(), /sched-row rate/);
+});
+test('REVE: while its interface does not answer, the schedules say they are the last read', async () => {
+  const x = await setupReve({over: {reve_api: ['binary_sensor.api', 'off']}});
+  x.states['binary_sensor.api'] = {...x.states['binary_sensor.api'], last_changed: '2026-10-18T11:35:00Z'};
+  x.card._lastRefs = x.card._lastSignature = null; x.card.hass = x.hass;
+  assert.match(x.html(), /class="override quiet" role="note"[^]*REVE interface not answering since \d\d:\d\d; showing the schedules last read/);
+  const ok = await setupReve();
+  assert.doesNotMatch(ok.html(), /not answering/);
+});
+
+// ---- Not charging: the readings that carry nothing make room ----
+const IDLE_METER = {state:['sensor.state','Standby'], power:['sensor.power',0,{unit_of_measurement:'W'}], current:['sensor.cur',0,{unit_of_measurement:'A'}]};
+test('meter, nothing flowing: one slim voltage row instead of two zero tiles',()=>{
+  const x=setupAll({sections:['basic_info'],charging:false,over:IDLE_METER}).html();
+  assert.match(x,/class="sl meter idle"/);
+  assert.match(x,/data-more-info="voltage"[^]*>227<small>V/);
+  assert.doesNotMatch(x,/data-more-info="(power|current)"/);
+  assert.match(setupAll({sections:['basic_info'],charging:false,over:{...IDLE_METER,voltage:['sensor.voltage',200]}}).html(),/info-value bad"[^>]*>200/);
+});
+test('meter: any power or current, or a hidden voltage, keeps the three tiles',()=>{
+  assert.match(setupAll({sections:['basic_info']}).html(),/class="panel meter"/);
+  assert.match(setupAll({sections:['basic_info'],charging:false,over:{...IDLE_METER,current:['sensor.cur',2.1,{unit_of_measurement:'A'}]}}).html(),/class="panel meter"/);
+  assert.match(setupAll({sections:['basic_info'],charging:false,over:IDLE_METER,hide:['basic_info.voltage']}).html(),/class="panel meter"/);
+});
+test('battery tile: "from" only once the SOC has moved off where the session started',()=>{
+  const still=setupAll({sections:['advanced_info'],charging:false,over:{soc_percent:['sensor.soc',25.2,{unit_of_measurement:'%'}]}}).html();
+  assert.doesNotMatch(still,/from 25/);
+  assert.match(setupAll({sections:['advanced_info']}).html(),/from 25<small>%/);
+});
+test('to go before the charge: the cost with its price per kWh',()=>{
+  const idle=setupAll({sections:['advanced_info'],charging:false}).html();
+  assert.match(idle,/<span class="nw">114<small>₴<\/small> <span class="tile-note">to go<\/span><\/span><span class="per-kwh"><i class="info-sep">·<\/i>4\.32<small>₴\/kWh<\/small><\/span>/);
+  assert.doesNotMatch(setupAll({sections:['advanced_info']}).html(),/₴\/kWh/);
+});
+test('limits without Limit: disable all (REVE does not create it): the limits are there, the disable-all button is not',()=>{
+  const x=setupAll({sections:['limits'],charging:true,over:{limit_disable_all:null,limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.doesNotMatch(x,/No Eveus limit controls found/);
+  assert.match(x,/data-limit-toggle="limit_energy_enabled"/);
+  assert.doesNotMatch(x,/limit_disable_all/);
+});
+
+// ---- Status: when the charger entered its state (State sensor `since`) ----
+
+function setupSince({state='Charging',reason='Charging',since,stop='off',language,tz='Europe/Kyiv'}={}) {
+  const x=setupStatus({state,reason,stop,sections:['status']});
+  if(language){const ids=x.card._ids;x.card.setConfig({sections:['status'],language});x.card._ids=ids;x.card._resolved=true;}
+  x.hass.config={time_zone:tz};
+  // Home Assistant hands over a new state object when an entity changes; the card skips the same one.
+  x.states['sensor.state']={...x.states['sensor.state'],attributes:since===undefined?{}:{since}};
+  x.card.hass=x.hass;
+  return x;
+}
+// 2026-10-21 23:30 in Kyiv (UTC+3 until the clocks change on the 25th).
+const atNow=(fn)=>{const real=Date.now;Date.now=()=>Date.parse('2026-10-21T20:30:00Z');try{return fn();}finally{Date.now=real;}};
+
+test('a charge says when it started, in Home Assistant\'s zone',()=>{
+  const html=atNow(()=>setupSince({since:'2026-10-21T16:05:00+00:00'}).html());
+  assert.match(html,/status-since">since 19:05<\/span>/);
+  assert.doesNotMatch(html,/status-note/,'no power or finish to show: nothing beside it, so no divider either');
+});
+
+test('the start follows the state, and the power follows the start',()=>{
+  const html=atNow(()=>{
+    const x=setupSince({since:'2026-10-21T16:05:00+00:00'});
+    x.states['sensor.pw']={state:'3200',attributes:{}};x.card._ids.power='sensor.pw';x.card.hass=x.hass;
+    return x.html();
+  });
+  assert.match(html,/status-state charging">Charging<\/span><span class="status-since">since 19:05<\/span><span class="status-note">3\.2 kW</);
+});
+
+test('the start leads the power and the finish',()=>{
+  const html=atNow(()=>{
+    const x=setupSince({since:'2026-10-21T16:05:00+00:00'});
+    x.states['sensor.pw']={state:'3200',attributes:{}};x.states['sensor.ttt']={state:'1h 30m',attributes:{}};x.states['sensor.fin']={state:'2026-10-22T02:10:00+03:00',attributes:{}};
+    x.states['sensor.cur']={state:'7',attributes:{}};
+    Object.assign(x.card._ids,{power:'sensor.pw',current:'sensor.cur',time_to_target_soc:'sensor.ttt',charging_finish_time:'sensor.fin'});x.card.hass=x.hass;
+    return x.html();
+  });
+  assert.match(html,/status-since">since 19:05<\/span><span class="status-note">3\.2 kW · 7 A · until 02:10</);
+});
+
+test('a charge from yesterday says yesterday, from this week the weekday, from before it the date — always with the time',()=>{
+  const note=(since,extra={})=>atNow(()=>setupSince({since,...extra}).html());
+  assert.match(note('2026-10-20T16:05:00+00:00'),/status-since">since yesterday 19:05</);
+  assert.match(note('2026-10-18T16:05:00+00:00'),/status-since">since Sun 19:05</);
+  assert.match(note('2026-10-13T16:05:00+00:00'),/status-since">since 13 Oct 19:05</);
+  assert.match(note('2026-10-20T16:05:00+00:00',{language:'uk'}),/status-since">з вчора 19:05</);
+  assert.match(note('2026-10-13T16:05:00+00:00',{language:'uk'}),/status-since">з 13 жовт\.? 19:05</);
+});
+
+test('"yesterday" is the calendar day in Home Assistant\'s zone, not 24 hours',()=>{
+  // It is 23:30 on the 21st in Kyiv.
+  assert.match(atNow(()=>setupSince({since:'2026-10-20T21:30:00+00:00'}).html()),/status-since">since 00:30</);
+  assert.match(atNow(()=>setupSince({since:'2026-10-20T20:50:00+00:00'}).html()),/status-since">since yesterday 23:50</);
+});
+
+test('a finished charge says when it finished',()=>{
+  const html=atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since:'2026-10-21T00:15:00+00:00'}).html());
+  assert.match(html,/status-state idle">Charge Complete<[^]*status-since">at 03:15</);
+});
+
+test('a charge that finished on an earlier day names the day and drops "at"',()=>{
+  const done=(since,extra={})=>atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since,...extra}).html());
+  assert.match(done('2026-10-20T00:15:00+00:00'),/status-since">yesterday 03:15</);
+  assert.match(done('2026-10-18T00:15:00+00:00'),/status-since">Sun 03:15</);
+  assert.match(done('2026-10-13T00:15:00+00:00'),/status-since">13 Oct 03:15</);
+  assert.match(done('2026-10-20T00:15:00+00:00',{language:'uk'}),/status-since">вчора 03:15</);
+});
+
+test('a finished charge with a reason the card cannot name still says when',()=>{
+  const html=atNow(()=>setupSince({state:'Charge Complete',reason:'unavailable',since:'2026-10-21T00:15:00+00:00'}).html());
+  assert.match(html,/status-since">at 03:15</);
+});
+
+test('no time where the state is not a finished charge or a running one',()=>{
+  const since='2026-10-21T00:15:00+00:00';
+  // A schedule or limit parked it: the reason leads and the car is not full.
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Energy Limit Reached',since}).html()),/ at |since/);
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Energy Limit Reached',stop:'on',since}).html()),/ at 0|since/);
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Connected',reason:'Waiting for Car',since}).html()),/since|at 03/);
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',since}).html()),/since|at 03/);
+});
+
+test('a missing, unreadable or future time shows nothing',()=>{
+  for(const since of [undefined,'','yesterday',42,null,'2026-10-22T20:30:00Z']){
+    assert.doesNotMatch(atNow(()=>setupSince({since}).html()),/status-(note|since)/,String(since));
+    assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Charge Complete',since}).html()),/status-(note|since)/,String(since));
+  }
+});
+
+test('the time reads in Ukrainian',()=>{
+  assert.match(atNow(()=>setupSince({language:'uk',since:'2026-10-21T16:05:00+00:00'}).html()),/status-since">з 19:05</);
+  assert.match(atNow(()=>setupSince({language:'uk',state:'Charge Complete',reason:'Charge Complete',since:'2026-10-21T00:15:00+00:00'}).html()),/status-since">о 03:15</);
+});
+
+// ---- REVE_PLUS 1.0.3: manual mode can be turned off without replugging (Anton, 23.10) ----
+// The notes read as on Eveus firmware, each with Turn off: One charge and Stop turn their own
+// switch off; manual mode from the app turns Stop off, which also takes the station out of it.
+const LEAVABLE = (state) => ({manual_mode:['binary_sensor.manual', state, {can_turn_off:true}]});
+const STOPPED = (state) => ({stop_charging:['switch.stop', state]});
+test('REVE 1.0.3 One charge: the One charge notice with Turn off, like Eveus firmware', () => {
+  const h = setupAll({sections:['schedules', 'limits'], over:{...SCHED, ...ONE('on'), ...STOPPED('off'), ...LEAVABLE('on'), limit_energy_enabled:['switch.lee','on']}}).html();
+  assert.match(h, /One charge ignores the schedules<\/span><button class="override-off" data-status-toggle="one_charge"/);
+  assert.match(h, /One charge ignores the limits<\/span><button class="override-off" data-status-toggle="one_charge"/);
+  assert.doesNotMatch(h, /replugged/);
+});
+test('REVE 1.0.3 Stop: Stop ignores the schedules and limits, Turn off releases it', () => {
+  const x = setupAll({sections:['schedules', 'limits'], charging:false, over:{...SCHED, ...ONE('off'), ...STOPPED('on'), ...LEAVABLE('on'), limit_energy_enabled:['switch.lee','on']}});
+  const h = x.html();
+  assert.match(h, /Stop ignores the schedules<\/span><button class="override-off" data-status-toggle="stop_charging"/);
+  assert.match(h, /Stop ignores the limits<\/span><button class="override-off" data-status-toggle="stop_charging"/);
+  assert.doesNotMatch(h, /replugged/);
+  assert.match(setupAll({sections:['schedules'], locale:'uk', charging:false, over:{...SCHED, ...ONE('off'), ...STOPPED('on'), ...LEAVABLE('on')}}).html(), /«Стоп» ігнорує розклади<\/span><button class="override-off"[^>]*>Вимкнути</);
+});
+test('REVE 1.0.3 manual mode from the app: the manual-mode notice with Turn off, which turns Stop off', () => {
+  const x = setupAll({sections:['schedules'], over:{...SCHED, ...ONE('off'), ...STOPPED('off'), ...LEAVABLE('on')}});
+  const h = x.html();
+  assert.match(h, /REVE manual mode ignores the schedules<\/span><button class="override-off" data-manual-off/);
+  assert.doesNotMatch(h, /replugged/);
+  x.card._onClick({target:{closest:(s) => s === '[data-manual-off]' ? {dataset:{}} : null}});
+  assert.equal(JSON.stringify(x.calls.at(-1)), JSON.stringify(['switch', 'turn_off', {entity_id:'switch.stop'}]));
+  assert.match(setupAll({sections:['schedules'], locale:'uk', over:{...SCHED, ...ONE('off'), ...STOPPED('off'), ...LEAVABLE('on')}}).html(), /Ручний режим REVE ігнорує розклади<\/span><button class="override-off" data-manual-off[^>]*>Вимкнути</);
+});
+test('REVE 1.0.3, manual mode off: no notice', () => {
+  assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...STOPPED('off'), ...LEAVABLE('off')}}).html(), /class="override"/);
 });

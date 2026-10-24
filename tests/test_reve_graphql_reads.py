@@ -23,6 +23,7 @@ import pytest
 from custom_components.eveus import reve, reve_fields
 from custom_components.eveus.common_network import EveusUnreachable
 from test_reve_firmware import _Charger, _clock, _load, _reve_main, _updater
+from test_reve_graphql_writes import _known
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -69,9 +70,12 @@ def _known_reve(monkeypatch: pytest.MonkeyPatch, charger: _Charger):
 
 def test_the_measurements_document_asks_for_exactly_the_mapped_fields() -> None:
     asked = _paths(reve.MEASUREMENTS_QUERY)
-    assert asked == reve_fields.graphql_paths() | {("chargingCommand",)}
+    # REVE_PLUS 1.0.3's own additions, named by its developer (2026-10-23);
+    # the app's document predates them.
+    added = {(field,) for field in reve._STATION_SYSTEM_FIELDS} | {("ratesV2", "activeRate")}
+    assert asked == reve_fields.graphql_paths() | {("chargingCommand",)} | added
     app = _paths((_FIXTURES / "reve_app_station_query.graphql").read_text())
-    assert asked <= app
+    assert asked - added <= app
     assert reve.MEASUREMENTS_QUERY.lstrip().startswith("query StationData")
 
 
@@ -112,7 +116,7 @@ def test_the_first_poll_reads_main_then_the_measurements_at_once(monkeypatch: py
     data = asyncio.run(updater._async_update_data())
 
     assert charger.paths()[:2] == ["/main", "/graphql"]
-    assert charger.calls[1][1]["query"] == reve.MEASUREMENTS_QUERY
+    assert charger.calls[1][1]["query"] == reve.MEASUREMENTS_AND_SETTINGS_QUERY
     assert data["sessionTime"] == 120
     assert data["manufacturer"] == "Reve"
     assert updater.reve_diagnostics()["measurements"]["last_source"] == "graphql"
@@ -153,7 +157,8 @@ def test_a_graphql_outage_falls_back_to_main_in_the_same_poll(monkeypatch: pytes
     assert data["voltMeas1"] == 229
     assert updater.last_update_success is True
     assert updater.reve_diagnostics()["measurements"]["main_fallbacks"] == 1
-    assert updater.reve_api_answering is False
+    # One missed reply from a server that has answered before.
+    assert updater.reve_api_answering is True
 
 
 def test_a_reply_without_the_state_is_a_failed_read(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -458,6 +463,10 @@ def test_reve_api_stays_off_while_only_the_settings_read_fails(monkeypatch: pyte
     charger.schedules = "not a list"
     now[0] += reve.EXTRAS_REFRESH_SECONDS
     asyncio.run(updater._async_update_data())
+    # One failed read is tolerated; the settings retry failing as well is not.
+    assert updater.reve_api_answering is True
+    now[0] += reve.EXTRAS_RETRY_SECONDS
+    asyncio.run(updater._async_update_data())
     assert updater.reve_api_answering is False
 
     now[0] += 30
@@ -482,3 +491,27 @@ def test_reve_api_stays_off_when_the_first_settings_read_fails(monkeypatch: pyte
     now[0] += 30
     asyncio.run(updater._async_update_data())
     assert updater.reve_api_answering is False
+
+
+def test_diagnostics_show_the_station_memory_and_uptime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REVE_PLUS 1.0.3 reports its heap and uptime; diagnostics only, no entities."""
+    charger, updater = _known(monkeypatch)
+    charger.station.update({
+        "heapFreeSize": 19428, "heapMinFreeSize": 2716, "heapLargestFreeBlock": 12288,
+        "heapTotalSize": 191704, "stationUptimeMs": 839781, "chargingManualControl": False,
+    })
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_diagnostics()["station"] == {
+        "heap_free": 19428, "heap_min_free": 2716, "heap_largest_free_block": 12288,
+        "heap_total": 191704, "uptime_seconds": 839, "manual_control": False,
+    }
+    for field in ("heapFreeSize", "stationUptimeMs"):
+        assert field in reve.MEASUREMENTS_QUERY
+        assert (field,) not in reve._EXPECTED_PATHS
+
+
+def test_diagnostics_station_is_empty_on_firmware_without_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _known(monkeypatch)
+    charger.station["heapFreeSize"] = "x"
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_diagnostics()["station"] == {}

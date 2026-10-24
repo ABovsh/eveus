@@ -33,6 +33,7 @@ from homeassistant.exceptions import (
     HomeAssistantError,
 )
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
@@ -43,6 +44,8 @@ from .const import (
     CONF_MODEL,
     CONF_SCHEME,
     DEFAULT_SCHEME,
+    CONF_FIRMWARE_FAMILY,
+    EVEUS_FIRMWARE_ONLY_ENTITIES,
     CONF_PHASES,
     DEFAULT_PHASES,
     PHASE_OPTIONS,
@@ -60,17 +63,22 @@ from .const import (
     DEFAULT_SOC_CORRECTION,
 )
 from .common_network import EveusUnreachable, EveusUpdater
+from .meter_guard import METER_STORE_VERSION, meter_store_key
+from .reve import FAMILY_CLASSIC, FAMILY_REVE
 from .issues import (
     BatteryLowTracker,
     ClockDriftTracker,
     battery_low_issue_id,
     clock_drift_issue_id,
     ocpp_issue_id,
+    reve_fields_issue_id,
     update_battery_low_issue,
     update_clock_drift_issue,
     update_ocpp_issue,
+    update_reve_fields_issue,
 )
 from .utils import (
+    device_entry_ids,
     get_device_suffix,
     get_next_device_number,
     is_device_number_taken,
@@ -212,8 +220,39 @@ def _resolve_phases(raw_phases: Any) -> tuple[int, bool]:
     return phases, False
 
 
+def _remember_firmware_family(
+    hass: HomeAssistant, entry: ConfigEntry, updater: EveusUpdater
+) -> None:
+    """Store the firmware the charger answered with; the platforms build from it.
+
+    A charger that did not answer leaves the entry as it was last heard, so a
+    REVE charger switched off at setup is still built as REVE. Only REVE is
+    stored: an Eveus firmware entry keeps its data unchanged.
+    """
+    if not updater.last_update_success:
+        return
+    reve = getattr(updater, "firmware_family", FAMILY_CLASSIC) == FAMILY_REVE
+    if reve and entry.data.get(CONF_FIRMWARE_FAMILY) != FAMILY_REVE:
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_FIRMWARE_FAMILY: FAMILY_REVE}
+        )
+    elif not reve and CONF_FIRMWARE_FAMILY in entry.data:
+        data = dict(entry.data)
+        data.pop(CONF_FIRMWARE_FAMILY)
+        hass.config_entries.async_update_entry(entry, data=data)
+
+
+def built_for_reve(entry: ConfigEntry) -> bool:
+    """Whether this entry's entities are built for REVE firmware."""
+    return entry.data.get(CONF_FIRMWARE_FAMILY) == FAMILY_REVE
+
+
 def _prune_unused_entities(
-    hass: HomeAssistant, device_number: int, soc_mode: str, phases: int
+    hass: HomeAssistant,
+    device_number: int,
+    soc_mode: str,
+    phases: int,
+    firmware_family: str = FAMILY_CLASSIC,
 ) -> None:
     """Remove registry rows for entities not built under the current config."""
     stale: list[tuple[str, str]] = list(_REMOVED_ENTITIES)
@@ -221,6 +260,8 @@ def _prune_unused_entities(
         stale.extend(_ADVANCED_ONLY_ENTITIES)
     if phases != 3:
         stale.extend(_THREE_PHASE_ONLY_ENTITIES)
+    if firmware_family == FAMILY_REVE:
+        stale.extend(EVEUS_FIRMWARE_ONLY_ENTITIES)
     reg = er.async_get(hass)
     suffix = get_device_suffix(device_number)
     for platform, key in stale:
@@ -241,6 +282,8 @@ async def async_setup(hass: HomeAssistant, _config: dict[str, Any]) -> bool:
             _LOGGER.warning("Eveus card was not registered: %s", type(err).__name__)
 
     websocket_api.async_register_command(hass, _ws_card_entities)
+    websocket_api.async_register_command(hass, _ws_reve_schedules)
+    websocket_api.async_register_command(hass, _ws_reve_schedule_weekdays)
     if hass.is_running:
         await _register_card()
     else:
@@ -280,6 +323,77 @@ def _ws_card_entities(
             connection.send_result(msg["id"], {"device_id": device_id, "entities": entities})
             return
     connection.send_error(msg["id"], "not_found", "No Eveus charger found")
+
+
+def _updater_for(hass: HomeAssistant, device_id: str | None) -> EveusUpdater | None:
+    """The loaded charger a card names by device, or the first one."""
+    device = dr.async_get(hass).async_get(device_id) if device_id is not None else None
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        data = getattr(entry, "runtime_data", None)
+        if data is None:
+            continue
+        if device_id is None or (device is not None and entry.entry_id in device_entry_ids(device)):
+            return data.updater
+    return None
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eveus/reve_schedules",
+        vol.Optional("device_id"): str,
+    }
+)
+@callback
+def _ws_reve_schedules(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Every REVE schedule with its days, for the card: asked for, never
+    published, so the recorder writes nothing for it."""
+    updater = _updater_for(hass, msg.get("device_id"))
+    if updater is None:
+        connection.send_error(msg["id"], "not_found", "No Eveus charger found")
+        return
+    connection.send_result(msg["id"], updater.reve_card_schedules())
+
+
+async def _async_reve_schedule_weekdays(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Set the days of REVE schedule 1 or 2 from the card."""
+    from .control_base import REVE_NOT_ANSWERING_MESSAGE
+    from .common_command import REVE_NOT_ANSWERING
+
+    updater = _updater_for(hass, msg.get("device_id"))
+    if updater is None:
+        connection.send_error(msg["id"], "not_found", "No Eveus charger found")
+        return
+    if updater.firmware_family != FAMILY_REVE:
+        connection.send_error(msg["id"], "not_supported", "Only REVE schedules have days of the week")
+        return
+    days = sorted(set(msg["weekdays"]))
+    if not days:
+        connection.send_error(msg["id"], "invalid_format", "A schedule needs at least one day")
+        return
+    # The schema's In((1, 2)) also lets 1.0 and True through: name the slot as a whole number.
+    if not await updater.send_command(f"sh{int(msg['schedule'])}Weekdays", days):
+        message = (
+            REVE_NOT_ANSWERING_MESSAGE
+            if updater.last_command_failure == REVE_NOT_ANSWERING
+            else "The charger did not accept the days"
+        )
+        connection.send_error(msg["id"], "failed", message)
+        return
+    connection.send_result(msg["id"], {"weekdays": days})
+
+
+_ws_reve_schedule_weekdays = websocket_api.websocket_command(
+    {
+        vol.Required("type"): "eveus/reve_schedule_weekdays",
+        vol.Optional("device_id"): str,
+        vol.Required("schedule"): vol.In((1, 2)),
+        vol.Required("weekdays"): [vol.All(int, vol.Range(min=0, max=6))],
+    }
+)(websocket_api.async_response(_async_reve_schedule_weekdays))
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
@@ -472,8 +586,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
     """Set up Eveus from a config entry."""
     try:
         host = entry.data.get(CONF_HOST)
-        username = entry.data.get(CONF_USERNAME)
-        password = entry.data.get(CONF_PASSWORD)
+        # Either may be empty: a charger without a password (REVE has none).
+        username = entry.data.get(CONF_USERNAME) or ""
+        password = entry.data.get(CONF_PASSWORD) or ""
         model = entry.data.get(CONF_MODEL)
         scheme = entry.data.get(CONF_SCHEME, DEFAULT_SCHEME)
 
@@ -491,12 +606,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         except vol.Invalid as err:
             _create_invalid_config_issue(hass, entry, "invalid_host")
             raise ConfigEntryError(f"Invalid host: {err}") from err
-        if not username:
-            _create_invalid_config_issue(hass, entry, "missing_username")
-            raise ConfigEntryError("No username specified")
-        if not password:
-            _create_invalid_config_issue(hass, entry, "missing_password")
-            raise ConfigEntryError("No password specified")
 
         from .config_flow import validate_credentials
 
@@ -648,6 +757,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # for an outage mid-session, and the first poll that lands fills them.
         # Every other failure still fails setup -- bad credentials, or a reply
         # this firmware cannot produce, are not fixed by polling again.
+        # The lifetime meters' last readings first: the poll that lands after a
+        # restart may be the charger's zero boot reading.
+        await updater.async_load_meter_baseline()
         try:
             await updater.async_config_entry_first_refresh()
         except ConfigEntryNotReady as err:
@@ -678,6 +790,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
             if callable(arm_probe):
                 arm_probe()
 
+        _remember_firmware_family(hass, entry, updater)
         entry.runtime_data = EveusRuntimeData(
             updater=updater,
             device_number=device_number,
@@ -735,6 +848,32 @@ async def _finish_setup(
     # toggles made from the charger UI or mobile app, not just from HA.
     follow_polls(lambda: update_ocpp_issue(hass, entry, updater))
 
+    # Name the fields a REVE firmware update stopped reporting: the server
+    # answers an unknown field with nothing, so their entities would
+    # otherwise lose their values without a word.
+    follow_polls(lambda: update_reve_fields_issue(hass, entry, updater))
+
+    # A charger first heard as REVE after setup (it was switched off, or was
+    # just updated to REVE) was built with the Eveus-firmware-only entities;
+    # remember REVE and reload once so they go.
+    if not built_for_reve(entry):
+        reloading = False  # pragma: no mutate - only read for truthiness
+
+        @callback
+        def _reload_on_reve() -> None:
+            nonlocal reloading
+            if reloading or not updater.last_update_success:
+                return
+            if getattr(updater, "firmware_family", FAMILY_CLASSIC) != FAMILY_REVE:
+                return
+            reloading = True
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_FIRMWARE_FAMILY: FAMILY_REVE}
+            )
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+
+        follow_polls(_reload_on_reve)
+
     # Track the CR2032 coin cell (vBat) across polls and warn when it is
     # depleted, with debounce/hysteresis held in the tracker.
     battery_tracker = BatteryLowTracker()
@@ -790,6 +929,7 @@ async def _finish_setup(
         # An invalid stored phase count fell back to 1; don't let that
         # fallback prune the 3-phase registry rows.
         3 if phases_were_invalid else phases,
+        FAMILY_REVE if built_for_reve(entry) else FAMILY_CLASSIC,
     )
 
     return True
@@ -815,6 +955,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, battery_low_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))
+    ir.async_delete_issue(hass, DOMAIN, reve_fields_issue_id(entry))
     ir.async_delete_issue(hass, DOMAIN, f"soc_dashboard_update_{entry.entry_id}")
     for policy in POLICIES:
         ir.async_delete_issue(hass, DOMAIN, safety_issue_id(entry, policy.key))
@@ -825,6 +966,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await Store(hass, _SAFETY_STORE_VERSION, safety_store_key(entry)).async_remove()
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Could not remove safety store for removed entry")
+    try:
+        await Store(hass, METER_STORE_VERSION, meter_store_key(entry.entry_id)).async_remove()
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not remove meter store for removed entry")
 
     await _async_unregister_card(hass, entry.entry_id)
 
@@ -839,4 +984,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> bo
         ir.async_delete_issue(hass, DOMAIN, ocpp_issue_id(entry))
         ir.async_delete_issue(hass, DOMAIN, battery_low_issue_id(entry))
         ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))
+        ir.async_delete_issue(hass, DOMAIN, reve_fields_issue_id(entry))
     return unloaded

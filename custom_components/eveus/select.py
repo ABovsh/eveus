@@ -17,6 +17,7 @@ from .common_base import (
     OptimisticControlMixin,
     WriteOnChangeMixin,
 )
+from .control_base import command_failure
 from .const import (
     CONF_MODEL,
     MIN_VOLTAGE_OPTIONS,
@@ -106,8 +107,8 @@ class _EveusIntegerSelect(
             if not success:
                 self._optimistic_value = None
                 self._write_if_changed(self.current_option)
-                raise HomeAssistantError(
-                    f"Eveus charger did not accept {self.WRITE_KEY}={value}"
+                raise command_failure(
+                    self._updater, f"Eveus charger did not accept {self.WRITE_KEY}={value}"
                 )
             self._set_optimistic_value(value)
         _LOGGER.debug("%s changed to %s", self.ENTITY_NAME, option)

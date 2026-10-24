@@ -25,9 +25,12 @@ FIRST_FAILURE_RETRY_INTERVAL: Final[int] = 15
 # Stop no longer waits more than a minute behind a dead request.
 UPDATE_TIMEOUT: Final[int] = 10
 COMMAND_TIMEOUT: Final[int] = 12
-# REVE's GraphQL answers in ~0.05-0.3 s. A read rides inside a /main poll, so
-# a hanging one may delay that poll by at most this much, once per retry window.
-GRAPHQL_TIMEOUT: Final[int] = 6
+# REVE's GraphQL answers in ~0.05-0.3 s, but ~5.2 s on every request while the
+# charger has no internet (up to 7.5 s as it sets up a cloud session; measured
+# 2026-10-24 on REVE_PLUS 1.0.3), so it waits as long as a /main read. A read
+# rides inside a /main poll, so a hanging one may delay that poll by at most
+# this much, once per retry window.
+GRAPHQL_TIMEOUT: Final[int] = 10
 
 # Charger device-state value that means "idle/standby" (CHARGING_STATES[2]).
 DEVICE_STATE_STANDBY: Final[int] = 2
@@ -235,6 +238,15 @@ MAX_VALID_RSSI_DBM: Final[int] = 0
 # anywhere near a year; the bound only rejects corrupt outliers that would
 # otherwise render an overlong HA state string.
 MAX_SESSION_TIME_SECONDS: Final[int] = 366 * 24 * 3600
+# sessionTime is floored to this step while the charger idles, so the plug-in
+# moment derived from it can read this much late. A restored "in this state
+# since" stamp is checked against that moment with this much slack.
+SESSION_TIME_IDLE_STEP_SECONDS: Final[int] = 300
+
+# An accumulated energy or cost meter writes a recorder row only after this much
+# energy has gathered since its last row (and at most once a minute). At 3.6 kW
+# that is one row every other minute; above ~6 kW the minute alone paces it.
+METER_PUBLISH_BAND_KWH: Final[float] = 0.1
 # Upper sanity cap for monetary values (session/tariff cost counters).
 MAX_COST_VALUE: Final[int] = 100_000_000
 
@@ -245,6 +257,19 @@ DEFAULT_SCHEME: Final[str] = "http"
 CONF_PHASES: Final[str] = "phases"
 PHASE_OPTIONS: Final[List[int]] = [1, 3]
 DEFAULT_PHASES: Final[int] = 1
+# "reve" once the charger has answered as REVE, absent otherwise: the entities
+# REVE cannot fill are built from it while the charger is switched off.
+CONF_FIRMWARE_FAMILY: Final[str] = "firmware_family"
+# Built for Eveus firmware only: REVE schedules have no energy limit and REVE
+# resets suspendLimits within seconds (hardware test 2026-10-18), so on REVE
+# these would read unavailable forever.
+EVEUS_FIRMWARE_ONLY_ENTITIES: Final[tuple[tuple[str, str], ...]] = (
+    ("switch", "limit_disable_all"),
+    ("switch", "schedule_1_energy_limit_enabled"),
+    ("switch", "schedule_2_energy_limit_enabled"),
+    ("number", "schedule_1_energy_limit"),
+    ("number", "schedule_2_energy_limit"),
+)
 
 # Integration mode (Basic / Advanced); key kept as soc_mode for entry compatibility
 CONF_SOC_MODE: Final[str] = "soc_mode"
@@ -302,6 +327,9 @@ RATE_STATES: Final[Dict[int, str]] = {
     0: "Primary Rate",
     1: "Rate 2",
     2: "Rate 3",
+    # REVE only: its third and fourth rates, named in its app.
+    3: "Rate 4",
+    4: "Rate 5",
 }
 
 # State Mappings

@@ -327,7 +327,7 @@ def test_the_reason_sensor_stores_the_completion_anchor():
 def test_only_the_reason_sensor_stores_the_anchor():
     updater = _updater()
     _feed(updater, {"state": 5, "subState": 0, "sessionTime": 4000})
-    spec = next(s for s in create_sensor_specifications() if s.key == "state")
+    spec = next(s for s in create_sensor_specifications() if s.key == "substate")
     assert OptimizedEveusSensor(updater, spec).extra_restore_state_data is None
 
 
@@ -363,7 +363,7 @@ def test_a_sensor_without_the_flag_does_not_read_stored_data(monkeypatch):
 
     monkeypatch.setattr(common_base.EveusSensorBase, "async_added_to_hass", _base_setup)
     updater = _updater()
-    spec = next(s for s in create_sensor_specifications() if s.key == "state")
+    spec = next(s for s in create_sensor_specifications() if s.key == "substate")
     sensor = OptimizedEveusSensor(updater, spec)
     read = Mock(side_effect=AssertionError("must not read stored data"))
     monkeypatch.setattr(sensor, "async_get_last_extra_data", read)

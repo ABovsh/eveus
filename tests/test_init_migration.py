@@ -701,6 +701,25 @@ def test_async_remove_entry_deletes_all_per_entry_issues(monkeypatch) -> None:
         assert f"safety_{policy.key}_e1" in deleted, policy.key
 
 
+def test_async_remove_entry_deletes_the_saved_meter_readings(monkeypatch) -> None:
+    from custom_components import eveus
+
+    removed: list[str] = []
+
+    class _Store:
+        def __init__(self, hass, version, key) -> None:
+            self.key = key
+
+        async def async_remove(self) -> None:
+            removed.append(self.key)
+
+    monkeypatch.setattr("homeassistant.helpers.storage.Store", _Store)
+    monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *args: None)
+    asyncio.run(eveus.async_remove_entry(object(), SimpleNamespace(entry_id="e1")))
+
+    assert "eveus_meters_e1" in removed
+
+
 def test_advanced_only_prune_list_covers_target_soc_forecast_sensors() -> None:
     from custom_components.eveus import _ADVANCED_ONLY_ENTITIES
 

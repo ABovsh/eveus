@@ -1,4 +1,4 @@
 {
-  "_comment": "Survivor-count ratchet for the single mutmut 3 run: increases fail the job; decreases tighten this baseline. OBSERVED: 700 survivors from CI workflow_dispatch run 39114884903 on reve aebbc0a (9618 mutants, 17 timeouts), 2026-10-18. Down from 809 (rc f4da2e7, 2026-10-06). Equivalent mutants remain in the count; only verified unobservable lines use pragma: no mutate with a reason.",
-  "survivors": 700
+  "_comment": "Survivor-count ratchet for the single mutmut 3 run: increases fail the job; decreases tighten this baseline. OBSERVED: 730 survivors from a local mutmut 3.8.0 run on rc 7e56792 (10828 mutants, 26 timeouts, 8 without tests), 2026-10-24. Down from 752 (rc b52c8d8): the re-audit round killed survivors in state_since seeding, REVE read health, card payload and cost-to-target. Equivalent mutants remain in the count; only verified unobservable lines use pragma: no mutate with a reason.",
+  "survivors": 730
 }

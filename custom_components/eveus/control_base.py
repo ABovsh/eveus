@@ -10,9 +10,24 @@ from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 
 from .common_base import BaseEveusEntity, OptimisticControlMixin
+from .common_command import REVE_NOT_ANSWERING
 from .const import OPTIMISTIC_CONTROL_TTL
 
 _LOGGER = logging.getLogger(__name__)
+
+# REVE's GraphQL server answers HTTP 500 for up to ~18 minutes after the
+# charger reconnects to Wi-Fi: nothing was refused, so say what happened.
+REVE_NOT_ANSWERING_MESSAGE = (
+    "The charger's REVE interface is not answering; try again in a few minutes"
+)
+
+
+def command_failure(updater: Any, rejected_message: str) -> HomeAssistantError:
+    """The error for a command ``send_command`` reported failed: REVE's
+    interface not answering when that is why, else ``rejected_message``."""
+    if getattr(updater, "last_command_failure", None) == REVE_NOT_ANSWERING:
+        return HomeAssistantError(REVE_NOT_ANSWERING_MESSAGE)
+    return HomeAssistantError(rejected_message)
 
 T = TypeVar("T")
 
@@ -104,7 +119,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
                 superseded = True
                 return
             if not success:
-                raise HomeAssistantError(rejected_message)
+                raise command_failure(self._updater, rejected_message)
             self._set_optimistic_value(accepted)
         except (HomeAssistantError, ConfigEntryAuthFailed):
             raise

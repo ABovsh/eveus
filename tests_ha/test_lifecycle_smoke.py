@@ -17,7 +17,13 @@ from urllib.parse import parse_qs
 
 import pytest
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, STATE_UNAVAILABLE
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    EVENT_HOMEASSISTANT_FINAL_WRITE,
+    STATE_UNAVAILABLE,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
@@ -383,11 +389,12 @@ async def test_meter_tail_reaches_ha_before_reset_and_cost_window_changes(
     assert rows[0].attributes['last_reset'] < rows[1].attributes['last_reset']
 
 
-@pytest.mark.parametrize("key,field", [
-    ("total_energy", "totalEnergy"), ("session_cost", "sessionMoney"),
+@pytest.mark.parametrize("key,field,recovered", [
+    # A lifetime meter never comes back lower: a drop is held (meter_guard).
+    ("total_energy", "totalEnergy", 10), ("session_cost", "sessionMoney", 0),
 ])
 async def test_missing_meter_is_unavailable_and_recovers_to_valid_zero(
-    hass, aioclient_mock, key, field
+    hass, aioclient_mock, key, field, recovered
 ):
     entry = _entry(hass, HOST_A)
     payload = {**REAL_MAIN, field: 10}
@@ -417,10 +424,47 @@ async def test_missing_meter_is_unavailable_and_recovers_to_valid_zero(
     assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
     assert rows == []
     aioclient_mock.clear_requests()
-    _mock_charger(aioclient_mock, HOST_A, json={**payload, field: 0})
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, field: recovered})
     updater._next_poll_attempt = 0
     await updater.async_refresh()
     await hass.async_block_till_done()
-    assert hass.states.get(entity_id).state == "0.0"
-    assert rows == ["0.0"]
+    assert hass.states.get(entity_id).state == f"{recovered:.1f}"
+    assert rows == [f"{recovered:.1f}"]
     unsub()
+
+
+async def test_a_restart_holds_a_zero_boot_reading_against_the_saved_meters(
+    hass, hass_storage, aioclient_mock
+):
+    """The poll after a restart can be the charger's zero boot reading: the
+    last accepted readings come from storage, so it does not become the baseline."""
+    entry = _entry(hass, HOST_A)
+    hass_storage[f"eveus_meters_{entry.entry_id}"] = {
+        "version": 1,
+        "data": {"totalEnergy": 5440.86, "IEM1": 49.16},
+    }
+    _mock_charger(aioclient_mock, HOST_A, json={**REAL_MAIN, "totalEnergy": 0, "IEM1": 0})
+    await _setup(hass, entry)
+
+    assert hass.states.get("sensor.eveus_ev_charger_total_energy").state == "5440.86"
+    assert hass.states.get("sensor.eveus_ev_charger_counter_a_energy").state == "49.16"
+
+
+async def test_unloading_saves_the_accepted_meters_for_the_next_start(
+    hass, hass_storage, aioclient_mock
+):
+    entry = _entry(hass, HOST_A)
+    _mock_charger(aioclient_mock, HOST_A, json={**REAL_MAIN, "totalEnergy": 5107.83})
+    await _setup(hass, entry)
+    # Inside the save interval: nothing is written by the poll itself.
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**REAL_MAIN, "totalEnergy": 5108.4})
+    await entry.runtime_data.updater.async_refresh()
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    # What Home Assistant does as it stops: write whatever is still pending.
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_FINAL_WRITE)
+    await hass.async_block_till_done()
+
+    assert hass_storage[f"eveus_meters_{entry.entry_id}"]["data"]["totalEnergy"] == pytest.approx(5108.4)

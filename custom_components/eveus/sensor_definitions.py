@@ -47,6 +47,7 @@ from .const import (
     LEGACY_RAW_STATE_KEY,
     MAX_SCHEDULE_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
+    METER_PUBLISH_BAND_KWH,
     TIME_DRIFT_TOLERANCE_SECONDS,
     TIME_DRIFT_QUANTUM_SECONDS,
 )
@@ -72,7 +73,9 @@ UNIT_UAH = "UAH"
 # parsed. A getter below states presentation only — precision, a unit
 # transform, a display deadband.
 _MAX_SCHEDULE_KWH = MAX_SCHEDULE_ENERGY_KWH
-_RATE_COST_KEYS: Final = {0: "tarif", 1: "tarifAValue", 2: "tarifBValue"}
+_RATE_COST_KEYS: Final = {
+    0: "tarif", 1: "tarifAValue", 2: "tarifBValue", 3: "tarifCValue", 4: "tarifDValue",
+}
 
 
 def _should_log_error(function_name: str) -> bool:
@@ -104,6 +107,9 @@ class EveusSensorEntityDescription(SensorEntityDescription, frozen_or_thawed=Tru
     # the entity, so a restart after the schedule window closes does not
     # relabel a full car. See `EveusUpdater.seed_charge_completion`.
     restores_charge_completion: bool = False
+    # Saves when the charger entered its current state, whatever the entity's
+    # state: see `EveusUpdater.seed_state_since`.
+    restores_state_since: bool = False
     # Churn damping for a reading that dithers between polls, applied by the
     # entity (`EveusSensorBase._deadband`) rather than here — see
     # `_make_value_getter`'s docstring for why the getter itself stays pure.
@@ -111,6 +117,12 @@ class EveusSensorEntityDescription(SensorEntityDescription, frozen_or_thawed=Tru
     # Raw coordinator data stays live; only these accumulated meters publish
     # ordinary growth once per UTC minute, with terminal/reset flushes.
     minute_publication: bool = False
+    # On top of the minute, ordinary growth waits until the ENERGY under
+    # `publish_band_key` has grown by `publish_band` kWh since the last write.
+    # A cost names the energy it is paid for, so it writes with that energy
+    # whatever the price. No energy reading -> the minute alone decides.
+    publish_band_key: Optional[str] = None
+    publish_band: float = METER_PUBLISH_BAND_KWH
 
 
 class OptimizedEveusSensor(EveusSensorBase):
@@ -137,6 +149,7 @@ class OptimizedEveusSensor(EveusSensorBase):
         self._meter_bucket = None
         self._publication_override = False
         self._publication_value = None
+        self._band_anchor = None
 
     def _publish_meter_value(self, value) -> None:
         """Use the normal availability, cost-reset and write-on-change path."""
@@ -168,13 +181,29 @@ class OptimizedEveusSensor(EveusSensorBase):
             # Publish the last observed tail BEFORE a reset/new window. Both
             # rows go through MonetaryCostSensor's last_reset bookkeeping.
             self._publish_meter_value(self._meter_latest)
-        publish = terminal or self._meter_bucket != bucket or self._attr_native_value is None
+        banded = snapshot.get(self._spec.publish_band_key) if self._spec.publish_band_key else None
+        publish = (
+            terminal
+            or self._attr_native_value is None
+            or (self._meter_bucket != bucket and self._band_reached(banded))
+        )
         self._publish_meter_value(value if publish else self._attr_native_value)
         if publish:
             self._meter_bucket = bucket
+            self._band_anchor = banded
         self._meter_latest = value
         self._meter_context = context
         self._meter_clock = clock
+
+    def _band_reached(self, energy: Any) -> bool:
+        """Whether the energy has grown by the band since the last write; true
+        when there is nothing to measure it against."""
+        # The snapshot hands over a bounded number or None, nothing else.
+        if self._band_anchor is None or energy is None:
+            return True
+        # Rounding absorbs float noise (10.1 - 10.0 is 0.0999...96); any digit
+        # count from 3 to 9 does the same for a 0.01 kWh meter.
+        return round(energy - self._band_anchor, 6) >= self._spec.publish_band  # pragma: no mutate
 
     async def async_will_remove_from_hass(self) -> None:
         """Flush the latest observed meter before an orderly unload/restart."""
@@ -213,6 +242,10 @@ class OptimizedEveusSensor(EveusSensorBase):
             stored = await self.async_get_last_extra_data()
             data = stored.as_dict() if stored is not None else {}
             self._updater.seed_charge_completion(data.get("completed_session_time"))
+        if self._spec.restores_state_since:
+            stored = await self.async_get_last_extra_data()
+            data = stored.as_dict() if stored is not None else {}
+            self._updater.seed_state_since(data.get("state"), data.get("since"))
         await super().async_added_to_hass()
         if self._spec.available_when_offline:
             # The link metric moves on every failed poll, which HA does not
@@ -234,6 +267,8 @@ class OptimizedEveusSensor(EveusSensorBase):
         attribute is a recorder row, and an `unavailable` state is saved
         without its attributes.
         """
+        if self._spec.restores_state_since:
+            return _StateSinceData(self._updater.state_since_anchor)
         if not self._spec.restores_charge_completion:
             return None
         return _ChargeCompletionData(self._updater.charge_completion_anchor)
@@ -323,6 +358,17 @@ class _ChargeCompletionData(ExtraStoredData):
 
     def as_dict(self) -> dict[str, Any]:
         return {"completed_session_time": self.session_time}
+
+
+class _StateSinceData(ExtraStoredData):
+    """The charger's state and the moment it was entered, or nothing."""
+
+    def __init__(self, anchor: Optional[tuple[int, datetime]]) -> None:
+        self.anchor = anchor
+
+    def as_dict(self) -> dict[str, Any]:
+        state, since = self.anchor or (None, None)
+        return {"state": state, "since": since.isoformat() if since else None}
 
 
 class _CostWindowData(ExtraStoredData):
@@ -637,17 +683,26 @@ def get_charger_state_attributes(updater, hass) -> dict:
     Two cases carry a code the enum value can't show: an unmapped state
     (rendered as plain "Unknown") and a firmware-1.x state translated to its
     modern equivalent by the coordinator (original kept under
-    LEGACY_RAW_STATE_KEY). A plain mapped state adds no attribute.
+    LEGACY_RAW_STATE_KEY). A plain mapped state adds no such attribute.
+
+    `since` is when the charger entered this state, from the updater's own
+    stamp; absent while that moment is not known. It changes only together
+    with the state, so it costs no recorder row of its own.
     """
     # Synthetic key, written by the coordinator's legacy translation — it is
     # not a charger field, so it is read from the raw payload, not the parse.
+    attrs: dict = {}
     raw_legacy = updater.snapshot.raw.get(LEGACY_RAW_STATE_KEY)
     if raw_legacy is not None:
-        return {"raw_state": raw_legacy}
-    state_value = _read_int(updater, "state")
-    if state_value is not None and state_value not in CHARGING_STATES:
-        return {"raw_state": state_value}
-    return {}
+        attrs["raw_state"] = raw_legacy
+    else:
+        state_value = _read_int(updater, "state")
+        if state_value is not None and state_value not in CHARGING_STATES:
+            attrs["raw_state"] = state_value
+    since = updater.state_since
+    if since is not None:
+        attrs["since"] = since.isoformat()
+    return attrs
 
 
 def get_charger_substate(updater, hass) -> Optional[str]:
@@ -1175,6 +1230,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             state_class=state_class,
             native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
             minute_publication=True,
+            publish_band_key=fn.source_keys[0],
             suggested_display_precision=2,
         )
         for name, fn, icon, state_class, device_class in energy_sensors
@@ -1185,6 +1241,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
         EveusSensorEntityDescription(
             key="state", name="State", value_fn=get_charger_state,
             attributes_fn=get_charger_state_attributes,
+            restores_state_since=True,
             icon="mdi:state-machine",
             entity_category=EntityCategory.DIAGNOSTIC,
             device_class=SensorDeviceClass.ENUM,
@@ -1317,6 +1374,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True, minute_publication=True,
+            publish_band_key="IEM1",
         ),
         EveusSensorEntityDescription(
             key="counter_b_cost", name="Counter B Cost", value_fn=get_counter_b_cost,
@@ -1324,6 +1382,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True, minute_publication=True,
+            publish_band_key="IEM2",
         ),
         EveusSensorEntityDescription(
             # The owner's own configured price (`tarif`/`tarif_2`/`tarif_3`),
@@ -1372,6 +1431,7 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
             device_class=SensorDeviceClass.MONETARY,
             state_class=SensorStateClass.TOTAL, native_unit_of_measurement=UNIT_UAH, suggested_display_precision=2,
             tracks_reset=True, minute_publication=True,
+            publish_band_key="sessionEnergy",
         ),
         EveusSensorEntityDescription(
             key="adaptive_charging", name="Adaptive Charging",

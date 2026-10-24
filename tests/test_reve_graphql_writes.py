@@ -604,3 +604,109 @@ def test_the_reve_sensors_of_a_second_charger_have_their_own_ids(monkeypatch: py
     for cls in (EveusReveApiBinarySensor, EveusManualModeBinarySensor):
         first, second = cls(updater, 1).unique_id, cls(updater, 2).unique_id
         assert second == first.replace("eveus", f"eveus{get_device_suffix(2)}", 1) != first
+
+
+# ---------------------------------------------------------------------------
+# A write REVE's interface does not answer
+# ---------------------------------------------------------------------------
+
+
+def _stop_switch(updater: Any) -> Any:
+    return next(e for e in _switches(updater) if e._command == "evseEnabled")
+
+
+def test_an_unanswered_write_says_the_reve_interface_is_not_answering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # REVE's GraphQL server returns HTTP 500 for up to ~18 minutes after a
+    # Wi-Fi reconnect: the charger refused nothing, so "did not accept" was
+    # the wrong thing to tell the user.
+    from homeassistant.exceptions import HomeAssistantError
+
+    charger, updater = _known(monkeypatch)
+    charger.graphql_status = 500
+
+    with pytest.raises(HomeAssistantError, match="REVE interface is not answering") as caught:
+        asyncio.run(_stop_switch(updater).async_turn_on())
+
+    assert "did not accept" not in str(caught.value)
+    # The usual retries were made before giving up.
+    assert len([path for path, _ in charger.calls if path == "/graphql"]) == 3
+    assert updater.last_command_failure == "reve_not_answering"
+
+
+def test_a_write_reve_answers_with_a_refusal_still_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    charger, updater = _known(monkeypatch)
+    real_post = charger.post
+
+    def _refuse(url: str, **kwargs: Any) -> _Response:
+        if url.endswith("/graphql"):
+            charger.calls.append(("/graphql", kwargs.get("data")))
+            return _Response(200, {"data": {"updateStationData": {"success": False}}})
+        return real_post(url, **kwargs)
+
+    charger.post = _refuse
+    with pytest.raises(HomeAssistantError, match="did not accept"):
+        asyncio.run(_stop_switch(updater).async_turn_on())
+    assert updater.last_command_failure is None
+
+
+def test_the_next_write_forgets_the_last_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _known(monkeypatch)
+    charger.graphql_status = 500
+    assert _send(updater, "evseEnabled", 1) is False
+    assert updater.last_command_failure == "reve_not_answering"
+
+    charger.graphql_status = 200
+    assert _send(updater, "evseEnabled", 1) is True
+    assert updater.last_command_failure is None
+
+
+def test_a_classic_page_event_failure_is_not_blamed_on_reve(monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_reve_firmware import _classic_main
+
+    charger = _Charger(_classic_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    real_post = charger.post
+
+    def _down(url: str, **kwargs: Any) -> _Response:
+        if url.endswith("/pageEvent"):
+            return _Response(500, "")
+        return real_post(url, **kwargs)
+
+    charger.post = _down
+    assert _send(updater, "evseEnabled", 1) is False
+    assert updater.last_command_failure is None
+
+
+def _press_or_select(entity: Any) -> None:
+    entity.async_write_ha_state = lambda: None
+    if hasattr(entity, "async_press"):
+        asyncio.run(entity.async_press())
+    else:
+        asyncio.run(entity.async_select_option(entity.options[1]))
+
+
+@pytest.mark.parametrize("which", ["reset_a", "sync_time", "time_zone", "adaptive_mode"])
+def test_buttons_and_selects_say_the_reve_interface_is_not_answering(
+    monkeypatch: pytest.MonkeyPatch, which: str,
+) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.eveus.button import EveusResetCounterAButton, EveusSyncTimeButton
+    from custom_components.eveus.select import EveusAdaptiveModeSelect, EveusTimeZoneSelect
+
+    charger, updater = _known(monkeypatch)
+    charger.graphql_status = 500
+    entity = {
+        "reset_a": EveusResetCounterAButton,
+        "sync_time": EveusSyncTimeButton,
+        "time_zone": EveusTimeZoneSelect,
+        "adaptive_mode": EveusAdaptiveModeSelect,
+    }[which](updater, 1)
+
+    with pytest.raises(HomeAssistantError, match="REVE interface is not answering"):
+        _press_or_select(entity)

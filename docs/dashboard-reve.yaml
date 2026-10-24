@@ -350,7 +350,7 @@ sections:
   - type: grid
     cards:
       - type: heading
-        heading: Adaptive, OCPP & Clock
+        heading: Adaptive & Clock
         icon: mdi:tune-variant
       - type: entities
         show_header_toggle: false
@@ -371,10 +371,6 @@ sections:
           - entity: select.eveus_ev_charger_minimum_voltage
             name: Minimum Voltage
             icon: mdi:sine-wave
-          - type: divider
-          - entity: switch.eveus_ev_charger_connect_to_ocpp
-            name: Connect to OCPP
-            icon: mdi:cloud-sync-outline
           - type: divider
           - entity: select.eveus_ev_charger_time_zone
             name: Time Zone

@@ -64,8 +64,9 @@ from .const import (
     DEVICE_STATE_COMPLETE,
     MAX_VALID_SYSTEM_TIME,
     PLUG_UNKNOWN_STATES,
+    SESSION_ACTIVE_STATES,
 )
-from .reve_fields import station_to_main
+from .reve_fields import graphql_paths, station_to_main
 from .snapshot import FIELD_KEYS
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,8 +99,6 @@ REVE_UNRELIABLE_FIELDS: Final[frozenset[str]] = frozenset(
 # temperature2 as REVE reports it; the same charger on classic firmware
 # reported a real plug temperature there.
 _NO_PLUG_SENSOR: Final = -60
-# REVE rates that have entities of their own (Rate 2 and Rate 3).
-_RATE_SLOTS: Final = 2
 
 # Legacy schedule key suffix -> scheduleV2 item field.
 _SLOT_FIELDS: Final[dict[str, str]] = {
@@ -111,6 +110,11 @@ _SLOT_FIELDS: Final[dict[str, str]] = {
 }
 SCHEDULE_COMMANDS: Final[frozenset[str]] = frozenset(
     f"sh{slot}{suffix}" for slot in (1, 2) for suffix in _SLOT_FIELDS
+)
+# A schedule's days of the week: no entity of their own, written from the
+# card (a 0-6 list, 0 = Sunday, as scheduleV2 keeps them).
+SCHEDULE_WEEKDAY_COMMANDS: Final[frozenset[str]] = frozenset(
+    f"sh{slot}Weekdays" for slot in (1, 2)
 )
 # scheduleV2 has no per-schedule energy cap.
 SCHEDULE_ENERGY_COMMANDS: Final[frozenset[str]] = frozenset(
@@ -169,12 +173,9 @@ EXTRAS_REFRESH_SECONDS: Final = 300
 EXTRAS_RETRY_SECONDS: Final = 300
 EXTRAS_MAX_AGE_SECONDS: Final = 3600
 
-# The vendor app reads each setting with its own small document; these are
-# its ScheduleV2 and RatesV2 queries as the local interface takes them (no
-# stationId), and a document of the same shape for chargingCommand. Sent one
-# at a time, in this order, stopping at the first refused one.
-SCHEDULES_QUERY: Final = """query StationData {
-        stationData {
+# The settings, as the vendor app's ScheduleV2 and RatesV2 queries ask for
+# them (no stationId on the local interface).
+_SCHEDULE_FIELDS: Final = """
             scheduleV2 {
                 name
                 start
@@ -183,12 +184,8 @@ SCHEDULES_QUERY: Final = """query StationData {
                 enabled
                 value
                 currentLimitEnabled
-            }
-        }
-    }"""
-
-RATES_QUERY: Final = """query StationData {
-        stationData {
+            }"""
+_RATE_FIELDS: Final = """
             ratesV2 {
                 base
                 rates {
@@ -199,23 +196,38 @@ RATES_QUERY: Final = """query StationData {
                     enabled
                     value
                 }
-            }
-        }
-    }"""
+                activeRate
+            }"""
+# The price in effect, which REVE_PLUS 1.0.3 reports (older firmware answers
+# it with nothing): read with every measurements read, so Active Rate Cost
+# turns with the station at a rate boundary rather than at the next settings
+# read.
+_ACTIVE_RATE_FIELD: Final = """
+            ratesV2 {
+                activeRate
+            }"""
 
-COMMAND_QUERY: Final = """query StationData {
-        stationData {
-            chargingCommand
-        }
-    }"""
+# What REVE_PLUS 1.0.3 adds to stationData: whether the station is in manual
+# mode, and its memory and uptime (diagnostics only). Older firmware answers
+# these with nothing, so they are asked for but never expected (_EXPECTED_PATHS).
+_MANUAL_CONTROL: Final = "chargingManualControl"
+_STATION_SYSTEM: Final[tuple[tuple[str, str], ...]] = (
+    ("heapFreeSize", "heap_free"),
+    ("heapMinFreeSize", "heap_min_free"),
+    ("heapLargestFreeBlock", "heap_largest_free_block"),
+    ("heapTotalSize", "heap_total"),
+)
+_UPTIME: Final = "stationUptimeMs"
+_STATION_SYSTEM_FIELDS: Final = (
+    _MANUAL_CONTROL, *(field for field, _key in _STATION_SYSTEM), _UPTIME
+)
 
 # Once a charger is known to be REVE, every poll reads its measurements with
-# this document: the charger app's own StationData, cut down to the fields
+# these fields: the charger app's own StationData, cut down to the fields
 # reve_fields maps to /main keys, plus chargingCommand so Stop shows at once.
 # /main is read only when it does not answer (MEASUREMENTS_RETRY_SECONDS keeps
 # a server that times out from delaying every poll by its whole timeout).
-MEASUREMENTS_QUERY: Final = """query StationData {
-        stationData {
+_MEASUREMENT_FIELDS: Final = """
             designedCurrent
             minCurrent
             mainFWVersion
@@ -276,9 +288,33 @@ MEASUREMENTS_QUERY: Final = """query StationData {
             }
             language
             STA_IP_Addres
-            chargingCommand
-        }
-    }"""
+            chargingCommand""" + "".join(
+    f"\n            {name}" for name in _STATION_SYSTEM_FIELDS
+)
+
+
+def _station_query(fields: str) -> str:
+    """A ``StationData`` read of fixed fields; every document is built once,
+    at import, from the constants above."""
+    return f"query StationData {{\n        stationData {{{fields}\n        }}\n    }}"
+
+
+MEASUREMENTS_QUERY: Final = _station_query(_MEASUREMENT_FIELDS + _ACTIVE_RATE_FIELD)
+# A poll that is due for the settings asks for them in its measurements read:
+# one request answered in ~90 ms against ~80 ms for the measurements alone
+# (live, 2026-10-18), where the settings used to take three more.
+MEASUREMENTS_AND_SETTINGS_QUERY: Final = _station_query(
+    _MEASUREMENT_FIELDS + _SCHEDULE_FIELDS + _RATE_FIELDS
+)
+# The settings alone: read while /main serves the polls, or before a schedule
+# write when nothing has been read yet. Splitting the request into one
+# document per setting changed nothing about the server's HTTP 500 windows
+# (2026-10-15/16), which follow its Wi-Fi reconnects.
+SETTINGS_QUERY: Final = _station_query(_SCHEDULE_FIELDS + _RATE_FIELDS + """
+            chargingCommand""")
+# The schedules alone, re-read right before a schedule write.
+SCHEDULES_QUERY: Final = _station_query(_SCHEDULE_FIELDS)
+
 MEASUREMENTS_RETRY_SECONDS: Final = 60
 
 # The session limits alone, to check a limit the charger refused to clear.
@@ -305,6 +341,28 @@ MAIN_ONLY_FIELDS: Final[frozenset[str]] = frozenset(
 )
 MAIN_RESIDUE_REFRESH_SECONDS: Final = 300
 MAIN_RESIDUE_MAX_AGE_SECONDS: Final = 3600
+# The adaptive current is one of them, and it moves while an adaptive charge
+# runs (7 -> 11 -> 16 -> 10 A on 2026-10-16/17). During such a session /main is
+# read about once a minute for as long as its last read answered: the current
+# changed 2.6 times an hour over 16 charging hours (median gap 370 s; only the
+# start ramp moves within seconds), so a minute shows every change a chart can
+# draw at half the requests of one read per 30 s poll. 50 s, not 60, so a poll
+# a second late does not push the read to the poll after it.
+ADAPTIVE_MAIN_REFRESH_SECONDS: Final = 50
+
+# How many GraphQL reads in a row must fail before REVE API reports the
+# server down: one missed reply turned it off for 30 s seven times on
+# 2026-10-17, while the next read, a minute later, answered.
+API_DOWN_AFTER_FAILURES: Final = 2
+
+# Every field a measurements read asks for. The server answers a field it does
+# not know with nothing (checked 2026-10-16), so a field a firmware update
+# renamed would leave its entities quietly without a value: one missing from
+# this many reads in a row is reported (diagnostics and a repair notice).
+_EXPECTED_PATHS: Final[tuple[tuple[str, ...], ...]] = tuple(
+    sorted(graphql_paths() | {("chargingCommand",)})
+)
+FIELDS_MISSING_READS: Final = 3
 
 # /main reports the session frozen from the old firmware (sessionTime 52745
 # on an idle charger); GraphQL reports it live. A poll served by /main shows
@@ -349,6 +407,9 @@ class ReveExtras:
     rates: tuple[dict[str, Any], ...]
     # The last start/stop command; None when REVE did not report a usable one.
     charging_command: int | None = None
+    # The price in effect as the station reports it (REVE_PLUS 1.0.3); None
+    # when it does not.
+    active_rate: float | None = None
 
 
 def _bool(value: Any) -> bool:
@@ -393,6 +454,13 @@ def _weekdays(value: Any) -> list[int]:
     if mask > 127:
         raise ValueError("weekday mask out of range")  # pragma: no mutate - message text; only the exception type is ever logged
     return [day for day in range(7) if mask & (1 << day)]  # pragma: no mutate - a mask of at most 127 has no bit 7
+
+
+def _price(value: Any) -> float | None:
+    """A price the station reports, or ``None`` for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) and value >= 0 else None
 
 
 def _limit_reading(value: Any) -> int | float | None:
@@ -497,6 +565,7 @@ def parse_extras(data: Any) -> ReveExtras:
             if type(command) is int and command in _CHARGING_COMMANDS
             else None
         ),
+        active_rate=_price(rates.get("activeRate")),
     )
 
 
@@ -528,6 +597,10 @@ def _rate_projection(extras: ReveExtras) -> dict[str, Any]:
         projection[f"tarif{letter}Value"] = _hundredths(item["value"])
         projection[f"tarif{letter}Start"] = item["start"]
         projection[f"tarif{letter}Stop"] = item["end"]
+    # The third and fourth rates have no entities, only a price for Active
+    # Rate Cost while one of them is in effect.
+    for letter, item in zip("CD", extras.rates[2:]):
+        projection[f"tarif{letter}Value"] = _hundredths(item["value"])
     return projection
 
 
@@ -540,13 +613,13 @@ def _wall_clock(main: Mapping[str, Any]) -> int | None:
 
 
 def active_rate_index(rates: tuple[dict[str, Any], ...], clock: int) -> int | None:
-    """``activeTarif`` for REVE, which keeps none: 0 the base price, 1 and 2
-    the first and second rate.
+    """``activeTarif`` for REVE, which keeps none: 0 the base price, 1 to 4
+    the charger's rates in order (1 and 2 have rate entities of their own).
 
     The first enabled rate whose window holds the clock's minute, on one of its
     weekdays, applies; a window past midnight belongs to the day it started.
-    ``None`` when that cannot be known or has no entity: a zero-length window,
-    unreadable weekdays, or a third or fourth rate.
+    ``None`` when that cannot be known: a zero-length window or unreadable
+    weekdays.
     """
     day, second = divmod(clock, 86400)
     minute = second // 60  # pragma: no mutate - window edges are whole minutes, so a fractional minute compares the same
@@ -565,8 +638,70 @@ def active_rate_index(rates: tuple[dict[str, Any], ...], clock: int) -> int | No
             started = (weekday - 1) % 7 if minute < end else None
         if started is None or started not in item["weekdays"]:
             continue
-        return index if index <= _RATE_SLOTS else None
+        return index
     return 0
+
+
+def station_rate_index(extras: ReveExtras, reckoned: int | None) -> int | None:
+    """``activeTarif`` for the price the station says is in effect: the rate
+    the windows name when it has that price, else the first enabled rate with
+    it, else the base price; ``None`` when nothing has it."""
+    price = _hundredths(extras.active_rate)
+    matches = [
+        index
+        for index, item in enumerate(extras.rates, start=1)
+        if item["enabled"] and _hundredths(item["value"]) == price
+    ]
+    if _hundredths(extras.base_rate) == price:
+        matches.append(0)
+    if reckoned in matches:
+        return reckoned
+    return matches[0] if matches else None
+
+
+def _reported(station: Mapping[str, Any], path: tuple[str, ...]) -> bool:
+    """Whether the reply has the field: present, or under an object the
+    server reported as ``null``."""
+    node: Any = station
+    for name in path:
+        if node is None:
+            return True
+        if not isinstance(node, Mapping) or name not in node:
+            return False
+        node = node[name]
+    return True
+
+
+# How far the start time computed from one read's uptime may stray from the
+# last before it counts as a restart: request latency and the poll's own
+# timing move it by a second or two, a restart by at least the boot time.
+STARTED_TOLERANCE_SECONDS: Final = 60
+
+
+def station_started(previous: float | None, now: float, uptime_ms: int) -> int:
+    """When the station started, in whole epoch seconds: ``now`` less its
+    uptime, keeping ``previous`` while the two agree within the tolerance."""
+    started = round(now - uptime_ms / 1000)
+    if previous is not None and abs(started - previous) <= STARTED_TOLERANCE_SECONDS:
+        return int(previous)
+    return started
+
+
+def _station_system(station: Mapping[str, Any]) -> dict[str, Any]:
+    """REVE_PLUS 1.0.3's memory, uptime and manual-mode flag, for diagnostics;
+    what the firmware does not report is left out."""
+    system: dict[str, Any] = {}
+    for field, key in _STATION_SYSTEM:
+        value = station.get(field)
+        if type(value) is int:
+            system[key] = value
+    uptime = station.get(_UPTIME)
+    if type(uptime) is int:
+        system["uptime_seconds"] = uptime // 1000
+    flag = station.get(_MANUAL_CONTROL)
+    if isinstance(flag, bool):
+        system["manual_control"] = flag
+    return system
 
 
 def _is_no_sensor_reading(value: Any) -> bool:
@@ -594,6 +729,8 @@ def normalize_reve_payload(
         payload.update(_rate_projection(extras))
         clock = _wall_clock(main)
         active = None if clock is None else active_rate_index(extras.rates, clock)
+        if extras.active_rate is not None:
+            active = station_rate_index(extras, active)
         if active is not None:
             payload["activeTarif"] = active
             # The name its owner gave the rate in the charger's app; the base
@@ -612,7 +749,18 @@ def normalize_reve_payload(
 # ---------------------------------------------------------------------------
 
 
+def _weekday_list(value: Any) -> list[int]:
+    """Days to write: a non-empty 0-6 list (0 = Sunday), sorted, once each."""
+    if not isinstance(value, list) or not value:
+        raise ValueError("weekdays must be a non-empty list")  # pragma: no mutate - message text; only the exception type is ever logged
+    if any(type(day) is not int or not 0 <= day <= 6 for day in value):
+        raise ValueError("weekday out of range")  # pragma: no mutate - message text; only the exception type is ever logged
+    return sorted(set(value))
+
+
 def _coerce_slot_value(field: str, value: Any) -> Any:
+    if field == "weekdays":
+        return _weekday_list(value)
     if field in ("enabled", "currentLimitEnabled"):
         return _bool(value)
     if field in ("start", "end"):
@@ -628,12 +776,15 @@ def apply_schedule_command(
     REVE replaces the whole list on every write, so every other schedule and
     every other field goes back exactly as it was read.
     """
-    if command not in SCHEDULE_COMMANDS:
+    if command in SCHEDULE_WEEKDAY_COMMANDS:
+        field = "weekdays"
+    elif command in SCHEDULE_COMMANDS:
+        field = _SLOT_FIELDS[command[3:]]
+    else:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged
     slot = int(command[2])
     if len(schedules) < slot:
         raise ReveCommandUnsupported(f"schedule {slot} does not exist")  # pragma: no mutate - message text; only the exception type is ever logged
-    field = _SLOT_FIELDS[command[3:]]
     updated = [dict(item) for item in schedules]
     updated[slot - 1][field] = _coerce_slot_value(field, value)
     return updated
@@ -645,19 +796,43 @@ def apply_schedule_command(
 
 
 class ManualMode:
-    """Whether the station is in manual mode, which it does not report.
+    """Whether the station is in manual mode.
 
     From the app's "ignore schedule" Start (``chargingCommand`` 0) or any Stop
     (2) until the car is unplugged, the station ignores the schedules and every
-    limit, and releasing the command changes nothing. So it is latched: on at a
-    0 or 2, read or written, and off when the car is unplugged or the session
-    counters start over (a station restart under a plugged-in car).
+    limit, and releasing the command changes nothing. REVE_PLUS 1.0.3 reports
+    the mode (``chargingManualControl``) and its word is final. Older firmware
+    does not, so it is latched: on at a 0 or 2, read or written, and off when
+    the car is unplugged or the session counters start over (a station restart
+    under a plugged-in car). A poll without the flag carries the latch on from
+    the station's last word.
     """
 
     def __init__(self) -> None:
         self._on = False
         self._session_time: float | None = None
         self._unplugged = False
+        self._reported: bool | None = None
+        self._supported = False
+
+    @property
+    def supported(self) -> bool:
+        """Whether the station has ever reported the flag, and so can be told
+        to leave manual mode (REVE_PLUS 1.0.3)."""
+        return self._supported
+
+    def report(self, value: Any) -> None:
+        """The station's own flag from this poll's GraphQL read; anything but a
+        boolean (older firmware, a ``/main`` poll) is no flag."""
+        self._reported = value if isinstance(value, bool) else None
+        if self._reported is not None:
+            self._supported = True
+
+    def left(self) -> None:
+        """Home Assistant told the station to leave manual mode; the next read
+        says whether it did."""
+        self._on = False
+        self._reported = None
 
     @property
     def on(self) -> bool:
@@ -667,13 +842,15 @@ class ManualMode:
         """A chargingCommand just written from Home Assistant."""
         if command != _COMMAND_START:
             self._on = True
+            # Shown at once; the next read says whether the station agrees.
+            self._reported = None
 
     def restore(self, on_for: float | None = None) -> None:
         """Manual mode as it stood before Home Assistant restarted, ``on_for``
         seconds ago, unless the station already shows it ended: the connector
         is out, or the session is younger than manual mode (replugged while
         Home Assistant was down)."""
-        if self._unplugged:
+        if self._unplugged or self._reported is not None:
             return
         session = self._session_time
         if on_for is not None and session is not None and session + _RESTORE_SLACK_SECONDS < on_for:
@@ -697,6 +874,8 @@ class ManualMode:
             self._session_time = elapsed
         if payload.get(ONE_CHARGE_COMMAND) == 1 or payload.get(STOP_COMMAND) == 1:
             self._on = True
+        if self._reported is not None:
+            self._on = self._reported
 
 
 # REVE's subState while it holds a charge for an outside start: after a limit
@@ -752,11 +931,18 @@ class ReveApi:
         self._retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
         self._failures = 0
         self._last_error: str | None = None  # pragma: no mutate - only read once a read has set or cleared it
-        # Whether the last schedules/rates read failed. Kept apart from
-        # `_last_error`, which every good measurements read clears, so REVE API
-        # stays off until a settings read succeeds instead of flipping between
-        # retries.
-        self._settings_failing = False  # pragma: no mutate - the first REVE poll always reads the settings, which sets or clears it
+        # GraphQL reads failed in a row, of any document, and settings reads
+        # failed in a row. The second is kept apart because every good
+        # measurements read clears the first: with only the settings read
+        # failing, REVE API stays off until a settings read succeeds instead of
+        # flipping between retries.
+        self._failure_streak = 0
+        self._settings_streak = 0
+        # Whether any GraphQL read has succeeded: the tolerance for a missed
+        # reply needs a server seen answering first.
+        self._answered = False
+        # Reads in a row each expected field was missing from.
+        self._missing_streaks: dict[str, int] = {}
         self._measurements_retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
         self._measurement_reads = 0
         self._measurement_failures = 0
@@ -765,12 +951,15 @@ class ReveApi:
         self._residue: dict[str, Any] = {}
         self._residue_at: float | None = None
         self._residue_tried_at: float | None = None
+        self._residue_answered = False
         self._session: tuple[dict[str, Any], float] | None = None
         # A limit's value in /main read units, kept while the limit is off
         # (REVE then reports null) so its number shows what switching it back
         # on would apply.
         self._limit_values: dict[str, int | float] = {}
         self.manual_mode = ManualMode()
+        self._station_system: dict[str, Any] = {}
+        self._started_at: int | None = None
 
     @property
     def extras(self) -> ReveExtras | None:
@@ -784,26 +973,36 @@ class ReveApi:
     async def refresh_if_due(self) -> None:
         """Re-read schedules and rates when due. Never raises: ``/main`` decides
         whether a poll succeeded, and a failed read only waits for its retry."""
-        now = time.monotonic()
-        if self._fetched_at is not None and now - self._fetched_at < EXTRAS_REFRESH_SECONDS:
-            return
+        if self._settings_due(time.monotonic()):
+            await self.refresh()
+
+    def _settings_due(self, now: float) -> bool:
         if now < self._retry_at:
-            return
-        await self.refresh()
+            return False
+        return self._fetched_at is None or now - self._fetched_at >= EXTRAS_REFRESH_SECONDS
 
     async def refresh(self) -> None:
         """Re-read schedules and rates now; a failure only schedules the retry."""
-        now = time.monotonic()
         try:
             self._store(await self._read_extras())
         except asyncio.CancelledError:
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
-            self._failures += 1
-            self._last_error = type(err).__name__
-            self._settings_failing = True
-            self._retry_at = now + EXTRAS_RETRY_SECONDS
-            _LOGGER.debug("REVE schedules/rates read failed: %s", type(err).__name__)
+            self._settings_failed(err)
+
+    def _read_failed(self, err: BaseException) -> None:
+        self._failure_streak += 1
+        self._last_error = type(err).__name__
+
+    def _settings_failed(self, err: BaseException) -> None:
+        """A read that asked for the settings failed: retry them alone, after
+        the back-off. Until one succeeds, the measurements are read without
+        them, so a server that refuses only the settings keeps its readings."""
+        self._read_failed(err)
+        self._failures += 1
+        self._settings_streak += 1
+        self._retry_at = time.monotonic() + EXTRAS_RETRY_SECONDS
+        _LOGGER.debug("REVE schedules/rates read failed: %s", type(err).__name__)
 
     # -- measurements --------------------------------------------------------
 
@@ -815,29 +1014,69 @@ class ReveApi:
         self, validate: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     ) -> dict[str, Any]:
         """This poll's measurements in ``/main`` keys. Raises when GraphQL gives
-        no usable reply, or one ``validate`` (the ``/main`` rules) rejects."""
+        no usable reply, or one ``validate`` (the ``/main`` rules) rejects.
+        Asks for the settings too when they are due and the last read of them
+        did not fail."""
+        with_settings = self._settings_streak == 0 and self._settings_due(time.monotonic())
         try:
-            station = await self._station(MEASUREMENTS_QUERY)
+            station = await self._station(
+                MEASUREMENTS_AND_SETTINGS_QUERY if with_settings else MEASUREMENTS_QUERY
+            )
             main = station_to_main(station)
             if "state" not in main:
                 raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
             if validate is not None:
                 main = validate(main)
+            extras = parse_extras({"stationData": station}) if with_settings else None
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             self._measurement_failures += 1
-            self._last_error = type(err).__name__
             self._measurements_retry_at = time.monotonic() + MEASUREMENTS_RETRY_SECONDS
             _LOGGER.debug("REVE measurements read failed: %s", type(err).__name__)
+            if with_settings:
+                self._settings_failed(err)
+            else:
+                self._read_failed(err)
             raise
         self._measurement_reads += 1
+        self._failure_streak = 0
+        self._answered = True
+        self._check_fields(station)
         self._last_error = None
         self._last_source = "graphql"
+        if extras is not None:
+            self._store(extras)
         self._session = (
             {key: main[key] for key in SESSION_FIELDS if key in main},
             time.monotonic(),
         )
         self._note_charging_command(station.get("chargingCommand"))
+        rates = station.get("ratesV2")
+        self._note_active_rate(_price(rates.get("activeRate")) if isinstance(rates, dict) else None)
+        self.manual_mode.report(station.get(_MANUAL_CONTROL))
+        self._station_system = _station_system(station)
+        uptime = station.get(_UPTIME)
+        if type(uptime) is int:
+            self._started_at = station_started(self._started_at, time.time(), uptime)
         return main
+
+    def _check_fields(self, station: Mapping[str, Any]) -> None:
+        self._missing_streaks = {
+            name: self._missing_streaks.get(name, 0) + 1
+            for path in _EXPECTED_PATHS
+            if not _reported(station, path)
+            for name in (".".join(path),)
+        }
+
+    @property
+    def missing_fields(self) -> tuple[str, ...]:
+        """Fields every one of the last ``FIELDS_MISSING_READS`` measurements
+        reads lacked; a field is dropped from the list by the first read that
+        has it."""
+        return tuple(
+            name
+            for name, reads in self._missing_streaks.items()
+            if reads >= FIELDS_MISSING_READS
+        )
 
     def with_main_residue(self, measurements: Mapping[str, Any]) -> dict[str, Any]:
         """The measurements with what only ``/main`` carries laid under them,
@@ -859,14 +1098,27 @@ class ReveApi:
         """Which API answered the last poll: ``graphql`` or ``main``."""
         return self._last_source
 
-    def main_residue_due(self) -> bool:
+    def main_residue_due(self, measurements: Mapping[str, Any] | None = None) -> bool:
         """Whether a GraphQL poll should also read ``/main`` for its own fields:
-        every five minutes, whether or not the last try found ``/main``."""
+        every five minutes, whether or not the last try found ``/main``, and
+        once a minute in an adaptive session while ``/main`` answers."""
         tried = self._residue_tried_at
-        return tried is None or time.monotonic() - tried >= MAIN_RESIDUE_REFRESH_SECONDS
+        if tried is None:
+            return True
+        elapsed = time.monotonic() - tried
+        if elapsed >= MAIN_RESIDUE_REFRESH_SECONDS:
+            return True
+        return (
+            elapsed >= ADAPTIVE_MAIN_REFRESH_SECONDS
+            and self._residue_answered
+            and measurements is not None
+            and measurements.get("state") in SESSION_ACTIVE_STATES
+            and measurements.get("aiStatus") not in (None, 0)
+        )
 
     def main_residue_tried(self) -> None:
         self._residue_tried_at = time.monotonic()
+        self._residue_answered = False
 
     def keep_main_residue(self, main: Mapping[str, Any]) -> None:
         """Keep what only ``/main`` carries from a ``/main`` reply."""
@@ -876,12 +1128,18 @@ class ReveApi:
             if key in main
         }
         self._residue_at = self._residue_tried_at = time.monotonic()
+        self._residue_answered = True
 
     def from_main(self, main: Mapping[str, Any], *, fallback: bool) -> dict[str, Any]:
         """A REVE ``/main`` payload as a poll shows it: the frozen session
         replaced by the last GraphQL one while that is recent, else left out."""
         self.keep_main_residue(main)
         self._last_source = "main"
+        self.manual_mode.report(None)
+        # A /main poll says nothing of the memory or the price now; the start
+        # time stands, and the rate windows decide the price.
+        self._station_system = {}
+        self._note_active_rate(None)
         if fallback:
             self._main_fallbacks += 1
         payload = {key: value for key, value in main.items() if key not in SESSION_FIELDS}
@@ -892,6 +1150,11 @@ class ReveApi:
 
     def _residue_fresh(self, now: float) -> bool:
         return self._residue_at is not None and now - self._residue_at <= MAIN_RESIDUE_MAX_AGE_SECONDS
+
+    def _note_active_rate(self, price: float | None) -> None:
+        extras = self._extras
+        if extras is not None and extras.active_rate != price:
+            self._extras = replace(extras, active_rate=price)
 
     def _note_charging_command(self, command: Any) -> None:
         extras = self._extras
@@ -905,7 +1168,7 @@ class ReveApi:
             return self.set_station_current
         if command == STOP_COMMAND:
             return self.set_stop
-        if command in SCHEDULE_COMMANDS:
+        if command in SCHEDULE_COMMANDS or command in SCHEDULE_WEEKDAY_COMMANDS:
             return partial(self.write_schedule, command)
         if command in SCHEDULE_ENERGY_COMMANDS or command == NO_MASTER_COMMAND:
             return partial(self._refuse, command)  # pragma: no mutate - the command only names the refusal
@@ -997,8 +1260,12 @@ class ReveApi:
         await self._mutate({"stationCurrent": _whole(value)})
 
     async def set_stop(self, value: Any) -> None:
-        """Stop (1) or release (0) charging the way the vendor app does."""
-        await self._write_charging_command(_COMMAND_STOP if _bool(value) else _COMMAND_START)
+        """Stop (1) or release (0) charging the way the vendor app does; a
+        release also leaves manual mode where the station can be told to."""
+        stop = _bool(value)
+        await self._write_charging_command(_COMMAND_STOP if stop else _COMMAND_START)
+        if not stop:
+            await self._leave_manual_mode()
 
     async def set_one_charge(self, value: Any) -> None:
         """Charge now, ignoring the schedules, the way the vendor app's Start
@@ -1010,15 +1277,27 @@ class ReveApi:
         extras = self._extras
         if extras is not None and extras.charging_command == _COMMAND_CHARGE_NOW:
             await self._write_charging_command(_COMMAND_START)
+        extras = self._extras
+        if extras is not None and extras.charging_command == _COMMAND_START:
+            await self._leave_manual_mode()
+
+    async def _leave_manual_mode(self) -> None:
+        """With Stop and One Charge both off, back to the schedules and limits
+        without unplugging, as on Eveus firmware (Anton, 2026-10-23). Only
+        REVE_PLUS 1.0.3 can be told to; older REVE stays in manual mode until
+        the car is unplugged. Never done on a read alone: the app's Pause then
+        Resume also leaves both off, and its user expects the charge to go on."""
+        if not (self.manual_mode.supported and self.manual_mode.on):
+            return
+        await self._mutate({_MANUAL_CONTROL: False})
+        self.manual_mode.left()
 
     async def _write_charging_command(self, command: int) -> None:
         await self._mutate({"chargingCommand": command})
         self.manual_mode.command(command)
         extras = self._extras
         if extras is not None:
-            self._store(
-                ReveExtras(extras.schedules, extras.base_rate, extras.rates, command)
-            )
+            self._store(replace(extras, charging_command=command))
 
     async def write_schedule(self, command: str, value: Any) -> None:
         # Read right before writing: the list is replaced whole, and the app
@@ -1029,24 +1308,33 @@ class ReveApi:
             current = await self._read_extras()
         else:
             schedules = parse_schedules(await self._station(SCHEDULES_QUERY))
-            current = ReveExtras(schedules, held.base_rate, held.rates, held.charging_command)
+            current = replace(held, schedules=schedules)
         updated = apply_schedule_command(list(current.schedules), command, value)
         await self._mutate({"scheduleV2": updated})
-        self._store(
-            ReveExtras(
-                tuple(updated), current.base_rate, current.rates, current.charging_command
-            )
-        )
+        self._store(replace(current, schedules=tuple(updated)))
 
     async def _refuse(self, command: str, _value: Any) -> None:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged
 
     @property
     def answering(self) -> bool | None:
-        """Whether the last GraphQL read succeeded; ``None`` before the first."""
-        if self._last_error is not None or self._settings_failing:
+        """Whether GraphQL answers: off once ``API_DOWN_AFTER_FAILURES`` reads
+        in a row failed, or as many settings reads, and after any failure
+        before the first good read; ``None`` before the first read."""
+        if max(self._failure_streak, self._settings_streak) >= API_DOWN_AFTER_FAILURES:
             return False
-        return None if self._fetched_at is None else True
+        if self._answered:
+            return True
+        return False if self._failure_streak else None
+
+    @property
+    def station_system(self) -> dict[str, Any]:
+        """The last GraphQL read's memory figures (bytes) and the station's
+        start time (``started_at``, epoch seconds), as far as reported."""
+        system = dict(self._station_system)
+        if self._started_at is not None:
+            system["started_at"] = self._started_at
+        return system
 
     def diagnostics(self) -> dict[str, Any]:
         extras = self.extras
@@ -1061,6 +1349,8 @@ class ReveApi:
             ),
             "read_failures": self._failures,
             "last_error": self._last_error,
+            "missing_fields": list(self.missing_fields),
+            "station": self._station_system,
             "measurements": {
                 "graphql_reads": self._measurement_reads,
                 "graphql_failures": self._measurement_failures,
@@ -1079,13 +1369,12 @@ class ReveApi:
         self._fetched_at = time.monotonic()
         self._retry_at = 0.0  # pragma: no mutate - any value below the monotonic clock is equivalent
         self._last_error = None
-        self._settings_failing = False
+        self._failure_streak = 0
+        self._settings_streak = 0
+        self._answered = True
 
     async def _read_extras(self) -> ReveExtras:
-        station: dict[str, Any] = {}
-        for document in (SCHEDULES_QUERY, RATES_QUERY, COMMAND_QUERY):
-            station.update(await self._station(document))
-        return parse_extras({"stationData": station})
+        return parse_extras({"stationData": await self._station(SETTINGS_QUERY)})
 
     async def _station(self, document: str) -> dict[str, Any]:
         data = await self._post("StationData", document)

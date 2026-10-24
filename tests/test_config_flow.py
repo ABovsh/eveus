@@ -241,17 +241,14 @@ def test_validate_credentials_accepts_exact_32_char_boundary() -> None:
 
 @pytest.mark.parametrize(
     ("username", "password"),
-    [("", TEST_PASSWORD), (TEST_USERNAME, ""), ("a" * 33, TEST_PASSWORD), (TEST_USERNAME, "b" * 33)],
+    [("a" * 33, TEST_PASSWORD), (TEST_USERNAME, "b" * 33)],
 )
-def test_validate_credentials_rejects_missing_or_long_values(
+def test_validate_credentials_rejects_long_values(
     username: str, password: str
 ) -> None:
     with pytest.raises(vol.Invalid) as exc_info:
         validate_credentials(username, password)
-    assert str(exc_info.value) in {
-        "Username and password cannot be empty",
-        "Username and password must be less than 32 characters",
-    }
+    assert str(exc_info.value) == "Username and password must be less than 32 characters"
 
 
 def test_normalize_user_input_returns_persistable_config_data() -> None:
@@ -309,7 +306,7 @@ def test_warn_if_plaintext_does_not_warn_for_https(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.WARNING, logger="custom_components.eveus.config_flow"):
-        config_flow._warn_if_plaintext("https")
+        config_flow._warn_if_plaintext("https", TEST_PASSWORD)
 
     assert caplog.records == []
 
@@ -319,7 +316,7 @@ def test_warn_if_plaintext_warns_for_http(
 ) -> None:
     """HTTP setups must get the cleartext-credentials warning."""
     with caplog.at_level(logging.WARNING, logger="custom_components.eveus.config_flow"):
-        config_flow._warn_if_plaintext("http")
+        config_flow._warn_if_plaintext("http", TEST_PASSWORD)
 
     assert len(caplog.records) == 1
     assert "cleartext" in caplog.records[0].getMessage()

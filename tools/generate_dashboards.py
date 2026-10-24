@@ -76,6 +76,7 @@ T = {  # key: (en, uk)
     "cb_cost": ("Counter B Cost", "Вартість лічильника B"),
     "cb_reset": ("Reset Counter B", "Скинути лічильник B"),
     "settings": ("Adaptive, OCPP & Clock", "Адаптивний режим, OCPP і годинник"),
+    "settings_reve": ("Adaptive & Clock", "Адаптивний режим і годинник"),
     "adaptive": ("Adaptive Mode", "Адаптивний режим"),
     "adaptive_status": ("Adaptive Status", "Стан адаптивного режиму"),
     "adaptive_limit": ("Adaptive Current Limit", "Адаптивний ліміт струму"),
@@ -311,7 +312,7 @@ def build(lang: int, reve: bool = False) -> dict:
             ),
         ],
         [
-            heading("settings", "mdi:tune-variant"),
+            heading("settings_reve" if reve else "settings", "mdi:tune-variant"),
             entities(
                 [
                     row("select", "adaptive_mode", "adaptive", "mdi:flash-auto"),
@@ -320,9 +321,16 @@ def build(lang: int, reve: bool = False) -> dict:
                     row("number", "undervoltage_threshold", "threshold", "mdi:sine-wave"),
                     row("select", "minimum_voltage", "min_voltage", "mdi:sine-wave"),
                     {"type": "divider"},
-                    row("switch", "connect_to_ocpp", "ocpp", "mdi:cloud-sync-outline"),
-                    *([] if reve else [present(row("binary_sensor", "ocpp_connected", "ocpp_conn", "mdi:cloud-check-outline"))]),
-                    {"type": "divider"},
+                    # The card has no OCPP button on REVE, so the REVE files offer none.
+                    *(
+                        []
+                        if reve
+                        else [
+                            row("switch", "connect_to_ocpp", "ocpp", "mdi:cloud-sync-outline"),
+                            present(row("binary_sensor", "ocpp_connected", "ocpp_conn", "mdi:cloud-check-outline")),
+                            {"type": "divider"},
+                        ]
+                    ),
                     row("select", "time_zone", "tz", "mdi:earth"),
                     row("sensor", "time_drift", "drift", "mdi:clock-alert-outline"),
                     row("button", "sync_time", "sync", "mdi:clock-check-outline"),

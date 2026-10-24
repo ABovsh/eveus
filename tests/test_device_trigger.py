@@ -90,3 +90,36 @@ async def test_attach_defaults_to_device_number_1_when_unset() -> None:
     event_config = attach.call_args.args[1]
     assert event_config["event_type"] == EVENT_CHARGING_STARTED
     assert event_config["event_data"] == {"device_number": 1}
+
+
+class _NewDevice:
+    """A DeviceEntry of a Home Assistant that has ``config_entry_id``: reading
+    ``config_entries`` is deprecated there and stops working in 2027.10."""
+
+    config_entry_id = "eid-1"
+
+    @property
+    def config_entries(self) -> set[str]:
+        raise AssertionError("DeviceEntry.config_entries is deprecated")
+
+
+@pytest.mark.asyncio
+async def test_attach_finds_the_device_number_without_the_deprecated_entry_set() -> None:
+    entry = SimpleNamespace(domain=DOMAIN, runtime_data=SimpleNamespace(device_number=3))
+    hass = Mock()
+    hass.config_entries.async_get_entry = Mock(return_value=entry)
+    registry = Mock()
+    registry.async_get = Mock(return_value=_NewDevice())
+    config = {
+        "platform": "device", "domain": DOMAIN, "device_id": "dev-1", "type": "charging_finished",
+    }
+    with (
+        patch.object(device_trigger.dr, "async_get", return_value=registry),
+        patch.object(device_trigger.event_trigger, "TRIGGER_SCHEMA", new=lambda c: c),
+        patch.object(
+            device_trigger.event_trigger, "async_attach_trigger", new=AsyncMock()
+        ) as attach,
+    ):
+        await device_trigger.async_attach_trigger(hass, config, Mock(), Mock())
+    assert attach.call_args.args[1]["event_data"] == {"device_number": 3}
+    hass.config_entries.async_get_entry.assert_called_once_with("eid-1")

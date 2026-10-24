@@ -56,11 +56,19 @@ async def test_reve_charger_publishes_its_real_settings(
         f"sensor.{_PREFIX}_leakage_current",
         f"sensor.{_PREFIX}_leakage_current_peak",
         f"sensor.{_PREFIX}_plug_temperature",
-        f"number.{_PREFIX}_schedule_1_energy_limit",
-        f"switch.{_PREFIX}_schedule_1_energy_limit_enabled",
         f"binary_sensor.{_PREFIX}_ocpp_connected",
     ):
         assert state(entity_id) == STATE_UNAVAILABLE, entity_id
+    # REVE has no schedule energy limit and resets "disable all limits": not built.
+    for entity_id in (
+        f"number.{_PREFIX}_schedule_1_energy_limit",
+        f"number.{_PREFIX}_schedule_2_energy_limit",
+        f"switch.{_PREFIX}_schedule_1_energy_limit_enabled",
+        f"switch.{_PREFIX}_schedule_2_energy_limit_enabled",
+        f"switch.{_PREFIX}_limit_disable_all",
+    ):
+        assert hass.states.get(entity_id) is None, entity_id
+    assert hass.config_entries.async_entries(DOMAIN)[0].data["firmware_family"] == "reve"
 
     assert state(f"switch.{_PREFIX}_schedule_1_enabled") == "off"
     assert state(f"switch.{_PREFIX}_stop_charging") == "off"
@@ -74,10 +82,12 @@ async def test_reve_charger_publishes_its_real_settings(
     assert float(state(f"number.{_PREFIX}_charging_current")) == 7
     assert state(f"sensor.{_PREFIX}_state") == "Standby"
     graphql_calls = [call for call in aioclient_mock.mock_calls if str(call[1]).endswith("/graphql")]
-    # The measurements, right after /main recognised the firmware, then one
-    # settings read: the schedules, the rates and Stop, one small document each.
-    assert len(graphql_calls) == 4
-    assert json.loads(graphql_calls[0][2])["query"].count("stationState") == 1
+    # One read right after /main recognised the firmware: the measurements
+    # with the schedules and rates.
+    assert len(graphql_calls) == 1
+    query = json.loads(graphql_calls[0][2])["query"]
+    assert query.count("stationState") == 1
+    assert "scheduleV2" in query and "ratesV2" in query
 
 
 async def test_reve_raw_leak_counts_raise_no_repair(

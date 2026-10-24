@@ -26,6 +26,7 @@ from .const import (
     EVENT_CHARGING_STARTED,
     EVENT_ERROR,
 )
+from .utils import device_entry_ids
 
 _EVENT_FOR_TYPE: Final[dict[str, str]] = {
     "charging_started": EVENT_CHARGING_STARTED,
@@ -44,7 +45,7 @@ def _device_number_for(hass: HomeAssistant, device_id: str) -> int:
     """Resolve the config entry's device number for a registry device."""
     device = dr.async_get(hass).async_get(device_id)
     if device is not None:
-        for entry_id in device.config_entries:
+        for entry_id in device_entry_ids(device):
             entry = hass.config_entries.async_get_entry(entry_id)
             if entry is None or entry.domain != DOMAIN:
                 continue

@@ -1,5 +1,55 @@
 # Changelog
 
+## 4.29.0 - 2026-10-24
+
+### ✨ New
+
+- **A charger without a password can be added with the username and password left empty.** REVE has no web-interface password; with both fields empty the integration sends no credentials.
+- **REVE: a repair notice names any reading a firmware update stops reporting.** REVE answers a field it no longer knows with nothing, so the reading would otherwise just stay empty; the notice clears when the field returns.
+- **REVE: turning Stop Charging or One Charge off ends manual mode on REVE_PLUS 1.0.3,** once both are off: the schedules and limits apply again without unplugging the car. Earlier REVE versions stay in manual mode until the connector is pulled out.
+- **Card, REVE: on REVE_PLUS 1.0.3 Schedules and Limits say what ignores them, with Turn off,** as on Eveus firmware: One charge or Stop turns that switch off; manual mode started in the charger's app turns Stop off. Manual Mode has a `can_turn_off` attribute there.
+- **REVE: Manual Mode shows the mode REVE_PLUS 1.0.3 reports.** Earlier REVE versions do not report it; there the sensor follows the commands as before.
+- **REVE: Active Rate Cost is the price REVE_PLUS 1.0.3 reports as in effect.** Earlier REVE versions keep the price worked out from the rate windows and the charger's clock.
+- **REVE: Plug Temperature, Counter A Cost and Counter B Cost have values on REVE_PLUS 1.0.3.**
+- **REVE: four diagnostic sensors for the charger's memory and last start, disabled by default** (REVE_PLUS 1.0.3): REVE Free Memory, REVE Min Free Memory, REVE Largest Free Block, REVE Started. Diagnostics also include them.
+- **Card, REVE: the card shows and changes the days of the week of Schedule 1 and Schedule 2.** It also lists the charger's other schedules and its tariffs, read-only and only those set up in the app. While REVE's interface does not answer, the schedules say they are the last read.
+
+- **Card: Status says when a charge started and when it finished.** While charging it reads `since 19:05`, and a finished charge `Charge Complete · at 03:15`. A charge from an earlier day says so: `since yesterday 19:05`, `since Sun 19:05`, `since 13 Oct 19:05`. A stop and a new start show the new start. The time is the `since` attribute of the **State** sensor, which Home Assistant keeps across a restart; when the charger changed state while Home Assistant could not see it, no time is shown. Closes [#20](https://github.com/ABovsh/eveus/issues/20) requested by @ababak.
+
+- **Blueprint "Stop charging on low house battery": stop on the battery voltage.** Choose **Stop when**: battery %, battery voltage, or either, whichever comes first. The % of a large LiFePO₄ battery drifts when it is rarely fully charged or emptied; voltage tells empty reliably, but not 40 % from 60 %, so set it near empty. Existing automations keep stopping on the %. Closes [#19](https://github.com/ABovsh/eveus/issues/19) requested by @ababak.
+
+### ⚠️ Breaking
+
+- **REVE: five entities that never had a value on REVE are no longer created.** REVE schedules have no energy limit and REVE drops "disable all limits" within seconds. Remove `number.eveus_ev_charger_schedule_1_energy_limit`, `number.eveus_ev_charger_schedule_2_energy_limit`, `switch.eveus_ev_charger_schedule_1_energy_limit_enabled`, `switch.eveus_ev_charger_schedule_2_energy_limit_enabled` and `switch.eveus_ev_charger_limit_disable_all` from REVE dashboards and automations. Chargers on Eveus firmware keep them.
+
+### 🔧 Changed
+
+- **Card: the note beside the state in Status is larger and white,** and sits level with the state, instead of small grey text; the row keeps its height.
+- **Card: Last Session Duration reads in any unit.** Set the sensor's unit to hours in its settings and Home Assistant's own cards show `1h 36m` instead of seconds, while the card keeps showing the same duration.
+- **Dashboard 2.0: standard Home Assistant cards only, plus a REVE variant.** The power and current graphs are built-in trend graphs, so `mini-graph-card` is no longer needed; the dashboard needs Home Assistant 2025.10 or newer. `docs/dashboard.yaml` hides the cards of entities the firmware does not have; `docs/dashboard-reve.yaml` (Ukrainian: `docs/dashboard-reve-uk.yaml`) leaves them out and shows Manual Mode and REVE API. [Details](README.md#dashboard)
+- **Cost to Target SOC before a scheduled charge uses the tariffs of the schedule windows.** It priced everything at the tariff in effect now, so at 19:00 a charge that Schedule 1 runs at night showed the day rate (235 ₴ instead of 118 ₴ in one case). On REVE, a schedule that runs on some days only, or an enabled third or later schedule, keeps the price in effect now.
+- **The log warns about a password sent over HTTP only when a password is set,** and no longer suggests HTTPS, which the charger does not serve.
+- **Energy and cost history updates only after 0.1 kWh.** Session, total and A/B energy and session and A/B cost were written once a minute while charging; they are now written at most once a minute and only after 0.1 kWh has been added since the last write (about every second minute at 3.6 kW, every minute from 6 kW). The end of a charge, a new session, a counter reset and an outage still write at once, so totals and the Energy dashboard stay exact; the hour a small amount falls into can shift by at most 0.1 kWh.
+- **REVE: a third fewer requests to the charger.** Schedules and tariffs come in the same request as the readings: 72 instead of 108 requests an hour while idle.
+- **REVE: the REVE API sensor turns off only when REVE's interface stops answering.** One missed reply turned it off for 30 seconds several times a day; it now takes two failed reads in a row.
+- **REVE: a setting REVE's interface did not answer says so.** The error asks to try again in a few minutes instead of saying the charger did not accept the change.
+- **REVE: the integration waits 10 seconds for REVE's interface, up from 6.** A REVE_PLUS 1.0.3 charger without internet answers in about 5 seconds and at times in 7, so the shorter wait could fail a read or a setting there.
+- **Card: with nothing flowing, Meter is one slim voltage row** instead of zero power and current tiles.
+- **Card: the cost to go before a charge shows its price per kWh,** and the battery tile drops "from" until the SOC has moved.
+- **Card: Charger clock shows the charger's time while its clock is right,** instead of a drift of a few seconds. From 10 minutes off it shows the drift in red, next to Sync.
+- **Card, REVE: no OCPP button.** Buttons shows One charge and Stop only on REVE; the Connect to OCPP switch itself is unchanged.
+- **Card: the card redraws only the sections that changed,** so a tap during a charge is no longer lost to a redraw, and it does less work on each Home Assistant update.
+
+### 🐛 Fixed
+
+- **A charger restart no longer counts Total Energy and the counters a second time.** A starting charger can report them as 0 for one poll; Home Assistant took that as a meter reset, so its energy statistics and any utility meter on Total Energy added the whole lifetime again (5,440 kWh in one day in one case). A lower reading is now kept back until it repeats in three polls, also right after Home Assistant starts; a counter reset from Home Assistant still shows at once.
+- **The log no longer warns about `DeviceEntry.config_entries`** when a device trigger of the charger is set up in an automation. Home Assistant 2026.10 and newer log it and stop supporting it in 2027.10.
+- **Last Session Duration shows whole seconds in Home Assistant's own cards.** Home Assistant gave it two decimals (5,748.00 s); the Eveus card was not affected.
+- **The dashboard install steps work.** The README sent the file, one view, to the raw configuration editor, which refused it with "At path: views - Expected an array value", and its indentation steps turned the sections into broken views. The file now goes into a new view through **Add view → Edit in YAML**, on a new or an existing dashboard, and has no fixed `path` that an existing view could already use.
+- **The dashboard's Adaptive Mode icon shows.** `mdi:shield-flash-outline` is not in Home Assistant's icon set, so it was an empty spot and Spook raised a repair.
+- **REVE: Active Rate Cost gives the price while REVE's third or fourth rate is in effect.** It was unavailable then, and so was Cost to Target SOC.
+- **REVE: Adaptive Current Limit follows an adaptive charge.** It lagged up to five minutes behind the charger; it is now read once a minute while such a charge runs.
+
 ## 4.28.0 - 2026-10-18
 
 ### ✨ New

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import time
 from collections.abc import Callable
@@ -16,7 +16,9 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .common_command import CommandManager
 from .const import (
@@ -37,6 +39,7 @@ from .const import (
     MAX_COST_VALUE,
     MAX_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
+    SESSION_TIME_IDLE_STEP_SECONDS,
     EVENT_CAR_CONNECTED,
     EVENT_CAR_DISCONNECTED,
     EVENT_CHARGING_FINISHED,
@@ -51,7 +54,7 @@ from .const import (
 )
 from ._payload import PayloadError, validate_main_payload
 from .charge_reason import finish_reason, reached_limit
-from .client import UPDATE_TIMEOUT_OBJ, fetch_json
+from .client import UPDATE_TIMEOUT_OBJ, basic_auth, fetch_json
 from .reve import (
     FAMILY_CLASSIC,
     FAMILY_REVE,
@@ -59,6 +62,12 @@ from .reve import (
     is_reve_payload,
     normalize_reve_payload,
     snapshot_limit_refusal,
+)
+from .meter_guard import (
+    METER_SAVE_INTERVAL_SECONDS,
+    METER_STORE_VERSION,
+    MeterGuard,
+    meter_store_key,
 )
 from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
@@ -214,7 +223,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # THIS model's maximum (a wrong-host/corrupt payload) instead of only the
         # largest supported model's maximum.
         self._model = model
-        self._basic_auth = aiohttp.BasicAuth(username, password)
+        self._basic_auth = basic_auth(username or "", password or "")
         self._command_manager = CommandManager(self)
 
         self._poll_results: deque[bool] = deque(maxlen=20)
@@ -302,6 +311,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # omits the REVE markers must not hand that poll the unreliable
         # tariff/schedule/leak fields REVE reports.
         self._reve_seen = False
+        # A charger that is still starting reports its lifetime meters as 0.
+        self._meter_guard = MeterGuard()
+        # Where its last accepted readings are kept, and what was last saved.
+        self._meter_store: Store | None = None
+        self._meter_saved: dict[str, float] = {}
+        self._meter_saved_at: float | None = None
         self._reve = ReveApi(self)
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
@@ -315,6 +330,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # The charger's sessionTime at the last poll that confirmed it. The
         # counter runs from plug-in, so going below it means a new plug-in.
         self._charge_completed_at: int | None = None  # pragma: no mutate - only ever read behind the completed flag, which is off here
+        # The device state the last good poll showed, and when it was entered:
+        # stamped when a change is SEEN between two consecutive good polls,
+        # restored across a restart, otherwise None (see `_track_state_since`).
+        self._state_since_state: int | None = None
+        self._state_since: datetime | None = None
+        # The (state, moment) the previous run saved, or the one a poll gap
+        # interrupted; settled against the first poll that follows.
+        self._state_since_seed: tuple[int, datetime] | None = None
         # A completion restored from the previous run, applied to the first
         # poll that can confirm it is still the same plug-in.
         self._charge_completion_seed: int | None = None
@@ -360,9 +383,112 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Whether a REVE station is in manual mode (see ``ManualMode``); ``None`` otherwise."""
         return self._reve.manual_mode.on if self._reve_seen else None
 
+    @property
+    def reve_manual_mode_can_turn_off(self) -> bool:
+        """Whether releasing Stop or One Charge ends manual mode (REVE_PLUS 1.0.3)."""
+        return self._reve_seen and self._reve.manual_mode.supported
+
+    @property
+    def reve_station_system(self) -> dict[str, Any]:
+        """REVE_PLUS 1.0.3's memory figures and start time; empty otherwise."""
+        return self._reve.station_system if self._reve_seen else {}
+
+    async def async_load_meter_baseline(self) -> None:
+        """Take the lifetime meters' last accepted readings from storage, before
+        the first poll: a charger that boots with them at 0 is held against
+        them even when Home Assistant began after the charger was switched off.
+        Storage trouble leaves the guard with only what it sees itself."""
+        entry = self.config_entry
+        if entry is None:
+            return
+        try:
+            self._meter_store = Store(self.hass, METER_STORE_VERSION, meter_store_key(entry.entry_id))
+            saved = await self._meter_store.async_load()
+        except Exception as err:  # noqa: BLE001
+            self._meter_store = None
+            _LOGGER.debug("Could not load the meter readings: %s", type(err).__name__)
+            return
+        self._meter_guard.seed(saved)
+        self._meter_saved = self._meter_guard.baseline()
+
+    def _save_meter_baseline(self, *, final: bool = False) -> None:
+        """Save the accepted readings once they changed; between saves only
+        after ``METER_SAVE_INTERVAL_SECONDS``, so a charge writes a file every
+        quarter hour, not a row's worth every poll."""
+        store = self._meter_store
+        baseline = self._meter_guard.baseline()
+        if store is None or baseline == self._meter_saved:
+            return
+        now = time.monotonic()
+        if (
+            not final
+            and self._meter_saved_at is not None
+            and now - self._meter_saved_at < METER_SAVE_INTERVAL_SECONDS
+        ):
+            return
+        self._meter_saved, self._meter_saved_at = baseline, now
+        store.async_delay_save(lambda: baseline, 1)
+
     def reve_restore_manual_mode(self, on_for: float | None = None) -> None:
         """Take manual mode over from before a Home Assistant restart."""
         self._reve.manual_mode.restore(on_for)
+
+    def reve_schedules(self) -> tuple[dict[str, Any], ...] | None:
+        """Every REVE schedule as last read, while that read stands; ``None``
+        for classic firmware."""
+        if not self._reve_seen:
+            return None
+        extras = self._reve.extras
+        return () if extras is None else extras.schedules
+
+    def reve_card_schedules(self) -> dict[str, Any]:
+        """The schedules and rates as the card shows them, and how old the read
+        is. ``set`` marks what the owner has set up: the charger keeps empty
+        slots (off, 00:00-00:00, price 0), which the card leaves out."""
+        schedules = self.reve_schedules()
+        if schedules is None:
+            return {"reve": False}
+        extras = self._reve.extras
+        return {
+            "reve": True,
+            "schedules": [
+                {
+                    "name": item["name"],
+                    "start": item["start"],
+                    "end": item["end"],
+                    "weekdays": list(item["weekdays"]),
+                    "enabled": item["enabled"],
+                    "current_limit": item["value"] if item["currentLimitEnabled"] else None,
+                    "set": item["enabled"] or item["start"] != item["end"],
+                }
+                for item in schedules
+            ],
+            "base_rate": None if extras is None else extras.base_rate,
+            "rates": [
+                {
+                    "name": rate["name"],
+                    "start": rate["start"],
+                    "end": rate["end"],
+                    "weekdays": rate["weekdays"],
+                    "enabled": rate["enabled"],
+                    "price": rate["value"],
+                    "set": rate["enabled"] or rate["start"] != rate["end"] or rate["value"] > 0,
+                }
+                for rate in (() if extras is None else extras.rates)
+            ],
+            "read_age_seconds": self._reve.diagnostics()["read_age_seconds"],
+        }
+
+    @property
+    def last_command_failure(self) -> str | None:
+        """Why the last command failed, when the user should hear it (REVE's
+        interface not answering); ``None`` otherwise."""
+        return self._command_manager.last_failure
+
+    @property
+    def reve_missing_fields(self) -> tuple[str, ...]:
+        """Fields a REVE charger's firmware stopped reporting; empty otherwise."""
+        return self._reve.missing_fields if self._reve_seen else ()
 
     def reve_diagnostics(self) -> dict[str, Any] | None:
         """REVE's GraphQL side and the fields it cannot provide; ``None`` otherwise."""
@@ -390,6 +516,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._event_prev_state = None
         self._event_prev_error_code = None
         self._event_charging_payload = None
+        self._forget_state_since()
 
     def _normalize_legacy_device_state(self, data: dict[str, Any]) -> dict[str, Any]:
         """Translate firmware-1.x state codes to their modern equivalents.
@@ -444,7 +571,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         return data
 
     @property
-    def basic_auth(self) -> aiohttp.BasicAuth:
+    def basic_auth(self) -> aiohttp.BasicAuth | None:
         """Cached Basic Auth credentials for charger requests."""
         return self._basic_auth
 
@@ -593,6 +720,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # so the cached consecutive_command_failures can't go stale.
             self._connection_quality_cache = None
         if success and not self._shutting_down:
+            self._meter_guard.expect_reset(command)
             self._schedule_post_command_refresh()
         return success
 
@@ -654,6 +782,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
+        self._save_meter_baseline(final=True)
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
         if self._init_fw_task is not None:
@@ -726,6 +855,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._maybe_burst_on_transition(new_data)
         self._track_charge_completion(self._snapshot)
+        self._track_state_since(self._snapshot)
         self._emit_transition_events(new_data)
 
     @property
@@ -802,6 +932,89 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._charge_completed_at = None  # pragma: no mutate - only ever read behind the completed flag, which is off here
         elif session_time is not None:
             self._charge_completed_at = session_time
+
+    @property
+    def state_since(self) -> datetime | None:
+        """When the charger entered the state it is in now; None when unknown."""
+        return self._state_since
+
+    @property
+    def state_since_anchor(self) -> tuple[int, datetime] | None:
+        """What the State sensor saves across a restart."""
+        if self._state_since_state is not None and self._state_since is not None:
+            return self._state_since_state, self._state_since
+        # Setup can remain offline: save the pending seed too, nothing has
+        # disproved it yet.
+        return self._state_since_seed
+
+    def seed_state_since(self, state: Any, since: Any) -> None:
+        """Re-arm the stamp the previous run saved.
+
+        It applies to the first poll that finds the charger in the same state
+        and the same plug-in; otherwise the moment is unknown and stays so. The
+        pair comes back from disk, so anything but a known state code with a
+        zoned ISO time is ignored.
+        """
+        if (
+            not isinstance(state, int)
+            or isinstance(state, bool)
+            or state not in CHARGING_STATES
+            or not isinstance(since, str)
+        ):
+            return
+        try:
+            moment = datetime.fromisoformat(since)
+        except ValueError:
+            return
+        if moment.tzinfo is None:
+            return
+        moment = moment.astimezone(timezone.utc).replace(microsecond=0)
+        if self._state_since_state is None:
+            self._state_since_seed = (state, moment)
+        elif self._state_since is None and self._state_since_state == state:
+            # Setup has already polled: settle it now, so the sensor's first
+            # published attributes are already right.
+            self._state_since = self._plausible_since(moment, self._snapshot)
+
+    def _forget_state_since(self) -> None:
+        """A gap in the polls: what was known waits to be confirmed afterwards."""
+        if self._state_since_state is not None and self._state_since is not None:
+            self._state_since_seed = (self._state_since_state, self._state_since)
+        self._state_since_state = None
+        self._state_since = None
+
+    def _plausible_since(self, since: datetime, snapshot: EveusSnapshot) -> datetime | None:
+        """The stamp, if it can belong to the plug-in the charger reports now."""
+        session_time = snapshot.session_time_s
+        now = dt_util.utcnow().replace(microsecond=0)
+        if session_time is None or since > now:
+            return None
+        plugged_in = now - timedelta(seconds=session_time + SESSION_TIME_IDLE_STEP_SECONDS)
+        return since if since >= plugged_in else None
+
+    def _track_state_since(self, snapshot: EveusSnapshot) -> None:
+        """Stamp the moment the charger enters a state, when it is seen.
+
+        Only a change between two consecutive good polls is a moment we know:
+        the first reading after a start, a gap or an unnameable code says
+        nothing about when the state began, so it carries no time rather than
+        the time we noticed.
+        """
+        state = snapshot.known_state
+        if state is None:
+            self._forget_state_since()
+            return
+        previous = self._state_since_state
+        if previous == state:
+            return
+        seed, self._state_since_seed = self._state_since_seed, None
+        self._state_since_state = state
+        if previous is not None:
+            self._state_since = dt_util.utcnow().replace(microsecond=0)
+        elif seed is not None and seed[0] == state:
+            self._state_since = self._plausible_since(seed[1], snapshot)
+        else:
+            self._state_since = None
 
     def _emit_transition_events(self, new_data: dict[str, Any]) -> None:
         """Fire bus events for device-state transitions between valid polls.
@@ -1160,7 +1373,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             return None
         latency = time.monotonic() - start
-        if self._reve.main_residue_due():
+        if self._reve.main_residue_due(measurements):
             # What only /main carries; a /main that does not answer leaves the
             # kept values standing until they age out.
             self._reve.main_residue_tried()
@@ -1262,6 +1475,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     new_data, self._reve.extras
                 )
                 self._reve.manual_mode.observe(new_data)
+            new_data = self._meter_guard.apply(new_data)
+            self._save_meter_baseline()
             # Parse AFTER the legacy translation (this coordinator owns the
             # fw-1.x latch), and BEFORE _record_success, which notifies the
             # listeners that read the snapshot.

@@ -190,6 +190,8 @@ def test_rate_states_mapping():
         0: "Primary Rate",
         1: "Rate 2",
         2: "Rate 3",
+        3: "Rate 4",
+        4: "Rate 5",
     }
 
 

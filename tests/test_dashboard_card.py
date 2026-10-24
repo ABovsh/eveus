@@ -278,7 +278,11 @@ async def test_setup_registers_the_card_websocket_command_once():
         eveus.websocket_api, "async_register_command"
     ) as register:
         assert await eveus.async_setup(hass, {}) is True
-    register.assert_called_once_with(hass, eveus._ws_card_entities)
+    assert [call.args for call in register.call_args_list] == [
+        (hass, eveus._ws_card_entities),
+        (hass, eveus._ws_reve_schedules),
+        (hass, eveus._ws_reve_schedule_weekdays),
+    ]
 
 
 def test_card_looks_entities_up_through_the_websocket_command():

@@ -143,6 +143,9 @@ class PayloadUpdater(OutageClock):
     coordinator but "was this poll good" and "what did the charger say".
     """
 
+    # Nothing here watches transitions, so no "in this state since" moment is known.
+    state_since = None
+
     def __init__(
         self,
         data: object = None,
@@ -170,6 +173,7 @@ class PayloadUpdater(OutageClock):
 class EveusTestUpdater(OutageClock):
     """Reusable coordinator/updater fake for direct entity tests."""
 
+    state_since = None
     host = TEST_HOST
     last_update_success = True
     scheme = "http"

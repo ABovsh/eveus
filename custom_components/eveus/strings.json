@@ -13,8 +13,8 @@
           "soc_mode": "Integration mode"
         },
         "data_description": {
-          "username": "The charger's own web-interface credentials, not your Home Assistant login.",
-          "password": "The charger's own web-interface credentials, not your Home Assistant login."
+          "username": "The charger's own web-interface credentials, not your Home Assistant login. Leave both empty if the charger has no password, as on REVE firmware.",
+          "password": "The charger's own web-interface credentials, not your Home Assistant login. Leave both empty if the charger has no password, as on REVE firmware."
         }
       },
       "soc": {
@@ -38,8 +38,8 @@
           "soc_mode": "Integration mode"
         },
         "data_description": {
-          "username": "The charger's own web-interface credentials, not your Home Assistant login.",
-          "password": "The charger's own web-interface credentials, not your Home Assistant login."
+          "username": "The charger's own web-interface credentials, not your Home Assistant login. Leave both empty if the charger has no password, as on REVE firmware.",
+          "password": "The charger's own web-interface credentials, not your Home Assistant login. Leave both empty if the charger has no password, as on REVE firmware."
         }
       },
       "reauth_confirm": {
@@ -296,6 +296,18 @@
       },
       "last_session_duration": {
         "name": "Last Session Duration"
+      },
+      "reve_free_memory": {
+        "name": "REVE Free Memory"
+      },
+      "reve_min_free_memory": {
+        "name": "REVE Min Free Memory"
+      },
+      "reve_largest_free_block": {
+        "name": "REVE Largest Free Block"
+      },
+      "reve_started": {
+        "name": "REVE Started"
       }
     },
     "binary_sensor": {
@@ -448,6 +460,10 @@
     "battery_low": {
       "title": "Eveus: charger battery is low, replace it soon",
       "description": "The CR2032 coin-cell battery inside your Eveus charger is low.\n\nWhile it is low, some charger functions may be limited.\n\nWhat to do:\n\n- Replace it with a fresh, good-quality CR2032 cell.\n\nThe Eveus integration will clear this warning automatically once a new battery reads a healthy voltage."
+    },
+    "reve_fields_missing": {
+      "title": "Eveus: REVE firmware stopped reporting some readings",
+      "description": "Your Eveus charger's REVE firmware ({firmware}) no longer reports these fields: {fields}.\n\nThe entities that show them have no value until it does. This usually follows a firmware update that renamed a field.\n\nWhat to do:\n\n- Update the Eveus integration when a new version is available.\n- If this notice stays, open an issue on GitHub and include the integration's diagnostics.\n\nThe Eveus integration will clear this notice automatically once the firmware reports every field again."
     },
     "safety_ground_missing": {
       "title": "Eveus: ground connection is missing, stop charging",

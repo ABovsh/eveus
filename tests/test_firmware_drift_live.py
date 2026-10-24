@@ -127,32 +127,43 @@ def test_live_charger_field_set_matches_the_fixture() -> None:
     not HOST, reason="set EVEUS_LIVE_HOST to run the live firmware-drift check"
 )
 def test_live_reve_graphql_schedules_and_rates_parse() -> None:
-    """On REVE, the integration's own GraphQL read must still parse."""
-    import urllib.request
-
+    """On REVE, the integration's own GraphQL reads must still parse, and the
+    measurements read must get back every field it asks for: the server
+    answers a field it does not know with nothing, not an error."""
     from custom_components.eveus.reve import (
-        COMMAND_QUERY,
-        RATES_QUERY,
-        SCHEDULES_QUERY,
+        MEASUREMENTS_AND_SETTINGS_QUERY,
+        SETTINGS_QUERY,
+        _EXPECTED_PATHS,
+        _reported,
         is_reve_payload,
         parse_extras,
     )
 
     if not is_reve_payload(_fetch_live()):
         pytest.skip("the live charger is not on REVE firmware")
-    station: dict = {}
-    for document in (SCHEDULES_QUERY, RATES_QUERY, COMMAND_QUERY):
-        body = json.dumps(
-            {"operationName": "StationData", "variables": {}, "query": document}
-        ).encode()
-        request = urllib.request.Request(
-            f"http://{HOST}/graphql",
-            data=body,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
-            result = json.loads(response.read().decode("utf-8", "replace"))
-        station.update(result["data"]["stationData"])
-    extras = parse_extras({"stationData": station})
+    settings = _graphql(SETTINGS_QUERY)
+    extras = parse_extras({"stationData": settings})
     assert len(extras.schedules) >= 1
+    assert extras.charging_command is not None
+
+    station = _graphql(MEASUREMENTS_AND_SETTINGS_QUERY)
+    missing = [".".join(path) for path in _EXPECTED_PATHS if not _reported(station, path)]
+    assert not missing, f"REVE no longer reports {missing}"
+    assert parse_extras({"stationData": station}).schedules == extras.schedules
+
+
+def _graphql(document: str) -> dict:
+    import urllib.request
+
+    body = json.dumps(
+        {"operationName": "StationData", "variables": {}, "query": document}
+    ).encode()
+    request = urllib.request.Request(
+        f"http://{HOST}/graphql",
+        data=body,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+        result = json.loads(response.read().decode("utf-8", "replace"))
+    return result["data"]["stationData"]
