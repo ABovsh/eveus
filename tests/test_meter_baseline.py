@@ -33,7 +33,7 @@ class _FakeStore:
     instances: list["_FakeStore"] = []
 
     def __init__(self, hass: Any, version: int, key: str) -> None:
-        self.version, self.key = version, key
+        self.hass, self.version, self.key = hass, version, key
         self.saves: list[dict[str, Any]] = []
         self.removed = False
         _FakeStore.instances.append(self)
@@ -42,6 +42,7 @@ class _FakeStore:
         return _FakeStore.loaded
 
     def async_delay_save(self, data_func: Any, delay: float = 0) -> None:
+        assert delay > 0, "a delayed save needs a delay"
         self.saves.append(data_func())
 
     async def async_remove(self) -> None:
@@ -169,3 +170,26 @@ def test_a_seed_never_replaces_a_reading_already_accepted() -> None:
     guard.apply({"totalEnergy": 7.0})
     guard.seed({"totalEnergy": 5440.0, "IEM1": 3.0})
     assert guard.baseline() == {"totalEnergy": 7.0, "IEM1": 3.0}
+
+
+def test_the_readings_live_in_one_store_per_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    updater = _updater(monkeypatch, _Charger(_boot_zero()))
+    asyncio.run(updater.async_load_meter_baseline())
+    (store,) = _FakeStore.instances
+    assert (store.hass, store.version, store.key) == (updater.hass, 1, "eveus_meters_entry-1")
+
+
+def test_readings_that_match_the_saved_ones_are_not_written_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeStore.loaded = dict(_SAVED)
+    updater = _updater(monkeypatch, _Charger({**_classic_main(), **_SAVED}))
+    asyncio.run(updater.async_load_meter_baseline())
+    asyncio.run(updater._async_update_data())
+    asyncio.run(updater._async_update_data())
+    (store,) = _FakeStore.instances
+    assert store.saves == []
+
+
+def test_a_saved_zero_is_a_reading_like_any_other() -> None:
+    guard = MeterGuard()
+    guard.seed({"IEM1_money": 0, "IEM1": 0.5})
+    assert guard.baseline() == {"IEM1_money": 0, "IEM1": 0.5}
