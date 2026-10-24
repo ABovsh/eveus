@@ -433,29 +433,25 @@ above works the same, except as described here.
 
 #### Manual mode
 
-REVE has a **manual mode** in which it ignores its schedules and its time,
-energy and cost limits. The charger enters it after:
+In **manual mode** REVE does not follow its schedules or its time, energy and
+cost limits. The charger enters it when you:
 
-- any stop: **Stop Charging** in Home Assistant or the app, the Target SOC stop, or the low-battery blueprint;
-- **One Charge**, or a start with "ignore schedule" in the charger's app.
+- stop charging: **Stop Charging** in Home Assistant or in the charger's app, the Target SOC stop, or the low-battery blueprint;
+- turn on **One Charge**, or start a charge with "ignore schedule" in the charger's app.
 
-A limit that stops charging by itself does not start manual mode. Manual mode
-ends when you pull the connector out of the car. After you plug it back in,
-the schedules and limits apply again. From REVE_PLUS 1.0.3 it also ends when
-you turn **Stop Charging** or **One Charge** off in Home Assistant and both are
-off.
+A limit that stops charging by itself does not start manual mode.
 
-What this means in practice:
+To leave manual mode:
 
-- On REVE_PLUS 1.0.3, turning **Stop Charging** or **One Charge** off in Home Assistant, with the other one off too, ends manual mode: the schedules and limits apply again, so outside a schedule window the charge waits for it. A stop and resume in the charger's app leaves the charger in manual mode.
-- On earlier REVE versions, turning **Stop Charging** or **One Charge** off does not end manual mode: the charger keeps ignoring its schedules and limits until the connector is pulled out.
-- From REVE_PLUS 1.0.3 the charger reports the mode, and **Manual Mode** shows what it reports. Earlier REVE versions do not report it, so the sensor follows the commands the integration sees or sends, and turns off when the connector is pulled out. It keeps its state through a Home Assistant restart, unless the connector was pulled out meanwhile.
-- While **Manual Mode** is on, the card says that schedules and limits are ignored.
+- **Pull the connector out of the car.** Once you plug it back in, the schedules and limits apply again. This works on every version.
+- **From REVE_PLUS 1.0.3:** turn **Stop Charging** and **One Charge** off in Home Assistant (both must be off). The schedules and limits apply again, so outside a schedule window the charge waits for it. Stopping and resuming in the charger's app does not end manual mode.
+
+The **Manual Mode** sensor and the card show that the schedules and limits are being ignored. On 1.0.3 the sensor shows the mode the charger reports. Earlier versions do not report it, so the sensor turns on when you stop a charge or turn One Charge on, and turns off when the connector is pulled out. It keeps its state through a Home Assistant restart, unless the connector was pulled out meanwhile.
 
 #### Limits on REVE
 
-- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **outside manual mode, while the car is charging or a limit has stopped the charge**. REVE drops a limit set before charging starts, and every limit when the connector is pulled out, so at other times the card locks the limits and says why, and Home Assistant refuses the change with the reason.
-- When a limit stops the charge, raise it or turn it off to charge on: the charger resumes by itself, and a raised limit stops it at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until the connector is pulled out.
+- **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **while the car is charging or a limit has stopped the charge, and not in manual mode**. REVE drops a limit set before charging starts, and every limit when the connector is pulled out, so at other times the card locks the limits and says why, and Home Assistant refuses the change with the reason.
+- When a limit stops the charge, raise it or turn it off to charge on: the charger resumes by itself, and a raised limit stops it at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until manual mode ends.
 - Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value.
 - **Target SOC** can be changed at any time: Home Assistant does that stop.
 - REVE has no **Limit: disable all**: the charger drops that setting within seconds, so the switch is not created and the card does not show it.
@@ -463,23 +459,19 @@ What this means in practice:
 #### Other differences
 
 - **Adaptive Mode** has Off, Voltage and Auto; REVE has no Power option.
-- **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app. Their days of the week are changed on the card; the days set in the app are kept. The card also lists the other schedules and the tariffs that are set up in the app. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
-- **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price the charger reports as in effect (REVE_PLUS 1.0.3), or on earlier versions the price in effect by the charger's clock, and its `rate_name` attribute is the rate's name in the app. While REVE's third or fourth rate is in effect, it gives that rate's price; those rates have no entities of their own. **Cost to Target SOC** follows the first two rates' hours and the schedules' hours, not their days of the week. Before the charge starts, a schedule that runs on some days only, or an enabled schedule beyond the second, leaves it at the price in effect now.
-- **Counter A Cost** and **Counter B Cost** increase from REVE_PLUS 1.0.3. On earlier REVE versions the charger counts the energy of counters A and B, but not their cost: after a counter is reset its cost stays at 0, and without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
-- **Adaptive Current Limit** is read from the charger's older `/main` page, which REVE's own interface does not carry: once a minute while an adaptive charge runs, otherwise every five minutes.
-- **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the charger's older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
-- From REVE_PLUS 1.0.3, four diagnostic sensors show the charger's memory and when it last started: **REVE Free Memory**, **REVE Min Free Memory**, **REVE Largest Free Block** and **REVE Started**. They are for troubleshooting and are disabled by default; enable them on the device page. **REVE Free Memory** updates only when it has moved by 2 KiB or more.
+- **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app. Their days of the week are changed on the card; the days set in the app are kept. The card also lists the other schedules and the tariffs set up in the app, for viewing only. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
+- **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect now: from REVE_PLUS 1.0.3 the charger reports it; on earlier versions the integration works it out from the rate windows and the charger's clock. Its `rate_name` attribute is the rate's name in the app. The third and fourth rates have no entities of their own, but **Active Rate Cost** shows their price while they are in effect.
+- **Cost to Target SOC** follows the hours of the first two rates and of the schedules, not their days of the week. Before the charge starts, if a schedule runs on some days only, or a third or later schedule is enabled, it uses the price in effect now.
+- **Counter A Cost** and **Counter B Cost** grow from REVE_PLUS 1.0.3, but how REVE counts this cost may change in later firmware versions. On earlier versions the charger counts the energy of counters A and B, but not their cost: it stays 0 after a reset, and without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
+- **Adaptive Current Limit** is read from the charger's older `/main` page, because REVE's own interface does not carry it: once a minute while an adaptive charge runs, otherwise every five minutes.
+- **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
-- REVE does not report **Leakage Current**, **Leakage Current Peak** or **OCPP Connected**, so they stay unavailable. **Plug Temperature** has a value from REVE_PLUS 1.0.3; on earlier REVE versions it stays unavailable.
+- REVE reports leakage only as raw values, not in mA, so **Leakage Current** and **Leakage Current Peak** stay unavailable, and so does **OCPP Connected**. **Plug Temperature** has a value from REVE_PLUS 1.0.3; on earlier versions it stays unavailable.
+- From REVE_PLUS 1.0.3 there are four diagnostic sensors, disabled by default: **REVE Free Memory**, **REVE Min Free Memory**, **REVE Largest Free Block** and **REVE Started** (when the charger last started). Most users do not need them; enable them on the device page when you need data on why the charger hangs or restarts.
 
 #### Wi-Fi drops about every 15 minutes
 
-REVE does not lower its packet size on a link with an MTU below 1500. When the
-charger reaches the internet through a VPN or tunnel with a smaller MTU, its
-connection to the maker's cloud hangs and the charger restarts its Wi-Fi.
-Set the maximum segment size (MSS) of that tunnel on the router, e.g. 1284 for
-an MTU of 1324 (Keenetic: `ip tcp adjust-mss 1284` on the tunnel interface), or
-let the charger reach the internet outside the tunnel.
+This affects REVE before 1.0.3. The charger did not lower its packet size on a link with an MTU below 1500. When it reached the internet through a VPN or tunnel with a smaller MTU, its connection to the maker's cloud hung and it restarted its Wi-Fi. **REVE_PLUS 1.0.3 fixes this.** On earlier versions, set the maximum segment size (MSS) of that tunnel on the router, e.g. 1284 for an MTU of 1324 (Keenetic: `ip tcp adjust-mss 1284` on the tunnel interface), or let the charger reach the internet outside the tunnel.
 
 ### Older charger firmware
 
@@ -502,7 +494,7 @@ More help: [integration website](https://abovsh.github.io/eveus/) · [community 
 | Controls do not respond | Check **Connection Quality**, that the charger is reachable, and the credentials under **Reconfigure** |
 | SOC sensors are missing | Switch the mode to Advanced under **Configure** |
 | SOC is wrong after replugging | Set **Initial SOC** to the real battery level before the next charge |
-| On REVE, the charger ignores a schedule or limit | It is in [manual mode](#manual-mode): pull the connector out and plug it back in |
+| On REVE, the charger ignores a schedule or limit | It is in [manual mode](#manual-mode): pull the connector out of the car, or on REVE_PLUS 1.0.3 turn **Stop Charging** and **One Charge** off |
 | REVE reconnects to Wi-Fi about every 15 minutes | See [Wi-Fi drops](#wi-fi-drops-about-every-15-minutes) |
 | The charger is off | Normal: the integration polls less often and does not fill the log with errors; readings return within a minute after power comes back |
 | A Repairs notice appeared | See [Safety notices](#-safety-notices) |
