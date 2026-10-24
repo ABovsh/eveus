@@ -861,6 +861,13 @@ def test_graphql_requests_carry_the_session_auth_timeout_and_operation(
     assert read["headers"]["Content-Type"] == "application/json"
 
 
+def test_graphql_wait_outlasts_a_charger_without_internet() -> None:
+    # REVE_PLUS 1.0.3 with no internet answers its local interface in ~5.2 s on
+    # every request and took up to 7.5 s while a cloud session was set up
+    # (measured 2026-10-24), so a shorter wait failed reads and settings there.
+    assert GRAPHQL_TIMEOUT_OBJ.total > 7.5
+
+
 def test_reads_refresh_exactly_at_the_window_and_retry_exactly_at_the_back_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
