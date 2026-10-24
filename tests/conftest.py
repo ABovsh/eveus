@@ -391,3 +391,18 @@ def _loopless_hass_grace_timers(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_call_later(hass, delay, action)
 
     monkeypatch.setattr(common_network, "async_call_later", _call_later)
+
+
+@pytest.fixture
+def kyiv_process_zone(monkeypatch: pytest.MonkeyPatch):
+    """Run the test under a non-UTC process time zone, as on a user's host.
+
+    CI runs in UTC, where a naive or ``astimezone(None)`` conversion equals a UTC
+    one, so a test of a UTC conversion proves nothing there without this."""
+    import time
+
+    monkeypatch.setenv("TZ", "Europe/Kyiv")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()

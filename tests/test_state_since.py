@@ -349,7 +349,7 @@ def test_a_saved_stamp_applies_when_the_charger_was_already_polled(clock):
     assert updater.state_since_anchor == (CHARGING, T0.replace(microsecond=0))
 
 
-def test_a_saved_stamp_is_read_in_utc_whatever_zone_it_was_saved_in(clock):
+def test_a_saved_stamp_is_read_in_utc_whatever_zone_it_was_saved_in(clock, kyiv_process_zone):
     updater = _updater()
     clock["t"] = T0 + timedelta(hours=2)
     _feed(updater, CHARGING, 2 * 3600 + 300)
