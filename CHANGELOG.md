@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.29.0 - 2026-10-24
 
 ### ✨ New
 
