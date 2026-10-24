@@ -219,3 +219,39 @@ def test_an_enabled_schedule_beyond_the_second_stays_at_the_rate_now() -> None:
 def test_a_disabled_schedule_beyond_the_second_does_not_matter() -> None:
     schedules = (_slot(True, _EVERY_DAY), _slot(False, _EVERY_DAY), _slot(False, [1]))
     assert _cost(_ANTON, reve_schedules=schedules) == pytest.approx(_REMAINING * 2.16, abs=0.02)
+
+
+# ---------------------------------------------------------------------------
+# The sensor's reading of the charger's schedule fields
+# ---------------------------------------------------------------------------
+
+_TWO = {**_ANTON, "sh2Enabled": 1}
+
+
+def _without(fields: dict, *keys: str) -> dict:
+    return {key: value for key, value in fields.items() if key not in keys}
+
+
+def test_tariff_windows_that_cannot_be_read_keep_the_flat_price() -> None:
+    assert _cost(_without(_ANTON, "tarifAStart")) == pytest.approx(_REMAINING * 4.32, abs=0.02)
+
+
+def test_without_a_voltage_reading_the_charge_is_sized_at_230_v() -> None:
+    assert _cost(_without(_TWO, "voltMeas1")) == pytest.approx(_cost(_TWO), abs=0.001)
+    assert _cost({**_TWO, "voltMeas1": 0}) == pytest.approx(_cost(_TWO), abs=0.001)
+
+
+def test_a_disabled_first_schedule_leaves_the_second_in_the_model() -> None:
+    # Schedule 2 runs at night here; Schedule 1 is off.
+    fields = {**_ANTON, "sh1Enabled": 0, "sh2Enabled": 1, "sh2Start": 1380, "sh2Stop": 420}
+    assert _cost(fields) == pytest.approx(_REMAINING * 2.16, abs=0.02)
+
+
+@pytest.mark.parametrize("missing", ["sh1Start", "sh1Stop"])
+def test_an_enabled_schedule_with_one_edge_unread_keeps_the_flat_price(missing: str) -> None:
+    assert _cost(_without(_ANTON, missing)) == pytest.approx(_REMAINING * 4.32, abs=0.02)
+
+
+def test_a_current_limit_that_is_off_does_not_slow_the_charge() -> None:
+    fields = {**_TWO, "sh1CurrentEnable": 0, "sh1CurrentValue": 10}
+    assert _cost(fields) == pytest.approx(_cost(_TWO), abs=0.001)
