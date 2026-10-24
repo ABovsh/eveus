@@ -2073,6 +2073,56 @@ test('REVE: a tapped day shows at once and is written as the whole set', async (
   release(); await new Promise((r) => setImmediate(r));
   assert.match(x.html(), /data-weekday="2:6" aria-pressed="true"/);
 });
+test('REVE: a config change while the schedules are being read does not stop later reads', async () => {
+  const releases = [];
+  const x = await setupReve();
+  x.hass.callWS = (msg) => { x.asked.push(msg); return new Promise((resolve) => { releases.push(() => resolve(reveSchedules())); }); };
+  const reading = x.card._fetchReveSchedules();
+  assert.equal(x.card._reveBusy, true);
+  x.card.setConfig({sections: ['schedules']});
+  assert.equal(x.card._reveBusy, false, 'the answer for the old config is dropped, so nothing is left waiting for it');
+  assert.equal(x.card._reveAt, 0);
+  assert.equal(x.card._reveSchedules, null, 'the old charger\'s schedules are not shown for the new config');
+  releases.forEach((release) => release()); await reading;
+  assert.equal(x.card._reveBusy, false);
+  assert.equal(x.card._reveSchedules, null);
+});
+test('REVE: days tapped on two schedules at once both settle on what the charger holds', async () => {
+  const releases = [];
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? new Promise((resolve) => { releases.push(() => resolve({weekdays: msg.weekdays})); }) : reveSchedules()});
+  openDays(x, 1);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '1:6'}} : null}});
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  releases.forEach((release) => release());
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(JSON.parse(JSON.stringify(x.card._dayPending)), {}, 'no tap is left pinned once its write has answered');
+  // Changed in the charger\'s app afterwards: the next read shows it.
+  x.card._reveSchedules = x.card._reveSchedules.map((item, i) => i === 0 ? {...item, weekdays: [2]} : item);
+  x.card._render();
+  assert.match(x.html(), /data-days-edit="1"[^>]*>Tu</);
+});
+test('REVE: a refused day on one schedule goes back although another schedule was tapped after it', async () => {
+  const x = await setupReve({answer: (msg) => {
+    if (msg.type === 'eveus/reve_schedule_weekdays') { if (msg.schedule === 1) return Promise.reject(new Error('failed')); return {weekdays: msg.weekdays}; }
+    return reveSchedules();
+  }});
+  openDays(x, 1);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '1:6'}} : null}});
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  await new Promise((r) => setImmediate(r));
+  assert.match(x.html(), /data-weekday="1:6" aria-pressed="true"/, 'schedule 1 ran every day and the refused tap took Saturday off');
+});
+test('REVE: a write that succeeds is not reported as failed because a read failed meanwhile', async () => {
+  let release;
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? new Promise((resolve) => { release = () => resolve({weekdays: msg.weekdays}); }) : reveSchedules()});
+  openDays(x, 2);
+  x.card._onClick({target: {closest: (s) => s === '[data-weekday]' ? {dataset: {weekday: '2:6'}} : null}});
+  x.card._reveSchedules = null;
+  release(); await new Promise((r) => setImmediate(r));
+  assert.doesNotMatch(x.html(), /cmd-error/);
+});
 test('REVE: the last day of a schedule cannot be turned off', async () => {
   const x = await setupReve({answer: () => ({...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [3]}]})});
   await x.card._fetchReveSchedules();

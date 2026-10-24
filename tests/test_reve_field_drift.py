@@ -63,6 +63,36 @@ def test_a_returning_field_clears_the_report_at_once(monkeypatch: pytest.MonkeyP
     assert updater.reve_missing_fields == ()
 
 
+def test_fields_missing_from_different_reads_are_not_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three reads that each lack a field, but not the same one, are no drift:
+    the notice names only a field every one of the last reads lacked."""
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    rssi = charger.station.pop("RSSI")
+    _poll(updater, now)
+    charger.station["RSSI"] = rssi
+    power = charger.station["measurements"].pop("powerMeasurement")
+    _poll(updater, now)
+    charger.station["measurements"]["powerMeasurement"] = power
+    del charger.station["RSSI"]
+    _poll(updater, now)
+    assert updater.reve_missing_fields == ()
+
+
+def test_only_the_field_missing_throughout_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    del charger.station["RSSI"]
+    _poll(updater, now, reve.FIELDS_MISSING_READS - 1)
+    del charger.station["measurements"]["powerMeasurement"]
+    _poll(updater, now)
+    assert updater.reve_missing_fields == ("RSSI",)
+    _poll(updater, now, reve.FIELDS_MISSING_READS - 1)
+    assert updater.reve_missing_fields == ("RSSI", "measurements.powerMeasurement")
+
+
 def test_a_null_field_is_not_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     now = _clock(monkeypatch)
     charger = _Charger(_reve_main())

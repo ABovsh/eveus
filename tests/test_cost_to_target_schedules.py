@@ -91,12 +91,21 @@ _ANTON = {
 _REMAINING = 48 / 0.9
 
 
-def _cost(fields: dict, clock_hm: tuple[int, int] = (19, 0), *, phases: int = 1, manual: bool | None = None) -> float | None:
+def _cost(
+    fields: dict,
+    clock_hm: tuple[int, int] = (19, 0),
+    *,
+    phases: int = 1,
+    manual: bool | None = None,
+    reve_schedules: tuple[dict, ...] | None = None,
+) -> float | None:
     calc = CachedSOCCalculator()
     for entity_id, value in EV_HELPERS.items():
         calc.set_value(entity_id.removeprefix("input_number.ev_"), float(value))
     updater = EveusTestUpdater({**fields, "systemTime": _DAY + clock_hm[0] * 3600 + clock_hm[1] * 60})
     updater.reve_manual_mode = manual
+    if reve_schedules is not None:
+        updater.reve_schedules = lambda: reve_schedules
     if clock_hm[0] < 7 or clock_hm[0] >= 23:
         updater.data["activeTarif"] = 1
     elif "tarifBEnable" in fields and fields["tarifBEnable"]:
@@ -171,3 +180,42 @@ def test_a_charge_after_the_last_edge_of_the_day_wraps_to_the_first() -> None:
     assert price_energy_in_schedules(100, 1400, 1, RATES, NIGHT_RATE, ((1380, 420, KW),)) == pytest.approx(200)
     # 23:20, schedule 09:00-18:00 only: waits across midnight for 09:00, day rate.
     assert price_energy_in_schedules(100, 1400, 1, RATES, NIGHT_RATE, ((540, 1080, KW),)) == pytest.approx(400)
+
+
+# ---------------------------------------------------------------------------
+# REVE schedules the two-slot model cannot see
+# ---------------------------------------------------------------------------
+
+_EVERY_DAY = [0, 1, 2, 3, 4, 5, 6]
+
+
+def _slot(enabled: bool, weekdays: list[int]) -> dict:
+    return {"enabled": enabled, "weekdays": weekdays}
+
+
+def test_schedules_on_every_day_keep_the_scheduled_price() -> None:
+    schedules = (_slot(True, _EVERY_DAY), _slot(False, _EVERY_DAY))
+    assert _cost(_ANTON, reve_schedules=schedules) == pytest.approx(_REMAINING * 2.16, abs=0.02)
+
+
+def test_a_schedule_on_some_days_only_stays_at_the_rate_now() -> None:
+    """Schedule 1 on weekdays only: on a Saturday evening the charge waits for
+    Monday, which the window model cannot say, so the flat price stands."""
+    schedules = (_slot(True, [1, 2, 3, 4, 5]), _slot(False, _EVERY_DAY))
+    assert _cost(_ANTON, reve_schedules=schedules) == pytest.approx(_REMAINING * 4.32, abs=0.02)
+
+
+def test_a_disabled_schedule_on_some_days_does_not_matter() -> None:
+    schedules = (_slot(True, _EVERY_DAY), _slot(False, [6]))
+    assert _cost(_ANTON, reve_schedules=schedules) == pytest.approx(_REMAINING * 2.16, abs=0.02)
+
+
+def test_an_enabled_schedule_beyond_the_second_stays_at_the_rate_now() -> None:
+    """Schedules 3-8 have no fields here, yet the charger obeys them."""
+    schedules = (_slot(True, _EVERY_DAY), _slot(False, _EVERY_DAY), _slot(True, _EVERY_DAY))
+    assert _cost(_ANTON, reve_schedules=schedules) == pytest.approx(_REMAINING * 4.32, abs=0.02)
+
+
+def test_a_disabled_schedule_beyond_the_second_does_not_matter() -> None:
+    schedules = (_slot(True, _EVERY_DAY), _slot(False, _EVERY_DAY), _slot(False, [1]))
+    assert _cost(_ANTON, reve_schedules=schedules) == pytest.approx(_REMAINING * 2.16, abs=0.02)

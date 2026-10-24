@@ -941,8 +941,8 @@ class ReveApi:
         # Whether any GraphQL read has succeeded: the tolerance for a missed
         # reply needs a server seen answering first.
         self._answered = False
-        self._missing: tuple[str, ...] = ()
-        self._missing_reads = 0
+        # Reads in a row each expected field was missing from.
+        self._missing_streaks: dict[str, int] = {}
         self._measurements_retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
         self._measurement_reads = 0
         self._measurement_failures = 0
@@ -1060,17 +1060,23 @@ class ReveApi:
         return main
 
     def _check_fields(self, station: Mapping[str, Any]) -> None:
-        missing = tuple(
-            ".".join(path) for path in _EXPECTED_PATHS if not _reported(station, path)
-        )
-        self._missing_reads = self._missing_reads + 1 if missing else 0
-        self._missing = missing
+        self._missing_streaks = {
+            name: self._missing_streaks.get(name, 0) + 1
+            for path in _EXPECTED_PATHS
+            if not _reported(station, path)
+            for name in (".".join(path),)
+        }
 
     @property
     def missing_fields(self) -> tuple[str, ...]:
-        """Fields the last ``FIELDS_MISSING_READS`` measurements reads all
-        lacked, as the last one lacked them; empty once a read has them all."""
-        return self._missing if self._missing_reads >= FIELDS_MISSING_READS else ()
+        """Fields every one of the last ``FIELDS_MISSING_READS`` measurements
+        reads lacked; a field is dropped from the list by the first read that
+        has it."""
+        return tuple(
+            name
+            for name, reads in self._missing_streaks.items()
+            if reads >= FIELDS_MISSING_READS
+        )
 
     def with_main_residue(self, measurements: Mapping[str, Any]) -> dict[str, Any]:
         """The measurements with what only ``/main`` carries laid under them,

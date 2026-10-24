@@ -656,6 +656,18 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
             remaining, power, (clock % 86400) / 60, active, rates, windows
         )
 
+    def _unmodelled_reve_schedule(self) -> bool:
+        """Whether REVE has an enabled schedule the window model cannot place:
+        one that runs on some days only (the charge may wait days for it), or
+        any beyond the two this sensor reads, which the charger obeys too."""
+        schedules = getattr(self._updater, "reve_schedules", None)
+        if not callable(schedules):
+            return False
+        return any(
+            item["enabled"] and (index >= 2 or len(item["weekdays"]) < 7)
+            for index, item in enumerate(schedules() or ())
+        )
+
     def _scheduled_cost(self, remaining: float) -> Optional[float]:
         """Before the charge: the energy placed in the schedule windows, or None.
 
@@ -666,6 +678,8 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
         if snap.session_active is not False or snap.get("oneCharge") == 1:
             return None
         if snap.get("evseEnabled") == 1 or getattr(self._updater, "reve_manual_mode", None):
+            return None
+        if self._unmodelled_reve_schedule():
             return None
         tariffs = self._tariffs()
         current = snap.get("currentSet")

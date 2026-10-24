@@ -398,6 +398,14 @@ class EveusCard extends HTMLElement {
     this._month = null;
     this._monthAt = 0;
     this._monthBusy = false;
+    // REVE schedules belong to the charger this config names: forget them, and any read still
+    // out for the old config (its answer is dropped, so it can no longer clear the busy flag).
+    this._reveSchedules = this._reveRates = this._reveKey = null;
+    this._reveAt = 0;
+    this._reveBusy = false;
+    this._dayPending = {};
+    this._dayTokens = {};
+    this._editingDays = null;
     this._open = this._loadOpen();
     if (!this.shadowRoot) {
       this.attachShadow({mode: 'open'});
@@ -1420,7 +1428,9 @@ class EveusCard extends HTMLElement {
     const next = days.includes(day) ? days.filter((d) => d !== day) : [...days, day].sort((a, b) => a - b);
     // REVE needs at least one day; the last one stays.
     if (!next.length) { haptic('warning'); return; }
-    const token = (this._dayToken = (this._dayToken || 0) + 1);
+    // One pin per schedule: a tap on the other schedule must not leave this one's pinned.
+    this._dayTokens = {...this._dayTokens, [n]: (this._dayTokens?.[n] || 0) + 1};
+    const token = this._dayTokens[n];
     this._dayPending = {...this._dayPending, [n]: next};
     haptic('selection');
     this._render();
@@ -1428,12 +1438,13 @@ class EveusCard extends HTMLElement {
     try {
       const result = await this._hass.callWS({type: 'eveus/reve_schedule_weekdays', ...(device ? {device_id: device} : {}), schedule: n, weekdays: next});
       const written = Array.isArray(result?.weekdays) ? result.weekdays : next;
-      this._reveSchedules = this._reveSchedules.map((s, i) => i === n - 1 ? {...s, weekdays: written} : s);
+      // A read that failed meanwhile left no schedules to update; the write still went through.
+      this._reveSchedules = this._reveSchedules?.map((s, i) => i === n - 1 ? {...s, weekdays: written} : s) ?? null;
     } catch {
       this._showError(true);
     }
     // A later tap on the same schedule owns the pin now.
-    if (token === this._dayToken) {
+    if (token === this._dayTokens[n]) {
       const {[n]: _done, ...rest} = this._dayPending;
       this._dayPending = rest;
     }
