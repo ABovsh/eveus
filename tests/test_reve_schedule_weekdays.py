@@ -336,3 +336,47 @@ def test_a_device_of_another_integration_entry_is_not_taken_for_a_charger() -> N
             {"id": 5, "type": "eveus/reve_schedules", "device_id": "dev9"},
         )
     assert connection.send_error.call_args[0][1] == "not_found"
+
+
+@pytest.mark.parametrize("slot", [1.0, True])
+def test_a_schedule_number_that_only_equals_a_slot_writes_that_slot(slot: Any) -> None:
+    """The schema's ``In((1, 2))`` accepts 1.0 and True, which would name the
+    command ``sh1.0Weekdays`` / ``shTrueWeekdays``: no GraphQL route, so a
+    ``/pageEvent`` the REVE server may answer 200 and the card told it worked."""
+    updater = _fake_updater()
+    message = eveus._ws_reve_schedule_weekdays._ws_schema(
+        {"id": 9, "type": "eveus/reve_schedule_weekdays", "schedule": slot, "weekdays": [1]}
+    )
+    connection = MagicMock()
+    with _devices({}):
+        asyncio.run(eveus._async_reve_schedule_weekdays(_ws_hass({"e1": updater}), connection, message))
+    assert updater.sent == [("sh1Weekdays", [1])]
+
+
+def test_a_rate_is_set_by_any_one_of_its_price_window_or_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    every_day = [0, 1, 2, 3, 4, 5, 6]
+    charger.rates = {"base": 4.32, "rates": [
+        {"name": "A", "start": 0, "end": 0, "weekdays": every_day, "enabled": False, "value": 0.5},
+        {"name": "B", "start": 0, "end": 0, "weekdays": every_day, "enabled": True, "value": 0},
+        {"name": "C", "start": 0, "end": 0, "weekdays": every_day, "enabled": False, "value": 0},
+    ]}
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+
+    rates = updater.reve_card_schedules()["rates"]
+
+    assert [(rate["name"], rate["set"]) for rate in rates] == [("A", True), ("B", True), ("C", False)]
+
+
+def test_a_current_limit_the_schedule_does_not_use_is_not_offered(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    charger.schedules[0] = {**charger.schedules[0], "currentLimitEnabled": False, "value": 12}
+    charger.schedules[1] = {**charger.schedules[1], "currentLimitEnabled": True, "value": 9}
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+
+    first, second = updater.reve_card_schedules()["schedules"][:2]
+
+    assert first["current_limit"] is None
+    assert second["current_limit"] == 9

@@ -63,7 +63,7 @@ def test_a_reset_from_home_assistant_shows_at_once() -> None:
     assert guard.apply({"IEM1": 0})["IEM1"] == 49.16
 
 
-@pytest.mark.parametrize("value", [None, "x", True])
+@pytest.mark.parametrize("value", [None, "x", True, float("nan"), float("inf")])
 def test_what_is_not_a_number_is_left_to_the_payload_rules(value: Any) -> None:
     guard = MeterGuard()
     guard.apply({"totalEnergy": 10.0})

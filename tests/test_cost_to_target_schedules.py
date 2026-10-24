@@ -255,3 +255,12 @@ def test_an_enabled_schedule_with_one_edge_unread_keeps_the_flat_price(missing: 
 def test_a_current_limit_that_is_off_does_not_slow_the_charge() -> None:
     fields = {**_TWO, "sh1CurrentEnable": 0, "sh1CurrentValue": 10}
     assert _cost(fields) == pytest.approx(_cost(_TWO), abs=0.001)
+
+
+def test_a_night_rate_on_the_second_tariff_alone_is_still_priced() -> None:
+    """Rate 2 off, rate 3 the night one: a disabled first window must not end the search."""
+    fields = {
+        **_ANTON, "tarifAEnable": 0, "tarifBEnable": 1,
+        "tarifBValue": 216, "tarifBStart": 1380, "tarifBStop": 420,
+    }
+    assert _cost(fields) == pytest.approx(_REMAINING * 2.16, abs=0.02)

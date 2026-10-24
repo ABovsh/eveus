@@ -41,7 +41,7 @@
 
 ### 🐛 Fixed
 
-- **A charger restart no longer counts Total Energy and the counters a second time.** A starting charger can report them as 0 for one poll; Home Assistant took that as a meter reset, so its energy statistics and any utility meter on Total Energy added the whole lifetime again (5,440 kWh in one day in one case). A lower reading is now kept back until it repeats in three polls; a counter reset from Home Assistant still shows at once.
+- **A charger restart no longer counts Total Energy and the counters a second time.** A starting charger can report them as 0 for one poll; Home Assistant took that as a meter reset, so its energy statistics and any utility meter on Total Energy added the whole lifetime again (5,440 kWh in one day in one case). A lower reading is now kept back until it repeats in three polls, also right after Home Assistant starts; a counter reset from Home Assistant still shows at once.
 - **The log no longer warns about `DeviceEntry.config_entries`** when a device trigger of the charger is set up in an automation. Home Assistant 2026.10 and newer log it and stop supporting it in 2027.10.
 - **Last Session Duration shows whole seconds in Home Assistant's own cards.** Home Assistant gave it two decimals (5,748.00 s); the Eveus card was not affected.
 - **The dashboard install steps work.** The README sent the file, one view, to the raw configuration editor, which refused it with "At path: views - Expected an array value", and its indentation steps turned the sections into broken views. The file now goes into a new view through **Add view → Edit in YAML**, on a new or an existing dashboard, and has no fixed `path` that an existing view could already use.

@@ -16,6 +16,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -62,7 +63,12 @@ from .reve import (
     normalize_reve_payload,
     snapshot_limit_refusal,
 )
-from .meter_guard import MeterGuard
+from .meter_guard import (
+    METER_SAVE_INTERVAL_SECONDS,
+    METER_STORE_VERSION,
+    MeterGuard,
+    meter_store_key,
+)
 from .snapshot import EveusSnapshot
 from .utils import RateLog, get_safe_value
 
@@ -307,6 +313,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._reve_seen = False
         # A charger that is still starting reports its lifetime meters as 0.
         self._meter_guard = MeterGuard()
+        # Where its last accepted readings are kept, and what was last saved.
+        self._meter_store: Store | None = None
+        self._meter_saved: dict[str, float] = {}
+        self._meter_saved_at: float | None = None
         self._reve = ReveApi(self)
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
@@ -382,6 +392,42 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def reve_station_system(self) -> dict[str, Any]:
         """REVE_PLUS 1.0.3's memory figures and start time; empty otherwise."""
         return self._reve.station_system if self._reve_seen else {}
+
+    async def async_load_meter_baseline(self) -> None:
+        """Take the lifetime meters' last accepted readings from storage, before
+        the first poll: a charger that boots with them at 0 is held against
+        them even when Home Assistant began after the charger was switched off.
+        Storage trouble leaves the guard with only what it sees itself."""
+        entry = self.config_entry
+        if entry is None:
+            return
+        try:
+            self._meter_store = Store(self.hass, METER_STORE_VERSION, meter_store_key(entry.entry_id))
+            saved = await self._meter_store.async_load()
+        except Exception as err:  # noqa: BLE001
+            self._meter_store = None
+            _LOGGER.debug("Could not load the meter readings: %s", type(err).__name__)
+            return
+        self._meter_guard.seed(saved)
+        self._meter_saved = self._meter_guard.baseline()
+
+    def _save_meter_baseline(self, *, final: bool = False) -> None:
+        """Save the accepted readings once they changed; between saves only
+        after ``METER_SAVE_INTERVAL_SECONDS``, so a charge writes a file every
+        quarter hour, not a row's worth every poll."""
+        store = self._meter_store
+        baseline = self._meter_guard.baseline()
+        if store is None or baseline == self._meter_saved:
+            return
+        now = time.monotonic()
+        if (
+            not final
+            and self._meter_saved_at is not None
+            and now - self._meter_saved_at < METER_SAVE_INTERVAL_SECONDS
+        ):
+            return
+        self._meter_saved, self._meter_saved_at = baseline, now
+        store.async_delay_save(lambda: baseline, 1)
 
     def reve_restore_manual_mode(self, on_for: float | None = None) -> None:
         """Take manual mode over from before a Home Assistant restart."""
@@ -736,6 +782,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
+        self._save_meter_baseline(final=True)
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
         if self._init_fw_task is not None:
@@ -1429,6 +1476,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 self._reve.manual_mode.observe(new_data)
             new_data = self._meter_guard.apply(new_data)
+            self._save_meter_baseline()
             # Parse AFTER the legacy translation (this coordinator owns the
             # fw-1.x latch), and BEFORE _record_success, which notifies the
             # listeners that read the snapshot.

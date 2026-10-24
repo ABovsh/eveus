@@ -63,6 +63,7 @@ from .const import (
     DEFAULT_SOC_CORRECTION,
 )
 from .common_network import EveusUnreachable, EveusUpdater
+from .meter_guard import METER_STORE_VERSION, meter_store_key
 from .reve import FAMILY_CLASSIC, FAMILY_REVE
 from .issues import (
     BatteryLowTracker,
@@ -373,7 +374,8 @@ async def _async_reve_schedule_weekdays(
     if not days:
         connection.send_error(msg["id"], "invalid_format", "A schedule needs at least one day")
         return
-    if not await updater.send_command(f"sh{msg['schedule']}Weekdays", days):
+    # The schema's In((1, 2)) also lets 1.0 and True through: name the slot as a whole number.
+    if not await updater.send_command(f"sh{int(msg['schedule'])}Weekdays", days):
         message = (
             REVE_NOT_ANSWERING_MESSAGE
             if updater.last_command_failure == REVE_NOT_ANSWERING
@@ -755,6 +757,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # for an outage mid-session, and the first poll that lands fills them.
         # Every other failure still fails setup -- bad credentials, or a reply
         # this firmware cannot produce, are not fixed by polling again.
+        # The lifetime meters' last readings first: the poll that lands after a
+        # restart may be the charger's zero boot reading.
+        await updater.async_load_meter_baseline()
         try:
             await updater.async_config_entry_first_refresh()
         except ConfigEntryNotReady as err:
@@ -961,6 +966,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await Store(hass, _SAFETY_STORE_VERSION, safety_store_key(entry)).async_remove()
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Could not remove safety store for removed entry")
+    try:
+        await Store(hass, METER_STORE_VERSION, meter_store_key(entry.entry_id)).async_remove()
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not remove meter store for removed entry")
 
     await _async_unregister_card(hass, entry.entry_id)
 

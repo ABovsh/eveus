@@ -227,3 +227,16 @@ def test_each_station_sensor_has_its_icon_and_belongs_to_its_charger(monkeypatch
     ]
     assert {e.unique_id for e in first}.isdisjoint({e.unique_id for e in second})
     assert len({e.unique_id for e in second}) == 4
+
+
+def test_memory_is_converted_with_1024_not_rounded_off_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A byte count where /1024 and /1025 round to different KiB."""
+    _wall(monkeypatch)
+    charger, updater = _known(monkeypatch)
+    charger.station.update({**_SYSTEM, "heapFreeSize": 1_000_000, "heapMinFreeSize": 1_000_000,
+                            "heapLargestFreeBlock": 1_000_000})
+    asyncio.run(updater._async_update_data())
+    sensors = _by_key(_sensors(updater)[0])
+    for key in ("reve_free_memory", "reve_min_free_memory", "reve_largest_free_block"):
+        sensors[key]._handle_coordinator_update()
+        assert sensors[key].native_value == 977, key

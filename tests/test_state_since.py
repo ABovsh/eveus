@@ -332,3 +332,73 @@ def test_only_the_state_sensor_keeps_a_stamp():
     assert not any(getattr(s, "restores_state_since", False) for s in others)
     state = next(s for s in create_sensor_specifications() if s.key == "state")
     assert state.restores_state_since is True
+
+
+# --- the sensor is added after the first poll --------------------------------
+# Platforms load once setup's first refresh is done, so a charger that answers
+# is polled before the State sensor restores its stamp.
+
+
+def test_a_saved_stamp_applies_when_the_charger_was_already_polled(clock):
+    updater = _updater()
+    clock["t"] = T0 + timedelta(hours=2)
+    _feed(updater, CHARGING, 2 * 3600 + 300)
+    assert _since(updater) is None
+    updater.seed_state_since(CHARGING, _iso())
+    assert _since(updater) == T0.replace(microsecond=0)
+    assert updater.state_since_anchor == (CHARGING, T0.replace(microsecond=0))
+
+
+def test_a_saved_stamp_is_read_in_utc_whatever_zone_it_was_saved_in(clock):
+    updater = _updater()
+    clock["t"] = T0 + timedelta(hours=2)
+    _feed(updater, CHARGING, 2 * 3600 + 300)
+    kyiv = T0.astimezone(timezone(timedelta(hours=3))).replace(microsecond=0)
+    updater.seed_state_since(CHARGING, kyiv.isoformat())
+    assert _since(updater) == T0.replace(microsecond=0)
+    assert _since(updater).utcoffset() == timedelta(0)
+
+
+def test_a_saved_stamp_for_another_state_is_not_applied_to_a_polled_charger(clock):
+    updater = _updater()
+    clock["t"] = T0 + timedelta(hours=2)
+    _feed(updater, COMPLETE, 2 * 3600 + 300)
+    updater.seed_state_since(CHARGING, _iso())
+    assert _since(updater) is None
+
+
+def test_a_saved_stamp_does_not_replace_a_transition_already_seen(clock):
+    updater = _updater()
+    _feed(updater, CONNECTED)
+    clock["t"] = T0 + timedelta(minutes=5)
+    _feed(updater, CHARGING)
+    seen = _since(updater)
+    updater.seed_state_since(CHARGING, _iso())
+    assert _since(updater) == seen
+    # ... and a state that differs from the polled one changes nothing either.
+    updater.seed_state_since(COMPLETE, _iso())
+    assert _since(updater) == seen
+
+
+def test_a_saved_stamp_from_the_current_second_is_still_this_plug_in(clock):
+    updater = _updater()
+    clock["t"] = T0
+    _feed(updater, CHARGING, 0)
+    updater.seed_state_since(CHARGING, _iso())
+    assert _since(updater) == T0.replace(microsecond=0)
+
+
+@pytest.mark.parametrize("bad", [True, "4", 99, -1, 4.0, None])
+def test_a_corrupt_saved_state_is_not_kept_to_be_saved_again(clock, bad):
+    updater = _updater()
+    updater.seed_state_since(bad, _iso())
+    assert updater.state_since_anchor is None
+
+
+def test_a_saved_boolean_is_not_the_state_code_it_equals(clock):
+    """True == 1 == Standby, which is a named state."""
+    updater = _updater()
+    updater.seed_state_since(True, _iso())
+    clock["t"] = T0 + timedelta(minutes=20)
+    _feed(updater, 1, 20 * 60)
+    assert _since(updater) is None
