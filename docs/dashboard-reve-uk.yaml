@@ -350,7 +350,7 @@ sections:
   - type: grid
     cards:
       - type: heading
-        heading: Адаптивний режим, OCPP і годинник
+        heading: Адаптивний режим і годинник
         icon: mdi:tune-variant
       - type: entities
         show_header_toggle: false
@@ -371,10 +371,6 @@ sections:
           - entity: select.eveus_ev_charger_minimum_voltage
             name: Мінімальна напруга
             icon: mdi:sine-wave
-          - type: divider
-          - entity: switch.eveus_ev_charger_connect_to_ocpp
-            name: Підключення до OCPP
-            icon: mdi:cloud-sync-outline
           - type: divider
           - entity: select.eveus_ev_charger_time_zone
             name: Часовий пояс

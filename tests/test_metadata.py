@@ -645,3 +645,19 @@ def test_shipped_dashboards_match_their_generator(tmp_path) -> None:
     module.main(tmp_path)
     for name in SHIPPED_DASHBOARDS:
         assert (tmp_path / name).read_text() == (ROOT / "docs" / name).read_text(), name
+
+
+@pytest.mark.parametrize("name", ["dashboard-reve.yaml", "dashboard-reve-uk.yaml"])
+def test_reve_dashboards_do_not_offer_ocpp(name: str) -> None:
+    """The card has no OCPP button on REVE, so the REVE dashboards have no OCPP
+    switch and their settings section does not name it."""
+    text = (ROOT / "docs" / name).read_text()
+    assert "connect_to_ocpp" not in text
+    assert "OCPP" not in text
+
+
+@pytest.mark.parametrize("name", ["dashboard.yaml", "dashboard-uk.yaml"])
+def test_the_general_dashboards_keep_ocpp(name: str) -> None:
+    text = (ROOT / "docs" / name).read_text()
+    assert "switch.eveus_ev_charger_connect_to_ocpp" in text
+    assert "binary_sensor.eveus_ev_charger_ocpp_connected" in text
