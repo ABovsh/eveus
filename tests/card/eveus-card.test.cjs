@@ -1382,6 +1382,86 @@ test('a clock off by whole hours offers the time zone that fixes it instead of S
   const minutes=setupAll({sections:['time'],over:{...tz,time_drift:['sensor.drift',700]}});
   assert.match(minutes.html(),/data-sync/);assert.doesNotMatch(minutes.html(),/data-zone-fix/);
 });
+// ---- Time zone: the first option follows Home Assistant (the Follow HA Time Zone switch).
+const FOLLOW=(state)=>({...TIME,time_zone:['select.tz','+3',{options:['-1','0','+1','+2','+3']}],follow_ha_time_zone:['switch.follow',state]});
+const callsOf=(x)=>JSON.parse(JSON.stringify(x.calls));
+test('time zone: Auto is the first option and the current zone stays selected while it is off',()=>{
+  const h=setupAll({sections:['time'],over:FOLLOW('off')}).html();
+  assert.match(h,/<select class="time-zone"[^>]*>\s*<option value="__auto__">Auto: follow Home Assistant<\/option>\s*<option value="-1">/);
+  assert.match(h,/<option value="\+3" selected>UTC\+3<\/option>/);
+  assert.doesNotMatch(h,/<option value="__auto__" selected/);
+});
+test('time zone: with Auto on, it is the selected option and reads the offset the charger holds',()=>{
+  const h=setupAll({sections:['time'],over:FOLLOW('on')}).html();
+  assert.match(h,/<option value="__auto__" selected>Auto · UTC\+3<\/option>/);
+  assert.doesNotMatch(h,/<option value="\+3" selected>/, 'only one option is selected');
+  assert.match(h,/Following Home Assistant/, 'the tooltip says what Auto does');
+});
+test('time zone: with Auto on and the charger zone unknown, Auto is the only selected option',()=>{
+  const h=setupAll({sections:['time'],over:{...FOLLOW('on'),time_zone:['select.tz','unknown',{options:['-1','0','+1','+2','+3']}]}}).html();
+  assert.equal((h.match(/ selected>/g)||[]).length,1);
+  assert.match(h,/<option value="__auto__" selected>Auto · —<\/option>/);
+  assert.doesNotMatch(h,/<select[^>]*disabled/, 'Auto stays usable to turn off');
+});
+test('time zone: no Auto option when the integration has no such switch (older version)',()=>{
+  const h=setupAll({sections:['time'],over:TIME}).html();
+  assert.doesNotMatch(h,/__auto__/);
+});
+test('time zone: choosing Auto turns the switch on, paints at once, and sends no zone',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('off')});
+  let release;x.hass.callService=(d,sv,data)=>{x.calls.push([d,sv,data]);return new Promise((r)=>{release=r;});};
+  const done=x.card._selectOption('time_zone','__auto__');
+  assert.match(x.html(),/<option value="__auto__" selected>Auto · UTC\+3<\/option>/,'painted before HA answers');
+  release();await done;
+  assert.deepEqual(callsOf(x),[['switch','turn_on',{entity_id:'switch.follow'}]]);
+});
+test('time zone: choosing Auto while it is already on does nothing',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  await x.card._selectOption('time_zone','__auto__');
+  assert.equal(x.calls.length,0);
+});
+test('time zone: a fixed zone while Auto is on turns Auto off first, then sets the zone',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  await x.card._selectOption('time_zone','+2');
+  assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}],['select','select_option',{entity_id:'select.tz',option:'+2'}]]);
+});
+test('time zone: picking the zone the charger already holds still ends Auto',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  await x.card._selectOption('time_zone','+3');
+  assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}]]);
+});
+test('time zone: a fixed zone while Auto is off is just the zone, as before',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('off')});
+  await x.card._selectOption('time_zone','+2');
+  assert.deepEqual(callsOf(x),[['select','select_option',{entity_id:'select.tz',option:'+2'}]]);
+});
+test('time zone: if turning Auto off fails, the zone is not sent',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  x.hass.callService=async(d,sv,data)=>{x.calls.push([d,sv,data]);if(d==='switch')throw new Error('no');};
+  await x.card._selectOption('time_zone','+2');
+  assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}]]);
+  assert.match(x.html(),/<option value="__auto__" selected>/,'back to Auto, as the switch still is');
+});
+test('time zone: with Auto on there is no Set button, only Sync, because the zone would be refused',()=>{
+  const over={...FOLLOW('on'),time_drift:['sensor.drift',3600]};
+  const x=setupAll({sections:['time'],over});
+  assert.doesNotMatch(x.html(),/data-zone-fix/);
+  assert.match(x.html(),/data-sync/);
+  const off=setupAll({sections:['time'],over:{...FOLLOW('off'),time_drift:['sensor.drift',3600]}});
+  assert.match(off.html(),/data-zone-fix="\+2"/, 'Auto off: the one-tap fix stays');
+});
+test('time zone: offline, Auto cannot be chosen',async()=>{
+  const x=setupAll({sections:['time'],over:{...FOLLOW('off'),state:['sensor.state','unavailable']}});
+  assert.match(x.html(),/data-select="time_zone"[^>]*disabled/);
+  await x.card._selectOption('time_zone','__auto__');
+  assert.equal(x.calls.length,0);
+});
+test('uk: Auto in the time zone list',()=>{
+  const off=setupAll({sections:['time'],over:FOLLOW('off'),locale:'uk'}).html();
+  assert.match(off,/<option value="__auto__">Авто: як у Home Assistant<\/option>/);
+  const on=setupAll({sections:['time'],over:FOLLOW('on'),locale:'uk'}).html();
+  assert.match(on,/<option value="__auto__" selected>Авто · UTC\+3<\/option>/);
+});
 test('Counters show this month and last month from the energy statistics',async()=>{
   const x=setupAll({sections:['history'],over:{total_energy:['sensor.total',5290.16,{unit_of_measurement:'kWh'}]}});
   const asked=[];

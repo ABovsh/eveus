@@ -19,6 +19,8 @@ const SAFETY_CONN_QUALITY_BAD_PCT = 60;
 // Mirrors const.py CLOCK_DRIFT_THRESHOLD_SECONDS: past it, schedules run at the wrong wall-clock
 // time and the integration raises its Repairs notice, so the card calls the drift bad from there.
 const CLOCK_DRIFT_THRESHOLD_S = 600;
+// The first option of the Time zone list: the Follow HA Time Zone switch, not a zone.
+const AUTO_ZONE = '__auto__';
 // How long a failed entity lookup waits before the card asks again.
 const RESOLVE_RETRY_MS = 10000;
 // Actual current this far below the set current is "slower than set", and the status says why.
@@ -165,6 +167,8 @@ const I18N = {
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
     setZone: (z) => `Set ${z}`,
+    autoZone: 'Auto: follow Home Assistant', autoZoneOn: (z) => `Auto · ${z}`,
+    followTitle: 'Following Home Assistant\'s time zone, daylight saving included',
     zoneFixTitle: 'The charger clock is off by whole hours, so its time zone is wrong. Tap to set the zone that matches Home Assistant',
     socSettings: 'SOC settings', schedules: 'Schedules', counters: 'Counters',
     tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
@@ -235,6 +239,8 @@ const I18N = {
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
     setZone: (z) => `Обрати ${z}`,
+    autoZone: 'Авто: як у Home Assistant', autoZoneOn: (z) => `Авто · ${z}`,
+    followTitle: 'Часовий пояс станції дотримується часового поясу Home Assistant, зокрема й переходу на літній і зимовий час',
     zoneFixTitle: 'Годинник станції зміщено на цілі години, тож часовий пояс неправильний. Натисніть, щоб обрати пояс, що збігається з Home Assistant',
     socSettings: 'SOC', schedules: 'Розклади', counters: 'Лічильники',
     tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
@@ -1249,7 +1255,37 @@ class EveusCard extends HTMLElement {
     this._editingSelect = null;
     this._render();
   }
+  // Follow HA Time Zone as seen by the card: a command still in flight counts.
+  _following() {
+    return this._limitPending.follow_ha_time_zone ?? this._state('follow_ha_time_zone')?.state === 'on';
+  }
+  async _setFollow(value) {
+    haptic('selection');
+    const timer = this._setLimitPending('follow_ha_time_zone', value);
+    this._render();
+    try {
+      await this._hass.callService('switch', value ? 'turn_on' : 'turn_off', {entity_id: this._ids.follow_ha_time_zone});
+      return true;
+    } catch {
+      this._rejectLimitPending('follow_ha_time_zone', timer);
+      return false;
+    }
+  }
+  // Auto turns the switch on. A zone chosen while Auto is on first turns it off: the select refuses
+  // manual changes while the integration follows Home Assistant.
+  async _chooseZone(option) {
+    clearTimeout(this._selectTimer);
+    this._editingSelect = null;
+    if (!this._online) { this._render(); return; }
+    if (option === AUTO_ZONE) {
+      if (this._following()) { this._render(); return; }
+      await this._setFollow(true);
+      return;
+    }
+    if (await this._setFollow(false)) await this._selectOption('time_zone', option);
+  }
   async _selectOption(key, option) {
+    if (key === 'time_zone' && this._ids?.follow_ha_time_zone && (option === AUTO_ZONE || this._following())) { await this._chooseZone(option); return; }
     clearTimeout(this._selectTimer);
     this._editingSelect = null;
     const entity = this._state(key);
@@ -1573,15 +1609,21 @@ class EveusCard extends HTMLElement {
     const zoneEntity = this._state('time_zone');
     const options = Array.isArray(zoneEntity?.attributes?.options) ? zoneEntity.attributes.options : [];
     const zone = this._limitPending.time_zone ?? zoneEntity?.state, known = options.includes(zone);
-    const zoneEl = this._ids.time_zone && this._shows('time', 'zone') ? `<label class="time-zone-wrap" title="${t.zone}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${!on || !known ? ' disabled' : ''}>
-      ${known ? '' : '<option selected>—</option>'}${options.map((o) => `<option value="${o}"${o === zone ? ' selected' : ''}>${o === '0' ? 'UTC' : `UTC${o}`}</option>`).join('')}</select></label>` : '';
+    // Auto (the Follow HA Time Zone switch) leads the list when the integration has that switch.
+    const followState = this._state('follow_ha_time_zone')?.state;
+    const canFollow = !!this._ids.follow_ha_time_zone && (followState === 'on' || followState === 'off');
+    const following = canFollow && this._following();
+    const zoneLabel = (o) => o === '0' ? 'UTC' : `UTC${o}`;
+    const autoEl = canFollow ? `<option value="${AUTO_ZONE}"${following ? ' selected' : ''}>${following ? t.autoZoneOn(known ? zoneLabel(zoneEntity.state) : '—') : t.autoZone}</option>` : '';
+    const zoneEl = this._ids.time_zone && this._shows('time', 'zone') ? `<label class="time-zone-wrap" title="${following ? `${t.zone} — ${t.followTitle}` : t.zone}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${!on || (!known && !following) ? ' disabled' : ''}>
+      ${known || following ? '' : '<option selected>—</option>'}${autoEl}${options.map((o) => `<option value="${o}"${o === zone && !following ? ' selected' : ''}>${zoneLabel(o)}</option>`).join('')}</select></label>` : '';
     const drift = on ? currentNumber(this._state('time_drift')) : null;
     const driftCls = drift === null ? '' : Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S ? 'bad' : 'good';
     // A right clock shows the charger's own time; a wrong one how far it is off, next to Sync.
     const clock = this._scheduleHM();
     const driftEl = this._ids.time_drift && this._shows('time', 'drift') ? `<button class="time-item" data-more-info="time_drift" title="${clock ? t.clock : t.drift} — ${t.details}"><ha-icon icon="${clock ? 'mdi:alarm' : 'mdi:clock-alert-outline'}"></ha-icon><span class="${['time-drift', driftCls].filter(Boolean).join(' ')}">${clock ?? this._driftText(drift)}</span></button>` : '';
     const syncOk = on && this._state('sync_time') && this._state('sync_time').state !== 'unavailable';
-    const fix = known ? this._zoneFix(zone, drift, options) : null;
+    const fix = known && !following ? this._zoneFix(zone, drift, options) : null;
     const syncEl = fix && this._shows('time', 'zone')
       ? `<button class="time-sync time-fix" data-zone-fix="${fix}" title="${t.zoneFixTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><span>${t.setZone(fix === '0' ? 'UTC' : `UTC${fix}`)}</span></button>`
       : this._ids.sync_time && this._shows('time', 'sync') ? `<button class="${['time-sync', this._syncDone ? 'done' : ''].filter(Boolean).join(' ')}" data-sync title="${t.syncTitle}"${syncOk ? '' : ' disabled'}><ha-icon icon="${this._syncDone ? 'mdi:check' : 'mdi:clock-check-outline'}"></ha-icon><span>${this._syncDone ? t.synced : t.sync}</span></button>` : '';
