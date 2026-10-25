@@ -19,6 +19,7 @@ from .common_base import (
 )
 from .control_base import command_failure
 from .const import (
+    CONF_FOLLOW_HA_TIME_ZONE,
     CONF_MODEL,
     MIN_VOLTAGE_OPTIONS,
     OPTIMISTIC_CONTROL_TTL,
@@ -134,7 +135,12 @@ class _EveusIntegerSelect(
 
 
 class EveusTimeZoneSelect(_EveusIntegerSelect):
-    """Time-zone offset reported by and sent to the charger's `timeZone` field."""
+    """Time-zone offset reported by and sent to the charger's `timeZone` field.
+
+    While the Follow HA Time Zone switch is on the integration owns the offset,
+    so a manual choice is refused (it would be undone within a few polls); the
+    select keeps showing what the charger holds.
+    """
 
     ENTITY_NAME = "Time Zone"
     READ_KEY = "timeZone"
@@ -144,6 +150,17 @@ class EveusTimeZoneSelect(_EveusIntegerSelect):
     _attr_icon = "mdi:map-clock-outline"
     _attr_entity_category = EntityCategory.CONFIG
     _attr_options = list(TIMEZONE_OPTIONS)
+
+    def __init__(self, updater, device_number: int = 1, entry=None) -> None:
+        super().__init__(updater, device_number)
+        self._entry = entry
+
+    async def async_select_option(self, option: str) -> None:
+        if self._entry is not None and self._entry.data.get(CONF_FOLLOW_HA_TIME_ZONE):
+            raise HomeAssistantError(
+                "Follow HA Time Zone is on: turn it off to set the Time Zone by hand"
+            )
+        await super().async_select_option(option)
 
 
 class EveusAdaptiveModeSelect(_EveusIntegerSelect):
@@ -180,7 +197,9 @@ async def async_setup_entry(
     """Set up Eveus select entities."""
     runtime_data = entry.runtime_data
     entities = [
-        EveusTimeZoneSelect(runtime_data.updater, runtime_data.device_number),
+        EveusTimeZoneSelect(
+            runtime_data.updater, runtime_data.device_number, entry
+        ),
         EveusAdaptiveModeSelect(runtime_data.updater, runtime_data.device_number),
     ]
     if entry.data.get(CONF_MODEL):

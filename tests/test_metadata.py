@@ -179,6 +179,7 @@ def _expected_entity_translation_keys() -> dict[str, set[str]]:
     for desc in SWITCH_DESCRIPTIONS:
         expected["switch"].add(slugify(desc.name))
     expected["switch"].add(_slug("Limit: SOC enabled"))
+    expected["switch"].add(_slug("Follow HA Time Zone"))
     for desc in TIME_DESCRIPTIONS:
         expected["time"].add(_slug(desc.name))
     for name in ("Force Refresh", "Reset Counter A", "Reset Counter B", "Sync Time"):

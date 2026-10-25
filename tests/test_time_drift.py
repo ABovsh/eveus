@@ -385,7 +385,7 @@ def test_clock_drift_issue_uses_kind_specific_translation_key(monkeypatch) -> No
         "async_create_issue",
         lambda hass, domain, issue_id, **kw: created.append(kw),
     )
-    entry = NS(entry_id="e1")
+    entry = NS(entry_id="e1", data={})
 
     for drift, key in ((-3600, "clock_drift_timezone"), (900, "clock_drift")):
         tracker = eveus.ClockDriftTracker()

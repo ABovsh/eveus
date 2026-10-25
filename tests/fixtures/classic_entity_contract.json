@@ -80,6 +80,10 @@
    "available": true,
    "value": null
   },
+  "eveus_follow_ha_time_zone": {
+   "available": true,
+   "value": false
+  },
   "eveus_force_refresh": {
    "available": true,
    "value": null
@@ -421,6 +425,10 @@
   "eveus_energy_to_target_soc": {
    "available": true,
    "value": null
+  },
+  "eveus_follow_ha_time_zone": {
+   "available": true,
+   "value": false
   },
   "eveus_force_refresh": {
    "available": true,

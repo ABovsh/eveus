@@ -511,10 +511,11 @@ def test_switch_setup_entry_adds_all_switches() -> None:
 
     asyncio.run(async_setup_switch_entry(None, entry, lambda entities: added.extend(entities)))
 
-    assert [entity.entity_description.key for entity in added[:-1]] == [
+    assert [entity.entity_description.key for entity in added[:-2]] == [
         description.key for description in SWITCH_DESCRIPTIONS
     ]
-    assert isinstance(added[-1], EveusSocLimitSwitch)
+    assert isinstance(added[-2], EveusSocLimitSwitch)
+    assert added[-1].unique_id == "eveus3_follow_ha_time_zone"
     assert all(entity.unique_id.startswith("eveus3_") for entity in added)
 
 

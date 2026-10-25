@@ -33,7 +33,6 @@ from custom_components.eveus import config_flow
 from custom_components.eveus.const import (
     CONF_BATTERY_CAPACITY,
     CONF_EXTERNAL_SOC_ENTITY,
-    CONF_FOLLOW_HA_TIME_ZONE,
     CONF_MODEL,
     CONF_PHASES,
     CONF_SCHEME,
@@ -495,11 +494,7 @@ def test_options_form_offers_the_mode_and_the_current_car_soc_sensor() -> None:
     }
     assert schema(
         {CONF_SOC_MODE: "basic", CONF_EXTERNAL_SOC_ENTITY: "sensor.other_car"}
-    ) == {
-        CONF_SOC_MODE: "basic",
-        CONF_EXTERNAL_SOC_ENTITY: "sensor.other_car",
-        CONF_FOLLOW_HA_TIME_ZONE: False,
-    }
+    ) == {CONF_SOC_MODE: "basic", CONF_EXTERNAL_SOC_ENTITY: "sensor.other_car"}
 
 
 def test_options_soc_step_prefills_what_the_entry_already_stores() -> None:

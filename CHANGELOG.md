@@ -4,7 +4,7 @@
 
 ### ✨ New
 
-- **Follow Home Assistant time zone (opt-in).** The charger keeps one fixed **Time Zone** offset and does not follow daylight saving, so it ran an hour off after every clock change until the REVE app or the select was used. Turn on **Follow Home Assistant time zone** under **Configure** and the integration writes Home Assistant's current offset to the charger's **Time Zone** when they differ, after three polls in a row. It only sets the offset; the charger's clock is not touched, so **Sync Time** stays yours. Off by default. A half-hour zone such as India or Nepal cannot be held by the charger's whole-hour **Time Zone** and is left alone. Closes [#21](https://github.com/ABovsh/eveus/issues/21) requested by @ababak.
+- **New switch: Follow HA Time Zone (daylight saving).** The charger keeps one fixed **Time Zone** offset and does not follow daylight saving, so it ran an hour off after every clock change until someone set it by hand. With **Follow HA Time Zone** on, the integration sets the charger's **Time Zone** to Home Assistant's, including daylight saving, after three polls in a row that disagree. While it is on, **Time Zone** cannot be changed by hand. It only sets the offset; **Sync Time** stays yours. Off by default. Half-hour zones such as India or Nepal cannot be held by the charger and are left alone. The clock-drift notice now offers both ways: set **Time Zone** by hand, or turn the switch on. Closes [#21](https://github.com/ABovsh/eveus/issues/21) requested by @ababak.
 
 ## 4.29.0 - 2026-10-24
 

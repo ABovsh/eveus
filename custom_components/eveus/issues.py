@@ -33,6 +33,8 @@ from .const import (
     CLOCK_DRIFT_THRESHOLD_SECONDS,
     CLOCK_DRIFT_TRIGGER_POLLS,
     CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS,
+    CONF_FOLLOW_HA_TIME_ZONE,
+    TIME_ZONE_FOLLOW_POLLS,
     DOMAIN,
 )
 from .utils import get_local_utc_offset_seconds, get_local_wall_clock_seconds
@@ -205,8 +207,14 @@ class ClockDriftTracker:
         self.rekey_streak = 0
         self.rekey_candidate: tuple[str, int] | None = None
 
-    def evaluate(self, snapshot) -> bool | None:
-        """Return True to raise, False to clear, or None to leave unchanged."""
+    def evaluate(self, snapshot, following: bool = False) -> bool | None:
+        """Return True to raise, False to clear, or None to leave unchanged.
+
+        ``following``: the Follow HA Time Zone switch is on, so a wrong whole-hour
+        offset is about to be written back. The notice then waits for that write
+        (and its effect) before it appears; any other drift cannot be fixed by
+        writing the offset and is not delayed.
+        """
         charger_wall = snapshot.charger_wall_clock_s
         if charger_wall is None:
             # A successful poll that simply omits/corrupts the time fields tells
@@ -251,6 +259,9 @@ class ClockDriftTracker:
         # bad); once active, that same reading must NOT count toward
         # clearing — hovering minutes-wrong is not recovery.
         recovered = drift <= CLOCK_DRIFT_CLEAR_THRESHOLD_SECONDS or not self._active
+        trigger_polls = CLOCK_DRIFT_TRIGGER_POLLS
+        if following and self.kind == "timezone":
+            trigger_polls += TIME_ZONE_FOLLOW_POLLS
         decision, self._drift_streak, self._ok_streak, self._active = (
             _evaluate_hysteresis(
                 trigger_streak=self._drift_streak,
@@ -258,7 +269,7 @@ class ClockDriftTracker:
                 active=self._active,
                 is_bad=is_bad,
                 recovered=recovered,
-                trigger_polls=CLOCK_DRIFT_TRIGGER_POLLS,
+                trigger_polls=trigger_polls,
                 recovery_polls=CLOCK_DRIFT_CLEAR_POLLS,
             )
         )
@@ -277,7 +288,15 @@ def update_clock_drift_issue(
     """
     if not updater.available or not updater.last_update_success:
         return
-    decision = tracker.evaluate(updater.snapshot)
+    following = bool(entry.data.get(CONF_FOLLOW_HA_TIME_ZONE))
+    decision = tracker.evaluate(updater.snapshot, following)
+    # The notice's wording depends on the switch: with it on, the offset is
+    # already being written, so the advice is to look at why that fails.
+    notice = (
+        "timezone_following"
+        if following and tracker.kind == "timezone"
+        else tracker.kind
+    )
     # Re-key an ACTIVE issue when the drift's classification changes (sync
     # <-> whole-hour timezone, or a different hour count) so the repair never
     # keeps recommending the wrong fix. Only while still drifted, and only
@@ -289,9 +308,9 @@ def update_clock_drift_issue(
         decision is None
         and tracker.published is not None
         and tracker.still_drifted
-        and (tracker.kind, tracker.hours) != tracker.published
+        and (notice, tracker.hours) != tracker.published
     ):
-        candidate = (tracker.kind, tracker.hours)
+        candidate = (notice, tracker.hours)
         tracker.rekey_streak = tracker.rekey_streak + 1 if candidate == tracker.rekey_candidate else 1
         tracker.rekey_candidate = candidate
         rekey = tracker.rekey_streak >= CLOCK_DRIFT_TRIGGER_POLLS
@@ -301,8 +320,9 @@ def update_clock_drift_issue(
     if decision is True or rekey:
         translation_key = {
             "timezone": "clock_drift_timezone",
+            "timezone_following": "clock_drift_timezone_following",
             "fractional": "clock_drift_fractional_timezone",
-        }.get(tracker.kind, "clock_drift")
+        }.get(notice, "clock_drift")
         ir.async_create_issue(
             hass,
             DOMAIN,
@@ -313,10 +333,12 @@ def update_clock_drift_issue(
             severity=ir.IssueSeverity.WARNING,
             translation_key=translation_key,
             translation_placeholders=(
-                {"hours": str(tracker.hours)} if tracker.kind == "timezone" else None
+                {"hours": str(tracker.hours)}
+                if notice in ("timezone", "timezone_following")
+                else None
             ),
         )
-        tracker.published = (tracker.kind, tracker.hours)
+        tracker.published = (notice, tracker.hours)
         tracker.rekey_streak = 0
     elif decision is False:
         ir.async_delete_issue(hass, DOMAIN, clock_drift_issue_id(entry))

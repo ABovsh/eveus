@@ -1,10 +1,11 @@
 """Keep the charger's Time Zone on Home Assistant's UTC offset (opt-in).
 
 The charger holds one whole-hour offset and never follows daylight saving, so
-twice a year it runs an hour off until the REVE app or the Time Zone select
-moves it. With the option on, the integration writes Home Assistant's current
-offset through the same command the select sends. It only ever sets the
-offset: the charger's UTC time is left alone (Sync Time stays a user action).
+twice a year it runs an hour off until the Time Zone select (or, on REVE, its
+app) moves it; older Eveus firmware has no app at all. With the Follow HA Time
+Zone switch on, the integration writes Home Assistant's current offset through
+the same command the select sends. It only ever sets the offset: the charger's
+UTC time is left alone (Sync Time stays a user action).
 """
 from __future__ import annotations
 
@@ -13,7 +14,11 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import TIME_ZONE_FOLLOW_POLLS, TIME_ZONE_FOLLOW_RETRY_POLLS
+from .const import (
+    CONF_FOLLOW_HA_TIME_ZONE,
+    TIME_ZONE_FOLLOW_POLLS,
+    TIME_ZONE_FOLLOW_RETRY_POLLS,
+)
 from .utils import RateLog, get_local_utc_offset_seconds
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,6 +40,11 @@ class TimeZoneFollower:
         self._polls_to_wait = 0
         # True while a write is in flight; polls arriving meanwhile do nothing.
         self.sending = False
+
+    def reset(self) -> None:
+        """Forget the count and the pause, e.g. while the switch is off."""
+        self._differing_polls = 0
+        self._polls_to_wait = 0
 
     def evaluate(self, snapshot, local_offset_seconds: int) -> int | None:
         """Return the offset in hours to write, or None to leave it alone."""
@@ -66,6 +76,10 @@ def update_time_zone_follow(
     follower: TimeZoneFollower,
 ) -> None:
     """After a poll, write Home Assistant's offset when the charger's differs."""
+    if not entry.data.get(CONF_FOLLOW_HA_TIME_ZONE):
+        # Read on every poll: the switch changes the entry without a reload.
+        follower.reset()
+        return
     if follower.sending or not updater.available or not updater.last_update_success:
         return
     hours = follower.evaluate(updater.snapshot, get_local_utc_offset_seconds())

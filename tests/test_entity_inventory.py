@@ -9,7 +9,7 @@ list the same way `__init__.async_setup_entry` does (each platform's
 registry, so it catches a construction-path regression before HA ever sees it.
 
 Config is deliberately at "everything present": a model set and the default
-(advanced) SOC mode, which is the config that yields the full 85-entity set
+(advanced) SOC mode, which is the config that yields the full 86-entity set
 measured in `docs/internal/plan-2026-09-16-consolidation.md`.
 """
 from __future__ import annotations
@@ -92,6 +92,7 @@ _EXPECTED: dict[str, tuple[object, tuple[str, ...]]] = {
         setup_switch,
         (
             "eveus_connect_to_ocpp",
+            "eveus_follow_ha_time_zone",
             "eveus_ground_protection",
             "eveus_limit_cost_enabled",
             "eveus_limit_disable_all",
@@ -150,7 +151,7 @@ _EXPECTED: dict[str, tuple[object, tuple[str, ...]]] = {
     ),
 }
 
-_TOTAL_ENTITIES = 85
+_TOTAL_ENTITIES = 86
 
 
 def _entry() -> SimpleNamespace:
@@ -201,7 +202,7 @@ def test_entity_inventory_is_frozen() -> None:
         )
 
 
-def test_entity_inventory_totals_85() -> None:
+def test_entity_inventory_totals_86() -> None:
     inventory = asyncio.run(_build_inventory())
     total = sum(len(ids) for ids in inventory.values())
     assert total == _TOTAL_ENTITIES

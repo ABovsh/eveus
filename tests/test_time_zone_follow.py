@@ -7,21 +7,25 @@ move it, so the charger runs an hour off after every clock change.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
-from custom_components.eveus import config_flow
+from conftest import OutageClock
+from custom_components.eveus import issues as issues_module
+from custom_components.eveus import select as select_module
 from custom_components.eveus.const import (
+    CLOCK_DRIFT_TRIGGER_POLLS,
     CONF_FOLLOW_HA_TIME_ZONE,
-    CONF_SOC_MODE,
-    SOC_MODE_ADVANCED,
-    SOC_MODE_BASIC,
     TIME_ZONE_FOLLOW_POLLS,
     TIME_ZONE_FOLLOW_RETRY_POLLS,
 )
+from custom_components.eveus.issues import ClockDriftTracker, update_clock_drift_issue
+from custom_components.eveus.switch import EveusFollowTimeZoneSwitch
 from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.time_zone_follow import (
     TimeZoneFollower,
@@ -136,7 +140,9 @@ def test_the_pause_ends_when_the_charger_agrees() -> None:
 class _Entry:
     """Entry double that runs background tasks the way HA's entry does."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, follow: bool = True) -> None:
+        self.data: dict = {CONF_FOLLOW_HA_TIME_ZONE: True} if follow else {}
+        self.entry_id = "entry-1"
         self.tasks: list = []
 
     def async_create_background_task(self, hass, target, name, eager_start=True):
@@ -144,10 +150,13 @@ class _Entry:
         return None
 
 
-class _Updater:
+class _Updater(OutageClock):
+    host = "192.168.3.39"
+
     def __init__(self, charger_zone: int | None, *, available: bool = True, send=None) -> None:
         self.available = available
         self.last_update_success = available
+        self.data = {}
         self.snapshot = _poll(charger_zone)
         self.sent: list[tuple[str, int]] = []
         self._send = send
@@ -173,6 +182,42 @@ def test_the_listener_sends_the_ha_offset_through_the_charger_command() -> None:
     _drive(updater, TimeZoneFollower(), entry, TIME_ZONE_FOLLOW_POLLS)
 
     assert updater.sent == [("timeZone", 2)]
+
+
+def test_the_listener_does_nothing_while_the_switch_is_off() -> None:
+    updater, entry = _Updater(3), _Entry(follow=False)
+
+    _drive(updater, TimeZoneFollower(), entry, TIME_ZONE_FOLLOW_POLLS * 4)
+
+    assert updater.sent == []
+    assert entry.tasks == []
+
+
+def test_turning_the_switch_on_starts_from_a_clean_count() -> None:
+    """Polls counted while it was off must not make the first write immediate."""
+    updater, entry, follower = _Updater(3), _Entry(follow=False), TimeZoneFollower()
+    _drive(updater, follower, entry, TIME_ZONE_FOLLOW_POLLS * 4)
+
+    entry.data[CONF_FOLLOW_HA_TIME_ZONE] = True
+    for _ in range(TIME_ZONE_FOLLOW_POLLS - 1):
+        update_time_zone_follow(None, entry, updater, follower)
+
+    assert entry.tasks == []
+    update_time_zone_follow(None, entry, updater, follower)
+    assert len(entry.tasks) == 1
+
+
+def test_turning_the_switch_off_and_on_again_restarts_the_pause() -> None:
+    updater, entry, follower = _Updater(3), _Entry(), TimeZoneFollower()
+    _drive(updater, follower, entry, TIME_ZONE_FOLLOW_POLLS)
+    assert updater.sent == [("timeZone", 2)]
+
+    entry.data.pop(CONF_FOLLOW_HA_TIME_ZONE)
+    update_time_zone_follow(None, entry, updater, follower)
+    entry.data[CONF_FOLLOW_HA_TIME_ZONE] = True
+    _drive(updater, follower, entry, TIME_ZONE_FOLLOW_POLLS)
+
+    assert updater.sent == [("timeZone", 2), ("timeZone", 2)]
 
 
 def test_the_listener_stays_quiet_when_the_charger_is_in_sync() -> None:
@@ -227,88 +272,233 @@ def test_a_write_that_raises_frees_the_follower() -> None:
     assert follower.sending is False
 
 
-# --- the options form --------------------------------------------------------
+# --- the switch ----------------------------------------------------------------
 
 
-def _options_flow(data: dict) -> config_flow.EveusOptionsFlow:
-    entry = SimpleNamespace(data=data, unique_id="host", entry_id="e1")
+class _ConfigEntries:
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+        self.reloads: list[str] = []
 
-    class _ConfigEntries:
-        def async_update_entry(self, e, *, data):
-            e.data = data
+    def async_update_entry(self, entry, *, data):
+        self.updates.append(data)
+        entry.data = data
 
-        async def async_reload(self, _entry_id):
-            return True
+    async def async_reload(self, entry_id):
+        self.reloads.append(entry_id)
 
-    flow = config_flow.EveusOptionsFlow(entry)
-    flow.hass = SimpleNamespace(
-        config_entries=_ConfigEntries(), states=SimpleNamespace(get=lambda _entity_id: None)
+
+def _switch(*, follow: bool = False, available: bool = True):
+    updater = _Updater(2, available=available)
+    entry = _Entry(follow=follow)
+    entry.data["host"] = "192.168.3.39"
+    hass = SimpleNamespace(config_entries=_ConfigEntries())
+    switch = EveusFollowTimeZoneSwitch(updater, entry, 1)
+    switch.hass = hass
+    switch.async_write_ha_state = lambda: None
+    return switch, entry, hass
+
+
+def test_the_switch_is_off_until_asked() -> None:
+    switch, _, _ = _switch()
+
+    assert switch.is_on is False
+
+
+def test_the_switch_shows_what_the_entry_stores() -> None:
+    switch, _, _ = _switch(follow=True)
+
+    assert switch.is_on is True
+
+
+def test_the_switch_is_named_and_identified_for_the_device_page() -> None:
+    switch, _, _ = _switch()
+
+    assert switch.unique_id == "eveus_follow_ha_time_zone"
+    assert switch.entity_category.value == "config"
+
+
+def test_the_switch_stays_usable_while_the_charger_is_off() -> None:
+    """It is a setting of the integration, and the charger is mostly powered off."""
+    switch, _, _ = _switch(available=False)
+
+    assert switch.available is True
+
+
+def test_turning_on_stores_the_choice_without_reloading() -> None:
+    switch, entry, hass = _switch()
+
+    asyncio.run(switch.async_turn_on())
+
+    assert entry.data[CONF_FOLLOW_HA_TIME_ZONE] is True
+    assert entry.data["host"] == "192.168.3.39"
+    assert switch.is_on is True
+    assert hass.config_entries.reloads == []
+
+
+def test_turning_off_removes_the_key_and_keeps_the_rest() -> None:
+    switch, entry, hass = _switch(follow=True)
+
+    asyncio.run(switch.async_turn_off())
+
+    assert CONF_FOLLOW_HA_TIME_ZONE not in entry.data
+    assert entry.data["host"] == "192.168.3.39"
+    assert switch.is_on is False
+    assert hass.config_entries.reloads == []
+
+
+def test_toggling_rebases_on_the_live_entry_data() -> None:
+    """A reconfigure finishing meanwhile must not be rolled back."""
+    switch, entry, _ = _switch()
+    entry.data = {**entry.data, "host": "192.168.3.99"}
+
+    asyncio.run(switch.async_turn_on())
+
+    assert entry.data["host"] == "192.168.3.99"
+
+
+def test_the_switch_publishes_its_new_state() -> None:
+    switch, _, _ = _switch()
+    published: list[bool] = []
+    switch.async_write_ha_state = lambda: published.append(switch.is_on)
+
+    asyncio.run(switch.async_turn_on())
+
+    assert published == [True]
+
+
+# --- the Time Zone select ------------------------------------------------------
+
+
+def _select(*, follow: bool):
+    updater = _Updater(3)
+    updater.config_entry = None
+    updater.host = "192.168.3.39"
+    updater.snapshot = _poll(3)
+    updater.async_add_listener = lambda *a, **k: (lambda: None)
+    select = select_module.EveusTimeZoneSelect(updater, 1, _Entry(follow=follow))
+    select.async_write_ha_state = lambda: None
+    return select, updater
+
+
+def test_a_manual_time_zone_is_refused_while_following_home_assistant() -> None:
+    select, updater = _select(follow=True)
+
+    with pytest.raises(HomeAssistantError):
+        asyncio.run(select.async_select_option("+5"))
+
+    assert updater.sent == []
+
+
+def test_a_manual_time_zone_works_when_not_following() -> None:
+    select, updater = _select(follow=False)
+
+    asyncio.run(select.async_select_option("+5"))
+
+    assert updater.sent == [("timeZone", 5)]
+
+
+def test_the_select_still_shows_the_chargers_offset_while_following() -> None:
+    select, _ = _select(follow=True)
+
+    assert select.current_option == "+3"
+
+
+# --- the repair notice ---------------------------------------------------------
+
+
+def _drifted_poll() -> EveusSnapshot:
+    """Charger on +3 with the right UTC time while HA is on +2: one hour ahead."""
+    return EveusSnapshot.parse(
+        {"systemTime": int(time.time()) + 3 * HOUR, "timeZone": 3}, None
     )
-    flow.async_show_form = lambda *, step_id, data_schema=None: {
-        "type": "form",
-        "step_id": step_id,
-        "data_schema": data_schema,
-    }
-    flow.async_create_entry = lambda *, title, data: {"type": "create_entry", "data": data}
-    return flow
 
 
-def _field(schema, name):
-    return next(key for key in schema.schema if key.schema == name)
+def test_the_tracker_waits_longer_when_the_follower_is_fixing_it() -> None:
+    tracker = ClockDriftTracker()
+    needed = TIME_ZONE_FOLLOW_POLLS + CLOCK_DRIFT_TRIGGER_POLLS
+
+    results = [tracker.evaluate(_drifted_poll(), following=True) for _ in range(needed)]
+
+    assert results[:-1] == [None] * (needed - 1)
+    assert results[-1] is True
 
 
-def test_the_options_form_offers_the_switch_off_by_default() -> None:
-    flow = _options_flow({CONF_SOC_MODE: SOC_MODE_BASIC})
+def test_the_tracker_does_not_wait_when_the_follower_is_off() -> None:
+    tracker = ClockDriftTracker()
 
-    form = asyncio.run(flow.async_step_init())
+    results = [
+        tracker.evaluate(_drifted_poll(), following=False)
+        for _ in range(CLOCK_DRIFT_TRIGGER_POLLS)
+    ]
 
-    assert _field(form["data_schema"], CONF_FOLLOW_HA_TIME_ZONE).default() is False
-
-
-def test_the_options_form_shows_the_stored_choice() -> None:
-    flow = _options_flow({CONF_SOC_MODE: SOC_MODE_BASIC, CONF_FOLLOW_HA_TIME_ZONE: True})
-
-    form = asyncio.run(flow.async_step_init())
-
-    assert _field(form["data_schema"], CONF_FOLLOW_HA_TIME_ZONE).default() is True
+    assert results[-1] is True
 
 
-def test_turning_it_on_is_stored_in_the_entry() -> None:
-    flow = _options_flow({CONF_SOC_MODE: SOC_MODE_BASIC})
-
-    asyncio.run(
-        flow.async_step_init({CONF_SOC_MODE: SOC_MODE_BASIC, CONF_FOLLOW_HA_TIME_ZONE: True})
+def test_a_wrong_clock_that_is_not_the_offset_is_not_delayed_by_the_follower() -> None:
+    """Writing the offset cannot fix a clock that is minutes off."""
+    tracker = ClockDriftTracker()
+    off = EveusSnapshot.parse(
+        {"systemTime": int(time.time()) + 2 * HOUR + 900, "timeZone": 2}, None
     )
 
-    assert flow._entry.data[CONF_FOLLOW_HA_TIME_ZONE] is True
+    results = [
+        tracker.evaluate(off, following=True) for _ in range(CLOCK_DRIFT_TRIGGER_POLLS)
+    ]
+
+    assert results[-1] is True
 
 
-def test_turning_it_off_removes_the_key() -> None:
-    flow = _options_flow({CONF_SOC_MODE: SOC_MODE_BASIC, CONF_FOLLOW_HA_TIME_ZONE: True})
-
-    asyncio.run(
-        flow.async_step_init({CONF_SOC_MODE: SOC_MODE_BASIC, CONF_FOLLOW_HA_TIME_ZONE: False})
-    )
-
-    assert CONF_FOLLOW_HA_TIME_ZONE not in flow._entry.data
-
-
-def test_a_submit_without_the_field_keeps_the_stored_choice() -> None:
-    flow = _options_flow({CONF_SOC_MODE: SOC_MODE_BASIC, CONF_FOLLOW_HA_TIME_ZONE: True})
-
-    asyncio.run(flow.async_step_init({CONF_SOC_MODE: SOC_MODE_BASIC}))
-
-    assert flow._entry.data[CONF_FOLLOW_HA_TIME_ZONE] is True
+class _IssueRecorder:
+    def __init__(self, monkeypatch) -> None:
+        self.created: list[dict] = []
+        monkeypatch.setattr(
+            issues_module.ir,
+            "async_create_issue",
+            lambda hass, domain, issue_id, **kw: self.created.append(kw),
+        )
+        monkeypatch.setattr(issues_module.ir, "async_delete_issue", lambda *a, **k: None)
 
 
-def test_the_choice_survives_the_soc_step_of_a_first_switch_to_advanced() -> None:
-    flow = _options_flow({CONF_SOC_MODE: SOC_MODE_BASIC})
+def _issue_updater() -> SimpleNamespace:
+    updater = SimpleNamespace(available=True, last_update_success=True)
+    updater.snapshot = _drifted_poll()
+    return updater
 
-    step = asyncio.run(
-        flow.async_step_init({CONF_SOC_MODE: SOC_MODE_ADVANCED, CONF_FOLLOW_HA_TIME_ZONE: True})
-    )
-    assert step["step_id"] == "soc"
-    asyncio.run(flow.async_step_soc({"battery_capacity": 60, "soc_correction": 7}))
 
-    assert flow._entry.data[CONF_FOLLOW_HA_TIME_ZONE] is True
-    assert flow._entry.data[CONF_SOC_MODE] == SOC_MODE_ADVANCED
+def test_the_notice_asks_to_set_or_follow_while_the_switch_is_off(monkeypatch) -> None:
+    recorder = _IssueRecorder(monkeypatch)
+    entry, updater, tracker = _Entry(follow=False), _issue_updater(), ClockDriftTracker()
+
+    for _ in range(CLOCK_DRIFT_TRIGGER_POLLS):
+        update_clock_drift_issue(None, entry, updater, tracker)
+
+    assert [c["translation_key"] for c in recorder.created] == ["clock_drift_timezone"]
+
+
+def test_the_notice_says_following_is_not_working_while_the_switch_is_on(monkeypatch) -> None:
+    recorder = _IssueRecorder(monkeypatch)
+    entry, updater, tracker = _Entry(follow=True), _issue_updater(), ClockDriftTracker()
+
+    for _ in range(TIME_ZONE_FOLLOW_POLLS + CLOCK_DRIFT_TRIGGER_POLLS):
+        update_clock_drift_issue(None, entry, updater, tracker)
+
+    assert [c["translation_key"] for c in recorder.created] == [
+        "clock_drift_timezone_following"
+    ]
+
+
+def test_turning_the_switch_on_rewrites_a_notice_that_is_already_showing(monkeypatch) -> None:
+    recorder = _IssueRecorder(monkeypatch)
+    entry, updater, tracker = _Entry(follow=False), _issue_updater(), ClockDriftTracker()
+    for _ in range(CLOCK_DRIFT_TRIGGER_POLLS):
+        update_clock_drift_issue(None, entry, updater, tracker)
+    recorder.created.clear()
+
+    entry.data[CONF_FOLLOW_HA_TIME_ZONE] = True
+    for _ in range(CLOCK_DRIFT_TRIGGER_POLLS):
+        update_clock_drift_issue(None, entry, updater, tracker)
+
+    assert [c["translation_key"] for c in recorder.created] == [
+        "clock_drift_timezone_following"
+    ]

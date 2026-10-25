@@ -125,7 +125,7 @@ Or in HACS:
 
 To change settings later, open the integration:
 
-- **Configure:** mode, the optional car SOC sensor and **Follow Home Assistant time zone**.
+- **Configure:** mode and the optional car SOC sensor.
 - **Reconfigure:** address, credentials, model and phase count.
 
 ## First charge
@@ -304,10 +304,10 @@ The charger has two schedules. Set the start and stop times, turn the schedule
 on, and optionally turn on its own current and energy limits. If a schedule
 runs at the wrong time, check **Time Zone** and press **Sync Time**. The charger
 keeps one fixed offset and does not follow daylight saving, so it runs an hour
-off after every clock change; turn on **Follow Home Assistant time zone** under
-**Configure** and the integration sets the charger's **Time Zone** to Home
-Assistant's current offset by itself (not for half-hour zones such as India,
-which the charger cannot hold). While
+off after every clock change. Turn on **Follow HA Time Zone** and the integration
+sets the charger's **Time Zone** to Home Assistant's, including daylight saving;
+while it is on, **Time Zone** cannot be changed by hand. Half-hour zones such as
+India cannot be held by the charger and are left alone. While
 **One Charge** is on, the charger charges at once and ignores every schedule
 and limit.
 
@@ -418,7 +418,7 @@ Ground notices clear after recovery. Serious fault notices also need
 | --- | --- |
 | Charger setup needs attention | Open the notice and re-enter the connection details |
 | OCPP is enabled | For local control only, turn off **Connect to OCPP** |
-| Charger clock is off by more than 10 minutes | Check **Time Zone**, then press **Sync Time** |
+| Charger clock is off by more than 10 minutes | Turn on **Follow HA Time Zone**, or set **Time Zone** by hand; press **Sync Time** if a small drift remains |
 | REVE firmware stopped reporting some readings | Update the integration when a new version is out; if the notice stays, open a GitHub issue with the diagnostics |
 | Update SOC cards and automations | Replace `input_number.ev_*` with the integration's SOC entities; see [migration](#battery-level-soc) |
 
@@ -556,6 +556,7 @@ no long-term statistics.
 | `switch.eveus_ev_charger_limit_cost_enabled` | **Limit: Cost enabled** |
 | `switch.eveus_ev_charger_limit_disable_all` | **Limit: disable all**; not created on REVE |
 | `switch.eveus_ev_charger_limit_soc_enabled` | **Limit: SOC enabled** (Advanced mode only) |
+| `switch.eveus_ev_charger_follow_ha_time_zone` | **Follow HA Time Zone**: sets the charger's **Time Zone** to Home Assistant's, including daylight saving; while on, **Time Zone** cannot be changed by hand |
 | `button.eveus_ev_charger_force_refresh` | Poll the charger immediately |
 
 </details>

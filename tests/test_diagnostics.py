@@ -284,7 +284,7 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
             "async_create_issue",
             lambda hass, domain, issue_id, **kw: created.append(kw),
         )
-        entry = SimpleNamespace(entry_id="e1")
+        entry = SimpleNamespace(entry_id="e1", data={})
         tracker = eveus.ClockDriftTracker()
         updater = PayloadUpdater(None)
 
@@ -322,7 +322,7 @@ def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
         "async_create_issue",
         lambda hass, domain, issue_id, **kw: created.append(kw),
     )
-    entry = SimpleNamespace(entry_id="e1")
+    entry = SimpleNamespace(entry_id="e1", data={})
     tracker = eveus.ClockDriftTracker()
     updater = PayloadUpdater(None)
 
@@ -357,7 +357,7 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
             "async_create_issue",
             lambda hass, domain, issue_id, **kw: created.append(kw),
         )
-        entry = SimpleNamespace(entry_id="e1")
+        entry = SimpleNamespace(entry_id="e1", data={})
         tracker = eveus.ClockDriftTracker()
         updater = PayloadUpdater(None)
 

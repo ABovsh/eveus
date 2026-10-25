@@ -3,7 +3,7 @@
 Support for newer firmware families is added at the coordinator boundary. This
 pins the visible result for the payloads the integration has always served,
 so a change made for one family cannot move a single reading, availability or
-option of another: each of the 85 entities is built through the real setup
+option of another: each of the 86 entities is built through the real setup
 path, fed a recorded payload, and compared against the stored contract.
 
 A deliberate change to a classic reading updates the contract file in the same

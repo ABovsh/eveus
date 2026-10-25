@@ -21,7 +21,6 @@ from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import aiohttp_client, device_registry as dr
 from homeassistant.helpers.selector import (
-    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
     SelectSelector,
@@ -51,7 +50,6 @@ from .const import (
     CONF_BATTERY_CAPACITY,
     CONF_SOC_CORRECTION,
     CONF_EXTERNAL_SOC_ENTITY,
-    CONF_FOLLOW_HA_TIME_ZONE,
     DEFAULT_INITIAL_SOC,
     DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
@@ -956,7 +954,6 @@ class EveusOptionsFlow(OptionsFlow):
         """Store the config entry being edited."""
         self._entry = entry
         self._external_soc: str | None = entry.data.get(CONF_EXTERNAL_SOC_ENTITY)
-        self._follow_time_zone: bool = bool(entry.data.get(CONF_FOLLOW_HA_TIME_ZONE))
 
     def _store_external_soc(self, new_data: dict[str, Any]) -> None:
         """Persist (or clear) the car SOC sensor chosen on the first step."""
@@ -965,22 +962,12 @@ class EveusOptionsFlow(OptionsFlow):
         else:
             new_data.pop(CONF_EXTERNAL_SOC_ENTITY, None)
 
-    def _store_follow_time_zone(self, new_data: dict[str, Any]) -> None:
-        """Persist the Time Zone choice from the first step; off stores nothing."""
-        if self._follow_time_zone:
-            new_data[CONF_FOLLOW_HA_TIME_ZONE] = True
-        else:
-            new_data.pop(CONF_FOLLOW_HA_TIME_ZONE, None)
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Show and apply the SOC mode chooser."""
         advanced = get_soc_mode(self._entry) == SOC_MODE_ADVANCED
         if user_input is not None:
-            self._follow_time_zone = bool(
-                user_input.get(CONF_FOLLOW_HA_TIME_ZONE, self._follow_time_zone)
-            )
             if advanced and user_input[CONF_SOC_MODE] == SOC_MODE_ADVANCED:
                 # An emptied entity picker submits no key at all, which is how
                 # the user clears a previously chosen sensor. Only trust that
@@ -991,7 +978,6 @@ class EveusOptionsFlow(OptionsFlow):
             new_data = dict(self._entry.data)
             new_data[CONF_SOC_MODE] = user_input[CONF_SOC_MODE]
             self._store_external_soc(new_data)
-            self._store_follow_time_zone(new_data)
             if user_input[CONF_SOC_MODE] == SOC_MODE_ADVANCED and (
                 CONF_BATTERY_CAPACITY not in new_data
                 or CONF_SOC_CORRECTION not in new_data
@@ -1016,9 +1002,6 @@ class EveusOptionsFlow(OptionsFlow):
                     description={"suggested_value": self._external_soc},
                 )
             ] = _EXTERNAL_SOC_SELECTOR
-        fields[
-            vol.Optional(CONF_FOLLOW_HA_TIME_ZONE, default=self._follow_time_zone)
-        ] = BooleanSelector()
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields))
 
     async def async_step_soc(
@@ -1033,7 +1016,6 @@ class EveusOptionsFlow(OptionsFlow):
             new_data[CONF_SOC_MODE] = SOC_MODE_ADVANCED
             self._external_soc = user_input.get(CONF_EXTERNAL_SOC_ENTITY) or None
             self._store_external_soc(new_data)
-            self._store_follow_time_zone(new_data)
             new_data[CONF_BATTERY_CAPACITY] = user_input[CONF_BATTERY_CAPACITY]
             new_data[CONF_SOC_CORRECTION] = user_input[CONF_SOC_CORRECTION]
             new_data.setdefault(CONF_INITIAL_SOC, DEFAULT_INITIAL_SOC)
