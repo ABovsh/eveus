@@ -57,6 +57,7 @@ from .const import (
     CONF_TARGET_SOC,
     CONF_BATTERY_CAPACITY,
     CONF_SOC_CORRECTION,
+    CONF_FOLLOW_HA_TIME_ZONE,
     DEFAULT_INITIAL_SOC,
     DEFAULT_TARGET_SOC,
     DEFAULT_BATTERY_CAPACITY,
@@ -77,6 +78,7 @@ from .issues import (
     update_ocpp_issue,
     update_reve_fields_issue,
 )
+from .time_zone_follow import TimeZoneFollower, update_time_zone_follow
 from .utils import (
     device_entry_ids,
     get_device_suffix,
@@ -884,6 +886,15 @@ async def _finish_setup(
     # notice walks the user to the Time Zone select + Sync Time button.
     clock_tracker = ClockDriftTracker()
     follow_polls(lambda: update_clock_drift_issue(hass, entry, updater, clock_tracker))
+
+    # Opt-in (Configure): write Home Assistant's UTC offset to the charger's
+    # Time Zone when they differ, since the charger never follows daylight
+    # saving. Off by default, so the clock is never changed unasked.
+    if entry.data.get(CONF_FOLLOW_HA_TIME_ZONE):
+        time_zone_follower = TimeZoneFollower()
+        follow_polls(
+            lambda: update_time_zone_follow(hass, entry, updater, time_zone_follower)
+        )
 
     # Surface dangerous charger conditions (missing ground, leakage,
     # overheat, and firmware safety faults) as Home Assistant Repairs

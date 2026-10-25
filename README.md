@@ -125,7 +125,7 @@ Or in HACS:
 
 To change settings later, open the integration:
 
-- **Configure:** mode and the optional car SOC sensor.
+- **Configure:** mode, the optional car SOC sensor and **Follow Home Assistant time zone**.
 - **Reconfigure:** address, credentials, model and phase count.
 
 ## First charge
@@ -302,7 +302,12 @@ stopped at a limit, and there is no **Limit: disable all**; see
 
 The charger has two schedules. Set the start and stop times, turn the schedule
 on, and optionally turn on its own current and energy limits. If a schedule
-runs at the wrong time, check **Time Zone** and press **Sync Time**. While
+runs at the wrong time, check **Time Zone** and press **Sync Time**. The charger
+keeps one fixed offset and does not follow daylight saving, so it runs an hour
+off after every clock change; turn on **Follow Home Assistant time zone** under
+**Configure** and the integration sets the charger's **Time Zone** to Home
+Assistant's current offset by itself (not for half-hour zones such as India,
+which the charger cannot hold). While
 **One Charge** is on, the charger charges at once and ignores every schedule
 and limit.
 

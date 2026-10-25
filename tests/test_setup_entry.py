@@ -713,6 +713,48 @@ def test_async_setup_entry_follows_battery_and_clock_issues_every_poll(
     assert [kind for kind, _, _ in calls] == ["battery", "clock"]
 
 
+def test_async_setup_entry_follows_the_time_zone_every_poll_when_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The opt-in follower evaluates at setup and on each poll, with its own state."""
+    calls: list[tuple[object, object]] = []
+    hass = _hass()
+    entry = _Entry(_data(device_number=1, follow_ha_time_zone=True))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(
+        eveus,
+        "update_time_zone_follow",
+        lambda h, e, u, follower: calls.append((e, follower)),
+    )
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    assert [e for e, _ in calls] == [entry]
+    assert isinstance(calls[0][1], eveus.TimeZoneFollower)
+
+    calls.clear()
+    for listener in entry.runtime_data.updater.listeners:
+        listener()
+    assert [e for e, _ in calls] == [entry]
+
+
+def test_async_setup_entry_never_follows_the_time_zone_unasked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    hass = _hass()
+    entry = _Entry(_data(device_number=1))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(
+        eveus, "update_time_zone_follow", lambda h, e, u, follower: calls.append(e)
+    )
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    for listener in entry.runtime_data.updater.listeners:
+        listener()
+
+    assert calls == []
+
+
 def test_async_setup_entry_normalizes_stored_device_number(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

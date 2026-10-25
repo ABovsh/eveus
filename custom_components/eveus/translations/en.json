@@ -79,9 +79,10 @@
         "title": "Integration mode",
         "data": {
           "soc_mode": "Integration mode",
-          "external_soc_entity": "Car SOC sensor (optional)"
+          "external_soc_entity": "Car SOC sensor (optional)",
+          "follow_ha_time_zone": "Follow Home Assistant time zone"
         },
-        "description": "Integration mode. Advanced adds SOC monitoring.\n\nOptionally pick a sensor that reports your car's own battery level. It is read once per plug-in, when charging starts, and copied into Initial SOC; pausing or restarting the charge without unplugging does not read it again. Every SOC figure is still calculated by the integration from that value and the charger's energy meter. Leave empty to set Initial SOC by hand."
+        "description": "Integration mode. Advanced adds SOC monitoring.\n\nOptionally pick a sensor that reports your car's own battery level. It is read once per plug-in, when charging starts, and copied into Initial SOC; pausing or restarting the charge without unplugging does not read it again. Every SOC figure is still calculated by the integration from that value and the charger's energy meter. Leave empty to set Initial SOC by hand.\n\nTime zone: the charger keeps one fixed offset and does not follow daylight saving. Turn on **Follow Home Assistant time zone** and the integration sets the charger's **Time Zone** to Home Assistant's current offset when they differ (not for half-hour zones such as India). It does not change the charger's clock."
       },
       "soc": {
         "title": "SOC Monitoring Setup",
@@ -527,7 +528,7 @@
     },
     "clock_drift_timezone": {
       "title": "Eveus: charger Time Zone appears incorrect",
-      "description": "The clock inside your Eveus charger is off from Home Assistant by almost exactly {hours} hour(s) — see the **Time Drift** sensor for the precise offset. A whole-hour drift almost always means the charger's **Time Zone** select is wrong, for example after a daylight-saving change, which the charger's fixed offset does not follow. Pressing **Sync Time** alone will not fix this.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Set the **Time Zone** select for your Eveus charger to match your current local time zone.\n- If a small drift remains afterwards, press the **Sync Time** button.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
+      "description": "The clock inside your Eveus charger is off from Home Assistant by almost exactly {hours} hour(s) — see the **Time Drift** sensor for the precise offset. A whole-hour drift almost always means the charger's **Time Zone** select is wrong, for example after a daylight-saving change, which the charger's fixed offset does not follow. Pressing **Sync Time** alone will not fix this.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Set the **Time Zone** select for your Eveus charger to match your current local time zone.\n- To have this done automatically after every clock change, turn on **Follow Home Assistant time zone** under **Configure**.\n- If a small drift remains afterwards, press the **Sync Time** button.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
     },
     "clock_drift_fractional_timezone": {
       "title": "Eveus: your time zone cannot be matched by the charger",
