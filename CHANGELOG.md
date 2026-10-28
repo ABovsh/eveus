@@ -13,6 +13,8 @@
 - **REVE schedule weekdays respect Home Assistant control permissions.** Read-only users cannot change them through the card's connection.
 - **Last Session keeps a valid energy, cost or duration reading when the other final reading is corrupt.**
 - **Reconfiguring or repairing the connection preserves the charger's remembered firmware family.**
+- **REVE: regular control commands no longer postpone tariff and schedule updates from the app.** A slow schedule change also keeps any newer Stop state and tariff readings.
+- **Card: switching chargers while a weekday change is pending keeps the new charger's own days.** A late reply from the previous charger cannot change a subsequent schedule write.
 
 ## 4.29.0 - 2026-10-24
 

@@ -1457,6 +1457,7 @@ class EveusCard extends HTMLElement {
     if (this._hass) this.hass = this._hass;
   }
   async _toggleWeekday(spec) {
+    const generation = this._generation;
     const [n, day] = spec.split(':').map(Number);
     const item = this._reveSchedules?.[n - 1];
     if (!item || !this._online) return;
@@ -1473,10 +1474,12 @@ class EveusCard extends HTMLElement {
     const device = this._config.device_id || this._deviceId;
     try {
       const result = await this._hass.callWS({type: 'eveus/reve_schedule_weekdays', ...(device ? {device_id: device} : {}), schedule: n, weekdays: next});
+      if (generation !== this._generation) return;
       const written = Array.isArray(result?.weekdays) ? result.weekdays : next;
       // A read that failed meanwhile left no schedules to update; the write still went through.
       this._reveSchedules = this._reveSchedules?.map((s, i) => i === n - 1 ? {...s, weekdays: written} : s) ?? null;
     } catch {
+      if (generation !== this._generation) return;
       this._showError(true);
     }
     // A later tap on the same schedule owns the pin now.

@@ -1308,7 +1308,9 @@ class ReveApi:
         self.manual_mode.command(command)
         extras = self._extras
         if extras is not None:
-            self._store(replace(extras, charging_command=command))
+            # A successful write says nothing about the schedules/rates age
+            # or read health. Reasserted controls must not postpone their poll.
+            self._extras = replace(extras, charging_command=command)
 
     async def write_schedule(self, command: str, value: Any) -> None:
         # Read right before writing: the list is replaced whole, and the app
@@ -1317,12 +1319,15 @@ class ReveApi:
         held = self._extras
         if held is None:
             current = await self._read_extras()
+            self._store(current)
         else:
             schedules = parse_schedules(await self._station(SCHEDULES_QUERY))
             current = replace(held, schedules=schedules)
         updated = apply_schedule_command(list(current.schedules), command, value)
         await self._mutate({"scheduleV2": updated})
-        self._store(replace(current, schedules=tuple(updated)))
+        # A concurrent poll may have read newer tariffs or Stop while the
+        # mutation awaited its reply. Own only the schedules we just wrote.
+        self._extras = replace(self._extras, schedules=tuple(updated))
 
     async def _refuse(self, command: str, _value: Any) -> None:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged

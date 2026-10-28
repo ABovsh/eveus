@@ -2182,6 +2182,54 @@ test('REVE: days tapped on two schedules at once both settle on what the charger
   x.card._render();
   assert.match(x.html(), /data-days-edit="1"[^>]*>Tu</);
 });
+test('REVE: an old charger weekday reply cannot change the next write to a new charger', async () => {
+  const slow = deferred();
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? slow.promise : reveSchedules()});
+  const oldWrite = x.card._toggleWeekday('1:6');
+  const entities = {...x.card._ids};
+  x.hass.callWS = async (msg) => {
+    x.asked.push(msg);
+    if (msg.type === 'eveus/card_entities') return {entities, device_id: 'dev2'};
+    if (msg.type === 'eveus/reve_schedule_weekdays') return {weekdays: msg.weekdays};
+    return {...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [1, 3]}]};
+  };
+  x.card.setConfig({sections: ['schedules'], device_id: 'dev2'});
+  // The new charger has a different schedule. An old reply must not supply
+  // the base for the next full-set write to this one.
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(JSON.parse(JSON.stringify(x.card._reveSchedules[0].weekdays)), [1, 3]);
+  slow.resolve({weekdays: [0, 1, 2, 3, 4, 5]});
+  await oldWrite;
+  await x.card._toggleWeekday('1:5');
+  assert.deepEqual(JSON.parse(JSON.stringify(x.asked.at(-1))), {
+    type: 'eveus/reve_schedule_weekdays', device_id: 'dev2', schedule: 1, weekdays: [1, 3, 5],
+  });
+});
+test('REVE: a late failed weekday write cannot clear a new charger pending change', async () => {
+  let rejectOld;
+  const oldReply = new Promise((_, reject) => { rejectOld = reject; });
+  const newReply = deferred();
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? oldReply : reveSchedules()});
+  const oldWrite = x.card._toggleWeekday('1:6');
+  const entities = {...x.card._ids};
+  x.hass.callWS = async (msg) => {
+    if (msg.type === 'eveus/card_entities') return {entities, device_id: 'dev2'};
+    if (msg.type === 'eveus/reve_schedule_weekdays') return newReply.promise;
+    return {...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [1, 3]}]};
+  };
+  x.card.setConfig({sections: ['schedules'], device_id: 'dev2'});
+  await new Promise((r) => setImmediate(r));
+  const newWrite = x.card._toggleWeekday('1:5');
+  rejectOld(new Error('old charger refused'));
+  await oldWrite;
+  assert.deepEqual(JSON.parse(JSON.stringify(x.card._dayPending[1])), [1, 3, 5]);
+  assert.equal(x.card._commandError, false);
+  newReply.resolve({weekdays: [1, 3, 5]});
+  await newWrite;
+  assert.deepEqual(JSON.parse(JSON.stringify(x.card._dayPending)), {});
+});
 test('REVE: a refused day on one schedule goes back although another schedule was tapped after it', async () => {
   const x = await setupReve({answer: (msg) => {
     if (msg.type === 'eveus/reve_schedule_weekdays') { if (msg.schedule === 1) return Promise.reject(new Error('failed')); return {weekdays: msg.weekdays}; }
