@@ -10,6 +10,7 @@ UTC time is left alone (Sync Time stays a user action).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -86,14 +87,28 @@ def update_time_zone_follow(
     if hours is None:
         return
     follower.sending = True
+
+    def still_due() -> bool:
+        # A user can turn following off, or HA's offset can change, while
+        # this write waits behind another command or a retry backoff.
+        return (
+            bool(entry.data.get(CONF_FOLLOW_HA_TIME_ZONE))
+            and updater.available
+            and updater.last_update_success
+            and get_local_utc_offset_seconds() == hours * 3600
+        )
+
     entry.async_create_background_task(
-        hass, _write(updater, follower, hours), "eveus_follow_time_zone"
+        hass, _write(updater, follower, hours, preflight=still_due), "eveus_follow_time_zone"
     )
 
 
-async def _write(updater, follower: TimeZoneFollower, hours: int) -> None:
+async def _write(
+    updater, follower: TimeZoneFollower, hours: int,
+    *, preflight: Callable[[], bool] | None = None,
+) -> None:
     try:
-        if await updater.send_command("timeZone", hours):
+        if await updater.send_command("timeZone", hours, preflight=preflight):
             _LOGGER.debug("Charger Time Zone set to %+d to follow Home Assistant", hours)
         elif _LOG.should_log(_LOG_INTERVAL, "refused"):  # pragma: no mutate - key only has to differ from the other one
             _LOGGER.debug("Charger did not accept Time Zone %+d; will retry", hours)

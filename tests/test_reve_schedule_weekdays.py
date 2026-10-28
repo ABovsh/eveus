@@ -229,11 +229,69 @@ def test_the_card_sets_a_schedules_days() -> None:
     connection.send_result.assert_called_once_with(9, {"weekdays": [1, 5]})
 
 
+@pytest.mark.parametrize("device_number", [1, 2])
+@pytest.mark.parametrize("allowed", [False, True])
+def test_weekdays_respect_control_permission_for_the_selected_schedule(
+    device_number: int, allowed: bool,
+) -> None:
+    """A read-only or other-device account cannot bypass entity service permissions."""
+    from homeassistant.auth.permissions.const import POLICY_CONTROL
+
+    updater = _fake_updater()
+    updater.device_number = device_number
+    connection = MagicMock()
+    connection.user.permissions.access_all_entities.return_value = False
+    connection.user.permissions.check_entity.side_effect = (
+        lambda entity_id, policy: allowed
+        and entity_id == "switch.renamed_second_schedule" and policy == POLICY_CONTROL
+    )
+    registry = MagicMock()
+    registry.async_get_entity_id.return_value = "switch.renamed_second_schedule"
+    with _devices({}), patch.object(eveus.er, "async_get", return_value=registry):
+        asyncio.run(eveus._async_reve_schedule_weekdays(
+            _ws_hass({"e1": updater}), connection,
+            {"id": 9, "type": "eveus/reve_schedule_weekdays", "schedule": 2, "weekdays": [1]},
+        ))
+    if not allowed:
+        assert updater.sent == []
+    suffix = "" if device_number == 1 else str(device_number)
+    registry.async_get_entity_id.assert_called_once_with(
+        "switch", DOMAIN, f"eveus{suffix}_schedule_2_enabled"
+    )
+    connection.user.permissions.check_entity.assert_called_once_with(
+        "switch.renamed_second_schedule", POLICY_CONTROL
+    )
+    if allowed:
+        assert updater.sent == [("sh2Weekdays", [1])]
+        connection.send_result.assert_called_once_with(9, {"weekdays": [1]})
+    else:
+        assert updater.sent == []
+        connection.send_error.assert_called_once_with(9, "unauthorized", "Unauthorized")
+        connection.send_result.assert_not_called()
+
+
 def test_days_are_refused_on_classic_firmware_without_a_write() -> None:
     updater = _fake_updater(family="classic")
     connection = _weekdays(updater)
     assert updater.sent == []
     assert connection.send_error.call_args[0][1] == "not_supported"
+
+
+def test_weekdays_cannot_be_written_when_the_authorization_entity_is_missing() -> None:
+    updater = _fake_updater()
+    updater.device_number = 1
+    connection = MagicMock()
+    connection.user.permissions.access_all_entities.return_value = False
+    registry = MagicMock()
+    registry.async_get_entity_id.return_value = None
+    with _devices({}), patch.object(eveus.er, "async_get", return_value=registry):
+        asyncio.run(eveus._async_reve_schedule_weekdays(
+            _ws_hass({"e1": updater}), connection,
+            {"id": 19, "type": "eveus/reve_schedule_weekdays", "schedule": 1, "weekdays": [0]},
+        ))
+    assert updater.sent == []
+    connection.send_error.assert_called_once_with(19, "unauthorized", "Unauthorized")
+    connection.user.permissions.check_entity.assert_not_called()
 
 
 def test_no_day_at_all_is_refused_without_a_write() -> None:

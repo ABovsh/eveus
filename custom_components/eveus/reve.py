@@ -62,12 +62,14 @@ from .const import (
     CONNECTED_STATES,
     DEVICE_STATE_CHARGING,
     DEVICE_STATE_COMPLETE,
+    DEVICE_STATE_STANDBY,
     MAX_VALID_SYSTEM_TIME,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
 )
 from .reve_fields import graphql_paths, station_to_main
 from .snapshot import FIELD_KEYS
+from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -953,6 +955,7 @@ class ReveApi:
         self._residue_tried_at: float | None = None
         self._residue_answered = False
         self._session: tuple[dict[str, Any], float] | None = None
+        self._session_unplugged = False
         # A limit's value in /main read units, kept while the limit is off
         # (REVE then reports null) so its number shows what switching it back
         # on would apply.
@@ -1049,6 +1052,7 @@ class ReveApi:
             {key: main[key] for key in SESSION_FIELDS if key in main},
             time.monotonic(),
         )
+        self._session_unplugged = main.get("state") == DEVICE_STATE_STANDBY
         self._note_charging_command(station.get("chargingCommand"))
         rates = station.get("ratesV2")
         self._note_active_rate(_price(rates.get("activeRate")) if isinstance(rates, dict) else None)
@@ -1143,6 +1147,13 @@ class ReveApi:
         if fallback:
             self._main_fallbacks += 1
         payload = {key: value for key, value in main.items() if key not in SESSION_FIELDS}
+        state = get_safe_value(main, "state", int)
+        if state == DEVICE_STATE_STANDBY:
+            self._session_unplugged = True
+        elif state in CONNECTED_STATES and self._session_unplugged:
+            # The cached tail belongs to the unplugged session. Reusing it
+            # after a replug can falsely satisfy the new session's SOC limit.
+            self._session = None
         held = self._session
         if held is not None and time.monotonic() - held[1] <= SESSION_HOLD_SECONDS:
             payload.update(held[0])

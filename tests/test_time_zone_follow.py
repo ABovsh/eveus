@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from unittest.mock import AsyncMock
 from datetime import timedelta, timezone
 from types import SimpleNamespace
 
@@ -33,6 +34,49 @@ from custom_components.eveus.time_zone_follow import (
 )
 
 HOUR = 3600
+
+
+@pytest.mark.parametrize("change", ["off", "ha_offset", "offline", "failed_poll", "unchanged"])
+def test_queued_follow_write_rechecks_current_intent_at_the_wire(change) -> None:
+    """A queued automatic write must not undo a later user choice or use stale time."""
+    from custom_components.eveus.common_command import CommandManager
+
+    async def scenario():
+        entry, updater, follower = _Entry(), _Updater(3), TimeZoneFollower()
+        manager = CommandManager(updater)
+        updater.send_command = manager.send_command
+        manager._post_command = AsyncMock(return_value=True)
+        await manager._lock.acquire()
+        queued = asyncio.Event()
+        acquire = manager._lock.acquire
+
+        async def queued_acquire(priority=1):
+            queued.set()
+            await acquire(priority)
+
+        manager._lock.acquire = queued_acquire
+        for _ in range(TIME_ZONE_FOLLOW_POLLS):
+            update_time_zone_follow(None, entry, updater, follower)
+        task = asyncio.create_task(entry.tasks.pop())
+        await queued.wait()
+        if change == "off":
+            entry.data.pop(CONF_FOLLOW_HA_TIME_ZONE)
+        elif change == "ha_offset":
+            _set_ha_offset(4 * HOUR)
+        elif change == "offline":
+            updater.available = False
+        elif change == "failed_poll":
+            updater.last_update_success = False
+        manager._lock.release()
+        await task
+        if change == "unchanged":
+            manager._post_command.assert_awaited_once_with("timeZone", 2, None)
+        else:
+            manager._post_command.assert_not_awaited()
+        assert follower.sending is False
+        assert manager.consecutive_failures == 0
+
+    asyncio.run(scenario())
 
 
 def _set_ha_offset(seconds: int) -> None:

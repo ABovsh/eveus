@@ -14,6 +14,7 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
@@ -37,6 +38,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
 )
 
 from custom_components.eveus import common_base, common_network
+from custom_components import eveus
 from custom_components.eveus.const import (
     AVAILABILITY_GRACE_PERIOD,
     CONF_BATTERY_CAPACITY,
@@ -79,6 +81,34 @@ REPRESENTATIVE_STATES = {
 }
 CURRENT = "number.eveus_ev_charger_charging_current"
 VOLTAGE = "sensor.eveus_ev_charger_voltage"
+
+
+@pytest.mark.parametrize("readonly", [True, False])
+async def test_schedule_weekdays_use_real_home_assistant_user_permissions(
+    hass, hass_read_only_user, hass_admin_user, monkeypatch, readonly,
+) -> None:
+    """The custom write must enforce the same policy as an entity service."""
+    entry = _entry(hass, HOST_A)
+    registry = er.async_get(hass)
+    entity = registry.async_get_or_create(
+        "switch", DOMAIN, "eveus_schedule_2_enabled", config_entry=entry,
+    )
+    registry.async_update_entity(entity.entity_id, new_entity_id="switch.custom_schedule")
+    updater = SimpleNamespace(
+        device_number=1, firmware_family="reve", send_command=AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(eveus, "_updater_for", lambda *_: updater)
+    connection = MagicMock()
+    connection.user = hass_read_only_user if readonly else hass_admin_user
+    await eveus._async_reve_schedule_weekdays(hass, connection, {
+        "id": 17, "type": "eveus/reve_schedule_weekdays", "schedule": 2, "weekdays": [1, 3],
+    })
+    if readonly:
+        updater.send_command.assert_not_awaited()
+        connection.send_error.assert_called_once_with(17, "unauthorized", "Unauthorized")
+    else:
+        updater.send_command.assert_awaited_once_with("sh2Weekdays", [1, 3])
+        connection.send_result.assert_called_once_with(17, {"weekdays": [1, 3]})
 
 
 def _calls(aioclient_mock: AiohttpClientMocker, host: str, path: str) -> list:

@@ -123,12 +123,14 @@ class EveusUnreachable(UpdateFailed):
     """
 
 
-def _final(charging: Any, stopped: Any, key: str, kind: type) -> Any:
+def _final(charging: Any, stopped: Any, key: str, kind: type, maximum: float) -> Any:
     """A session figure as the charge ended: the stop poll's when it grew past
     the last charging poll (the charge ran on between them), else the last
     charging poll's (a reset to 0 on unplug or completion never wins)."""
-    last = get_safe_value(charging, key, kind)
-    end = get_safe_value(stopped, key, kind)
+    # Reject each impossible endpoint before choosing the larger one; an
+    # outlier must not mask the other poll's valid, persistent summary.
+    last = _bounded(get_safe_value(charging, key, kind), maximum)
+    end = _bounded(get_safe_value(stopped, key, kind), maximum)
     if last is None or (end is not None and end > last):
         return end
     return last
@@ -1094,15 +1096,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                             else None
                         ),
                     ),
-                    "session_energy_kwh": _bounded(
-                        _final(snapshot, new_data, "sessionEnergy", float), MAX_ENERGY_KWH
+                    "session_energy_kwh": _final(
+                        snapshot, new_data, "sessionEnergy", float, MAX_ENERGY_KWH
                     ),
-                    "session_cost": _bounded(
-                        _final(snapshot, new_data, "sessionMoney", float), MAX_COST_VALUE
+                    "session_cost": _final(
+                        snapshot, new_data, "sessionMoney", float, MAX_COST_VALUE
                     ),
-                    "session_duration_s": _bounded(
-                        _final(snapshot, new_data, "sessionTime", int),
-                        MAX_SESSION_TIME_SECONDS,
+                    "session_duration_s": _final(
+                        snapshot, new_data, "sessionTime", int, MAX_SESSION_TIME_SECONDS,
                     ),
                 },
             )

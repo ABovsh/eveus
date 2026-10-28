@@ -387,6 +387,55 @@ def test_a_fallback_poll_holds_the_last_graphql_session(monkeypatch: pytest.Monk
     assert "sessionTime" not in data
 
 
+@pytest.mark.parametrize("unplug_source", ["main", "main_string", "graphql"])
+def test_a_replug_during_graphql_outage_cannot_reuse_the_previous_sessions_soc(
+    monkeypatch: pytest.MonkeyPatch, unplug_source: str,
+) -> None:
+    """An observed unplug ends a held session, even within its five-minute TTL."""
+    from unittest.mock import AsyncMock
+    from test_soc_limit import _calc, _make
+
+    _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    charger.station.update(stationState=4, stationSubState=0)
+    charger.station["session"].update(sessionTime=3600, sessionEnergy=30, sessionCost=120)
+    updater = _known_reve(monkeypatch, charger)
+    assert updater.snapshot.session_energy_kwh == 30
+
+    charger.main.update(state=2, subState=0)
+    charger.station.update(stationState=2, stationSubState=0)
+    if unplug_source.startswith("main"):
+        charger.measurements_status = 500
+    if unplug_source == "main_string":
+        charger.main["state"] = "2"  # numeric strings are accepted /main telemetry
+    asyncio.run(updater._async_update_data())
+    assert updater.snapshot.state == 2
+
+    charger.measurements_status = 500
+    charger.main.update(state=4, subState=0)
+    if unplug_source == "main_string":
+        charger.main["state"] = "4"
+    asyncio.run(updater._async_update_data())
+    assert updater.snapshot.state == 4
+    # 30 kWh from the old session would make this fresh 20% battery look 80% full.
+    updater.send_command = AsyncMock(return_value=True)
+    controller, _, _ = _make(_calc(initial=20, target=80, cap=50, corr=0), updater)
+    controller.set_enabled(True)
+    controller.process()
+    updater.send_command.assert_not_awaited()
+    assert updater.snapshot.session_energy_kwh is None
+
+    charger.measurements_status = 200
+    charger.station.update(stationState=4, stationSubState=0)
+    charger.station["session"].update(sessionTime=60, sessionEnergy=0.1, sessionCost=0.4)
+    updater._reve._measurements_retry_at = 0
+    asyncio.run(updater._async_update_data())
+    assert updater.snapshot.session_energy_kwh == 0.1
+    charger.measurements_status = 500
+    asyncio.run(updater._async_update_data())
+    assert updater.snapshot.session_energy_kwh == 0.1
+
+
 # ---------------------------------------------------------------------------
 # Stop read with the measurements
 # ---------------------------------------------------------------------------

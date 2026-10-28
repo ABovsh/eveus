@@ -89,6 +89,31 @@ def test_finished_event_keeps_valid_snapshot_values() -> None:
     assert events[0]["session_cost"] == pytest.approx(49.78)
     assert events[0]["session_duration_s"] == 22320
 
+
+@pytest.mark.parametrize("corrupt_poll", ["charging", "stopped"])
+@pytest.mark.parametrize(
+    ("key", "event_key", "valid", "invalid"),
+    [
+        ("sessionEnergy", "session_energy_kwh", 18.4, 1e100),
+        ("sessionMoney", "session_cost", 49.78, 1e100),
+        ("sessionTime", "session_duration_s", 22320, 10**20),
+        ("sessionTime", "session_duration_s", 22320, 22320.5),
+    ],
+)
+def test_finished_event_keeps_the_valid_endpoint_when_the_other_is_corrupt(
+    corrupt_poll: str, key: str, event_key: str, valid: float, invalid: float,
+) -> None:
+    """One impossible counter must not erase an otherwise usable session summary."""
+    hass = _Hass()
+    updater = _updater(hass)
+    updater._record_success(0.05, {
+        "state": 4, key: invalid if corrupt_poll == "charging" else valid,
+    })
+    updater._record_success(0.05, {
+        "state": 5, key: invalid if corrupt_poll == "stopped" else valid,
+    })
+    assert _finished_events(hass)[0][event_key] == valid
+
 def _updater_07_19(hass: _Hass) -> EveusUpdater:
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass, device_number=2)
     updater._schedule_post_command_refresh = Mock()

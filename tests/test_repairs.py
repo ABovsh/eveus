@@ -84,8 +84,12 @@ def test_invalid_config_repair_flow_updates_entry(
     assert deleted == [("eveus", "invalid_config_entry-id")]
 
 
+@pytest.mark.parametrize("retained", [
+    {"device_number": 4}, {"follow_ha_time_zone": True}, {"firmware_family": "reve"},
+])
 def test_invalid_config_repair_flow_preserves_device_number(
     monkeypatch: pytest.MonkeyPatch,
+    retained: dict,
 ) -> None:
     """Re-running the repair flow must not strip integration-owned keys."""
 
@@ -98,7 +102,7 @@ def test_invalid_config_repair_flow_preserves_device_number(
 
     entry = SimpleNamespace(
         entry_id="entry-id",
-        data=_data(device_number=4),
+        data=_data(**retained),
     )
     config_entries = _ConfigEntries(entry)
     hass = SimpleNamespace(config_entries=config_entries)
@@ -112,7 +116,8 @@ def test_invalid_config_repair_flow_preserves_device_number(
     flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
     asyncio.run(flow.async_step_confirm(_data(**{CONF_PASSWORD: "new"})))
 
-    assert config_entries.updated[0]["data"]["device_number"] == 4
+    for key, value in retained.items():
+        assert config_entries.updated[0]["data"].get(key) == value
 
 
 def test_invalid_config_repair_flow_preserves_stored_soc_mode(
