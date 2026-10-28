@@ -398,7 +398,7 @@ class EveusFollowTimeZoneSwitch(BaseEveusEntity, SwitchEntity):
         self._store(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        self._store(False)
+        self._store(False)  # pragma: no mutate - _store only tests truthiness; None is falsy too
 
 
 async def async_setup_entry(

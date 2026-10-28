@@ -95,10 +95,10 @@ async def _write(updater, follower: TimeZoneFollower, hours: int) -> None:
     try:
         if await updater.send_command("timeZone", hours):
             _LOGGER.debug("Charger Time Zone set to %+d to follow Home Assistant", hours)
-        elif _LOG.should_log(_LOG_INTERVAL, "refused"):
+        elif _LOG.should_log(_LOG_INTERVAL, "refused"):  # pragma: no mutate - key only has to differ from the other one
             _LOGGER.debug("Charger did not accept Time Zone %+d; will retry", hours)
     except Exception as err:  # noqa: BLE001 - a failed write must not kill the listener
-        if _LOG.should_log(_LOG_INTERVAL, "failed"):
+        if _LOG.should_log(_LOG_INTERVAL, "failed"):  # pragma: no mutate - key only has to differ from the other one
             _LOGGER.debug("Time Zone follow failed: %s", type(err).__name__)
     finally:
         follower.sending = False

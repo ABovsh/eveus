@@ -144,8 +144,10 @@ class _Entry:
         self.data: dict = {CONF_FOLLOW_HA_TIME_ZONE: True} if follow else {}
         self.entry_id = "entry-1"
         self.tasks: list = []
+        self.task_args: list = []
 
     def async_create_background_task(self, hass, target, name, eager_start=True):
+        self.task_args.append((hass, name))
         self.tasks.append(target)
         return None
 
@@ -272,6 +274,92 @@ def test_a_write_that_raises_frees_the_follower() -> None:
     assert follower.sending is False
 
 
+def test_the_follower_starts_idle_with_plain_counters() -> None:
+    follower = TimeZoneFollower()
+
+    assert follower.sending is False
+    assert follower._polls_to_wait == 0
+    follower._polls_to_wait = 5
+    follower.reset()
+    assert follower._polls_to_wait == 0
+
+
+def test_an_agreeing_poll_clears_the_pause_to_zero() -> None:
+    follower = TimeZoneFollower()
+    for _ in range(TIME_ZONE_FOLLOW_POLLS):
+        follower.evaluate(_poll(3), 2 * HOUR)
+    assert follower._polls_to_wait == TIME_ZONE_FOLLOW_RETRY_POLLS
+
+    follower.evaluate(_poll(2), 2 * HOUR)
+
+    assert follower._polls_to_wait == 0
+
+
+def test_the_write_task_is_named_and_bound_to_hass() -> None:
+    hass = object()
+    updater, entry = _Updater(3), _Entry()
+    follower = TimeZoneFollower()
+
+    for _ in range(TIME_ZONE_FOLLOW_POLLS):
+        update_time_zone_follow(hass, entry, updater, follower)
+
+    assert entry.task_args == [(hass, "eveus_follow_time_zone")]
+    for coro in entry.tasks:
+        coro.close()
+
+
+def test_either_an_unavailable_updater_or_a_failed_poll_blocks_the_write() -> None:
+    for available, success in ((True, False), (False, True)):
+        updater, entry = _Updater(3), _Entry()
+        updater.available, updater.last_update_success = available, success
+
+        _drive(updater, TimeZoneFollower(), entry, TIME_ZONE_FOLLOW_POLLS)
+
+        assert updater.sent == []
+
+
+def _debug_messages(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name.endswith("time_zone_follow")]
+
+
+def test_a_refused_write_is_logged_once_per_interval(caplog, monkeypatch) -> None:
+    from custom_components.eveus import time_zone_follow as module
+
+    monkeypatch.setattr(module, "_LOG", module.RateLog())
+
+    async def refused() -> bool:
+        return False
+
+    caplog.set_level("DEBUG")
+    for _ in range(3):
+        asyncio.run(module._write(_Updater(3, send=refused), TimeZoneFollower(), 2))
+
+    messages = _debug_messages(caplog)
+    assert sum("did not accept" in m for m in messages) == 1
+    assert not any("follow failed" in m for m in messages)
+
+
+def test_refused_and_failed_writes_are_rate_limited_separately(caplog, monkeypatch) -> None:
+    from custom_components.eveus import time_zone_follow as module
+
+    monkeypatch.setattr(module, "_LOG", module.RateLog())
+
+    async def refused() -> bool:
+        return False
+
+    async def broken() -> bool:
+        raise RuntimeError("x")
+
+    caplog.set_level("DEBUG")
+    asyncio.run(module._write(_Updater(3, send=refused), TimeZoneFollower(), 2))
+    asyncio.run(module._write(_Updater(3, send=broken), TimeZoneFollower(), 2))
+    asyncio.run(module._write(_Updater(3, send=broken), TimeZoneFollower(), 2))
+
+    messages = _debug_messages(caplog)
+    assert sum("did not accept" in m for m in messages) == 1
+    assert sum("follow failed: RuntimeError" in m for m in messages) == 1
+
+
 # --- the switch ----------------------------------------------------------------
 
 
@@ -316,6 +404,29 @@ def test_the_switch_is_named_and_identified_for_the_device_page() -> None:
 
     assert switch.unique_id == "eveus_follow_ha_time_zone"
     assert switch.entity_category.value == "config"
+
+
+def test_the_switch_belongs_to_its_own_device_number() -> None:
+    second = EveusFollowTimeZoneSwitch(_Updater(2), _Entry(), 2)
+
+    assert second._device_number == 2
+    assert EveusFollowTimeZoneSwitch(_Updater(2), _Entry())._device_number == 1
+
+
+def test_turning_off_drops_the_key_instead_of_storing_false() -> None:
+    switch, entry, hass = _switch(follow=True)
+
+    asyncio.run(switch.async_turn_off())
+
+    assert CONF_FOLLOW_HA_TIME_ZONE not in hass.config_entries.updates[-1]
+
+
+def test_turning_off_a_switch_that_is_already_off_is_harmless() -> None:
+    switch, entry, hass = _switch(follow=False)
+
+    asyncio.run(switch.async_turn_off())
+
+    assert CONF_FOLLOW_HA_TIME_ZONE not in hass.config_entries.updates[-1]
 
 
 def test_the_switch_stays_usable_while_the_charger_is_off() -> None:
@@ -388,6 +499,26 @@ def test_a_manual_time_zone_is_refused_while_following_home_assistant() -> None:
         asyncio.run(select.async_select_option("+5"))
 
     assert updater.sent == []
+
+
+def test_the_refusal_tells_the_user_how_to_proceed() -> None:
+    select, _ = _select(follow=True)
+
+    with pytest.raises(HomeAssistantError, match=r"^Follow HA Time Zone is on: turn it off to set the Time Zone by hand$"):
+        asyncio.run(select.async_select_option("+5"))
+
+
+def test_the_select_setup_hands_the_entry_to_the_time_zone_select() -> None:
+    updater = _Updater(3)
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(updater=updater, device_number=1), data={}
+    )
+    added: list = []
+
+    asyncio.run(select_module.async_setup_entry(object(), entry, added.extend))
+
+    zone = next(e for e in added if e.ENTITY_NAME == "Time Zone")
+    assert zone._entry is entry
 
 
 def test_a_manual_time_zone_works_when_not_following() -> None:
@@ -480,12 +611,18 @@ def test_the_notice_says_following_is_not_working_while_the_switch_is_on(monkeyp
     recorder = _IssueRecorder(monkeypatch)
     entry, updater, tracker = _Entry(follow=True), _issue_updater(), ClockDriftTracker()
 
-    for _ in range(TIME_ZONE_FOLLOW_POLLS + CLOCK_DRIFT_TRIGGER_POLLS):
+    for _ in range(TIME_ZONE_FOLLOW_POLLS + CLOCK_DRIFT_TRIGGER_POLLS - 1):
         update_clock_drift_issue(None, entry, updater, tracker)
+    # Held back while the follower is still expected to fix it.
+    assert recorder.created == []
+    update_clock_drift_issue(None, entry, updater, tracker)
 
     assert [c["translation_key"] for c in recorder.created] == [
         "clock_drift_timezone_following"
     ]
+    assert recorder.created[0]["translation_placeholders"] == {
+        "hours": str(tracker.hours)
+    }
 
 
 def test_turning_the_switch_on_rewrites_a_notice_that_is_already_showing(monkeypatch) -> None:
