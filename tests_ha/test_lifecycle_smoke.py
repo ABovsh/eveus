@@ -43,6 +43,7 @@ from custom_components.eveus.const import (
     AVAILABILITY_GRACE_PERIOD,
     CONF_BATTERY_CAPACITY,
     CONF_INITIAL_SOC,
+    CONF_EXTERNAL_SOC_ENTITY,
     CONF_MODEL,
     CONF_PHASES,
     CONF_SCHEME,
@@ -376,6 +377,77 @@ async def test_disabled_soc_correction_entity_does_not_blank_soc_percent(
     assert state is not None
     assert state.state not in (None, "unknown", "unavailable")
     float(state.state)
+
+
+@pytest.mark.parametrize(("initial_state", "seeded", "car_soc"), [
+    (2, True, 25), (2, True, 85), (4, False, 25), (4, False, 85),
+])
+async def test_car_soc_is_applied_before_limit_enforcement(
+    hass, aioclient_mock, monkeypatch, initial_state, seeded, car_soc,
+) -> None:
+    from custom_components.eveus.number import EveusInitialSocNumber
+    from custom_components.eveus.switch import EveusSocLimitSwitch
+
+    entry = _entry(hass, HOST_A)
+    hass.config_entries.async_update_entry(entry, data={
+        **entry.data, CONF_SOC_MODE: SOC_MODE_ADVANCED,
+        CONF_INITIAL_SOC: 85, CONF_TARGET_SOC: 80, CONF_BATTERY_CAPACITY: 60,
+        CONF_SOC_CORRECTION: 0, CONF_EXTERNAL_SOC_ENTITY: "sensor.car_soc",
+    })
+    hass.states.async_set("sensor.car_soc", str(car_soc))
+    monkeypatch.setattr(EveusInitialSocNumber, "async_get_last_extra_data", AsyncMock(
+        return_value=SimpleNamespace(as_dict=lambda: {"seeded": seeded}),
+    ))
+    monkeypatch.setattr(EveusSocLimitSwitch, "async_get_last_state", AsyncMock(
+        return_value=SimpleNamespace(state="on"),
+    ))
+    payload = {**REAL_MAIN, "state": initial_state, "evseEnabled": 0, "suspendLimits": 0,
+               "sessionEnergy": 0, "sessionTime": 0}
+    _mock_charger(aioclient_mock, HOST_A, json=payload)
+    await _setup(hass, entry)
+    if car_soc < 80:
+        assert _calls(aioclient_mock, HOST_A, "/pageEvent") == []
+    await hass.services.async_call("switch", "turn_on", {
+        "entity_id": "switch.eveus_ev_charger_limit_soc_enabled",
+    }, blocking=True)
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, "state": 4, "sessionTime": 30})
+    await entry.runtime_data.updater.async_refresh()
+    await hass.async_block_till_done()
+    posts = _calls(aioclient_mock, HOST_A, "/pageEvent")
+    if car_soc < 80:
+        assert posts == []
+    else:
+        assert len(posts) == 1
+        assert parse_qs(posts[0][2]) == {"pageevent": ["evseEnabled"], "evseEnabled": ["1"]}
+    assert float(hass.states.get("number.eveus_ev_charger_initial_soc").state) == car_soc
+
+
+async def test_car_sensor_recovery_does_not_replace_manual_soc_or_trigger_stop(
+    hass, aioclient_mock,
+) -> None:
+    entry = _entry(hass, HOST_A)
+    hass.config_entries.async_update_entry(entry, data={
+        **entry.data, CONF_SOC_MODE: SOC_MODE_ADVANCED,
+        CONF_INITIAL_SOC: 20, CONF_TARGET_SOC: 80, CONF_BATTERY_CAPACITY: 60,
+        CONF_SOC_CORRECTION: 0, CONF_EXTERNAL_SOC_ENTITY: "sensor.car_soc",
+    })
+    hass.states.async_set("sensor.car_soc", "unavailable")
+    _mock_charger(aioclient_mock, HOST_A, json={
+        **REAL_MAIN, "state": 4, "evseEnabled": 0, "suspendLimits": 0,
+        "sessionEnergy": 0, "sessionTime": 30,
+    })
+    await _setup(hass, entry)
+    await hass.services.async_call("switch", "turn_on", {
+        "entity_id": "switch.eveus_ev_charger_limit_soc_enabled",
+    }, blocking=True)
+    await _set_current(hass, "number.eveus_ev_charger_initial_soc", 42)
+    hass.states.async_set("sensor.car_soc", "85")
+    aioclient_mock.clear_requests()
+    await entry.runtime_data.updater.async_refresh()
+    await hass.async_block_till_done()
+    assert _calls(aioclient_mock, HOST_A, "/pageEvent") == []
+    assert float(hass.states.get("number.eveus_ev_charger_initial_soc").state) == 42
 
 
 async def test_meter_tail_reaches_ha_before_reset_and_cost_window_changes(

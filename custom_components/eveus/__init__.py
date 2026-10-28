@@ -929,11 +929,14 @@ async def _finish_setup(
     # (its task is created via hass.async_create_task, which HA does not bind to
     # this entry's lifecycle).
     entry.async_on_unload(soc_limit.async_shutdown)
-    follow_polls(soc_limit.process)
 
     # DataUpdateCoordinator constructed with config_entry already registers
     # async_shutdown on the entry unload lifecycle — no manual registration.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Initial SOC restores and seeds from the car in its entity listener.
+    # Register enforcement afterwards: HA can eagerly start a Stop task while
+    # notifying listeners, before a later entity listener updates the SOC.
+    follow_polls(soc_limit.process)
     # No reloading update listener is registered: the reconfigure/reauth flows
     # reload via async_update_reload_and_abort, the repair flow reloads
     # explicitly, and the options flow reloads itself. Registering a listener

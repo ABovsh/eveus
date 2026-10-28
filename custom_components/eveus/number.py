@@ -685,6 +685,10 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         stored = await self.async_get_last_extra_data()
         if stored is not None:
             self._session_seeded = bool(stored.as_dict().get("seeded"))
+        # Setup polls before entities restore. Reconcile that snapshot too:
+        # an observed unplug ends the restored cycle, and an active unseeded
+        # cycle must use the car's SOC before limit enforcement starts.
+        self._maybe_seed_from_external_soc()
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -695,6 +699,13 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         """Entity id of the configured car SOC sensor, if any."""
         entry = getattr(self._updater, "config_entry", None)
         return (getattr(entry, "data", None) or {}).get(CONF_EXTERNAL_SOC_ENTITY) or None
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Keep an explicit correction even if the car has not answered yet."""
+        value = _validate_finite_number(value, self.ENTITY_NAME)
+        # Set before _apply_value publishes the value and its restore data.
+        self._session_seeded = True
+        self._apply_value(value)
 
     def _maybe_seed_from_external_soc(self) -> None:
         """Copy the car's SOC into this entity while a session is running."""

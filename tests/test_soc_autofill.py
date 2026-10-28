@@ -115,6 +115,23 @@ def test_manual_override_survives_the_rest_of_the_session() -> None:
     assert entity.native_value == 42
 
 
+@pytest.mark.parametrize("reload", [False, True])
+def test_manual_soc_wins_when_the_car_sensor_recovers_later(monkeypatch, reload) -> None:
+    """A sleeping car must not replace a correction with its later reading."""
+    entity, updater, _ = _build(car_soc="unavailable")
+    _poll(entity, updater, 4)
+    asyncio.run(entity.async_set_native_value(42))
+    if reload:
+        stored = entity.extra_restore_state_data.as_dict()
+        _reload(entity, monkeypatch, restored_value=42, seeded=stored["seeded"])
+    entity.hass = HelperHass({CAR_SOC: 85})
+    _poll(entity, updater, 4)
+    assert entity.native_value == 42
+    _poll(entity, updater, 2)
+    _poll(entity, updater, 4)
+    assert entity.native_value == 85
+
+
 def test_next_plug_in_cycle_seeds_again() -> None:
     """Unplugging ends the session, so the next one reads the car again."""
     entity, updater, _ = _build(car_soc=55)
@@ -782,6 +799,38 @@ def test_unplugging_after_a_reload_re_arms_seeding(monkeypatch) -> None:
     _poll(entity, updater, 4)
 
     assert entity.native_value == 55
+
+
+def test_unplug_seen_during_setup_cannot_restore_the_previous_cycles_soc_latch(monkeypatch) -> None:
+    """An unplug before entity addition is just as real as a later poll."""
+    from unittest.mock import AsyncMock
+    from test_soc_limit import _make
+
+    entity, updater, calc = _build(car_soc=25, seed=85)
+    updater.data = {"state": 2, "sessionEnergy": 0.0}
+    # The coordinator's first poll happens before platforms restore their entities.
+    _reload(entity, monkeypatch, restored_value=85, seeded=True)
+    _poll(entity, updater, 4, session_energy=0.0)
+    updater.data.update(evseEnabled=0, suspendLimits=0)
+    updater.send_command = AsyncMock(return_value=True)
+    calc.set_value("target_soc", 80)
+    controller, _, _ = _make(calc, updater)
+    controller.set_enabled(True)
+    controller.process()
+    updater.send_command.assert_not_awaited()
+    assert entity.native_value == 25
+
+
+@pytest.mark.parametrize(("state", "success"), [(3, True), (4, True), (5, True), (6, True), (7, True), (255, True), (2, False)])
+def test_restored_soc_latch_survives_when_setup_does_not_prove_an_unplug(
+    monkeypatch, state, success,
+) -> None:
+    entity, updater, _ = _build(car_soc=25, seed=42)
+    updater.data = {"state": state, "sessionEnergy": 10.0}
+    updater.last_update_success = success
+    _reload(entity, monkeypatch, restored_value=42, seeded=True)
+    _poll(entity, updater, 4, session_energy=10.0)
+    assert entity.native_value == 42
 
 
 def test_the_seeded_flag_is_written_into_the_stored_state() -> None:

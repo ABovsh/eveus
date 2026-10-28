@@ -573,6 +573,64 @@ def test_a_manual_time_zone_works_when_not_following() -> None:
     assert updater.sent == [("timeZone", 5)]
 
 
+@pytest.mark.parametrize("enable_follow", [True, False])
+def test_a_queued_manual_zone_respects_following_enabled_before_transmission(enable_follow) -> None:
+    from custom_components.eveus.common_command import CommandManager
+
+    async def scenario():
+        select, updater = _select(follow=False)
+        manager = CommandManager(updater)
+        updater.send_command = manager.send_command
+        manager._post_command = AsyncMock(return_value=True)
+        await manager._lock.acquire()
+        queued = asyncio.Event()
+        acquire = manager._lock.acquire
+
+        async def queued_acquire(priority=1):
+            queued.set()
+            await acquire(priority)
+
+        manager._lock.acquire = queued_acquire
+        task = asyncio.create_task(select.async_select_option("+5"))
+        await queued.wait()
+        if enable_follow:
+            select._entry.data[CONF_FOLLOW_HA_TIME_ZONE] = True
+        manager._lock.release()
+        result, = await asyncio.gather(task, return_exceptions=True)
+        if enable_follow:
+            manager._post_command.assert_not_awaited()
+            assert isinstance(result, HomeAssistantError)
+            assert select.current_option == "+3"
+        else:
+            manager._post_command.assert_awaited_once_with("timeZone", 5, None)
+            assert result is None
+        assert manager.consecutive_failures == 0
+
+    asyncio.run(scenario())
+
+
+def test_manual_zone_retry_is_cancelled_when_following_starts() -> None:
+    from custom_components.eveus.common_command import CommandManager
+
+    async def scenario():
+        select, updater = _select(follow=False)
+        manager = CommandManager(updater)
+        updater.send_command = manager.send_command
+        manager._post_command = AsyncMock(side_effect=[TimeoutError(), True])
+
+        async def enable_follow(_):
+            select._entry.data[CONF_FOLLOW_HA_TIME_ZONE] = True
+
+        manager._sleep_backoff = enable_follow
+        with pytest.raises(HomeAssistantError):
+            await select.async_select_option("+5")
+        manager._post_command.assert_awaited_once_with("timeZone", 5, None)
+        assert select.current_option == "+3"
+        assert manager.consecutive_failures == 0
+
+    asyncio.run(scenario())
+
+
 def test_the_select_still_shows_the_chargers_offset_while_following() -> None:
     select, _ = _select(follow=True)
 

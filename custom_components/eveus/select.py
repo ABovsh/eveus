@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, State, callback
@@ -88,7 +89,9 @@ class _EveusIntegerSelect(
             self._last_device_value = value
             self._last_successful_read = time.monotonic()
 
-    async def async_select_option(self, option: str) -> None:
+    async def async_select_option(
+        self, option: str, *, preflight: Callable[[], bool] | None = None,
+    ) -> None:
         """Send the selected integer value to the charger with optimistic UI."""
         if option not in self.OPTION_TO_DEVICE:
             raise HomeAssistantError(f"Unsupported {self.ENTITY_NAME}: {option}")
@@ -98,7 +101,8 @@ class _EveusIntegerSelect(
             self._command_pending = True
             self._write_if_changed(option)
             try:
-                success = await self._updater.send_command(self.WRITE_KEY, value)
+                kwargs = {"preflight": preflight} if preflight is not None else {}
+                success = await self._updater.send_command(self.WRITE_KEY, value, **kwargs)
             except Exception:
                 self._optimistic_value = None
                 self._write_if_changed(self.current_option)
@@ -160,7 +164,13 @@ class EveusTimeZoneSelect(_EveusIntegerSelect):
             raise HomeAssistantError(
                 "Follow HA Time Zone is on: turn it off to set the Time Zone by hand"
             )
-        await super().async_select_option(option)
+        await super().async_select_option(
+            option,
+            preflight=(
+                (lambda: not self._entry.data.get(CONF_FOLLOW_HA_TIME_ZONE))
+                if self._entry is not None else None
+            ),
+        )
 
 
 class EveusAdaptiveModeSelect(_EveusIntegerSelect):

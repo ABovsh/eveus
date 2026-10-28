@@ -275,8 +275,9 @@ provided by another integration.
 3. Without a sensor, set **Initial SOC** by hand before charging.
 
 - The sensor is read once per plug-in, when charging starts. If it is unavailable then, the integration retries and counts the energy already delivered.
-- A value you enter by hand wins until the next plug-in.
+- A value you enter by hand wins until the next plug-in, including after a reload or when an unavailable car sensor recovers.
 - After you pull the connector out and plug it in again, a new initial value is needed.
+- An unplug observed during startup also starts a new cycle. The car's reading is applied before the SOC limit decides whether to Stop.
 - The source and any failed reading are in the `soc_anchor` attribute of **SOC Percent**.
 
 <details>
@@ -308,7 +309,7 @@ off after every clock change. Turn on **Follow HA Time Zone** and the integratio
 sets the charger's **Time Zone** to Home Assistant's, including daylight saving;
 while it is on, **Time Zone** cannot be changed by hand. The choice survives
 connection reconfiguration and repair; turning it off cancels queued automatic
-offset changes. Half-hour zones such as
+offset changes; turning it on cancels queued manual changes. Half-hour zones such as
 India cannot be held by the charger and are left alone. While
 **One Charge** is on, the charger charges at once and ignores every schedule
 and limit.
