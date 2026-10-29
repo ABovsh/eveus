@@ -603,3 +603,25 @@ async def test_unloading_saves_the_accepted_meters_for_the_next_start(
     await hass.async_block_till_done()
 
     assert hass_storage[f"eveus_meters_{entry.entry_id}"]["data"]["totalEnergy"] == pytest.approx(5108.4)
+
+
+async def test_removing_the_entry_leaves_no_meter_readings_behind(
+    hass, hass_storage, aioclient_mock
+):
+    """A save still waiting on the removed entry's own store must not write
+    the file again after removal deleted it."""
+    entry = _entry(hass, HOST_A)
+    _mock_charger(aioclient_mock, HOST_A, json={**REAL_MAIN, "totalEnergy": 5107.83})
+    await _setup(hass, entry)
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**REAL_MAIN, "totalEnergy": 5108.4})
+    await entry.runtime_data.updater.async_refresh()
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=5))
+    await hass.async_block_till_done()
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_FINAL_WRITE)
+    await hass.async_block_till_done()
+
+    assert f"eveus_meters_{entry.entry_id}" not in hass_storage

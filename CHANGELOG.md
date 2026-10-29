@@ -17,6 +17,7 @@
 - **Reconfiguring or repairing the connection preserves the charger's remembered firmware family.**
 - **REVE: regular control commands no longer postpone tariff and schedule updates from the app.** A slow schedule change also keeps any newer Stop state and tariff readings.
 - **Card: switching chargers while a weekday change is pending keeps the new charger's own days.** A late reply from the previous charger cannot change a subsequent schedule write.
+- **Removing a charger deletes its saved meter readings.** A save still pending at removal wrote them back to Home Assistant's storage.
 
 ## 4.29.0 - 2026-10-24
 
