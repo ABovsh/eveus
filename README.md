@@ -277,7 +277,7 @@ provided by another integration.
 - The sensor is read once per plug-in, when charging starts. If it is unavailable then, the integration retries and counts the energy already delivered.
 - A value you enter by hand wins until the next plug-in, including after a reload or when an unavailable car sensor recovers.
 - After you pull the connector out and plug it in again, a new initial value is needed.
-- An unplug observed during startup also starts a new cycle. The car's reading is applied before the SOC limit decides whether to Stop.
+- The car's reading is applied before the SOC limit decides whether to Stop.
 - The source and any failed reading are in the `soc_anchor` attribute of **SOC Percent**.
 
 <details>
@@ -307,9 +307,7 @@ runs at the wrong time, check **Time Zone** and press **Sync Time**. The charger
 keeps one fixed offset and does not follow daylight saving, so it runs an hour
 off after every clock change. Turn on **Follow HA Time Zone** and the integration
 sets the charger's **Time Zone** to Home Assistant's, including daylight saving;
-while it is on, **Time Zone** cannot be changed by hand. The choice survives
-connection reconfiguration and repair; turning it off cancels queued automatic
-offset changes; turning it on cancels queued manual changes. Half-hour zones such as
+while it is on, **Time Zone** cannot be changed by hand. Half-hour zones such as
 India cannot be held by the charger and are left alone. While
 **One Charge** is on, the charger charges at once and ignores every schedule
 and limit.
@@ -469,13 +467,11 @@ The **Manual Mode** sensor and the card show that the schedules and limits are b
 - **Adaptive Mode** has Off, Voltage and Auto; REVE has no Power option.
 - **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app. Their days of the week are changed on the card; the days set in the app are kept. The card also lists the other schedules and the tariffs set up in the app, for viewing only. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
 - Changing a schedule's weekdays requires Home Assistant control permission for its enable switch.
-- Switching the card to another charger keeps pending weekday replies tied to the original charger.
 - **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect now: from REVE_PLUS 1.0.3 the charger reports it; on earlier versions the integration works it out from the rate windows and the charger's clock. Its `rate_name` attribute is the rate's name in the app. The third and fourth rates have no entities of their own, but **Active Rate Cost** shows their price while they are in effect.
 - **Cost to Target SOC** follows the hours of the first two rates and of the schedules, not their days of the week. Before the charge starts, if a schedule runs on some days only, or a third or later schedule is enabled, it uses the price in effect now.
 - **Counter A Cost** and **Counter B Cost** grow from REVE_PLUS 1.0.3, but how REVE counts this cost may change in later firmware versions. On earlier versions the charger counts the energy of counters A and B, but not their cost: it stays 0 after a reset, and without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
 - **Adaptive Current Limit** is read from the charger's older `/main` page, because REVE's own interface does not carry it: once a minute while an adaptive charge runs, otherwise every five minutes.
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
-- Regular HA control commands keep the five-minute refresh of app schedules and tariffs running. A schedule write preserves newer Stop and tariff readings received while it was pending.
 - After an observed connector unplug and replug during a REVE interface outage, session readings wait for fresh data. Energy from the previous charge cannot trigger the new charge's SOC limit.
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
 - REVE reports leakage only as raw values, not in mA, so **Leakage Current** and **Leakage Current Peak** stay unavailable, and so does **OCPP Connected**. **Plug Temperature** has a value from REVE_PLUS 1.0.3; on earlier versions it stays unavailable.
@@ -612,7 +608,6 @@ no long-term statistics.
 | `sensor.eveus_ev_charger_last_session_duration` | s | Duration of the most recently finished session. Home Assistant's own cards show seconds as a number; set the entity's unit to hours (h) in its settings to see `1h 36m`. The Eveus card reads any unit |
 
 Each Last Session sensor is populated when a session finishes and carries `reason` and `finished_at` attributes.
-If one of the final two readings is corrupt, its valid counterpart is kept.
 
 </details>
 

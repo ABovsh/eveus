@@ -4,21 +4,21 @@
 
 ### ✨ New
 
-- **New switch: Follow HA Time Zone (daylight saving).** The charger keeps one fixed **Time Zone** offset and does not follow daylight saving, so it ran an hour off after every clock change until someone set it by hand. With **Follow HA Time Zone** on, the integration sets the charger's **Time Zone** to Home Assistant's, including daylight saving, after three polls in a row that disagree. While it is on, **Time Zone** cannot be changed by hand; enabling it also cancels queued manual changes. It only sets the offset; **Sync Time** stays yours. Off by default. The clock-drift notice now offers both ways: set **Time Zone** by hand, or turn the switch on. Closes [#21](https://github.com/ABovsh/eveus/issues/21) requested by @ababak.
-- **Card: the Time zone list starts with Auto.** Choose **Auto: follow Home Assistant** to turn **Follow HA Time Zone** on. Choosing a zone while Auto is on turns it off first.
+- **New switch: Follow HA Time Zone keeps the charger on Home Assistant's time zone, daylight saving included.** The charger holds one fixed offset, so it ran an hour off after every clock change. With the switch on, the integration writes Home Assistant's offset once three polls in a row disagree, and **Time Zone** cannot be set by hand; **Sync Time** stays manual. Off by default. The clock-drift notice offers both ways: set **Time Zone** by hand, or turn the switch on. Closes [#21](https://github.com/ABovsh/eveus/issues/21) requested by @ababak.
+- **Card: Auto, the first choice in the Time zone list, turns Follow HA Time Zone on.** Choosing a zone while Auto is on turns it off first.
 
 ### 🐛 Fixed
 
-- **SOC limit uses the car's new initial SOC before deciding to Stop.** Restarting Home Assistant while unplugged no longer keeps the previous cycle's filled-in flag. On startup and each poll, filling Initial SOC happens before limit enforcement, so a stale higher value cannot stop the new charge.
-- **A manual Initial SOC correction survives a late car-sensor reading.** If the sensor was unavailable, its recovery no longer replaces the value entered by hand, including across a reload; unplugging allows automatic filling again.
-- **REVE: a new charge cannot be stopped at Target SOC using the previous charge's energy.** After an observed connector unplug and replug, session readings wait for fresh data if REVE's interface is unavailable.
-- **REVE schedule weekdays respect Home Assistant control permissions.** Read-only users cannot change them through the card's connection.
-- **Last Session keeps a valid energy, cost or duration reading when the other final reading is corrupt.**
-- **Reconfiguring or repairing the connection preserves the charger's remembered firmware family.**
-- **REVE: regular control commands no longer postpone tariff and schedule updates from the app.** A slow schedule change also keeps any newer Stop state and tariff readings.
-- **Card: switching chargers while a weekday change is pending keeps the new charger's own days.** A late reply from the previous charger cannot change a subsequent schedule write.
+- **The SOC limit no longer stops a new charge on the previous charge's Initial SOC.** With a car SOC sensor, the car's reading is applied before the limit decides, also right after a Home Assistant restart.
+- **An Initial SOC set by hand is no longer overwritten when the car sensor comes back.** It stays until the next plug-in, also through a reload.
+- **Last Session Duration shown in hours keeps its value through a restart.** Each restart read the saved hours as seconds, shrinking the duration 3,600-fold; Last Session Energy shown in Wh or MWh was rescaled the same way.
+- **Last Session keeps its energy, cost and duration when the charger's final poll reports a corrupt value.** The last charging poll's reading is used instead.
 - **Removing a charger deletes its saved meter readings.** A save still pending at removal wrote them back to Home Assistant's storage.
-- **Last Session Duration shown in hours keeps its value through a restart.** Each restart read the saved hours as seconds, so the duration shrank 3,600-fold; Last Session Energy shown in Wh or MWh was rescaled the same way.
+- **REVE: a new charge is no longer stopped at Target SOC on the previous charge's energy.** When the car was unplugged and plugged in again while REVE's interface was not answering, the old session's readings stayed for up to five minutes; they now wait for fresh data.
+- **REVE: schedules and tariffs changed in the app reach Home Assistant within five minutes again.** Every Stop or One Charge sent from Home Assistant postponed that refresh, and a slow schedule change could overwrite a newer Stop state or tariff.
+- **REVE: users without control permission can no longer change schedule days.** The card's day buttons now need the same permission as the schedule's switch.
+- **REVE: reconfiguring or repairing the connection keeps REVE's set of entities.** With the charger off at that moment, the five entities REVE does not have came back until it answered.
+- **Card, REVE: switching the card to another charger while a day change is pending no longer shows the first charger's days.**
 
 ## 4.29.0 - 2026-10-24
 
