@@ -1529,3 +1529,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         ) as err:
             self._record_failure(err)
             raise EveusUnreachable(f"Eveus connection issue: {type(err).__name__}") from err
+        except Exception as err:
+            # Anything else is still a failed poll: account for it like one,
+            # or the charger reads available with no outage clock running and
+            # every entity keeps its last reading while the error lasts. Home
+            # Assistant logs the message, which names only the error type.
+            self._record_failure(err)
+            raise UpdateFailed(f"Unexpected Eveus poll error: {type(err).__name__}") from err
