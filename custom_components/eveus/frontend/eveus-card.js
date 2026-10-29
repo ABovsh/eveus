@@ -1072,10 +1072,12 @@ class EveusCard extends HTMLElement {
     if (last) return last;
     const rateEntity = this._ids.active_rate_cost && this._shows('session', 'rate') ? this._state('active_rate_cost') : null;
     const rate = on ? currentNumber(rateEntity) : null;
-    const rateName = rateEntity?.attributes?.rate_name;
+    // The owner names a rate in the REVE app: show it as text, translated only when it is ours.
+    const rawRate = rateEntity?.attributes?.rate_name;
+    const rateName = esc(Object.prototype.hasOwnProperty.call(t.rateNames, rawRate ?? '') ? t.rateNames[rawRate] : rawRate ?? '');
     const rateUnit = String(rateEntity?.attributes?.unit_of_measurement || '').replace(/^[A-Z]{3}(?=\/|$)/, (code) => CURRENCY[code] || code);
     const label = rate === null ? t.session
-      : `${t.session}<small class="session-rate" title="${t.rateNames[rateName] ?? rateName ?? ''}">${rate.toFixed(2)} ${rateUnit}</small>`;
+      : `${t.session}<small class="session-rate" title="${rateName}">${rate.toFixed(2)} ${rateUnit}</small>`;
     const e = on ? currentNumber(this._state('session_energy')) : null;
     const c = on ? currentNumber(this._state('session_cost')) : null;
     const raw = on ? this._state('session_time')?.state : null;

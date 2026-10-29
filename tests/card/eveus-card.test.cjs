@@ -1310,6 +1310,16 @@ test('while plugged in, the Session row carries the active tariff price',()=>{
   const uk=setupAll({sections:['session'],language:'uk',over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:'Rate 2'}]}});
   assert.match(uk.html(),/title="Тариф 2"/);
 });
+test('a tariff name set in the charger app is shown as text, never as markup',()=>{
+  // REVE takes the name from its app or its unauthenticated local interface.
+  const name='"><img src=x onerror=alert(1)>';
+  const x=setupAll({sections:['session'],over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:name}]}});
+  assert.doesNotMatch(x.html(),/<img/);
+  assert.match(x.html(),/title="&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;"/);
+  // A name that is also an Object member is still just the name.
+  const proto=setupAll({sections:['session'],over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:'constructor'}]}});
+  assert.match(proto.html(),/class="session-rate" title="constructor"/);
+});
 test('a fault names the reading behind it and what to do',()=>{
   const hot=setupAll({sections:['status'],over:{state:['sensor.state','Error'],substate:['sensor.sub','Plug Overheat'],plug_temperature:['sensor.plug',86,{unit_of_measurement:'°C'}]}});
   assert.match(hot.html(),/status-state fault">Plug Overheat<[^]*status-note">plug 86° · limit 80° · wait for it to cool</);
