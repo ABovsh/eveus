@@ -18,6 +18,7 @@
 - **REVE: regular control commands no longer postpone tariff and schedule updates from the app.** A slow schedule change also keeps any newer Stop state and tariff readings.
 - **Card: switching chargers while a weekday change is pending keeps the new charger's own days.** A late reply from the previous charger cannot change a subsequent schedule write.
 - **Removing a charger deletes its saved meter readings.** A save still pending at removal wrote them back to Home Assistant's storage.
+- **Last Session Duration shown in hours keeps its value through a restart.** Each restart read the saved hours as seconds, so the duration shrank 3,600-fold; Last Session Energy shown in Wh or MWh was rescaled the same way.
 
 ## 4.29.0 - 2026-10-24
 

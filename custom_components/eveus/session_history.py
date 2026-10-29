@@ -12,8 +12,15 @@ import math
 from typing import Any, Optional
 
 from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import ATTR_UNIT_OF_MEASUREMENT
 from homeassistant.core import Event, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
+from homeassistant.util.unit_conversion import (
+    BaseUnitConverter,
+    DurationConverter,
+    EnergyConverter,
+)
 
 from .common_base import EveusSensorBase
 from .const import (
@@ -45,6 +52,9 @@ class _LastSessionSensorBase(EveusSensorBase):
     # restored value outside [0, _max_value] is corrupt and must not latch into
     # this sensor's persistent state.
     _max_value: float = 0.0
+    # Converts a restored state from the unit it was shown in; None when the
+    # unit cannot be changed (cost).
+    _converter: type[BaseUnitConverter] | None = None
 
     def __init__(self, updater, device_number: int = 1) -> None:
         super().__init__(updater, device_number)
@@ -74,8 +84,10 @@ class _LastSessionSensorBase(EveusSensorBase):
     async def _async_restore_state(self, state) -> None:
         await super()._async_restore_state(state)
         try:
-            restored = float(state.state)
-        except (TypeError, ValueError):
+            restored = self._native_from_shown(
+                float(state.state), state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+            )
+        except (TypeError, ValueError, HomeAssistantError):
             return
         # float("inf")/"nan" parse without raising; bound like the event path so
         # a corrupt stored state can't resurrect an out-of-domain value.
@@ -85,6 +97,19 @@ class _LastSessionSensorBase(EveusSensorBase):
         for attr in ("reason", "finished_at"):
             if attr in state.attributes:
                 self._attr_extra_state_attributes[attr] = state.attributes[attr]
+
+    def _native_from_shown(self, value: float, unit: Any) -> float:
+        """The saved state in this sensor's own unit.
+
+        Home Assistant saves the state in the unit it is shown in, which the
+        user can change in the entity's settings (the README suggests hours
+        for the duration). A unit it cannot convert raises.
+        """
+        native = self._attr_native_unit_of_measurement
+        if self._converter is None or unit is None or unit == native:
+            return value
+        # Rounded like the finished event, so conversion dust is not published.
+        return round(self._converter.convert(value, unit, native), 2)
 
     @callback
     def _handle_finished_event(self, event: Event) -> None:
@@ -134,6 +159,7 @@ class LastSessionEnergySensor(_LastSessionSensorBase):
     ENTITY_NAME = "Last Session Energy"
     _event_field = "session_energy_kwh"
     _max_value = MAX_ENERGY_KWH
+    _converter = EnergyConverter
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_suggested_display_precision = 2
@@ -154,6 +180,7 @@ class LastSessionDurationSensor(_LastSessionSensorBase):
     ENTITY_NAME = "Last Session Duration"
     _event_field = "session_duration_s"
     _max_value = MAX_SESSION_TIME_SECONDS
+    _converter = DurationConverter
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_suggested_display_precision = 0

@@ -25,12 +25,13 @@ from homeassistant.const import (
     EVENT_HOMEASSISTANT_FINAL_WRITE,
     STATE_UNAVAILABLE,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
+    mock_restore_cache,
 )
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMocker,
@@ -603,6 +604,31 @@ async def test_unloading_saves_the_accepted_meters_for_the_next_start(
     await hass.async_block_till_done()
 
     assert hass_storage[f"eveus_meters_{entry.entry_id}"]["data"]["totalEnergy"] == pytest.approx(5108.4)
+
+
+async def test_last_session_duration_shown_in_hours_survives_a_restart(
+    hass, aioclient_mock
+) -> None:
+    """Home Assistant saves the state in the unit it is shown in; the README
+    suggests hours. A restart must bring back the same duration."""
+    entity_id = "sensor.eveus_ev_charger_last_session_duration"
+    entry = _entry(hass, HOST_A)
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "sensor", DOMAIN, "eveus_last_session_duration", config_entry=entry,
+        suggested_object_id="eveus_ev_charger_last_session_duration",
+    )
+    registry.async_update_entity_options(entity_id, "sensor", {"unit_of_measurement": "h"})
+    mock_restore_cache(hass, [State(entity_id, "14.256944444444445", {
+        "unit_of_measurement": "h", "reason": "complete",
+        "finished_at": "2026-10-25T14:05:46+02:00",
+    })])
+    _mock_charger(aioclient_mock, HOST_A)
+    await _setup(hass, entry)
+
+    state = hass.states.get(entity_id)
+    assert state.attributes["unit_of_measurement"] == "h"
+    assert float(state.state) == pytest.approx(14.256944, rel=1e-6)
 
 
 async def test_removing_the_entry_leaves_no_meter_readings_behind(
