@@ -13,6 +13,7 @@
 - **An Initial SOC set by hand is no longer overwritten when the car sensor comes back.** It stays until the next plug-in, also through a reload.
 - **Last Session Duration shown in hours keeps its value through a restart.** Each restart read the saved hours as seconds, shrinking the duration 3,600-fold; Last Session Energy shown in Wh or MWh was rescaled the same way.
 - **Last Session keeps its energy, cost and duration when the charger's final poll reports a corrupt value.** The last charging poll's reading is used instead.
+- **A clock that is whole hours off on a charger already in Home Assistant's time zone is now sent to Sync Time.** The clock-drift notice blamed the Time Zone instead, and the card's Set UTC button offered a zone that only hid the error.
 - **Removing a charger deletes its saved meter readings.** A save still pending at removal wrote them back to Home Assistant's storage.
 - **REVE: a new charge is no longer stopped at Target SOC on the previous charge's energy.** When the car was unplugged and plugged in again while REVE's interface was not answering, the old session's readings stayed for up to five minutes; they now wait for fresh data.
 - **REVE: schedules and tariffs changed in the app reach Home Assistant within five minutes again.** Every Stop or One Charge sent from Home Assistant postponed that refresh, and a slow schedule change could overwrite a newer Stop state or tariff.

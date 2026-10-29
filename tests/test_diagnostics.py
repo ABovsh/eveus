@@ -291,7 +291,7 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
         def _drift_payload(drift_seconds: int) -> dict:
             return {
                 "systemTime": int(time.time()) + 3 * 3600 + drift_seconds,
-                "timeZone": "3",
+                "timeZone": str(3 + round(drift_seconds / 3600)),
             }
 
         for _ in range(3):
@@ -364,7 +364,7 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
         def _drift_payload(drift_seconds: int) -> dict:
             return {
                 "systemTime": int(time.time()) + 3 * 3600 + drift_seconds,
-                "timeZone": "3",
+                "timeZone": str(3 + round(drift_seconds / 3600)),
             }
 
         for _ in range(3):

@@ -1978,8 +1978,24 @@ class EveusCard extends HTMLElement {
     const hours = Math.round(drift / 3600);
     if (!hours || Math.abs(drift - hours * 3600) > TZ_MATCH_TOLERANCE_S) return null;
     const n = Number(zone) - hours;
+    // The charger's clock is UTC plus its zone: a zone other than Home Assistant's would only
+    // hide hours its UTC clock is off, which Sync Time fixes.
+    const ha = this._haOffsetHours();
+    if (ha !== null && n !== ha) return null;
     const option = n === 0 ? '0' : n > 0 ? `+${n}` : String(n);
     return Number.isFinite(n) && options.includes(option) ? option : null;
+  }
+  // Home Assistant's UTC offset now in whole hours; null when unknown or not whole.
+  _haOffsetHours() {
+    const tz = this._hass?.config?.time_zone;
+    if (!tz) return null;
+    try {
+      const now = new Date(Math.floor(Date.now() / 60000) * 60000);
+      const p = {};
+      for (const {type, value} of new Intl.DateTimeFormat('en-US', {timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'}).formatToParts(now)) p[type] = Number(value);
+      const minutes = (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - now.getTime()) / 60000;
+      return Number.isInteger(minutes) && minutes % 60 === 0 ? minutes / 60 : null;
+    } catch { return null; }
   }
   // ---- Counters: this month's and last month's energy from Home Assistant's long-term statistics. ----
   get _wantsMonth() { return !!this._ids?.total_energy && this._config.sections.includes('history') && this._shows('history', 'month'); }

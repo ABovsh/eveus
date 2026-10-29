@@ -1695,6 +1695,10 @@ class _WallClock:
     def __init__(self, seconds: int | None) -> None:
         self.charger_wall_clock_s = seconds
 
+    def get_int(self, key: str) -> None:
+        # No offset known: a whole-hour drift may be the zone.
+        return None
+
 
 def _wall_updater(seconds: int | None, *, available=True, success=True):
     return SimpleNamespace(

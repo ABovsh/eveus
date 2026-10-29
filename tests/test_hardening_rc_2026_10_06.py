@@ -255,7 +255,7 @@ def test_clock_repair_rekey_requires_the_same_new_classification(monkeypatch):
     updater = PayloadUpdater({})
 
     def poll(drift):
-        updater.data = {"systemTime": wall + drift, "timeZone": 0}
+        updater.data = {"systemTime": wall + drift, "timeZone": round(drift / 3600)}
         issues.update_clock_drift_issue(object(), entry, updater, tracker)
 
     for _ in range(3):

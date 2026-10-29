@@ -1392,6 +1392,16 @@ test('a clock off by whole hours offers the time zone that fixes it instead of S
   const minutes=setupAll({sections:['time'],over:{...tz,time_drift:['sensor.drift',700]}});
   assert.match(minutes.html(),/data-sync/);assert.doesNotMatch(minutes.html(),/data-zone-fix/);
 });
+test('a zone fix is offered only when it is Home Assistant\'s offset; a charger already on it gets Sync',()=>{
+  // Etc/GMT-2 is a fixed UTC+2, so the test does not depend on the date.
+  const tz=(zone)=>({time_zone:['select.tz',zone,{options:['+1','+2','+3','+4']}],sync_time:['button.sync','unknown'],time_drift:['sensor.drift',3600]});
+  const at=(zone)=>{const x=setupAll({sections:['time'],over:tz(zone)});x.card._lastSignature=x.card._lastRefs=null;x.card.hass={...x.hass,config:{time_zone:'Etc/GMT-2'}};return x;};
+  const wrongZone=at('+3');
+  assert.match(wrongZone.html(),/data-zone-fix="\+2"/,'the zone is wrong: setting HA\'s fixes it');
+  const wrongClock=at('+2');
+  assert.doesNotMatch(wrongClock.html(),/data-zone-fix/,'+1 would only hide a clock that is an hour off');
+  assert.match(wrongClock.html(),/data-sync/);
+});
 // ---- Time zone: the first option follows Home Assistant (the Follow HA Time Zone switch).
 const FOLLOW=(state)=>({...TIME,time_zone:['select.tz','+3',{options:['-1','0','+1','+2','+3']}],follow_ha_time_zone:['switch.follow',state]});
 const callsOf=(x)=>JSON.parse(JSON.stringify(x.calls));

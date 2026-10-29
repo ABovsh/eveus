@@ -172,6 +172,12 @@ def clock_drift_issue_id(entry: ConfigEntry) -> str:
     return f"clock_drift_{entry.entry_id}"
 
 
+def _zone_differs(snapshot) -> bool:
+    """Whether the charger's offset differs from Home Assistant's, or is unknown."""
+    zone = snapshot.get_int("timeZone")
+    return zone is None or zone * 3600 != get_local_utc_offset_seconds()
+
+
 class ClockDriftTracker:
     """Decide when to raise/clear the charger clock-drift notice.
 
@@ -192,8 +198,9 @@ class ClockDriftTracker:
         self._active = False
         # Classification of the most recent drifted reading, used to pick the
         # repair message: "timezone" when the drift sits at a non-zero whole
-        # hour (wrong Time Zone select or DST mismatch — Sync Time won't fix
-        # it), "sync" for any other offset (the RTC itself is off).
+        # hour and the charger's offset is not Home Assistant's (wrong Time
+        # Zone select or DST mismatch — Sync Time won't fix it), "sync" for any
+        # other drift (the RTC itself is off, by whole hours or not).
         self.kind = "sync"
         self.hours = 0
         # (kind, hours) the repair was last published with, owned by
@@ -243,12 +250,10 @@ class ClockDriftTracker:
             whole_hours != 0
             and abs(signed_drift - whole_hours * 3600)
             <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
-            # While following, a charger already on HA's offset gets nothing
-            # written: the hours are in its UTC clock, which Sync Time fixes.
-            and not (
-                following
-                and snapshot.get_int("timeZone") * 3600 == get_local_utc_offset_seconds()
-            )
+            # The wall clock is UTC plus the charger's offset, so on a charger
+            # already at HA's offset the hours are in its UTC clock: Sync Time
+            # fixes that, a Time Zone change (or the follower) cannot.
+            and _zone_differs(snapshot)
         ):
             self.kind = "timezone"
             self.hours = abs(whole_hours)

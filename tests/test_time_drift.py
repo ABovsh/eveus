@@ -323,9 +323,11 @@ def test_time_drift_detects_dst_mismatch() -> None:
 
 
 def _drift_payload(drift_seconds: int) -> dict:
+    """A charger whose offset is wrong by the drift's whole hours (its UTC
+    clock is right but for the rest): what a wrong Time Zone looks like."""
     return {
         "systemTime": int(time.time()) + TZ_SHIFT + drift_seconds,
-        "timeZone": str(TZ_HOURS),
+        "timeZone": str(TZ_HOURS + round(drift_seconds / 3600)),
     }
 
 
@@ -367,6 +369,20 @@ def test_tracker_classifies_whole_hour_drift_as_timezone() -> None:
 def test_tracker_classifies_other_drift_as_sync() -> None:
     assert _fired_tracker(900).kind == "sync"
     assert _fired_tracker(-1800).kind == "sync"
+
+
+@pytest.mark.parametrize("drift", [3600, -7200])
+def test_whole_hours_on_a_charger_already_at_ha_offset_are_a_clock_to_sync(drift) -> None:
+    """The wall clock is UTC plus the offset: with the offset already right,
+    the hours are in the charger's UTC clock, which only Sync Time fixes."""
+    from custom_components.eveus import ClockDriftTracker
+
+    tracker = ClockDriftTracker()
+    payload = {"systemTime": int(time.time()) + TZ_SHIFT + drift, "timeZone": str(TZ_HOURS)}
+    for _ in range(3):
+        tracker.evaluate(EveusSnapshot.parse(payload, None))
+
+    assert (tracker.kind, tracker.hours) == ("sync", 0)
 
 
 def test_tracker_reports_hours_for_timezone_kind() -> None:
