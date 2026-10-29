@@ -319,12 +319,14 @@ def test_confirmation_during_inflight_stop_is_not_lost():
     async def scenario():
         calc = _calc(target=80, initial=20, cap=50, corr=0)
         gate = asyncio.Event()
+        sent = asyncio.Event()
         events = []
 
         async def slow_send(_cmd, _val, **kwargs):
             # Mirror the real manager: eligibility is checked at transmission,
             # before the response is delayed, rather than while still queued.
             assert kwargs["preflight"]()
+            sent.set()
             await gate.wait()
             return True
 
@@ -343,7 +345,7 @@ def test_confirmation_during_inflight_stop_is_not_lost():
         ctrl.set_enabled(True)
         ctrl.process()              # spawns Stop; blocks on gate after recording token
         stop_task = ctrl._stop_task
-        await asyncio.sleep(0)      # let _stop record _pending then block on send
+        await sent.wait()           # _stop recorded _pending and is blocked on send
         # The stop took effect at the charger before its HTTP response returned:
         updater.data = {"state": 1, "sessionEnergy": 0.0, "evseEnabled": 1, "suspendLimits": 0}
         ctrl.process()              # confirms via the in-flight token

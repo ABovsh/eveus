@@ -423,6 +423,39 @@ async def test_car_soc_is_applied_before_limit_enforcement(
     assert float(hass.states.get("number.eveus_ev_charger_initial_soc").state) == car_soc
 
 
+async def test_renamed_initial_soc_is_filled_before_the_stop_decision(
+    hass, aioclient_mock, monkeypatch,
+) -> None:
+    """A rename re-adds Initial SOC, so its poll listener now runs after the
+    SOC limit's: the Stop must still wait for this poll's car reading."""
+    from custom_components.eveus.switch import EveusSocLimitSwitch
+
+    entry = _entry(hass, HOST_A)
+    hass.config_entries.async_update_entry(entry, data={
+        **entry.data, CONF_SOC_MODE: SOC_MODE_ADVANCED,
+        CONF_INITIAL_SOC: 85, CONF_TARGET_SOC: 80, CONF_BATTERY_CAPACITY: 60,
+        CONF_SOC_CORRECTION: 0, CONF_EXTERNAL_SOC_ENTITY: "sensor.car_soc",
+    })
+    hass.states.async_set("sensor.car_soc", "25")
+    monkeypatch.setattr(EveusSocLimitSwitch, "async_get_last_state", AsyncMock(
+        return_value=SimpleNamespace(state="on"),
+    ))
+    payload = {**REAL_MAIN, "state": 2, "evseEnabled": 0, "suspendLimits": 0,
+               "sessionEnergy": 0, "sessionTime": 0}
+    _mock_charger(aioclient_mock, HOST_A, json=payload)
+    await _setup(hass, entry)
+    er.async_get(hass).async_update_entity(
+        "number.eveus_ev_charger_initial_soc", new_entity_id="number.car_initial_soc",
+    )
+    await hass.async_block_till_done()
+    aioclient_mock.clear_requests()
+    _mock_charger(aioclient_mock, HOST_A, json={**payload, "state": 4, "sessionTime": 30})
+    await entry.runtime_data.updater.async_refresh()
+    await hass.async_block_till_done()
+    assert _calls(aioclient_mock, HOST_A, "/pageEvent") == []
+    assert float(hass.states.get("number.car_initial_soc").state) == 25
+
+
 async def test_car_sensor_recovery_does_not_replace_manual_soc_or_trigger_stop(
     hass, aioclient_mock,
 ) -> None:

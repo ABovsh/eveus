@@ -334,6 +334,12 @@ class SocLimitController:
         ``evseEnabled == 1`` (and re-sends each poll until it does). A failed POST
         leaves no pending mark so the next poll simply retries.
         """
+        # Home Assistant starts this task eagerly, inside the poll's listener
+        # loop, and the preflight below can reach the wire before yielding.
+        # Yield first so every listener of this poll runs: Initial SOC fills
+        # from the car in its entity listener, which runs after this one once
+        # the entity is re-added (e.g. renamed).
+        await asyncio.sleep(0)  # pragma: no mutate - any yield lets the listeners run first
         # Record the attempt BEFORE awaiting the command: a poll that completes
         # while the POST is in flight can observe ``evseEnabled == 1`` (the stop
         # already took effect at the charger) and must be able to confirm it —
