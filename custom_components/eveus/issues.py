@@ -243,6 +243,12 @@ class ClockDriftTracker:
             whole_hours != 0
             and abs(signed_drift - whole_hours * 3600)
             <= CLOCK_DRIFT_TZ_MATCH_TOLERANCE_SECONDS
+            # While following, a charger already on HA's offset gets nothing
+            # written: the hours are in its UTC clock, which Sync Time fixes.
+            and not (
+                following
+                and snapshot.get_int("timeZone") * 3600 == get_local_utc_offset_seconds()
+            )
         ):
             self.kind = "timezone"
             self.hours = abs(whole_hours)

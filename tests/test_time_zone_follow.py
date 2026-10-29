@@ -727,6 +727,23 @@ def test_the_notice_says_following_is_not_working_while_the_switch_is_on(monkeyp
     }
 
 
+def test_whole_hours_in_the_clock_itself_ask_for_sync_while_following(monkeypatch) -> None:
+    """The charger already holds HA's offset, so the follower has nothing to
+    write: the hours are in its clock, which Sync Time fixes at once."""
+    recorder = _IssueRecorder(monkeypatch)
+    entry, tracker = _Entry(follow=True), ClockDriftTracker()
+    updater = SimpleNamespace(available=True, last_update_success=True)
+    updater.snapshot = EveusSnapshot.parse(
+        {"systemTime": int(time.time()) + 3 * HOUR, "timeZone": 2}, None
+    )
+
+    for _ in range(CLOCK_DRIFT_TRIGGER_POLLS):
+        update_clock_drift_issue(None, entry, updater, tracker)
+
+    assert [c["translation_key"] for c in recorder.created] == ["clock_drift"]
+    assert recorder.created[0]["translation_placeholders"] is None
+
+
 def test_turning_the_switch_on_rewrites_a_notice_that_is_already_showing(monkeypatch) -> None:
     recorder = _IssueRecorder(monkeypatch)
     entry, updater, tracker = _Entry(follow=False), _issue_updater(), ClockDriftTracker()
