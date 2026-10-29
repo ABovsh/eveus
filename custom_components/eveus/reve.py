@@ -63,6 +63,7 @@ from .const import (
     DEVICE_STATE_CHARGING,
     DEVICE_STATE_COMPLETE,
     DEVICE_STATE_STANDBY,
+    MAX_RATE_HUNDREDTHS,
     MAX_VALID_SYSTEM_TIME,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
@@ -459,10 +460,11 @@ def _weekdays(value: Any) -> list[int]:
 
 
 def _price(value: Any) -> float | None:
-    """A price the station reports, or ``None`` for anything else."""
+    """A price the station reports, or ``None`` for anything else (including
+    one beyond the rate bound, which would overflow in hundredths)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value) if math.isfinite(value) and value >= 0 else None
+    return float(value) if 0 <= value <= MAX_RATE_HUNDREDTHS / 100 else None
 
 
 def _limit_reading(value: Any) -> int | float | None:

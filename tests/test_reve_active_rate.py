@@ -114,3 +114,19 @@ def test_a_main_poll_drops_the_station_rate(monkeypatch: pytest.MonkeyPatch) -> 
     assert updater._reve.extras.active_rate == charger.rates["base"]
     updater._reve.from_main(_reve_main(), fallback=True)
     assert updater._reve.extras.active_rate is None
+
+
+def test_an_impossible_station_price_is_no_price_instead_of_failing_the_poll() -> None:
+    """A finite but absurd activeRate overflowed the price comparison and
+    failed the whole poll; it now counts as no reported price."""
+    from custom_components.eveus.reve import normalize_reve_payload, parse_extras
+
+    extras = parse_extras({"stationData": {
+        "scheduleV2": [],
+        "ratesV2": {"base": 4.32, "rates": [], "activeRate": 1e308},
+    }})
+
+    payload, _ = normalize_reve_payload({"state": 2}, extras)
+
+    assert extras.active_rate is None
+    assert payload["tarif"] == 432
