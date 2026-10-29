@@ -1425,6 +1425,36 @@ test('time zone: a fixed zone while Auto is on turns Auto off first, then sets t
   await x.card._selectOption('time_zone','+2');
   assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}],['select','select_option',{entity_id:'select.tz',option:'+2'}]]);
 });
+test('time zone: switching chargers while Auto turns off cannot send the old choice to the new charger',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  let release;
+  x.hass.callService=(d,sv,data)=>{x.calls.push([d,sv,data]);return x.calls.length===1?new Promise(r=>{release=r;}):Promise.resolve();};
+  const done=x.card._selectOption('time_zone','+2');
+  const next=setupAll({sections:['time'],over:{...FOLLOW('off'),time_zone:['select.other_tz','+3',{options:['+2','+3']}]}});
+  x.hass.states=next.states;x.hass.callWS=next.hass.callWS;
+  x.card.setConfig({sections:['time'],device_id:'other'});
+  await x.card._resolve();
+  assert.equal(x.card._online,true);
+  assert.equal(x.card._ids.time_zone,'select.other_tz');
+  release();await done;
+  assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}]]);
+});
+for(const latest of ['+1','__auto__']) test(`time zone: a delayed Auto-off reply cannot overwrite a newer ${latest} choice`,async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  let release;
+  x.hass.callService=(d,sv,data)=>{
+    x.calls.push([d,sv,data]);
+    return x.calls.length===1?new Promise(r=>{release=r;}):Promise.resolve();
+  };
+  const first=x.card._selectOption('time_zone','+2');
+  await x.card._selectOption('time_zone',latest);
+  const sent=callsOf(x);
+  release();await first;
+  assert.deepEqual(callsOf(x),sent,'the old choice must not send a late zone');
+  assert.deepEqual(sent[1],latest==='__auto__'
+    ?['switch','turn_on',{entity_id:'switch.follow'}]
+    :['select','select_option',{entity_id:'select.tz',option:latest}]);
+});
 test('time zone: picking the zone the charger already holds still ends Auto',async()=>{
   const x=setupAll({sections:['time'],over:FOLLOW('on')});
   await x.card._selectOption('time_zone','+3');

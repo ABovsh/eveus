@@ -1274,6 +1274,7 @@ class EveusCard extends HTMLElement {
   // Auto turns the switch on. A zone chosen while Auto is on first turns it off: the select refuses
   // manual changes while the integration follows Home Assistant.
   async _chooseZone(option) {
+    const generation = this._generation, choice = this._zoneChoice;
     clearTimeout(this._selectTimer);
     this._editingSelect = null;
     if (!this._online) { this._render(); return; }
@@ -1282,9 +1283,13 @@ class EveusCard extends HTMLElement {
       await this._setFollow(true);
       return;
     }
-    if (await this._setFollow(false)) await this._selectOption('time_zone', option);
+    if (await this._setFollow(false) && generation === this._generation && choice === this._zoneChoice) {
+      await this._selectOption('time_zone', option);
+    }
   }
   async _selectOption(key, option) {
+    // A two-step zone change may finish after a newer choice or a charger change.
+    if (key === 'time_zone') this._zoneChoice = {};
     if (key === 'time_zone' && this._ids?.follow_ha_time_zone && (option === AUTO_ZONE || this._following())) { await this._chooseZone(option); return; }
     clearTimeout(this._selectTimer);
     this._editingSelect = null;
