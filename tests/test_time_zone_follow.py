@@ -600,6 +600,8 @@ def test_a_queued_manual_zone_respects_following_enabled_before_transmission(ena
         if enable_follow:
             manager._post_command.assert_not_awaited()
             assert isinstance(result, HomeAssistantError)
+            # Nothing was sent: the reason is the switch, not the charger.
+            assert "Follow HA Time Zone is on" in str(result)
             assert select.current_option == "+3"
         else:
             manager._post_command.assert_awaited_once_with("timeZone", 5, None)
@@ -622,7 +624,7 @@ def test_manual_zone_retry_is_cancelled_when_following_starts() -> None:
             select._entry.data[CONF_FOLLOW_HA_TIME_ZONE] = True
 
         manager._sleep_backoff = enable_follow
-        with pytest.raises(HomeAssistantError):
+        with pytest.raises(HomeAssistantError, match="Follow HA Time Zone is on"):
             await select.async_select_option("+5")
         manager._post_command.assert_awaited_once_with("timeZone", 5, None)
         assert select.current_option == "+3"

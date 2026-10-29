@@ -159,18 +159,24 @@ class EveusTimeZoneSelect(_EveusIntegerSelect):
         super().__init__(updater, device_number)
         self._entry = entry
 
+    def _following(self) -> bool:
+        return self._entry is not None and bool(self._entry.data.get(CONF_FOLLOW_HA_TIME_ZONE))
+
     async def async_select_option(self, option: str) -> None:
-        if self._entry is not None and self._entry.data.get(CONF_FOLLOW_HA_TIME_ZONE):
-            raise HomeAssistantError(
-                "Follow HA Time Zone is on: turn it off to set the Time Zone by hand"
+        refusal = "Follow HA Time Zone is on: turn it off to set the Time Zone by hand"
+        if self._following():
+            raise HomeAssistantError(refusal)
+        try:
+            await super().async_select_option(
+                option,
+                preflight=(lambda: not self._following()) if self._entry is not None else None,
             )
-        await super().async_select_option(
-            option,
-            preflight=(
-                (lambda: not self._entry.data.get(CONF_FOLLOW_HA_TIME_ZONE))
-                if self._entry is not None else None
-            ),
-        )
+        except HomeAssistantError as err:
+            # Following started while this choice waited its turn: nothing was
+            # sent, so the reason is the switch, not the charger.
+            if self._following():
+                raise HomeAssistantError(refusal) from err
+            raise
 
 
 class EveusAdaptiveModeSelect(_EveusIntegerSelect):
