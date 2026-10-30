@@ -23,6 +23,7 @@
 - **REVE: users without control permission can no longer change schedule days.** The card's day buttons now need the same permission as the schedule's switch.
 - **REVE: reconfiguring or repairing the connection keeps REVE's set of entities.** With the charger off at that moment, the five entities REVE does not have came back until it answered.
 - **Card, REVE: switching the card to another charger while a day change is pending no longer shows the first charger's days.**
+- **Card, REVE: a schedule is marked as running, and named as the next start, only on its own days.** A schedule set for some weekdays was shown as running on the others too.
 - **Card, REVE: a tariff name from the charger's app is always shown as plain text.** A name containing HTML could run a script in the dashboard of anyone viewing the card.
 
 ## 4.29.0 - 2026-10-24

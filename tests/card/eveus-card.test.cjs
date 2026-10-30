@@ -2232,6 +2232,21 @@ test('REVE: days tapped on two schedules at once both settle on what the charger
   x.card._render();
   assert.match(x.html(), /data-days-edit="1"[^>]*>Tu</);
 });
+test('REVE: a schedule is now, and next, only on its own days; a window past midnight belongs to the day it began', async () => {
+  const x = await setupReve();
+  // Schedule 1 runs 23:00-07:00 on Tuesdays only (0 = Sunday).
+  x.card._reveSchedules = x.card._reveSchedules.map((item, i) => i === 0 ? {...item, weekdays: [2]} : item);
+  const at = (hm, day) => { x.card._nowHM = () => hm; x.card._scheduleDay = () => day; x.card._render(); return rowOf(x.html(), 1); };
+  assert.match(at('23:30', 2), /^ on now"/, 'Tuesday night');
+  assert.match(at('06:00', 3), /^ on now"/, 'Wednesday morning: the window began on Tuesday');
+  assert.match(at('23:30', 3), /^ on"/, 'Wednesday night: not one of its days');
+  assert.match(at('06:00', 2), /^ on"/, 'Tuesday morning: that window began on Monday');
+  x.card._nowHM = () => '20:00';
+  x.card._scheduleDay = () => 3;
+  assert.equal(x.card._nextSchedule(), null, 'no start tonight on a Wednesday');
+  x.card._scheduleDay = () => 2;
+  assert.equal(x.card._nextSchedule(), 1);
+});
 test('REVE: an old charger weekday reply cannot change the next write to a new charger', async () => {
   const slow = deferred();
   const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'

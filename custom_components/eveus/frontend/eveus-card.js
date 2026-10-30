@@ -1511,13 +1511,32 @@ class EveusCard extends HTMLElement {
       return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     }
   }
+  // The charger's weekday (0 = Sunday, as REVE counts) on the same clock as _scheduleHM.
+  _scheduleDay() {
+    const drift = this._online ? currentNumber(this._state('time_drift')) : null;
+    if (drift === null || Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S) return null;
+    const date = new Date(Date.now() + drift * 1000), tz = this._hass?.config?.time_zone;
+    try {
+      return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(new Intl.DateTimeFormat('en-US', {weekday: 'short', ...(tz ? {timeZone: tz} : {})}).format(date));
+    } catch {
+      return date.getDay();
+    }
+  }
+  // REVE runs a schedule only on its days; Eveus firmware schedules run every day.
+  _runsOn(n, day) {
+    const days = this._reveSchedules?.[n - 1]?.weekdays;
+    return day === null || day < 0 || !Array.isArray(days) || days.includes(day);
+  }
   _scheduleNow(n) {
     if (this._ignoring) return false;
     const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
     if (!this._online || !this._limitOn(`schedule_${n}_enabled`) || start === null || stop === null || start === stop) return false;
     const now = this._scheduleHM();
     if (now === null) return false;
-    return start < stop ? now >= start && now < stop : now >= start || now < stop;
+    if (!(start < stop ? now >= start && now < stop : now >= start || now < stop)) return false;
+    // A window past midnight belongs to the day it began.
+    const day = this._scheduleDay();
+    return this._runsOn(n, day !== null && start > stop && now < stop ? (day + 6) % 7 : day);
   }
   // The start of the enabled schedule that comes next, for "Waiting for Schedule · from 23:00".
   _nextScheduleStart() {
@@ -1529,8 +1548,10 @@ class EveusCard extends HTMLElement {
   _nextSchedule() {
     const clock = this._scheduleHM();
     if (clock === null) return null;
-    const now = minutesOf(clock);
-    const next = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._limitOn(`schedule_${n}_enabled`) && this._timeShown(`schedule_${n}_start`))
+    const now = minutesOf(clock), day = this._scheduleDay();
+    // Its next start is today or, once passed, tomorrow: on a REVE schedule that has to be one of its days.
+    const startsOnItsDay = (n) => day === null || this._runsOn(n, minutesOf(this._timeShown(`schedule_${n}_start`)) > now ? day : (day + 1) % 7);
+    const next = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._limitOn(`schedule_${n}_enabled`) && this._timeShown(`schedule_${n}_start`) && startsOnItsDay(n))
       .sort((a, b) => (minutesOf(this._timeShown(`schedule_${a}_start`)) - now + 1440) % 1440 - (minutesOf(this._timeShown(`schedule_${b}_start`)) - now + 1440) % 1440);
     return next[0] ?? null;
   }
