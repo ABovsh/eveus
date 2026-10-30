@@ -19,6 +19,7 @@
 - **Removing a charger deletes its saved meter readings.** A save still pending at removal wrote them back to Home Assistant's storage.
 - **REVE: a new charge is no longer stopped at Target SOC on the previous charge's energy.** When the car was unplugged and plugged in again while REVE's interface was not answering, the old session's readings stayed for up to five minutes; they now wait for fresh data.
 - **REVE: schedules and tariffs changed in the app reach Home Assistant within five minutes again.** Every Stop or One Charge sent from Home Assistant postponed that refresh, and a slow schedule change could overwrite a newer Stop state or tariff.
+- **REVE: Not Charging Reason reads Waiting for Schedule for any schedule on in the app.** Only Schedule 1 and 2 counted; with only a later schedule on, it read Waiting for Activation.
 - **REVE: users without control permission can no longer change schedule days.** The card's day buttons now need the same permission as the schedule's switch.
 - **REVE: reconfiguring or repairing the connection keeps REVE's set of entities.** With the charger off at that moment, the five entities REVE does not have came back until it answered.
 - **Card, REVE: switching the card to another charger while a day change is pending no longer shows the first charger's days.**

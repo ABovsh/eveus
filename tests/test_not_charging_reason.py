@@ -340,6 +340,23 @@ def test_reve_plugged_in_outside_a_schedule_waits_for_it(payload, expected):
     assert get_not_charging_reason(_reve(state=3, subState=9, **payload), None) == expected
 
 
+@pytest.mark.parametrize(("third_enabled", "expected"), [
+    (True, "Waiting for Schedule"), (False, "Waiting for Activation"),
+])
+def test_reve_waits_for_a_schedule_beyond_the_first_two(third_enabled, expected):
+    """REVE runs up to eight schedules, set in its app; a third one that is on
+    is what the car waits for, not an external start."""
+    updater = _reve(state=3, subState=9, sh1Enabled=0, sh2Enabled=0)
+    slot = {"name": "", "start": 0, "end": 0, "weekdays": [0, 1, 2, 3, 4, 5, 6],
+            "value": 16, "currentLimitEnabled": False}
+    updater.reve_schedules = lambda: (
+        {**slot, "enabled": False}, {**slot, "enabled": False},
+        {**slot, "enabled": third_enabled, "start": 1380, "end": 420},
+    )
+
+    assert get_not_charging_reason(updater, None) == expected
+
+
 def test_a_classic_charger_waiting_in_substate_9_is_not_given_a_schedule_reason():
     classic = _modern(state=3, subState=9, sh1Enabled=1)
     assert get_not_charging_reason(classic, None) == "Waiting for Activation"
