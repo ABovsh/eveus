@@ -1076,7 +1076,7 @@ class EveusCard extends HTMLElement {
     const rate = on ? currentNumber(rateEntity) : null;
     // The owner names a rate in the REVE app: show it as text, translated only when it is ours.
     const rawRate = rateEntity?.attributes?.rate_name;
-    const rateName = esc(Object.prototype.hasOwnProperty.call(t.rateNames, rawRate ?? '') ? t.rateNames[rawRate] : rawRate ?? '');
+    const rateName = esc(Object.hasOwn(t.rateNames, rawRate ?? '') ? t.rateNames[rawRate] : rawRate ?? '');
     const rateUnit = String(rateEntity?.attributes?.unit_of_measurement || '').replace(/^[A-Z]{3}(?=\/|$)/, (code) => CURRENCY[code] || code);
     const label = rate === null ? t.session
       : `${t.session}<small class="session-rate" title="${rateName}">${rate.toFixed(2)} ${rateUnit}</small>`;
@@ -1647,9 +1647,24 @@ class EveusCard extends HTMLElement {
     const canFollow = !!this._ids.follow_ha_time_zone && (followState === 'on' || followState === 'off');
     const following = canFollow && this._following();
     const zoneLabel = (o) => o === '0' ? 'UTC' : `UTC${o}`;
-    const autoEl = canFollow ? `<option value="${AUTO_ZONE}"${following ? ' selected' : ''}>${following ? t.autoZoneOn(known ? zoneLabel(zoneEntity.state) : '—') : t.autoZone}</option>` : '';
-    const zoneEl = this._ids.time_zone && this._shows('time', 'zone') ? `<label class="time-zone-wrap" title="${following ? `${t.zone} — ${t.followTitle}` : t.zone}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${!on || (!known && !following) ? ' disabled' : ''}>
-      ${known || following ? '' : '<option selected>—</option>'}${autoEl}${options.map((o) => `<option value="${o}"${o === zone && !following ? ' selected' : ''}>${zoneLabel(o)}</option>`).join('')}</select></label>` : '';
+    let autoEl = '';
+    if (canFollow) {
+      const followZone = known ? zoneLabel(zoneEntity.state) : '—';
+      const autoText = following ? t.autoZoneOn(followZone) : t.autoZone;
+      autoEl = `<option value="${AUTO_ZONE}"${following ? ' selected' : ''}>${autoText}</option>`;
+    }
+    let zoneEl = '';
+    if (this._ids.time_zone && this._shows('time', 'zone')) {
+      const zoneTitle = following ? `${t.zone} — ${t.followTitle}` : t.zone;
+      const disabled = !on || (!known && !following);
+      const placeholder = known || following ? '' : '<option selected>—</option>';
+      const zoneOption = (o) => {
+        const selected = o === zone && !following ? ' selected' : '';
+        return `<option value="${o}"${selected}>${zoneLabel(o)}</option>`;
+      };
+      zoneEl = `<label class="time-zone-wrap" title="${zoneTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${disabled ? ' disabled' : ''}>
+      ${placeholder}${autoEl}${options.map(zoneOption).join('')}</select></label>`;
+    }
     const drift = on ? currentNumber(this._state('time_drift')) : null;
     const driftCls = drift === null ? '' : Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S ? 'bad' : 'good';
     // A right clock shows the charger's own time; a wrong one how far it is off, next to Sync.

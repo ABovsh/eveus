@@ -40,6 +40,7 @@ def test_an_unexpected_parse_error_is_accounted_as_a_failed_poll(monkeypatch, er
         asyncio.run(updater._async_update_data())
 
     assert not updater.available
-    assert updater.seconds_unavailable >= 0 and updater._first_failure_monotonic is not None
+    assert updater.seconds_unavailable >= 0
+    assert updater._first_failure_monotonic is not None
     # A gap in the polls: a transition across it must not fire an event.
     assert updater._event_prev_state is None

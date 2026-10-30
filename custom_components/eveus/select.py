@@ -89,10 +89,14 @@ class _EveusIntegerSelect(
             self._last_device_value = value
             self._last_successful_read = time.monotonic()
 
-    async def async_select_option(
+    async def async_select_option(self, option: str) -> None:
+        """Send the selected integer value to the charger with optimistic UI."""
+        await self._async_send_option(option)
+
+    async def _async_send_option(
         self, option: str, *, preflight: Callable[[], bool] | None = None,
     ) -> None:
-        """Send the selected integer value to the charger with optimistic UI."""
+        """Send ``option``; ``preflight`` may veto it right before the wire."""
         if option not in self.OPTION_TO_DEVICE:
             raise HomeAssistantError(f"Unsupported {self.ENTITY_NAME}: {option}")
         value = self.OPTION_TO_DEVICE[option]
@@ -167,7 +171,7 @@ class EveusTimeZoneSelect(_EveusIntegerSelect):
         if self._following():
             raise HomeAssistantError(refusal)
         try:
-            await super().async_select_option(
+            await self._async_send_option(
                 option,
                 preflight=(lambda: not self._following()) if self._entry is not None else None,
             )

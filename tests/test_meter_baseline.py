@@ -54,7 +54,8 @@ class _FakeStore:
 
 @pytest.fixture(autouse=True)
 def _store(monkeypatch: pytest.MonkeyPatch) -> None:
-    _FakeStore.loaded, _FakeStore.instances = None, []
+    monkeypatch.setattr(_FakeStore, "loaded", None)
+    monkeypatch.setattr(_FakeStore, "instances", [])
     monkeypatch.setattr(common_network, "Store", _FakeStore)
 
 
@@ -70,7 +71,7 @@ def _boot_zero() -> dict[str, Any]:
 
 
 def test_the_first_poll_after_a_restart_is_held_against_the_saved_readings(monkeypatch: pytest.MonkeyPatch) -> None:
-    _FakeStore.loaded = dict(_SAVED)
+    monkeypatch.setattr(_FakeStore, "loaded", dict(_SAVED))
     updater = _updater(monkeypatch, _Charger(_boot_zero()))
     asyncio.run(updater.async_load_meter_baseline())
 
@@ -92,7 +93,7 @@ def test_without_saved_readings_the_first_poll_is_believed(monkeypatch: pytest.M
 
 def test_a_saved_baseline_does_not_hide_a_confirmed_reset(monkeypatch: pytest.MonkeyPatch) -> None:
     """A replaced board while Home Assistant was down: the zero repeats."""
-    _FakeStore.loaded = dict(_SAVED)
+    monkeypatch.setattr(_FakeStore, "loaded", dict(_SAVED))
     updater = _updater(monkeypatch, _Charger(_boot_zero()))
     asyncio.run(updater.async_load_meter_baseline())
 
@@ -226,7 +227,7 @@ def test_the_readings_live_in_one_store_per_entry(monkeypatch: pytest.MonkeyPatc
 
 
 def test_readings_that_match_the_saved_ones_are_not_written_again(monkeypatch: pytest.MonkeyPatch) -> None:
-    _FakeStore.loaded = dict(_SAVED)
+    monkeypatch.setattr(_FakeStore, "loaded", dict(_SAVED))
     updater = _updater(monkeypatch, _Charger({**_classic_main(), **_SAVED}))
     asyncio.run(updater.async_load_meter_baseline())
     asyncio.run(updater._async_update_data())
