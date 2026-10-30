@@ -43,15 +43,18 @@ def _build(
     return entity, updater, calc
 
 
-def _poll(entity, updater, state, *, session_energy=0.0, success=True):
+def _poll(entity, updater, state, *, session_energy=0.0, success=True, session_time=None):
     """Feed one coordinator poll with the given device state.
 
     ``session_energy=None`` omits the field entirely, which the charger does
-    only in an incomplete reply; every normal poll carries it.
+    only in an incomplete reply; every normal poll carries it. The session
+    clock (``sessionTime``) is sent only when given.
     """
     payload: dict[str, object] = {"state": state}
     if session_energy is not None:
         payload["sessionEnergy"] = session_energy
+    if session_time is not None:
+        payload["sessionTime"] = session_time
     updater.data = payload
     updater.last_update_success = success
     entity._handle_coordinator_update()
@@ -113,6 +116,23 @@ def test_manual_override_survives_the_rest_of_the_session() -> None:
     _poll(entity, updater, 4)
 
     assert entity.native_value == 42
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_manual_soc_wins_when_the_car_sensor_recovers_later(monkeypatch, reload) -> None:
+    """A sleeping car must not replace a correction with its later reading."""
+    entity, updater, _ = _build(car_soc="unavailable")
+    _poll(entity, updater, 4)
+    asyncio.run(entity.async_set_native_value(42))
+    if reload:
+        stored = entity.extra_restore_state_data.as_dict()
+        _reload(entity, monkeypatch, restored_value=42, seeded=stored["seeded"])
+    entity.hass = HelperHass({CAR_SOC: 85})
+    _poll(entity, updater, 4)
+    assert entity.native_value == 42
+    _poll(entity, updater, 2)
+    _poll(entity, updater, 4)
+    assert entity.native_value == 85
 
 
 def test_next_plug_in_cycle_seeds_again() -> None:
@@ -728,7 +748,7 @@ def test_only_advanced_mode_builds_the_initial_soc_entity(mode) -> None:
 # Surviving a config-entry reload mid-session
 # ---------------------------------------------------------------------------
 
-def _reload(entity, monkeypatch, *, restored_value, seeded):
+def _reload(entity, monkeypatch, *, restored_value, seeded, session_time=None):
     """Bring the entity up the way HA does after a reload, with stored data."""
     monkeypatch.setattr(
         number_module.BaseEveusEntity,
@@ -740,7 +760,10 @@ def _reload(entity, monkeypatch, *, restored_value, seeded):
         return SimpleNamespace(native_value=restored_value)
 
     async def fake_extra_data(self):
-        return SimpleNamespace(as_dict=lambda: {"seeded": seeded})
+        stored = {"seeded": seeded}
+        if session_time is not None:
+            stored["session_time"] = session_time
+        return SimpleNamespace(as_dict=lambda: stored)
 
     monkeypatch.setattr(
         type(entity), "async_get_last_number_data", fake_number_data, raising=False
@@ -782,6 +805,38 @@ def test_unplugging_after_a_reload_re_arms_seeding(monkeypatch) -> None:
     _poll(entity, updater, 4)
 
     assert entity.native_value == 55
+
+
+def test_unplug_seen_during_setup_cannot_restore_the_previous_cycles_soc_latch(monkeypatch) -> None:
+    """An unplug before entity addition is just as real as a later poll."""
+    from unittest.mock import AsyncMock
+    from test_soc_limit import _make
+
+    entity, updater, calc = _build(car_soc=25, seed=85)
+    updater.data = {"state": 2, "sessionEnergy": 0.0}
+    # The coordinator's first poll happens before platforms restore their entities.
+    _reload(entity, monkeypatch, restored_value=85, seeded=True)
+    _poll(entity, updater, 4, session_energy=0.0)
+    updater.data.update(evseEnabled=0, suspendLimits=0)
+    updater.send_command = AsyncMock(return_value=True)
+    calc.set_value("target_soc", 80)
+    controller, _, _ = _make(calc, updater)
+    controller.set_enabled(True)
+    controller.process()
+    updater.send_command.assert_not_awaited()
+    assert entity.native_value == 25
+
+
+@pytest.mark.parametrize(("state", "success"), [(3, True), (4, True), (5, True), (6, True), (7, True), (255, True), (2, False)])
+def test_restored_soc_latch_survives_when_setup_does_not_prove_an_unplug(
+    monkeypatch, state, success,
+) -> None:
+    entity, updater, _ = _build(car_soc=25, seed=42)
+    updater.data = {"state": state, "sessionEnergy": 10.0}
+    updater.last_update_success = success
+    _reload(entity, monkeypatch, restored_value=42, seeded=True)
+    _poll(entity, updater, 4, session_energy=10.0)
+    assert entity.native_value == 42
 
 
 def test_the_seeded_flag_is_written_into_the_stored_state() -> None:
@@ -992,3 +1047,59 @@ def test_the_picker_is_prefilled_with_the_stored_sensor() -> None:
     )
 
     assert key.description == {"suggested_value": CAR_SOC}
+
+
+# ---------------------------------------------------------------------------
+# A plug-in nobody saw: the charger was switched off over the unplug
+# ---------------------------------------------------------------------------
+
+def test_a_plug_in_unseen_while_the_charger_was_off_seeds_again() -> None:
+    """Powered off between charges, the unplug is never polled. The session
+    clock starting over proves the new plug-in, so the car's reading is used."""
+    entity, updater, _ = _build(car_soc=40, capacity=60, correction=0, seed=20)
+    _poll(entity, updater, 3, session_time=60)
+    _poll(entity, updater, 4, session_energy=0.0, session_time=120)
+    _poll(entity, updater, 4, session_energy=6.0, session_time=7200)
+    assert entity.native_value == 40
+
+    _poll(entity, updater, 5, session_energy=6.0, session_time=9000, success=False)
+    entity.hass = HelperHass({CAR_SOC: 50})
+    _poll(entity, updater, 4, session_energy=0.3, session_time=120)
+
+    assert entity.native_value == pytest.approx(50 - 0.3 / 60 * 100)
+
+
+def test_a_restart_in_between_still_sees_the_clock_start_over(monkeypatch) -> None:
+    entity, updater, _ = _build(car_soc=50, capacity=60, correction=0, seed=40)
+    updater.data = {"state": 4, "sessionEnergy": 0.3, "sessionTime": 120}
+    _reload(entity, monkeypatch, restored_value=40, seeded=True, session_time=7200)
+    _poll(entity, updater, 4, session_energy=0.3, session_time=120)
+
+    assert entity.native_value == pytest.approx(50 - 0.3 / 60 * 100)
+
+
+def test_a_running_session_clock_through_pauses_stays_one_cycle() -> None:
+    entity, updater, _ = _build(car_soc=40, capacity=60, correction=0, seed=20)
+    _poll(entity, updater, 4, session_energy=1.0, session_time=600)
+    entity.hass = HelperHass({CAR_SOC: 60})
+    for state, clock in [(6, 900), (3, 1200), (5, 1500), (4, 1800)]:
+        _poll(entity, updater, state, session_energy=2.0, session_time=clock)
+
+    assert entity.native_value == pytest.approx(40 - 1.0 / 60 * 100)
+
+
+def test_the_session_clock_is_stored_with_the_seeded_flag() -> None:
+    entity, updater, _ = _build(car_soc=55, seed=20)
+    _poll(entity, updater, 4, session_time=4321)
+
+    assert entity.extra_restore_state_data.as_dict()["session_time"] == 4321
+
+
+@pytest.mark.parametrize("stored", [True, -1, "120", 1e12, None])
+def test_an_unusable_stored_session_clock_is_ignored(monkeypatch, stored) -> None:
+    entity, updater, _ = _build(car_soc=55, seed=42)
+    updater.data = {"state": 4, "sessionEnergy": 10.0, "sessionTime": 30}
+    _reload(entity, monkeypatch, restored_value=42, seeded=True, session_time=stored)
+    _poll(entity, updater, 4, session_energy=10.0, session_time=30)
+
+    assert entity.native_value == 42

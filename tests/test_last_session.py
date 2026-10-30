@@ -189,6 +189,34 @@ def test_restore_state_boundary_inclusive_both_ends(value: float) -> None:
     assert sensor.native_value == pytest.approx(value)
 
 
+@pytest.mark.parametrize(
+    ("cls", "shown", "unit", "native"),
+    [
+        (LastSessionDurationSensor, "14.256944444444445", UnitOfTime.HOURS, 51325),
+        (LastSessionDurationSensor, "855.4166666666666", UnitOfTime.MINUTES, 51325),
+        (LastSessionDurationSensor, "51325", UnitOfTime.SECONDS, 51325),
+        (LastSessionEnergySensor, "10360", UnitOfEnergy.WATT_HOUR, 10.36),
+        (LastSessionEnergySensor, "10.36", UnitOfEnergy.KILO_WATT_HOUR, 10.36),
+        (LastSessionCostSensor, "38.95", UNIT_UAH, 38.95),
+    ],
+)
+def test_restore_reads_the_state_in_the_unit_it_was_shown_in(cls, shown, unit, native) -> None:
+    """The README suggests showing Last Session Duration in hours. The saved
+    state is then in hours and must come back as seconds; read as seconds it
+    shrank 3600-fold on every restart (live: 51325 s became 8.5e-14 h)."""
+    sensor = cls(_updater(), 1)
+    state = SimpleNamespace(state=shown, attributes={"unit_of_measurement": unit})
+    asyncio.run(sensor._async_restore_state(state))
+    assert sensor.native_value == pytest.approx(native)
+
+
+def test_a_state_in_a_unit_that_cannot_be_converted_is_not_restored() -> None:
+    sensor = LastSessionDurationSensor(_updater(), 1)
+    state = SimpleNamespace(state="5", attributes={"unit_of_measurement": "fortnights"})
+    asyncio.run(sensor._async_restore_state(state))
+    assert sensor.native_value is None
+
+
 def test_restore_state_requires_real_or_not_and_gate() -> None:
     """`not isfinite(x) or not (0<=x<=max)` must be a real OR: a finite but
     out-of-range value (e.g. negative) has to be rejected on the range

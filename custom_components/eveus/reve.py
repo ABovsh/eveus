@@ -62,12 +62,15 @@ from .const import (
     CONNECTED_STATES,
     DEVICE_STATE_CHARGING,
     DEVICE_STATE_COMPLETE,
+    DEVICE_STATE_STANDBY,
+    MAX_RATE_HUNDREDTHS,
     MAX_VALID_SYSTEM_TIME,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
 )
 from .reve_fields import graphql_paths, station_to_main
 from .snapshot import FIELD_KEYS
+from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -457,10 +460,11 @@ def _weekdays(value: Any) -> list[int]:
 
 
 def _price(value: Any) -> float | None:
-    """A price the station reports, or ``None`` for anything else."""
+    """A price the station reports, or ``None`` for anything else (including
+    one beyond the rate bound, which would overflow in hundredths)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value) if math.isfinite(value) and value >= 0 else None
+    return float(value) if 0 <= value <= MAX_RATE_HUNDREDTHS / 100 else None
 
 
 def _limit_reading(value: Any) -> int | float | None:
@@ -953,6 +957,7 @@ class ReveApi:
         self._residue_tried_at: float | None = None
         self._residue_answered = False
         self._session: tuple[dict[str, Any], float] | None = None
+        self._session_unplugged = False  # pragma: no mutate - until a session is held it can only clear the empty one; holding one sets it
         # A limit's value in /main read units, kept while the limit is off
         # (REVE then reports null) so its number shows what switching it back
         # on would apply.
@@ -1049,6 +1054,7 @@ class ReveApi:
             {key: main[key] for key in SESSION_FIELDS if key in main},
             time.monotonic(),
         )
+        self._session_unplugged = main.get("state") == DEVICE_STATE_STANDBY
         self._note_charging_command(station.get("chargingCommand"))
         rates = station.get("ratesV2")
         self._note_active_rate(_price(rates.get("activeRate")) if isinstance(rates, dict) else None)
@@ -1143,6 +1149,13 @@ class ReveApi:
         if fallback:
             self._main_fallbacks += 1
         payload = {key: value for key, value in main.items() if key not in SESSION_FIELDS}
+        state = get_safe_value(main, "state", int)  # pragma: no mutate - a float state equals the same int code; a fractional one matches neither branch
+        if state == DEVICE_STATE_STANDBY:
+            self._session_unplugged = True
+        elif state in CONNECTED_STATES and self._session_unplugged:
+            # The cached tail belongs to the unplugged session. Reusing it
+            # after a replug can falsely satisfy the new session's SOC limit.
+            self._session = None
         held = self._session
         if held is not None and time.monotonic() - held[1] <= SESSION_HOLD_SECONDS:
             payload.update(held[0])
@@ -1297,7 +1310,9 @@ class ReveApi:
         self.manual_mode.command(command)
         extras = self._extras
         if extras is not None:
-            self._store(replace(extras, charging_command=command))
+            # A successful write says nothing about the schedules/rates age
+            # or read health. Reasserted controls must not postpone their poll.
+            self._extras = replace(extras, charging_command=command)
 
     async def write_schedule(self, command: str, value: Any) -> None:
         # Read right before writing: the list is replaced whole, and the app
@@ -1306,12 +1321,15 @@ class ReveApi:
         held = self._extras
         if held is None:
             current = await self._read_extras()
+            self._store(current)
         else:
             schedules = parse_schedules(await self._station(SCHEDULES_QUERY))
             current = replace(held, schedules=schedules)
         updated = apply_schedule_command(list(current.schedules), command, value)
         await self._mutate({"scheduleV2": updated})
-        self._store(replace(current, schedules=tuple(updated)))
+        # A concurrent poll may have read newer tariffs or Stop while the
+        # mutation awaited its reply. Own only the schedules we just wrote.
+        self._extras = replace(self._extras, schedules=tuple(updated))
 
     async def _refuse(self, command: str, _value: Any) -> None:
         raise ReveCommandUnsupported(command)  # pragma: no mutate - message text; only the exception type is ever logged

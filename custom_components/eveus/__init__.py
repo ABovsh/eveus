@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.components import websocket_api
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
@@ -77,6 +78,7 @@ from .issues import (
     update_ocpp_issue,
     update_reve_fields_issue,
 )
+from .time_zone_follow import TimeZoneFollower, update_time_zone_follow
 from .utils import (
     device_entry_ids,
     get_device_suffix,
@@ -374,6 +376,18 @@ async def _async_reve_schedule_weekdays(
     if not days:
         connection.send_error(msg["id"], "invalid_format", "A schedule needs at least one day")
         return
+    # This path bypasses entity services, which normally enforce the user's
+    # control policy. Use the same schedule switch, including a renamed id
+    # and this charger's device-number suffix, as the authorization target.
+    permissions = connection.user.permissions
+    if not permissions.access_all_entities(POLICY_CONTROL):
+        suffix = get_device_suffix(updater.device_number)
+        entity_id = er.async_get(hass).async_get_entity_id(
+            "switch", DOMAIN, f"eveus{suffix}_schedule_{int(msg['schedule'])}_enabled"
+        )
+        if entity_id is None or not permissions.check_entity(entity_id, POLICY_CONTROL):
+            connection.send_error(msg["id"], "unauthorized", "Unauthorized")
+            return
     # The schema's In((1, 2)) also lets 1.0 and True through: name the slot as a whole number.
     if not await updater.send_command(f"sh{int(msg['schedule'])}Weekdays", days):
         message = (
@@ -885,6 +899,16 @@ async def _finish_setup(
     clock_tracker = ClockDriftTracker()
     follow_polls(lambda: update_clock_drift_issue(hass, entry, updater, clock_tracker))
 
+    # Opt-in (the Follow HA Time Zone switch): write Home Assistant's UTC offset
+    # to the charger's Time Zone when they differ, since the charger never
+    # follows daylight saving. Attached always, because the switch changes the
+    # entry without a reload; the listener does nothing while it is off, so the
+    # clock is never changed unasked.
+    time_zone_follower = TimeZoneFollower()
+    follow_polls(
+        lambda: update_time_zone_follow(hass, entry, updater, time_zone_follower)
+    )
+
     # Surface dangerous charger conditions (missing ground, leakage,
     # overheat, and firmware safety faults) as Home Assistant Repairs
     # notices. The manager owns its own debounce/hysteresis/latching. Its
@@ -905,11 +929,15 @@ async def _finish_setup(
     # (its task is created via hass.async_create_task, which HA does not bind to
     # this entry's lifecycle).
     entry.async_on_unload(soc_limit.async_shutdown)
-    follow_polls(soc_limit.process)
 
     # DataUpdateCoordinator constructed with config_entry already registers
     # async_shutdown on the entry unload lifecycle — no manual registration.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Initial SOC restores and seeds from the car in its entity listener.
+    # Register enforcement afterwards so its first evaluation sees that. A
+    # listener added later (a renamed entity is re-added) runs after this one;
+    # the Stop task yields before deciding, so it still sees that poll's SOC.
+    follow_polls(soc_limit.process)
     # No reloading update listener is registered: the reconfigure/reauth flows
     # reload via async_update_reload_and_abort, the repair flow reloads
     # explicitly, and the options flow reloads itself. Registering a listener

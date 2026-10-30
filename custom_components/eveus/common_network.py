@@ -123,12 +123,14 @@ class EveusUnreachable(UpdateFailed):
     """
 
 
-def _final(charging: Any, stopped: Any, key: str, kind: type) -> Any:
+def _final(charging: Any, stopped: Any, key: str, kind: type, maximum: float) -> Any:
     """A session figure as the charge ended: the stop poll's when it grew past
     the last charging poll (the charge ran on between them), else the last
     charging poll's (a reset to 0 on unplug or completion never wins)."""
-    last = get_safe_value(charging, key, kind)
-    end = get_safe_value(stopped, key, kind)
+    # Reject each impossible endpoint before choosing the larger one; an
+    # outlier must not mask the other poll's valid, persistent summary.
+    last = _bounded(get_safe_value(charging, key, kind), maximum)
+    end = _bounded(get_safe_value(stopped, key, kind), maximum)
     if last is None or (end is not None and end > last):
         return end
     return last
@@ -411,23 +413,42 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._meter_guard.seed(saved)
         self._meter_saved = self._meter_guard.baseline()
 
-    def _save_meter_baseline(self, *, final: bool = False) -> None:
+    def _save_meter_baseline(self) -> None:
         """Save the accepted readings once they changed; between saves only
         after ``METER_SAVE_INTERVAL_SECONDS``, so a charge writes a file every
         quarter hour, not a row's worth every poll."""
         store = self._meter_store
         baseline = self._meter_guard.baseline()
-        if store is None or baseline == self._meter_saved:
+        # Once unloading, only _flush_meter_baseline writes: a delayed save
+        # from a poll still finishing could land after the entry was removed.
+        if store is None or self._shutting_down or baseline == self._meter_saved:
             return
         now = time.monotonic()
         if (
-            not final
-            and self._meter_saved_at is not None
+            self._meter_saved_at is not None
             and now - self._meter_saved_at < METER_SAVE_INTERVAL_SECONDS
         ):
             return
         self._meter_saved, self._meter_saved_at = baseline, now
         store.async_delay_save(lambda: baseline, 1)
+
+    async def _flush_meter_baseline(self) -> None:
+        """Write the accepted readings now, as the entry unloads.
+
+        A delayed save still pending on this store would land after removing
+        the entry deleted the file, and leave it behind for good. Saving now
+        replaces that pending save and finishes before the removal runs.
+        """
+        store = self._meter_store
+        baseline = self._meter_guard.baseline()
+        if store is None or not baseline:
+            return
+        try:
+            await store.async_save(baseline)
+        except Exception as err:  # noqa: BLE001 - unloading must not fail on storage
+            _LOGGER.debug("Could not save the meter readings: %s", type(err).__name__)
+            return
+        self._meter_saved, self._meter_saved_at = baseline, time.monotonic()
 
     def reve_restore_manual_mode(self, on_for: float | None = None) -> None:
         """Take manual mode over from before a Home Assistant restart."""
@@ -782,7 +803,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     async def async_shutdown(self) -> None:
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
-        self._save_meter_baseline(final=True)
+        await self._flush_meter_baseline()
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
         if self._init_fw_task is not None:
@@ -1094,15 +1115,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                             else None
                         ),
                     ),
-                    "session_energy_kwh": _bounded(
-                        _final(snapshot, new_data, "sessionEnergy", float), MAX_ENERGY_KWH
+                    "session_energy_kwh": _final(
+                        snapshot, new_data, "sessionEnergy", float, MAX_ENERGY_KWH
                     ),
-                    "session_cost": _bounded(
-                        _final(snapshot, new_data, "sessionMoney", float), MAX_COST_VALUE
+                    "session_cost": _final(
+                        snapshot, new_data, "sessionMoney", float, MAX_COST_VALUE
                     ),
-                    "session_duration_s": _bounded(
-                        _final(snapshot, new_data, "sessionTime", int),
-                        MAX_SESSION_TIME_SECONDS,
+                    "session_duration_s": _final(
+                        snapshot, new_data, "sessionTime", int, MAX_SESSION_TIME_SECONDS,
                     ),
                 },
             )
@@ -1509,3 +1529,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         ) as err:
             self._record_failure(err)
             raise EveusUnreachable(f"Eveus connection issue: {type(err).__name__}") from err
+        except Exception as err:
+            # Anything else is still a failed poll: account for it like one,
+            # or the charger reads available with no outage clock running and
+            # every entity keeps its last reading while the error lasts. Home
+            # Assistant logs the message, which names only the error type.
+            self._record_failure(err)
+            raise UpdateFailed(f"Unexpected Eveus poll error: {type(err).__name__}") from err

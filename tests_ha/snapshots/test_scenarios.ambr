@@ -671,6 +671,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -1462,6 +1469,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -2251,6 +2265,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -3050,6 +3071,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -3847,6 +3875,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -4641,6 +4676,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -5428,6 +5470,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'unknown',
         dict({
@@ -6210,6 +6259,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -7006,6 +7062,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -7793,6 +7856,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -8584,6 +8654,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'unknown',
         dict({
@@ -9373,6 +9450,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'unknown',
         dict({
@@ -10160,6 +10244,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -10951,6 +11042,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'unavailable',
         dict({
@@ -11727,6 +11825,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -12517,6 +12622,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -13313,6 +13425,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -14101,6 +14220,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -14899,6 +15025,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -15692,6 +15825,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_ground_protection': tuple(
         'on',
         dict({
@@ -16483,6 +16623,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -17280,6 +17427,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -18163,6 +18317,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -19628,6 +19789,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_2_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger 2 Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_2_ground_protection': tuple(
         'on',
         dict({
@@ -19724,6 +19892,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -21206,6 +21381,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_2_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger 2 Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_2_ground_protection': tuple(
         'on',
         dict({
@@ -21302,6 +21484,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -22785,6 +22974,13 @@
           'icon': 'mdi:cloud-sync',
         }),
       ),
+      'switch.eveus_ev_charger_2_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger 2 Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
+        }),
+      ),
       'switch.eveus_ev_charger_2_ground_protection': tuple(
         'on',
         dict({
@@ -22881,6 +23077,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
@@ -23700,6 +23903,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger 2 Connect to OCPP',
           'icon': 'mdi:cloud-sync',
+        }),
+      ),
+      'switch.eveus_ev_charger_2_follow_ha_time_zone': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger 2 Follow HA Time Zone',
+          'icon': 'mdi:map-clock-outline',
         }),
       ),
       'switch.eveus_ev_charger_2_ground_protection': tuple(

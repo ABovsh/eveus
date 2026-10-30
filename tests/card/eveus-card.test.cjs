@@ -1162,10 +1162,10 @@ test('hidden items drop out of their section and the row re-spreads', () => {
   assert.match(all, /class="panel actions" aria-label/, 'three buttons keep the stylesheet grid');
 });
 test('editor: expand a section to hide or show its items; the last item cannot be hidden', () => {
-  const {editor, last} = setupEditor({sections:['time','status']});
+  const {editor, last} = setupEditor({sections:['time','current']});
   assert.doesNotMatch(editor._sectionsHtml(), /data-item=/, 'items are folded away');
   assert.match(editor._sectionsHtml(), /data-expand="time"/);
-  assert.doesNotMatch(editor._sectionsHtml(), /data-expand="status"/, 'a one-item section has nothing to hide');
+  assert.doesNotMatch(editor._sectionsHtml(), /data-expand="current"/, 'a section without items or sizes has nothing to set');
   editor._expand('time');
   const html = editor._sectionsHtml();
   assert.match(html, /data-item="time.zone" checked/); assert.match(html, /Time zone/);
@@ -1310,6 +1310,16 @@ test('while plugged in, the Session row carries the active tariff price',()=>{
   const uk=setupAll({sections:['session'],language:'uk',over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:'Rate 2'}]}});
   assert.match(uk.html(),/title="Тариф 2"/);
 });
+test('a tariff name set in the charger app is shown as text, never as markup',()=>{
+  // REVE takes the name from its app or its unauthenticated local interface.
+  const name='"><img src=x onerror=alert(1)>';
+  const x=setupAll({sections:['session'],over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:name}]}});
+  assert.doesNotMatch(x.html(),/<img/);
+  assert.match(x.html(),/title="&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;"/);
+  // A name that is also an Object member is still just the name.
+  const proto=setupAll({sections:['session'],over:{active_rate_cost:['sensor.rate',2.16,{unit_of_measurement:'₴/kWh',rate_name:'constructor'}]}});
+  assert.match(proto.html(),/class="session-rate" title="constructor"/);
+});
 test('a fault names the reading behind it and what to do',()=>{
   const hot=setupAll({sections:['status'],over:{state:['sensor.state','Error'],substate:['sensor.sub','Plug Overheat'],plug_temperature:['sensor.plug',86,{unit_of_measurement:'°C'}]}});
   assert.match(hot.html(),/status-state fault">Plug Overheat<[^]*status-note">plug 86° · limit 80° · wait for it to cool</);
@@ -1381,6 +1391,126 @@ test('a clock off by whole hours offers the time zone that fixes it instead of S
   assert.deepEqual(JSON.parse(JSON.stringify(x.calls.at(-1))),['select','select_option',{entity_id:'select.tz',option:'+2'}]);
   const minutes=setupAll({sections:['time'],over:{...tz,time_drift:['sensor.drift',700]}});
   assert.match(minutes.html(),/data-sync/);assert.doesNotMatch(minutes.html(),/data-zone-fix/);
+});
+test('a zone fix is offered only when it is Home Assistant\'s offset; a charger already on it gets Sync',()=>{
+  // Etc/GMT-2 is a fixed UTC+2, so the test does not depend on the date.
+  const tz=(zone)=>({time_zone:['select.tz',zone,{options:['+1','+2','+3','+4']}],sync_time:['button.sync','unknown'],time_drift:['sensor.drift',3600]});
+  const at=(zone)=>{const x=setupAll({sections:['time'],over:tz(zone)});x.card._lastSignature=x.card._lastRefs=null;x.card.hass={...x.hass,config:{time_zone:'Etc/GMT-2'}};return x;};
+  const wrongZone=at('+3');
+  assert.match(wrongZone.html(),/data-zone-fix="\+2"/,'the zone is wrong: setting HA\'s fixes it');
+  const wrongClock=at('+2');
+  assert.doesNotMatch(wrongClock.html(),/data-zone-fix/,'+1 would only hide a clock that is an hour off');
+  assert.match(wrongClock.html(),/data-sync/);
+});
+// ---- Time zone: the first option follows Home Assistant (the Follow HA Time Zone switch).
+const FOLLOW=(state)=>({...TIME,time_zone:['select.tz','+3',{options:['-1','0','+1','+2','+3']}],follow_ha_time_zone:['switch.follow',state]});
+const callsOf=(x)=>JSON.parse(JSON.stringify(x.calls));
+test('time zone: Auto is the first option and the current zone stays selected while it is off',()=>{
+  const h=setupAll({sections:['time'],over:FOLLOW('off')}).html();
+  assert.match(h,/<select class="time-zone"[^>]*>\s*<option value="__auto__">Auto: follow Home Assistant<\/option>\s*<option value="-1">/);
+  assert.match(h,/<option value="\+3" selected>UTC\+3<\/option>/);
+  assert.doesNotMatch(h,/<option value="__auto__" selected/);
+});
+test('time zone: with Auto on, it is the selected option and reads the offset the charger holds',()=>{
+  const h=setupAll({sections:['time'],over:FOLLOW('on')}).html();
+  assert.match(h,/<option value="__auto__" selected>Auto · UTC\+3<\/option>/);
+  assert.doesNotMatch(h,/<option value="\+3" selected>/, 'only one option is selected');
+  assert.match(h,/Following Home Assistant/, 'the tooltip says what Auto does');
+});
+test('time zone: with Auto on and the charger zone unknown, Auto is the only selected option',()=>{
+  const h=setupAll({sections:['time'],over:{...FOLLOW('on'),time_zone:['select.tz','unknown',{options:['-1','0','+1','+2','+3']}]}}).html();
+  assert.equal((h.match(/ selected>/g)||[]).length,1);
+  assert.match(h,/<option value="__auto__" selected>Auto · —<\/option>/);
+  assert.doesNotMatch(h,/<select[^>]*disabled/, 'Auto stays usable to turn off');
+});
+test('time zone: no Auto option when the integration has no such switch (older version)',()=>{
+  const h=setupAll({sections:['time'],over:TIME}).html();
+  assert.doesNotMatch(h,/__auto__/);
+});
+test('time zone: choosing Auto turns the switch on, paints at once, and sends no zone',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('off')});
+  let release;x.hass.callService=(d,sv,data)=>{x.calls.push([d,sv,data]);return new Promise((r)=>{release=r;});};
+  const done=x.card._selectOption('time_zone','__auto__');
+  assert.match(x.html(),/<option value="__auto__" selected>Auto · UTC\+3<\/option>/,'painted before HA answers');
+  release();await done;
+  assert.deepEqual(callsOf(x),[['switch','turn_on',{entity_id:'switch.follow'}]]);
+});
+test('time zone: choosing Auto while it is already on does nothing',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  await x.card._selectOption('time_zone','__auto__');
+  assert.equal(x.calls.length,0);
+});
+test('time zone: a fixed zone while Auto is on turns Auto off first, then sets the zone',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  await x.card._selectOption('time_zone','+2');
+  assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}],['select','select_option',{entity_id:'select.tz',option:'+2'}]]);
+});
+test('time zone: switching chargers while Auto turns off cannot send the old choice to the new charger',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  let release;
+  x.hass.callService=(d,sv,data)=>{x.calls.push([d,sv,data]);return x.calls.length===1?new Promise(r=>{release=r;}):Promise.resolve();};
+  const done=x.card._selectOption('time_zone','+2');
+  const next=setupAll({sections:['time'],over:{...FOLLOW('off'),time_zone:['select.other_tz','+3',{options:['+2','+3']}]}});
+  x.hass.states=next.states;x.hass.callWS=next.hass.callWS;
+  x.card.setConfig({sections:['time'],device_id:'other'});
+  await x.card._resolve();
+  assert.equal(x.card._online,true);
+  assert.equal(x.card._ids.time_zone,'select.other_tz');
+  release();await done;
+  assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}]]);
+});
+for(const latest of ['+1','__auto__']) test(`time zone: a delayed Auto-off reply cannot overwrite a newer ${latest} choice`,async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  let release;
+  x.hass.callService=(d,sv,data)=>{
+    x.calls.push([d,sv,data]);
+    return x.calls.length===1?new Promise(r=>{release=r;}):Promise.resolve();
+  };
+  const first=x.card._selectOption('time_zone','+2');
+  await x.card._selectOption('time_zone',latest);
+  const sent=callsOf(x);
+  release();await first;
+  assert.deepEqual(callsOf(x),sent,'the old choice must not send a late zone');
+  assert.deepEqual(sent[1],latest==='__auto__'
+    ?['switch','turn_on',{entity_id:'switch.follow'}]
+    :['select','select_option',{entity_id:'select.tz',option:latest}]);
+});
+test('time zone: picking the zone the charger already holds still ends Auto',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  await x.card._selectOption('time_zone','+3');
+  assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}]]);
+});
+test('time zone: a fixed zone while Auto is off is just the zone, as before',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('off')});
+  await x.card._selectOption('time_zone','+2');
+  assert.deepEqual(callsOf(x),[['select','select_option',{entity_id:'select.tz',option:'+2'}]]);
+});
+test('time zone: if turning Auto off fails, the zone is not sent',async()=>{
+  const x=setupAll({sections:['time'],over:FOLLOW('on')});
+  x.hass.callService=async(d,sv,data)=>{x.calls.push([d,sv,data]);if(d==='switch')throw new Error('no');};
+  await x.card._selectOption('time_zone','+2');
+  assert.deepEqual(callsOf(x),[['switch','turn_off',{entity_id:'switch.follow'}]]);
+  assert.match(x.html(),/<option value="__auto__" selected>/,'back to Auto, as the switch still is');
+});
+test('time zone: with Auto on there is no Set button, only Sync, because the zone would be refused',()=>{
+  const over={...FOLLOW('on'),time_drift:['sensor.drift',3600]};
+  const x=setupAll({sections:['time'],over});
+  assert.doesNotMatch(x.html(),/data-zone-fix/);
+  assert.match(x.html(),/data-sync/);
+  const off=setupAll({sections:['time'],over:{...FOLLOW('off'),time_drift:['sensor.drift',3600]}});
+  assert.match(off.html(),/data-zone-fix="\+2"/, 'Auto off: the one-tap fix stays');
+});
+test('time zone: offline, Auto cannot be chosen',async()=>{
+  const x=setupAll({sections:['time'],over:{...FOLLOW('off'),state:['sensor.state','unavailable']}});
+  assert.match(x.html(),/data-select="time_zone"[^>]*disabled/);
+  await x.card._selectOption('time_zone','__auto__');
+  assert.equal(x.calls.length,0);
+});
+test('uk: Auto in the time zone list',()=>{
+  const off=setupAll({sections:['time'],over:FOLLOW('off'),locale:'uk'}).html();
+  assert.match(off,/<option value="__auto__">Авто: як у Home Assistant<\/option>/);
+  const on=setupAll({sections:['time'],over:FOLLOW('on'),locale:'uk'}).html();
+  assert.match(on,/<option value="__auto__" selected>Авто · UTC\+3<\/option>/);
 });
 test('Counters show this month and last month from the energy statistics',async()=>{
   const x=setupAll({sections:['history'],over:{total_energy:['sensor.total',5290.16,{unit_of_measurement:'kWh'}]}});
@@ -1495,10 +1625,11 @@ test('fitted text clears fractional overflow even when DOM widths round equal', 
   class HTMLElement {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
   }
-  const clipped = {dataset:{fit:'12'},style:{},clientWidth:154,
+  const querySelector = () => null;
+  const clipped = {dataset:{fit:'12'},style:{},querySelector,clientWidth:154,
     get scrollWidth() { return Math.round(153.89 * parseFloat(this.style.fontSize) / 12); },
     getBoundingClientRect() { return {width:153.5}; }};
-  const roomy = {dataset:{fit:'36'},style:{},clientWidth:154,scrollWidth:79,
+  const roomy = {dataset:{fit:'36'},style:{},querySelector,clientWidth:154,scrollWidth:79,
     getBoundingClientRect() { return {width:153.5}; }};
   const document = {createRange() { let el; return {
     selectNodeContents(value) { el=value; },
@@ -2102,6 +2233,69 @@ test('REVE: days tapped on two schedules at once both settle on what the charger
   x.card._render();
   assert.match(x.html(), /data-days-edit="1"[^>]*>Tu</);
 });
+test('REVE: a schedule is now, and next, only on its own days; a window past midnight belongs to the day it began', async () => {
+  const x = await setupReve();
+  // Schedule 1 runs 23:00-07:00 on Tuesdays only (0 = Sunday).
+  x.card._reveSchedules = x.card._reveSchedules.map((item, i) => i === 0 ? {...item, weekdays: [2]} : item);
+  const at = (hm, day) => { x.card._nowHM = () => hm; x.card._scheduleDay = () => day; x.card._render(); return rowOf(x.html(), 1); };
+  assert.match(at('23:30', 2), /^ on now"/, 'Tuesday night');
+  assert.match(at('06:00', 3), /^ on now"/, 'Wednesday morning: the window began on Tuesday');
+  assert.match(at('23:30', 3), /^ on"/, 'Wednesday night: not one of its days');
+  assert.match(at('06:00', 2), /^ on"/, 'Tuesday morning: that window began on Monday');
+  x.card._nowHM = () => '20:00';
+  x.card._scheduleDay = () => 3;
+  assert.equal(x.card._nextSchedule(), null, 'no start tonight on a Wednesday');
+  x.card._scheduleDay = () => 2;
+  assert.equal(x.card._nextSchedule(), 1);
+});
+test('REVE: an old charger weekday reply cannot change the next write to a new charger', async () => {
+  const slow = deferred();
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? slow.promise : reveSchedules()});
+  const oldWrite = x.card._toggleWeekday('1:6');
+  const entities = {...x.card._ids};
+  x.hass.callWS = async (msg) => {
+    x.asked.push(msg);
+    if (msg.type === 'eveus/card_entities') return {entities, device_id: 'dev2'};
+    if (msg.type === 'eveus/reve_schedule_weekdays') return {weekdays: msg.weekdays};
+    return {...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [1, 3]}]};
+  };
+  x.card.setConfig({sections: ['schedules'], device_id: 'dev2'});
+  // The new charger has a different schedule. An old reply must not supply
+  // the base for the next full-set write to this one.
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(JSON.parse(JSON.stringify(x.card._reveSchedules[0].weekdays)), [1, 3]);
+  slow.resolve({weekdays: [0, 1, 2, 3, 4, 5]});
+  await oldWrite;
+  await x.card._toggleWeekday('1:5');
+  assert.deepEqual(JSON.parse(JSON.stringify(x.asked.at(-1))), {
+    type: 'eveus/reve_schedule_weekdays', device_id: 'dev2', schedule: 1, weekdays: [1, 3, 5],
+  });
+});
+test('REVE: a late failed weekday write cannot clear a new charger pending change', async () => {
+  let rejectOld;
+  const oldReply = new Promise((_, reject) => { rejectOld = reject; });
+  const newReply = deferred();
+  const x = await setupReve({answer: (msg) => msg.type === 'eveus/reve_schedule_weekdays'
+    ? oldReply : reveSchedules()});
+  const oldWrite = x.card._toggleWeekday('1:6');
+  const entities = {...x.card._ids};
+  x.hass.callWS = async (msg) => {
+    if (msg.type === 'eveus/card_entities') return {entities, device_id: 'dev2'};
+    if (msg.type === 'eveus/reve_schedule_weekdays') return newReply.promise;
+    return {...reveSchedules(), schedules: [{...reveSchedules().schedules[0], weekdays: [1, 3]}]};
+  };
+  x.card.setConfig({sections: ['schedules'], device_id: 'dev2'});
+  await new Promise((r) => setImmediate(r));
+  const newWrite = x.card._toggleWeekday('1:5');
+  rejectOld(new Error('old charger refused'));
+  await oldWrite;
+  assert.deepEqual(JSON.parse(JSON.stringify(x.card._dayPending[1])), [1, 3, 5]);
+  assert.equal(x.card._commandError, false);
+  newReply.resolve({weekdays: [1, 3, 5]});
+  await newWrite;
+  assert.deepEqual(JSON.parse(JSON.stringify(x.card._dayPending)), {});
+});
 test('REVE: a refused day on one schedule goes back although another schedule was tapped after it', async () => {
   const x = await setupReve({answer: (msg) => {
     if (msg.type === 'eveus/reve_schedule_weekdays') { if (msg.schedule === 1) return Promise.reject(new Error('failed')); return {weekdays: msg.weekdays}; }
@@ -2288,13 +2482,89 @@ test('a finished charge with a reason the card cannot name still says when',()=>
   assert.match(html,/status-since">at 03:15</);
 });
 
-test('no time where the state is not a finished charge or a running one',()=>{
+test('no time where the state is not a finished charge, a running one or no car',()=>{
   const since='2026-10-21T00:15:00+00:00';
   // A schedule or limit parked it: the reason leads and the car is not full.
   assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Energy Limit Reached',since}).html()),/ at |since/);
   assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Energy Limit Reached',stop:'on',since}).html()),/ at 0|since/);
   assert.doesNotMatch(atNow(()=>setupSince({state:'Connected',reason:'Waiting for Car',since}).html()),/since|at 03/);
-  assert.doesNotMatch(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',since}).html()),/since|at 03/);
+});
+
+test('no car: the state says since when, and the reason follows it',()=>{
+  const html=atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',since:'2026-10-21T06:32:00+00:00'}).html());
+  assert.match(html,/status-state idle">Standby<\/span><span class="status-since">since 09:32<\/span><span class="status-note">Cable Not Connected</);
+  assert.match(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',since:'2026-10-20T06:32:00+00:00'}).html()),/status-since">since yesterday 09:32</);
+  assert.match(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',language:'uk',since:'2026-10-21T06:32:00+00:00'}).html()),
+    /status-state idle">Очікування<\/span><span class="status-since">з 09:32<\/span><span class="status-note">Кабель не підключено</);
+});
+
+test('no car: no time when it is unknown, or when Stop is what the row names',()=>{
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected'}).html()),/status-since/);
+  // "Stopped since 09:32" would date the Stop by the unplug.
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',stop:'on',since:'2026-10-21T06:32:00+00:00'}).html()),/status-since/);
+});
+
+// ---- Status: power and current beside a running charge can be hidden (status.power) ----
+
+function chargingWith({hide,slow=false,finish=false}={}) {
+  return atNow(()=>{
+    const x=setupSince({since:'2026-10-21T16:05:00+00:00'});
+    if(hide){const ids=x.card._ids;x.card.setConfig({sections:['status'],hide});x.card._ids=ids;x.card._resolved=true;}
+    x.states['sensor.pw']={state:'3200',attributes:{}};x.states['sensor.cur']={state:slow?'6':'7',attributes:{}};
+    x.states['sensor.set']={state:'16',attributes:{}};
+    Object.assign(x.card._ids,{power:'sensor.pw',current:'sensor.cur',charging_current:'sensor.set'});
+    if(finish){
+      x.states['sensor.ttt']={state:'1h 30m',attributes:{}};x.states['sensor.fin']={state:'2026-10-22T02:10:00+03:00',attributes:{}};
+      Object.assign(x.card._ids,{time_to_target_soc:'sensor.ttt',charging_finish_time:'sensor.fin'});
+    }
+    if(!slow)x.states['sensor.set']={state:'7',attributes:{}};
+    x.card.hass={...x.hass};
+    return x.html();
+  });
+}
+
+test('power and current show beside a running charge by default',()=>{
+  assert.match(chargingWith(),/status-since">since 19:05<\/span><span class="status-note">3\.2 kW · 7 A</);
+});
+
+test('status.power hidden: no power or current, the finish stays',()=>{
+  const html=chargingWith({hide:['status.power'],finish:true});
+  assert.match(html,/status-since">since 19:05<\/span><span class="status-note">until 02:10<\/span>/);
+  assert.doesNotMatch(html,/kW|7 A/);
+});
+
+test('status.power hidden with nothing else to say: no divider and no empty note',()=>{
+  const html=chargingWith({hide:['status.power']});
+  assert.match(html,/status-since">since 19:05<\/span><\/button>/);
+  assert.doesNotMatch(html,/status-note/);
+});
+
+test('status.power hidden: why the charge runs slow still shows',()=>{
+  assert.match(chargingWith({hide:['status.power'],slow:true}),/status-note">6 of 16 A · the car takes less</);
+});
+
+test('editor: Status offers Power · current, the only item, and it can be hidden because the state stays',()=>{
+  const {editor, last} = setupEditor({sections:['status','time']});
+  assert.match(editor._sectionsHtml(), /data-expand="status"/);
+  editor._expand('status');
+  const html = editor._sectionsHtml();
+  assert.match(html, /data-item="status.power" checked><span>Power · current</);
+  editor._toggleItem('status.power');
+  assert.deepEqual([...last().hide], ['status.power']);
+  assert.match(editor._sectionsHtml(), /data-item="status.power"><span>/, 'unticked and still tickable');
+  editor._toggleItem('status.power');
+  assert.equal(last().hide, undefined);
+  // Other sections still keep their last item.
+  editor._expand('time');
+  editor._toggleItem('time.sync'); editor._toggleItem('time.zone'); editor._toggleItem('time.drift');
+  assert.deepEqual([...last().hide], ['time.sync', 'time.zone']);
+});
+
+test('editor: the Status item reads in Ukrainian',()=>{
+  const {editor} = setupEditor({sections:['status']});
+  editor._hass = {locale:{language:'uk'}};
+  editor._expand('status');
+  assert.match(editor._sectionsHtml(), /data-item="status.power" checked><span>Потужність · струм</);
 });
 
 test('a missing, unreadable or future time shows nothing',()=>{
@@ -2339,4 +2609,105 @@ test('REVE 1.0.3 manual mode from the app: the manual-mode notice with Turn off,
 });
 test('REVE 1.0.3, manual mode off: no notice', () => {
   assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...STOPPED('off'), ...LEAVABLE('off')}}).html(), /class="override"/);
+});
+
+// ---- Status row: the state is never cut while the note can give way ----
+// A shrinking state lost a sub-pixel share of every overflow, and the ellipsis turned that
+// into "Заряджан…" beside a long "since yesterday" (measured live at 390 px, 2026-10-30).
+test('the status state does not shrink; only a state wider than the row beside the icon ends in an ellipsis',()=>{
+  const rules=[...source.matchAll(/\.status-state\{([^}]*)\}/g)].map((m)=>m[1]);
+  const last=(prop)=>rules.map((r)=>r.match(new RegExp(`(?:^|;)${prop}:([^;]+)`))?.[1]).filter(Boolean).at(-1);
+  assert.equal(last('flex-shrink'),'0');
+  assert.equal(last('max-width'),'calc(100% - 31px)','31 px = the icon badge and its gap');
+});
+
+// ---- Status row: a note that does not fit beside the state takes its own line ----
+// The narrow layout wrapped the note's text in place, beside the state: with a long "since"
+// that left a one-word column ("Cable / Not / Conne…") that overflowed the row (live, 320 px).
+function fitRow(noteWidths) {
+  const x=setupStatus({sections:['status']});
+  const classes=new Set(), measured=[];
+  const row={classList:{add:(c)=>classes.add(c),remove:(c)=>classes.delete(c),contains:(c)=>classes.has(c)},
+    querySelector:(q)=>q==='.status-note'?note:null};
+  const note={get scrollWidth(){measured.push(classes.has('status-wrap'));return noteWidths.text;},get clientWidth(){return noteWidths.box;}};
+  x.card.shadowRoot={innerHTML:'',querySelectorAll:()=>[],querySelector:(q)=>q==='.sl.status'?row:null};
+  return {x,classes,measured,note,noteWidths};
+}
+
+test('a status note cut short moves to its own line; one that fits stays beside the state',()=>{
+  const r=fitRow({text:206,box:107});
+  r.x.card._fitLimitValues();
+  assert.ok(r.classes.has('status-wrap'));
+  r.noteWidths.text=100;
+  r.x.card._fitLimitValues();
+  assert.ok(!r.classes.has('status-wrap'),'a wider card or a shorter note returns to one line');
+});
+
+test('the note is measured on one line, not in the two-line layout it may already have',()=>{
+  const r=fitRow({text:206,box:107});
+  r.x.card._fitLimitValues(); r.x.card._fitLimitValues();
+  assert.deepEqual(r.measured,[false,false]);
+});
+
+test('a status row without a note keeps one line',()=>{
+  const x=setupStatus({sections:['status']});
+  const classes=new Set(['status-wrap']);
+  const row={classList:{add:(c)=>classes.add(c),remove:(c)=>classes.delete(c)},querySelector:()=>null};
+  x.card.shadowRoot={innerHTML:'',querySelectorAll:()=>[],querySelector:(q)=>q==='.sl.status'?row:null};
+  x.card._fitLimitValues();
+  assert.ok(!classes.has('status-wrap'));
+});
+
+test('two-line status: the note spans the row under the state, without the divider; narrow cards no longer squeeze it beside',()=>{
+  assert.match(source,/\.sl\.status\.status-wrap \.status-main\{[^}]*flex-wrap:wrap/);
+  assert.match(source,/\.sl\.status\.status-wrap \.status-note\{flex-basis:100%;padding-left:31px;white-space:normal/);
+  assert.match(source,/\.sl\.status\.status-wrap \.status-note::before\{display:none\}/);
+  const narrow=source.match(/@container \(max-width:340px\)\{\n[^]*?\n\}/)[0];
+  assert.doesNotMatch(narrow,/\.status-note\{/);
+});
+
+// ---- Battery SOC: "to go" leaves when the numbers need its room ----
+// "21.3kWh · 92₴ залишилось" was one unbreakable line: at the 11 px floor it still ran 16-23 px
+// past the tile at 320 px and 2.7 px at 360 (live, 2026-10-30). Anton: no second line, drop the word.
+function fitNote({text,box,note=true}) {
+  const x=setupStatus({sections:['status']});
+  const word={hidden:false};
+  const el={dataset:{fit:'12'},style:{},querySelector:(q)=>q==='.tile-note'&&note?word:null,
+    get scrollWidth(){return text(parseFloat(this.style.fontSize),word.hidden);},get clientWidth(){return box;}};
+  x.card.shadowRoot={innerHTML:'',querySelectorAll:(q)=>q==='[data-fit]'?[el]:[],querySelector:()=>null};
+  return {x,el,word};
+}
+
+test('to go: a word that does not fit even at the smallest size is dropped, and the numbers return to their size',()=>{
+  // 137 px with the word at 11 px in a 120 px tile; 100 px without it at 12 px.
+  const r=fitNote({text:(px,hidden)=>hidden?100:137,box:120});
+  r.x.card._fitLimitValues();
+  assert.equal(r.word.hidden,true);
+  assert.equal(r.el.style.fontSize,'12px');
+});
+
+test('to go: a word that fits once the line is smaller stays',()=>{
+  const r=fitNote({text:(px)=>px>11?130:118,box:120});
+  r.x.card._fitLimitValues();
+  assert.equal(r.word.hidden,false);
+  assert.equal(r.el.style.fontSize,'11px');
+});
+
+test('to go: a dropped word comes back on a wider card',()=>{
+  let box=120;
+  const word={hidden:false};
+  const x=setupStatus({sections:['status']});
+  const el={dataset:{fit:'12'},style:{},querySelector:(q)=>q==='.tile-note'?word:null,
+    get scrollWidth(){return word.hidden?100:137;},get clientWidth(){return box;}};
+  x.card.shadowRoot={innerHTML:'',querySelectorAll:(q)=>q==='[data-fit]'?[el]:[],querySelector:()=>null};
+  x.card._fitLimitValues();
+  assert.equal(word.hidden,true);
+  box=160; x.card._fitLimitValues();
+  assert.equal(word.hidden,false);
+});
+
+test('to go: a value without a word still only shrinks',()=>{
+  const r=fitNote({text:()=>137,box:120,note:false});
+  r.x.card._fitLimitValues();
+  assert.equal(r.el.style.fontSize,'11px');
 });

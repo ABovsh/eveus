@@ -20,6 +20,7 @@ from .common_base import (
 from .control_base import CommandBackedEntity
 from .const import (
     CONF_FIRMWARE_FAMILY,
+    CONF_FOLLOW_HA_TIME_ZONE,
     EVEUS_FIRMWARE_ONLY_ENTITIES,
     SOC_MODE_ADVANCED,
     get_soc_mode,
@@ -355,6 +356,51 @@ class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):
         self.async_write_ha_state()
 
 
+class EveusFollowTimeZoneSwitch(BaseEveusEntity, SwitchEntity):
+    """Local switch: when on, keep the charger's Time Zone on Home Assistant's.
+
+    The charger holds one whole-hour offset and never follows daylight saving.
+    The choice lives in the config entry (so it survives restarts and restores
+    and is the one value the follower reads); the entity only shows and flips
+    it. Turning it on makes the Time Zone select refuse manual changes.
+    """
+
+    ENTITY_NAME = "Follow HA Time Zone"
+    _attr_icon = "mdi:map-clock-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, updater, entry, device_number: int = 1) -> None:
+        super().__init__(updater, device_number)
+        self._entry = entry
+
+    @property
+    def available(self) -> bool:
+        """Always available: a setting of the integration, not of the charger."""
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._entry.data.get(CONF_FOLLOW_HA_TIME_ZONE))
+
+    def _store(self, follow: bool) -> None:
+        # Rebase on the LIVE entry data: a reconfigure finishing meanwhile must
+        # not be rolled back. No reload: the integration registers no update
+        # listener, and the follower reads this on every poll.
+        data = dict(self._entry.data)
+        if follow:
+            data[CONF_FOLLOW_HA_TIME_ZONE] = True
+        else:
+            data.pop(CONF_FOLLOW_HA_TIME_ZONE, None)
+        self.hass.config_entries.async_update_entry(self._entry, data=data)
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self._store(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self._store(False)  # pragma: no mutate - _store only tests truthiness; None is falsy too
+
+
 async def async_setup_entry(
     _hass: HomeAssistant,
     entry: EveusConfigEntry,
@@ -379,4 +425,5 @@ async def async_setup_entry(
         entities.append(
             EveusSocLimitSwitch(updater, runtime_data.soc_limit, device_number)
         )
+    entities.append(EveusFollowTimeZoneSwitch(updater, entry, device_number))
     async_add_entities(entities)

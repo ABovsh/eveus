@@ -1,5 +1,35 @@
 # Changelog
 
+## 4.30.0 - 2026-10-30
+
+### ✨ New
+
+- **New switch: Follow HA Time Zone keeps the charger on Home Assistant's time zone, daylight saving included.** The charger holds one fixed offset, so it ran an hour off after every clock change. With the switch on, the integration writes Home Assistant's offset once three polls in a row disagree, and **Time Zone** cannot be set by hand; **Sync Time** stays manual. Off by default. The clock-drift notice offers both ways: set **Time Zone** by hand, or turn the switch on. Closes [#21](https://github.com/ABovsh/eveus/issues/21) requested by @ababak.
+- **Card: Auto, the first choice in the Time zone list, turns Follow HA Time Zone on.** Choosing a zone while Auto is on turns it off first.
+- **Card: Status says since when no car is plugged in.** It reads `Standby since 09:32 · Cable Not Connected`, with yesterday, the weekday or the date for an earlier day, as for a charge. Follow-up to [#20](https://github.com/ABovsh/eveus/issues/20) requested by @ababak.
+- **Card: power and current beside a running charge can be hidden.** They repeat the Meter section. Untick **Power · current** under the Status section's settings icon, or add `status.power` to `hide:` in YAML; why a charge runs slow and the finish time stay. Follow-up to [#20](https://github.com/ABovsh/eveus/issues/20) requested by @ababak.
+
+### 🐛 Fixed
+
+- **The SOC limit no longer stops a new charge on the previous charge's Initial SOC.** With a car SOC sensor, the car's reading is applied before the limit decides, also right after a Home Assistant restart.
+- **The SOC limit also applies to a charge that began between two polls.** After a limit stop, pulling the connector out and plugging it in again, or power-cycling the charger, within one poll left the new charge without the limit.
+- **Initial SOC is filled from the car again when the unplug happened while the charger was switched off.** The charger's session time starting over now marks the new plug-in; before, only an unplug Home Assistant saw did, so the previous charge's value stayed.
+- **An Initial SOC set by hand is no longer overwritten when the car sensor comes back.** It stays until the next plug-in, also through a reload.
+- **Last Session Duration shown in hours keeps its value through a restart.** Each restart read the saved hours as seconds, shrinking the duration 3,600-fold; Last Session Energy shown in Wh or MWh was rescaled the same way.
+- **Last Session keeps its energy, cost and duration when the charger's final poll reports a corrupt value.** The last charging poll's reading is used instead.
+- **A clock that is whole hours off on a charger already in Home Assistant's time zone is now sent to Sync Time.** The clock-drift notice blamed the Time Zone instead, and the card's Set UTC button offered a zone that only hid the error.
+- **Removing a charger deletes its saved meter readings.** A save still pending at removal wrote them back to Home Assistant's storage.
+- **REVE: a new charge is no longer stopped at Target SOC on the previous charge's energy.** When the car was unplugged and plugged in again while REVE's interface was not answering, the old session's readings stayed for up to five minutes; they now wait for fresh data.
+- **REVE: schedules and tariffs changed in the app reach Home Assistant within five minutes again.** Every Stop or One Charge sent from Home Assistant postponed that refresh, and a slow schedule change could overwrite a newer Stop state or tariff.
+- **REVE: Not Charging Reason reads Waiting for Schedule for any schedule on in the app.** Only Schedule 1 and 2 counted; with only a later schedule on, it read Waiting for Activation.
+- **REVE: users without control permission can no longer change schedule days.** The card's day buttons now need the same permission as the schedule's switch.
+- **REVE: reconfiguring or repairing the connection keeps REVE's set of entities.** With the charger off at that moment, the five entities REVE does not have came back until it answered.
+- **Card, REVE: switching the card to another charger while a day change is pending no longer shows the first charger's days.**
+- **Card, REVE: a schedule is marked as running, and named as the next start, only on its own days.** A schedule set for some weekdays was shown as running on the others too.
+- **Card: Status shows the state and its note in full.** Next to `since yesterday 19:05` the state could lose its last letters, as in `Заряджан…`, and the note was cut off, or squeezed into a one-word column on a narrow card. A note that does not fit beside the state now takes a second line.
+- **Card: Battery SOC no longer cuts off what is left to the target on a narrow card.** `21.3 kWh · 92 ₴ залишилось` ran past the tile's edge at 320-360 px; when the numbers leave no room, the word is left out.
+- **Card, REVE: a tariff name from the charger's app is always shown as plain text.** A name containing HTML could run a script in the dashboard of anyone viewing the card.
+
 ## 4.29.0 - 2026-10-24
 
 ### ✨ New

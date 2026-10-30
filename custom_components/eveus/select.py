@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, State, callback
@@ -19,6 +20,7 @@ from .common_base import (
 )
 from .control_base import command_failure
 from .const import (
+    CONF_FOLLOW_HA_TIME_ZONE,
     CONF_MODEL,
     MIN_VOLTAGE_OPTIONS,
     OPTIMISTIC_CONTROL_TTL,
@@ -89,6 +91,12 @@ class _EveusIntegerSelect(
 
     async def async_select_option(self, option: str) -> None:
         """Send the selected integer value to the charger with optimistic UI."""
+        await self._async_send_option(option)
+
+    async def _async_send_option(
+        self, option: str, *, preflight: Callable[[], bool] | None = None,
+    ) -> None:
+        """Send ``option``; ``preflight`` may veto it right before the wire."""
         if option not in self.OPTION_TO_DEVICE:
             raise HomeAssistantError(f"Unsupported {self.ENTITY_NAME}: {option}")
         value = self.OPTION_TO_DEVICE[option]
@@ -97,7 +105,8 @@ class _EveusIntegerSelect(
             self._command_pending = True
             self._write_if_changed(option)
             try:
-                success = await self._updater.send_command(self.WRITE_KEY, value)
+                kwargs = {"preflight": preflight} if preflight is not None else {}
+                success = await self._updater.send_command(self.WRITE_KEY, value, **kwargs)
             except Exception:
                 self._optimistic_value = None
                 self._write_if_changed(self.current_option)
@@ -134,7 +143,12 @@ class _EveusIntegerSelect(
 
 
 class EveusTimeZoneSelect(_EveusIntegerSelect):
-    """Time-zone offset reported by and sent to the charger's `timeZone` field."""
+    """Time-zone offset reported by and sent to the charger's `timeZone` field.
+
+    While the Follow HA Time Zone switch is on the integration owns the offset,
+    so a manual choice is refused (it would be undone within a few polls); the
+    select keeps showing what the charger holds.
+    """
 
     ENTITY_NAME = "Time Zone"
     READ_KEY = "timeZone"
@@ -144,6 +158,29 @@ class EveusTimeZoneSelect(_EveusIntegerSelect):
     _attr_icon = "mdi:map-clock-outline"
     _attr_entity_category = EntityCategory.CONFIG
     _attr_options = list(TIMEZONE_OPTIONS)
+
+    def __init__(self, updater, device_number: int = 1, entry=None) -> None:
+        super().__init__(updater, device_number)
+        self._entry = entry
+
+    def _following(self) -> bool:
+        return self._entry is not None and bool(self._entry.data.get(CONF_FOLLOW_HA_TIME_ZONE))
+
+    async def async_select_option(self, option: str) -> None:
+        refusal = "Follow HA Time Zone is on: turn it off to set the Time Zone by hand"
+        if self._following():
+            raise HomeAssistantError(refusal)
+        try:
+            await self._async_send_option(
+                option,
+                preflight=(lambda: not self._following()) if self._entry is not None else None,
+            )
+        except HomeAssistantError as err:
+            # Following started while this choice waited its turn: nothing was
+            # sent, so the reason is the switch, not the charger.
+            if self._following():
+                raise HomeAssistantError(refusal) from err
+            raise
 
 
 class EveusAdaptiveModeSelect(_EveusIntegerSelect):
@@ -180,7 +217,9 @@ async def async_setup_entry(
     """Set up Eveus select entities."""
     runtime_data = entry.runtime_data
     entities = [
-        EveusTimeZoneSelect(runtime_data.updater, runtime_data.device_number),
+        EveusTimeZoneSelect(
+            runtime_data.updater, runtime_data.device_number, entry
+        ),
         EveusAdaptiveModeSelect(runtime_data.updater, runtime_data.device_number),
     ]
     if entry.data.get(CONF_MODEL):

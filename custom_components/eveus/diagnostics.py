@@ -9,7 +9,12 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import EveusConfigEntry
-from .const import CONF_EXTERNAL_SOC_ENTITY, LEGACY_RAW_STATE_KEY
+from .const import (
+    CONF_EXTERNAL_SOC_ENTITY,
+    CONF_FIRMWARE_FAMILY,
+    CONF_FOLLOW_HA_TIME_ZONE,
+    LEGACY_RAW_STATE_KEY,
+)
 
 # Redacted on every diagnostics download — credentials, host, IDs, and any
 # /main field that exposes the LAN address or hardware serial.
@@ -104,7 +109,8 @@ _KNOWN_MAIN_FIELDS = frozenset({
 _KNOWN_ENTRY_FIELDS = frozenset({
     "host", "username", "password", "unique_id", "scheme", "model", "phases",
     "device_number", "soc_mode", "initial_soc", "target_soc", "battery_capacity",
-    "soc_correction", CONF_EXTERNAL_SOC_ENTITY,
+    "soc_correction", CONF_EXTERNAL_SOC_ENTITY, CONF_FIRMWARE_FAMILY,
+    CONF_FOLLOW_HA_TIME_ZONE,
 })
 _SCALARS = (str, int, float, bool, type(None))
 _SAFE_FIELD_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")

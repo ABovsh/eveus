@@ -1,7 +1,7 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.29.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.30.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
@@ -157,7 +157,7 @@ browser or reset the app's frontend cache.
 
 | Section | Shows |
 | --- | --- |
-| **Status** | Charger state and why it is not charging; while charging, since when, and for a finished charge, at what time |
+| **Status** | Charger state and why it is not charging; while charging, since when, with power and current (you can hide them), and for a finished charge, at what time; with no car, since when |
 | **Buttons** | **OCPP** (not shown on REVE), **One charge** and **Stop** |
 | **Battery SOC** | Estimated SOC and where the session started; while charging, time left and finish time; energy and cost to target, and before the charge the price per kWh; **Advanced mode only** |
 | **SOC settings** | **Initial**, **Target**, **Capacity** and **Loss**; **Advanced mode only** |
@@ -167,7 +167,7 @@ browser or reset the app's frontend cache.
 | **Session** | Session energy, cost and time; with the car unplugged, the last session |
 | **Limits** | Energy, time, cost and SOC limits, **Disable all** (not on REVE) |
 | **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and, on Eveus firmware, energy limit. On REVE also their days of the week, which you can change, and the other schedules and the tariffs set in the charger's app, read-only |
-| **Charger clock** | Time Zone, the charger's time (Time Drift instead when the clock is 10 minutes or more off) and **Sync Time** |
+| **Charger clock** | Time Zone (its list starts with **Auto: follow Home Assistant**, the **Follow HA Time Zone** switch), the charger's time (Time Drift instead when the clock is 10 minutes or more off) and **Sync Time** |
 | **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy |
 | **Safety** | Box and plug temperature, ground, leakage current, connection quality |
 
@@ -185,7 +185,7 @@ A reading the charger's firmware does not report is not shown.
 ```yaml
 type: custom:eveus-card
 sections:            # any of these, in any order; omit for all of them
-  - status
+  - status           # power · current while charging
   - actions          # OCPP · One charge · Stop
   - advanced_info    # Battery SOC (Advanced only)
   - advanced_controls  # SOC settings (Advanced only)
@@ -199,6 +199,7 @@ sections:            # any of these, in any order; omit for all of them
   - history          # this month · counters
   - safety
 # hide:              # single items: section.item
+#   - status.power
 #   - schedules.schedule_2
 #   - safety.connection
 # device_id: ...     # only with several chargers
@@ -275,8 +276,9 @@ provided by another integration.
 3. Without a sensor, set **Initial SOC** by hand before charging.
 
 - The sensor is read once per plug-in, when charging starts. If it is unavailable then, the integration retries and counts the energy already delivered.
-- A value you enter by hand wins until the next plug-in.
+- A value you enter by hand wins until the next plug-in, including after a reload or when an unavailable car sensor recovers.
 - After you pull the connector out and plug it in again, a new initial value is needed.
+- The car's reading is applied before the SOC limit decides whether to Stop.
 - The source and any failed reading are in the `soc_anchor` attribute of **SOC Percent**.
 
 <details>
@@ -302,7 +304,12 @@ stopped at a limit, and there is no **Limit: disable all**; see
 
 The charger has two schedules. Set the start and stop times, turn the schedule
 on, and optionally turn on its own current and energy limits. If a schedule
-runs at the wrong time, check **Time Zone** and press **Sync Time**. While
+runs at the wrong time, check **Time Zone** and press **Sync Time**. The charger
+keeps one fixed offset and does not follow daylight saving, so it runs an hour
+off after every clock change. Turn on **Follow HA Time Zone** and the integration
+sets the charger's **Time Zone** to Home Assistant's, including daylight saving;
+while it is on, **Time Zone** cannot be changed by hand. Half-hour zones such as
+India cannot be held by the charger and are left alone. While
 **One Charge** is on, the charger charges at once and ignores every schedule
 and limit.
 
@@ -413,7 +420,7 @@ Ground notices clear after recovery. Serious fault notices also need
 | --- | --- |
 | Charger setup needs attention | Open the notice and re-enter the connection details |
 | OCPP is enabled | For local control only, turn off **Connect to OCPP** |
-| Charger clock is off by more than 10 minutes | Check **Time Zone**, then press **Sync Time** |
+| Charger clock is off by more than 10 minutes | Turn on **Follow HA Time Zone**, or set **Time Zone** by hand; press **Sync Time** if a small drift remains |
 | REVE firmware stopped reporting some readings | Update the integration when a new version is out; if the notice stays, open a GitHub issue with the diagnostics |
 | Update SOC cards and automations | Replace `input_number.ev_*` with the integration's SOC entities; see [migration](#battery-level-soc) |
 
@@ -460,11 +467,13 @@ The **Manual Mode** sensor and the card show that the schedules and limits are b
 
 - **Adaptive Mode** has Off, Voltage and Auto; REVE has no Power option.
 - **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app. Their days of the week are changed on the card; the days set in the app are kept. The card also lists the other schedules and the tariffs set up in the app, for viewing only. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
+- Changing a schedule's weekdays requires Home Assistant control permission for its enable switch.
 - **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect now: from REVE_PLUS 1.0.3 the charger reports it; on earlier versions the integration works it out from the rate windows and the charger's clock. Its `rate_name` attribute is the rate's name in the app. The third and fourth rates have no entities of their own, but **Active Rate Cost** shows their price while they are in effect.
 - **Cost to Target SOC** follows the hours of the first two rates and of the schedules, not their days of the week. Before the charge starts, if a schedule runs on some days only, or a third or later schedule is enabled, it uses the price in effect now.
 - **Counter A Cost** and **Counter B Cost** grow from REVE_PLUS 1.0.3, but how REVE counts this cost may change in later firmware versions. On earlier versions the charger counts the energy of counters A and B, but not their cost: it stays 0 after a reset, and without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.
 - **Adaptive Current Limit** is read from the charger's older `/main` page, because REVE's own interface does not carry it: once a minute while an adaptive charge runs, otherwise every five minutes.
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
+- After an observed connector unplug and replug during a REVE interface outage, session readings wait for fresh data. Energy from the previous charge cannot trigger the new charge's SOC limit.
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
 - REVE reports leakage only as raw values, not in mA, so **Leakage Current** and **Leakage Current Peak** stay unavailable, and so does **OCPP Connected**. **Plug Temperature** has a value from REVE_PLUS 1.0.3; on earlier versions it stays unavailable.
 - From REVE_PLUS 1.0.3 there are four diagnostic sensors, disabled by default: **REVE Free Memory**, **REVE Min Free Memory**, **REVE Largest Free Block** and **REVE Started** (when the charger last started). Most users do not need them; enable them on the device page when you need data on why the charger hangs or restarts.
@@ -551,6 +560,7 @@ no long-term statistics.
 | `switch.eveus_ev_charger_limit_cost_enabled` | **Limit: Cost enabled** |
 | `switch.eveus_ev_charger_limit_disable_all` | **Limit: disable all**; not created on REVE |
 | `switch.eveus_ev_charger_limit_soc_enabled` | **Limit: SOC enabled** (Advanced mode only) |
+| `switch.eveus_ev_charger_follow_ha_time_zone` | **Follow HA Time Zone**: sets the charger's **Time Zone** to Home Assistant's, including daylight saving; while on, **Time Zone** cannot be changed by hand |
 | `button.eveus_ev_charger_force_refresh` | Poll the charger immediately |
 
 </details>

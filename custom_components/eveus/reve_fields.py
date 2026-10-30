@@ -30,6 +30,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Final
 
+from .const import MAX_VALID_TIMEZONE_H, MIN_VALID_TIMEZONE_H
+
 
 def _number(value: Any) -> int | float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -149,7 +151,11 @@ def _lookup(station: Mapping[str, Any], path: tuple[str, ...]) -> Any:
 
 def _local_seconds(iso: Any, zone: Any) -> int | None:
     """``/main``'s ``systemTime``: the UTC instant plus ``timeZone`` hours."""
-    if not isinstance(iso, str) or _number(zone) is None:
+    hours = _number(zone)
+    # Only a real offset: an absurd one would overflow the arithmetic below.
+    if not isinstance(iso, str) or hours is None or not (
+        MIN_VALID_TIMEZONE_H <= hours <= MAX_VALID_TIMEZONE_H
+    ):
         return None
     try:
         instant = datetime.fromisoformat(iso)
@@ -157,7 +163,7 @@ def _local_seconds(iso: Any, zone: Any) -> int | None:
         return None
     if instant.tzinfo is None:
         return None
-    return int(instant.timestamp()) + int(zone * 3600)
+    return int(instant.timestamp()) + int(hours * 3600)
 
 
 def _convert(key: str, raw: Any) -> Any:

@@ -284,14 +284,14 @@ def test_clock_drift_issue_rekeys_when_kind_changes(monkeypatch) -> None:
             "async_create_issue",
             lambda hass, domain, issue_id, **kw: created.append(kw),
         )
-        entry = SimpleNamespace(entry_id="e1")
+        entry = SimpleNamespace(entry_id="e1", data={})
         tracker = eveus.ClockDriftTracker()
         updater = PayloadUpdater(None)
 
         def _drift_payload(drift_seconds: int) -> dict:
             return {
                 "systemTime": int(time.time()) + 3 * 3600 + drift_seconds,
-                "timeZone": "3",
+                "timeZone": str(3 + round(drift_seconds / 3600)),
             }
 
         for _ in range(3):
@@ -322,7 +322,7 @@ def test_fractional_timezone_raises_unsupported_message(monkeypatch) -> None:
         "async_create_issue",
         lambda hass, domain, issue_id, **kw: created.append(kw),
     )
-    entry = SimpleNamespace(entry_id="e1")
+    entry = SimpleNamespace(entry_id="e1", data={})
     tracker = eveus.ClockDriftTracker()
     updater = PayloadUpdater(None)
 
@@ -357,14 +357,14 @@ def test_clock_drift_rekey_requires_stable_classification(monkeypatch) -> None:
             "async_create_issue",
             lambda hass, domain, issue_id, **kw: created.append(kw),
         )
-        entry = SimpleNamespace(entry_id="e1")
+        entry = SimpleNamespace(entry_id="e1", data={})
         tracker = eveus.ClockDriftTracker()
         updater = PayloadUpdater(None)
 
         def _drift_payload(drift_seconds: int) -> dict:
             return {
                 "systemTime": int(time.time()) + 3 * 3600 + drift_seconds,
-                "timeZone": "3",
+                "timeZone": str(3 + round(drift_seconds / 3600)),
             }
 
         for _ in range(3):
@@ -764,13 +764,18 @@ def test_an_unknown_entry_data_field_reports_its_type_but_never_its_value() -> N
 
 def test_every_documented_entry_field_is_known_and_unsafe_entry_names_are_counted() -> None:
     """Entry options land in `data`, never in `unknown_fields`; unsafe names only add to the count."""
-    from custom_components.eveus.const import CONF_EXTERNAL_SOC_ENTITY
+    from custom_components.eveus.const import (
+        CONF_EXTERNAL_SOC_ENTITY,
+        CONF_FIRMWARE_FAMILY,
+        CONF_FOLLOW_HA_TIME_ZONE,
+    )
 
     known = {
         "scheme": "http", "model": "16A", "phases": 1, "device_number": 1,
         "soc_mode": "basic", "initial_soc": 20, "target_soc": 80,
         "battery_capacity": 77, "soc_correction": 7.5,
         CONF_EXTERNAL_SOC_ENTITY: "sensor.car_soc",
+        CONF_FIRMWARE_FAMILY: "reve", CONF_FOLLOW_HA_TIME_ZONE: True,
     }
     diagnostics = _diag_with_main(
         {}, entry_data={**known, "192.168.1.77": 1, "SN20240912345": 2}

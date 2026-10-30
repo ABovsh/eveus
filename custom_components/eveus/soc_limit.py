@@ -179,14 +179,13 @@ class SocLimitController:
         # kWh epsilon. Gated on an active state so the current session's own end
         # still confirms normally below.
         #
-        # Deliberately NOT extended to a CONFIRMED stop (``_fired``): once the
-        # limit has fired, it stays latched until a session boundary is actually
-        # OBSERVED (an inactive poll re-arms it below) — matching how the charger
-        # treats its own limits and how Anton uses this rare backup (his car
-        # already self-limits SOC). A session that begins entirely between polls
-        # is intentionally skipped rather than stopped, so the limit never
-        # re-fires off a boundary it never saw.
-        if active and self._pending is not None:
+        # A CONFIRMED stop (``_fired``) re-arms the same way (Anton,
+        # 2026-10-30): a session that began entirely between polls (connector
+        # replugged, or the charger power-cycled within one poll) is still a new
+        # session, and Initial SOC refills on the same restarted clock. Within
+        # one session the counters only run on, so the stop stays once per
+        # session.
+        if active and (self._pending is not None or self._fired):
             energy_reset = (
                 self._pending_energy is not None
                 and energy is not None
@@ -305,7 +304,7 @@ class SocLimitController:
     def _emit_reached(self, soc: int, target: int) -> None:
         """Latch and fire the reached event exactly once for this session."""
         self._fired = True
-        self._pending = None
+        self._pending = None  # pragma: no mutate - every reader of _pending also checks _fired, set on the line above
         self._hass.bus.async_fire(
             EVENT_SOC_LIMIT_REACHED,
             {
@@ -334,6 +333,12 @@ class SocLimitController:
         ``evseEnabled == 1`` (and re-sends each poll until it does). A failed POST
         leaves no pending mark so the next poll simply retries.
         """
+        # Home Assistant starts this task eagerly, inside the poll's listener
+        # loop, and the preflight below can reach the wire before yielding.
+        # Yield first so every listener of this poll runs: Initial SOC fills
+        # from the car in its entity listener, which runs after this one once
+        # the entity is re-added (e.g. renamed).
+        await asyncio.sleep(0)  # pragma: no mutate - any yield lets the listeners run first
         # Record the attempt BEFORE awaiting the command: a poll that completes
         # while the POST is in flight can observe ``evseEnabled == 1`` (the stop
         # already took effect at the charger) and must be able to confirm it —

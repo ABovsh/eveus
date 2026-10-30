@@ -79,7 +79,10 @@ def test_soc_switch_reenabled_while_suspended_survives_reload() -> None:
     assert sw.is_on is True
 
 
-def test_soc_limit_latched_through_session_begun_between_polls() -> None:
+def test_soc_limit_rearms_for_a_session_begun_between_polls() -> None:
+    """Anton, 2026-10-30: a session clock that starts over proves a new
+    session even when no idle poll was seen in between (connector replugged or
+    charger power-cycled within one poll), so the limit applies to it too."""
     calc = _calc()
     updater = _updater(session_energy=30.0, session_time=3600)
     ctrl, events = _controller(calc, updater)
@@ -91,9 +94,8 @@ def test_soc_limit_latched_through_session_begun_between_polls() -> None:
     assert len(events) == 1
     assert updater.send_command.call_count == 1
 
-    # Session B begins entirely between polls (no inactive poll observed):
-    # active, counters reset, charging, already back at target. The limit stays
-    # latched and must NOT re-fire off a boundary it never saw.
+    # Session B begins entirely between polls: active, its clock started over,
+    # charging, already at target.
     updater.data = {
         "state": 4,
         "sessionEnergy": 30.0,
@@ -102,7 +104,24 @@ def test_soc_limit_latched_through_session_begun_between_polls() -> None:
         "suspendLimits": 0,
     }
     ctrl.process()
-    assert updater.send_command.call_count == 1  # no second Stop
+    assert updater.send_command.call_count == 2
+
+
+def test_a_confirmed_stop_does_not_refire_within_the_same_session() -> None:
+    """Once per session: charging resumed in the SAME session (its counters
+    still running on) after a confirmed Stop is left alone."""
+    calc = _calc()
+    updater = _updater(session_energy=30.0, session_time=3600)
+    ctrl, events = _controller(calc, updater)
+    ctrl.set_enabled(True)
+    ctrl.process()
+    updater.data = {**updater.data, "evseEnabled": 1}
+    ctrl.process()
+
+    updater.data = {**updater.data, "sessionEnergy": 30.2, "sessionTime": 3700, "evseEnabled": 0}
+    ctrl.process()
+
+    assert updater.send_command.call_count == 1
     assert len(events) == 1
 
 

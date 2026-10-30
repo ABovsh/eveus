@@ -19,6 +19,8 @@ const SAFETY_CONN_QUALITY_BAD_PCT = 60;
 // Mirrors const.py CLOCK_DRIFT_THRESHOLD_SECONDS: past it, schedules run at the wrong wall-clock
 // time and the integration raises its Repairs notice, so the card calls the drift bad from there.
 const CLOCK_DRIFT_THRESHOLD_S = 600;
+// The first option of the Time zone list: the Follow HA Time Zone switch, not a zone.
+const AUTO_ZONE = '__auto__';
 // How long a failed entity lookup waits before the card asks again.
 const RESOLVE_RETRY_MS = 10000;
 // Actual current this far below the set current is "slower than set", and the status says why.
@@ -165,6 +167,8 @@ const I18N = {
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
     setZone: (z) => `Set ${z}`,
+    autoZone: 'Auto: follow Home Assistant', autoZoneOn: (z) => `Auto · ${z}`,
+    followTitle: 'Following Home Assistant\'s time zone, daylight saving included',
     zoneFixTitle: 'The charger clock is off by whole hours, so its time zone is wrong. Tap to set the zone that matches Home Assistant',
     socSettings: 'SOC settings', schedules: 'Schedules', counters: 'Counters',
     tapBlock: 'Tap to block', blockTitle: 'Block charging: the charger does not start until you tap again',
@@ -235,6 +239,8 @@ const I18N = {
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
     setZone: (z) => `Обрати ${z}`,
+    autoZone: 'Авто: як у Home Assistant', autoZoneOn: (z) => `Авто · ${z}`,
+    followTitle: 'Часовий пояс станції дотримується часового поясу Home Assistant, зокрема й переходу на літній і зимовий час',
     zoneFixTitle: 'Годинник станції зміщено на цілі години, тож часовий пояс неправильний. Натисніть, щоб обрати пояс, що збігається з Home Assistant',
     socSettings: 'SOC', schedules: 'Розклади', counters: 'Лічильники',
     tapBlock: 'Блокувати', blockTitle: 'Заблокувати заряджання: станція не почне заряджати, доки ви не натиснете ще раз',
@@ -282,11 +288,13 @@ const LEGACY_LAYOUTS = {
 };
 // What each section is made of. `hide: [section.item]` drops an item; the ids are part of saved configs.
 const ITEMS = {
-  actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
+  status: ['power'], actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
   basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time', 'rate'], limits: ['soc', 'energy', 'time', 'cost'],
   schedules: ['schedule_1', 'schedule_2', 'days', 'more', 'rates'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
   safety: ['box', 'plug', 'ground', 'leak', 'connection'],
 };
+// A section keeps at least one item, except Status: its state always shows, so its one item can go too.
+const minItems = (section) => section === 'status' ? 0 : 1;
 // The entity behind each safety item, in ITEMS.safety order; null = always shown.
 const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_current', null];
 const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
@@ -312,7 +320,7 @@ const EDITOR_I18N = {
       time: ['Charger clock', 'time zone · clock or drift · sync'], history: ['Counters', 'total · A · B'], safety: ['Safety', ''],
     },
     items: {
-      actions: {ocpp: 'OCPP', one_charge: 'One charge', stop: 'Stop'},
+      status: {power: 'Power · current'}, actions: {ocpp: 'OCPP', one_charge: 'One charge', stop: 'Stop'},
       advanced_controls: {initial: 'Initial', target: 'Target', capacity: 'Capacity', loss: 'Loss'},
       basic_info: {voltage: 'Voltage', power: 'Power', current: 'Current'},
       session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
@@ -337,7 +345,7 @@ const EDITOR_I18N = {
       time: ['Годинник станції', 'часовий пояс · час або зміщення · синхронізація'], history: ['Лічильники', 'загалом · A · B'], safety: ['Безпека', ''],
     },
     items: {
-      actions: {ocpp: 'OCPP', one_charge: 'Один заряд', stop: 'Стоп'},
+      status: {power: 'Потужність · струм'}, actions: {ocpp: 'OCPP', one_charge: 'Один заряд', stop: 'Стоп'},
       advanced_controls: {initial: 'Початковий', target: 'Ціль', capacity: 'Ємність', loss: 'Втрати'},
       basic_info: {voltage: 'Напруга', power: 'Потужність', current: 'Струм'},
       session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
@@ -1066,10 +1074,12 @@ class EveusCard extends HTMLElement {
     if (last) return last;
     const rateEntity = this._ids.active_rate_cost && this._shows('session', 'rate') ? this._state('active_rate_cost') : null;
     const rate = on ? currentNumber(rateEntity) : null;
-    const rateName = rateEntity?.attributes?.rate_name;
+    // The owner names a rate in the REVE app: show it as text, translated only when it is ours.
+    const rawRate = rateEntity?.attributes?.rate_name;
+    const rateName = esc(Object.hasOwn(t.rateNames, rawRate ?? '') ? t.rateNames[rawRate] : rawRate ?? '');
     const rateUnit = String(rateEntity?.attributes?.unit_of_measurement || '').replace(/^[A-Z]{3}(?=\/|$)/, (code) => CURRENCY[code] || code);
     const label = rate === null ? t.session
-      : `${t.session}<small class="session-rate" title="${t.rateNames[rateName] ?? rateName ?? ''}">${rate.toFixed(2)} ${rateUnit}</small>`;
+      : `${t.session}<small class="session-rate" title="${rateName}">${rate.toFixed(2)} ${rateUnit}</small>`;
     const e = on ? currentNumber(this._state('session_energy')) : null;
     const c = on ? currentNumber(this._state('session_cost')) : null;
     const raw = on ? this._state('session_time')?.state : null;
@@ -1249,7 +1259,42 @@ class EveusCard extends HTMLElement {
     this._editingSelect = null;
     this._render();
   }
+  // Follow HA Time Zone as seen by the card: a command still in flight counts.
+  _following() {
+    return this._limitPending.follow_ha_time_zone ?? this._state('follow_ha_time_zone')?.state === 'on';
+  }
+  async _setFollow(value) {
+    haptic('selection');
+    const timer = this._setLimitPending('follow_ha_time_zone', value);
+    this._render();
+    try {
+      await this._hass.callService('switch', value ? 'turn_on' : 'turn_off', {entity_id: this._ids.follow_ha_time_zone});
+      return true;
+    } catch {
+      this._rejectLimitPending('follow_ha_time_zone', timer);
+      return false;
+    }
+  }
+  // Auto turns the switch on. A zone chosen while Auto is on first turns it off: the select refuses
+  // manual changes while the integration follows Home Assistant.
+  async _chooseZone(option) {
+    const generation = this._generation, choice = this._zoneChoice;
+    clearTimeout(this._selectTimer);
+    this._editingSelect = null;
+    if (!this._online) { this._render(); return; }
+    if (option === AUTO_ZONE) {
+      if (this._following()) { this._render(); return; }
+      await this._setFollow(true);
+      return;
+    }
+    if (await this._setFollow(false) && generation === this._generation && choice === this._zoneChoice) {
+      await this._selectOption('time_zone', option);
+    }
+  }
   async _selectOption(key, option) {
+    // A two-step zone change may finish after a newer choice or a charger change.
+    if (key === 'time_zone') this._zoneChoice = {};
+    if (key === 'time_zone' && this._ids?.follow_ha_time_zone && (option === AUTO_ZONE || this._following())) { await this._chooseZone(option); return; }
     clearTimeout(this._selectTimer);
     this._editingSelect = null;
     const entity = this._state(key);
@@ -1421,6 +1466,7 @@ class EveusCard extends HTMLElement {
     if (this._hass) this.hass = this._hass;
   }
   async _toggleWeekday(spec) {
+    const generation = this._generation;
     const [n, day] = spec.split(':').map(Number);
     const item = this._reveSchedules?.[n - 1];
     if (!item || !this._online) return;
@@ -1437,10 +1483,12 @@ class EveusCard extends HTMLElement {
     const device = this._config.device_id || this._deviceId;
     try {
       const result = await this._hass.callWS({type: 'eveus/reve_schedule_weekdays', ...(device ? {device_id: device} : {}), schedule: n, weekdays: next});
+      if (generation !== this._generation) return;
       const written = Array.isArray(result?.weekdays) ? result.weekdays : next;
       // A read that failed meanwhile left no schedules to update; the write still went through.
       this._reveSchedules = this._reveSchedules?.map((s, i) => i === n - 1 ? {...s, weekdays: written} : s) ?? null;
     } catch {
+      if (generation !== this._generation) return;
       this._showError(true);
     }
     // A later tap on the same schedule owns the pin now.
@@ -1465,13 +1513,32 @@ class EveusCard extends HTMLElement {
       return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     }
   }
+  // The charger's weekday (0 = Sunday, as REVE counts) on the same clock as _scheduleHM.
+  _scheduleDay() {
+    const drift = this._online ? currentNumber(this._state('time_drift')) : null;
+    if (drift === null || Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S) return null;
+    const date = new Date(Date.now() + drift * 1000), tz = this._hass?.config?.time_zone;
+    try {
+      return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(new Intl.DateTimeFormat('en-US', {weekday: 'short', ...(tz ? {timeZone: tz} : {})}).format(date));
+    } catch {
+      return date.getDay();
+    }
+  }
+  // REVE runs a schedule only on its days; Eveus firmware schedules run every day.
+  _runsOn(n, day) {
+    const days = this._reveSchedules?.[n - 1]?.weekdays;
+    return day === null || day < 0 || !Array.isArray(days) || days.includes(day);
+  }
   _scheduleNow(n) {
     if (this._ignoring) return false;
     const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
     if (!this._online || !this._limitOn(`schedule_${n}_enabled`) || start === null || stop === null || start === stop) return false;
     const now = this._scheduleHM();
     if (now === null) return false;
-    return start < stop ? now >= start && now < stop : now >= start || now < stop;
+    if (!(start < stop ? now >= start && now < stop : now >= start || now < stop)) return false;
+    // A window past midnight belongs to the day it began.
+    const day = this._scheduleDay();
+    return this._runsOn(n, day !== null && start > stop && now < stop ? (day + 6) % 7 : day);
   }
   // The start of the enabled schedule that comes next, for "Waiting for Schedule · from 23:00".
   _nextScheduleStart() {
@@ -1483,8 +1550,10 @@ class EveusCard extends HTMLElement {
   _nextSchedule() {
     const clock = this._scheduleHM();
     if (clock === null) return null;
-    const now = minutesOf(clock);
-    const next = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._limitOn(`schedule_${n}_enabled`) && this._timeShown(`schedule_${n}_start`))
+    const now = minutesOf(clock), day = this._scheduleDay();
+    // Its next start is today or, once passed, tomorrow: on a REVE schedule that has to be one of its days.
+    const startsOnItsDay = (n) => day === null || this._runsOn(n, minutesOf(this._timeShown(`schedule_${n}_start`)) > now ? day : (day + 1) % 7);
+    const next = [1, 2].filter((n) => this._ids?.[`schedule_${n}_enabled`] && this._limitOn(`schedule_${n}_enabled`) && this._timeShown(`schedule_${n}_start`) && startsOnItsDay(n))
       .sort((a, b) => (minutesOf(this._timeShown(`schedule_${a}_start`)) - now + 1440) % 1440 - (minutesOf(this._timeShown(`schedule_${b}_start`)) - now + 1440) % 1440);
     return next[0] ?? null;
   }
@@ -1573,15 +1642,36 @@ class EveusCard extends HTMLElement {
     const zoneEntity = this._state('time_zone');
     const options = Array.isArray(zoneEntity?.attributes?.options) ? zoneEntity.attributes.options : [];
     const zone = this._limitPending.time_zone ?? zoneEntity?.state, known = options.includes(zone);
-    const zoneEl = this._ids.time_zone && this._shows('time', 'zone') ? `<label class="time-zone-wrap" title="${t.zone}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${!on || !known ? ' disabled' : ''}>
-      ${known ? '' : '<option selected>—</option>'}${options.map((o) => `<option value="${o}"${o === zone ? ' selected' : ''}>${o === '0' ? 'UTC' : `UTC${o}`}</option>`).join('')}</select></label>` : '';
+    // Auto (the Follow HA Time Zone switch) leads the list when the integration has that switch.
+    const followState = this._state('follow_ha_time_zone')?.state;
+    const canFollow = !!this._ids.follow_ha_time_zone && (followState === 'on' || followState === 'off');
+    const following = canFollow && this._following();
+    const zoneLabel = (o) => o === '0' ? 'UTC' : `UTC${o}`;
+    let autoEl = '';
+    if (canFollow) {
+      const followZone = known ? zoneLabel(zoneEntity.state) : '—';
+      const autoText = following ? t.autoZoneOn(followZone) : t.autoZone;
+      autoEl = `<option value="${AUTO_ZONE}"${following ? ' selected' : ''}>${autoText}</option>`;
+    }
+    let zoneEl = '';
+    if (this._ids.time_zone && this._shows('time', 'zone')) {
+      const zoneTitle = following ? `${t.zone} — ${t.followTitle}` : t.zone;
+      const disabled = !on || (!known && !following);
+      const placeholder = known || following ? '' : '<option selected>—</option>';
+      const zoneOption = (o) => {
+        const selected = o === zone && !following ? ' selected' : '';
+        return `<option value="${o}"${selected}>${zoneLabel(o)}</option>`;
+      };
+      zoneEl = `<label class="time-zone-wrap" title="${zoneTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${disabled ? ' disabled' : ''}>
+      ${placeholder}${autoEl}${options.map(zoneOption).join('')}</select></label>`;
+    }
     const drift = on ? currentNumber(this._state('time_drift')) : null;
     const driftCls = drift === null ? '' : Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S ? 'bad' : 'good';
     // A right clock shows the charger's own time; a wrong one how far it is off, next to Sync.
     const clock = this._scheduleHM();
     const driftEl = this._ids.time_drift && this._shows('time', 'drift') ? `<button class="time-item" data-more-info="time_drift" title="${clock ? t.clock : t.drift} — ${t.details}"><ha-icon icon="${clock ? 'mdi:alarm' : 'mdi:clock-alert-outline'}"></ha-icon><span class="${['time-drift', driftCls].filter(Boolean).join(' ')}">${clock ?? this._driftText(drift)}</span></button>` : '';
     const syncOk = on && this._state('sync_time') && this._state('sync_time').state !== 'unavailable';
-    const fix = known ? this._zoneFix(zone, drift, options) : null;
+    const fix = known && !following ? this._zoneFix(zone, drift, options) : null;
     const syncEl = fix && this._shows('time', 'zone')
       ? `<button class="time-sync time-fix" data-zone-fix="${fix}" title="${t.zoneFixTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><span>${t.setZone(fix === '0' ? 'UTC' : `UTC${fix}`)}</span></button>`
       : this._ids.sync_time && this._shows('time', 'sync') ? `<button class="${['time-sync', this._syncDone ? 'done' : ''].filter(Boolean).join(' ')}" data-sync title="${t.syncTitle}"${syncOk ? '' : ' disabled'}><ha-icon icon="${this._syncDone ? 'mdi:check' : 'mdi:clock-check-outline'}"></ha-icon><span>${this._syncDone ? t.synced : t.sync}</span></button>` : '';
@@ -1669,8 +1759,9 @@ class EveusCard extends HTMLElement {
     const reasonNote = reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
     const note = charging ? this._chargingNote() : reasonNote;
     // The time sits right after the state; the power, the finish or the reason follow it behind a divider.
-    const since = charging ? this._stateSince() : null;
-    const when = charging ? (since ? `${this._t.since} ${this._stamp(since).text}` : '')
+    // With no car the time is the unplug; a Stop the row names is not dated by it.
+    const since = charging || (raw === 'Standby' && !stopped) ? this._stateSince() : null;
+    const when = since ? `${this._t.since} ${this._stamp(since).text}`
       : done ? (done.today ? `${this._t.at} ${done.text}` : done.text) : '';
     return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, when, note};
   }
@@ -1866,7 +1957,9 @@ class EveusCard extends HTMLElement {
     if (actual !== null && set !== null && set - actual >= SLOW_GAP_A) return `${t.of(amps(actual), amps(set))} · ${this._slowReason(actual, set)}`;
     const w = currentNumber(this._state('power'));
     const finish = this._advanced && this._config.sections.includes('advanced_info') ? null : this._finishHM();
-    return [w === null ? '' : `${(w / 1000).toFixed(1)} kW`, actual === null ? '' : `${amps(actual)} A`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
+    // Power and current repeat the Meter section; status.power hides them here.
+    const meter = this._shows('status', 'power');
+    return [meter && w !== null ? `${(w / 1000).toFixed(1)} kW` : '', meter && actual !== null ? `${amps(actual)} A` : '', finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
   }
   _slowReason(actual, set) {
     const t = this._t, mode = this._state('adaptive_mode')?.state;
@@ -1926,8 +2019,24 @@ class EveusCard extends HTMLElement {
     const hours = Math.round(drift / 3600);
     if (!hours || Math.abs(drift - hours * 3600) > TZ_MATCH_TOLERANCE_S) return null;
     const n = Number(zone) - hours;
+    // The charger's clock is UTC plus its zone: a zone other than Home Assistant's would only
+    // hide hours its UTC clock is off, which Sync Time fixes.
+    const ha = this._haOffsetHours();
+    if (ha !== null && n !== ha) return null;
     const option = n === 0 ? '0' : n > 0 ? `+${n}` : String(n);
     return Number.isFinite(n) && options.includes(option) ? option : null;
+  }
+  // Home Assistant's UTC offset now in whole hours; null when unknown or not whole.
+  _haOffsetHours() {
+    const tz = this._hass?.config?.time_zone;
+    if (!tz) return null;
+    try {
+      const now = new Date(Math.floor(Date.now() / 60000) * 60000);
+      const p = {};
+      for (const {type, value} of new Intl.DateTimeFormat('en-US', {timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'}).formatToParts(now)) p[type] = Number(value);
+      const minutes = (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - now.getTime()) / 60000;
+      return Number.isInteger(minutes) && minutes % 60 === 0 ? minutes / 60 : null;
+    } catch { return null; }
   }
   // ---- Counters: this month's and last month's energy from Home Assistant's long-term statistics. ----
   get _wantsMonth() { return !!this._ids?.total_energy && this._config.sections.includes('history') && this._shows('history', 'month'); }
@@ -2053,18 +2162,36 @@ class EveusCard extends HTMLElement {
       range.selectNodeContents(el);
       return range.getBoundingClientRect().width > el.getBoundingClientRect().width + 0.01;
     };
-    for (const el of this.shadowRoot.querySelectorAll('[data-fit]')) {
+    const fit = (el) => {
       let size = Math.max(11, Number(el.dataset.fit) || 18);
       el.style.fontSize = `${size}px`;
       while (size > 11 && overflows(el)) {
         size = Math.max(11, size - 1);
         el.style.fontSize = `${size}px`;
       }
+    };
+    for (const el of this.shadowRoot.querySelectorAll('[data-fit]')) {
+      // A word beside the numbers ("to go") leaves when even the smallest size has no room for it.
+      const note = el.querySelector('.tile-note');
+      if (note) note.hidden = false;
+      fit(el);
+      if (note && overflows(el)) {
+        note.hidden = true;
+        fit(el);
+      }
     }
     // Both schedule rows read as one table: they share the smaller of their two sizes.
     const windows = [...this.shadowRoot.querySelectorAll('.sched-window')];
     const min = Math.min(...windows.map((el) => parseFloat(el.style.fontSize) || Infinity));
     if (Number.isFinite(min)) for (const el of windows) el.style.fontSize = `${min}px`;
+    // A status note cut short beside the state takes its own line, as a fault's does;
+    // measured on one line each time, so a wider card brings it back.
+    const status = this.shadowRoot.querySelector('.sl.status');
+    if (status) {
+      status.classList.remove('status-wrap');
+      const note = status.querySelector('.status-note');
+      if (note && overflows(note)) status.classList.add('status-wrap');
+    }
   }
 }
 
@@ -2222,10 +2349,10 @@ ha-card[data-state=charging] .sl.status>.status-main>ha-icon{animation:icon-glow
 .sv{font-weight:750}
 /* ---- Bigger values and touch targets, one job per section. ---- */
 .sl{min-height:32px}
-.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1}.status-since{flex:0 0 auto;font-size:14px;font-weight:600;line-height:1;white-space:nowrap;color:var(--primary-text-color)}
+.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1;flex-shrink:0;max-width:calc(100% - 31px)}.status-since{flex:0 0 auto;font-size:14px;font-weight:600;line-height:1;white-space:nowrap;color:var(--primary-text-color)}
 .status-note{font-size:14px;font-weight:500;line-height:1;color:color-mix(in srgb,var(--primary-text-color) 72%,transparent)}
 .status-note::before{content:'';display:inline-block;width:1px;height:14px;margin-right:7px;vertical-align:-2px;background:currentColor;opacity:.45}
-.sl.status.status-alert-fault .status-note::before{display:none}
+.sl.status.status-alert-fault .status-note::before,.sl.status.status-wrap .status-note::before{display:none}
 /* Actions: three big buttons, icon over name over state (4.24.0 icons). */
 .panel.actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px}
 .act-btn{--b:#95a5a6;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;min-width:0;min-height:56px;padding:4px 2px 3px;margin:0;
@@ -2310,7 +2437,6 @@ ha-card[data-state=charging] .soc-fill{animation:icon-glow 2.6s ease-in-out infi
 /* Narrow cards use the spare vertical space so labels and controls remain legible. */
 @container (max-width:340px){
   .status-main{height:auto;min-height:28px}
-  .status-note{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.15}
   .soc-tile .tile-sub{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.1}
   .soc-tile .nw{white-space:nowrap}.soc-tile .per-kwh{display:block}.soc-tile .per-kwh .info-sep{display:none}
   .panel.actions:not([style]){grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -2467,7 +2593,8 @@ ha-card[data-theme=light] :is(.sl.session,.panel.history,.sl.fold-history){--h:#
 .soc-plan span{min-width:0;overflow:hidden;text-overflow:ellipsis}.soc-plan small{font-size:.85em;font-weight:500}
 .soc-plan ha-icon{--mdc-icon-size:14px;color:var(--h)}
 /* A fault's reading and what to do wraps under the fault's name. */
-.sl.status.status-alert-fault .status-main{height:auto;min-height:28px;flex-wrap:wrap;row-gap:0;padding:2px 0}
+.sl.status.status-alert-fault .status-main,.sl.status.status-wrap .status-main{height:auto;min-height:28px;flex-wrap:wrap;row-gap:0;padding:2px 0}
+.sl.status.status-wrap .status-note{flex-basis:100%;padding-left:31px;white-space:normal;overflow:visible;line-height:1.2}
 .sl.status.status-alert-fault .status-note{flex-basis:100%;padding-left:31px;white-space:normal;overflow:visible;line-height:1.2;color:var(--primary-text-color);opacity:.85}
 /* Stop with nothing charging blocks the next charge: the sign is quieter until a charge runs. */
 .act-btn.idle .act-stop-icon{filter:grayscale(.6);opacity:.8}
@@ -2568,14 +2695,14 @@ class EveusCardEditor extends HTMLElement {
         return `<div class="row na"><label><input type="checkbox" data-toggle="${key}"${shown ? ' checked' : ''} disabled><span>${name}<small>${l.advOnly}</small></span></label></div>`;
       }
       const lock = shown && usable.length === 1 ? ' disabled' : '';
-      const sizes = sizesOf(key), expandable = shown && ((ITEMS[key]?.length ?? 0) > 1 || sizes.length > 1), open = expandable && this._open?.has(key);
+      const sizes = sizesOf(key), expandable = shown && ((ITEMS[key]?.length ?? 0) > minItems(key) || sizes.length > 1), open = expandable && this._open?.has(key);
       const expand = expandable ? `<button type="button" data-expand="${key}" class="${open ? 'open' : ''}" title="${l.itemsTitle}" aria-expanded="${!!open}"><ha-icon icon="mdi:tune-variant"></ha-icon></button>` : '';
       const hide = this._config.hide || [], left = (ITEMS[key] || []).filter((i) => !hide.includes(`${key}.${i}`)).length;
       const size = this._sizeOf(key), fits = largeFits(this._config, key);
       const sizeRow = this._sizeOptionsHtml(key, sizes, size, fits);
       const items = open ? `<div class="items">${(ITEMS[key] || []).map((i) => {
         const id = `${key}.${i}`, on = !hide.includes(id);
-        return `<label><input type="checkbox" data-item="${id}"${on ? ' checked' : ''}${on && left === 1 ? ' disabled' : ''}><span>${l.items[key][i]}</span></label>`;
+        return `<label><input type="checkbox" data-item="${id}"${on ? ' checked' : ''}${on && left <= minItems(key) ? ' disabled' : ''}><span>${l.items[key][i]}</span></label>`;
       }).join('')}${sizeRow}</div>` : '';
       const move = (dir, off) => `<button type="button" data-move="${key}" data-dir="${dir}"${off ? ' disabled' : ''} title="${dir < 0 ? l.up : l.down}"><ha-icon icon="mdi:chevron-${dir < 0 ? 'up' : 'down'}"></ha-icon></button>`;
       return `<div class="row${shown ? '' : ' off'}"><label><input type="checkbox" data-toggle="${key}"${shown ? ' checked' : ''}${lock}><span>${name}${hint ? `<small>${hint}</small>` : ''}</span></label>`
@@ -2627,12 +2754,12 @@ class EveusCardEditor extends HTMLElement {
     if (!this._open.delete(key)) this._open.add(key);
     this._render();
   }
-  // Items hide one at a time; a section always keeps at least one. An empty list is not written.
+  // Items hide one at a time; a section keeps at least one (see minItems). An empty list is not written.
   _toggleItem(id) {
     const [section, item] = id.split('.'), hide = [...(this._config.hide || [])];
     if (!ITEMS[section]?.includes(item)) return;
     if (hide.includes(id)) hide.splice(hide.indexOf(id), 1);
-    else if (ITEMS[section].filter((i) => !hide.includes(`${section}.${i}`)).length > 1) hide.push(id);
+    else if (ITEMS[section].filter((i) => !hide.includes(`${section}.${i}`)).length > minItems(section)) hide.push(id);
     else { this._render(); return; }
     const rest = {...this._config};
     delete rest.hide;

@@ -372,6 +372,9 @@
       },
       "schedule_2_energy_limit_enabled": {
         "name": "Schedule 2 Energy limit enabled"
+      },
+      "follow_ha_time_zone": {
+        "name": "Follow HA Time Zone"
       }
     },
     "button": {
@@ -527,7 +530,11 @@
     },
     "clock_drift_timezone": {
       "title": "Eveus: charger Time Zone appears incorrect",
-      "description": "The clock inside your Eveus charger is off from Home Assistant by almost exactly {hours} hour(s) — see the **Time Drift** sensor for the precise offset. A whole-hour drift almost always means the charger's **Time Zone** select is wrong, for example after a daylight-saving change, which the charger's fixed offset does not follow. Pressing **Sync Time** alone will not fix this.\n\nWhile the clocks disagree, charging schedules and tariff-based costs may apply at the wrong times.\n\nWhat to do:\n\n- Set the **Time Zone** select for your Eveus charger to match your current local time zone.\n- If a small drift remains afterwards, press the **Sync Time** button.\n\nThe Eveus integration will clear this warning automatically once the clocks agree again — the **Time Drift** sensor will read 0 s."
+      "description": "The charger's clock is {hours} hour(s) off from Home Assistant, most likely because its **Time Zone** is wrong. The charger does not switch to or from daylight saving by itself. Charging schedules and tariff costs may apply at the wrong times.\n\nTwo ways to fix it:\n\n- **Set it by hand:** choose your local time zone in the **Time Zone** select. You will have to repeat this at every daylight-saving change.\n- **Follow Home Assistant:** turn on **Follow HA Time Zone**. The charger then follows Home Assistant's time zone, including daylight saving, and there is nothing to set by hand.\n\nIf a small drift remains, press **Sync Time**. This notice clears when the clocks agree."
+    },
+    "clock_drift_timezone_following": {
+      "title": "Eveus: charger Time Zone could not be set automatically",
+      "description": "**Follow HA Time Zone** is on, but the charger's clock is still {hours} hour(s) off from Home Assistant. The integration keeps retrying; the charger has not accepted the change yet.\n\nTo set the Time Zone by hand instead, turn **Follow HA Time Zone** off first. This notice clears when the clocks agree."
     },
     "clock_drift_fractional_timezone": {
       "title": "Eveus: your time zone cannot be matched by the charger",

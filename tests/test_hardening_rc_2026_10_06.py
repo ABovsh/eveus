@@ -250,12 +250,12 @@ def test_clock_repair_rekey_requires_the_same_new_classification(monkeypatch):
     monkeypatch.setattr(issues, "get_local_utc_offset_seconds", lambda: 0)
     created = []
     monkeypatch.setattr(issues.ir, "async_create_issue", lambda *a, **kw: created.append(kw))
-    entry = SimpleNamespace(entry_id="clock_rekey")
+    entry = SimpleNamespace(entry_id="clock_rekey", data={})
     tracker = issues.ClockDriftTracker()
     updater = PayloadUpdater({})
 
     def poll(drift):
-        updater.data = {"systemTime": wall + drift, "timeZone": 0}
+        updater.data = {"systemTime": wall + drift, "timeZone": round(drift / 3600)}
         issues.update_clock_drift_issue(object(), entry, updater, tracker)
 
     for _ in range(3):

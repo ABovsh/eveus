@@ -10,6 +10,8 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from custom_components.eveus.config_flow import build_user_data_schema, normalize_user_input
 from custom_components.eveus.const import (
     CONF_MODEL,
+    CONF_FOLLOW_HA_TIME_ZONE,
+    CONF_FIRMWARE_FAMILY,
     CONF_SOC_MODE,
     SOC_MODE_BASIC,
 )
@@ -49,7 +51,12 @@ def test_reconfigure_repair_schema_omits_soc_mode() -> None:
     assert CONF_SOC_MODE in build_user_data_schema({}).schema
 
 
-def test_reconfigure_preserves_stored_soc_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("runtime_settings", [
+    {}, {CONF_FOLLOW_HA_TIME_ZONE: True}, {CONF_FIRMWARE_FAMILY: "reve"},
+])
+def test_reconfigure_preserves_stored_soc_mode(
+    monkeypatch: pytest.MonkeyPatch, runtime_settings: dict,
+) -> None:
     from custom_components.eveus import config_flow
 
     async def fake_validate_input(hass, data):
@@ -69,6 +76,7 @@ def test_reconfigure_preserves_stored_soc_mode(monkeypatch: pytest.MonkeyPatch) 
                 CONF_PASSWORD: "p",
                 CONF_MODEL: "16A",
                 CONF_SOC_MODE: SOC_MODE_BASIC,
+                **runtime_settings,
             },
             "unique_id": "1.2.3.4",
         },
@@ -98,6 +106,8 @@ def test_reconfigure_preserves_stored_soc_mode(monkeypatch: pytest.MonkeyPatch) 
     # normalize_user_input would default an absent soc_mode to advanced; the flow
     # re-asserts the entry's stored mode so reconfigure can't silently flip it.
     assert captured["data"][CONF_SOC_MODE] == SOC_MODE_BASIC
+    for key, value in runtime_settings.items():
+        assert captured["data"].get(key) == value
 
 def _input(**overrides: object) -> dict[str, object]:
     data: dict[str, object] = {

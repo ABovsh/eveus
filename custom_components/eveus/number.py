@@ -5,6 +5,7 @@ import asyncio
 import logging
 import math
 import time
+from typing import Any
 
 import dataclasses
 
@@ -48,6 +49,7 @@ from .const import (
     CONF_SOC_CORRECTION,
     CONF_EXTERNAL_SOC_ENTITY,
     CONNECTED_STATES,
+    MAX_SESSION_TIME_SECONDS,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
 )
@@ -638,6 +640,15 @@ class _InitialSocStoredData(NumberExtraStoredData):
     # No default: extra_restore_state_data always passes it explicitly, so a
     # default would be unreachable code that no test could ever pin.
     seeded: bool
+    # The charger's session clock last seen in this plug-in cycle (seconds).
+    session_time: int | None
+
+
+def _stored_session_clock(value: Any) -> int | None:
+    """A session clock read back from storage, or None when unusable."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= MAX_SESSION_TIME_SECONDS else None
 
 
 class EveusInitialSocNumber(EveusSocConfigNumber):
@@ -663,13 +674,19 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         super().__init__(updater, soc_calculator, seed, device_number)
         self._session_seeded = False
         self._seed_warned = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
+        # The charger's session clock as last seen in this plug-in cycle. It
+        # only runs on within a cycle and starts over with the next, so a lower
+        # reading proves a plug-in nobody saw (the charger was switched off).
+        self._cycle_session_time: int | None = None
 
     @property
     def extra_restore_state_data(self) -> _InitialSocStoredData:
-        """Persist the seeded flag alongside the value it belongs to."""
+        """Persist the seeded flag and session clock with the value."""
         base = super().extra_restore_state_data
         return _InitialSocStoredData(
-            **dataclasses.asdict(base), seeded=self._session_seeded
+            **dataclasses.asdict(base),
+            seeded=self._session_seeded,
+            session_time=self._cycle_session_time,
         )
 
     async def async_added_to_hass(self) -> None:
@@ -684,7 +701,13 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         await super().async_added_to_hass()
         stored = await self.async_get_last_extra_data()
         if stored is not None:
-            self._session_seeded = bool(stored.as_dict().get("seeded"))
+            data = stored.as_dict()
+            self._session_seeded = bool(data.get("seeded"))
+            self._cycle_session_time = _stored_session_clock(data.get("session_time"))
+        # Setup polls before entities restore. Reconcile that snapshot too:
+        # an observed unplug ends the restored cycle, and an active unseeded
+        # cycle must use the car's SOC before limit enforcement starts.
+        self._maybe_seed_from_external_soc()
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -695,6 +718,13 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
         """Entity id of the configured car SOC sensor, if any."""
         entry = getattr(self._updater, "config_entry", None)
         return (getattr(entry, "data", None) or {}).get(CONF_EXTERNAL_SOC_ENTITY) or None
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Keep an explicit correction even if the car has not answered yet."""
+        value = _validate_finite_number(value, self.ENTITY_NAME)
+        # Set before _apply_value publishes the value and its restore data.
+        self._session_seeded = True
+        self._apply_value(value)
 
     def _maybe_seed_from_external_soc(self) -> None:
         """Copy the car's SOC into this entity while a session is running."""
@@ -722,6 +752,8 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             self._seed_warned = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
             self._soc_calculator.last_seed = {}
             return
+        if state in CONNECTED_STATES:
+            self._note_session_clock(self._updater.snapshot.session_time_s)
         if self._session_seeded or state not in SESSION_ACTIVE_STATES:
             return
         entity_id = self._external_soc_entity_id()
@@ -757,6 +789,23 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             "detail": f"{anchor:.1f}% from {entity_id}",
         }
         _LOGGER.info("Initial SOC seeded from %s: %.1f%%", entity_id, anchor)
+
+    def _note_session_clock(self, clock: int | None) -> None:
+        """Re-arm seeding when the session clock started over.
+
+        That happens at a plug-in this integration did not see (the charger
+        was off over the unplug) and when a charger restart zeroed the session
+        meter: either way the old anchor no longer matches the energy counted
+        from now on. The SOC limit reads the same signal for a new session.
+        """
+        if clock is None:
+            return
+        last = self._cycle_session_time
+        if last is not None and clock < last:
+            self._session_seeded = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
+            self._seed_warned = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
+            self._soc_calculator.last_seed = {}  # pragma: no mutate - both readers take `last_seed or {}`, so None reads the same as {}
+        self._cycle_session_time = clock
 
     def _external_soc_anchor(self, entity_id: str) -> float | str:
         """Car SOC rebased to the start of this session, or why it is unusable.

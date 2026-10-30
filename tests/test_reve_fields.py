@@ -223,3 +223,24 @@ def test_system_time_with_an_explicit_offset_is_read_as_that_instant() -> None:
         {"timeSettings": {"timeZone": 2, "systemTime": "2026-10-15T01:06:54+03:00"}}
     )
     assert converted == {"timeZone": 2, "systemTime": 1792015614 + 2 * 3600}
+
+
+@pytest.mark.parametrize("zone", [1e308, -1e308, 25])
+def test_an_impossible_time_zone_leaves_the_clock_out_instead_of_failing_the_read(zone) -> None:
+    """A finite but absurd offset overflowed the clock arithmetic and failed
+    the whole poll outside its error handling; the clock is simply unknown."""
+    main = reve_fields.station_to_main({
+        "stationState": 2,
+        "timeSettings": {"timeZone": zone, "systemTime": "2026-10-30T00:00:00+00:00"},
+    })
+
+    assert main["state"] == 2
+    assert "systemTime" not in main
+
+
+def test_the_highest_real_offset_still_sets_the_clock() -> None:
+    main = reve_fields.station_to_main(
+        {"timeSettings": {"timeZone": 14, "systemTime": "2026-10-30T00:00:00+00:00"}}
+    )
+
+    assert main["systemTime"] == 1_793_318_400 + 14 * 3600

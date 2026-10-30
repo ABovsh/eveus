@@ -765,10 +765,17 @@ def get_not_charging_reason(updater, hass) -> Optional[str]:
         completed=getattr(updater, "charge_completed", False),  # pragma: no mutate - False and None are equally falsy; only read for truthiness
         stopped=_read_int(updater, "evseEnabled") == 1,
         limit_reached=reached_limit(updater.snapshot.get) if reve else None,
-        schedule_waiting=reve and state == 3 and any(
-            _read_int(updater, key) == 1 for key in ("sh1Enabled", "sh2Enabled")
-        ),
+        schedule_waiting=reve and state == 3 and _a_reve_schedule_is_on(updater),
     )
+
+
+def _a_reve_schedule_is_on(updater) -> bool:
+    """Whether any REVE schedule is on: the first two through their entities'
+    fields, and the others (up to eight, set in the app) as last read."""
+    if any(_read_int(updater, key) == 1 for key in ("sh1Enabled", "sh2Enabled")):
+        return True
+    schedules = getattr(updater, "reve_schedules", None)
+    return callable(schedules) and any(item["enabled"] for item in schedules() or ())
 
 
 def get_not_charging_reason_attrs(updater, hass) -> dict:

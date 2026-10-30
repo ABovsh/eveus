@@ -280,7 +280,7 @@ def test_entities_without_a_reve_source_are_unavailable() -> None:
     unavailable = {uid for uid, entity in entities.items() if not entity.available}
     # Charging Finish Time is unavailable whenever no charge runs.
     assert unavailable == _NO_REVE_SOURCE | {"eveus_charging_finish_time"}
-    assert len(entities) == 85
+    assert len(entities) == 86
 
 
 def test_reve_entities_show_the_graphql_schedule_and_rates() -> None:

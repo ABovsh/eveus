@@ -189,6 +189,16 @@ MAX_VALID_TIMEZONE_H: Final[int] = 14
 TIME_DRIFT_TOLERANCE_SECONDS: Final[int] = 5
 TIME_DRIFT_QUANTUM_SECONDS: Final[int] = 30
 
+# Opt-in "follow Home Assistant time zone": the charger holds one whole-hour
+# offset and never follows daylight saving, so the integration can write Home
+# Assistant's current offset to it. The offset must differ for several polls
+# before it is written (a transient reading never moves the charger), and a
+# write that did not take is retried only after a pause so a charger that
+# refuses it is not hit on every poll.
+CONF_FOLLOW_HA_TIME_ZONE: Final[str] = "follow_ha_time_zone"
+TIME_ZONE_FOLLOW_POLLS: Final[int] = 3
+TIME_ZONE_FOLLOW_RETRY_POLLS: Final[int] = 10
+
 # Current limits
 MIN_CURRENT: Final[int] = 7
 MODEL_16A: Final[str] = "16A"

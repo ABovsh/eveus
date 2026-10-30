@@ -220,7 +220,7 @@ def test_update_ocpp_issue_guard_and_dispatch(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         eveus.ir, "async_delete_issue", lambda hass, domain, issue_id: deleted.append(issue_id)
     )
-    entry = SimpleNamespace(entry_id="e1")
+    entry = SimpleNamespace(entry_id="e1", data={})
 
     unavailable = PayloadUpdater({"ocppEnabled": 1}, available=False, last_update_success=True)
     eveus.update_ocpp_issue(None, entry, unavailable)
@@ -713,6 +713,32 @@ def test_async_setup_entry_follows_battery_and_clock_issues_every_poll(
     assert [kind for kind, _, _ in calls] == ["battery", "clock"]
 
 
+def test_async_setup_entry_follows_the_time_zone_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The follower is attached always (the switch flips without a reload) and
+    evaluates at setup and on each poll, with its own state."""
+    calls: list[tuple[object, object, object, object]] = []
+    hass = _hass()
+    entry = _Entry(_data(device_number=1))
+    monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
+    monkeypatch.setattr(
+        eveus,
+        "update_time_zone_follow",
+        lambda h, e, u, follower: calls.append((h, e, u, follower)),
+    )
+
+    assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
+    updater = entry.runtime_data.updater
+    assert [(h, e, u) for h, e, u, _ in calls] == [(hass, entry, updater)]
+    assert isinstance(calls[0][3], eveus.TimeZoneFollower)
+
+    calls.clear()
+    for listener in updater.listeners:
+        listener()
+    assert [(h, e, u) for h, e, u, _ in calls] == [(hass, entry, updater)]
+
+
 def test_async_setup_entry_normalizes_stored_device_number(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -863,6 +889,7 @@ def test_switch_setup_creates_control_entities() -> None:
         "Schedule 2 Current limit enabled",
         "Schedule 2 Energy limit enabled",
         "Limit: SOC enabled",
+        "Follow HA Time Zone",
     ]
     assert {entity.unique_id for entity in added} == {
         "eveus2_stop_charging",
@@ -880,6 +907,7 @@ def test_switch_setup_creates_control_entities() -> None:
         "eveus2_schedule_2_current_limit_enabled",
         "eveus2_schedule_2_energy_limit_enabled",
         "eveus2_limit_soc_enabled",
+        "eveus2_follow_ha_time_zone",
     }
 
 
@@ -1617,7 +1645,7 @@ def test_update_battery_low_issue_guard_field_and_dispatch(
     monkeypatch.setattr(
         eveus.ir, "async_delete_issue", lambda hass, domain, issue_id: deleted.append(issue_id)
     )
-    entry = SimpleNamespace(entry_id="e1")
+    entry = SimpleNamespace(entry_id="e1", data={})
     tracker = eveus.BatteryLowTracker()
     low = BATTERY_LOW_THRESHOLD_VOLTS - 0.1
 
@@ -1667,6 +1695,10 @@ class _WallClock:
 
     def __init__(self, seconds: int | None) -> None:
         self.charger_wall_clock_s = seconds
+
+    def get_int(self, key: str) -> None:
+        # No offset known: a whole-hour drift may be the zone.
+        return None
 
 
 def _wall_updater(seconds: int | None, *, available=True, success=True):
@@ -1843,7 +1875,7 @@ def test_clock_drift_band_reset_and_ok_streak_clear(
 
 def test_update_clock_drift_issue_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     _clock_env(monkeypatch, local_wall=0, utc_offset=0)
-    entry = SimpleNamespace(entry_id="e1")
+    entry = SimpleNamespace(entry_id="e1", data={})
     tracker = eveus.ClockDriftTracker()
 
     unavailable = _wall_updater(5000, available=False, success=True)
@@ -1871,7 +1903,7 @@ def test_update_clock_drift_issue_creates_timezone_issue_and_clears(
     monkeypatch.setattr(
         eveus.ir, "async_delete_issue", lambda hass, domain, issue_id: deleted.append(issue_id)
     )
-    entry = SimpleNamespace(entry_id="e1")
+    entry = SimpleNamespace(entry_id="e1", data={})
     tracker = eveus.ClockDriftTracker()
     drifted = _wall_updater(7200, available=True, success=True)
 
@@ -1914,7 +1946,7 @@ def test_update_clock_drift_issue_rekeys_on_reclassification(
         lambda hass, domain, issue_id, **kw: created.append((issue_id, kw)),
     )
     monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *a, **k: None)
-    entry = SimpleNamespace(entry_id="e1")
+    entry = SimpleNamespace(entry_id="e1", data={})
     tracker = eveus.ClockDriftTracker()
     tz_drift = _wall_updater(7200, available=True, success=True)
     for _ in range(CLOCK_DRIFT_TRIGGER_POLLS):
@@ -1944,7 +1976,7 @@ def test_update_clock_drift_issue_fractional_classification_translation_key(
         lambda hass, domain, issue_id, **kw: created.append((issue_id, kw)),
     )
     monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *a, **k: None)
-    entry = SimpleNamespace(entry_id="e1")
+    entry = SimpleNamespace(entry_id="e1", data={})
     tracker = eveus.ClockDriftTracker()
     drifted = _wall_updater(-2700, available=True, success=True)
 

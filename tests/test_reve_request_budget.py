@@ -163,6 +163,60 @@ def test_a_schedule_write_with_nothing_read_yet_reads_the_settings_once(
     assert queries[0] == reve.SETTINGS_QUERY
     assert queries[1].lstrip().startswith("mutation")
     assert len(queries) == 2
+    assert updater.reve_diagnostics()["read_age_seconds"] == 0
+    assert updater.reve_schedules()[0]["enabled"] is True
+
+
+@pytest.mark.parametrize(("command", "value"), [("evseEnabled", 0), ("sh2Enabled", 1)])
+def test_regular_control_writes_cannot_starve_tariff_refresh(
+    monkeypatch: pytest.MonkeyPatch, command: str, value: int,
+) -> None:
+    """Reasserting a control must not make unread app settings look freshly read."""
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    charger.rates["base"] = 8.0  # changed in the charger's app after setup
+    for _ in range(reve.EXTRAS_REFRESH_SECONDS // 60):
+        now[0] += 60
+        assert asyncio.run(updater._command_manager.send_command(command, value)) is True
+        asyncio.run(updater._async_update_data())
+    assert updater.snapshot.get("tarif") == 800
+    assert reve.MEASUREMENTS_AND_SETTINGS_QUERY in _queries(charger)
+
+
+def test_a_schedule_write_cannot_roll_back_a_newer_stop_and_tariff_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poll can finish while the schedule mutation is awaiting its reply."""
+    _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    updater = _known_reve(monkeypatch, charger)
+    api = updater._reve
+
+    async def scenario():
+        started, release = asyncio.Event(), asyncio.Event()
+        mutate = api._mutate
+
+        async def slow_mutation(change):
+            started.set()
+            await release.wait()
+            await mutate(change)
+
+        monkeypatch.setattr(api, "_mutate", slow_mutation)
+        writing = asyncio.create_task(api.write_schedule("sh2Enabled", 1))
+        await started.wait()
+        charger.charging_command = 2  # stopped in the app meanwhile
+        charger.rates["base"] = 8.0
+        await api.refresh()
+        assert api.extras.charging_command == 2
+        release.set()
+        await writing
+        charger.measurements_status = 500
+        await updater._async_update_data()  # fallback must keep the newer settings
+        assert updater.snapshot.get("evseEnabled") == 1
+        assert updater.snapshot.get("tarif") == 800
+
+    asyncio.run(scenario())
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +406,8 @@ def test_settings_reads_that_keep_failing_turn_reve_api_off_and_keep_it_off(
     now[0] += reve.EXTRAS_RETRY_SECONDS
     asyncio.run(updater._async_update_data())  # the settings read alone fails too
     assert updater.reve_api_answering is False
+    assert asyncio.run(updater._command_manager.send_command("evseEnabled", 0)) is True
+    assert updater.reve_api_answering is False, "a write did not repair settings reads"
     for _ in range(3):
         now[0] += reve.MEASUREMENTS_RETRY_SECONDS
         asyncio.run(updater._async_update_data())

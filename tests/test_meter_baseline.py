@@ -45,13 +45,17 @@ class _FakeStore:
         assert delay > 0, "a delayed save needs a delay"
         self.saves.append(data_func())
 
+    async def async_save(self, data: Any) -> None:
+        self.saves.append(dict(data))
+
     async def async_remove(self) -> None:
         self.removed = True
 
 
 @pytest.fixture(autouse=True)
 def _store(monkeypatch: pytest.MonkeyPatch) -> None:
-    _FakeStore.loaded, _FakeStore.instances = None, []
+    monkeypatch.setattr(_FakeStore, "loaded", None)
+    monkeypatch.setattr(_FakeStore, "instances", [])
     monkeypatch.setattr(common_network, "Store", _FakeStore)
 
 
@@ -67,7 +71,7 @@ def _boot_zero() -> dict[str, Any]:
 
 
 def test_the_first_poll_after_a_restart_is_held_against_the_saved_readings(monkeypatch: pytest.MonkeyPatch) -> None:
-    _FakeStore.loaded = dict(_SAVED)
+    monkeypatch.setattr(_FakeStore, "loaded", dict(_SAVED))
     updater = _updater(monkeypatch, _Charger(_boot_zero()))
     asyncio.run(updater.async_load_meter_baseline())
 
@@ -89,7 +93,7 @@ def test_without_saved_readings_the_first_poll_is_believed(monkeypatch: pytest.M
 
 def test_a_saved_baseline_does_not_hide_a_confirmed_reset(monkeypatch: pytest.MonkeyPatch) -> None:
     """A replaced board while Home Assistant was down: the zero repeats."""
-    _FakeStore.loaded = dict(_SAVED)
+    monkeypatch.setattr(_FakeStore, "loaded", dict(_SAVED))
     updater = _updater(monkeypatch, _Charger(_boot_zero()))
     asyncio.run(updater.async_load_meter_baseline())
 
@@ -153,6 +157,49 @@ def test_the_latest_readings_are_saved_when_the_updater_shuts_down(monkeypatch: 
     assert store.saves[-1]["totalEnergy"] == 10.4
 
 
+def test_a_poll_finishing_during_unload_schedules_no_delayed_save(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the unload's own save may write: a delayed one could land after
+    removing the entry deleted the file."""
+    clock = [1000.0]
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
+    charger = _Charger({**_classic_main(), "totalEnergy": 10.0})
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater.async_load_meter_baseline())
+    store = _FakeStore.instances[0]
+    asyncio.run(updater._async_update_data())
+
+    updater._shutting_down = True
+    charger.main = {**charger.main, "totalEnergy": 10.4}
+    clock[0] += METER_SAVE_INTERVAL_SECONDS
+    asyncio.run(updater._async_update_data())
+
+    assert [save["totalEnergy"] for save in store.saves] == [10.0]
+
+
+def test_a_failed_save_does_not_stop_the_unload(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Broken(_FakeStore):
+        async def async_save(self, data: Any) -> None:
+            raise OSError("disk")
+
+    monkeypatch.setattr(common_network, "Store", Broken)
+    updater = _updater(monkeypatch, _Charger({**_classic_main(), "totalEnergy": 10.0}))
+    asyncio.run(updater.async_load_meter_baseline())
+    asyncio.run(updater._async_update_data())
+
+    asyncio.run(updater.async_shutdown())
+
+    assert updater._shutting_down
+
+
+def test_unloading_before_any_reading_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    updater = _updater(monkeypatch, _Charger(_boot_zero()))
+    asyncio.run(updater.async_load_meter_baseline())
+
+    asyncio.run(updater.async_shutdown())
+
+    assert _FakeStore.instances[0].saves == []
+
+
 @pytest.mark.parametrize(
     "saved",
     [None, [], "x", {"totalEnergy": "5"}, {"totalEnergy": True}, {"totalEnergy": -1.0},
@@ -180,7 +227,7 @@ def test_the_readings_live_in_one_store_per_entry(monkeypatch: pytest.MonkeyPatc
 
 
 def test_readings_that_match_the_saved_ones_are_not_written_again(monkeypatch: pytest.MonkeyPatch) -> None:
-    _FakeStore.loaded = dict(_SAVED)
+    monkeypatch.setattr(_FakeStore, "loaded", dict(_SAVED))
     updater = _updater(monkeypatch, _Charger({**_classic_main(), **_SAVED}))
     asyncio.run(updater.async_load_meter_baseline())
     asyncio.run(updater._async_update_data())
