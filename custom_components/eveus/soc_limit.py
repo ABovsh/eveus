@@ -179,14 +179,13 @@ class SocLimitController:
         # kWh epsilon. Gated on an active state so the current session's own end
         # still confirms normally below.
         #
-        # Deliberately NOT extended to a CONFIRMED stop (``_fired``): once the
-        # limit has fired, it stays latched until a session boundary is actually
-        # OBSERVED (an inactive poll re-arms it below) — matching how the charger
-        # treats its own limits and how Anton uses this rare backup (his car
-        # already self-limits SOC). A session that begins entirely between polls
-        # is intentionally skipped rather than stopped, so the limit never
-        # re-fires off a boundary it never saw.
-        if active and self._pending is not None:
+        # A CONFIRMED stop (``_fired``) re-arms the same way (Anton,
+        # 2026-10-30): a session that began entirely between polls (connector
+        # replugged, or the charger power-cycled within one poll) is still a new
+        # session, and Initial SOC refills on the same restarted clock. Within
+        # one session the counters only run on, so the stop stays once per
+        # session.
+        if active and (self._pending is not None or self._fired):
             energy_reset = (
                 self._pending_energy is not None
                 and energy is not None

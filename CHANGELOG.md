@@ -10,6 +10,7 @@
 ### 🐛 Fixed
 
 - **The SOC limit no longer stops a new charge on the previous charge's Initial SOC.** With a car SOC sensor, the car's reading is applied before the limit decides, also right after a Home Assistant restart.
+- **The SOC limit also applies to a charge that began between two polls.** After a limit stop, pulling the connector out and plugging it in again, or power-cycling the charger, within one poll left the new charge without the limit.
 - **Initial SOC is filled from the car again when the unplug happened while the charger was switched off.** The charger's session time starting over now marks the new plug-in; before, only an unplug Home Assistant saw did, so the previous charge's value stayed.
 - **An Initial SOC set by hand is no longer overwritten when the car sensor comes back.** It stays until the next plug-in, also through a reload.
 - **Last Session Duration shown in hours keeps its value through a restart.** Each restart read the saved hours as seconds, shrinking the duration 3,600-fold; Last Session Energy shown in Wh or MWh was rescaled the same way.
