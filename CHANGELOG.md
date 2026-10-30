@@ -27,6 +27,7 @@
 - **Card, REVE: switching the card to another charger while a day change is pending no longer shows the first charger's days.**
 - **Card, REVE: a schedule is marked as running, and named as the next start, only on its own days.** A schedule set for some weekdays was shown as running on the others too.
 - **Card: Status shows the state and its note in full.** Next to `since yesterday 19:05` the state could lose its last letters, as in `Заряджан…`, and the note was cut off, or squeezed into a one-word column on a narrow card. A note that does not fit beside the state now takes a second line.
+- **Card: Battery SOC shows what is left to the target in full on a narrow card.** `21.3 kWh · 92 ₴ залишилось` ran past the tile's edge at 320-360 px; the word now takes a second line when the numbers leave no room for it.
 - **Card, REVE: a tariff name from the charger's app is always shown as plain text.** A name containing HTML could run a script in the dashboard of anyone viewing the card.
 
 ## 4.29.0 - 2026-10-24

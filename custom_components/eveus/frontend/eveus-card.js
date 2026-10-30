@@ -1140,7 +1140,8 @@ class EveusCard extends HTMLElement {
     const toGo = (eta ? [energy, cost] : [cost]).filter(Boolean).join('<i class="info-sep">·</i>');
     // Before the charge the cost also says its price per kWh: the tariffs the schedules will charge at.
     const perKwh = !eta && ct !== null && et > 0 ? `<span class="per-kwh"><i class="info-sep">·</i>${money((ct / et).toFixed(2), this._state('cost_to_target_soc')?.attributes?.unit_of_measurement).replace('</small>', '/kWh</small>')}</span>` : '';
-    const goalSub = reached || !toGo ? '&nbsp;' : `<span class="nw">${toGo} <span class="tile-note">${t.toGo}</span></span>${perKwh}`;
+    // The numbers stay together; "to go" may take the next line when they leave no room for it.
+    const goalSub = reached || !toGo ? '&nbsp;' : `<span class="nw">${toGo}</span> <span class="tile-note">${t.toGo}</span>${perKwh}`;
     const base = on && soc !== null && initial !== null ? clamp(initial) : 0;
     const fill = on && soc !== null ? Math.max(0, clamp(soc) - base) : 0;
     return `<section class="${['panel soc', `soc-${color}`, on ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.battery}">
@@ -2148,11 +2149,17 @@ class EveusCard extends HTMLElement {
       return range.getBoundingClientRect().width > el.getBoundingClientRect().width + 0.01;
     };
     for (const el of this.shadowRoot.querySelectorAll('[data-fit]')) {
+      el.classList.remove('fit-wrap');
       let size = Math.max(11, Number(el.dataset.fit) || 18);
       el.style.fontSize = `${size}px`;
       while (size > 11 && overflows(el)) {
         size = Math.max(11, size - 1);
         el.style.fontSize = `${size}px`;
+      }
+      // A sub-line still too long at the smallest size lets its note take a second line, at its own size.
+      if (overflows(el) && el.querySelector('.tile-note')) {
+        el.classList.add('fit-wrap');
+        el.style.fontSize = `${Math.max(11, Number(el.dataset.fit) || 18)}px`;
       }
     }
     // Both schedule rows read as one table: they share the smaller of their two sizes.
@@ -2288,6 +2295,7 @@ ha-card{--accent:var(--primary-color,#3498db);--panel:rgba(127,127,127,.075);--t
 .tile-big b{min-width:0;overflow:hidden;font-weight:700}.tile-big small{font-size:.6em;font-weight:500;color:var(--secondary-text-color);margin-left:1px}
 .tile-sub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;font-weight:600;color:var(--secondary-text-color);font-variant-numeric:tabular-nums}
 .tile-sub small{font-size:.85em;font-weight:500}.tile-note{font-weight:500;opacity:.8}
+.tile-sub.fit-wrap{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.1}
 /* ---- Glass and glow from the 4.24.0 card, one hue per section.
    --c = charger state colour (card glow, status badge). --h = the section's own hue: its icon
    badge, a faint glass gradient and a hairline border. Structure and sizes stay as above. ---- */

@@ -649,7 +649,7 @@ test('battery SOC idle: no time and no finish without a charge — the energy to
   const cc={charging_current:['number.cc',12,{min:6,max:32,step:1,unit_of_measurement:'A'}]};
   const idle=setupAll({sections:['advanced_info'],charging:false,over:cc}).html();
   assert.doesNotMatch(idle,/Not charging|soc-finish|≈\d+h|\d{2}:\d{2}/);
-  assert.match(idle,/To 75<small>%[^]*<b data-fit="24">26\.3<small>kWh<\/small><\/b>[^]*114<small>₴<\/small> <span class="tile-note">to go/);
+  assert.match(idle,/To 75<small>%[^]*<b data-fit="24">26\.3<small>kWh<\/small><\/b>[^]*114<small>₴<\/small><\/span> <span class="tile-note">to go/);
   assert.match(setupAll({sections:['advanced_info'],over:{soc_percent:['sensor.soc',80]}}).html(),/Target reached/);
   assert.doesNotMatch(setupAll({sections:['advanced_info'],mode:'basic'}).html(),/class="(sl|panel)/);
   assert.doesNotMatch(setupAll({sections:['advanced_controls'],mode:'basic'}).html(),/limit-tile/);
@@ -1625,10 +1625,11 @@ test('fitted text clears fractional overflow even when DOM widths round equal', 
   class HTMLElement {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
   }
-  const clipped = {dataset:{fit:'12'},style:{},clientWidth:154,
+  const classList = {add(){},remove(){}};
+  const clipped = {dataset:{fit:'12'},style:{},classList,clientWidth:154,
     get scrollWidth() { return Math.round(153.89 * parseFloat(this.style.fontSize) / 12); },
     getBoundingClientRect() { return {width:153.5}; }};
-  const roomy = {dataset:{fit:'36'},style:{},clientWidth:154,scrollWidth:79,
+  const roomy = {dataset:{fit:'36'},style:{},classList,clientWidth:154,scrollWidth:79,
     getBoundingClientRect() { return {width:153.5}; }};
   const document = {createRange() { let el; return {
     selectNodeContents(value) { el=value; },
@@ -2398,7 +2399,7 @@ test('battery tile: "from" only once the SOC has moved off where the session sta
 });
 test('to go before the charge: the cost with its price per kWh',()=>{
   const idle=setupAll({sections:['advanced_info'],charging:false}).html();
-  assert.match(idle,/<span class="nw">114<small>₴<\/small> <span class="tile-note">to go<\/span><\/span><span class="per-kwh"><i class="info-sep">·<\/i>4\.32<small>₴\/kWh<\/small><\/span>/);
+  assert.match(idle,/<span class="nw">114<small>₴<\/small><\/span> <span class="tile-note">to go<\/span><span class="per-kwh"><i class="info-sep">·<\/i>4\.32<small>₴\/kWh<\/small><\/span>/);
   assert.doesNotMatch(setupAll({sections:['advanced_info']}).html(),/₴\/kWh/);
 });
 test('limits without Limit: disable all (REVE does not create it): the limits are there, the disable-all button is not',()=>{
@@ -2663,4 +2664,57 @@ test('two-line status: the note spans the row under the state, without the divid
   assert.match(source,/\.sl\.status\.status-wrap \.status-note::before\{display:none\}/);
   const narrow=source.match(/@container \(max-width:340px\)\{\n[^]*?\n\}/)[0];
   assert.doesNotMatch(narrow,/\.status-note\{/);
+});
+
+// ---- Battery SOC: the "to go" line keeps its numbers whole and lets the word take a second line ----
+// "21.3kWh · 92₴ залишилось" was one unbreakable span: at the 11 px floor it still ran 16-23 px past
+// the tile at 320 px and 2.7 px at 360 (live, 2026-10-30).
+test('to go: the numbers stay together, the word after them may break to the next line',()=>{
+  const r=setupAll({sections:['advanced_info'],locale:'uk'}).html();
+  assert.match(r,/<span class="tile-sub" data-fit="12"><span class="nw">[^]*?<\/span> <span class="tile-note">залишилось<\/span><\/span>/);
+});
+
+function fitSub({text,box,note=true,fit='12'}) {
+  const x=setupStatus({sections:['status']});
+  const classes=new Set(), seen=[];
+  const el={dataset:{fit},style:{},classList:{add:(c)=>classes.add(c),remove:(c)=>classes.delete(c)},
+    querySelector:(q)=>q==='.tile-note'&&note?{}:null,
+    get scrollWidth(){seen.push(classes.has('fit-wrap'));return typeof text==='function'?text(parseFloat(this.style.fontSize),classes.has('fit-wrap')):text;},
+    get clientWidth(){return box;}};
+  x.card.shadowRoot={innerHTML:'',querySelectorAll:(q)=>q==='[data-fit]'?[el]:[],querySelector:()=>null};
+  return {x,el,classes,seen};
+}
+
+test('a sub-line that still does not fit at the smallest size lets its note wrap, back at its own size',()=>{
+  // 143 px of text in a 140 px tile at 11 px; wrapped, it fits.
+  const r=fitSub({text:(px,wrap)=>wrap?120:143,box:140});
+  r.x.card._fitLimitValues();
+  assert.ok(r.classes.has('fit-wrap'));
+  assert.equal(r.el.style.fontSize,'12px','two legible lines, not two small ones');
+});
+
+test('a sub-line that fits once smaller stays on one line',()=>{
+  const r=fitSub({text:(px)=>px>11?150:130,box:140});
+  r.x.card._fitLimitValues();
+  assert.ok(!r.classes.has('fit-wrap'));
+  assert.equal(r.el.style.fontSize,'11px');
+});
+
+test('only a sub-line with a note to move wraps; a value never does',()=>{
+  const r=fitSub({text:143,box:140,note:false,fit:'26'});
+  r.x.card._fitLimitValues();
+  assert.ok(!r.classes.has('fit-wrap'));
+});
+
+test('a wrapped sub-line is measured on one line again, so a wider card brings it back',()=>{
+  let wide=false;
+  const r=fitSub({text:(px,wrap)=>wrap?120:(wide?100:143),box:140});
+  r.x.card._fitLimitValues();
+  assert.ok(r.classes.has('fit-wrap'));
+  wide=true; r.x.card._fitLimitValues();
+  assert.ok(!r.classes.has('fit-wrap'));
+});
+
+test('fit-wrap lets the sub-line wrap',()=>{
+  assert.match(source,/\.tile-sub\.fit-wrap\{white-space:normal;overflow:visible;text-overflow:clip;line-height:1\.1\}/);
 });
