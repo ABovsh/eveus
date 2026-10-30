@@ -1162,10 +1162,10 @@ test('hidden items drop out of their section and the row re-spreads', () => {
   assert.match(all, /class="panel actions" aria-label/, 'three buttons keep the stylesheet grid');
 });
 test('editor: expand a section to hide or show its items; the last item cannot be hidden', () => {
-  const {editor, last} = setupEditor({sections:['time','status']});
+  const {editor, last} = setupEditor({sections:['time','current']});
   assert.doesNotMatch(editor._sectionsHtml(), /data-item=/, 'items are folded away');
   assert.match(editor._sectionsHtml(), /data-expand="time"/);
-  assert.doesNotMatch(editor._sectionsHtml(), /data-expand="status"/, 'a one-item section has nothing to hide');
+  assert.doesNotMatch(editor._sectionsHtml(), /data-expand="current"/, 'a section without items or sizes has nothing to set');
   editor._expand('time');
   const html = editor._sectionsHtml();
   assert.match(html, /data-item="time.zone" checked/); assert.match(html, /Time zone/);
@@ -2481,13 +2481,89 @@ test('a finished charge with a reason the card cannot name still says when',()=>
   assert.match(html,/status-since">at 03:15</);
 });
 
-test('no time where the state is not a finished charge or a running one',()=>{
+test('no time where the state is not a finished charge, a running one or no car',()=>{
   const since='2026-10-21T00:15:00+00:00';
   // A schedule or limit parked it: the reason leads and the car is not full.
   assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Energy Limit Reached',since}).html()),/ at |since/);
   assert.doesNotMatch(atNow(()=>setupSince({state:'Charge Complete',reason:'Energy Limit Reached',stop:'on',since}).html()),/ at 0|since/);
   assert.doesNotMatch(atNow(()=>setupSince({state:'Connected',reason:'Waiting for Car',since}).html()),/since|at 03/);
-  assert.doesNotMatch(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',since}).html()),/since|at 03/);
+});
+
+test('no car: the state says since when, and the reason follows it',()=>{
+  const html=atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',since:'2026-10-21T06:32:00+00:00'}).html());
+  assert.match(html,/status-state idle">Standby<\/span><span class="status-since">since 09:32<\/span><span class="status-note">Cable Not Connected</);
+  assert.match(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',since:'2026-10-20T06:32:00+00:00'}).html()),/status-since">since yesterday 09:32</);
+  assert.match(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',language:'uk',since:'2026-10-21T06:32:00+00:00'}).html()),
+    /status-state idle">Очікування<\/span><span class="status-since">з 09:32<\/span><span class="status-note">Кабель не підключено</);
+});
+
+test('no car: no time when it is unknown, or when Stop is what the row names',()=>{
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected'}).html()),/status-since/);
+  // "Stopped since 09:32" would date the Stop by the unplug.
+  assert.doesNotMatch(atNow(()=>setupSince({state:'Standby',reason:'Cable Not Connected',stop:'on',since:'2026-10-21T06:32:00+00:00'}).html()),/status-since/);
+});
+
+// ---- Status: power and current beside a running charge can be hidden (status.power) ----
+
+function chargingWith({hide,slow=false,finish=false}={}) {
+  return atNow(()=>{
+    const x=setupSince({since:'2026-10-21T16:05:00+00:00'});
+    if(hide){const ids=x.card._ids;x.card.setConfig({sections:['status'],hide});x.card._ids=ids;x.card._resolved=true;}
+    x.states['sensor.pw']={state:'3200',attributes:{}};x.states['sensor.cur']={state:slow?'6':'7',attributes:{}};
+    x.states['sensor.set']={state:'16',attributes:{}};
+    Object.assign(x.card._ids,{power:'sensor.pw',current:'sensor.cur',charging_current:'sensor.set'});
+    if(finish){
+      x.states['sensor.ttt']={state:'1h 30m',attributes:{}};x.states['sensor.fin']={state:'2026-10-22T02:10:00+03:00',attributes:{}};
+      Object.assign(x.card._ids,{time_to_target_soc:'sensor.ttt',charging_finish_time:'sensor.fin'});
+    }
+    if(!slow)x.states['sensor.set']={state:'7',attributes:{}};
+    x.card.hass={...x.hass};
+    return x.html();
+  });
+}
+
+test('power and current show beside a running charge by default',()=>{
+  assert.match(chargingWith(),/status-since">since 19:05<\/span><span class="status-note">3\.2 kW · 7 A</);
+});
+
+test('status.power hidden: no power or current, the finish stays',()=>{
+  const html=chargingWith({hide:['status.power'],finish:true});
+  assert.match(html,/status-since">since 19:05<\/span><span class="status-note">until 02:10<\/span>/);
+  assert.doesNotMatch(html,/kW|7 A/);
+});
+
+test('status.power hidden with nothing else to say: no divider and no empty note',()=>{
+  const html=chargingWith({hide:['status.power']});
+  assert.match(html,/status-since">since 19:05<\/span><\/button>/);
+  assert.doesNotMatch(html,/status-note/);
+});
+
+test('status.power hidden: why the charge runs slow still shows',()=>{
+  assert.match(chargingWith({hide:['status.power'],slow:true}),/status-note">6 of 16 A · the car takes less</);
+});
+
+test('editor: Status offers Power · current, the only item, and it can be hidden because the state stays',()=>{
+  const {editor, last} = setupEditor({sections:['status','time']});
+  assert.match(editor._sectionsHtml(), /data-expand="status"/);
+  editor._expand('status');
+  const html = editor._sectionsHtml();
+  assert.match(html, /data-item="status.power" checked><span>Power · current</);
+  editor._toggleItem('status.power');
+  assert.deepEqual([...last().hide], ['status.power']);
+  assert.match(editor._sectionsHtml(), /data-item="status.power"><span>/, 'unticked and still tickable');
+  editor._toggleItem('status.power');
+  assert.equal(last().hide, undefined);
+  // Other sections still keep their last item.
+  editor._expand('time');
+  editor._toggleItem('time.sync'); editor._toggleItem('time.zone'); editor._toggleItem('time.drift');
+  assert.deepEqual([...last().hide], ['time.sync', 'time.zone']);
+});
+
+test('editor: the Status item reads in Ukrainian',()=>{
+  const {editor} = setupEditor({sections:['status']});
+  editor._hass = {locale:{language:'uk'}};
+  editor._expand('status');
+  assert.match(editor._sectionsHtml(), /data-item="status.power" checked><span>Потужність · струм</);
 });
 
 test('a missing, unreadable or future time shows nothing',()=>{
@@ -2532,4 +2608,59 @@ test('REVE 1.0.3 manual mode from the app: the manual-mode notice with Turn off,
 });
 test('REVE 1.0.3, manual mode off: no notice', () => {
   assert.doesNotMatch(setupAll({sections:['schedules'], over:{...SCHED, ...STOPPED('off'), ...LEAVABLE('off')}}).html(), /class="override"/);
+});
+
+// ---- Status row: the state is never cut while the note can give way ----
+// A shrinking state lost a sub-pixel share of every overflow, and the ellipsis turned that
+// into "Заряджан…" beside a long "since yesterday" (measured live at 390 px, 2026-10-30).
+test('the status state does not shrink; only a state wider than the row beside the icon ends in an ellipsis',()=>{
+  const rules=[...source.matchAll(/\.status-state\{([^}]*)\}/g)].map((m)=>m[1]);
+  const last=(prop)=>rules.map((r)=>r.match(new RegExp(`(?:^|;)${prop}:([^;]+)`))?.[1]).filter(Boolean).at(-1);
+  assert.equal(last('flex-shrink'),'0');
+  assert.equal(last('max-width'),'calc(100% - 31px)','31 px = the icon badge and its gap');
+});
+
+// ---- Status row: a note that does not fit beside the state takes its own line ----
+// The narrow layout wrapped the note's text in place, beside the state: with a long "since"
+// that left a one-word column ("Cable / Not / Conne…") that overflowed the row (live, 320 px).
+function fitRow(noteWidths) {
+  const x=setupStatus({sections:['status']});
+  const classes=new Set(), measured=[];
+  const row={classList:{add:(c)=>classes.add(c),remove:(c)=>classes.delete(c),contains:(c)=>classes.has(c)},
+    querySelector:(q)=>q==='.status-note'?note:null};
+  const note={get scrollWidth(){measured.push(classes.has('status-wrap'));return noteWidths.text;},get clientWidth(){return noteWidths.box;}};
+  x.card.shadowRoot={innerHTML:'',querySelectorAll:()=>[],querySelector:(q)=>q==='.sl.status'?row:null};
+  return {x,classes,measured,note,noteWidths};
+}
+
+test('a status note cut short moves to its own line; one that fits stays beside the state',()=>{
+  const r=fitRow({text:206,box:107});
+  r.x.card._fitLimitValues();
+  assert.ok(r.classes.has('status-wrap'));
+  r.noteWidths.text=100;
+  r.x.card._fitLimitValues();
+  assert.ok(!r.classes.has('status-wrap'),'a wider card or a shorter note returns to one line');
+});
+
+test('the note is measured on one line, not in the two-line layout it may already have',()=>{
+  const r=fitRow({text:206,box:107});
+  r.x.card._fitLimitValues(); r.x.card._fitLimitValues();
+  assert.deepEqual(r.measured,[false,false]);
+});
+
+test('a status row without a note keeps one line',()=>{
+  const x=setupStatus({sections:['status']});
+  const classes=new Set(['status-wrap']);
+  const row={classList:{add:(c)=>classes.add(c),remove:(c)=>classes.delete(c)},querySelector:()=>null};
+  x.card.shadowRoot={innerHTML:'',querySelectorAll:()=>[],querySelector:(q)=>q==='.sl.status'?row:null};
+  x.card._fitLimitValues();
+  assert.ok(!classes.has('status-wrap'));
+});
+
+test('two-line status: the note spans the row under the state, without the divider; narrow cards no longer squeeze it beside',()=>{
+  assert.match(source,/\.sl\.status\.status-wrap \.status-main\{[^}]*flex-wrap:wrap/);
+  assert.match(source,/\.sl\.status\.status-wrap \.status-note\{flex-basis:100%;padding-left:31px;white-space:normal/);
+  assert.match(source,/\.sl\.status\.status-wrap \.status-note::before\{display:none\}/);
+  const narrow=source.match(/@container \(max-width:340px\)\{\n[^]*?\n\}/)[0];
+  assert.doesNotMatch(narrow,/\.status-note\{/);
 });

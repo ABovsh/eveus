@@ -6,6 +6,8 @@
 
 - **New switch: Follow HA Time Zone keeps the charger on Home Assistant's time zone, daylight saving included.** The charger holds one fixed offset, so it ran an hour off after every clock change. With the switch on, the integration writes Home Assistant's offset once three polls in a row disagree, and **Time Zone** cannot be set by hand; **Sync Time** stays manual. Off by default. The clock-drift notice offers both ways: set **Time Zone** by hand, or turn the switch on. Closes [#21](https://github.com/ABovsh/eveus/issues/21) requested by @ababak.
 - **Card: Auto, the first choice in the Time zone list, turns Follow HA Time Zone on.** Choosing a zone while Auto is on turns it off first.
+- **Card: Status says since when no car is plugged in.** It reads `Standby since 09:32 · Cable Not Connected`, with yesterday, the weekday or the date for an earlier day, as for a charge. Follow-up to [#20](https://github.com/ABovsh/eveus/issues/20) requested by @ababak.
+- **Card: power and current beside a running charge can be hidden.** They repeat the Meter section. Untick **Power · current** under the Status section's settings icon, or add `status.power` to `hide:` in YAML; why a charge runs slow and the finish time stay. Follow-up to [#20](https://github.com/ABovsh/eveus/issues/20) requested by @ababak.
 
 ### 🐛 Fixed
 
@@ -24,6 +26,7 @@
 - **REVE: reconfiguring or repairing the connection keeps REVE's set of entities.** With the charger off at that moment, the five entities REVE does not have came back until it answered.
 - **Card, REVE: switching the card to another charger while a day change is pending no longer shows the first charger's days.**
 - **Card, REVE: a schedule is marked as running, and named as the next start, only on its own days.** A schedule set for some weekdays was shown as running on the others too.
+- **Card: Status shows the state and its note in full.** Next to `since yesterday 19:05` the state could lose its last letters, as in `Заряджан…`, and the note was cut off, or squeezed into a one-word column on a narrow card. A note that does not fit beside the state now takes a second line.
 - **Card, REVE: a tariff name from the charger's app is always shown as plain text.** A name containing HTML could run a script in the dashboard of anyone viewing the card.
 
 ## 4.29.0 - 2026-10-24

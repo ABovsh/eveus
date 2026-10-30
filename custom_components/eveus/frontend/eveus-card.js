@@ -288,11 +288,13 @@ const LEGACY_LAYOUTS = {
 };
 // What each section is made of. `hide: [section.item]` drops an item; the ids are part of saved configs.
 const ITEMS = {
-  actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
+  status: ['power'], actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
   basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time', 'rate'], limits: ['soc', 'energy', 'time', 'cost'],
   schedules: ['schedule_1', 'schedule_2', 'days', 'more', 'rates'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
   safety: ['box', 'plug', 'ground', 'leak', 'connection'],
 };
+// A section keeps at least one item, except Status: its state always shows, so its one item can go too.
+const minItems = (section) => section === 'status' ? 0 : 1;
 // The entity behind each safety item, in ITEMS.safety order; null = always shown.
 const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_current', null];
 const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
@@ -318,7 +320,7 @@ const EDITOR_I18N = {
       time: ['Charger clock', 'time zone · clock or drift · sync'], history: ['Counters', 'total · A · B'], safety: ['Safety', ''],
     },
     items: {
-      actions: {ocpp: 'OCPP', one_charge: 'One charge', stop: 'Stop'},
+      status: {power: 'Power · current'}, actions: {ocpp: 'OCPP', one_charge: 'One charge', stop: 'Stop'},
       advanced_controls: {initial: 'Initial', target: 'Target', capacity: 'Capacity', loss: 'Loss'},
       basic_info: {voltage: 'Voltage', power: 'Power', current: 'Current'},
       session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
@@ -343,7 +345,7 @@ const EDITOR_I18N = {
       time: ['Годинник станції', 'часовий пояс · час або зміщення · синхронізація'], history: ['Лічильники', 'загалом · A · B'], safety: ['Безпека', ''],
     },
     items: {
-      actions: {ocpp: 'OCPP', one_charge: 'Один заряд', stop: 'Стоп'},
+      status: {power: 'Потужність · струм'}, actions: {ocpp: 'OCPP', one_charge: 'Один заряд', stop: 'Стоп'},
       advanced_controls: {initial: 'Початковий', target: 'Ціль', capacity: 'Ємність', loss: 'Втрати'},
       basic_info: {voltage: 'Напруга', power: 'Потужність', current: 'Струм'},
       session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
@@ -1742,8 +1744,9 @@ class EveusCard extends HTMLElement {
     const reasonNote = reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
     const note = charging ? this._chargingNote() : reasonNote;
     // The time sits right after the state; the power, the finish or the reason follow it behind a divider.
-    const since = charging ? this._stateSince() : null;
-    const when = charging ? (since ? `${this._t.since} ${this._stamp(since).text}` : '')
+    // With no car the time is the unplug; a Stop the row names is not dated by it.
+    const since = charging || (raw === 'Standby' && !stopped) ? this._stateSince() : null;
+    const when = since ? `${this._t.since} ${this._stamp(since).text}`
       : done ? (done.today ? `${this._t.at} ${done.text}` : done.text) : '';
     return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, when, note};
   }
@@ -1939,7 +1942,9 @@ class EveusCard extends HTMLElement {
     if (actual !== null && set !== null && set - actual >= SLOW_GAP_A) return `${t.of(amps(actual), amps(set))} · ${this._slowReason(actual, set)}`;
     const w = currentNumber(this._state('power'));
     const finish = this._advanced && this._config.sections.includes('advanced_info') ? null : this._finishHM();
-    return [w === null ? '' : `${(w / 1000).toFixed(1)} kW`, actual === null ? '' : `${amps(actual)} A`, finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
+    // Power and current repeat the Meter section; status.power hides them here.
+    const meter = this._shows('status', 'power');
+    return [meter && w !== null ? `${(w / 1000).toFixed(1)} kW` : '', meter && actual !== null ? `${amps(actual)} A` : '', finish ? `${t.until} ${finish}` : ''].filter(Boolean).join(' · ');
   }
   _slowReason(actual, set) {
     const t = this._t, mode = this._state('adaptive_mode')?.state;
@@ -2154,6 +2159,14 @@ class EveusCard extends HTMLElement {
     const windows = [...this.shadowRoot.querySelectorAll('.sched-window')];
     const min = Math.min(...windows.map((el) => parseFloat(el.style.fontSize) || Infinity));
     if (Number.isFinite(min)) for (const el of windows) el.style.fontSize = `${min}px`;
+    // A status note cut short beside the state takes its own line, as a fault's does;
+    // measured on one line each time, so a wider card brings it back.
+    const status = this.shadowRoot.querySelector('.sl.status');
+    if (status) {
+      status.classList.remove('status-wrap');
+      const note = status.querySelector('.status-note');
+      if (note && overflows(note)) status.classList.add('status-wrap');
+    }
   }
 }
 
@@ -2311,10 +2324,10 @@ ha-card[data-state=charging] .sl.status>.status-main>ha-icon{animation:icon-glow
 .sv{font-weight:750}
 /* ---- Bigger values and touch targets, one job per section. ---- */
 .sl{min-height:32px}
-.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1}.status-since{flex:0 0 auto;font-size:14px;font-weight:600;line-height:1;white-space:nowrap;color:var(--primary-text-color)}
+.sl.status{min-height:34px;padding:2px 8px 2px 3px}.status-main{height:28px;gap:7px}.status-state{font-size:15px;font-weight:700;line-height:1;flex-shrink:0;max-width:calc(100% - 31px)}.status-since{flex:0 0 auto;font-size:14px;font-weight:600;line-height:1;white-space:nowrap;color:var(--primary-text-color)}
 .status-note{font-size:14px;font-weight:500;line-height:1;color:color-mix(in srgb,var(--primary-text-color) 72%,transparent)}
 .status-note::before{content:'';display:inline-block;width:1px;height:14px;margin-right:7px;vertical-align:-2px;background:currentColor;opacity:.45}
-.sl.status.status-alert-fault .status-note::before{display:none}
+.sl.status.status-alert-fault .status-note::before,.sl.status.status-wrap .status-note::before{display:none}
 /* Actions: three big buttons, icon over name over state (4.24.0 icons). */
 .panel.actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px}
 .act-btn{--b:#95a5a6;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;min-width:0;min-height:56px;padding:4px 2px 3px;margin:0;
@@ -2399,7 +2412,6 @@ ha-card[data-state=charging] .soc-fill{animation:icon-glow 2.6s ease-in-out infi
 /* Narrow cards use the spare vertical space so labels and controls remain legible. */
 @container (max-width:340px){
   .status-main{height:auto;min-height:28px}
-  .status-note{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.15}
   .soc-tile .tile-sub{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.1}
   .soc-tile .nw{white-space:nowrap}.soc-tile .per-kwh{display:block}.soc-tile .per-kwh .info-sep{display:none}
   .panel.actions:not([style]){grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -2556,7 +2568,8 @@ ha-card[data-theme=light] :is(.sl.session,.panel.history,.sl.fold-history){--h:#
 .soc-plan span{min-width:0;overflow:hidden;text-overflow:ellipsis}.soc-plan small{font-size:.85em;font-weight:500}
 .soc-plan ha-icon{--mdc-icon-size:14px;color:var(--h)}
 /* A fault's reading and what to do wraps under the fault's name. */
-.sl.status.status-alert-fault .status-main{height:auto;min-height:28px;flex-wrap:wrap;row-gap:0;padding:2px 0}
+.sl.status.status-alert-fault .status-main,.sl.status.status-wrap .status-main{height:auto;min-height:28px;flex-wrap:wrap;row-gap:0;padding:2px 0}
+.sl.status.status-wrap .status-note{flex-basis:100%;padding-left:31px;white-space:normal;overflow:visible;line-height:1.2}
 .sl.status.status-alert-fault .status-note{flex-basis:100%;padding-left:31px;white-space:normal;overflow:visible;line-height:1.2;color:var(--primary-text-color);opacity:.85}
 /* Stop with nothing charging blocks the next charge: the sign is quieter until a charge runs. */
 .act-btn.idle .act-stop-icon{filter:grayscale(.6);opacity:.8}
@@ -2657,14 +2670,14 @@ class EveusCardEditor extends HTMLElement {
         return `<div class="row na"><label><input type="checkbox" data-toggle="${key}"${shown ? ' checked' : ''} disabled><span>${name}<small>${l.advOnly}</small></span></label></div>`;
       }
       const lock = shown && usable.length === 1 ? ' disabled' : '';
-      const sizes = sizesOf(key), expandable = shown && ((ITEMS[key]?.length ?? 0) > 1 || sizes.length > 1), open = expandable && this._open?.has(key);
+      const sizes = sizesOf(key), expandable = shown && ((ITEMS[key]?.length ?? 0) > minItems(key) || sizes.length > 1), open = expandable && this._open?.has(key);
       const expand = expandable ? `<button type="button" data-expand="${key}" class="${open ? 'open' : ''}" title="${l.itemsTitle}" aria-expanded="${!!open}"><ha-icon icon="mdi:tune-variant"></ha-icon></button>` : '';
       const hide = this._config.hide || [], left = (ITEMS[key] || []).filter((i) => !hide.includes(`${key}.${i}`)).length;
       const size = this._sizeOf(key), fits = largeFits(this._config, key);
       const sizeRow = this._sizeOptionsHtml(key, sizes, size, fits);
       const items = open ? `<div class="items">${(ITEMS[key] || []).map((i) => {
         const id = `${key}.${i}`, on = !hide.includes(id);
-        return `<label><input type="checkbox" data-item="${id}"${on ? ' checked' : ''}${on && left === 1 ? ' disabled' : ''}><span>${l.items[key][i]}</span></label>`;
+        return `<label><input type="checkbox" data-item="${id}"${on ? ' checked' : ''}${on && left <= minItems(key) ? ' disabled' : ''}><span>${l.items[key][i]}</span></label>`;
       }).join('')}${sizeRow}</div>` : '';
       const move = (dir, off) => `<button type="button" data-move="${key}" data-dir="${dir}"${off ? ' disabled' : ''} title="${dir < 0 ? l.up : l.down}"><ha-icon icon="mdi:chevron-${dir < 0 ? 'up' : 'down'}"></ha-icon></button>`;
       return `<div class="row${shown ? '' : ' off'}"><label><input type="checkbox" data-toggle="${key}"${shown ? ' checked' : ''}${lock}><span>${name}${hint ? `<small>${hint}</small>` : ''}</span></label>`
@@ -2716,12 +2729,12 @@ class EveusCardEditor extends HTMLElement {
     if (!this._open.delete(key)) this._open.add(key);
     this._render();
   }
-  // Items hide one at a time; a section always keeps at least one. An empty list is not written.
+  // Items hide one at a time; a section keeps at least one (see minItems). An empty list is not written.
   _toggleItem(id) {
     const [section, item] = id.split('.'), hide = [...(this._config.hide || [])];
     if (!ITEMS[section]?.includes(item)) return;
     if (hide.includes(id)) hide.splice(hide.indexOf(id), 1);
-    else if (ITEMS[section].filter((i) => !hide.includes(`${section}.${i}`)).length > 1) hide.push(id);
+    else if (ITEMS[section].filter((i) => !hide.includes(`${section}.${i}`)).length > minItems(section)) hide.push(id);
     else { this._render(); return; }
     const rest = {...this._config};
     delete rest.hide;

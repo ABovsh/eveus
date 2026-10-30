@@ -157,7 +157,7 @@ browser or reset the app's frontend cache.
 
 | Section | Shows |
 | --- | --- |
-| **Status** | Charger state and why it is not charging; while charging, since when, and for a finished charge, at what time |
+| **Status** | Charger state and why it is not charging; while charging, since when, with power and current (you can hide them), and for a finished charge, at what time; with no car, since when |
 | **Buttons** | **OCPP** (not shown on REVE), **One charge** and **Stop** |
 | **Battery SOC** | Estimated SOC and where the session started; while charging, time left and finish time; energy and cost to target, and before the charge the price per kWh; **Advanced mode only** |
 | **SOC settings** | **Initial**, **Target**, **Capacity** and **Loss**; **Advanced mode only** |
@@ -185,7 +185,7 @@ A reading the charger's firmware does not report is not shown.
 ```yaml
 type: custom:eveus-card
 sections:            # any of these, in any order; omit for all of them
-  - status
+  - status           # power · current while charging
   - actions          # OCPP · One charge · Stop
   - advanced_info    # Battery SOC (Advanced only)
   - advanced_controls  # SOC settings (Advanced only)
@@ -199,6 +199,7 @@ sections:            # any of these, in any order; omit for all of them
   - history          # this month · counters
   - safety
 # hide:              # single items: section.item
+#   - status.power
 #   - schedules.schedule_2
 #   - safety.connection
 # device_id: ...     # only with several chargers
