@@ -304,7 +304,7 @@ class SocLimitController:
     def _emit_reached(self, soc: int, target: int) -> None:
         """Latch and fire the reached event exactly once for this session."""
         self._fired = True
-        self._pending = None
+        self._pending = None  # pragma: no mutate - every reader of _pending also checks _fired, set on the line above
         self._hass.bus.async_fire(
             EVENT_SOC_LIMIT_REACHED,
             {

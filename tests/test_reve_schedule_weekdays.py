@@ -247,11 +247,14 @@ def test_weekdays_respect_control_permission_for_the_selected_schedule(
     )
     registry = MagicMock()
     registry.async_get_entity_id.return_value = "switch.renamed_second_schedule"
-    with _devices({}), patch.object(eveus.er, "async_get", return_value=registry):
+    hass = _ws_hass({"e1": updater})
+    with _devices({}), patch.object(eveus.er, "async_get", return_value=registry) as get_registry:
         asyncio.run(eveus._async_reve_schedule_weekdays(
-            _ws_hass({"e1": updater}), connection,
+            hass, connection,
             {"id": 9, "type": "eveus/reve_schedule_weekdays", "schedule": 2, "weekdays": [1]},
         ))
+    connection.user.permissions.access_all_entities.assert_called_once_with(POLICY_CONTROL)
+    get_registry.assert_called_once_with(hass)
     if not allowed:
         assert updater.sent == []
     suffix = "" if device_number == 1 else str(device_number)

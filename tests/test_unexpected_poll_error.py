@@ -42,5 +42,7 @@ def test_an_unexpected_parse_error_is_accounted_as_a_failed_poll(monkeypatch, er
     assert not updater.available
     assert updater.seconds_unavailable >= 0
     assert updater._first_failure_monotonic is not None
+    # Diagnostics name the error type of the failed poll.
+    assert updater._last_error == error.__name__
     # A gap in the polls: a transition across it must not fire an event.
     assert updater._event_prev_state is None

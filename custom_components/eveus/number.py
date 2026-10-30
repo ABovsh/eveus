@@ -802,9 +802,9 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             return
         last = self._cycle_session_time
         if last is not None and clock < last:
-            self._session_seeded = False
+            self._session_seeded = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
             self._seed_warned = False  # pragma: no mutate - False and None are equally falsy here; the flag is only ever read for truthiness
-            self._soc_calculator.last_seed = {}
+            self._soc_calculator.last_seed = {}  # pragma: no mutate - both readers take `last_seed or {}`, so None reads the same as {}
         self._cycle_session_time = clock
 
     def _external_soc_anchor(self, entity_id: str) -> float | str:

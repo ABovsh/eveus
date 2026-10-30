@@ -957,7 +957,7 @@ class ReveApi:
         self._residue_tried_at: float | None = None
         self._residue_answered = False
         self._session: tuple[dict[str, Any], float] | None = None
-        self._session_unplugged = False
+        self._session_unplugged = False  # pragma: no mutate - until a session is held it can only clear the empty one; holding one sets it
         # A limit's value in /main read units, kept while the limit is off
         # (REVE then reports null) so its number shows what switching it back
         # on would apply.
@@ -1149,7 +1149,7 @@ class ReveApi:
         if fallback:
             self._main_fallbacks += 1
         payload = {key: value for key, value in main.items() if key not in SESSION_FIELDS}
-        state = get_safe_value(main, "state", int)
+        state = get_safe_value(main, "state", int)  # pragma: no mutate - a float state equals the same int code; a fractional one matches neither branch
         if state == DEVICE_STATE_STANDBY:
             self._session_unplugged = True
         elif state in CONNECTED_STATES and self._session_unplugged:

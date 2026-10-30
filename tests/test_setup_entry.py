@@ -718,24 +718,25 @@ def test_async_setup_entry_follows_the_time_zone_every_poll(
 ) -> None:
     """The follower is attached always (the switch flips without a reload) and
     evaluates at setup and on each poll, with its own state."""
-    calls: list[tuple[object, object]] = []
+    calls: list[tuple[object, object, object, object]] = []
     hass = _hass()
     entry = _Entry(_data(device_number=1))
     monkeypatch.setattr(eveus, "EveusUpdater", _Updater)
     monkeypatch.setattr(
         eveus,
         "update_time_zone_follow",
-        lambda h, e, u, follower: calls.append((e, follower)),
+        lambda h, e, u, follower: calls.append((h, e, u, follower)),
     )
 
     assert asyncio.run(eveus.async_setup_entry(hass, entry)) is True
-    assert [e for e, _ in calls] == [entry]
-    assert isinstance(calls[0][1], eveus.TimeZoneFollower)
+    updater = entry.runtime_data.updater
+    assert [(h, e, u) for h, e, u, _ in calls] == [(hass, entry, updater)]
+    assert isinstance(calls[0][3], eveus.TimeZoneFollower)
 
     calls.clear()
-    for listener in entry.runtime_data.updater.listeners:
+    for listener in updater.listeners:
         listener()
-    assert [e for e, _ in calls] == [entry]
+    assert [(h, e, u) for h, e, u, _ in calls] == [(hass, entry, updater)]
 
 
 def test_async_setup_entry_normalizes_stored_device_number(
