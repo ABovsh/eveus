@@ -1,0 +1,78 @@
+blueprint:
+  name: "Eveus — stop charging when the grid is gone"
+  description: >-
+    Stops the car charging with the charger's own Stop command once the grid
+    has been gone for five minutes, so the car does not drain your inverter's
+    battery. Fully local; no internet or cloud involved.
+
+
+    Use a voltage sensor on the grid side of the inverter. A reading below the
+    threshold, `unavailable` or `unknown` counts as no grid, so a sensor that
+    stays offline keeps charging stopped. While One Charge is on, nothing is
+    stopped. To resume charging, add "Eveus — resume charging when the grid
+    returns".
+  domain: automation
+  source_url: https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_no_grid.yaml
+  input:
+    voltage_sensor:
+      name: Grid voltage sensor
+      description: Must measure the grid, not the inverter's output.
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: voltage
+    threshold:
+      name: No grid below (V)
+      description: >-
+        Keep it well below normal voltage: the car's own load pulls the line
+        down, and a low grid is still a grid.
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 180
+          unit_of_measurement: "V"
+          mode: box
+    stop_switch:
+      name: The charger's "Stop Charging" switch
+      selector:
+        entity:
+          filter:
+            domain: switch
+            integration: eveus
+    one_charge_switch:
+      name: The charger's "One Charge" switch
+      selector:
+        entity:
+          filter:
+            domain: switch
+            integration: eveus
+
+mode: single
+
+trigger_variables:
+  voltage: !input voltage_sensor
+  limit: !input threshold
+
+triggers:
+  # Held for five minutes so a sensor's brief dropout cannot end a charge. A
+  # sensor with no number counts as no grid: many read unavailable in an outage.
+  - trigger: template
+    value_template: >-
+      {% set volts = states(voltage) %}
+      {{ not is_number(volts) or volts | float < limit | float }}
+    for: "00:05:00"
+
+conditions:
+  - condition: state
+    entity_id: !input stop_switch
+    state: "off"
+  - condition: state
+    entity_id: !input one_charge_switch
+    state: "off"
+
+actions:
+  - action: switch.turn_on
+    target:
+      entity_id: !input stop_switch

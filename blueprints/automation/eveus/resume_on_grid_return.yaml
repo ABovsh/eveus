@@ -1,0 +1,76 @@
+blueprint:
+  name: "Eveus — resume charging when the grid returns"
+  description: >-
+    Turns the charger's Stop Charging off once the grid has been back for five
+    minutes. From there the charger's own schedules and limits decide when the
+    car charges; with none set, it charges at once. Fully local; no internet or
+    cloud involved.
+
+
+    Use a voltage sensor on the grid side of the inverter. It lifts any Stop
+    Charging that is on when the grid returns, including one you turned on by
+    hand; to keep such a stop, turn this automation off. While One Charge is on,
+    nothing is changed. This does not stop charging; for that, add "Eveus — stop
+    charging when the grid is gone" or your own automation.
+  domain: automation
+  source_url: https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/resume_on_grid_return.yaml
+  input:
+    voltage_sensor:
+      name: Grid voltage sensor
+      description: Must measure the grid, not the inverter's output.
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: voltage
+    threshold:
+      name: Grid is back above (V)
+      default: 190
+      selector:
+        number:
+          min: 100
+          max: 250
+          unit_of_measurement: "V"
+          mode: box
+    stop_switch:
+      name: The charger's "Stop Charging" switch
+      selector:
+        entity:
+          filter:
+            domain: switch
+            integration: eveus
+    one_charge_switch:
+      name: The charger's "One Charge" switch
+      selector:
+        entity:
+          filter:
+            domain: switch
+            integration: eveus
+
+mode: single
+
+trigger_variables:
+  voltage: !input voltage_sensor
+  limit: !input threshold
+
+triggers:
+  # Held for five minutes so a grid that comes and goes cannot restart the
+  # charge. A sensor with no number is not a grid, so it never lifts the stop.
+  - trigger: template
+    value_template: >-
+      {% set volts = states(voltage) %}
+      {{ is_number(volts) and volts | float > limit | float }}
+    for: "00:05:00"
+
+conditions:
+  - condition: state
+    entity_id: !input stop_switch
+    state: "on"
+  - condition: state
+    entity_id: !input one_charge_switch
+    state: "off"
+
+actions:
+  - action: switch.turn_off
+    target:
+      entity_id: !input stop_switch

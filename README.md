@@ -56,7 +56,7 @@ All SOC features require **Advanced mode**. [Set up SOC →](#battery-level-soc)
 
 - **Device triggers** for car connection, charging start and finish, and charger errors.
 - **Session data for your own automations:** energy, cost and duration of a finished session, and an event when the target SOC is reached.
-- **Two ready-made blueprints:** session notifications, and stopping charging when your home inverter battery is low. [Import a blueprint →](#blueprints)
+- **Four ready-made blueprints:** session notifications, stopping charging when your home inverter battery is low or the grid is gone, and resuming when the grid returns. [Import a blueprint →](#blueprints)
 
 ### ⚡ Charger readings
 
@@ -349,7 +349,7 @@ only locally.
 ## Blueprints
 
 A blueprint is a ready-made automation: import it once, fill in its fields, and
-Home Assistant runs the automation. There are two for this integration. Installing
+Home Assistant runs the automation. There are four for this integration. Installing
 or updating the integration does not add them, so import each one you want. They
 work only while Home Assistant is running, and with several chargers you create
 one automation per charger.
@@ -395,7 +395,7 @@ data:
 When your inverter's battery stays below a threshold for two minutes, turns on
 **Stop Charging**. This is the charger's own Stop command; its power stays on.
 
-- **It does not resume charging.** Turn **Stop Charging** off yourself or with your own automation. On REVE firmware a stop also starts [manual mode](#manual-mode).
+- **It does not resume charging.** Turn **Stop Charging** off yourself, with your own automation or with [Resume charging when the grid returns](#resume-charging-when-the-grid-returns). On REVE firmware a stop also starts [manual mode](#manual-mode).
 - **It acts when the battery drops below the threshold.** If the battery is already low when you create the automation, or you turn **Stop Charging** off while it stays low, the automation stops charging again only after the battery rises above the threshold and drops below it.
 - **A sensor without a number never stops the charge,** for example one that reads `unavailable`.
 
@@ -413,6 +413,58 @@ When your inverter's battery stays below a threshold for two minutes, turns on
 | Battery voltage sensor | Required for **Battery voltage is low** and **Either** |
 | Stop below (V) | 10–120. Default: 48. Set it near empty: on LiFePO₄ the voltage is flat in the middle, and the car's load pulls it down, so leave some margin |
 | The charger's "Stop Charging" switch | The **Stop Charging** switch of your charger |
+
+### Stop charging when the grid is gone
+
+Once the grid has been gone for five minutes, turns on **Stop Charging**, so the
+car does not drain your inverter's battery. It is for a charger powered through
+an inverter; a charger without backup power switches off with the grid.
+
+- **No grid means** a reading below the threshold, `unavailable` or `unknown`. A sensor that stays offline therefore keeps charging stopped.
+- **It does not resume charging.** Add the next blueprint for that.
+- **While One Charge is on, it stops nothing,** so you can charge from the battery on purpose.
+- **It acts when the reading changes.** If the grid goes while Home Assistant is off, or the sensor is already missing when Home Assistant starts, nothing is stopped until the sensor reads a grid and loses it again.
+- **On REVE firmware a stop also starts** [manual mode](#manual-mode).
+
+**You need:** a sensor with device class `voltage` that measures the grid before the inverter and reads low or `unavailable` during an outage. The inverter's output and this charger's **Voltage** do not fit: behind an inverter they stay normal during an outage. Check the sensor once during a real outage.
+
+[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FABovsh%2Feveus%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Feveus%2Fstop_on_no_grid.yaml)
+
+**URL:** `https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_no_grid.yaml`
+
+| Field | What to enter |
+| --- | --- |
+| Grid voltage sensor | The sensor described above |
+| No grid below (V) | 1–180. Default: 100. Keep it well below normal voltage: the car's own load pulls the line down, and a low grid is still a grid |
+| The charger's "Stop Charging" switch | The **Stop Charging** switch of your charger |
+| The charger's "One Charge" switch | The **One Charge** switch of your charger |
+
+### Resume charging when the grid returns
+
+Once the voltage has stayed above the threshold for five minutes, turns off
+**Stop Charging**. From there the charger's schedules and limits decide when the
+car charges; with none set, charging starts at once. It does not stop charging:
+use it with the previous blueprint, the low-battery blueprint or your own
+automation.
+
+- **It lifts any Stop Charging that is on at that moment,** including one you turned on by hand. To keep such a stop, turn this automation off.
+- **While One Charge is on, it changes nothing.** Stop Charging then stays on until the next time the grid returns.
+- **It acts when the grid returns.** A Home Assistant restart with the grid present lifts nothing, and neither does turning Stop Charging on while the grid is present. If the grid returns while Home Assistant is off, Stop Charging stays on until the next outage ends or you turn it off.
+- **On REVE before REVE_PLUS 1.0.3,** [manual mode](#manual-mode) stays on after the stop is lifted, so schedules and limits apply only after the connector is pulled out of the car.
+- **The car may not take current after a pause.** If it does not, pull the connector out of the car and plug it back in.
+
+**You need:** the same kind of grid voltage sensor as for the previous blueprint.
+
+[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FABovsh%2Feveus%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Feveus%2Fresume_on_grid_return.yaml)
+
+**URL:** `https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/resume_on_grid_return.yaml`
+
+| Field | What to enter |
+| --- | --- |
+| Grid voltage sensor | The sensor described above |
+| Grid is back above (V) | 100–250. Default: 190 |
+| The charger's "Stop Charging" switch | The **Stop Charging** switch of your charger |
+| The charger's "One Charge" switch | The **One Charge** switch of your charger |
 
 ## Events & Device Triggers
 

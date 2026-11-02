@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### ✨ New
+
+- **New blueprint: stop charging when the grid is gone.** For a charger powered through an inverter: once a grid voltage sensor has read below 100 V, `unavailable` or `unknown` for five minutes, it turns on **Stop Charging**, unless **One Charge** is on. Requested in [#23](https://github.com/ABovsh/eveus/issues/23) by @capodecapi2025-source.
+- **New blueprint: resume charging when the grid returns.** Once the voltage has stayed above 190 V for five minutes, it turns off **Stop Charging**, unless **One Charge** is on; the charger's schedules and limits then decide when the car charges. Requested in [#23](https://github.com/ABovsh/eveus/issues/23) by @capodecapi2025-source.
+
 ## 4.30.0 - 2026-10-30
 
 ### ✨ New
