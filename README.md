@@ -349,16 +349,18 @@ only locally.
 ## Blueprints
 
 A blueprint is a ready-made automation: import it once, fill in its fields, and
-Home Assistant runs the automation. The integration ships two. They work only
-while Home Assistant is running, and with several chargers you create one
-automation per charger.
+Home Assistant runs the automation. There are two for this integration. Installing
+or updating the integration does not add them, so import each one you want. They
+work only while Home Assistant is running, and with several chargers you create
+one automation per charger.
 
 ### How to install a blueprint
 
-1. Copy the blueprint's URL from its section below.
-2. Open **Settings → Automations & Scenes → Blueprints → Import blueprint**, paste the URL and press **Preview**.
-3. Press **Import blueprint**.
-4. In the **Blueprints** list, press **Create automation** for this blueprint, fill in the fields and save.
+1. Press the **Import Blueprint** button in the blueprint's section below. The first time, My Home Assistant asks for your Home Assistant address.
+2. Press **Preview**, then **Import blueprint**.
+3. In the **Blueprints** list, press **Create automation** for this blueprint, fill in the fields and save.
+
+Without the button: open **Settings → Automations & Scenes → Blueprints → Import blueprint**, paste the blueprint's URL and continue from step 2.
 
 ### Charging session notification
 
@@ -369,6 +371,8 @@ in English. A session that starts or finishes while the charger is unreachable
 sends no message.
 
 **You need:** a notification route in Home Assistant, such as the mobile app, Telegram or your own script.
+
+[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FABovsh%2Feveus%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Feveus%2Fnotify_session.yaml)
 
 **URL:** `https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml`
 
@@ -396,6 +400,8 @@ When your inverter's battery stays below a threshold for two minutes, turns on
 - **A sensor without a number never stops the charge,** for example one that reads `unavailable`.
 
 **You need:** your inverter's battery reading in Home Assistant, either a % sensor with device class `battery` or a voltage sensor with device class `voltage`. The fields list only sensors of these classes.
+
+[![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FABovsh%2Feveus%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Feveus%2Fstop_on_low_house_battery.yaml)
 
 **URL:** `https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml`
 
