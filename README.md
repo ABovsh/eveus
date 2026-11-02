@@ -348,14 +348,65 @@ only locally.
 
 ## Blueprints
 
-Two ready-made automations ship with the integration. Import one from
-**Settings → Automations & Scenes → Blueprints → Import Blueprint**, paste the
-URL, then fill in the two or three fields it asks for.
+A blueprint is a ready-made automation: import it once, fill in its fields, and
+Home Assistant runs the automation. The integration ships two. They work only
+while Home Assistant is running, and with several chargers you create one
+automation per charger.
 
-| Blueprint | What it does | URL |
-| --- | --- | --- |
-| Charging session notification | Notifies on start and finish through the action of your choice; the finish message includes session energy, cost and duration. Use `{{ message }}` as the notification text | [`notify_session.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml) |
-| Stop charging on low house battery | When your inverter's battery stays below a threshold for two minutes, turns on **Stop Charging**. Choose the threshold on the battery %, on its voltage, or on whichever comes first; voltage is reliable only near empty. It does not resume charging afterwards | [`stop_on_low_house_battery.yaml`](https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml) |
+### How to install a blueprint
+
+1. Copy the blueprint's URL from its section below.
+2. Open **Settings → Automations & Scenes → Blueprints → Import blueprint**, paste the URL and press **Preview**.
+3. Press **Import blueprint**.
+4. In the **Blueprints** list, press **Create automation** for this blueprint, fill in the fields and save.
+
+### Charging session notification
+
+Sends a message when a charging session starts and when it finishes. The finish
+message gives the reason, energy, cost and duration, for example
+`Charging finished (complete): 12.35 kWh, 56.20 UAH, 2h 05m.` The text is always
+in English. A session that starts or finishes while the charger is unreachable
+sends no message.
+
+**You need:** a notification route in Home Assistant, such as the mobile app, Telegram or your own script.
+
+**URL:** `https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/notify_session.yaml`
+
+| Field | What to enter |
+| --- | --- |
+| Eveus charger | Your charger |
+| Notification action | The action that sends the message. Use `{{ message }}` as its text |
+| Currency label | Shown after the session cost. Default: `UAH` |
+
+An example **Notification action** in YAML:
+
+```yaml
+action: notify.mobile_app_my_phone
+data:
+  message: "{{ message }}"
+```
+
+### Stop charging on low house battery
+
+When your inverter's battery stays below a threshold for two minutes, turns on
+**Stop Charging**. This is the charger's own Stop command; its power stays on.
+
+- **It does not resume charging.** Turn **Stop Charging** off yourself or with your own automation. On REVE firmware a stop also starts [manual mode](#manual-mode).
+- **It acts when the battery drops below the threshold.** If the battery is already low when you create the automation, or you turn **Stop Charging** off while it stays low, the automation stops charging again only after the battery rises above the threshold and drops below it.
+- **A sensor without a number never stops the charge,** for example one that reads `unavailable`.
+
+**You need:** your inverter's battery reading in Home Assistant, either a % sensor with device class `battery` or a voltage sensor with device class `voltage`. The fields list only sensors of these classes.
+
+**URL:** `https://github.com/ABovsh/eveus/blob/main/blueprints/automation/eveus/stop_on_low_house_battery.yaml`
+
+| Field | What to enter |
+| --- | --- |
+| Stop when | **Battery % is low** (default), **Battery voltage is low** or **Either, whichever comes first**. Use voltage if the battery's % drifts |
+| Battery % sensor | Required for **Battery % is low** and **Either** |
+| Stop below (%) | 5–95. Default: 40 |
+| Battery voltage sensor | Required for **Battery voltage is low** and **Either** |
+| Stop below (V) | 10–120. Default: 48. Set it near empty: on LiFePO₄ the voltage is flat in the middle, and the car's load pulls it down, so leave some margin |
+| The charger's "Stop Charging" switch | The **Stop Charging** switch of your charger |
 
 ## Events & Device Triggers
 
