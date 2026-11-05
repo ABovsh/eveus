@@ -231,6 +231,32 @@ def _charging(charger: _Charger, *, adaptive: int = 1) -> None:
     charger.main["aiStatus"] = adaptive
 
 
+def test_adaptive_current_from_graphql_avoids_extra_main_reads_and_tracks_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    charger.station["adaptiveModeCurrent"] = 10
+    updater = _known_reve(monkeypatch, charger)
+    _charging(charger)
+
+    assert "adaptiveModeCurrent" in reve.MEASUREMENTS_QUERY
+    for value in (10, 0, 13):
+        charger.station["adaptiveModeCurrent"] = value
+        now[0] += 60
+        data = asyncio.run(updater._async_update_data())
+        assert data["aiModecurrent"] == value
+    assert charger.paths() == ["/graphql"] * 3
+
+    # A field disappearing must immediately restore the legacy refresh cadence.
+    del charger.station["adaptiveModeCurrent"]
+    charger.main["aiModecurrent"] = 12
+    now[0] += 60
+    data = asyncio.run(updater._async_update_data())
+    assert charger.paths()[-2:] == ["/graphql", "/main"]
+    assert data["aiModecurrent"] == 12
+
+
 def test_an_adaptive_charge_reads_main_every_minute(monkeypatch: pytest.MonkeyPatch) -> None:
     now = _clock(monkeypatch)
     charger = _Charger(_reve_main())
@@ -265,6 +291,63 @@ def test_an_adaptive_hour_costs_120_graphql_and_60_main_requests(
 
     assert charger.paths().count("/graphql") == 120
     assert charger.paths().count("/main") == 60
+
+
+def test_new_reve_adaptive_hour_keeps_only_five_minute_main_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    charger.station["adaptiveModeCurrent"] = 7
+    updater = _known_reve(monkeypatch, charger)
+    _charging(charger)
+
+    for _ in range(120):
+        now[0] += 30
+        assert asyncio.run(updater._async_update_data())["aiModecurrent"] == 7
+
+    assert charger.paths().count("/graphql") == 120
+    assert charger.paths().count("/main") == 12
+
+
+@pytest.mark.parametrize("bad", [-1, 999, None, True])
+def test_invalid_graphql_adaptive_current_falls_back_to_main(
+    monkeypatch: pytest.MonkeyPatch, bad: Any,
+) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    charger.station["adaptiveModeCurrent"] = 9
+    updater = _known_reve(monkeypatch, charger)
+    _charging(charger)
+    charger.station["adaptiveModeCurrent"] = bad
+    charger.main["aiModecurrent"] = 12
+
+    now[0] += 60
+    data = asyncio.run(updater._async_update_data())
+    assert charger.paths() == ["/graphql", "/main"]
+    assert data["aiModecurrent"] == 12
+
+
+def test_graphql_adaptive_current_obeys_the_configured_model_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _clock(monkeypatch)
+    charger = _Charger(_reve_main())
+    charger.station["adaptiveModeCurrent"] = 16
+    updater = _updater(monkeypatch, charger, model="16A")
+    asyncio.run(updater._async_update_data())
+    charger.calls.clear()
+    _charging(charger)
+
+    now[0] += 60
+    assert asyncio.run(updater._async_update_data())["aiModecurrent"] == 16
+    assert charger.paths() == ["/graphql"]
+    charger.calls.clear()
+    charger.station["adaptiveModeCurrent"] = 17
+    charger.main["aiModecurrent"] = 12
+    now[0] += 60
+    assert asyncio.run(updater._async_update_data())["aiModecurrent"] == 12
+    assert charger.paths() == ["/graphql", "/main"]
 
 
 def test_main_is_read_after_fifty_seconds_not_before(monkeypatch: pytest.MonkeyPatch) -> None:

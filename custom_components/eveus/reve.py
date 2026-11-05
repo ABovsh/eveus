@@ -69,7 +69,7 @@ from .const import (
     SESSION_ACTIVE_STATES,
 )
 from .reve_fields import graphql_paths, station_to_main
-from .snapshot import FIELD_KEYS
+from .snapshot import FIELD_KEYS, model_max_current
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -246,6 +246,7 @@ _MEASUREMENT_FIELDS: Final = """
             chargerType
             releType
             adaptiveModeStatus
+            adaptiveModeCurrent
             voltageThreshold
             ground
             isGroundConnected
@@ -344,8 +345,8 @@ MAIN_ONLY_FIELDS: Final[frozenset[str]] = frozenset(
 )
 MAIN_RESIDUE_REFRESH_SECONDS: Final = 300
 MAIN_RESIDUE_MAX_AGE_SECONDS: Final = 3600
-# The adaptive current is one of them, and it moves while an adaptive charge
-# runs (7 -> 11 -> 16 -> 10 A on 2026-10-16/17). During such a session /main is
+# On older REVE firmware the adaptive current is one of them, and it moves
+# during an adaptive charge (7 -> 11 -> 16 -> 10 A on 2026-10-16/17). /main is
 # read about once a minute for as long as its last read answered: the current
 # changed 2.6 times an hour over 16 charging hours (median gap 370 s; only the
 # start ramp moves within seconds), so a minute shows every change a chart can
@@ -358,12 +359,13 @@ ADAPTIVE_MAIN_REFRESH_SECONDS: Final = 50
 # 2026-10-17, while the next read, a minute later, answered.
 API_DOWN_AFTER_FAILURES: Final = 2
 
-# Every field a measurements read asks for. The server answers a field it does
+# Fields expected on all supported REVE firmware. The server answers a field it does
 # not know with nothing (checked 2026-10-16), so a field a firmware update
 # renamed would leave its entities quietly without a value: one missing from
-# this many reads in a row is reported (diagnostics and a repair notice).
+# this many reads in a row is reported (diagnostics and a repair notice). The
+# adaptive current is optional because older firmware does not report it.
 _EXPECTED_PATHS: Final[tuple[tuple[str, ...], ...]] = tuple(
-    sorted(graphql_paths() | {("chargingCommand",)})
+    sorted((graphql_paths() - {("adaptiveModeCurrent",)}) | {("chargingCommand",)})
 )
 FIELDS_MISSING_READS: Final = 3
 
@@ -1028,6 +1030,11 @@ class ReveApi:
                 MEASUREMENTS_AND_SETTINGS_QUERY if with_settings else MEASUREMENTS_QUERY
             )
             main = station_to_main(station)
+            adaptive_current = main.get("aiModecurrent")
+            if adaptive_current is not None and not (
+                0 <= adaptive_current <= model_max_current(self._updater._model)
+            ):
+                del main["aiModecurrent"]
             if "state" not in main:
                 raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
             if validate is not None:
@@ -1107,7 +1114,8 @@ class ReveApi:
     def main_residue_due(self, measurements: Mapping[str, Any] | None = None) -> bool:
         """Whether a GraphQL poll should also read ``/main`` for its own fields:
         every five minutes, whether or not the last try found ``/main``, and
-        once a minute in an adaptive session while ``/main`` answers."""
+        once a minute in an adaptive session if GraphQL lacks the current and
+        ``/main`` answers."""
         tried = self._residue_tried_at
         if tried is None:
             return True
@@ -1118,6 +1126,7 @@ class ReveApi:
             elapsed >= ADAPTIVE_MAIN_REFRESH_SECONDS
             and self._residue_answered
             and measurements is not None
+            and "aiModecurrent" not in measurements
             and measurements.get("state") in SESSION_ACTIVE_STATES
             and measurements.get("aiStatus") not in (None, 0)
         )

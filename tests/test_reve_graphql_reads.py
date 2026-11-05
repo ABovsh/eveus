@@ -75,7 +75,7 @@ def test_the_measurements_document_asks_for_exactly_the_mapped_fields() -> None:
     added = {(field,) for field in reve._STATION_SYSTEM_FIELDS} | {("ratesV2", "activeRate")}
     assert asked == reve_fields.graphql_paths() | {("chargingCommand",)} | added
     app = _paths((_FIXTURES / "reve_app_station_query.graphql").read_text())
-    assert asked - added <= app
+    assert asked - added - app == {("adaptiveModeCurrent",)}
     assert reve.MEASUREMENTS_QUERY.lstrip().startswith("query StationData")
 
 
