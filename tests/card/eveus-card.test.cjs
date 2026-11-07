@@ -2801,3 +2801,34 @@ test('a folded summary shrinks to fit instead of cutting off (larger phone text)
   assert.ok(sums.length>0);
   for(const s of sums) assert.match(s,/data-fit="13"/);
 });
+// ---- Stopped says since when, like Charging and Standby: when Stop went on, from the recorder ----
+const hmOf=(ms)=>{const d=new Date(ms);return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;};
+const settle=async()=>{for(let i=0;i<5;i++) await new Promise((r)=>setImmediate(r));};
+const stoppedCard=(rows,lastChanged)=>{
+  const x=setupAll({sections:['status'],charging:false,over:{state:['sensor.state','Standby'],stop_charging:['switch.stop','on'],car_connected:['binary_sensor.car','on']}});
+  x.states['switch.stop']={state:'on',attributes:{},last_changed:new Date(lastChanged).toISOString()};
+  const asked=[];
+  x.hass.callWS=async(msg)=>{asked.push(msg);return msg.type==='history/history_during_period'?{'switch.stop':rows}:{entities:x.card._ids};};
+  x.card.hass={...x.hass};
+  return {...x,asked};
+};
+test('Stopped since: the first On of the current Stop, across a restart and an outage',async()=>{
+  const t1=Date.now()-5*3600000, t2=Date.now()-3600000, t3=Date.now()-3000000;
+  const x=stoppedCard([{s:'off',lu:(t1-3600000)/1000},{s:'on',lu:t1/1000},{s:'unavailable',lu:t2/1000},{s:'on',lu:t3/1000}],t3);
+  await settle();
+  const q=x.asked.find((m)=>m.type==='history/history_during_period');
+  assert.ok(q);assert.deepEqual([...q.entity_ids],['switch.stop']);
+  assert.match(x.html(),new RegExp(`status-state paused">Stopped</span><span class="status-since">since (yesterday )?${hmOf(t1)}<`));
+});
+test('Stopped since: a Stop the recorder has not stored yet is dated by the switch',async()=>{
+  const now=Date.now()-60000;
+  const x=stoppedCard([{s:'off',lu:(now-7200000)/1000}],now);
+  await settle();
+  assert.match(x.html(),new RegExp(`status-since">since ${hmOf(now)}<`));
+});
+test('Stopped since: no history at all, or a Stop older than the window, shows no time',async()=>{
+  const x=stoppedCard([],Date.now()-60000);await settle();
+  assert.doesNotMatch(x.html(),/status-since/);
+  const y=stoppedCard([{s:'on',lu:Date.now()/1000-86400}],Date.now()-60000);await settle();
+  assert.doesNotMatch(y.html(),/status-since/);
+});

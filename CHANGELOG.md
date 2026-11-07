@@ -8,7 +8,7 @@
 - **New blueprint: resume charging when the grid returns.** Once the voltage has stayed above 190 V for five minutes, it turns off **Stop Charging**, unless **One Charge** is on; the charger's schedules and limits then decide when the car charges. Requested in [#23](https://github.com/ABovsh/eveus/issues/23) by @capodecapi2025-source.
 
 - **Card: fits the charger's state.** On a card with Status, an offline charger shows only the status and the last session. With no car plugged in, Battery SOC, Meter and Charger clock are hidden; Charger clock returns while the clock is wrong. Safety, the last session and the order of sections stay. Turn it off with **Fit to the charger's state** in the editor, or `adapt: false`.
-- **Card: Offline says since when.** It reads `Offline · since 14:02 | 3h ago`, taken from Home Assistant's recorder, so a restart does not reset it.
+- **Card: Offline and Stopped say since when,** like Charging and Standby: `Offline · since 14:02 | 3h ago`, `Stopped since 21:40`. The time comes from Home Assistant's recorder, so a restart does not reset it.
 
 ### 🔧 Changed
 

@@ -35,8 +35,8 @@ const LARGE_MAX_ITEMS = 2;
 const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
-// How far back the recorder is asked when the charger stopped answering.
-const OFFLINE_LOOKBACK_MS = 14 * 86400000;
+// How far back the recorder is asked when an outage or a Stop began.
+const RUN_LOOKBACK_MS = 14 * 86400000;
 // REVE schedules (all of them, with their days) are asked for again this often, and at once
 // when a schedule entity or REVE API changes; a change made in the charger's app shows within it.
 const REVE_SCHEDULES_REFRESH_MS = 60000;
@@ -410,8 +410,8 @@ class EveusCard extends HTMLElement {
     this._month = null;
     this._monthAt = 0;
     this._monthBusy = false;
-    this._offlineKey = null;
-    this._offlineAt = null;
+    this._runKeyAsked = null;
+    this._runAt = null;
     // REVE schedules belong to the charger this config names: forget them, and any read still
     // out for the old config (its answer is dropped, so it can no longer clear the busy flag).
     this._reveSchedules = this._reveRates = this._reveKey = null;
@@ -558,8 +558,8 @@ class EveusCard extends HTMLElement {
     if ((!this._resolved || retry) && !this._resolving) void this._resolve();
     if (this._resolved) this._watchRegistry();
     if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
-    if (this._resolved && this._ids?.state && typeof this._hass?.callWS === 'function' && this._outageKey !== (this._offlineKey ?? null)) {
-      if (this._outageKey === null) { this._offlineKey = null; this._offlineAt = null; } else void this._fetchOfflineSince();
+    if (this._resolved && typeof this._hass?.callWS === 'function' && this._runKey !== (this._runKeyAsked ?? null)) {
+      if (this._runKey === null) { this._runKeyAsked = null; this._runAt = null; } else void this._fetchRunSince();
     }
     if (this._resolved && this._wantsReveSchedules && !this._reveBusy
       && (Date.now() - (this._reveAt || 0) > REVE_SCHEDULES_REFRESH_MS || this._reveKey !== this._reveScheduleKey())) void this._fetchReveSchedules();
@@ -1696,7 +1696,7 @@ class EveusCard extends HTMLElement {
   }
   // How long the last charger reading has been stale; '' under a minute or unknown.
   _since() {
-    const t = this._offlineAt ? this._offlineAt.getTime() : Date.parse(this._state('state')?.last_changed);
+    const offlineAt = this._runSince('offline'), t = offlineAt ? offlineAt.getTime() : Date.parse(this._state('state')?.last_changed);
     if (!Number.isFinite(t)) return '';
     const m = Math.floor((Date.now() - t) / 60000);
     return m < 1 ? '' : this._t.ago(m);
@@ -1740,7 +1740,7 @@ class EveusCard extends HTMLElement {
   }
   _statusView() {
     if (!this._online) {
-      const when = this._offlineAt ? `${this._t.since} ${this._stamp(this._offlineAt).text}` : '';
+      const at = this._runSince('offline'), when = at ? `${this._t.since} ${this._stamp(at).text}` : '';
       return {cls: 'offline', icon: 'mdi:clock-alert-outline', text: this._t.offline, when, note: this._since()};
     }
     const entity = this._state('state'), raw = entity.state;
@@ -1770,8 +1770,8 @@ class EveusCard extends HTMLElement {
     const reasonNote = reasonText && reasonText !== text && !(stopped && reason.state === 'Stopped by User') ? reasonText : '';
     const note = charging ? this._chargingNote() : reasonNote;
     // The time sits right after the state; the power, the finish or the reason follow it behind a divider.
-    // With no car the time is the unplug; a Stop the row names is not dated by it.
-    const since = charging || (raw === 'Standby' && !stopped) ? this._stateSince() : null;
+    // With no car the time is the unplug; a Stop the row names is dated by the Stop itself, not by the state.
+    const since = charging || (raw === 'Standby' && !stopped) ? this._stateSince() : stopped ? this._runSince('stop') : null;
     const when = since ? `${this._t.since} ${this._stamp(since).text}`
       : done ? (done.today ? `${this._t.at} ${done.text}` : done.text) : '';
     return {cls: charging ? 'charging' : stopped ? 'paused' : 'idle', icon: charging ? 'mdi:flash' : 'mdi:ev-station', text, when, note};
@@ -1882,32 +1882,45 @@ class EveusCard extends HTMLElement {
     const drift = currentNumber(this._state('time_drift'));
     return drift !== null && Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S;
   }
-  // When the charger stopped answering: the first unavailable reading after the last real one in
-  // the recorder, so a Home Assistant restart (a fresh `unavailable`) does not move it. Asked once
-  // per outage; null when the recorder does not know (no history, or none online in the window).
-  get _outageKey() {
-    const entity = this._state('state');
-    return this._online || !entity ? null : `${this._ids.state}|${entity.last_changed ?? ''}`;
+  // Since when the status row's run has lasted, where the charger itself does not say: offline (the
+  // first unavailable reading after the last real one) or Stop on (its first On after the last Off).
+  // From the recorder, so a Home Assistant restart (a fresh state with a new last_changed) does not
+  // move it. Asked once per run; null when the recorder does not know.
+  get _run() {
+    const status = this._state('state');
+    if (!this._ids?.state || !status) return null;
+    if (!this._online) return {kind: 'offline', id: this._ids.state, entity: status, inRun: (v) => v === 'unknown' || v === 'unavailable' ? true : typeof v === 'string' ? false : null};
+    const stop = this._state('stop_charging');
+    if (stop?.state === 'on') return {kind: 'stop', id: this._ids.stop_charging, entity: stop, inRun: (v) => v === 'on' ? true : v === 'off' ? false : null};
+    return null;
   }
-  async _fetchOfflineSince() {
-    const key = this._outageKey, id = this._ids.state, generation = this._generation;
-    this._offlineKey = key;
-    this._offlineAt = null;
+  get _runKey() {
+    const run = this._run;
+    return run ? `${run.kind}|${run.id}|${run.entity.last_changed ?? ''}` : null;
+  }
+  _runSince(kind) { return this._runAt?.kind === kind ? this._runAt.at : null; }
+  async _fetchRunSince() {
+    const run = this._run, key = this._runKey, generation = this._generation;
+    this._runKeyAsked = key;
+    this._runAt = null;
     let at = null;
     try {
-      const result = await this._hass.callWS({type: 'history/history_during_period', entity_ids: [id],
-        start_time: new Date(Date.now() - OFFLINE_LOOKBACK_MS).toISOString(), minimal_response: true, no_attributes: true, significant_changes_only: false});
-      const rows = Array.isArray(result?.[id]) ? result[id] : [];
-      let online = false;
+      const result = await this._hass.callWS({type: 'history/history_during_period', entity_ids: [run.id],
+        start_time: new Date(Date.now() - RUN_LOOKBACK_MS).toISOString(), minimal_response: true, no_attributes: true, significant_changes_only: false});
+      const rows = Array.isArray(result?.[run.id]) ? result[run.id] : [];
+      let out = false, last = null;
       for (const row of rows) {
-        const state = row?.s ?? row?.state;
+        const inRun = run.inRun(row?.s ?? row?.state);
         const when = Number.isFinite(row?.lc) ? row.lc * 1000 : Number.isFinite(row?.lu) ? row.lu * 1000 : Date.parse(row?.last_changed);
-        if (['unknown', 'unavailable'].includes(state)) { if (online && at === null && Number.isFinite(when)) at = when; }
-        else if (typeof state === 'string') { online = true; at = null; }
+        if (inRun === true) { if (out && at === null && Number.isFinite(when)) at = when; }
+        else if (inRun === false) { out = true; at = null; }
+        if (inRun !== null) last = inRun;
       }
+      // The recorder has not stored the change yet: the run began when the entity changed.
+      if (last === false) at = Date.parse(run.entity.last_changed);
     } catch { at = null; }
-    if (generation !== this._generation || this._offlineKey !== key) return;
-    this._offlineAt = at !== null && at <= Date.now() ? new Date(at) : null;
+    if (generation !== this._generation || this._runKeyAsked !== key) return;
+    this._runAt = Number.isFinite(at) && at <= Date.now() + 60000 ? {kind: run.kind, at: new Date(at)} : null;
     this._lastSignature = this._lastRefs = null;
     if (this._hass) this.hass = this._hass;
   }

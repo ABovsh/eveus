@@ -157,7 +157,7 @@ browser or reset the app's frontend cache.
 
 | Section | Shows |
 | --- | --- |
-| **Status** | Charger state and why it is not charging; while charging, since when, with power and current (you can hide them), and for a finished charge, at what time; with no car, since when |
+| **Status** | Charger state and why it is not charging; while charging, since when, with power and current (you can hide them), and for a finished charge, at what time; with no car, since when; after **Stop**, since when it was stopped |
 | **Buttons** | **OCPP** (not shown on REVE), **One charge** and **Stop** |
 | **Battery SOC** | Estimated SOC and where the session started; while charging, time left and finish time; energy and cost to target, and before the charge the price per kWh; **Advanced mode only** |
 | **SOC settings** | **Initial**, **Target**, **Capacity** and **Loss**; **Advanced mode only** |
