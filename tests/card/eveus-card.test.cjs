@@ -555,7 +555,9 @@ test('Stop when not charging, and resuming, send without asking',async()=>{
 test('offline status: readable, buttons disabled, nothing sent',async()=>{
   const {card,calls,html}=setupStatus({state:'unavailable'});
   assert.match(html(),/>Offline</);
-  assert.match(html(),/data-status-toggle="stop_charging"[^>]*disabled/);
+  assert.doesNotMatch(html(),/data-status-toggle/,'with Status, offline buttons leave the card');
+  const alone=setupStatus({state:'unavailable',sections:['actions']}).html();
+  assert.match(alone,/data-status-toggle="stop_charging"[^>]*disabled/);
   await card._statusToggle('stop_charging');assert.equal(calls.length,0);
 });
 
@@ -943,7 +945,7 @@ test('uk: editor follows Home Assistant language and offers the card language', 
   const html = editor._sectionsHtml();
   assert.match(html, /Повзунок струму/); assert.match(html, /Безпека/); assert.doesNotMatch(html, /Current slider|Safety/);
   const names = editor._schema().map((f) => f.name);
-  assert.equal(JSON.stringify(names), JSON.stringify(['device_id', 'mode', 'language', 'fold']));
+  assert.equal(JSON.stringify(names), JSON.stringify(['device_id', 'mode', 'language', 'fold', 'adapt']));
   assert.equal(JSON.stringify(editor._schema()[2].selector.select.options.map((o) => o.label)), JSON.stringify(['Мова Home Assistant', 'Українська', 'English']));
   assert.equal(editor._labels().head, 'Розділи');
 });
@@ -1931,8 +1933,13 @@ test('One charge on: Limits shows the saved limits as suspended and says so', ()
   const h = setupAll({sections:['limits'], over:on}).html();
   assert.match(h, /One charge ignores the limits/);
   assert.match(h, /limits-grid four suspended/);
-  assert.doesNotMatch(h, /limit-tile active/);
+  // Target SOC is stopped by Home Assistant, which One charge does not override: its lamp stays lit.
+  assert.match(h, /limit-tile active">\s*<button class="limit-toggle" data-limit-toggle="limit_soc_enabled"/);
+  assert.match(h, /limit-tile saved">\s*<button class="limit-toggle" data-limit-toggle="limit_energy_enabled"/);
   assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, ...ONE('off')}}).html(), /class="override"/);
+  const socOnly = setupAll({sections:['limits'], over:ONE('on')}).html();
+  assert.doesNotMatch(socOnly, /class="override"|suspended/, 'only Target SOC on: One charge ignores nothing');
+  assert.match(socOnly, /limit-tile active">\s*<button class="limit-toggle" data-limit-toggle="limit_soc_enabled"/);
   assert.doesNotMatch(setupAll({sections:['limits'], over:{...on, limit_disable_all:['switch.dis','on']}}).html(), /class="override"/, 'Disable all already says it');
 });
 test('One charge on: no schedule plan, and a schedule current cap is not blamed for a slow charge', () => {
@@ -2710,4 +2717,87 @@ test('to go: a value without a word still only shrinks',()=>{
   const r=fitNote({text:()=>137,box:120,note:false});
   r.x.card._fitLimitValues();
   assert.equal(r.el.style.fontSize,'11px');
+});
+
+// ---- The card fits the charger's state: offline it is the status and the last charge; with no car,
+// readings about a charge leave. Only on a card that has Status, which says why; the order never changes. ----
+const ALL_SECTIONS=['status','actions','advanced_info','advanced_controls','basic_info','current','adaptive','session','limits','schedules','time','history','safety'];
+const lastSession={last_session_energy:['sensor.lse',32.3,{unit_of_measurement:'kWh',finished_at:'2026-11-07T05:01:00+00:00'}],
+  last_session_cost:['sensor.lsc',77.89,{unit_of_measurement:'UAH'}],last_session_duration:['sensor.lsd',32580,{unit_of_measurement:'s'}]};
+const offlineOver=(extra={})=>({state:['sensor.state','unavailable'],power:['sensor.power','unavailable'],current:['sensor.cur','unavailable'],
+  voltage:['sensor.voltage','unavailable'],session_energy:['sensor.se','unavailable'],...extra});
+const sectionLabels=(h)=>[...h.matchAll(/<section class="[^"]*" aria-label="([^"]*)"/g)].map((m)=>m[1]);
+test('offline: a card with Status shows only Status and the last session',()=>{
+  const h=setupAll({sections:ALL_SECTIONS,over:offlineOver(lastSession)}).html();
+  assert.deepEqual(sectionLabels(h),['Status','Last session']);
+  assert.match(h,/32.3<small>kWh/);
+});
+test('offline with no last session: Status alone',()=>{
+  assert.deepEqual(sectionLabels(setupAll({sections:ALL_SECTIONS,over:offlineOver()}).html()),['Status']);
+});
+test('offline: a card without Status keeps its sections',()=>{
+  const h=setupAll({sections:['limits','session'],over:offlineOver(lastSession)}).html();
+  assert.match(h,/aria-label="Charging limits"/);
+});
+test('standby: Battery, Meter and Time leave; Safety, Last session and the order stay',()=>{
+  const over={...lastSession,state:['sensor.state','Standby'],car_connected:['binary_sensor.car','off']};
+  const h=setupAll({sections:ALL_SECTIONS,charging:false,over}).html(), labels=sectionLabels(h);
+  for(const gone of ['Battery charge','Basic information','Charger clock']) assert.ok(!labels.includes(gone),gone);
+  for(const kept of ['Status','Last session','Charging limits']) assert.ok(labels.includes(kept),kept);
+  assert.match(h,/No Eveus safety telemetry found/,'Safety stays (this fixture has no safety sensors)');
+  assert.deepEqual(labels,['Status','Actions','SOC settings','Advanced controls','Charging current','Adaptive charging','Last session','Charging limits','Schedules','Counters','History'].filter((l)=>labels.includes(l)),'configured order');
+  assert.ok(h.indexOf('Last session')<h.indexOf('No Eveus safety telemetry found'));
+});
+test('standby with a wrong clock keeps Time; a connected car keeps everything',()=>{
+  const standby={state:['sensor.state','Standby'],car_connected:['binary_sensor.car','off']};
+  assert.ok(sectionLabels(setupAll({sections:ALL_SECTIONS,charging:false,over:{...standby,time_drift:['sensor.drift',900,{unit_of_measurement:'s'}]}}).html()).includes('Charger clock'));
+  const plugged=sectionLabels(setupAll({sections:ALL_SECTIONS,charging:false,over:{car_connected:['binary_sensor.car','on']}}).html());
+  for(const kept of ['Battery charge','Basic information','Charger clock']) assert.ok(plugged.includes(kept),kept);
+});
+test('adapt: false keeps every section in standby',()=>{
+  const over={state:['sensor.state','Standby'],car_connected:['binary_sensor.car','off']};
+  const x=setupAll({sections:ALL_SECTIONS,charging:false,over});
+  x.card._config={...x.card._config,adapt:false};x.card._lastSignature=x.card._lastRefs=null;x.card._render();
+  assert.ok(sectionLabels(x.html()).includes('Battery charge'));
+  const off=setupAll({sections:ALL_SECTIONS,over:offlineOver(lastSession)});
+  off.card._config={...off.card._config,adapt:false};off.card._render();
+  assert.ok(sectionLabels(off.html()).includes('Charging limits'));
+});
+test('offline since: the moment the recorder saw the charger stop answering, across a restart',async()=>{
+  const x=setupAll({sections:['status'],over:offlineOver()});
+  const went=Date.now()-(3*60+10)*60000, restart=Date.now()-2*60000;
+  x.states['sensor.state']={state:'unavailable',attributes:{},last_changed:new Date(restart).toISOString()};
+  const asked=[];
+  x.hass.callWS=async(msg)=>{asked.push(msg);
+    if(msg.type==='history/history_during_period') return {'sensor.state':[{s:'Charging',lu:(went-3600000)/1000},{s:'unavailable',lu:went/1000},{s:'unavailable',lu:restart/1000}]};
+    return {entities:x.card._ids};};
+  x.card.hass={...x.hass};
+  for(let i=0;i<5;i++) await new Promise((r)=>setImmediate(r));
+  const q=asked.find((m)=>m.type==='history/history_during_period');
+  assert.ok(q,'asks the recorder');assert.deepEqual([...q.entity_ids],['sensor.state']);assert.equal(q.no_attributes,true);assert.equal(q.minimal_response,true);
+  const d=new Date(went), hm=`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  assert.match(x.html(),new RegExp(`class="status-since">since (yesterday )?${hm}<`));
+  assert.match(x.html(),/class="status-note">3h ago</);
+  const n=asked.length;x.card.hass={...x.hass};for(let i=0;i<3;i++) await new Promise((r)=>setImmediate(r));
+  assert.equal(asked.filter((m)=>m.type==='history/history_during_period').length,1,'asked once per outage');
+  assert.ok(asked.length>=n);
+});
+test('offline since: no answer, or no online reading in the window, keeps the age from the state',async()=>{
+  const x=setupAll({sections:['status'],over:offlineOver()});
+  x.states['sensor.state']={state:'unavailable',attributes:{},last_changed:new Date(Date.now()-5*60000).toISOString()};
+  x.hass.callWS=async(msg)=>msg.type==='history/history_during_period'?{'sensor.state':[{s:'unavailable',lu:Date.now()/1000-86400}]}:{entities:x.card._ids};
+  x.card.hass={...x.hass};for(let i=0;i<5;i++) await new Promise((r)=>setImmediate(r));
+  assert.doesNotMatch(x.html(),/status-since/);assert.match(x.html(),/class="status-note">5m ago</);
+});
+test('editor: Fit to state is on by default and only Off is written',()=>{
+  const {editor}=setupEditor({sections:['status','limits']});
+  assert.ok(editor._schema().some((f)=>f.name==='adapt'));
+  assert.match(source,/adapt: this._config.adapt !== false/);
+  assert.match(source,/if \(adapt === false\) next.adapt = false; else delete next.adapt;/);
+});
+test('a folded summary shrinks to fit instead of cutting off (larger phone text)',()=>{
+  const h=setupAll({sections:ALL_SECTIONS,charging:false,over:{car_connected:['binary_sensor.car','on']}}).html();
+  const sums=[...h.matchAll(/<span class="fold-sum[^"]*"[^>]*>/g)].map((m)=>m[0]);
+  assert.ok(sums.length>0);
+  for(const s of sums) assert.match(s,/data-fit="13"/);
 });

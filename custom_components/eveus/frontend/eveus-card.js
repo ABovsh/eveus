@@ -35,6 +35,8 @@ const LARGE_MAX_ITEMS = 2;
 const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
+// How far back the recorder is asked when the charger stopped answering.
+const OFFLINE_LOOKBACK_MS = 14 * 86400000;
 // REVE schedules (all of them, with their days) are asked for again this often, and at once
 // when a schedule entity or REVE API changes; a change made in the charger's app shows within it.
 const REVE_SCHEDULES_REFRESH_MS = 60000;
@@ -333,6 +335,7 @@ const EDITOR_I18N = {
     device: 'Charger', mode: 'Mode', modeHelp: 'Empty follows the integration', language: 'Language',
     advanced: 'Advanced', basic: 'Basic', languages: {auto: 'Home Assistant language', uk: 'Українська', en: 'English'},
     fold: 'Fold settings', foldHelp: 'Long cards show settings as one-line summaries; tap one to open it',
+    adapt: 'Fit to the charger\'s state', adaptHelp: 'With Status on the card: offline, only the status and the last session; with no car, no Battery SOC, Meter or Charger clock (the clock returns when it is wrong)',
     size: 'Size', sizes: {small: 'Small', normal: 'Normal', large: 'Large'}, largeHelp: 'Large: leave two items or fewer',
   },
   uk: {
@@ -358,6 +361,7 @@ const EDITOR_I18N = {
     device: 'Станція', mode: 'Режим', modeHelp: 'Порожнє поле — як в інтеграції', language: 'Мова картки',
     advanced: 'Розширений', basic: 'Базовий', languages: {auto: 'Мова Home Assistant', uk: 'Українська', en: 'English'},
     fold: 'Згортати налаштування', foldHelp: 'Довга картка показує налаштування одним рядком; натисніть рядок, щоб розгорнути',
+    adapt: 'Підлаштовувати під стан станції', adaptHelp: 'Якщо на картці є Стан: без зв\'язку лишаються стан і остання сесія; без авто зникають Заряд батареї, Показники й Годинник станції (годинник повертається, коли він неправильний)',
     size: 'Розмір', sizes: {small: 'Малий', normal: 'Звичайний', large: 'Великий'}, largeHelp: 'Великий: залиште не більше двох елементів',
   },
 };
@@ -406,6 +410,8 @@ class EveusCard extends HTMLElement {
     this._month = null;
     this._monthAt = 0;
     this._monthBusy = false;
+    this._offlineKey = null;
+    this._offlineAt = null;
     // REVE schedules belong to the charger this config names: forget them, and any read still
     // out for the old config (its answer is dropped, so it can no longer clear the busy flag).
     this._reveSchedules = this._reveRates = this._reveKey = null;
@@ -552,6 +558,9 @@ class EveusCard extends HTMLElement {
     if ((!this._resolved || retry) && !this._resolving) void this._resolve();
     if (this._resolved) this._watchRegistry();
     if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
+    if (this._resolved && this._ids?.state && typeof this._hass?.callWS === 'function' && this._outageKey !== (this._offlineKey ?? null)) {
+      if (this._outageKey === null) { this._offlineKey = null; this._offlineAt = null; } else void this._fetchOfflineSince();
+    }
     if (this._resolved && this._wantsReveSchedules && !this._reveBusy
       && (Date.now() - (this._reveAt || 0) > REVE_SCHEDULES_REFRESH_MS || this._reveKey !== this._reveScheduleKey())) void this._fetchReveSchedules();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
@@ -938,10 +947,9 @@ class EveusCard extends HTMLElement {
     );
     // With nothing on, "Disable all" has nothing to disable; suspended, it is how the limits come back.
     const anyOn = items.some((item) => this._limitOn(item.toggle));
-    // One charge ignores the limits that are on: they read as suspended, like Disable all.
-    // Manual mode ignores the charger's own limits only; Target SOC is stopped by Home Assistant.
-    const ignored = !suspended && this._ignoring
-      && (this._oneChargeNote ? anyOn : items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle)));
+    // One charge and manual mode ignore the charger's own limits that are on: they read as suspended,
+    // like Disable all. Target SOC is stopped by Home Assistant, which neither overrides, so it stays lit.
+    const ignored = !suspended && this._ignoring && items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle));
     const closed = fold && !fold.open;
     // REVE takes a limit only while charging outside manual mode, so its limits are locked otherwise and a
     // note under the title says why and until when; a folded row keeps a short form with the full text as a tooltip.
@@ -962,7 +970,7 @@ class EveusCard extends HTMLElement {
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
     const held = suspended || ignored;
-    const grid = !closed ? `${lockNote}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held && (suspended || this._oneChargeNote || item.key !== 'target_soc'), this._limitsLocked && item.key !== 'target_soc')).join('')}</div>` : '';
+    const grid = !closed ? `${lockNote}<div class="limits-grid ${GRID[items.length] || 'four'} ${held ? 'suspended' : ''}">${items.map((item) => this._limitTile(item, held && (suspended || item.key !== 'target_soc'), this._limitsLocked && item.key !== 'target_soc')).join('')}</div>` : '';
     return `<section class="${['limits', this._online ? '' : 'off', fold && !fold.open ? 'folded' : ''].filter(Boolean).join(' ')}" aria-label="${t.aria.limits}">
       <div class="limits-head">${head}${disable}${fold ? this._foldChev('limits', fold.open) : ''}</div>${grid}
     </section>`;
@@ -1070,7 +1078,7 @@ class EveusCard extends HTMLElement {
     if (!this._ids?.session_energy) return `<div class="message">${t.none.session}</div>`;
     const on = this._online;
     // Unplugged, the charger still shows the last charge as "the session"; say which one it was.
-    const last = on && this._unplugged ? this._lastSession() : null;
+    const last = !on || this._unplugged ? this._lastSession() : null;
     if (last) return last;
     const rateEntity = this._ids.active_rate_cost && this._shows('session', 'rate') ? this._state('active_rate_cost') : null;
     const rate = on ? currentNumber(rateEntity) : null;
@@ -1688,7 +1696,7 @@ class EveusCard extends HTMLElement {
   }
   // How long the last charger reading has been stale; '' under a minute or unknown.
   _since() {
-    const t = Date.parse(this._state('state')?.last_changed);
+    const t = this._offlineAt ? this._offlineAt.getTime() : Date.parse(this._state('state')?.last_changed);
     if (!Number.isFinite(t)) return '';
     const m = Math.floor((Date.now() - t) / 60000);
     return m < 1 ? '' : this._t.ago(m);
@@ -1731,7 +1739,10 @@ class EveusCard extends HTMLElement {
     return a ? `<div class="alert-strip ${a.kind}" role="alert"><ha-icon icon="${a.icon}"></ha-icon><span>${a.text}</span></div>` : '';
   }
   _statusView() {
-    if (!this._online) return {cls: 'offline', icon: 'mdi:clock-alert-outline', text: this._t.offline, note: this._since()};
+    if (!this._online) {
+      const when = this._offlineAt ? `${this._t.since} ${this._stamp(this._offlineAt).text}` : '';
+      return {cls: 'offline', icon: 'mdi:clock-alert-outline', text: this._t.offline, when, note: this._since()};
+    }
     const entity = this._state('state'), raw = entity.state;
     if (raw === 'Error') {
       const sub = this._state('substate');
@@ -1856,6 +1867,50 @@ class EveusCard extends HTMLElement {
     haptic('selection');
     this._render();
   }
+  // Sections that say nothing in the charger's state leave; the rest keep their order.
+  // Only on a card with Status, which says why, and unless `adapt: false`.
+  _hidden(section) {
+    if (section === 'status' || this._config.adapt === false || !this._ids?.state || !this._config.sections.includes('status')) return false;
+    if (!this._online) return section !== 'session' || currentNumber(this._state('last_session_energy')) === null;
+    if (!this._unplugged) return false;
+    if (section === 'advanced_info' || section === 'basic_info') return true;
+    return section === 'time' && !this._clockWrong();
+  }
+  // The clock section stays while the clock needs a look, or a change to it is on its way.
+  _clockWrong() {
+    if (this._syncDone || this._limitPending.time_zone !== undefined || this._limitPending.follow_ha_time_zone !== undefined) return true;
+    const drift = currentNumber(this._state('time_drift'));
+    return drift !== null && Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S;
+  }
+  // When the charger stopped answering: the first unavailable reading after the last real one in
+  // the recorder, so a Home Assistant restart (a fresh `unavailable`) does not move it. Asked once
+  // per outage; null when the recorder does not know (no history, or none online in the window).
+  get _outageKey() {
+    const entity = this._state('state');
+    return this._online || !entity ? null : `${this._ids.state}|${entity.last_changed ?? ''}`;
+  }
+  async _fetchOfflineSince() {
+    const key = this._outageKey, id = this._ids.state, generation = this._generation;
+    this._offlineKey = key;
+    this._offlineAt = null;
+    let at = null;
+    try {
+      const result = await this._hass.callWS({type: 'history/history_during_period', entity_ids: [id],
+        start_time: new Date(Date.now() - OFFLINE_LOOKBACK_MS).toISOString(), minimal_response: true, no_attributes: true, significant_changes_only: false});
+      const rows = Array.isArray(result?.[id]) ? result[id] : [];
+      let online = false;
+      for (const row of rows) {
+        const state = row?.s ?? row?.state;
+        const when = Number.isFinite(row?.lc) ? row.lc * 1000 : Number.isFinite(row?.lu) ? row.lu * 1000 : Date.parse(row?.last_changed);
+        if (['unknown', 'unavailable'].includes(state)) { if (online && at === null && Number.isFinite(when)) at = when; }
+        else if (typeof state === 'string') { online = true; at = null; }
+      }
+    } catch { at = null; }
+    if (generation !== this._generation || this._offlineKey !== key) return;
+    this._offlineAt = at !== null && at <= Date.now() ? new Date(at) : null;
+    this._lastSignature = this._lastRefs = null;
+    if (this._hass) this.hass = this._hass;
+  }
   _section(section) {
     const size = this._config.size?.[section];
     if (!FOLDABLE.includes(section) || (size ? size !== 'small' : !this._folding)) {
@@ -1872,7 +1927,7 @@ class EveusCard extends HTMLElement {
       return html.replace(/<section[^>]*>/, (tag) => `${tag}<button class="fold-head" data-fold="${section}" aria-expanded="true"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span><ha-icon class="fold-chev" icon="mdi:chevron-up"></ha-icon></button>`);
     }
     return `<section class="${['sl fold', `fold-${section}`, cls, this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${label}">
-      <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span>${flag}<span class="${['fold-sum', sumCls].filter(Boolean).join(' ')}"${sumTitle ? ` title="${sumTitle}"` : ''}>${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
+      <button class="fold-btn" data-fold="${section}" aria-expanded="false"><ha-icon icon="${icon}"></ha-icon><span class="label">${label}</span>${flag}<span class="${['fold-sum', sumCls].filter(Boolean).join(' ')}"${sumTitle ? ` title="${sumTitle}"` : ''} data-fit="13">${sum}</span><ha-icon class="fold-chev" icon="mdi:chevron-down"></ha-icon></button>
     </section>`;
   }
   // Large: the same section, its fitted values started bigger (the fit still shrinks what clips).
@@ -2097,7 +2152,7 @@ class EveusCard extends HTMLElement {
       : focus?.hasAttribute('data-confirm') ? '[data-confirm]'
       : null;
     const body = !this._resolved ? `<div class="message">${this._t.loading}</div>`
-      : this._controlFeedback() + this._alertStrip() + this._config.sections.map((section) => this._section(section)).join('');
+      : this._controlFeedback() + this._alertStrip() + this._config.sections.filter((section) => !this._hidden(section)).map((section) => this._section(section)).join('');
     // The charger's state colours the card itself (glow, status badge); charging adds the
     // old card's slow pulse. A data attribute, not a class: alert tints stay section-scoped.
     const mood = this._resolved && this._ids?.state ? this._statusView().cls : 'idle';
@@ -2674,6 +2729,7 @@ class EveusCardEditor extends HTMLElement {
       {name: 'mode', selector: {select: {options: [{value: 'advanced', label: l.advanced}, {value: 'basic', label: l.basic}]}}},
       {name: 'language', selector: {select: {mode: 'dropdown', options: Object.entries(l.languages).map(([value, label]) => ({value, label}))}}},
       {name: 'fold', selector: {boolean: {}}},
+      {name: 'adapt', selector: {boolean: {}}},
     ];
   }
   _sizeOptionsHtml(key, sizes, size, fits) {
@@ -2804,15 +2860,17 @@ class EveusCardEditor extends HTMLElement {
     if (!this._hass) return;
     if (!this._form) {
       this._form = document.createElement('ha-form');
-      this._form.computeLabel = (f) => ({device_id: this._labels().device, mode: this._labels().mode, language: this._labels().language, fold: this._labels().fold})[f.name];
-      this._form.computeHelper = (f) => ({mode: this._labels().modeHelp, fold: this._labels().foldHelp})[f.name];
+      this._form.computeLabel = (f) => ({device_id: this._labels().device, mode: this._labels().mode, language: this._labels().language, fold: this._labels().fold, adapt: this._labels().adapt})[f.name];
+      this._form.computeHelper = (f) => ({mode: this._labels().modeHelp, fold: this._labels().foldHelp, adapt: this._labels().adaptHelp})[f.name];
       this._form.addEventListener('value-changed', (e) => {
         e.stopPropagation();
-        const {device_id, mode, language, fold} = e.detail.value, next = {...this._config};
+        const {device_id, mode, language, fold, adapt} = e.detail.value, next = {...this._config};
         // "auto" is the default, so it is not written into the card's YAML.
         for (const [k, v] of Object.entries({device_id, mode, language})) { if (v && v !== 'auto') next[k] = v; else delete next[k]; }
         // Folding follows the card's length unless set the other way.
         if (typeof fold !== 'boolean' || fold === this._foldDefault) delete next.fold; else next.fold = fold;
+        // On by default: only Off is written.
+        if (adapt === false) next.adapt = false; else delete next.adapt;
         this._config = next;
         this._resolve();
         this._render();
@@ -2822,7 +2880,7 @@ class EveusCardEditor extends HTMLElement {
     }
     this._form.hass = this._hass;
     this._form.schema = this._schema();
-    this._form.data = {device_id: this._config.device_id, mode: this._config.mode, language: this._config.language || 'auto', fold: this._config.fold ?? this._foldDefault};
+    this._form.data = {device_id: this._config.device_id, mode: this._config.mode, language: this._config.language || 'auto', fold: this._config.fold ?? this._foldDefault, adapt: this._config.adapt !== false};
   }
 }
 const EDITOR_CSS = `

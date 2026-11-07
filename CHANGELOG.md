@@ -7,9 +7,17 @@
 - **New blueprint: stop charging when the grid is gone.** For a charger powered through an inverter: once a grid voltage sensor has read below 100 V, `unavailable` or `unknown` for five minutes, it turns on **Stop Charging**, unless **One Charge** is on. Requested in [#23](https://github.com/ABovsh/eveus/issues/23) by @capodecapi2025-source.
 - **New blueprint: resume charging when the grid returns.** Once the voltage has stayed above 190 V for five minutes, it turns off **Stop Charging**, unless **One Charge** is on; the charger's schedules and limits then decide when the car charges. Requested in [#23](https://github.com/ABovsh/eveus/issues/23) by @capodecapi2025-source.
 
+- **Card: fits the charger's state.** On a card with Status, an offline charger shows only the status and the last session. With no car plugged in, Battery SOC, Meter and Charger clock are hidden; Charger clock returns while the clock is wrong. Safety, the last session and the order of sections stay. Turn it off with **Fit to the charger's state** in the editor, or `adapt: false`.
+- **Card: Offline says since when.** It reads `Offline · since 14:02 | 3h ago`, taken from Home Assistant's recorder, so a restart does not reset it.
+
 ### 🔧 Changed
 
 - **REVE: Adaptive Current Limit updates from the REVE interface when available.** Older firmware continues to use the charger's `/main` page.
+- **Card: a folded row's summary shrinks to fit** instead of being cut off, for example with larger text set on the phone.
+
+### 🐛 Fixed
+
+- **Card: the SOC limit stays on while One charge is on.** Home Assistant stops the charge at Target SOC whatever One charge does, but the card showed this limit as ignored. With only the SOC limit on, Limits no longer says One charge ignores it.
 
 ## 4.30.0 - 2026-10-30
 
