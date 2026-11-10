@@ -298,6 +298,6 @@ def test_card_behaviour_suite_passes_in_node():
     if node is None:  # pragma: no cover - CI runners all ship node
         pytest.skip("node is required to exercise the card's own behaviour")
     suite = Path(__file__).resolve().parent / "card" / "eveus-card.test.cjs"
-    result = subprocess.run([node, "--test", str(suite)], capture_output=True, text=True, timeout=120, check=False)
+    result = subprocess.run([node, "--test", "--test-reporter=tap", str(suite)], capture_output=True, text=True, timeout=120, check=False)
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
     assert "# fail 0" in result.stdout

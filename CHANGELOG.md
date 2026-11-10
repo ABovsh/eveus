@@ -17,6 +17,7 @@
 
 ### 🐛 Fixed
 
+- **CI: the card test and the latest-Python leg work on the new runner image.** The card suite is read in TAP format, and the ceiling leg takes the newest Python 3.14 instead of a pinned 3.14.2. Development only; nothing changes for users.
 - **Card: the SOC limit stays on while One charge is on.** Home Assistant stops the charge at Target SOC whatever One charge does, but the card showed this limit as ignored. With only the SOC limit on, Limits no longer says One charge ignores it.
 
 ## 4.30.0 - 2026-10-30
