@@ -64,6 +64,7 @@ from .const import (
     DEVICE_STATE_COMPLETE,
     DEVICE_STATE_STANDBY,
     MAX_RATE_HUNDREDTHS,
+    MAX_VOLTAGE_V,
     MAX_VALID_SYSTEM_TIME,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
@@ -708,6 +709,45 @@ def _station_system(station: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(flag, bool):
         system["manual_control"] = flag
     return system
+
+
+# The station's own record of its newest finished session: when it ended and
+# the lowest and highest mains voltage on phase A (REVE is one-phase; B and C
+# hold 999/0 placeholders). A fixed document, like every other one here.
+LAST_SESSION_QUERY: Final = """query ListSessions($limit: Int, $offset: Int) {
+        listSessions(limit: $limit, offset: $offset) {
+            items { stopAt minVoltageA maxVoltageA }
+        }
+    }"""
+
+
+NO_SESSION: Final[dict[str, Any]] = {"min": None, "max": None, "stop_at": None}
+
+
+def _plausible_volts(value: Any) -> int | None:
+    """A whole-volt reading, or None for a placeholder (0, 999) or junk."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not 0 < value <= MAX_VOLTAGE_V:
+        return None
+    return round(value)
+
+
+def parse_last_session_voltage(items: Any) -> dict[str, Any] | None:
+    """``{"min", "max", "stop_at"}`` of the newest session in ``items``; a
+    voltage the station did not record is None. None when there is no usable
+    session. (``NO_SESSION`` is what a reachable station with none reads as.)"""
+    if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+        return None
+    item = items[0]
+    stop_at = item.get("stopAt")
+    if isinstance(stop_at, bool) or not isinstance(stop_at, int) or stop_at <= 0:
+        return None
+    low = _plausible_volts(item.get("minVoltageA"))
+    high = _plausible_volts(item.get("maxVoltageA"))
+    if low is not None and high is not None and low > high:
+        low = high = None
+    return {"min": low, "max": high, "stop_at": stop_at}
 
 
 def _is_no_sensor_reading(value: Any) -> bool:
@@ -1409,6 +1449,25 @@ class ReveApi:
         if not isinstance(station, dict):
             raise ValueError("no stationData")  # pragma: no mutate - message text; only the exception type is ever logged
         return station
+
+    async def read_last_session(self) -> dict[str, Any] | None:
+        """The newest finished session's voltages from the station, ``NO_SESSION``
+        when it answered with none, or None when it could not be read. Never
+        raises."""
+        try:
+            data = await self._post(
+                "ListSessions", LAST_SESSION_QUERY, {"limit": 1, "offset": 0}
+            )
+        except asyncio.CancelledError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            _LOGGER.debug("REVE last session read failed: %s", type(err).__name__)
+            return None
+        listing = data.get("listSessions")
+        parsed = parse_last_session_voltage(
+            listing.get("items") if isinstance(listing, dict) else None
+        )
+        return NO_SESSION if parsed is None else parsed
 
     async def _mutate(self, change: dict[str, Any]) -> None:
         data = await self._post("UpdateStationData", UPDATE_MUTATION, {"input": change})

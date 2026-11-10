@@ -2832,3 +2832,26 @@ test('Stopped since: no history at all, or a Stop older than the window, shows n
   const y=stoppedCard([{s:'on',lu:Date.now()/1000-86400}],Date.now()-60000);await settle();
   assert.doesNotMatch(y.html(),/status-since/);
 });
+
+// ---- REVE: the last session's lowest and highest mains voltage, one tile in the last-session row.
+const voltages={last_session_min_voltage:['sensor.lmin',221,{unit_of_measurement:'V'}],
+  last_session_max_voltage:['sensor.lmax',231,{unit_of_measurement:'V'}]};
+test('the last session shows its voltage range as one tile that opens the minimum',()=>{
+  const x=setupAll({sections:['session'],charging:false,over:{...unplugged,...voltages}});
+  assert.match(x.html(),/data-more-info="last_session_min_voltage"[^]*>221–231<small>V<\/small>/);
+  assert.match(x.html(),/data-more-info="last_session_duration"[^]*data-more-info="last_session_min_voltage"/);
+});
+test('the voltage tile reads on only one value, and is absent without either or when hidden',()=>{
+  const onlyMax=setupAll({sections:['session'],charging:false,over:{...unplugged,last_session_max_voltage:voltages.last_session_max_voltage,last_session_min_voltage:['sensor.lmin','unknown']}});
+  assert.match(onlyMax.html(),/>231<small>V<\/small>/);
+  const none=setupAll({sections:['session'],charging:false,over:{...unplugged,last_session_min_voltage:['sensor.lmin','unknown'],last_session_max_voltage:['sensor.lmax','unknown']}});
+  assert.doesNotMatch(none.html(),/last_session_min_voltage/);
+  const classic=setupAll({sections:['session'],charging:false,over:unplugged});
+  assert.doesNotMatch(classic.html(),/last_session_min_voltage/);
+  const hidden=setupAll({sections:['session'],charging:false,hide:['session.voltage'],over:{...unplugged,...voltages}});
+  assert.doesNotMatch(hidden.html(),/last_session_min_voltage/);
+});
+test('the voltage tile belongs to the last session: not shown while charging',()=>{
+  const live=setupAll({sections:['session'],charging:true,over:voltages});
+  assert.doesNotMatch(live.html(),/last_session_min_voltage/);
+});

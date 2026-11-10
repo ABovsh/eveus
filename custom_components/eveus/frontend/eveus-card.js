@@ -158,7 +158,7 @@ const I18N = {
     capCurrent: 'current limit', capEnergy: 'energy limit',
     zone: 'Time zone', clock: 'Charger clock', drift: 'Clock drift: charger clock minus Home Assistant', sync: 'Sync', synced: 'Sent',
     syncTitle: 'Sync time: set the charger clock from Home Assistant', units: {s: 's', min: 'min', h: 'h'},
-    lastSession: 'Last session', rateNames: {'Primary Rate': 'Primary rate'},
+    lastSession: 'Last session', lastSessionVoltage: 'Last session: lowest–highest voltage', rateNames: {'Primary Rate': 'Primary rate'},
     faultLabels: {plug_temperature: 'plug', box_temperature: 'box', voltage: 'mains', leakage_current: 'leakage', current: 'current'},
     faultLimit: 'limit',
     faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
@@ -230,7 +230,7 @@ const I18N = {
     capCurrent: 'ліміт струму', capEnergy: 'ліміт енергії',
     zone: 'Часовий пояс', clock: 'Годинник станції', drift: 'Зміщення часу: годинник станції мінус Home Assistant', sync: 'Синхр.', synced: 'Надіслано',
     syncTitle: 'Синхронізувати час: виставити годинник станції за Home Assistant', units: {s: 'с', min: 'хв', h: 'год'},
-    lastSession: 'Остання сесія', rateNames: {'Primary Rate': 'Основний тариф', 'Rate 2': 'Тариф 2', 'Rate 3': 'Тариф 3'},
+    lastSession: 'Остання сесія', lastSessionVoltage: 'Остання сесія: мін.–макс. напруга', rateNames: {'Primary Rate': 'Основний тариф', 'Rate 2': 'Тариф 2', 'Rate 3': 'Тариф 3'},
     faultLabels: {plug_temperature: 'конектор', box_temperature: 'корпус', voltage: 'мережа', leakage_current: 'витік', current: 'струм'},
     faultLimit: 'поріг',
     faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
@@ -291,7 +291,7 @@ const LEGACY_LAYOUTS = {
 // What each section is made of. `hide: [section.item]` drops an item; the ids are part of saved configs.
 const ITEMS = {
   status: ['power'], actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
-  basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time', 'rate'], limits: ['soc', 'energy', 'time', 'cost'],
+  basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time', 'rate', 'voltage'], limits: ['soc', 'energy', 'time', 'cost'],
   schedules: ['schedule_1', 'schedule_2', 'days', 'more', 'rates'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
   safety: ['box', 'plug', 'ground', 'leak', 'connection'],
 };
@@ -309,7 +309,9 @@ const moved = (node) => node.nodeType === 1 && [...node.querySelectorAll('input,
   el.tagName === 'SELECT' ? [...el.options].some((o) => o.selected !== o.defaultSelected) : el.value !== el.defaultValue);
 const sectionsOf = (config) => config.sections ?? LEGACY_LAYOUTS[config.layout] ?? SECTIONS;
 const sizesOf = (section) => [...(FOLDABLE.includes(section) ? ['small'] : []), 'normal', ...(LARGE.has(section) ? ['large'] : [])];
-const largeFits = (config, section) => (ITEMS[section] || []).filter((i) => !config.hide?.includes(`${section}.${i}`)).length <= LARGE_MAX_ITEMS;
+// Items only the last-session row has: Large is about the live row, so they do not count against it.
+const LAST_SESSION_ONLY = new Set(['session.voltage']);
+const largeFits = (config, section) => (ITEMS[section] || []).filter((i) => !LAST_SESSION_ONLY.has(`${section}.${i}`) && !config.hide?.includes(`${section}.${i}`)).length <= LARGE_MAX_ITEMS;
 // Editor words: what each section shows, in words a first-time user recognises.
 const EDITOR_I18N = {
   en: {
@@ -325,7 +327,7 @@ const EDITOR_I18N = {
       status: {power: 'Power · current'}, actions: {ocpp: 'OCPP', one_charge: 'One charge', stop: 'Stop'},
       advanced_controls: {initial: 'Initial', target: 'Target', capacity: 'Capacity', loss: 'Loss'},
       basic_info: {voltage: 'Voltage', power: 'Power', current: 'Current'},
-      session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
+      session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate', voltage: 'Voltage range (REVE)'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
       schedules: {schedule_1: 'Schedule 1', schedule_2: 'Schedule 2', days: 'Days (REVE)', more: 'Schedules 3–8 (REVE)', rates: 'Tariffs (REVE)'}, time: {zone: 'Time zone', drift: 'Clock or drift', sync: 'Sync'},
       history: {month: 'This month', total: 'Total', counter_a: 'Counter A', counter_b: 'Counter B'},
       safety: {box: 'Box', plug: 'Plug', ground: 'Ground', leak: 'Leakage', connection: 'Connection'},
@@ -351,7 +353,7 @@ const EDITOR_I18N = {
       status: {power: 'Потужність · струм'}, actions: {ocpp: 'OCPP', one_charge: 'Один заряд', stop: 'Стоп'},
       advanced_controls: {initial: 'Початковий', target: 'Ціль', capacity: 'Ємність', loss: 'Втрати'},
       basic_info: {voltage: 'Напруга', power: 'Потужність', current: 'Струм'},
-      session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
+      session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф', voltage: 'Діапазон напруги (REVE)'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
       schedules: {schedule_1: 'Розклад 1', schedule_2: 'Розклад 2', days: 'Дні (REVE)', more: 'Розклади 3–8 (REVE)', rates: 'Тарифи (REVE)'}, time: {zone: 'Часовий пояс', drift: 'Час або зміщення', sync: 'Синхронізація'},
       history: {month: 'Цей місяць', total: 'Загалом', counter_a: 'Лічильник A', counter_b: 'Лічильник B'},
       safety: {box: 'Корпус', plug: 'Конектор', ground: 'Заземлення', leak: 'Витік', connection: "Зв'язок"},
@@ -1999,10 +2001,15 @@ class EveusCard extends HTMLElement {
     const at = this._state('last_session_energy')?.attributes?.finished_at;
     const when = at && !Number.isNaN(Date.parse(at)) ? this._when(new Date(at)) : '';
     const shows = (item) => this._shows('session', item);
+    // REVE records the lowest and highest mains voltage of each session: one tile, "221–231 V".
+    const lows = ['last_session_min_voltage', 'last_session_max_voltage'].map((key) => (this._ids[key] ? currentNumber(this._state(key)) : null));
+    const volts = lows.filter((v) => v !== null).map((v) => Math.round(v));
+    const range = volts.length === 2 && volts[0] !== volts[1] ? `${volts[0]}–${volts[1]}` : volts.length ? String(volts[0]) : null;
     const items = [
       shows('energy') ? this._infoItem('last_session_energy', 'mdi:lightning-bolt', `${Number(e.toFixed(e < 100 ? 1 : 0))}<small>kWh</small>`, '', t.lastSession, true) : '',
       this._ids.last_session_cost && shows('cost') ? this._infoItem('last_session_cost', 'mdi:cash', c === null ? '—' : money(c < 1000 ? c.toFixed(2) : this._int(c), this._state('last_session_cost')?.attributes?.unit_of_measurement), '', t.lastSession, true) : '',
       this._ids.last_session_duration && shows('time') ? this._infoItem('last_session_duration', 'mdi:timer-outline', s === null ? '—' : t.sessionDuration(hms(s)), '', t.lastSession, true) : '',
+      range !== null && shows('voltage') ? this._infoItem(this._ids.last_session_min_voltage && lows[0] !== null ? 'last_session_min_voltage' : 'last_session_max_voltage', 'mdi:sine-wave', `${range}<small>V</small>`, '', t.lastSessionVoltage, true) : '',
     ].join('');
     return `<section class="sl session last" aria-label="${t.lastSession}">
       <ha-icon icon="mdi:history"></ha-icon><span class="label session-label">${t.lastSession}${when ? `<small>${when}</small>` : ''}</span><div class="info-row session-row">${items}</div>

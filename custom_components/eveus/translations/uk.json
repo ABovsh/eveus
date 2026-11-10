@@ -297,6 +297,12 @@
       "last_session_duration": {
         "name": "Тривалість останньої сесії"
       },
+      "last_session_min_voltage": {
+        "name": "Мін. напруга останньої сесії"
+      },
+      "last_session_max_voltage": {
+        "name": "Макс. напруга останньої сесії"
+      },
       "reve_free_memory": {
         "name": "REVE: вільна пам'ять"
       },

@@ -111,6 +111,8 @@ _UPDATE_INTERVALS = {
 # deadline far in the future) can't strand the charger as unavailable: a
 # remaining wait beyond this means the clock moved.
 _MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
+# Sensors asking for the last session in the same moment share one read.
+LAST_SESSION_SHARE_SECONDS = 10.0
 
 
 class EveusUnreachable(UpdateFailed):
@@ -320,6 +322,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._meter_saved: dict[str, float] = {}
         self._meter_saved_at: float | None = None
         self._reve = ReveApi(self)
+        self._last_session_lock = asyncio.Lock()
+        self._last_session_read: tuple[float, dict[str, Any]] | None = None
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
         # availability grace window keeps republishing the reading behind it.
@@ -394,6 +398,24 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def reve_station_system(self) -> dict[str, Any]:
         """REVE_PLUS 1.0.3's memory figures and start time; empty otherwise."""
         return self._reve.station_system if self._reve_seen else {}
+
+    async def async_read_last_session(self) -> dict[str, Any] | None:
+        """REVE's record of its newest finished session (voltages, end time),
+        or None: classic firmware, no session, or the read failed.
+
+        Sensors ask together; reads within ``LAST_SESSION_SHARE_SECONDS`` share
+        one answer, so a finish costs one request. A failed read is not shared.
+        """
+        if not self._reve_seen:
+            return None
+        async with self._last_session_lock:
+            now = time.monotonic()
+            cached = self._last_session_read
+            if cached is not None and now - cached[0] < LAST_SESSION_SHARE_SECONDS:
+                return cached[1]
+            result = await self._reve.read_last_session()
+            self._last_session_read = None if result is None else (time.monotonic(), result)
+            return result
 
     async def async_load_meter_baseline(self) -> None:
         """Take the lifetime meters' last accepted readings from storage, before

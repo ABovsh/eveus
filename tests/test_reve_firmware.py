@@ -427,6 +427,8 @@ class _Charger:
         self.station = copy.deepcopy(_load("reve_graphql_station.json")["data"]["stationData"])
         self.measurements_status = 200
         self.main_status = 200
+        # The station's own finished sessions, newest first (``listSessions``).
+        self.sessions: list[dict[str, Any]] = []
         self.calls: list[tuple[str, Any]] = []
 
     def post(self, url: str, **kwargs: Any) -> _Response:
@@ -446,6 +448,11 @@ class _Charger:
                 if "chargingCommand" in change:
                     self.charging_command = change["chargingCommand"]
                 return _Response(200, {"data": {"updateStationData": {"__typename": "UpdateStationData", "success": True}}})
+            if "listSessions" in body["query"]:
+                limit = body["variables"].get("limit") or len(self.sessions)
+                return _Response(200, {"data": {"listSessions": {
+                    "totalCount": len(self.sessions), "items": self.sessions[:limit],
+                }}})
             if "measurements {" in body["query"]:
                 if self.measurements_status != 200:
                     return _Response(self.measurements_status, "Server has encountered an unexpected error")

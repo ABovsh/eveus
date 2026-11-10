@@ -4,6 +4,8 @@
 
 ### ✨ New
 
+- **REVE: Last Session Min Voltage and Last Session Max Voltage.** The lowest and highest mains voltage of the last finished session, as the station recorded it. Read from the station when the integration starts and after each session ends, so a session that ended while Home Assistant was down is still shown. REVE only; enabled by default.
+- **Card: the last session shows its voltage range** (`221–231 V`) beside energy, cost and duration. Hide it with `session.voltage` under `hide:`.
 - **New blueprint: stop charging when the grid is gone.** For a charger powered through an inverter: once a grid voltage sensor has read below 100 V, `unavailable` or `unknown` for five minutes, it turns on **Stop Charging**, unless **One Charge** is on. Requested in [#23](https://github.com/ABovsh/eveus/issues/23) by @capodecapi2025-source.
 - **New blueprint: resume charging when the grid returns.** Once the voltage has stayed above 190 V for five minutes, it turns off **Stop Charging**, unless **One Charge** is on; the charger's schedules and limits then decide when the car charges. Requested in [#23](https://github.com/ABovsh/eveus/issues/23) by @capodecapi2025-source.
 

@@ -718,8 +718,10 @@ no long-term statistics.
 | `sensor.eveus_ev_charger_last_session_energy` | kWh | Last finished session energy; retained across restarts and outages |
 | `sensor.eveus_ev_charger_last_session_cost` | UAH | Cost of the most recently finished session |
 | `sensor.eveus_ev_charger_last_session_duration` | s | Duration of the most recently finished session. Home Assistant's own cards show seconds as a number; set the entity's unit to hours (h) in its settings to see `1h 36m`. The Eveus card reads any unit |
+| `sensor.eveus_ev_charger_last_session_min_voltage` | V | REVE only: the lowest mains voltage of the most recently finished session, as the station recorded it |
+| `sensor.eveus_ev_charger_last_session_max_voltage` | V | REVE only: the highest mains voltage of that session |
 
-Each Last Session sensor is populated when a session finishes and carries `reason` and `finished_at` attributes.
+Each Last Session sensor is populated when a session finishes and carries `reason` and `finished_at` attributes. The two voltage sensors are read from the REVE station itself when the integration starts and after each session ends, and carry `finished_at` only.
 
 </details>
 

@@ -84,6 +84,10 @@ async def test_reve_charger_publishes_its_real_settings(
     graphql_calls = [call for call in aioclient_mock.mock_calls if str(call[1]).endswith("/graphql")]
     # One read right after /main recognised the firmware: the measurements
     # with the schedules and rates.
+    # The Last Session voltages are one more read, once, shared by both sensors.
+    sessions = [c for c in graphql_calls if json.loads(c[2])["operationName"] == "ListSessions"]
+    assert len(sessions) == 1
+    graphql_calls = [c for c in graphql_calls if c not in sessions]
     assert len(graphql_calls) == 1
     query = json.loads(graphql_calls[0][2])["query"]
     assert query.count("stationState") == 1
