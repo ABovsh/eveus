@@ -377,9 +377,10 @@ def test_parse_needs_a_positive_stop_time(stop_at: int, usable: bool) -> None:
 def test_parse_keeps_the_edges_of_a_plausible_range(low: Any, high: Any, want: tuple[Any, Any]) -> None:
     from custom_components.eveus.const import MAX_VOLTAGE_V
 
-    assert MAX_VOLTAGE_V == 500
     parsed = reve.parse_last_session_voltage([{**_ITEM, "minVoltageA": low, "maxVoltageA": high}])
-    assert (parsed["min"], parsed["max"]) == want
+    assert parsed["min"] == want[0]
+    assert parsed["max"] == want[1]
+    assert high <= MAX_VOLTAGE_V
 
 
 def test_the_factory_builds_both_sensors_for_its_charger(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -447,7 +448,8 @@ def test_an_owed_read_waits_for_a_burst_still_running(monkeypatch: pytest.Monkey
         sensor._read_task = running
         sensor._handle_coordinator_update()
         assert not running.cancelled()
-        assert reads == [] and tasks == []
+        assert reads == []
+        assert tasks == []
         running.cancel()
 
     asyncio.run(scenario())

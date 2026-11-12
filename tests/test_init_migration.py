@@ -849,6 +849,8 @@ def test_async_remove_entry_hands_its_hass_to_every_cleanup(monkeypatch) -> None
     ]
     assert len(issues) == 6 + len(POLICIES)
     for issue_hass, domain, issue_id in issues:
-        assert issue_hass is hass and domain == DOMAIN and issue_id
+        assert issue_hass is hass
+        assert domain == DOMAIN
+        assert issue_id
     assert len({issue_id for _h, _d, issue_id in issues}) == len(issues)
     assert cards == [(hass, "e1")]
