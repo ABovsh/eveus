@@ -317,10 +317,18 @@ def test_an_owed_read_waits_for_a_successful_poll(monkeypatch: pytest.MonkeyPatc
     asyncio.run(scenario())
 
 
-def test_a_restored_voltage_shown_in_kv_is_read_back_in_volts(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(("shown", "unit"), [("0.221", "kV"), ("221000", "mV")])
+def test_a_restored_voltage_shown_in_another_unit_is_read_back_in_volts(
+    monkeypatch: pytest.MonkeyPatch, shown: str, unit: str
+) -> None:
+    from homeassistant.util.unit_conversion import ElectricPotentialConverter
+
+    if unit not in ElectricPotentialConverter.VALID_UNITS:
+        # Older Home Assistant (kV arrived after 2025.1) cannot show it either.
+        pytest.skip(f"{unit} is not a voltage unit in this Home Assistant")
     _charger, updater = _known(monkeypatch)
     sensor = _setup(updater)[0]["last_session_min_voltage"]
     asyncio.run(sensor._async_restore_state(
-        SimpleNamespace(state="0.221", attributes={"unit_of_measurement": "kV"})
+        SimpleNamespace(state=shown, attributes={"unit_of_measurement": unit})
     ))
     assert sensor.native_value == 221

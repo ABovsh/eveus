@@ -769,12 +769,21 @@ def test_force_refresh_bypass_counter_untouched():
     assert updater._force_refresh_requests == 0
 
 
-def test_capped_reader_reports_deep_nesting_as_malformed_payload() -> None:
+def test_capped_reader_reports_deep_nesting_as_malformed_payload(monkeypatch) -> None:
     """RecursionError is not a ValueError; the poll's ValueError handler would
-    miss it and skip failure accounting, so it is normalized."""
+    miss it and skip failure accounting, so it is normalized.
+
+    Whether a given depth overflows depends on the interpreter (Python 3.14's
+    decoder takes this body whole), so the decoder's RecursionError is forced."""
+    from custom_components.eveus import _payload
     from custom_components.eveus._payload import PayloadError, read_json_capped
     import asyncio
+    from types import SimpleNamespace
 
+    def _too_deep(_text):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(_payload, "json", SimpleNamespace(loads=_too_deep))
     body = b"[" * 100_000 + b"]" * 100_000
 
     class _Content:
