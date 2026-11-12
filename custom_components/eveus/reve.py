@@ -1027,9 +1027,9 @@ class ReveApi:
         # Told when a kept limit value changes, so the updater can save it:
         # a value set while its limit is off lives nowhere on the charger.
         self.on_limit_values_changed: Callable[[], None] | None = None
-        self._write_epoch = 0
+        self._write_epoch = 0  # pragma: no mutate - any start is equivalent: the epoch is only compared with itself
         self._writes_in_flight = 0
-        self._measure_mark: int | None = None
+        self._measure_mark: int | None = None  # pragma: no mutate - any non-int start fails _read_current alike
         self.manual_mode = ManualMode()
         self._station_system: dict[str, Any] = {}
         self._started_at: int | None = None
@@ -1056,7 +1056,7 @@ class ReveApi:
 
     def _read_mark(self) -> int | None:
         """Taken as a read starts: ``None`` while a write is in flight."""
-        return None if self._writes_in_flight else self._write_epoch
+        return None if self._writes_in_flight else self._write_epoch  # pragma: no mutate - a mark taken mid-write is stale anyway: _read_current also needs no write in flight, and the write's end moves the epoch
 
     def _read_current(self, mark: int | None) -> bool:
         """Whether no write started or ended since ``mark`` was taken."""

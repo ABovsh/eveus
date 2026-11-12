@@ -354,3 +354,165 @@ def test_a_restored_voltage_shown_in_another_unit_is_read_back_in_volts(
         SimpleNamespace(state=shown, attributes={"unit_of_measurement": unit})
     ))
     assert sensor.native_value == 221
+
+
+# ---------------------------------------------------------------------------
+# Mutation round 4.31.0: boundaries, the factory, and what the reads pass on.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(("stop_at", "usable"), [(0, False), (1, True)])
+def test_parse_needs_a_positive_stop_time(stop_at: int, usable: bool) -> None:
+    parsed = reve.parse_last_session_voltage([{**_ITEM, "stopAt": stop_at}])
+    assert (parsed is not None) is usable
+
+
+@pytest.mark.parametrize(
+    "low, high, want",
+    [
+        (230, 230, (230, 230)),          # a steady supply: min equals max
+        (1, 231, (1, 231)),              # the smallest whole volt is a reading
+        (221, 500, (221, 500)),          # the ceiling itself is plausible
+    ],
+)
+def test_parse_keeps_the_edges_of_a_plausible_range(low: Any, high: Any, want: tuple[Any, Any]) -> None:
+    from custom_components.eveus.const import MAX_VOLTAGE_V
+
+    assert MAX_VOLTAGE_V == 500
+    parsed = reve.parse_last_session_voltage([{**_ITEM, "minVoltageA": low, "maxVoltageA": high}])
+    assert (parsed["min"], parsed["max"]) == want
+
+
+def test_the_factory_builds_both_sensors_for_its_charger(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_components.eveus.reve_sensors import (
+        _ReveLastSessionVoltageSensor,
+        create_reve_last_session_sensors,
+    )
+
+    _charger, updater = _known(monkeypatch)
+    low, high = create_reve_last_session_sensors(updater, 2)
+    assert (low.ENTITY_NAME, low._key, low.icon, low._device_number) == (
+        "Last Session Min Voltage", "min", "mdi:flash-triangle-outline", 2,
+    )
+    assert (high.ENTITY_NAME, high._key, high.icon, high._device_number) == (
+        "Last Session Max Voltage", "max", "mdi:flash-triangle", 2,
+    )
+    assert [s._device_number for s in create_reve_last_session_sensors(updater)] == [1, 1]
+    assert _ReveLastSessionVoltageSensor(updater, "n", "min", "mdi:x")._device_number == 1
+
+
+def test_a_new_sensor_shows_and_owes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    _charger, updater = _known(monkeypatch)
+    sensor = _setup(updater)[0]["last_session_min_voltage"]
+    assert sensor._owed is None
+    assert sensor._owed_after == 0.0
+    assert sensor._last_read_failed is False
+    assert sensor._shown_stop_at is None
+
+
+def test_a_new_reading_is_written_once_and_an_unchanged_one_not_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater = _known(monkeypatch)
+    _station(charger, _ITEM)
+    sensor = _setup(updater)[0]["last_session_min_voltage"]
+    writes: list[Any] = []
+    sensor.async_write_ha_state = lambda: writes.append(sensor.native_value)
+    sensor.hass = SimpleNamespace()
+    finished = {"finished_at": "2026-11-08T10:05:26+00:00"}
+
+    # A restored session shown with another value: the station's figure wins.
+    sensor._attr_native_value = 200
+    sensor._attr_extra_state_attributes = dict(finished)
+    assert asyncio.run(sensor.async_refresh_from_station()) is True
+    assert writes == [221]
+    assert sensor.extra_state_attributes == finished
+
+    # The same answer again: nothing to write.
+    updater._last_session_read = None
+    assert asyncio.run(sensor.async_refresh_from_station()) is True
+    assert writes == [221]
+
+    # Same value, but the end time was not restored: written to add it.
+    sensor._attr_extra_state_attributes = {}
+    updater._last_session_read = None
+    asyncio.run(sensor.async_refresh_from_station())
+    assert writes == [221, 221]
+    assert sensor.extra_state_attributes == finished
+
+
+def test_an_owed_read_waits_for_a_burst_still_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    _charger, _updater_, sensor, _clock, reads, tasks = _owed_fixture(monkeypatch)
+
+    async def scenario() -> None:
+        sensor._owed = (None,)
+        running = asyncio.get_running_loop().create_future()
+        sensor._read_task = running
+        sensor._handle_coordinator_update()
+        assert not running.cancelled()
+        assert reads == [] and tasks == []
+        running.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_finish_reads_on_its_delays_and_still_knows_the_session_shown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The burst after a finish, and the owed read after it, compare with the
+    session on display: the station still holding only that one is not news."""
+    from custom_components.eveus import reve_sensors
+
+    charger, updater, sensor, _clock, reads, tasks = _owed_fixture(monkeypatch)
+    sleeps: list[Any] = []
+
+    async def recorded(delay: Any) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(reve_sensors.asyncio, "sleep", recorded)
+    names: list[str] = []
+    spawn = sensor.hass.async_create_background_task
+
+    def named(coro: Any, name: str, **kw: Any) -> Any:
+        names.append(name)
+        return spawn(coro, name, **kw)
+
+    sensor.hass = SimpleNamespace(async_create_background_task=named)
+    sensor._shown_stop_at = _ITEM["stopAt"]
+
+    async def scenario() -> None:
+        charger.graphql_status = 500
+        sensor._handle_finished_event(SimpleNamespace(data={"device_number": 1}))
+        await _settle(tasks)
+        assert sleeps == [10.0, 30.0, 60.0]
+        assert sensor._owed == (_ITEM["stopAt"],)
+        charger.graphql_status = 200
+        await updater._async_update_data()
+        sensor._handle_coordinator_update()
+        await _settle(tasks)
+        assert len(reads) == 4
+        assert sleeps == [10.0, 30.0, 60.0], "an owed read goes at once"
+        assert sensor.native_value is None, "the station still has only the session shown"
+        assert sensor._owed is None, "answered: nothing more is owed"
+        # Settled: a later poll reads nothing more.
+        sensor._handle_coordinator_update()
+        await _settle(tasks)
+        assert len(reads) == 4
+
+    asyncio.run(scenario())
+    assert names == ["eveus last session min voltage"] * 2
+
+
+def test_reads_share_one_answer_for_less_than_ten_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_components.eveus import common_network
+
+    charger, updater = _known(monkeypatch)
+    _station(charger, _ITEM)
+    clock = [100.0]
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
+
+    def graphql_reads() -> int:
+        return sum(1 for path, _ in charger.calls if path == "/graphql")
+
+    asyncio.run(updater.async_read_last_session())
+    clock[0] = 109.9
+    asyncio.run(updater.async_read_last_session())
+    assert graphql_reads() == 1
+    clock[0] = 110.0
+    asyncio.run(updater.async_read_last_session())
+    assert graphql_reads() == 2

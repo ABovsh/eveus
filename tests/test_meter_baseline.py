@@ -317,3 +317,29 @@ def test_growth_still_waits_for_the_save_interval(monkeypatch: pytest.MonkeyPatc
     asyncio.run(updater._async_update_data())
     assert len(store.saves) == writes
     assert _durable(store) == {}
+
+
+def test_a_reset_seen_while_shutting_down_is_not_written(monkeypatch) -> None:
+    """Mutation round 4.31.0: an unloading entry writes no meter file; the
+    reset is saved by the run that sees it next."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from custom_components.eveus.common_network import EveusUpdater
+
+    saved: list[dict] = []
+
+    class _Store:
+        async def async_save(self, data) -> None:
+            saved.append(dict(data))
+
+    updater = EveusUpdater.__new__(EveusUpdater)
+    updater._meter_store = _Store()
+    updater._meter_guard = SimpleNamespace(baseline=lambda: {"totalEnergy": 1.0})
+    updater._meter_saved = {"totalEnergy": 500.0}
+    updater._shutting_down = True
+    asyncio.run(updater._persist_meter_reset())
+    assert saved == []
+    updater._shutting_down = False
+    asyncio.run(updater._persist_meter_reset())
+    assert saved == [{"totalEnergy": 1.0}]

@@ -810,3 +810,45 @@ def test_session_cost_rejects_negative() -> None:
 
     assert get_session_cost(EveusTestUpdater({"sessionMoney": -0.5}), None) is None
     assert get_session_cost(EveusTestUpdater({"sessionMoney": 7.2}), None) == 7.2
+
+
+def test_async_remove_entry_hands_its_hass_to_every_cleanup(monkeypatch) -> None:
+    """Mutation round 4.31.0: each issue, store and the card resource is
+    removed in this Home Assistant, under this domain, at its own version."""
+    from custom_components import eveus
+    from custom_components.eveus.const import DOMAIN
+    from custom_components.eveus.meter_guard import METER_STORE_VERSION
+    from custom_components.eveus.reve import REVE_LIMIT_STORE_VERSION
+    from custom_components.eveus.safety import _SAFETY_STORE_VERSION, POLICIES, safety_store_key
+
+    hass = object()
+    stores: list[tuple] = []
+    issues: list[tuple] = []
+    cards: list[tuple] = []
+
+    class _Store:
+        def __init__(self, store_hass, version, key) -> None:
+            stores.append((store_hass, version, key))
+
+        async def async_remove(self) -> None:
+            return None
+
+    async def unregister(card_hass, entry_id) -> None:
+        cards.append((card_hass, entry_id))
+
+    monkeypatch.setattr("homeassistant.helpers.storage.Store", _Store)
+    monkeypatch.setattr(eveus.ir, "async_delete_issue", lambda *args: issues.append(args))
+    monkeypatch.setattr(eveus, "_async_unregister_card", unregister)
+    entry = SimpleNamespace(entry_id="e1")
+    asyncio.run(eveus.async_remove_entry(hass, entry))
+
+    assert stores == [
+        (hass, _SAFETY_STORE_VERSION, safety_store_key(entry)),
+        (hass, METER_STORE_VERSION, "eveus_meters_e1"),
+        (hass, REVE_LIMIT_STORE_VERSION, "eveus_reve_limits_e1"),
+    ]
+    assert len(issues) == 6 + len(POLICIES)
+    for issue_hass, domain, issue_id in issues:
+        assert issue_hass is hass and domain == DOMAIN and issue_id
+    assert len({issue_id for _h, _d, issue_id in issues}) == len(issues)
+    assert cards == [(hass, "e1")]

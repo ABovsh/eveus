@@ -1336,3 +1336,14 @@ def test_a_queued_stop_is_dropped_when_the_energy_is_no_longer_measured():
     generation = ctrl._generation
     updater.session_energy_measured = False
     assert ctrl._stop_still_due(generation) is False
+
+
+def test_a_stop_is_due_on_an_updater_that_does_not_report_measured_energy():
+    """Mutation round 4.31.0: only an updater that says its session energy was
+    not measured holds the Stop back; one without the flag is classic."""
+    calc = _calc(target=80, initial=20, cap=50, corr=0)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    del updater.session_energy_measured
+    ctrl, _scheduled, _events = _make(calc, updater)
+    ctrl.set_enabled(True)
+    assert ctrl._stop_still_due(ctrl._generation) is True

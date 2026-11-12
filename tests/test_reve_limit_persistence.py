@@ -185,3 +185,70 @@ def test_unload_replaces_a_pending_delayed_save(monkeypatch) -> None:
     asyncio.run(updater.async_shutdown())
     assert "eveus_reve_limits_e1" not in _DeferredStore.pending
     assert _SharedStore.files["eveus_reve_limits_e1"]["energyLimit"] == 20
+
+
+# ---------------------------------------------------------------------------
+# Mutation round 4.31.0: the store's identity, failures, and repeat flushes.
+# ---------------------------------------------------------------------------
+
+def test_the_limit_store_belongs_to_this_home_assistant_at_its_version(monkeypatch) -> None:
+    from custom_components.eveus.reve import REVE_LIMIT_STORE_VERSION
+
+    made: list[tuple] = []
+
+    class _Recorded(_SharedStore):
+        def __init__(self, hass: Any, version: int, key: str) -> None:
+            made.append((hass, version, key))
+            super().__init__(hass, version, key)
+
+    monkeypatch.setattr(common_network, "Store", _Recorded)
+    charger, _ = _known_charging(monkeypatch)
+    updater = _entry_updater(monkeypatch, charger)
+    asyncio.run(updater.async_load_reve_limits())
+    assert made == [(updater.hass, REVE_LIMIT_STORE_VERSION, "eveus_reve_limits_e1")]
+
+
+def test_a_store_that_cannot_load_is_dropped_and_never_written(monkeypatch) -> None:
+    class _Broken(_SharedStore):
+        async def async_load(self) -> Any:
+            raise OSError("disk")
+
+    monkeypatch.setattr(common_network, "Store", _Broken)
+    charger, _ = _known_charging(monkeypatch)
+    charger.station["session"]["energyLimit"] = None
+    updater = _started(monkeypatch, charger)
+    assert updater._limit_store is None
+    assert _send(updater, "energyLimit", 20000)
+    asyncio.run(updater.async_shutdown())
+    assert _SharedStore.writes == []
+
+
+def test_loaded_values_the_charger_agrees_with_are_not_written_back(monkeypatch) -> None:
+    charger, _ = _known_charging(monkeypatch)
+    charger.station["session"]["energyLimit"] = None
+    _SharedStore.files["eveus_reve_limits_e1"] = {"energyLimit": 20}
+    updater = _started(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    updater._save_reve_limits()
+    asyncio.run(updater.async_shutdown())
+    assert _SharedStore.writes == []
+
+
+def test_a_change_during_shutdown_is_left_to_the_flush(monkeypatch) -> None:
+    charger, _ = _known_charging(monkeypatch)
+    charger.station["session"]["energyLimit"] = None
+    updater = _started(monkeypatch, charger)
+    updater._shutting_down = True
+    updater._reve._limit_values["energyLimit"] = 20
+    updater._save_reve_limits()
+    assert _SharedStore.writes == []
+
+
+def test_a_second_flush_with_nothing_new_writes_nothing(monkeypatch) -> None:
+    charger, _ = _known_charging(monkeypatch)
+    charger.station["session"]["energyLimit"] = None
+    updater = _started(monkeypatch, charger)
+    updater._reve._limit_values["energyLimit"] = 20
+    asyncio.run(updater._flush_reve_limits())
+    asyncio.run(updater._flush_reve_limits())
+    assert _SharedStore.writes == [("eveus_reve_limits_e1", {"energyLimit": 20})]

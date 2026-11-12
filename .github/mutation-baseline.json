@@ -1,4 +1,4 @@
 {
-  "_comment": "Survivor-count ratchet for the single mutmut 3 run: increases fail the job; decreases tighten this baseline. OBSERVED: 728 survivors from a local mutmut 3.8.0 run on rc 760ad81 (11158 mutants, 27 timeouts, 8 without tests), 2026-10-30. Down from 730 (rc 7e56792): the 4.30.0 round's new guards are pinned at their bounds and four verified-equivalent lines carry pragma: no mutate with a reason. Equivalent mutants remain in the count; only verified unobservable lines use pragma: no mutate with a reason.",
-  "survivors": 728
+  "_comment": "Survivor-count ratchet for the single mutmut 3 run: increases fail the job; decreases tighten this baseline. OBSERVED: 706 survivors from a local mutmut 3.8.1 run on the 4.31.0 release tree (11605 mutants, 27 timeouts, 18 without tests), 2026-11-12. Down from 728: the 4.31.0 round added 85 survivors (REVE Last Session voltages, the REVE write epoch, limit storage); tests now kill them and 26 older ones in async_remove_entry, and four verified-equivalent lines carry pragma: no mutate with a reason. Equivalent mutants remain in the count; only verified unobservable lines use pragma: no mutate with a reason.",
+  "survivors": 706
 }

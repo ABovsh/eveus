@@ -326,7 +326,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._reve = ReveApi(self)
         self._reve.on_limit_values_changed = self._save_reve_limits
         self._limit_store: Store | None = None
-        self._limits_saved: dict[str, int | float] = {}
+        self._limits_saved: dict[str, int | float] = {}  # pragma: no mutate - async_load_reve_limits sets it before any save or flush can pass the store check
         self._limits_save_pending = False
         self._last_session_lock = asyncio.Lock()
         self._last_session_read: tuple[float, dict[str, Any]] | None = None
