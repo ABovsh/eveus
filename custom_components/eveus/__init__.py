@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
-from homeassistant.auth.permissions.const import POLICY_CONTROL
+from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.components import websocket_api
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
@@ -65,6 +65,7 @@ from .const import (
 )
 from .common_network import EveusUnreachable, EveusUpdater
 from .meter_guard import METER_STORE_VERSION, meter_store_key
+from .reve import REVE_LIMIT_STORE_VERSION, reve_limit_store_key
 from .reve import FAMILY_CLASSIC, FAMILY_REVE
 from .issues import (
     BatteryLowTracker,
@@ -310,6 +311,8 @@ def _ws_card_entities(
     """
     registry = er.async_get(hass)
     wanted = msg.get("device_id")
+    permissions = connection.user.permissions
+    read_all = permissions.access_all_entities(POLICY_READ)
     for entry in hass.config_entries.async_entries(DOMAIN):
         device_id = None
         entities: dict[str, str] = {}
@@ -318,6 +321,9 @@ def _ws_card_entities(
             if ent.platform != DOMAIN or match is None:
                 continue
             if wanted is not None and ent.device_id != wanted:
+                continue
+            # Never enumerate an entity (or a charger) the user may not read.
+            if not read_all and not permissions.check_entity(ent.entity_id, POLICY_READ):
                 continue
             device_id = device_id or ent.device_id
             entities[match.group(1)] = ent.entity_id
@@ -355,7 +361,37 @@ def _ws_reve_schedules(
     if updater is None:
         connection.send_error(msg["id"], "not_found", "No Eveus charger found")
         return
+    # Schedules and tariffs are what the two schedule switches describe: the
+    # user must be allowed to read both, as the state API would require.
+    if not all(
+        _schedule_permitted(hass, connection, updater, schedule, POLICY_READ) for schedule in (1, 2)
+    ):
+        connection.send_error(msg["id"], "unauthorized", "Unauthorized")
+        return
     connection.send_result(msg["id"], updater.reve_card_schedules())
+
+
+def _schedule_permitted(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    updater: EveusUpdater,
+    schedule: int,
+    policy: str,
+) -> bool:
+    """Whether the user holds ``policy`` on this charger's schedule switch.
+
+    The WebSocket routes bypass entity services and the state API, which
+    normally enforce the user's entity policy. Resolve the switch through the
+    registry, so a renamed id and the device-number suffix still match.
+    """
+    permissions = connection.user.permissions
+    if permissions.access_all_entities(policy):
+        return True
+    suffix = get_device_suffix(updater.device_number)
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "switch", DOMAIN, f"eveus{suffix}_schedule_{schedule}_enabled"
+    )
+    return entity_id is not None and bool(permissions.check_entity(entity_id, policy))
 
 
 async def _async_reve_schedule_weekdays(
@@ -376,18 +412,9 @@ async def _async_reve_schedule_weekdays(
     if not days:
         connection.send_error(msg["id"], "invalid_format", "A schedule needs at least one day")
         return
-    # This path bypasses entity services, which normally enforce the user's
-    # control policy. Use the same schedule switch, including a renamed id
-    # and this charger's device-number suffix, as the authorization target.
-    permissions = connection.user.permissions
-    if not permissions.access_all_entities(POLICY_CONTROL):
-        suffix = get_device_suffix(updater.device_number)
-        entity_id = er.async_get(hass).async_get_entity_id(
-            "switch", DOMAIN, f"eveus{suffix}_schedule_{int(msg['schedule'])}_enabled"
-        )
-        if entity_id is None or not permissions.check_entity(entity_id, POLICY_CONTROL):
-            connection.send_error(msg["id"], "unauthorized", "Unauthorized")
-            return
+    if not _schedule_permitted(hass, connection, updater, int(msg["schedule"]), POLICY_CONTROL):
+        connection.send_error(msg["id"], "unauthorized", "Unauthorized")
+        return
     # The schema's In((1, 2)) also lets 1.0 and True through: name the slot as a whole number.
     if not await updater.send_command(f"sh{int(msg['schedule'])}Weekdays", days):
         message = (
@@ -774,6 +801,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EveusConfigEntry) -> boo
         # The lifetime meters' last readings first: the poll that lands after a
         # restart may be the charger's zero boot reading.
         await updater.async_load_meter_baseline()
+        # REVE limit values set while their limit was off: nowhere on the charger.
+        await updater.async_load_reve_limits()
         try:
             await updater.async_config_entry_first_refresh()
         except ConfigEntryNotReady as err:
@@ -998,6 +1027,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await Store(hass, METER_STORE_VERSION, meter_store_key(entry.entry_id)).async_remove()
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Could not remove meter store for removed entry")
+    try:
+        await Store(hass, REVE_LIMIT_STORE_VERSION, reve_limit_store_key(entry.entry_id)).async_remove()
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not remove REVE limit store for removed entry")
 
     await _async_unregister_card(hass, entry.entry_id)
 

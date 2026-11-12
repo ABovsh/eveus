@@ -651,3 +651,49 @@ async def test_removing_the_entry_leaves_no_meter_readings_behind(
     await hass.async_block_till_done()
 
     assert f"eveus_meters_{entry.entry_id}" not in hass_storage
+
+
+async def test_a_schedule_write_waiting_on_its_read_sends_nothing_after_unload(
+    hass, aioclient_mock, monkeypatch
+):
+    """Audit 2026-11-12 #10: a REVE command that awaited a read when the entry
+    unloaded must not start its mutation afterwards, and must not succeed."""
+    import asyncio
+
+    from custom_components.eveus.reve import SCHEDULES_QUERY
+
+    from .conftest import _entry, _setup
+    from .test_reve_smoke import HOST, REVE_GRAPHQL, REVE_MAIN
+
+    aioclient_mock.post(f"http://{HOST}/main", json=REVE_MAIN)
+    response = {"data": {**REVE_GRAPHQL["data"], "updateStationData": True}}
+    aioclient_mock.post(f"http://{HOST}/graphql", json=response)
+    aioclient_mock.post(f"http://{HOST}/pageEvent", text="ok")
+    entry = _entry(hass, HOST)
+    await _setup(hass, entry)
+    updater = entry.runtime_data.updater
+    api = updater._reve
+    read_returning = asyncio.Event()
+    release_read = asyncio.Event()
+    original = api._station
+
+    async def delayed_read(document):
+        reply = await original(document)
+        if document == SCHEDULES_QUERY:
+            read_returning.set()
+            await release_read.wait()
+        return reply
+
+    monkeypatch.setattr(api, "_station", delayed_read)
+    command = asyncio.create_task(hass.services.async_call(
+        "time", "set_value",
+        {"entity_id": "time.eveus_ev_charger_schedule_1_start", "time": "02:00:00"},
+        blocking=True,
+    ))
+    await asyncio.wait_for(read_returning.wait(), 2)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    calls_at_unload = len(aioclient_mock.mock_calls)
+    release_read.set()
+    (outcome,) = await asyncio.wait_for(asyncio.gather(command, return_exceptions=True), 2)
+    assert aioclient_mock.mock_calls[calls_at_unload:] == []
+    assert isinstance(outcome, Exception), "a write that was never sent must not report success"

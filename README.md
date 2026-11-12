@@ -265,6 +265,10 @@ charge starts, with a schedule on, it prices the energy in the schedule windows,
 where the charger will draw it: at 19:00 a charge that Schedule 1 runs from
 23:00 is priced at the night rate.
 
+With a car plugged in, the estimates need the charger's session energy. If the
+charger does not report it, for example on REVE while only `/main` answers, they
+read `unavailable` instead of falling back to **Initial SOC**.
+
 Setting a target alone does not stop charging: turn on **Limit: SOC enabled**.
 Home Assistant sends that stop, so it must be running and able to reach the
 charger. The charger itself enforces the time, energy and cost limits.
@@ -278,7 +282,7 @@ provided by another integration.
 2. It must be a `sensor` with device class `battery`, unit `%` and a value from 0 to 100; others are not listed.
 3. Without a sensor, set **Initial SOC** by hand before charging.
 
-- The sensor is read once per plug-in, when charging starts. If it is unavailable then, the integration retries and counts the energy already delivered.
+- The sensor is read once per plug-in, when charging starts. If it is unavailable then, the integration retries and counts the energy already delivered. On REVE it also waits while only `/main` answers: the session energy shown then is the last one read, not a new measurement.
 - A value you enter by hand wins until the next plug-in, including after a reload or when an unavailable car sensor recovers.
 - After you pull the connector out and plug it in again, a new initial value is needed.
 - The car's reading is applied before the SOC limit decides whether to Stop.
@@ -401,6 +405,7 @@ When your inverter's battery stays below a threshold for two minutes, turns on
 - **It does not resume charging.** Turn **Stop Charging** off yourself, with your own automation or with [Resume charging when the grid returns](#resume-charging-when-the-grid-returns). On REVE firmware a stop also starts [manual mode](#manual-mode).
 - **It acts when the battery drops below the threshold.** If the battery is already low when you create the automation, or you turn **Stop Charging** off while it stays low, the automation stops charging again only after the battery rises above the threshold and drops below it.
 - **A sensor without a number never stops the charge,** for example one that reads `unavailable`.
+- **The voltage is compared in volts** whatever unit the sensor shows: V, mV or kV. A sensor without a unit counts as volts.
 
 **You need:** your inverter's battery reading in Home Assistant, either a % sensor with device class `battery` or a voltage sensor with device class `voltage`. The fields list only sensors of these classes.
 
@@ -424,6 +429,7 @@ car does not drain your inverter's battery. It is for a charger powered through
 an inverter; a charger without backup power switches off with the grid.
 
 - **No grid means** a reading below the threshold, `unavailable` or `unknown`. A sensor that stays offline therefore keeps charging stopped.
+- **The voltage is compared in volts** whatever unit the sensor shows: V, mV or kV. A sensor without a unit counts as volts; one with another unit counts as no reading.
 - **It does not resume charging.** Add the next blueprint for that.
 - **While One Charge is on, it stops nothing,** so you can charge from the battery on purpose.
 - **It acts when the reading changes.** If the grid goes while Home Assistant is off, or the sensor is already missing when Home Assistant starts, nothing is stopped until the sensor reads a grid and loses it again.
@@ -571,7 +577,7 @@ The **Manual Mode** sensor and the card show that the schedules and limits are b
 
 - **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **while the car is charging or a limit has stopped the charge, and not in manual mode**. REVE drops a limit set before charging starts, and every limit when the connector is pulled out, so at other times the card locks the limits and says why, and Home Assistant refuses the change with the reason.
 - When a limit stops the charge, raise it or turn it off to charge on: the charger resumes by itself, and a raised limit stops it at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until manual mode ends.
-- Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value.
+- Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value. A value set while its limit is off is kept by Home Assistant, also through a restart, because REVE has nowhere to store it.
 - **Target SOC** can be changed at any time: Home Assistant does that stop.
 - REVE has no **Limit: disable all**: the charger drops that setting within seconds, so the switch is not created and the card does not show it.
 
@@ -579,7 +585,7 @@ The **Manual Mode** sensor and the card show that the schedules and limits are b
 
 - **Adaptive Mode** has Off, Voltage and Auto; REVE has no Power option.
 - **Schedule 1** and **Schedule 2** are the first two schedules in the charger's app. Their days of the week are changed on the card; the days set in the app are kept. The card also lists the other schedules and the tariffs set up in the app, for viewing only. Schedules and tariffs changed in the app appear in Home Assistant within about five minutes.
-- Changing a schedule's weekdays requires Home Assistant control permission for its enable switch.
+- Changing a schedule's weekdays requires Home Assistant control permission for its enable switch. The card lists the schedules and tariffs only to users who may read both schedule switches.
 - **Primary Rate Cost** is REVE's base price; **Rate 2** and **Rate 3** are its first two rates. **Active Rate Cost** is the price in effect now: from REVE_PLUS 1.0.3 the charger reports it; on earlier versions the integration works it out from the rate windows and the charger's clock. Its `rate_name` attribute is the rate's name in the app. The third and fourth rates have no entities of their own, but **Active Rate Cost** shows their price while they are in effect.
 - **Cost to Target SOC** follows the hours of the first two rates and of the schedules, not their days of the week. Before the charge starts, if a schedule runs on some days only, or a third or later schedule is enabled, it uses the price in effect now.
 - **Counter A Cost** and **Counter B Cost** grow from REVE_PLUS 1.0.3, but how REVE counts this cost may change in later firmware versions. On earlier versions the charger counts the energy of counters A and B, but not their cost: it stays 0 after a reset, and without a reset it keeps its previous value. The cost of a charge is in **Session Cost** and **Last Session Cost**.

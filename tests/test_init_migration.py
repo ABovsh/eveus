@@ -718,6 +718,7 @@ def test_async_remove_entry_deletes_the_saved_meter_readings(monkeypatch) -> Non
     asyncio.run(eveus.async_remove_entry(object(), SimpleNamespace(entry_id="e1")))
 
     assert "eveus_meters_e1" in removed
+    assert "eveus_reve_limits_e1" in removed
 
 
 def test_advanced_only_prune_list_covers_target_soc_forecast_sensors() -> None:

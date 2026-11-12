@@ -66,6 +66,33 @@ const hms = (seconds) => {
 const DURATION_SECONDS = {ms: 0.001, s: 1, min: 60, h: 3600, d: 86400};
 const secondsOf = (value, stateObj) =>
   value === null ? null : Math.round(value * (DURATION_SECONDS[stateObj?.attributes?.unit_of_measurement] ?? 1));
+// Home Assistant shows a sensor in the unit the user picked (°F under US units, kW, mA→A…), but the
+// card compares readings with fixed limits and labels them in the integration's own units. So a
+// reading is converted to that unit first; a unit that is not its measurement gives no reading.
+const UNIT_FACTORS = [
+  {mW: 0.001, W: 1, kW: 1000, MW: 1e6, GW: 1e9, TW: 1e12},
+  {mWh: 1e-6, Wh: 0.001, kWh: 1, MWh: 1000, GWh: 1e6, TWh: 1e9, J: 1 / 3.6e6, kJ: 1 / 3600, MJ: 1 / 3.6, GJ: 1000 / 3.6},
+  {'μV': 1e-6, 'µV': 1e-6, mV: 0.001, V: 1, kV: 1000, MV: 1e6},
+  {'μA': 1e-6, 'µA': 1e-6, mA: 0.001, A: 1},
+  DURATION_SECONDS,
+];
+const TO_CELSIUS = {'°C': (v) => v, '°F': (v) => (v - 32) * 5 / 9, K: (v) => v - 273.15};
+const NATIVE_UNITS = {
+  box_temperature: '°C', plug_temperature: '°C', leakage_current: 'mA',
+  voltage: 'V', last_session_min_voltage: 'V', last_session_max_voltage: 'V',
+  power: 'W', current: 'A', charging_current: 'A', adaptive_current_limit: 'A',
+  schedule_1_current_limit: 'A', schedule_2_current_limit: 'A',
+  session_energy: 'kWh', total_energy: 'kWh', counter_a_energy: 'kWh', counter_b_energy: 'kWh',
+  soc_energy: 'kWh', energy_to_target_soc: 'kWh', last_session_energy: 'kWh', battery_capacity: 'kWh',
+  schedule_1_energy_limit: 'kWh', schedule_2_energy_limit: 'kWh',
+  time_drift: 's',
+};
+const inNativeUnit = (value, unit, native) => {
+  if (value === null || !native || !unit || unit === native) return value;
+  if (native === '°C') return TO_CELSIUS[unit] ? TO_CELSIUS[unit](value) : null;
+  const factors = UNIT_FACTORS.find((table) => native in table);
+  return unit in factors ? value * factors[unit] / factors[native] : null;
+};
 // The integration's Excellent/Good/Fair/Poor/Critical brackets (95/80/60/30) as MDI wifi icons.
 const connectionIcon = (pct) => {
   if (pct === null) return 'mdi:wifi-strength-outline';
@@ -576,7 +603,7 @@ class EveusCard extends HTMLElement {
     // Bounds may change without a new state value. They participate in validation
     // and render scheduling, including a change received during a drag.
     if (this._draft !== null && (!this._canControl || !this._valid(this._draft))) this._reset();
-    if (this._sent && currentNumber(this._state('charging_current')) === this._draft) this._reset();
+    if (this._sent && this._num('charging_current') === this._draft) this._reset();
     if (this._editingLimit || this._editingTime || this._editingSelect) return;
     if (this._sliding) { this._updateActual(); return; }
     // Home Assistant hands over a new hass on every state change anywhere — several a second.
@@ -672,6 +699,11 @@ class EveusCard extends HTMLElement {
     subscription.catch(() => { if (this._registryUnsub === subscription) this._registryUnsub = null; });
   }
   _state(key) { return this._hass?.states[this._ids?.[key]]; }
+  // A reading in the integration's own unit (see NATIVE_UNITS), or null.
+  _num(key) {
+    const entity = this._state(key);
+    return inNativeUnit(currentNumber(entity), entity?.attributes?.unit_of_measurement, NATIVE_UNITS[key]);
+  }
   get _online() {
     const state = this._state('state')?.state;
     return !!state && !['unknown', 'unavailable'].includes(state);
@@ -682,7 +714,7 @@ class EveusCard extends HTMLElement {
     return {min: a.min, max: a.max, step: a.step};
   }
   get _canControl() {
-    return this._online && this._bounds !== null && currentNumber(this._state('charging_current')) !== null;
+    return this._online && this._bounds !== null && this._num('charging_current') !== null;
   }
   _valid(value) {
     const b = this._bounds;
@@ -719,7 +751,7 @@ class EveusCard extends HTMLElement {
     if (b && e.target.style?.setProperty) e.target.style.setProperty('--fill', `${100 * (value - b.min) / (b.max - b.min)}%`);
     if (!commit) return;
     if (this._commandError === 'current') this._showError(false);
-    const current = currentNumber(this._state('charging_current'));
+    const current = this._num('charging_current');
     if (value > current) {
       this._asking = true;
       this._expire();
@@ -754,7 +786,7 @@ class EveusCard extends HTMLElement {
       this._render();
     }
   }
-  _actual() { return this._online ? currentNumber(this._state('current')) : null; }
+  _actual() { return this._online ? this._num('current') : null; }
   _actualMarker() {
     const bounds = this._bounds, actual = this._actual();
     // Only a live charge draws the tick; a 0 A reading at the scale's left edge just looked like noise.
@@ -773,7 +805,7 @@ class EveusCard extends HTMLElement {
   }
   _limitValue(key) {
     const pending = this._limitPending?.[key];
-    return typeof pending === 'number' ? pending : currentNumber(this._state(key));
+    return typeof pending === 'number' ? pending : this._num(key);
   }
   _setLimitPending(key, value) {
     clearTimeout(this._limitTimers[key]);
@@ -982,10 +1014,10 @@ class EveusCard extends HTMLElement {
   // firmware safety policy and a weak signal is a monitoring nuisance, not an electrical hazard.
   _safetyReadings() {
     if (!this._ids?.ground_protection) return null;
-    const box = currentNumber(this._state('box_temperature'));
-    const plug = currentNumber(this._state('plug_temperature'));
-    const leak = currentNumber(this._state('leakage_current'));
-    const conn = currentNumber(this._state('connection_quality'));
+    const box = this._num('box_temperature');
+    const plug = this._num('plug_temperature');
+    const leak = this._num('leakage_current');
+    const conn = this._num('connection_quality');
     const groundState = this._state('ground')?.state;
     const groundKnown = groundState === 'Connected' || groundState === 'Not Connected';
     const groundOk = groundState === 'Connected';
@@ -1054,9 +1086,9 @@ class EveusCard extends HTMLElement {
     const t = this._t;
     if (!this._ids?.power) return `<div class="message">${t.none.basic_info}</div>`;
     const on = this._online;
-    const v = on ? currentNumber(this._state('voltage')) : null;
-    const w = on ? currentNumber(this._state('power')) : null;
-    const a = on ? currentNumber(this._state('current')) : null;
+    const v = on ? this._num('voltage') : null;
+    const w = on ? this._num('power') : null;
+    const a = on ? this._num('current') : null;
     const vCls = v === null ? '' : v < VOLTAGE_LOW_V || v > VOLTAGE_HIGH_V ? 'bad' : '';
     // Nothing flowing: power and current would be two zero tiles, so the voltage stands alone in a slim row.
     if (on && w === 0 && a === 0 && v !== null && this._ids.voltage && this._shows('basic_info', 'voltage')) {
@@ -1090,8 +1122,8 @@ class EveusCard extends HTMLElement {
     const rateUnit = String(rateEntity?.attributes?.unit_of_measurement || '').replace(/^[A-Z]{3}(?=\/|$)/, (code) => CURRENCY[code] || code);
     const label = rate === null ? t.session
       : `${t.session}<small class="session-rate" title="${rateName}">${rate.toFixed(2)} ${rateUnit}</small>`;
-    const e = on ? currentNumber(this._state('session_energy')) : null;
-    const c = on ? currentNumber(this._state('session_cost')) : null;
+    const e = on ? this._num('session_energy') : null;
+    const c = on ? this._num('session_cost') : null;
     const raw = on ? this._state('session_time')?.state : null;
     const time = typeof raw === 'string' && /\d/.test(raw) ? t.sessionDuration(raw.replace(/\s+/g, ' ').trim()) : null;
     const shows = (item) => this._shows('session', item);
@@ -1107,7 +1139,7 @@ class EveusCard extends HTMLElement {
   // The 4.24.0 card's battery pair: where the charge is (start → now) and how far to go
   // (target → time left), over one full-width bar with the session's start, progress and target.
   get _socColor() {
-    const soc = currentNumber(this._state('soc_percent')), target = currentNumber(this._state('target_soc'));
+    const soc = this._num('soc_percent'), target = this._num('target_soc');
     if (!this._online) return 'off';
     if (soc !== null && target !== null && soc >= target) return 'reached';
     if (!this._charging || soc === null) return 'idle';
@@ -1127,11 +1159,11 @@ class EveusCard extends HTMLElement {
   _advanced_infoSection() {
     if (!this._advanced) return '';
     const t = this._t, on = this._online;
-    const soc = currentNumber(this._state('soc_percent'));
-    const initial = currentNumber(this._state('initial_soc'));
-    const target = currentNumber(this._state('target_soc'));
+    const soc = this._num('soc_percent');
+    const initial = this._num('initial_soc');
+    const target = this._num('target_soc');
     const color = this._socColor, reached = color === 'reached';
-    const et = currentNumber(this._state('energy_to_target_soc')), ct = currentNumber(this._state('cost_to_target_soc'));
+    const et = this._num('energy_to_target_soc'), ct = this._num('cost_to_target_soc');
     // Time left and finish exist only while a charge runs; without one the energy to go leads.
     const eta = on && this._charging && duration(this._state('time_to_target_soc')?.state) ? t.duration(this._state('time_to_target_soc').state) : null;
     const finishRaw = eta ? this._state('charging_finish_time')?.state : null;
@@ -1140,7 +1172,7 @@ class EveusCard extends HTMLElement {
     const icon = step === null ? 'mdi:battery-unknown' : `mdi:battery${this._charging ? '-charging' : ''}${step >= 100 ? (this._charging ? '-100' : '') : step < 20 ? '-outline' : `-${step}`}`;
     const pc = (v) => v === null ? '—' : `${Math.round(v)}<small>%</small>`;
     const clamp = (v) => Math.max(0, Math.min(100, Math.round(v)));
-    const stored = on ? currentNumber(this._state('soc_energy')) : null;
+    const stored = on ? this._num('soc_energy') : null;
     // "from" only once the SOC has moved off the session's start: before that it repeats the big number.
     const moved = initial !== null && (soc === null || Math.round(soc) !== Math.round(initial));
     const batterySub = [moved ? `${t.from} ${pc(initial)}` : '', stored === null ? '' : `≈${this._int(stored)}<small>kWh</small>`].filter(Boolean).join('<i class="info-sep">·</i>');
@@ -1180,8 +1212,8 @@ class EveusCard extends HTMLElement {
     ].filter((item) => this._ids?.[item.key] && this._shows('history', item.item));
     if (!items.length && !this._monthLine()) return `<div class="message">${t.none.history}</div>`;
     const value = (key, cost) => {
-      const e = this._online ? currentNumber(this._state(key)) : null;
-      const c = cost && this._online ? currentNumber(this._state(cost)) : null;
+      const e = this._online ? this._num(key) : null;
+      const c = cost && this._online ? this._num(cost) : null;
       return {e, c, money: c === null ? '—' : money(this._int(c), this._state(cost)?.attributes?.unit_of_measurement)};
     };
     const asking = items.find((item) => item.reset && item.reset === this._resetAsk);
@@ -1326,7 +1358,7 @@ class EveusCard extends HTMLElement {
     const mode = this._limitPending.adaptive_mode ?? entity.state;
     const options = Array.isArray(entity.attributes?.options) ? entity.attributes.options : [];
     const known = options.includes(mode);
-    const limit = this._online ? currentNumber(this._state('adaptive_current_limit')) : null;
+    const limit = this._online ? this._num('adaptive_current_limit') : null;
     const select = `<select class="adaptive-mode" data-select="adaptive_mode" aria-label="${t.adaptiveMode}" ${!this._online || !known ? 'disabled' : ''}>
       ${known ? '' : '<option selected>—</option>'}${options.map((o) => `<option value="${o}"${o === mode ? ' selected' : ''}>${t.modes[o] ?? o}</option>`).join('')}</select>`;
     // Only Voltage mode uses the threshold; Off has no cap to show.
@@ -1511,7 +1543,7 @@ class EveusCard extends HTMLElement {
   // Home Assistant's own clock and zone: the card must not trust the phone's.
   _nowHM(offsetSeconds = 0) { return this._hm(new Date(Date.now() + offsetSeconds * 1000)); }
   _scheduleHM() {
-    const drift = this._online ? currentNumber(this._state('time_drift')) : null;
+    const drift = this._online ? this._num('time_drift') : null;
     return drift !== null && Math.abs(drift) < CLOCK_DRIFT_THRESHOLD_S ? this._nowHM(drift) : null;
   }
   // 24-hour HH:MM in Home Assistant's zone.
@@ -1525,7 +1557,7 @@ class EveusCard extends HTMLElement {
   }
   // The charger's weekday (0 = Sunday, as REVE counts) on the same clock as _scheduleHM.
   _scheduleDay() {
-    const drift = this._online ? currentNumber(this._state('time_drift')) : null;
+    const drift = this._online ? this._num('time_drift') : null;
     if (drift === null || Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S) return null;
     const date = new Date(Date.now() + drift * 1000), tz = this._hass?.config?.time_zone;
     try {
@@ -1675,7 +1707,7 @@ class EveusCard extends HTMLElement {
       zoneEl = `<label class="time-zone-wrap" title="${zoneTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${disabled ? ' disabled' : ''}>
       ${placeholder}${autoEl}${options.map(zoneOption).join('')}</select></label>`;
     }
-    const drift = on ? currentNumber(this._state('time_drift')) : null;
+    const drift = on ? this._num('time_drift') : null;
     const driftCls = drift === null ? '' : Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S ? 'bad' : 'good';
     // A right clock shows the charger's own time; a wrong one how far it is off, next to Sync.
     const clock = this._scheduleHM();
@@ -1839,7 +1871,7 @@ class EveusCard extends HTMLElement {
     const t = this._t;
     if (!this._ids?.charging_current) return `<div class="message">${t.none.current}</div>`;
     const bounds = this._bounds;
-    const value = this._draft ?? (this._online ? currentNumber(this._state('charging_current')) : null);
+    const value = this._draft ?? (this._online ? this._num('charging_current') : null);
     const disabled = !this._canControl || this._sent;
     const label = t.current;
     const range = bounds ? `min="${bounds.min}" max="${bounds.max}" step="${bounds.step}"` : 'min="0" max="0" step="1"';
@@ -1873,7 +1905,7 @@ class EveusCard extends HTMLElement {
   // Only on a card with Status, which says why, and unless `adapt: false`.
   _hidden(section) {
     if (section === 'status' || this._config.adapt === false || !this._ids?.state || !this._config.sections.includes('status')) return false;
-    if (!this._online) return section !== 'session' || currentNumber(this._state('last_session_energy')) === null;
+    if (!this._online) return section !== 'session' || this._num('last_session_energy') === null;
     if (!this._unplugged && this._statusView().cls !== 'paused') return false;
     return section === 'advanced_info' || section === 'basic_info';
   }
@@ -1958,9 +1990,9 @@ class EveusCard extends HTMLElement {
   // What a folded section says in its one line.
   _foldInfo(section) {
     const t = this._t, sep = '<i class="info-sep">·</i>';
-    const pc = (key) => { const v = currentNumber(this._state(key)); return v === null ? '—' : `${Number(v.toFixed(1))}<small>%</small>`; };
+    const pc = (key) => { const v = this._num(key); return v === null ? '—' : `${Number(v.toFixed(1))}<small>%</small>`; };
     if (section === 'advanced_controls') {
-      const cap = currentNumber(this._state('battery_capacity'));
+      const cap = this._num('battery_capacity');
       return {label: t.socSettings, icon: 'mdi:tune-variant', cls: `soc-${this._socColor}`,
         sum: `${pc('initial_soc')} → ${pc('target_soc')}${sep}${cap === null ? '—' : this._int(cap)}<small>kWh</small>${sep}${t.loss} ${pc('soc_correction')}`};
     }
@@ -1974,7 +2006,7 @@ class EveusCard extends HTMLElement {
       if (ignored) return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sumCls: 'overridden', sumTitle: this._overrideText('schedules'), flag: this._overrideFlag('schedules'), sum: rows.join(sep)};
       return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sum: rows.join(sep)};
     }
-    const total = this._online ? currentNumber(this._state('total_energy')) : null;
+    const total = this._online ? this._num('total_energy') : null;
     const month = this._shows('history', 'month') && this._month?.cur != null ? `${this._monthNames('short')[0]} ${this._kwh(this._month.cur)}` : '';
     return {label: t.counters, icon: 'mdi:counter', cls: '', sum: [month, total === null ? '' : `${t.total} ${this._kwh(total)}`].filter(Boolean).join(sep)};
   }
@@ -1988,14 +2020,14 @@ class EveusCard extends HTMLElement {
   }
   _lastSession() {
     const t = this._t;
-    const e = this._ids.last_session_energy ? currentNumber(this._state('last_session_energy')) : null;
+    const e = this._ids.last_session_energy ? this._num('last_session_energy') : null;
     if (e === null) return null;
-    const c = currentNumber(this._state('last_session_cost')), s = secondsOf(currentNumber(this._state('last_session_duration')), this._state('last_session_duration'));
+    const c = this._num('last_session_cost'), s = secondsOf(this._num('last_session_duration'), this._state('last_session_duration'));
     const at = this._state('last_session_energy')?.attributes?.finished_at;
     const when = at && !Number.isNaN(Date.parse(at)) ? this._when(new Date(at)) : '';
     const shows = (item) => this._shows('session', item);
     // REVE records the lowest and highest mains voltage of each session: one tile, "221–231 V".
-    const lows = ['last_session_min_voltage', 'last_session_max_voltage'].map((key) => (this._ids[key] ? currentNumber(this._state(key)) : null));
+    const lows = ['last_session_min_voltage', 'last_session_max_voltage'].map((key) => (this._ids[key] ? this._num(key) : null));
     const volts = lows.filter((v) => v !== null).map((v) => Math.round(v));
     const range = volts.length === 2 && volts[0] !== volts[1] ? `${volts[0]}–${volts[1]}` : volts.length ? String(volts[0]) : null;
     const items = [
@@ -2021,9 +2053,9 @@ class EveusCard extends HTMLElement {
   // ---- Status while charging: why it is slower than set, or the power and current (and finish when nothing else shows it). ----
   _chargingNote() {
     const t = this._t;
-    const actual = currentNumber(this._state('current')), set = currentNumber(this._state('charging_current'));
+    const actual = this._num('current'), set = this._num('charging_current');
     if (actual !== null && set !== null && set - actual >= SLOW_GAP_A) return `${t.of(amps(actual), amps(set))} · ${this._slowReason(actual, set)}`;
-    const w = currentNumber(this._state('power'));
+    const w = this._num('power');
     const finish = this._advanced && this._config.sections.includes('advanced_info') ? null : this._finishHM();
     // Power and current repeat the Meter section; status.power hides them here.
     const meter = this._shows('status', 'power');
@@ -2032,9 +2064,9 @@ class EveusCard extends HTMLElement {
   _slowReason(actual, set) {
     const t = this._t, mode = this._state('adaptive_mode')?.state;
     const holds = (limit) => limit !== null && limit <= set - SLOW_GAP_A && actual <= limit + 0.5;
-    if (mode && !['Off', 'unknown', 'unavailable'].includes(mode) && holds(currentNumber(this._state('adaptive_current_limit')))) return t.slowAdaptive;
+    if (mode && !['Off', 'unknown', 'unavailable'].includes(mode) && holds(this._num('adaptive_current_limit'))) return t.slowAdaptive;
     for (const n of [1, 2]) {
-      if (this._scheduleNow(n) && this._limitOn(`schedule_${n}_current_limit_enabled`) && holds(currentNumber(this._state(`schedule_${n}_current_limit`)))) return t.slowSchedule(n);
+      if (this._scheduleNow(n) && this._limitOn(`schedule_${n}_current_limit_enabled`) && holds(this._num(`schedule_${n}_current_limit`))) return t.slowSchedule(n);
     }
     return t.slowCar;
   }
@@ -2047,7 +2079,7 @@ class EveusCard extends HTMLElement {
   _faultDetail(code) {
     const f = FAULTS[code];
     if (!f) return '';
-    const t = this._t, v = f.key && this._ids?.[f.key] ? currentNumber(this._state(f.key)) : null;
+    const t = this._t, v = f.key && this._ids?.[f.key] ? this._num(f.key) : null;
     const reading = v === null ? '' : `${t.faultLabels[f.key]} ${f.key === 'current' ? amps(v) : Math.round(v)}${f.unit}${f.limit ? ` · ${t.faultLimit} ${f.limit}${f.unit}` : ''}`;
     return [reading, t.faultHints[f.hint]].filter(Boolean).join(' · ');
   }
@@ -2055,21 +2087,21 @@ class EveusCard extends HTMLElement {
   _plan() {
     // Only while the car waits for its charge: a fault, a pause or a finished charge has nothing to plan.
     if (!this._advanced || !this._online || this._unplugged || this._state('state')?.state !== 'Connected' || this._ignoring) return null;
-    const need = currentNumber(this._state('energy_to_target_soc')), soc = currentNumber(this._state('soc_percent'));
-    const target = currentNumber(this._state('target_soc')), capacity = currentNumber(this._state('battery_capacity'));
-    const loss = currentNumber(this._state('soc_correction')) ?? 0;
+    const need = this._num('energy_to_target_soc'), soc = this._num('soc_percent');
+    const target = this._num('target_soc'), capacity = this._num('battery_capacity');
+    const loss = this._num('soc_correction') ?? 0;
     if ([need, soc, target, capacity].includes(null) || need <= 0 || soc >= target || capacity <= 0) return null;
     const n = this._nextSchedule();
     const start = n && this._timeShown(`schedule_${n}_start`), stop = n && this._timeShown(`schedule_${n}_stop`);
-    let current = currentNumber(this._state('charging_current'));
+    let current = this._num('charging_current');
     if (!start || !stop || current === null) return null;
     const mins = (minutesOf(stop) - minutesOf(start) + 1440) % 1440;
     if (!mins) return null;
-    const capA = currentNumber(this._state(`schedule_${n}_current_limit`));
+    const capA = this._num(`schedule_${n}_current_limit`);
     if (capA !== null && this._limitOn(`schedule_${n}_current_limit_enabled`)) current = Math.min(current, capA);
-    const volts = currentNumber(this._state('voltage')) ?? 230, phases = this._ids.current_phase_3 ? 3 : 1;
+    const volts = this._num('voltage') ?? 230, phases = this._ids.current_phase_3 ? 3 : 1;
     let kwh = current * volts * phases / 1000 * mins / 60;
-    const capE = currentNumber(this._state(`schedule_${n}_energy_limit`));
+    const capE = this._num(`schedule_${n}_energy_limit`);
     if (capE !== null && capE > 0 && this._limitOn(`schedule_${n}_energy_limit_enabled`)) kwh = Math.min(kwh, capE);
     return kwh >= need ? {n, target} : {n, kwh, soc: Math.min(100, soc + kwh * (1 - loss / 100) / capacity * 100)};
   }

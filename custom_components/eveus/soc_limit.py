@@ -243,6 +243,11 @@ class SocLimitController:
             # The snapshot already rejected a negative or impossible reading,
             # so "absent" and "unusable" are the same answer here.
             return
+        if not getattr(self._updater, "session_energy_measured", True):
+            # REVE's /main fallback shows the last GraphQL session for a while;
+            # after a replug the integration did not see, that is the previous
+            # session's energy. Stop only on a counter this poll measured.
+            return
         # Use the EXACT SOC percent for the target comparison, not the rounded
         # display percent: on a large battery a rounded-up percent reaches the
         # target up to ~0.5% before the battery actually does, stopping early.
@@ -270,6 +275,7 @@ class SocLimitController:
             or not self._enabled
             or not self._updater.available
             or not self._updater.last_update_success
+            or not getattr(self._updater, "session_energy_measured", True)
         ):
             return False
         snapshot = self._updater.snapshot

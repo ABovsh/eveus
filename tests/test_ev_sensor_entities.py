@@ -99,11 +99,17 @@ def test_soc_sensors_return_values_and_cache_last_valid_value() -> None:
     assert kwh._get_sensor_value() == 34
     assert percent._get_sensor_value() == 42
 
-    updater.data = {}
-    # No sessionEnergy → treat as 0 delivered and reproject from Initial SOC.
-    # 20% × 80 kWh = 16.0. Avoids the entity going "unknown" at cold start.
+    updater.data = {"state": 2}
+    # Unplugged and no sessionEnergy → 0 delivered: reproject from Initial SOC.
+    # 20% × 80 kWh = 16.0.
     assert kwh._get_sensor_value() == pytest.approx(16.0)
     assert percent._get_sensor_value() == 20
+
+    # Without a known plug state nothing proves zero was delivered (audit
+    # 2026-11-12 #11): no fabricated Initial-SOC reading.
+    updater.data = {}
+    assert kwh._get_sensor_value() is None
+    assert percent._get_sensor_value() is None
 
 
 def test_soc_sensors_return_unknown_for_invalid_session_energy() -> None:

@@ -56,10 +56,15 @@ trigger_variables:
 triggers:
   # Held for five minutes so a grid that comes and goes cannot restart the
   # charge. A sensor with no number is not a grid, so it never lifts the stop.
+  # The reading is converted to volts from the sensor's unit (none means V); a
+  # unit that is not a voltage has no number.
   - trigger: template
     value_template: >-
-      {% set volts = states(voltage) %}
-      {{ is_number(volts) and volts | float > limit | float }}
+      {% set scale = {'V': 1, 'mV': 0.001, 'μV': 0.000001, 'µV': 0.000001, 'kV': 1000, 'MV': 1000000} %}
+      {% set unit = state_attr(voltage, 'unit_of_measurement') or 'V' %}
+      {% set raw = states(voltage) %}
+      {% set volts = (raw | float) * scale[unit] if is_number(raw) and unit in scale else none %}
+      {{ volts is not none and volts > limit | float }}
     for: "00:05:00"
 
 conditions:

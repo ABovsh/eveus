@@ -109,3 +109,30 @@ async def test_reve_raw_leak_counts_raise_no_repair(
         if domain == DOMAIN and "leakage" in issue_id
     ]
     assert issues == []
+
+
+async def test_last_session_voltage_retries_do_not_block_startup(hass) -> None:
+    """Audit 2026-11-12 #03: the optional station read is background work."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from custom_components.eveus.common_network import EveusUpdater
+    from custom_components.eveus.const import MODEL_16A
+    from custom_components.eveus.reve_sensors import create_reve_last_session_sensors
+    from tests_ha.conftest import _entry
+
+    updater = EveusUpdater(host=HOST, username="", password="", hass=hass,
+                           config_entry=_entry(hass, HOST), device_number=1, model=MODEL_16A)
+    sensor = create_reve_last_session_sensors(updater)[0]
+    sensor.hass = hass
+    sensor.async_refresh_from_station = AsyncMock(return_value=False)
+    sensor._start_reads((0.0, 30.0, 60.0), None)
+    task = sensor._read_task
+    try:
+        await asyncio.sleep(0)
+        assert task not in hass._tasks
+        await hass.async_block_till_done()
+        assert not task.done(), "startup work must not wait for the retry sleeps"
+    finally:
+        sensor._cancel_reads()
+        await asyncio.gather(task, return_exceptions=True)

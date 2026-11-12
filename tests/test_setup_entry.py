@@ -123,6 +123,9 @@ class _Updater(OutageClock):
         self.baseline_loaded_before_first_refresh = not self.refreshed
         self.baseline_loaded = True
 
+    async def async_load_reve_limits(self) -> None:
+        self.limits_loaded_before_first_refresh = not self.refreshed
+
     async def async_config_entry_first_refresh(self) -> None:
         self.refreshed = True
 
@@ -320,6 +323,8 @@ def test_async_setup_entry_loads_the_meter_readings_before_the_first_poll(
     updater = entry.runtime_data.updater
     assert updater.baseline_loaded is True
     assert updater.baseline_loaded_before_first_refresh is True
+    # Audit 2026-11-12 #02: REVE limit values are loaded before the first poll too.
+    assert updater.limits_loaded_before_first_refresh is True
 
 
 def test_async_setup_entry_seeds_soc_calculator_from_entry_data(

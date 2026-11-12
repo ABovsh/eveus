@@ -553,3 +553,34 @@ def test_repair_flow_keeps_the_issue_when_the_reload_fails(
     assert config_entries.updated[0]["data"][CONF_PASSWORD] == "new"
     # ...and crucially the repair notice is still there for the retry.
     assert deleted == []
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-11-12 #05: a bare host typed into the repair form must keep the
+# entry's HTTPS transport before the first credentialed request.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("stored", "typed", "expected"),
+    [
+        ("https", TEST_HOST, "https"),            # bare host keeps HTTPS
+        ("https", f"http://{TEST_HOST}", "http"),  # explicit choice wins
+        ("http", TEST_HOST, "http"),               # plain entry unchanged
+        ("http", f"https://{TEST_HOST}", "https"),
+    ],
+)
+def test_repair_validates_with_stored_scheme_unless_typed(monkeypatch, stored, typed, expected):
+    observed: list[str] = []
+
+    async def validate(hass, data):
+        normalized = normalize_user_input(data)
+        observed.append(normalized["scheme"])
+        return {"title": "Eveus", "data": normalized}
+
+    entry = SimpleNamespace(entry_id="entry-id", unique_id=TEST_HOST, data=_data(scheme=stored))
+    hass = SimpleNamespace(config_entries=_ConfigEntries(entry))
+    monkeypatch.setattr(repairs, "validate_input", validate)
+    monkeypatch.setattr(repairs.ir, "async_delete_issue", lambda *_: None)
+    flow = repairs.InvalidConfigRepairFlow(hass, "invalid_config_entry-id", "entry-id")
+    asyncio.run(flow.async_step_confirm(_data(host=typed)))
+    assert observed == [expected]

@@ -441,3 +441,47 @@ def test_a_current_limit_the_schedule_does_not_use_is_not_offered(monkeypatch: p
 
     assert first["current_limit"] is None
     assert second["current_limit"] == 9
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-11-12 #08: the schedule read honours entity READ permission.
+# ---------------------------------------------------------------------------
+
+def _read_connection(readable: set[str]) -> MagicMock:
+    from homeassistant.auth.permissions.const import POLICY_READ
+
+    connection = MagicMock()
+    connection.user.permissions.access_all_entities.side_effect = lambda policy: False
+    connection.user.permissions.check_entity.side_effect = (
+        lambda entity_id, policy: policy == POLICY_READ and entity_id in readable
+    )
+    return connection
+
+
+def _schedule_registry() -> MagicMock:
+    registry = MagicMock()
+    registry.async_get_entity_id.side_effect = (
+        lambda platform, domain, unique_id: f"{platform}.renamed_{unique_id}"
+    )
+    return registry
+
+
+@pytest.mark.parametrize(
+    ("readable", "allowed"),
+    [
+        (set(), False),
+        ({"switch.renamed_eveus2_schedule_1_enabled"}, False),
+        ({"switch.renamed_eveus2_schedule_1_enabled", "switch.renamed_eveus2_schedule_2_enabled"}, True),
+    ],
+)
+def test_schedule_reads_require_entity_read_permission(readable: set[str], allowed: bool) -> None:
+    payload = {"reve": True, "schedules": [{"name": "Private"}], "base_rate": 4.32}
+    updater = SimpleNamespace(device_number=2, reve_card_schedules=lambda: payload)
+    connection = _read_connection(readable)
+    with _devices({}), patch.object(eveus.er, "async_get", return_value=_schedule_registry()):
+        eveus._ws_reve_schedules(_ws_hass({"e1": updater}), connection, {"id": 5, "type": "eveus/reve_schedules"})
+    if allowed:
+        connection.send_result.assert_called_once_with(5, payload)
+    else:
+        connection.send_result.assert_not_called()
+        connection.send_error.assert_called_once_with(5, "unauthorized", "Unauthorized")

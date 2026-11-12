@@ -2918,3 +2918,38 @@ test('standby and stopped share section configuration with the clock in both ada
     assert.equal(render(true).includes('Battery charge'),!adapt);
   }
 });
+
+// ---- Audit 2026-11-12 #06: readings in whatever unit the user set a sensor to show ----
+test('safety: a healthy Fahrenheit or Kelvin temperature is not a fault, a hot one is',()=>{
+  const x=setupSafety();
+  x.states['sensor.box']={state:'104',attributes:{unit_of_measurement:'°F'}};
+  x.states['sensor.plug']={state:'303.15',attributes:{unit_of_measurement:'K'}};
+  x.card.hass=x.hass;
+  assert.equal(x.card._safetyStatus(),'good');
+  x.states['sensor.box']={state:'185',attributes:{unit_of_measurement:'°F'}};
+  x.card.hass=x.hass;
+  assert.equal(x.card._safetyStatus(),'bad');
+});
+test('safety: leakage shown in A still trips the 30 mA threshold and reads in mA',()=>{
+  const x=setupSafety();
+  x.states['sensor.leak']={state:'0.04',attributes:{unit_of_measurement:'A'}};
+  x.card.hass=x.hass;
+  assert.equal(x.card._safetyStatus(),'bad');
+  assert.equal(x.card._safetyReadings().leak,40);
+});
+test('safety: a reading in a unit that is not its measurement is no reading',()=>{
+  const x=setupSafety();
+  x.states['sensor.box']={state:'500',attributes:{unit_of_measurement:'W'}};
+  x.card.hass=x.hass;
+  assert.equal(x.card._safetyReadings().box,null);
+});
+test('power shown in kW, voltage in kV and energy in Wh read as the card units',()=>{
+  const x=setupAll({sections:['basic_info','session'],over:{
+    power:['sensor.power',3.62,{unit_of_measurement:'kW'}],
+    voltage:['sensor.voltage',0.227,{unit_of_measurement:'kV'}],
+    session_energy:['sensor.se',15580,{unit_of_measurement:'Wh'}]}});
+  const html=x.html();
+  assert.match(html,/3\.6<small>kW/);
+  assert.match(html,/227<small>V/);
+  assert.match(html,/16<small>kWh|15\.6<small>kWh/);
+});

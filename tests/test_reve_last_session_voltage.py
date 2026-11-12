@@ -212,3 +212,115 @@ def test_a_station_without_a_session_leaves_the_sensor_unknown(monkeypatch: pyte
     assert sensor.native_value is None
     assert sensor.available is True
     assert reve.NO_SESSION["stop_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-11-12 #03/#04: reads run in the background, and a burst that
+# ended on a failed read is owed: a later successful poll retries it, at most
+# every few minutes, until the station answers.
+# ---------------------------------------------------------------------------
+
+def _owed_fixture(monkeypatch: pytest.MonkeyPatch):
+    from custom_components.eveus import reve_sensors
+
+    charger, updater = _known(monkeypatch)
+    _station(charger, _ITEM)
+    found, _ = _setup(updater)
+    sensor = found["last_session_min_voltage"]
+
+    async def no_wait(*_args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(reve_sensors.asyncio, "sleep", no_wait)
+    clock = [1000.0]
+    monkeypatch.setattr(reve_sensors.time, "monotonic", lambda: clock[0])
+    reads: list[None] = []
+    original = updater.async_read_last_session
+
+    async def counted() -> Any:
+        reads.append(None)
+        return await original()
+
+    updater.async_read_last_session = counted
+    tasks: list[asyncio.Task[Any]] = []
+
+    def background(coro: Any, name: str, **_kw: Any) -> asyncio.Task[Any]:
+        task = asyncio.get_running_loop().create_task(coro)
+        tasks.append(task)
+        return task
+
+    sensor.hass = SimpleNamespace(async_create_background_task=background)
+    updater.last_update_success = True
+    return charger, updater, sensor, clock, reads, tasks
+
+
+async def _settle(tasks: list[asyncio.Task[Any]]) -> None:
+    await asyncio.gather(*tasks)
+
+
+def test_an_exhausted_read_is_retried_once_the_api_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater, sensor, clock, reads, tasks = _owed_fixture(monkeypatch)
+
+    async def scenario() -> None:
+        charger.graphql_status = 500
+        sensor._start_reads((0.0, 30.0, 60.0), None)
+        await _settle(tasks)
+        assert sensor.native_value is None and len(reads) == 3
+        charger.graphql_status = 200
+        await updater._async_update_data()
+        sensor._handle_coordinator_update()
+        await _settle(tasks)
+        assert sensor.native_value == 221
+        # Settled: later polls read nothing more.
+        clock[0] += 3600
+        sensor._handle_coordinator_update()
+        await _settle(tasks)
+        assert len(reads) == 4
+
+    asyncio.run(scenario())
+
+
+def test_an_owed_read_backs_off_while_the_api_stays_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, _updater_, sensor, clock, reads, tasks = _owed_fixture(monkeypatch)
+
+    async def scenario() -> None:
+        charger.graphql_status = 500
+        sensor._start_reads((0.0,), None)
+        await _settle(tasks)
+        sensor._handle_coordinator_update()
+        await _settle(tasks)
+        assert len(reads) == 2
+        clock[0] += 60
+        sensor._handle_coordinator_update()
+        await _settle(tasks)
+        assert len(reads) == 2, "an owed read must not be retried on every poll"
+        clock[0] += 300
+        sensor._handle_coordinator_update()
+        await _settle(tasks)
+        assert len(reads) == 3
+
+    asyncio.run(scenario())
+
+
+def test_an_owed_read_waits_for_a_successful_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger, updater, sensor, _clock, reads, tasks = _owed_fixture(monkeypatch)
+
+    async def scenario() -> None:
+        charger.graphql_status = 500
+        sensor._start_reads((0.0,), None)
+        await _settle(tasks)
+        updater.last_update_success = False
+        sensor._handle_coordinator_update()
+        await _settle(tasks)
+        assert len(reads) == 1
+
+    asyncio.run(scenario())
+
+
+def test_a_restored_voltage_shown_in_kv_is_read_back_in_volts(monkeypatch: pytest.MonkeyPatch) -> None:
+    _charger, updater = _known(monkeypatch)
+    sensor = _setup(updater)[0]["last_session_min_voltage"]
+    asyncio.run(sensor._async_restore_state(
+        SimpleNamespace(state="0.221", attributes={"unit_of_measurement": "kV"})
+    ))
+    assert sensor.native_value == 221

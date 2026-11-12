@@ -301,3 +301,29 @@ def test_card_behaviour_suite_passes_in_node():
     result = subprocess.run([node, "--test", "--test-reporter=tap", str(suite)], capture_output=True, text=True, timeout=120, check=False)
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
     assert "# fail 0" in result.stdout
+
+
+def test_card_entities_hide_entities_the_user_cannot_read():
+    """Audit 2026-11-12 #08: no enumeration of unreadable chargers/entities."""
+    from homeassistant.auth.permissions.const import POLICY_READ
+
+    registry = {
+        "e1": [_reg_entry("eveus_state", "sensor.hidden_state", device_id="dev1")],
+        "e2": [
+            _reg_entry("eveus2_state", "sensor.second_state", device_id="dev2"),
+            _reg_entry("eveus2_soc_percent", "sensor.second_soc", device_id="dev2"),
+        ],
+    }
+    connection = MagicMock()
+    connection.user.permissions.access_all_entities.side_effect = lambda policy: False
+    connection.user.permissions.check_entity.side_effect = (
+        lambda entity_id, policy: policy == POLICY_READ and entity_id == "sensor.second_state"
+    )
+    with patch.object(eveus.er, "async_get", return_value=object()), patch.object(
+        eveus.er, "async_entries_for_config_entry", side_effect=lambda _reg, entry_id: registry.get(entry_id, [])
+    ):
+        eveus._ws_card_entities(_ws_hass(["e1", "e2"]), connection, {"id": 7, "type": "eveus/card_entities"})
+    connection.send_result.assert_called_once()
+    result = connection.send_result.call_args[0][1]
+    assert result["device_id"] == "dev2"
+    assert set(result["entities"].values()) == {"sensor.second_state"}
