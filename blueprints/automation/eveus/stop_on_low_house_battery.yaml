@@ -86,15 +86,19 @@ trigger_variables:
 triggers:
   # Held for two minutes so an inrush sag — a well pump, a kettle — cannot end
   # the charging session on its own. A sensor that has no number counts as not
-  # low, so an unavailable one never stops the charge.
+  # low, so an unavailable one never stops the charge. Voltage is converted to
+  # volts from the sensor's unit (none means V); a non-voltage unit has no number.
   - trigger: template
     value_template: >-
       {% set soc = states(soc_sensor) if soc_sensor else none %}
-      {% set volt = states(volt_sensor) if volt_sensor else none %}
+      {% set scale = {'V': 1, 'mV': 0.001, 'μV': 0.000001, 'µV': 0.000001, 'kV': 1000, 'MV': 1000000} %}
+      {% set unit = (state_attr(volt_sensor, 'unit_of_measurement') if volt_sensor else none) or 'V' %}
+      {% set raw = states(volt_sensor) if volt_sensor else none %}
+      {% set volt = (raw | float) * scale[unit] if is_number(raw) and unit in scale else none %}
       {% set soc_low = mode in ['soc', 'either'] and is_number(soc)
          and soc | float < soc_limit | float %}
-      {% set volt_low = mode in ['voltage', 'either'] and is_number(volt)
-         and volt | float < volt_limit | float %}
+      {% set volt_low = mode in ['voltage', 'either'] and volt is not none
+         and volt < volt_limit | float %}
       {{ soc_low or volt_low }}
     for: "00:02:00"
 

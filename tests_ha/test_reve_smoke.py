@@ -84,6 +84,10 @@ async def test_reve_charger_publishes_its_real_settings(
     graphql_calls = [call for call in aioclient_mock.mock_calls if str(call[1]).endswith("/graphql")]
     # One read right after /main recognised the firmware: the measurements
     # with the schedules and rates.
+    # The Last Session voltages are one more read, once, shared by both sensors.
+    sessions = [c for c in graphql_calls if json.loads(c[2])["operationName"] == "ListSessions"]
+    assert len(sessions) == 1
+    graphql_calls = [c for c in graphql_calls if c not in sessions]
     assert len(graphql_calls) == 1
     query = json.loads(graphql_calls[0][2])["query"]
     assert query.count("stationState") == 1
@@ -105,3 +109,97 @@ async def test_reve_raw_leak_counts_raise_no_repair(
         if domain == DOMAIN and "leakage" in issue_id
     ]
     assert issues == []
+
+
+async def _voltage_sensor_after_station_reads(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, monkeypatch: pytest.MonkeyPatch,
+    station: list[dict],
+):
+    """Set up REVE with the station's newest session record read from ``station[0]``."""
+    from custom_components.eveus import reve_sensors
+    from custom_components.eveus.common_network import EveusUpdater
+
+    async def no_wait(*_args) -> None:
+        return None
+
+    async def newest(_updater) -> dict:
+        return dict(station[0])
+
+    monkeypatch.setattr(EveusUpdater, "async_read_last_session", newest)
+    monkeypatch.setattr(reve_sensors.asyncio, "sleep", no_wait)
+    await _setup_reve(hass, aioclient_mock)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    return f"sensor.{_PREFIX}_last_session_min_voltage"
+
+
+async def test_last_session_voltage_follows_the_session_reve_closes_at_unplug(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REVE stores a session when the car is unplugged, not when the charge
+    completes (live 2026-11-08: Charge Complete 10:02:10, unplug 10:05:31,
+    stopAt 10:05:26). The reads after the finish find the older session; the
+    unplug must read the station again."""
+    import time
+
+    from custom_components.eveus.const import EVENT_CAR_DISCONNECTED, EVENT_CHARGING_FINISHED
+
+    finished = int(time.time()) - 4 * 3600
+    station = [{"min": 215, "max": 229, "stop_at": finished}]
+    entity_id = await _voltage_sensor_after_station_reads(hass, aioclient_mock, monkeypatch, station)
+    assert hass.states.get(entity_id).state == "215"
+
+    hass.bus.async_fire(EVENT_CHARGING_FINISHED, {"device_number": 1})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert hass.states.get(entity_id).state == "215", "the station has not stored the session yet"
+
+    station[0] = {"min": 221, "max": 231, "stop_at": int(time.time())}
+    hass.bus.async_fire(EVENT_CAR_DISCONNECTED, {"device_number": 1})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert hass.states.get(entity_id).state == "221"
+
+
+async def test_last_session_voltage_does_not_trust_the_charger_clock(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The station stamps a session by its own clock. Five minutes behind Home
+    Assistant (under the 10-minute drift the card calls wrong) the session that
+    just ended is still the new one: it differs from the session shown."""
+    import time
+
+    from custom_components.eveus.const import EVENT_CHARGING_FINISHED
+
+    station = [{"min": 215, "max": 229, "stop_at": int(time.time()) - 86400}]
+    entity_id = await _voltage_sensor_after_station_reads(hass, aioclient_mock, monkeypatch, station)
+    assert hass.states.get(entity_id).state == "215"
+
+    station[0] = {"min": 221, "max": 231, "stop_at": int(time.time()) - 300}
+    hass.bus.async_fire(EVENT_CHARGING_FINISHED, {"device_number": 1})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert hass.states.get(entity_id).state == "221"
+
+
+async def test_last_session_voltage_retries_do_not_block_startup(hass) -> None:
+    """Audit 2026-11-12 #03: the optional station read is background work."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from custom_components.eveus.common_network import EveusUpdater
+    from custom_components.eveus.const import MODEL_16A
+    from custom_components.eveus.reve_sensors import create_reve_last_session_sensors
+    from tests_ha.conftest import _entry
+
+    updater = EveusUpdater(host=HOST, username="", password="", hass=hass,
+                           config_entry=_entry(hass, HOST), device_number=1, model=MODEL_16A)
+    sensor = create_reve_last_session_sensors(updater)[0]
+    sensor.hass = hass
+    sensor.async_refresh_from_station = AsyncMock(return_value=False)
+    sensor._start_reads((0.0, 30.0, 60.0), None)
+    task = sensor._read_task
+    try:
+        await asyncio.sleep(0)
+        assert task not in hass._tasks
+        await hass.async_block_till_done()
+        assert not task.done(), "startup work must not wait for the retry sleeps"
+    finally:
+        sensor._cancel_reads()
+        await asyncio.gather(task, return_exceptions=True)

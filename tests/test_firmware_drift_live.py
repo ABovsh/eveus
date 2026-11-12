@@ -150,6 +150,10 @@ def test_live_reve_graphql_schedules_and_rates_parse() -> None:
     missing = [".".join(path) for path in _EXPECTED_PATHS if not _reported(station, path)]
     assert not missing, f"REVE no longer reports {missing}"
     assert parse_extras({"stationData": station}).schedules == extras.schedules
+    # Newer REVE reports the adaptive limit via GraphQL. Compare only while
+    # idle: a running adaptive charge can change between these two requests.
+    if "adaptiveModeCurrent" in station and station.get("stationState") == 2:
+        assert station["adaptiveModeCurrent"] == _fetch_live()["aiModecurrent"]
 
 
 def _graphql(document: str) -> dict:

@@ -712,3 +712,15 @@ def test_buttons_and_selects_say_the_reve_interface_is_not_answering(
 
     with pytest.raises(HomeAssistantError, match="REVE interface is not answering"):
         _press_or_select(entity)
+
+
+def test_no_mutation_starts_once_the_updater_shuts_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit 2026-11-12 #10: the one boundary every REVE write passes."""
+    from custom_components.eveus.reve import ReveCommandAbandoned
+
+    charger, updater = _known(monkeypatch)
+    charger.calls.clear()
+    updater._shutting_down = True
+    with pytest.raises(ReveCommandAbandoned):
+        asyncio.run(updater._reve._mutate({"stationCurrent": 10}))
+    assert _inputs(charger) == []

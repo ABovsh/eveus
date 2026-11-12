@@ -16,7 +16,7 @@ from .config_flow import (
     build_user_data_schema,
     validate_input,
 )
-from .const import CONF_SOC_MODE, DOMAIN, get_soc_mode
+from .const import CONF_SCHEME, CONF_SOC_MODE, DEFAULT_SCHEME, DOMAIN, get_soc_mode
 
 
 
@@ -64,7 +64,14 @@ class InvalidConfigRepairFlow(RepairsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                info = await validate_input(self.hass, user_input)
+                # The form infers the scheme from a typed prefix. A bare host
+                # must keep the entry's stored transport (same seeding as the
+                # reconfigure flow), before the first credentialed request.
+                repair_input = {
+                    CONF_SCHEME: entry.data.get(CONF_SCHEME, DEFAULT_SCHEME),
+                    **user_input,
+                }
+                info = await validate_input(self.hass, repair_input)
                 entry_data = _merge_entry_data(entry.data, info["data"])
                 # Repair edits connection details only; its form omits the SOC
                 # chooser, so re-assert the stored mode (normalize defaults an

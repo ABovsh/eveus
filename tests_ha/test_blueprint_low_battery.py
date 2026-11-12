@@ -159,3 +159,20 @@ async def test_either_mode_with_one_sensor_missing_still_uses_the_other(hass):
     await hass.async_block_till_done()
     await _wait(hass, HOLD + timedelta(seconds=5))
     assert len(calls) == 1
+
+
+# Audit 2026-11-12 #07: the volt limit holds in any sensor unit.
+@pytest.mark.parametrize(
+    ("healthy", "low", "unit"),
+    [("52000", "46500", "mV"), ("0.052", "0.0465", "kV"), ("52", "46.5", "V")],
+)
+async def test_low_battery_voltage_is_compared_in_volts(hass: HomeAssistant, healthy, low, unit) -> None:
+    attributes = {"unit_of_measurement": unit, "device_class": "voltage"}
+    hass.states.async_set(VOLT, healthy, attributes)
+    calls = await _setup(hass, stop_mode="voltage", battery_voltage=VOLT, voltage_threshold=48)
+    await _wait(hass, timedelta(minutes=2, seconds=5))
+    assert _stopped(calls) == []
+    hass.states.async_set(VOLT, low, attributes)
+    await hass.async_block_till_done()
+    await _wait(hass, timedelta(minutes=2, seconds=5))
+    assert _stopped(calls) == [STOP]

@@ -18,7 +18,7 @@ from .ev_sensors import (
     EVSocPercentSensor,
     TimeToTargetSocSensor,
 )
-from .reve_sensors import create_reve_station_sensors
+from .reve_sensors import create_reve_last_session_sensors, create_reve_station_sensors
 from .session_history import create_last_session_sensors
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,7 +69,12 @@ async def async_setup_entry(
         if added or getattr(updater, "firmware_family", FAMILY_CLASSIC) != FAMILY_REVE:
             return
         added = True
-        async_add_entities(create_reve_station_sensors(updater, device_number))
+        async_add_entities(
+            [
+                *create_reve_station_sensors(updater, device_number),
+                *create_reve_last_session_sensors(updater, device_number),
+            ]
+        )
 
     _add_reve_station_sensors()
     if not added:

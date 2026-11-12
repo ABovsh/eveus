@@ -297,6 +297,12 @@
       "last_session_duration": {
         "name": "Last Session Duration"
       },
+      "last_session_min_voltage": {
+        "name": "Last Session Min Voltage"
+      },
+      "last_session_max_voltage": {
+        "name": "Last Session Max Voltage"
+      },
       "reve_free_memory": {
         "name": "REVE Free Memory"
       },

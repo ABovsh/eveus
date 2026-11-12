@@ -58,9 +58,11 @@ from .client import UPDATE_TIMEOUT_OBJ, basic_auth, fetch_json
 from .reve import (
     FAMILY_CLASSIC,
     FAMILY_REVE,
+    REVE_LIMIT_STORE_VERSION,
     ReveApi,
     is_reve_payload,
     normalize_reve_payload,
+    reve_limit_store_key,
     snapshot_limit_refusal,
 )
 from .meter_guard import (
@@ -111,6 +113,8 @@ _UPDATE_INTERVALS = {
 # deadline far in the future) can't strand the charger as unavailable: a
 # remaining wait beyond this means the clock moved.
 _MAX_OFFLINE_BACKOFF = min(30, OFFLINE_UPDATE_INTERVAL // 2)
+# Sensors asking for the last session in the same moment share one read.
+LAST_SESSION_SHARE_SECONDS = 10.0
 
 
 class EveusUnreachable(UpdateFailed):
@@ -320,6 +324,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._meter_saved: dict[str, float] = {}
         self._meter_saved_at: float | None = None
         self._reve = ReveApi(self)
+        self._reve.on_limit_values_changed = self._save_reve_limits
+        self._limit_store: Store | None = None
+        self._limits_saved: dict[str, int | float] = {}
+        self._limits_save_pending = False
+        self._last_session_lock = asyncio.Lock()
+        self._last_session_read: tuple[float, dict[str, Any]] | None = None
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
         # availability grace window keeps republishing the reading behind it.
@@ -395,6 +405,24 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """REVE_PLUS 1.0.3's memory figures and start time; empty otherwise."""
         return self._reve.station_system if self._reve_seen else {}
 
+    async def async_read_last_session(self) -> dict[str, Any] | None:
+        """REVE's record of its newest finished session (voltages, end time),
+        or None: classic firmware, no session, or the read failed.
+
+        Sensors ask together; reads within ``LAST_SESSION_SHARE_SECONDS`` share
+        one answer, so a finish costs one request. A failed read is not shared.
+        """
+        if not self._reve_seen:
+            return None
+        async with self._last_session_lock:
+            now = time.monotonic()
+            cached = self._last_session_read
+            if cached is not None and now - cached[0] < LAST_SESSION_SHARE_SECONDS:
+                return cached[1]
+            result = await self._reve.read_last_session()
+            self._last_session_read = None if result is None else (time.monotonic(), result)
+            return result
+
     async def async_load_meter_baseline(self) -> None:
         """Take the lifetime meters' last accepted readings from storage, before
         the first poll: a charger that boots with them at 0 is held against
@@ -412,6 +440,81 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._meter_guard.seed(saved)
         self._meter_saved = self._meter_guard.baseline()
+
+    async def async_load_reve_limits(self) -> None:
+        """Take the REVE limit values kept by a previous run, before the first
+        poll: a value set while its limit was off lives nowhere on the charger,
+        so switching the limit on after a restart would otherwise apply the
+        charger's older one. Storage trouble leaves only what is read."""
+        entry = self.config_entry
+        if entry is None:
+            return
+        try:
+            self._limit_store = Store(self.hass, REVE_LIMIT_STORE_VERSION, reve_limit_store_key(entry.entry_id))
+            saved = await self._limit_store.async_load()
+        except Exception as err:  # noqa: BLE001
+            self._limit_store = None
+            _LOGGER.debug("Could not load the REVE limit values: %s", type(err).__name__)
+            return
+        self._reve.seed_limit_values(saved)
+        self._limits_saved = self._reve.limit_values()
+
+    def _save_reve_limits(self) -> None:
+        """Save the kept limit values when they changed (rare: a user's edit or
+        a new limit read from the charger)."""
+        store = self._limit_store
+        values = self._reve.limit_values()
+        if store is None or self._shutting_down or values == self._limits_saved:
+            return
+        self._limits_saved = values
+        self._limits_save_pending = True
+
+        def written() -> dict[str, int | float]:
+            # Called as the delayed save writes: nothing is pending after it.
+            self._limits_save_pending = False
+            return values
+
+        store.async_delay_save(written, 1)
+
+    async def _flush_reve_limits(self) -> None:
+        """Write unsaved limit values now, as the entry unloads. A delayed save
+        still pending is replaced too: removing the entry deletes the file
+        through another ``Store``, which cannot cancel it, so it would land
+        after the removal and leave the file behind."""
+        store = self._limit_store
+        values = self._reve.limit_values()
+        if store is None or (values == self._limits_saved and not self._limits_save_pending):
+            return
+        try:
+            await store.async_save(values)
+        except Exception as err:  # noqa: BLE001 - unloading must not fail on storage
+            _LOGGER.debug("Could not save the REVE limit values: %s", type(err).__name__)
+            return
+        self._limits_saved = values
+        self._limits_save_pending = False
+
+    async def _persist_meter_reset(self) -> None:
+        """Write an accepted reset to storage now, before this poll publishes it.
+
+        A meter lower than its saved reading is a reset (from Home Assistant
+        or confirmed over three polls). Left to the quarter-hour throttle, an
+        abrupt restart would seed the guard with the pre-reset reading and hold
+        the fresh zero against it, resurrecting the old count for the
+        statistics. Resets are rare, so this costs a write per reset.
+        """
+        store = self._meter_store
+        if store is None or self._shutting_down:
+            return
+        baseline = self._meter_guard.baseline()
+        saved = self._meter_saved
+        if not any(key in saved and value < saved[key] for key, value in baseline.items()):
+            return
+        try:
+            await store.async_save(baseline)
+        except Exception as err:  # noqa: BLE001 - a poll must not fail on storage
+            _LOGGER.debug("Could not save the meter readings: %s", type(err).__name__)
+            return
+        self._meter_saved, self._meter_saved_at = baseline, time.monotonic()
 
     def _save_meter_baseline(self) -> None:
         """Save the accepted readings once they changed; between saves only
@@ -461,6 +564,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return None
         extras = self._reve.extras
         return () if extras is None else extras.schedules
+
+    @property
+    def session_energy_measured(self) -> bool:
+        """Whether the last poll measured the session counters itself. REVE's
+        ``/main`` fallback shows the last GraphQL session for a while; that is
+        fine to display, but must not anchor a new calculation."""
+        return not self._reve_seen or self._reve.session_measured
 
     def reve_card_schedules(self) -> dict[str, Any]:
         """The schedules and rates as the card shows them, and how old the read
@@ -804,6 +914,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
         await self._flush_meter_baseline()
+        await self._flush_reve_limits()
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
         if self._init_fw_task is not None:
@@ -1496,6 +1607,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 self._reve.manual_mode.observe(new_data)
             new_data = self._meter_guard.apply(new_data)
+            await self._persist_meter_reset()
             self._save_meter_baseline()
             # Parse AFTER the legacy translation (this coordinator owns the
             # fw-1.x latch), and BEFORE _record_success, which notifies the

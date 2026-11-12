@@ -1309,3 +1309,30 @@ def test_reve_enforces_without_suspendlimits():
     ctrl.set_enabled(True)
     ctrl.process()
     updater.send_command.assert_called()
+
+
+def test_no_stop_on_session_energy_held_over_from_an_earlier_read():
+    """Audit 2026-11-12 #01 sibling: REVE's /main fallback shows the last
+    GraphQL session for a while. After a replug the integration did not see,
+    that is the previous session's energy; a Stop must wait for a poll that
+    measured the counter itself."""
+    calc = _calc(target=80, initial=20, cap=50, corr=0)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    updater.session_energy_measured = False
+    ctrl, scheduled, _events = _make(calc, updater)
+    ctrl.set_enabled(True)
+    ctrl.process()
+    assert scheduled == []
+    updater.session_energy_measured = True
+    ctrl.process()
+    assert len(scheduled) == 1
+
+
+def test_a_queued_stop_is_dropped_when_the_energy_is_no_longer_measured():
+    calc = _calc(target=80, initial=20, cap=50, corr=0)
+    updater = _updater(state=4, session_energy=30.0, ev=0)
+    ctrl, _scheduled, _events = _make(calc, updater)
+    ctrl.set_enabled(True)
+    generation = ctrl._generation
+    updater.session_energy_measured = False
+    assert ctrl._stop_still_due(generation) is False

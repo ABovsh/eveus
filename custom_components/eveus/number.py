@@ -756,6 +756,12 @@ class EveusInitialSocNumber(EveusSocConfigNumber):
             self._note_session_clock(self._updater.snapshot.session_time_s)
         if self._session_seeded or state not in SESSION_ACTIVE_STATES:
             return
+        if not getattr(self._updater, "session_energy_measured", True):
+            # REVE's /main fallback holds the last GraphQL session: rebasing a
+            # live car reading against that older energy would bias the anchor
+            # for the rest of the session. Seeding stays armed for the next
+            # poll that measures it.
+            return
         entity_id = self._external_soc_entity_id()
         if not entity_id or self.hass is None:
             return

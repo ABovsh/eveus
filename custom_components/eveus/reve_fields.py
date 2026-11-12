@@ -5,10 +5,10 @@ as well, under other names and partly in other units. This table is the one
 place that says which is which, so a GraphQL reply can be turned into the very
 ``/main`` keys the entities already read.
 
-Every GraphQL field named here comes from the ``StationData`` document of the
-web app REVE serves itself (at ``/``; it polls that document every 4 s). The
-REVE server silently drops a field it does not know, so a field outside that
-document would only ever read as missing; none is sent. Checked against live captures of
+Most GraphQL fields named here come from the charger's web app. The optional
+``adaptiveModeCurrent`` is also reported by REVE_PLUS 1.0.5, although the
+app does not ask for it. Older firmware silently omits unknown fields.
+Checked against live captures of
 ``/main`` and ``stationData`` from a REVE Plus (REVE_PLUS_1.0.0 / 2.4.0) on
 2026-10-15: every field the two shared carried the same value, except the
 session ones ``/main`` reports frozen.
@@ -66,6 +66,7 @@ _FIELDS: Final[dict[str, tuple[str, ...]]] = {
     "evseType": ("chargerType",),
     "typeRelay": ("releType",),
     "aiStatus": ("adaptiveModeStatus",),
+    "aiModecurrent": ("adaptiveModeCurrent",),
     "aiVoltage": ("voltageThreshold",),
     "ground": ("ground",),
     "groundCtrl": ("isGroundConnected",),
@@ -123,15 +124,15 @@ MAIN_KEYS: Final[frozenset[str]] = frozenset(
 
 # Entity fields with no GraphQL source at all. Leakage is reported only as raw
 # ADC counts (``/main`` and ``serviceData`` alike); the charger has no
-# "disable limits" master or per-schedule energy cap any more; adaptive-mode
-# current and the OCPP connection flag have no field the app reads; the
-# classic ``aiMode`` write key is ``adaptiveModeStatus`` there.
+# "disable limits" master or per-schedule energy cap any more. The OCPP
+# connection flag has no known source, and the classic ``aiMode`` write key
+# is ``adaptiveModeStatus`` there. Adaptive current is optional on newer REVE.
 NO_GRAPHQL_SOURCE: Final[frozenset[str]] = frozenset(
     {
         "leakValue", "leakValueH",
         "suspendLimits",
         "sh1EnergyEnable", "sh1EnergyValue", "sh2EnergyEnable", "sh2EnergyValue",
-        "aiMode", "aiModecurrent",
+        "aiMode",
         "ocppconnected",
     }
 )

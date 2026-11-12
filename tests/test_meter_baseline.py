@@ -240,3 +240,80 @@ def test_a_saved_zero_is_a_reading_like_any_other() -> None:
     guard = MeterGuard()
     guard.seed({"IEM1_money": 0, "IEM1": 0.5})
     assert guard.baseline() == {"IEM1_money": 0, "IEM1": 0.5}
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-11-12 #09: an accepted reset (a lower meter) is written to storage
+# at once, before the poll publishes it, so an abrupt restart cannot hold the
+# fresh zero against the pre-reset reading and resurrect it. A delayed save is
+# lost with the process, so it does not count.
+# ---------------------------------------------------------------------------
+
+def _durable(store: _FakeStore) -> dict[str, Any]:
+    return store.durable[-1] if store.durable else {}
+
+
+@pytest.fixture
+def _crash_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    def delay(self: _FakeStore, data_func: Any, delay: float = 0) -> None:
+        self.saves.append(data_func())  # pending: lost on an abrupt restart
+
+    async def save(self: _FakeStore, data: Any) -> None:
+        self.saves.append(dict(data))
+        self.__dict__.setdefault("durable", []).append(dict(data))
+
+    monkeypatch.setattr(_FakeStore, "async_delay_save", delay)
+    monkeypatch.setattr(_FakeStore, "async_save", save)
+    monkeypatch.setattr(_FakeStore, "durable", [], raising=False)
+
+
+@pytest.mark.parametrize(("command", "meters"), [("rstEM1", ("IEM1", "IEM1_money")), ("rstEM2", ("IEM2", "IEM2_money"))])
+def test_a_reset_survives_an_abrupt_restart(monkeypatch: pytest.MonkeyPatch, _crash_store: None, command, meters) -> None:
+    monkeypatch.setattr(common_network, "Store", _FakeStore)
+    charger = _Charger({**_classic_main(), **{key: 100 for key in meters}})
+    updater = _updater(monkeypatch, charger)
+    updater._schedule_post_command_refresh = lambda: None
+    asyncio.run(updater.async_load_meter_baseline())
+    asyncio.run(updater._async_update_data())
+    store = _FakeStore.instances[-1]
+    assert asyncio.run(updater.send_command(command, 0, retry=False))
+    charger.main.update({key: 0 for key in meters})
+    asyncio.run(updater._async_update_data())
+    assert all(updater.snapshot.get(key) == 0 for key in meters)
+    assert all(_durable(store).get(key) == 0 for key in meters), "reset not durable before publication"
+    # Abrupt process loss: no shutdown flush, only what was written durably.
+    monkeypatch.setattr(_FakeStore, "loaded", dict(_durable(store)))
+    fresh = _updater(monkeypatch, charger)
+    asyncio.run(fresh.async_load_meter_baseline())
+    asyncio.run(fresh._async_update_data())
+    assert all(fresh.snapshot.get(key) == 0 for key in meters)
+
+
+def test_a_confirmed_app_reset_is_written_at_once(monkeypatch: pytest.MonkeyPatch, _crash_store: None) -> None:
+    from custom_components.eveus.meter_guard import METER_DROP_CONFIRM_POLLS
+
+    monkeypatch.setattr(common_network, "Store", _FakeStore)
+    charger = _Charger({**_classic_main(), "IEM1": 100})
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater.async_load_meter_baseline())
+    asyncio.run(updater._async_update_data())
+    store = _FakeStore.instances[-1]
+    charger.main["IEM1"] = 0
+    for _ in range(METER_DROP_CONFIRM_POLLS):
+        asyncio.run(updater._async_update_data())
+    assert updater.snapshot.get("IEM1") == 0
+    assert _durable(store).get("IEM1") == 0
+
+
+def test_growth_still_waits_for_the_save_interval(monkeypatch: pytest.MonkeyPatch, _crash_store: None) -> None:
+    monkeypatch.setattr(common_network, "Store", _FakeStore)
+    charger = _Charger({**_classic_main(), "IEM1": 100})
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater.async_load_meter_baseline())
+    asyncio.run(updater._async_update_data())
+    store = _FakeStore.instances[-1]
+    writes = len(store.saves)
+    charger.main["IEM1"] = 101
+    asyncio.run(updater._async_update_data())
+    assert len(store.saves) == writes
+    assert _durable(store) == {}

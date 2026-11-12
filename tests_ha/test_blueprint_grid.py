@@ -383,3 +383,38 @@ async def test_the_blueprints_drive_the_real_stop_charging_switch(hass, clock, a
     await _set(hass, VOLTAGE, 230)
     await clock.advance(hass, JUST_OVER)
     assert commands() == [{"pageevent": ["evseEnabled"], "evseEnabled": ["0"]}]
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-11-12 #07: the threshold is in volts whatever unit the sensor
+# displays. A missing unit stays volts; an unsupported unit has no number.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("blueprint", "reading", "unit", "acts"),
+    [
+        (STOP_BLUEPRINT, 0.230, "kV", False),     # healthy grid in kV
+        (STOP_BLUEPRINT, 230000, "mV", False),    # healthy grid in mV
+        (STOP_BLUEPRINT, 0.006, "kV", True),      # 6 V: no grid
+        (STOP_BLUEPRINT, 230, None, False),       # unitless template sensor = V
+        (STOP_BLUEPRINT, 230, "W", True),         # not a voltage: no number
+        (RESUME_BLUEPRINT, 6000, "mV", False),    # 6 V must not lift Stop
+        (RESUME_BLUEPRINT, 0.230, "kV", True),    # grid back, in kV
+        (RESUME_BLUEPRINT, 230, None, True),
+        (RESUME_BLUEPRINT, 230, "W", False),
+    ],
+)
+async def test_grid_threshold_is_volts_in_any_sensor_unit(hass, freezer, blueprint, reading, unit, acts):
+    on, off = _services(hass)
+    stopping = blueprint == STOP_BLUEPRINT
+    await _state(hass, volt=230 if stopping else 0, stop="off" if stopping else "on")
+    await _setup(hass, _use(blueprint))
+    attributes = {"device_class": "voltage"}
+    if unit is not None:
+        attributes["unit_of_measurement"] = unit
+    hass.states.async_set(VOLTAGE, str(reading), attributes)
+    await hass.async_block_till_done()
+    await _Clock(freezer).advance(hass, JUST_OVER)
+    acted = (on if stopping else off)
+    assert bool(acted) is acts
+    assert (off if stopping else on) == []

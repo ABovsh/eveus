@@ -24,7 +24,9 @@ from .utils import (
     price_energy_over_tariffs,
 )
 from .const import (
+    CONNECTED_STATES,
     DEFAULT_SOC_CORRECTION,
+    PLUG_UNKNOWN_STATES,
     soc_update_signal,
 )
 
@@ -353,15 +355,18 @@ class BaseEVHelperSensor(EveusSensorBase):
         """Session kWh delivered, 0.0 before a session, None when unusable.
 
         A present-but-corrupt reading is always unusable. The field being
-        absent entirely means 0 kWh delivered before a session starts, but
-        during an ACTIVE session it is anomalous telemetry: falling back to 0
-        would snap every from-initial-SOC figure back to the session start.
+        absent means 0 kWh delivered only while the car is known to be
+        unplugged. Inside a plug-in cycle (Connected, Charging, Paused,
+        Complete) or with the plug hidden (Error), energy may already be on
+        the meter: falling back to 0 would publish Initial SOC as the
+        battery's level, e.g. 100 % -> 20 % after a full charge.
         """
         if self._session_energy_is_invalid():
             return None
         energy_charged = self._get_energy_charged()
         if energy_charged is None:
-            if self._updater.snapshot.session_active is True:
+            state = self._updater.snapshot.known_state
+            if state is None or state in CONNECTED_STATES or state in PLUG_UNKNOWN_STATES:
                 return None
             energy_charged = 0.0
         return energy_charged

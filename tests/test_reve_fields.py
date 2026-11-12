@@ -4,8 +4,8 @@ The map is checked against two live captures from the same REVE Plus
 (REVE_PLUS_1.0.0 / 2.4.0, 2026-10-15, idle): ``/main`` and a GraphQL
 ``stationData`` read an hour apart, and against the ``StationData`` document
 the charger's own web app sends (served by the charger at ``/``, polled every
-4 s). A field outside that document is one the local server may not know, and
-an unknown field stops it answering, so the map may only name fields from it.
+4 s). Newer firmware can also report fields the app never asks for; those
+require separate live evidence and remain optional on older firmware.
 """
 from __future__ import annotations
 
@@ -55,9 +55,14 @@ def _app_document_paths() -> set[tuple[str, ...]]:
     return paths
 
 
-def test_every_mapped_path_is_in_the_charger_apps_own_document() -> None:
+def test_every_mapped_path_is_in_the_app_or_verified_on_newer_firmware() -> None:
     allowed = _app_document_paths()
-    assert reve_fields.graphql_paths() <= allowed
+    assert reve_fields.graphql_paths() - allowed == {("adaptiveModeCurrent",)}
+
+
+@pytest.mark.parametrize("value", [None, True, "7", float("nan")])
+def test_invalid_adaptive_current_has_no_graphql_value(value) -> None:
+    assert "aiModecurrent" not in reve_fields.station_to_main({"adaptiveModeCurrent": value})
 
 
 def test_the_app_document_parser_sees_nested_leaves() -> None:

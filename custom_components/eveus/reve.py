@@ -64,12 +64,13 @@ from .const import (
     DEVICE_STATE_COMPLETE,
     DEVICE_STATE_STANDBY,
     MAX_RATE_HUNDREDTHS,
+    MAX_VOLTAGE_V,
     MAX_VALID_SYSTEM_TIME,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
 )
 from .reve_fields import graphql_paths, station_to_main
-from .snapshot import FIELD_KEYS
+from .snapshot import FIELD_KEYS, model_max_current
 from .utils import get_safe_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -148,6 +149,14 @@ _ADAPTIVE_MODES: Final[frozenset[int]] = frozenset({0, 1, 2})
 # Session limits: the /main number key, its on/off key, the GraphQL session
 # field, and the factor from /main read units to write units (the energy
 # limit reads in kWh and is written in Wh, as /pageEvent takes it too).
+REVE_LIMIT_STORE_VERSION: Final = 1
+
+
+def reve_limit_store_key(entry_id: str) -> str:
+    """The entry-scoped storage key for the limit values Home Assistant keeps."""
+    return f"eveus_reve_limits_{entry_id}"
+
+
 _LIMIT_WRITES: Final[tuple[tuple[str, str, str, int], ...]] = (
     ("energyLimit", "energyLimitS", "energyLimit", 1000),
     ("timeLimit", "timeLimitS", "timeLimit", 1),
@@ -246,6 +255,7 @@ _MEASUREMENT_FIELDS: Final = """
             chargerType
             releType
             adaptiveModeStatus
+            adaptiveModeCurrent
             voltageThreshold
             ground
             isGroundConnected
@@ -344,8 +354,8 @@ MAIN_ONLY_FIELDS: Final[frozenset[str]] = frozenset(
 )
 MAIN_RESIDUE_REFRESH_SECONDS: Final = 300
 MAIN_RESIDUE_MAX_AGE_SECONDS: Final = 3600
-# The adaptive current is one of them, and it moves while an adaptive charge
-# runs (7 -> 11 -> 16 -> 10 A on 2026-10-16/17). During such a session /main is
+# On older REVE firmware the adaptive current is one of them, and it moves
+# during an adaptive charge (7 -> 11 -> 16 -> 10 A on 2026-10-16/17). /main is
 # read about once a minute for as long as its last read answered: the current
 # changed 2.6 times an hour over 16 charging hours (median gap 370 s; only the
 # start ramp moves within seconds), so a minute shows every change a chart can
@@ -358,12 +368,13 @@ ADAPTIVE_MAIN_REFRESH_SECONDS: Final = 50
 # 2026-10-17, while the next read, a minute later, answered.
 API_DOWN_AFTER_FAILURES: Final = 2
 
-# Every field a measurements read asks for. The server answers a field it does
+# Fields expected on all supported REVE firmware. The server answers a field it does
 # not know with nothing (checked 2026-10-16), so a field a firmware update
 # renamed would leave its entities quietly without a value: one missing from
-# this many reads in a row is reported (diagnostics and a repair notice).
+# this many reads in a row is reported (diagnostics and a repair notice). The
+# adaptive current is optional because older firmware does not report it.
 _EXPECTED_PATHS: Final[tuple[tuple[str, ...], ...]] = tuple(
-    sorted(graphql_paths() | {("chargingCommand",)})
+    sorted((graphql_paths() - {("adaptiveModeCurrent",)}) | {("chargingCommand",)})
 )
 FIELDS_MISSING_READS: Final = 3
 
@@ -380,6 +391,10 @@ UPDATE_MUTATION: Final = """mutation UpdateStationData($input: StationDataInput!
 
 class ReveCommandUnsupported(Exception):
     """A setting REVE has no place for (or a schedule slot it does not have)."""
+
+
+class ReveCommandAbandoned(Exception):
+    """A write not sent because its entry is unloading: the command fails."""
 
 
 def is_reve_payload(data: Mapping[str, Any]) -> bool:
@@ -708,6 +723,45 @@ def _station_system(station: Mapping[str, Any]) -> dict[str, Any]:
     return system
 
 
+# The station's own record of its newest finished session: when it ended and
+# the lowest and highest mains voltage on phase A (REVE is one-phase; B and C
+# hold 999/0 placeholders). A fixed document, like every other one here.
+LAST_SESSION_QUERY: Final = """query ListSessions($limit: Int, $offset: Int) {
+        listSessions(limit: $limit, offset: $offset) {
+            items { stopAt minVoltageA maxVoltageA }
+        }
+    }"""
+
+
+NO_SESSION: Final[dict[str, Any]] = {"min": None, "max": None, "stop_at": None}
+
+
+def _plausible_volts(value: Any) -> int | None:
+    """A whole-volt reading, or None for a placeholder (0, 999) or junk."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not 0 < value <= MAX_VOLTAGE_V:
+        return None
+    return round(value)
+
+
+def parse_last_session_voltage(items: Any) -> dict[str, Any] | None:
+    """``{"min", "max", "stop_at"}`` of the newest session in ``items``; a
+    voltage the station did not record is None. None when there is no usable
+    session. (``NO_SESSION`` is what a reachable station with none reads as.)"""
+    if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+        return None
+    item = items[0]
+    stop_at = item.get("stopAt")
+    if isinstance(stop_at, bool) or not isinstance(stop_at, int) or stop_at <= 0:
+        return None
+    low = _plausible_volts(item.get("minVoltageA"))
+    high = _plausible_volts(item.get("maxVoltageA"))
+    if low is not None and high is not None and low > high:
+        low = high = None
+    return {"min": low, "max": high, "stop_at": stop_at}
+
+
 def _is_no_sensor_reading(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
@@ -957,11 +1011,25 @@ class ReveApi:
         self._residue_tried_at: float | None = None
         self._residue_answered = False
         self._session: tuple[dict[str, Any], float] | None = None
+        # Whether the last poll's session fields were measured by it (GraphQL),
+        # not held over from an earlier read under a /main fallback.
+        self._session_measured = True
         self._session_unplugged = False  # pragma: no mutate - until a session is held it can only clear the empty one; holding one sets it
         # A limit's value in /main read units, kept while the limit is off
         # (REVE then reports null) so its number shows what switching it back
         # on would apply.
         self._limit_values: dict[str, int | float] = {}
+        # Polls and commands hold different locks, so a read can start before
+        # a write and land after it. Every write moves the epoch on as it
+        # starts and as it ends; a read that saw the epoch move (or began
+        # mid-write) may not replace what the write set: the remembered limit
+        # values, the charging command, the manual-mode report.
+        # Told when a kept limit value changes, so the updater can save it:
+        # a value set while its limit is off lives nowhere on the charger.
+        self.on_limit_values_changed: Callable[[], None] | None = None
+        self._write_epoch = 0
+        self._writes_in_flight = 0
+        self._measure_mark: int | None = None
         self.manual_mode = ManualMode()
         self._station_system: dict[str, Any] = {}
         self._started_at: int | None = None
@@ -986,10 +1054,29 @@ class ReveApi:
             return False
         return self._fetched_at is None or now - self._fetched_at >= EXTRAS_REFRESH_SECONDS
 
+    def _read_mark(self) -> int | None:
+        """Taken as a read starts: ``None`` while a write is in flight."""
+        return None if self._writes_in_flight else self._write_epoch
+
+    def _read_current(self, mark: int | None) -> bool:
+        """Whether no write started or ended since ``mark`` was taken."""
+        return mark is not None and mark == self._write_epoch and not self._writes_in_flight
+
+    def _keep_written(self, extras: ReveExtras) -> ReveExtras:
+        """A read older than the last write: keep what writes set, the charging
+        command and the schedules (the read also restarts the settings clock,
+        so its older schedules would stand for minutes)."""
+        held = self._extras
+        if held is None:
+            return extras
+        return replace(extras, charging_command=held.charging_command, schedules=held.schedules)
+
     async def refresh(self) -> None:
         """Re-read schedules and rates now; a failure only schedules the retry."""
         try:
-            self._store(await self._read_extras())
+            mark = self._read_mark()
+            extras = await self._read_extras()
+            self._store(extras if self._read_current(mark) else self._keep_written(extras))
         except asyncio.CancelledError:
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
@@ -1023,11 +1110,17 @@ class ReveApi:
         Asks for the settings too when they are due and the last read of them
         did not fail."""
         with_settings = self._settings_streak == 0 and self._settings_due(time.monotonic())
+        mark = self._measure_mark = self._read_mark()
         try:
             station = await self._station(
                 MEASUREMENTS_AND_SETTINGS_QUERY if with_settings else MEASUREMENTS_QUERY
             )
             main = station_to_main(station)
+            adaptive_current = main.get("aiModecurrent")
+            if adaptive_current is not None and not (
+                0 <= adaptive_current <= model_max_current(self._updater._model)
+            ):
+                del main["aiModecurrent"]
             if "state" not in main:
                 raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
             if validate is not None:
@@ -1048,17 +1141,20 @@ class ReveApi:
         self._check_fields(station)
         self._last_error = None
         self._last_source = "graphql"
+        current = self._read_current(mark)
         if extras is not None:
-            self._store(extras)
+            self._store(extras if current else self._keep_written(extras))
         self._session = (
             {key: main[key] for key in SESSION_FIELDS if key in main},
             time.monotonic(),
         )
+        self._session_measured = True
         self._session_unplugged = main.get("state") == DEVICE_STATE_STANDBY
-        self._note_charging_command(station.get("chargingCommand"))
+        if current:
+            self._note_charging_command(station.get("chargingCommand"))
+            self.manual_mode.report(station.get(_MANUAL_CONTROL))
         rates = station.get("ratesV2")
         self._note_active_rate(_price(rates.get("activeRate")) if isinstance(rates, dict) else None)
-        self.manual_mode.report(station.get(_MANUAL_CONTROL))
         self._station_system = _station_system(station)
         uptime = station.get(_UPTIME)
         if type(uptime) is int:
@@ -1088,9 +1184,13 @@ class ReveApi:
         """The measurements with what only ``/main`` carries laid under them,
         and a limit that is off showing the value it was last set to."""
         payload = dict(measurements)
+        # A read that overlapped a write shows what it read, but the values
+        # kept for switching a limit back on stay the written ones.
+        current = self._read_current(self._measure_mark)
         for key, _flag, _field, _factor in _LIMIT_WRITES:
             if key in payload:
-                self._limit_values[key] = payload[key]
+                if current:
+                    self._keep_limit_value(key, payload[key])
             elif key in self._limit_values:
                 payload[key] = self._limit_values[key]
         fresh = self._residue_fresh(time.monotonic())
@@ -1100,6 +1200,12 @@ class ReveApi:
         return payload
 
     @property
+    def session_measured(self) -> bool:
+        """False while the session fields are the held GraphQL ones (or left
+        out) under a ``/main`` fallback: shown, but not measured this poll."""
+        return self._session_measured
+
+    @property
     def last_source(self) -> str | None:
         """Which API answered the last poll: ``graphql`` or ``main``."""
         return self._last_source
@@ -1107,7 +1213,8 @@ class ReveApi:
     def main_residue_due(self, measurements: Mapping[str, Any] | None = None) -> bool:
         """Whether a GraphQL poll should also read ``/main`` for its own fields:
         every five minutes, whether or not the last try found ``/main``, and
-        once a minute in an adaptive session while ``/main`` answers."""
+        once a minute in an adaptive session if GraphQL lacks the current and
+        ``/main`` answers."""
         tried = self._residue_tried_at
         if tried is None:
             return True
@@ -1118,6 +1225,7 @@ class ReveApi:
             elapsed >= ADAPTIVE_MAIN_REFRESH_SECONDS
             and self._residue_answered
             and measurements is not None
+            and "aiModecurrent" not in measurements
             and measurements.get("state") in SESSION_ACTIVE_STATES
             and measurements.get("aiStatus") not in (None, 0)
         )
@@ -1141,6 +1249,7 @@ class ReveApi:
         replaced by the last GraphQL one while that is recent, else left out."""
         self.keep_main_residue(main)
         self._last_source = "main"
+        self._session_measured = False
         self.manual_mode.report(None)
         # A /main poll says nothing of the memory or the price now; the start
         # time stands, and the rate windows decide the price.
@@ -1233,7 +1342,37 @@ class ReveApi:
         written = _whole(value)
         if self._updater.snapshot.get_int(flag) == 1:
             await self._mutate({"session": {field: written}})
-        self._limit_values[key] = written / factor if factor != 1 else written
+        self._keep_limit_value(key, written / factor if factor != 1 else written)
+
+    def _keep_limit_value(self, key: str, value: int | float) -> None:
+        if self._limit_values.get(key) == value:
+            return
+        self._limit_values[key] = value
+        if self.on_limit_values_changed is not None:
+            self.on_limit_values_changed()
+
+    def limit_values(self) -> dict[str, int | float]:
+        """The kept limit values (read units), as saved for the next start."""
+        return dict(self._limit_values)
+
+    def seed_limit_values(self, saved: Any) -> None:
+        """Take the values a previous run saved, for limits not yet read.
+
+        They come back from disk: anything but a positive finite number under
+        a known limit is ignored. A limit the charger reports on still wins
+        at the first read.
+        """
+        if not isinstance(saved, Mapping):
+            return
+        for key, _flag, _field, _factor in _LIMIT_WRITES:
+            value = saved.get(key)
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and value > 0
+            ):
+                self._limit_values.setdefault(key, value)
 
     async def switch_limit(self, key: str, flag: str, field: str, factor: int, value: Any) -> None:
         """Switch a limit on with its kept (or current) value, or off: ``null``."""
@@ -1401,8 +1540,39 @@ class ReveApi:
             raise ValueError("no stationData")  # pragma: no mutate - message text; only the exception type is ever logged
         return station
 
+    async def read_last_session(self) -> dict[str, Any] | None:
+        """The newest finished session's voltages from the station, ``NO_SESSION``
+        when it answered with none, or None when it could not be read. Never
+        raises."""
+        try:
+            data = await self._post(
+                "ListSessions", LAST_SESSION_QUERY, {"limit": 1, "offset": 0}
+            )
+        except asyncio.CancelledError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            _LOGGER.debug("REVE last session read failed: %s", type(err).__name__)
+            return None
+        listing = data.get("listSessions")
+        parsed = parse_last_session_voltage(
+            listing.get("items") if isinstance(listing, dict) else None
+        )
+        return NO_SESSION if parsed is None else parsed
+
     async def _mutate(self, change: dict[str, Any]) -> None:
-        data = await self._post("UpdateStationData", UPDATE_MUTATION, {"input": change})
+        # Every REVE write passes here, including the second step of a compound
+        # one (read the schedules, then write them). The command manager checks
+        # shutdown only before dispatch; an entry that unloaded while a command
+        # awaited its read must not change the charger afterwards.
+        if getattr(self._updater, "_shutting_down", False):
+            raise ReveCommandAbandoned
+        self._write_epoch += 1
+        self._writes_in_flight += 1
+        try:
+            data = await self._post("UpdateStationData", UPDATE_MUTATION, {"input": change})
+        finally:
+            self._write_epoch += 1
+            self._writes_in_flight -= 1
         result = data.get("updateStationData")
         accepted = result is True or (
             isinstance(result, dict) and result.get("success") is True
