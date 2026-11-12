@@ -337,7 +337,7 @@ const EDITOR_I18N = {
     device: 'Charger', mode: 'Mode', modeHelp: 'Empty follows the integration', language: 'Language',
     advanced: 'Advanced', basic: 'Basic', languages: {auto: 'Home Assistant language', uk: 'Українська', en: 'English'},
     fold: 'Fold settings', foldHelp: 'Long cards show settings as one-line summaries; tap one to open it',
-    adapt: 'Fit to the charger\'s state', adaptHelp: 'With Status on the card: offline, only the status and the last session; with no car, no Battery SOC, Meter or Charger clock (the clock returns when it is wrong)',
+    adapt: 'Fit to the charger\'s state', adaptHelp: 'With Status on the card: offline, only the status and the last session; in Standby or Stopped, Battery SOC and Meter are hidden; Charger clock stays visible',
     size: 'Size', sizes: {small: 'Small', normal: 'Normal', large: 'Large'}, largeHelp: 'Large: leave two items or fewer',
   },
   uk: {
@@ -363,7 +363,7 @@ const EDITOR_I18N = {
     device: 'Станція', mode: 'Режим', modeHelp: 'Порожнє поле — як в інтеграції', language: 'Мова картки',
     advanced: 'Розширений', basic: 'Базовий', languages: {auto: 'Мова Home Assistant', uk: 'Українська', en: 'English'},
     fold: 'Згортати налаштування', foldHelp: 'Довга картка показує налаштування одним рядком; натисніть рядок, щоб розгорнути',
-    adapt: 'Підлаштовувати під стан станції', adaptHelp: 'Якщо на картці є Стан: без зв\'язку лишаються стан і остання сесія; без авто зникають Заряд батареї, Показники й Годинник станції (годинник повертається, коли він неправильний)',
+    adapt: 'Підлаштовувати під стан станції', adaptHelp: 'Якщо на картці є Стан: без зв\'язку лишаються стан і остання сесія; в очікуванні або після Стоп приховані Заряд батареї й Показники; Годинник станції залишається',
     size: 'Розмір', sizes: {small: 'Малий', normal: 'Звичайний', large: 'Великий'}, largeHelp: 'Великий: залиште не більше двох елементів',
   },
 };
@@ -1096,8 +1096,8 @@ class EveusCard extends HTMLElement {
     const time = typeof raw === 'string' && /\d/.test(raw) ? t.sessionDuration(raw.replace(/\s+/g, ' ').trim()) : null;
     const shows = (item) => this._shows('session', item);
     const items = [
-      !shows('energy') ? '' : this._infoItem('session_energy', 'mdi:lightning-bolt', e === null ? '—' : `${Number(e.toFixed(e < 100 ? 1 : 0))}<small>kWh</small>`, '', t.sessionEnergy, true),
-      this._ids.session_cost && shows('cost') ? this._infoItem('session_cost', 'mdi:cash', c === null ? '—' : money(c < 1000 ? c.toFixed(2) : this._int(c), this._state('session_cost')?.attributes?.unit_of_measurement), '', t.sessionCost, true) : '',
+      !shows('energy') ? '' : this._infoItem('session_energy', 'mdi:lightning-bolt', e === null ? '—' : `${this._int(e)}<small>kWh</small>`, '', t.sessionEnergy, true),
+      this._ids.session_cost && shows('cost') ? this._infoItem('session_cost', 'mdi:cash', c === null ? '—' : money(this._int(c), this._state('session_cost')?.attributes?.unit_of_measurement), '', t.sessionCost, true) : '',
       this._ids.session_time && shows('time') ? this._infoItem('session_time', 'mdi:timer-outline', time ?? '—', '', t.sessionTime, true) : '',
     ].join('');
     return `<section class="${['sl', 'session', on ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.session}">
@@ -1143,8 +1143,8 @@ class EveusCard extends HTMLElement {
     const stored = on ? currentNumber(this._state('soc_energy')) : null;
     // "from" only once the SOC has moved off the session's start: before that it repeats the big number.
     const moved = initial !== null && (soc === null || Math.round(soc) !== Math.round(initial));
-    const batterySub = [moved ? `${t.from} ${pc(initial)}` : '', stored === null ? '' : `≈${Number(stored.toFixed(stored < 100 ? 1 : 0))}<small>kWh</small>`].filter(Boolean).join('<i class="info-sep">·</i>');
-    const energy = et === null ? '' : `${Number(et.toFixed(et < 100 ? 1 : 0))}<small>kWh</small>`;
+    const batterySub = [moved ? `${t.from} ${pc(initial)}` : '', stored === null ? '' : `≈${this._int(stored)}<small>kWh</small>`].filter(Boolean).join('<i class="info-sep">·</i>');
+    const energy = et === null ? '' : `${this._int(et)}<small>kWh</small>`;
     const cost = ct === null ? '' : money(this._int(ct), this._state('cost_to_target_soc')?.attributes?.unit_of_measurement);
     const big = eta ?? (energy || '—');
     const toGo = (eta ? [energy, cost] : [cost]).filter(Boolean).join('<i class="info-sep">·</i>');
@@ -1874,15 +1874,8 @@ class EveusCard extends HTMLElement {
   _hidden(section) {
     if (section === 'status' || this._config.adapt === false || !this._ids?.state || !this._config.sections.includes('status')) return false;
     if (!this._online) return section !== 'session' || currentNumber(this._state('last_session_energy')) === null;
-    if (!this._unplugged) return false;
-    if (section === 'advanced_info' || section === 'basic_info') return true;
-    return section === 'time' && !this._clockWrong();
-  }
-  // The clock section stays while the clock needs a look, or a change to it is on its way.
-  _clockWrong() {
-    if (this._syncDone || this._limitPending.time_zone !== undefined || this._limitPending.follow_ha_time_zone !== undefined) return true;
-    const drift = currentNumber(this._state('time_drift'));
-    return drift !== null && Math.abs(drift) >= CLOCK_DRIFT_THRESHOLD_S;
+    if (!this._unplugged && this._statusView().cls !== 'paused') return false;
+    return section === 'advanced_info' || section === 'basic_info';
   }
   // Since when the status row's run has lasted, where the charger itself does not say: offline (the
   // first unavailable reading after the last real one) or Stop on (its first On after the last Off).
@@ -1969,7 +1962,7 @@ class EveusCard extends HTMLElement {
     if (section === 'advanced_controls') {
       const cap = currentNumber(this._state('battery_capacity'));
       return {label: t.socSettings, icon: 'mdi:tune-variant', cls: `soc-${this._socColor}`,
-        sum: `${pc('initial_soc')} → ${pc('target_soc')}${sep}${cap === null ? '—' : Number(cap.toFixed(1))}<small>kWh</small>${sep}${t.loss} ${pc('soc_correction')}`};
+        sum: `${pc('initial_soc')} → ${pc('target_soc')}${sep}${cap === null ? '—' : this._int(cap)}<small>kWh</small>${sep}${t.loss} ${pc('soc_correction')}`};
     }
     if (section === 'schedules') {
       const ignored = this._schedulesIgnored;
@@ -1985,7 +1978,7 @@ class EveusCard extends HTMLElement {
     const month = this._shows('history', 'month') && this._month?.cur != null ? `${this._monthNames('short')[0]} ${this._kwh(this._month.cur)}` : '';
     return {label: t.counters, icon: 'mdi:counter', cls: '', sum: [month, total === null ? '' : `${t.total} ${this._kwh(total)}`].filter(Boolean).join(sep)};
   }
-  _kwh(v) { return `${v < 100 ? Number(v.toFixed(1)) : this._int(v)}<small>kWh</small>`; }
+  _kwh(v) { return `${this._int(v)}<small>kWh</small>`; }
   // ---- Session: unplugged, the charger still reports the last charge as "the session". ----
   // The car_connected sensor when it exists, otherwise Standby (the state with no car).
   get _unplugged() {
@@ -2006,8 +1999,8 @@ class EveusCard extends HTMLElement {
     const volts = lows.filter((v) => v !== null).map((v) => Math.round(v));
     const range = volts.length === 2 && volts[0] !== volts[1] ? `${volts[0]}–${volts[1]}` : volts.length ? String(volts[0]) : null;
     const items = [
-      shows('energy') ? this._infoItem('last_session_energy', 'mdi:lightning-bolt', `${Number(e.toFixed(e < 100 ? 1 : 0))}<small>kWh</small>`, '', t.lastSession, true) : '',
-      this._ids.last_session_cost && shows('cost') ? this._infoItem('last_session_cost', 'mdi:cash', c === null ? '—' : money(c < 1000 ? c.toFixed(2) : this._int(c), this._state('last_session_cost')?.attributes?.unit_of_measurement), '', t.lastSession, true) : '',
+      shows('energy') ? this._infoItem('last_session_energy', 'mdi:lightning-bolt', `${this._int(e)}<small>kWh</small>`, '', t.lastSession, true) : '',
+      this._ids.last_session_cost && shows('cost') ? this._infoItem('last_session_cost', 'mdi:cash', c === null ? '—' : money(this._int(c), this._state('last_session_cost')?.attributes?.unit_of_measurement), '', t.lastSession, true) : '',
       this._ids.last_session_duration && shows('time') ? this._infoItem('last_session_duration', 'mdi:timer-outline', s === null ? '—' : t.sessionDuration(hms(s)), '', t.lastSession, true) : '',
       range !== null && shows('voltage') ? this._infoItem(this._ids.last_session_min_voltage && lows[0] !== null ? 'last_session_min_voltage' : 'last_session_max_voltage', 'mdi:sine-wave', `${range}<small>V</small>`, '', t.lastSessionVoltage, true) : '',
     ].join('');
@@ -2085,7 +2078,7 @@ class EveusCard extends HTMLElement {
     if (!p) return '';
     const t = this._t, pc = (v) => `${Math.round(v)}<small>%</small>`;
     const text = p.kwh === undefined ? `${t.planEnough(p.n)} ${pc(p.target)}`
-      : `${t.planUpTo(p.n)} ≈${Number(p.kwh.toFixed(1))}<small>kWh</small> → ≈${pc(p.soc)}`;
+      : `${t.planUpTo(p.n)} ≈${this._int(p.kwh)}<small>kWh</small> → ≈${pc(p.soc)}`;
     return `<div class="soc-plan" title="${t.planTitle}"><ha-icon icon="mdi:calendar-clock"></ha-icon><span>${text}</span></div>`;
   }
   // ---- Clock: whole hours of drift mean a wrong time zone (the Repairs notice says the same); Sync only sets UTC. ----
@@ -2245,6 +2238,8 @@ class EveusCard extends HTMLElement {
         el.style.fontSize = `${size}px`;
       }
     };
+    const sessionRows = [...this.shadowRoot.querySelectorAll('.session-row')];
+    for (const row of sessionRows) row.parentElement?.classList.remove('session-wrap');
     for (const el of this.shadowRoot.querySelectorAll('[data-fit]')) {
       // A word beside the numbers ("to go") leaves when even the smallest size has no room for it.
       const note = el.querySelector('.tile-note');
@@ -2253,6 +2248,20 @@ class EveusCard extends HTMLElement {
       if (note && overflows(el)) {
         note.hidden = true;
         fit(el);
+      }
+    }
+    // Session figures share one size, including the last session's voltage range.
+    for (const row of sessionRows) {
+      const values = [...row.querySelectorAll('.info-value[data-fit]')];
+      const shareSize = () => {
+        const size = Math.min(...values.map((el) => parseFloat(el.style.fontSize) || Infinity));
+        if (Number.isFinite(size)) for (const el of values) el.style.fontSize = `${size}px`;
+      };
+      shareSize();
+      if (values.some(overflows)) {
+        row.parentElement?.classList.add('session-wrap');
+        for (const el of values) fit(el);
+        shareSize();
       }
     }
     // Both schedule rows read as one table: they share the smaller of their two sizes.
@@ -2556,6 +2565,7 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 @container (max-width:350px){.safety-label{display:none}}
 @container (max-width:370px){.session-row .info-item ha-icon{display:none}}
 .session-row .info-item.grow{flex:0 1 auto;min-width:0}
+.sl.session.session-wrap{flex-wrap:wrap}.session-wrap .session-row{flex-basis:100%}
 [data-hold]{position:relative;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .soc-tile[data-hold]::before{content:"";position:absolute;right:5px;bottom:5px;width:4px;height:4px;border-radius:50%;background:var(--h);opacity:.6}
 /* Schedules: one row per schedule, one hue. Badge = on/off, the window is tap-to-pick, caps are chips

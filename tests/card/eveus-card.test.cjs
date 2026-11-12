@@ -630,11 +630,11 @@ test('meter voltage outside the working band is bad; unknown readings are dashes
   const x=setupAll({sections:['basic_info'],over:{power:['sensor.power','unavailable']}}).html();
   assert.match(x,/data-more-info="power"[^]*>—</);
 });
-test('Session is its own thin row: energy, cost (currency after, two decimals) and duration as separate items',()=>{
+test('Session is its own thin row: energy, cost (currency after, whole amounts) and duration as separate items',()=>{
   const {html}=setupAll({sections:['session']});
   assert.match(html(),/class="sl session"/);
   assert.match(html(),/>Session</);
-  assert.match(html(),/data-more-info="session_energy"[^]*>15\.6<small>kWh[^]*data-more-info="session_cost"[^]*>67\.30<small>₴<\/small>[^]*data-more-info="session_time"[^]*>5h 30m</);
+  assert.match(html(),/data-more-info="session_energy"[^]*>16<small>kWh[^]*data-more-info="session_cost"[^]*>67<small>₴<\/small>[^]*data-more-info="session_time"[^]*>5h 30m</);
   assert.match(setupAll({sections:['session'],over:{session_cost:['sensor.sc',1234.5,{unit_of_measurement:'UAH'}]}}).html(),/>1\u202f235<small>₴/);
 });
 test('battery SOC: the battery tile leads with the SOC; the target tile with the time left and the finish time',()=>{
@@ -642,7 +642,7 @@ test('battery SOC: the battery tile leads with the SOC; the target tile with the
   assert.match(html(),/class="panel soc soc-mid"/);
   assert.match(html(),/data-more-info="soc_percent"[^]*<b data-fit="26">≈44<small>%<\/small><\/b>[^]*from 25<small>%/);
   assert.match(html(),/data-more-info="time_to_target_soc"[^]*To 75<small>%[^]*class="soc-finish"[^>]*>\d{2}:\d{2}<[^]*<b data-fit="24">2h15m<\/b>/);
-  assert.match(html(),/26\.3<small>kWh[^]*114[^]*to go/);
+  assert.match(html(),/26<small>kWh[^]*114[^]*to go/);
   assert.match(html(),/soc-base" style="width:25%"/);
   assert.match(html(),/soc-fill" style="left:25%;width:19%"/);
   assert.match(html(),/soc-target" style="left:75%"/);
@@ -651,7 +651,7 @@ test('battery SOC idle: no time and no finish without a charge — the energy to
   const cc={charging_current:['number.cc',12,{min:6,max:32,step:1,unit_of_measurement:'A'}]};
   const idle=setupAll({sections:['advanced_info'],charging:false,over:cc}).html();
   assert.doesNotMatch(idle,/Not charging|soc-finish|≈\d+h|\d{2}:\d{2}/);
-  assert.match(idle,/To 75<small>%[^]*<b data-fit="24">26\.3<small>kWh<\/small><\/b>[^]*114<small>₴<\/small> <span class="tile-note">to go/);
+  assert.match(idle,/To 75<small>%[^]*<b data-fit="24">26<small>kWh<\/small><\/b>[^]*114<small>₴<\/small> <span class="tile-note">to go/);
   assert.match(setupAll({sections:['advanced_info'],over:{soc_percent:['sensor.soc',80]}}).html(),/Target reached/);
   assert.doesNotMatch(setupAll({sections:['advanced_info'],mode:'basic'}).html(),/class="(sl|panel)/);
   assert.doesNotMatch(setupAll({sections:['advanced_controls'],mode:'basic'}).html(),/limit-tile/);
@@ -1232,7 +1232,7 @@ test('updates from other entities do not re-render the card; its own entities an
   x.card.hass = {...x.hass};
   assert.equal(x.card.shadowRoot.innerHTML, 'SENTINEL', 'someone else\'s light');
   x.states['sensor.se'] = {state:'16.2', attributes:{unit_of_measurement:'kWh'}}; x.card.hass = x.hass;
-  assert.match(x.card.shadowRoot.innerHTML, /16\.2<small>kWh/);
+  assert.match(x.card.shadowRoot.innerHTML, /16<small>kWh/);
   x.card.shadowRoot.innerHTML = 'SENTINEL';
   // A minute other than the real one: a fixed '23:59' failed when the suite ran at 23:59.
   const next = x.card._nowHM() === '12:00' ? '12:01' : '12:00';
@@ -1284,7 +1284,7 @@ const unplugged = {state:['sensor.state','Standby'], car_connected:['binary_sens
 test('unplugged, the Session row is the last session: its energy, cost, duration and when it ended',()=>{
   const x=setupAll({sections:['session'],charging:false,over:unplugged});
   assert.match(x.html(),/>Last session<small>[^<]+<\/small>/);
-  assert.match(x.html(),/data-more-info="last_session_energy"[^]*>15\.6<small>kWh[^]*data-more-info="last_session_cost"[^]*>67\.21<small>₴[^]*data-more-info="last_session_duration"[^]*>5h 31m</);
+  assert.match(x.html(),/data-more-info="last_session_energy"[^]*>16<small>kWh[^]*data-more-info="last_session_cost"[^]*>67<small>₴[^]*data-more-info="last_session_duration"[^]*>5h 31m</);
   assert.doesNotMatch(x.html(),/data-more-info="session_energy"/);
   const uk=setupAll({sections:['session'],charging:false,over:unplugged,language:'uk'});
   assert.match(uk.html(),/>Остання сесія<small>/);
@@ -1368,16 +1368,16 @@ const plan=(over={})=>({car_connected:['binary_sensor.car','on'],charging_curren
   schedule_1_enabled:['switch.s1','on'],schedule_1_start:['time.s1a','23:00:00'],schedule_1_stop:['time.s1b','07:00:00'],...over});
 test('plugged in and waiting for a schedule, the battery section says how far that schedule gets it (energy, not time)',()=>{
   const x=setupAll({sections:['advanced_info'],charging:false,over:plan()});
-  assert.match(x.html(),/class="soc-plan"[^]*Schedule 1: up to ≈21\.8<small>kWh<\/small> → ≈70<small>%/);
+  assert.match(x.html(),/class="soc-plan"[^]*Schedule 1: up to ≈22<small>kWh<\/small> → ≈70<small>%/);
   const enough=setupAll({sections:['advanced_info'],charging:false,over:plan({charging_current:['number.cc',16,{min:6,max:16,step:1}]})});
   assert.match(enough.html(),/Schedule 1: enough for 75<small>%/);
   // The schedule's own current limit wins over the slider.
   const capped=setupAll({sections:['advanced_info'],charging:false,over:plan({schedule_1_current_limit:['number.s1c',10,{min:7,max:16,step:1}],schedule_1_current_limit_enabled:['switch.s1ce','on']})});
-  assert.match(capped.html(),/up to ≈18\.2<small>kWh/);
+  assert.match(capped.html(),/up to ≈18<small>kWh/);
   assert.doesNotMatch(setupAll({sections:['advanced_info'],over:plan()}).html(),/soc-plan/,'not while charging');
   assert.doesNotMatch(setupAll({sections:['advanced_info'],charging:false,over:plan({car_connected:['binary_sensor.car','off']})}).html(),/soc-plan/,'not unplugged');
   assert.doesNotMatch(setupAll({sections:['advanced_info'],charging:false,over:plan({schedule_1_enabled:['switch.s1','off']})}).html(),/soc-plan/,'no schedule on');
-  assert.match(setupAll({sections:['advanced_info'],charging:false,language:'uk',over:plan()}).html(),/Розклад 1: до ≈21\.8<small>kWh/);
+  assert.match(setupAll({sections:['advanced_info'],charging:false,language:'uk',over:plan()}).html(),/Розклад 1: до ≈22<small>kWh/);
   // Only while the car waits: a fault or a finished charge has nothing to plan.
   for (const state of ['Error','Charge Complete','Paused']) {
     assert.doesNotMatch(setupAll({sections:['advanced_info'],charging:false,over:plan({state:['sensor.state',state]})}).html(),/soc-plan/,state);
@@ -2730,7 +2730,7 @@ const sectionLabels=(h)=>[...h.matchAll(/<section class="[^"]*" aria-label="([^"
 test('offline: a card with Status shows only Status and the last session',()=>{
   const h=setupAll({sections:ALL_SECTIONS,over:offlineOver(lastSession)}).html();
   assert.deepEqual(sectionLabels(h),['Status','Last session']);
-  assert.match(h,/32.3<small>kWh/);
+  assert.match(h,/32<small>kWh/);
 });
 test('offline with no last session: Status alone',()=>{
   assert.deepEqual(sectionLabels(setupAll({sections:ALL_SECTIONS,over:offlineOver()}).html()),['Status']);
@@ -2739,13 +2739,13 @@ test('offline: a card without Status keeps its sections',()=>{
   const h=setupAll({sections:['limits','session'],over:offlineOver(lastSession)}).html();
   assert.match(h,/aria-label="Charging limits"/);
 });
-test('standby: Battery, Meter and Time leave; Safety, Last session and the order stay',()=>{
+test('standby: Battery and Meter leave; Time, Safety, Last session and the order stay',()=>{
   const over={...lastSession,state:['sensor.state','Standby'],car_connected:['binary_sensor.car','off']};
   const h=setupAll({sections:ALL_SECTIONS,charging:false,over}).html(), labels=sectionLabels(h);
-  for(const gone of ['Battery charge','Basic information','Charger clock']) assert.ok(!labels.includes(gone),gone);
-  for(const kept of ['Status','Last session','Charging limits']) assert.ok(labels.includes(kept),kept);
+  for(const gone of ['Battery charge','Basic information']) assert.ok(!labels.includes(gone),gone);
+  for(const kept of ['Status','Last session','Charging limits','Charger clock']) assert.ok(labels.includes(kept),kept);
   assert.match(h,/No Eveus safety telemetry found/,'Safety stays (this fixture has no safety sensors)');
-  assert.deepEqual(labels,['Status','Actions','SOC settings','Advanced controls','Charging current','Adaptive charging','Last session','Charging limits','Schedules','Counters','History'].filter((l)=>labels.includes(l)),'configured order');
+  assert.deepEqual(labels,['Status','Actions','SOC settings','Advanced controls','Charging current','Adaptive charging','Last session','Charging limits','Schedules','Charger clock','Counters','History'].filter((l)=>labels.includes(l)),'configured order');
   assert.ok(h.indexOf('Last session')<h.indexOf('No Eveus safety telemetry found'));
 });
 test('standby with a wrong clock keeps Time; a connected car keeps everything',()=>{
@@ -2854,4 +2854,67 @@ test('the voltage tile reads on only one value, and is absent without either or 
 test('the voltage tile belongs to the last session: not shown while charging',()=>{
   const live=setupAll({sections:['session'],charging:true,over:voltages});
   assert.doesNotMatch(live.html(),/last_session_min_voltage/);
+});
+
+test('whole energy and cost readouts keep the original measurements for More Info',()=>{
+  for (const language of ['en','uk']) {
+    const live=setupAll({sections:['session','advanced_info'],language,over:{
+      session_energy:['sensor.se',49.8,{unit_of_measurement:'kWh'}],
+      session_cost:['sensor.sc',153.49,{unit_of_measurement:'UAH'}],
+      energy_to_target_soc:['sensor.etts',26.32,{unit_of_measurement:'kWh'}],
+      soc_energy:['sensor.stored',33.6,{unit_of_measurement:'kWh'}],
+    }});
+    assert.match(live.html(),/data-more-info="session_energy"[^]*>50<small>kWh/);
+    assert.match(live.html(),/data-more-info="session_cost"[^]*>153<small>₴/);
+    assert.doesNotMatch(live.html(),/49\.8<small>kWh|153\.49<small>|26\.3<small>kWh|33\.6<small>kWh/);
+    assert.equal(live.states['sensor.se'].state,'49.8');
+    const last=setupAll({sections:['session'],charging:false,language,over:{...unplugged,
+      last_session_energy:['sensor.lse',49.8,{unit_of_measurement:'kWh'}],
+      last_session_cost:['sensor.lsc',153.49,{unit_of_measurement:'UAH'}],
+    }});
+    assert.match(last.html(),/data-more-info="last_session_energy"[^]*>50<small>kWh/);
+    assert.match(last.html(),/data-more-info="last_session_cost"[^]*>153<small>₴/);
+    assert.match(live.card._kwh(0),/^0<small>kWh/);
+    assert.match(live.card._kwh(0.4),/^0<small>kWh/);
+    assert.match(live.card._kwh(0.6),/^1<small>kWh/);
+    const missing=setupAll({sections:['session'],over:{session_energy:['sensor.se','unavailable'],session_cost:['sensor.sc','unknown']}});
+    assert.match(missing.html(),/data-more-info="session_energy"[^]*>—<\/span>/);
+    assert.match(missing.html(),/data-more-info="session_cost"[^]*>—<\/span>/);
+  }
+});
+
+test('session row shares a fitted font size and grows back together at a wider width',()=>{
+  const x=setupAll({sections:['session']});
+  let width=40, wrapped=false;
+  const make=(natural)=>({dataset:{fit:'15'},style:{},querySelector:()=>null,
+    get clientWidth(){return wrapped?100:width;},
+    get scrollWidth(){return natural*parseFloat(this.style.fontSize)/15;}});
+  const values=[make(36),make(48),make(54),make(44)];
+  const row={querySelectorAll:()=>values,parentElement:{classList:{remove(){wrapped=false;},add(){wrapped=true;}}}};
+  x.card.shadowRoot.querySelectorAll=(selector)=>selector==='[data-fit]'?values:selector==='.session-row'?[row]:[];
+  x.card._fitLimitValues();
+  assert.deepEqual(values.map(v=>v.style.fontSize),['11px','11px','11px','11px']);
+  width=20;x.card._fitLimitValues();
+  assert.equal(wrapped,true,'a row that cannot fit at the minimum size gets its own line');
+  assert.deepEqual(values.map(v=>v.style.fontSize),['15px','15px','15px','15px']);
+  width=100;x.card._fitLimitValues();
+  assert.equal(wrapped,false,'a wider card restores the single line');
+  assert.deepEqual(values.map(v=>v.style.fontSize),['15px','15px','15px','15px']);
+});
+
+test('standby and stopped share section configuration with the clock in both adapt modes',()=>{
+  for(const adapt of [true,false]) {
+    const render=(stopped)=>{
+      const x=setupAll({sections:ALL_SECTIONS,charging:false,over:{...lastSession,
+        state:['sensor.state',stopped?'Connected':'Standby'],
+        car_connected:['binary_sensor.car',stopped?'on':'off'],
+        stop_charging:['switch.stop',stopped?'on':'off'],
+      }});
+      x.card._config={...x.card._config,adapt};x.card._lastSignature=x.card._lastRefs=null;x.card._render();
+      return sectionLabels(x.html()).map(label=>label==='Last session'?'Session':label);
+    };
+    assert.deepEqual(render(true),render(false));
+    assert.ok(render(true).includes('Charger clock'));
+    assert.equal(render(true).includes('Battery charge'),!adapt);
+  }
 });
