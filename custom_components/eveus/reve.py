@@ -1063,9 +1063,13 @@ class ReveApi:
         return mark is not None and mark == self._write_epoch and not self._writes_in_flight
 
     def _keep_written(self, extras: ReveExtras) -> ReveExtras:
-        """A read older than the last write: keep the command that write set."""
+        """A read older than the last write: keep what writes set, the charging
+        command and the schedules (the read also restarts the settings clock,
+        so its older schedules would stand for minutes)."""
         held = self._extras
-        return extras if held is None else replace(extras, charging_command=held.charging_command)
+        if held is None:
+            return extras
+        return replace(extras, charging_command=held.charging_command, schedules=held.schedules)
 
     async def refresh(self) -> None:
         """Re-read schedules and rates now; a failure only schedules the retry."""

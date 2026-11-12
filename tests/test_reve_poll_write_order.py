@@ -112,3 +112,49 @@ def test_older_poll_must_not_let_one_charge_off_release_a_new_stop(
         "Turning One Charge off must leave an acknowledged Stop alone; got "
         f"{_inputs(charger)}"
     )
+
+
+@pytest.mark.parametrize("old_reply_arrives_last", [True, False], ids=["race", "ordered-control"])
+def test_older_settings_read_must_not_restore_the_schedules_just_written(
+    monkeypatch, old_reply_arrives_last
+):
+    """A poll that also reads the settings (due every five minutes) can start
+    before a schedule write and land after it. Its older schedules must not
+    replace the written ones: the read also restarts the settings clock, so
+    the switch and card would show the old schedule for five minutes."""
+    charger = _WritableCharger(_reve_main())
+    charger, updater = _known_charging(monkeypatch, charger)
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    api = updater._reve
+    before = bool(api._extras.schedules[0]["enabled"])
+
+    async def scenario():
+        old_read = asyncio.Event()
+        release_read = asyncio.Event()
+        original = api._station
+        delayed = False
+
+        async def delayed_station(document):
+            nonlocal delayed
+            reply = deepcopy(await original(document))
+            if not delayed and document == MEASUREMENTS_AND_SETTINGS_QUERY:
+                delayed = True
+                old_read.set()
+                await release_read.wait()
+            return reply
+
+        monkeypatch.setattr(api, "_station", delayed_station)
+        api._fetched_at = None  # the settings are due with this poll
+        poll = asyncio.create_task(updater._async_update_data())
+        await asyncio.wait_for(old_read.wait(), 2)
+        if not old_reply_arrives_last:
+            release_read.set()
+            await asyncio.wait_for(poll, 2)
+        assert await updater.send_command("sh1Enabled", 0 if before else 1)
+        release_read.set()
+        await asyncio.wait_for(poll, 2)
+
+    asyncio.run(scenario())
+    assert bool(api._extras.schedules[0]["enabled"]) is (not before), (
+        "An older settings read put the previous schedule back"
+    )

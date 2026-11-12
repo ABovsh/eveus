@@ -327,6 +327,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._reve.on_limit_values_changed = self._save_reve_limits
         self._limit_store: Store | None = None
         self._limits_saved: dict[str, int | float] = {}
+        self._limits_save_pending = False
         self._last_session_lock = asyncio.Lock()
         self._last_session_read: tuple[float, dict[str, Any]] | None = None
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
@@ -466,14 +467,23 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if store is None or self._shutting_down or values == self._limits_saved:
             return
         self._limits_saved = values
-        store.async_delay_save(lambda: values, 1)
+        self._limits_save_pending = True
+
+        def written() -> dict[str, int | float]:
+            # Called as the delayed save writes: nothing is pending after it.
+            self._limits_save_pending = False
+            return values
+
+        store.async_delay_save(written, 1)
 
     async def _flush_reve_limits(self) -> None:
-        """Write unsaved limit values now, as the entry unloads (a pending
-        delayed save is replaced, so it cannot land after a removal)."""
+        """Write unsaved limit values now, as the entry unloads. A delayed save
+        still pending is replaced too: removing the entry deletes the file
+        through another ``Store``, which cannot cancel it, so it would land
+        after the removal and leave the file behind."""
         store = self._limit_store
         values = self._reve.limit_values()
-        if store is None or values == self._limits_saved:
+        if store is None or (values == self._limits_saved and not self._limits_save_pending):
             return
         try:
             await store.async_save(values)
@@ -481,6 +491,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Could not save the REVE limit values: %s", type(err).__name__)
             return
         self._limits_saved = values
+        self._limits_save_pending = False
 
     async def _persist_meter_reset(self) -> None:
         """Write an accepted reset to storage now, before this poll publishes it.

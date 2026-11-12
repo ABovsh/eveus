@@ -154,3 +154,34 @@ def test_each_entry_keeps_its_own_values(monkeypatch) -> None:
     second = _started(monkeypatch, charger, "e2")
     assert second._reve._limit_values.get("energyLimit") != 20
     assert "eveus_reve_limits_e2" not in _SharedStore.files or _SharedStore.files["eveus_reve_limits_e2"].get("energyLimit") != 20
+
+
+class _DeferredStore(_SharedStore):
+    """Like Home Assistant's ``Store``: a delayed save waits for its timer, and
+    an immediate save (or removal) on the same instance replaces it."""
+
+    pending: dict[str, Any] = {}
+
+    def async_delay_save(self, data_func: Any, delay: float = 0) -> None:
+        assert delay > 0
+        _DeferredStore.pending[self.key] = (self, data_func)
+
+    async def async_save(self, data: Any) -> None:
+        _DeferredStore.pending.pop(self.key, None)
+        self._write(data)
+
+
+def test_unload_replaces_a_pending_delayed_save(monkeypatch) -> None:
+    """Removing an entry deletes its file through a new ``Store``, which cannot
+    cancel the unloaded updater's pending delayed save: that save would land
+    after the removal and leave the file behind for good."""
+    monkeypatch.setattr(common_network, "Store", _DeferredStore)
+    monkeypatch.setattr(_DeferredStore, "pending", {})
+    charger, _ = _known_charging(monkeypatch)
+    charger.station["session"]["energyLimit"] = None
+    updater = _started(monkeypatch, charger)
+    assert _send(updater, "energyLimit", 20000)
+    assert "eveus_reve_limits_e1" in _DeferredStore.pending
+    asyncio.run(updater.async_shutdown())
+    assert "eveus_reve_limits_e1" not in _DeferredStore.pending
+    assert _SharedStore.files["eveus_reve_limits_e1"]["energyLimit"] == 20
