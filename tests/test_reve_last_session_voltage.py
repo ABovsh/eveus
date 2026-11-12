@@ -176,16 +176,38 @@ def test_the_sensors_take_their_value_from_the_station(monkeypatch: pytest.Monke
     assert found["last_session_max_voltage"].extra_state_attributes["finished_at"].startswith("2026-")
 
 
-def test_a_session_older_than_the_finish_is_not_taken(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The station may not have stored the session that just ended yet."""
+def test_the_session_shown_is_not_taken_as_the_one_that_just_ended(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The station may not have stored the session that just ended yet. Which
+    one is new is told by its record, not by comparing the station's clock with
+    Home Assistant's."""
     charger, updater = _known(monkeypatch)
     _station(charger, _ITEM)
     found, _ = _setup(updater)
     sensor = found["last_session_min_voltage"]
-    assert asyncio.run(sensor.async_refresh_from_station(newer_than=_ITEM["stopAt"] + 600)) is False
+    assert asyncio.run(sensor.async_refresh_from_station(shown=_ITEM["stopAt"])) is False
     assert sensor.native_value is None
-    assert asyncio.run(sensor.async_refresh_from_station(newer_than=_ITEM["stopAt"] - 60)) is True
+    assert asyncio.run(sensor.async_refresh_from_station(shown=_ITEM["stopAt"] + 600)) is True
     assert sensor.native_value == 221
+    assert sensor._shown_stop_at == _ITEM["stopAt"]
+
+
+@pytest.mark.parametrize(
+    ("attributes", "want"),
+    [
+        ({"finished_at": "2026-11-08T10:05:26+00:00"}, 1794132326),
+        ({}, None),
+        ({"finished_at": "yesterday"}, None),
+        ({"finished_at": 5}, None),
+    ],
+)
+def test_a_restart_remembers_which_session_is_shown(
+    monkeypatch: pytest.MonkeyPatch, attributes: dict[str, Any], want: Any
+) -> None:
+    _charger, updater = _known(monkeypatch)
+    sensor = _setup(updater)[0]["last_session_min_voltage"]
+    # A session without a voltage restores as unknown, yet is the one shown.
+    asyncio.run(sensor._async_restore_state(SimpleNamespace(state="unknown", attributes=attributes)))
+    assert sensor._shown_stop_at == want
 
 
 def test_a_failed_read_keeps_the_last_value(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,7 +230,7 @@ def test_a_station_without_a_session_leaves_the_sensor_unknown(monkeypatch: pyte
     # A station with no session is a final answer at start, and not yet the one
     # that just ended after a finish.
     assert asyncio.run(sensor.async_refresh_from_station()) is True
-    assert asyncio.run(sensor.async_refresh_from_station(newer_than=1.0)) is False
+    assert asyncio.run(sensor.async_refresh_from_station(shown=1)) is False
     assert sensor.native_value is None
     assert sensor.available is True
     assert reve.NO_SESSION["stop_at"] is None

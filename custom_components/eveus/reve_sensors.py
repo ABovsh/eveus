@@ -23,7 +23,7 @@ from homeassistant.core import Event, callback
 from homeassistant.util.unit_conversion import ElectricPotentialConverter
 
 from .common_base import EveusSensorBase
-from .const import MAX_VOLTAGE_V
+from .const import EVENT_CAR_DISCONNECTED, MAX_VOLTAGE_V
 from .session_history import _LastSessionSensorBase
 
 _FREE_MEMORY_KEY = "heap_free"
@@ -96,11 +96,9 @@ class ReveStartedSensor(_ReveStationSensor):
 
 # Seconds to wait before each read of the station's session record. After a
 # finish the station may not have stored the session yet; a read that finds
-# only an older one is tried again.
+# only the one already shown is tried again.
 _AFTER_FINISH_DELAYS: tuple[float, ...] = (10.0, 30.0, 60.0)
 _AT_START_DELAYS: tuple[float, ...] = (0.0, 30.0, 60.0)
-# A session counts as the one that just ended when it stopped this recently.
-_JUST_ENDED_SECONDS = 120
 # A burst that ended on a failed read (the API was down) leaves the read owed:
 # a later successful poll tries it again, at most this often, until answered.
 _OWED_RETRY_SECONDS = 300.0
@@ -110,10 +108,17 @@ class _ReveLastSessionVoltageSensor(_LastSessionSensorBase):
     """Lowest or highest mains voltage of the last finished session, as the
     station recorded it (phase A; REVE is one-phase).
 
-    Read from the station when this entry starts and after each finish, never
-    polled: the record is written once a session ends, so the sensor changes
-    once per session and keeps no long-term statistics. The station keeps it,
-    so a session that ended while Home Assistant was down is still read.
+    Read from the station when this entry starts, after each finish and when
+    the car is unplugged, never polled: the record is written once a session
+    ends, so the sensor changes once per session and keeps no long-term
+    statistics. The station keeps it, so a session that ended while Home
+    Assistant was down is still read.
+
+    REVE closes the record at the unplug, not when the charge completes (live
+    2026-11-08: Charge Complete 10:02:10, unplug 10:05:31, ``stopAt``
+    10:05:26), hence the read at the unplug. The record is stamped by the
+    station's clock, which may be minutes off Home Assistant's: a newest
+    record other than the one shown is the session that just ended.
     """
 
     _max_value = float(MAX_VOLTAGE_V)
@@ -128,24 +133,41 @@ class _ReveLastSessionVoltageSensor(_LastSessionSensorBase):
         self._key = key
         self._attr_icon = icon
         self._read_task: asyncio.Task[None] | None = None
-        # ``(newer_than,)`` while a read is owed; retried from this monotonic time.
-        self._owed: tuple[float | None] | None = None
+        # ``(shown,)`` while a read is owed; retried from this monotonic time.
+        self._owed: tuple[int | None] | None = None
         self._owed_after = 0.0
         self._last_read_failed = False
+        # The station's stop time of the session this sensor shows.
+        self._shown_stop_at: int | None = None
         super().__init__(updater, device_number)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.async_on_remove(self._cancel_reads)
+        self.async_on_remove(
+            self.hass.bus.async_listen(EVENT_CAR_DISCONNECTED, self._handle_finished_event)
+        )
         self._owed = None
         self._start_reads(_AT_START_DELAYS, None)
 
+    async def _async_restore_state(self, state) -> None:
+        await super()._async_restore_state(state)
+        # Whatever the value (a session may have no voltage), its stop time
+        # says which session is on display.
+        try:
+            self._shown_stop_at = int(
+                datetime.fromisoformat(state.attributes["finished_at"]).timestamp()
+            )
+        except (KeyError, TypeError, ValueError, OverflowError):
+            self._shown_stop_at = None
+
     @callback
     def _handle_finished_event(self, event: Event) -> None:
+        """A finish or an unplug: the station's next session record is due."""
         if event.data.get("device_number") != self._device_number:
             return
         self._owed = None
-        self._start_reads(_AFTER_FINISH_DELAYS, time.time() - _JUST_ENDED_SECONDS)
+        self._start_reads(_AFTER_FINISH_DELAYS, self._shown_stop_at)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -170,45 +192,48 @@ class _ReveLastSessionVoltageSensor(_LastSessionSensorBase):
             self._read_task.cancel()
             self._read_task = None
 
-    def _start_reads(self, delays: tuple[float, ...], newer_than: float | None) -> None:
+    def _start_reads(self, delays: tuple[float, ...], shown: int | None) -> None:
         self._cancel_reads()
         # Background work: an optional historical read with retry sleeps must
         # not hold up Home Assistant's startup. Cancelled on removal/unload.
         self._read_task = self.hass.async_create_background_task(
-            self._read_until_taken(delays, newer_than),
+            self._read_until_taken(delays, shown),
             name=f"eveus last session {self._key} voltage",
         )
 
-    async def _read_until_taken(self, delays: tuple[float, ...], newer_than: float | None) -> None:
+    async def _read_until_taken(self, delays: tuple[float, ...], shown: int | None) -> None:
         for delay in delays:
             if delay:
                 await asyncio.sleep(delay)
-            if await self.async_refresh_from_station(newer_than):
+            if await self.async_refresh_from_station(shown):
                 self._owed = None
                 return
-        # The station answered with only an older session: nothing more to ask.
-        # A failed read is owed instead, until the API answers again.
+        # The station answered with only the session shown: nothing more to
+        # ask (the unplug asks again). A failed read is owed instead, until the
+        # API answers again.
         if not self._last_read_failed:
             self._owed = None
             return
         if self._owed is None:
             self._owed_after = time.monotonic()
-        self._owed = (newer_than,)
+        self._owed = (shown,)
 
-    async def async_refresh_from_station(self, newer_than: float | None = None) -> bool:
+    async def async_refresh_from_station(self, shown: int | None = None) -> bool:
         """Take the newest session's figure from the station; True once it has
         answered for good. False, with the shown value kept, when the read
-        failed or the newest session ended before ``newer_than`` (not stored
-        yet, or none): worth another try. Without ``newer_than`` a station that
-        has no session yet is a final answer."""
+        failed or the station's newest session is still ``shown`` (the stop
+        time of the session on display), or it has none: the session that just
+        ended is not stored yet, worth another try. Without ``shown`` any
+        answer, a station with no session too, is final."""
         session = await self._updater.async_read_last_session()
         self._last_read_failed = session is None
         if session is None:
             return False
         if session["stop_at"] is None:
-            return newer_than is None
-        if newer_than is not None and session["stop_at"] < newer_than:
+            return shown is None
+        if shown is not None and session["stop_at"] == shown:
             return False
+        self._shown_stop_at = session["stop_at"]
         value = session[self._key]
         attrs = {"finished_at": datetime.fromtimestamp(session["stop_at"], tz=timezone.utc).isoformat()}
         if value != self._attr_native_value or attrs != self._attr_extra_state_attributes:
