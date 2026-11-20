@@ -422,19 +422,13 @@ class EveusCard extends HTMLElement {
       throw new Error(`Available sections: ${SECTIONS.join(', ')}`);
     }
     validateSectionSizes(config.size);
-    this._reset();
+    this._clearInteractions();
     this._config = {...config, sections: [...new Set(sections)]};
     this._ids = null;
     this._resolved = false;
     this._lastSignature = this._lastRefs = null;
     this._generation = (this._generation || 0) + 1;
     this._resolving = false;
-    Object.values(this._limitTimers || {}).forEach(clearTimeout);
-    this._limitPending = {};
-    this._limitTimers = {};
-    this._editingLimit = null;
-    this._guardAsk = null;
-    this._showError(false);
     this._resolveAgain = false;
     this._month = null;
     this._monthAt = 0;
@@ -635,7 +629,7 @@ class EveusCard extends HTMLElement {
     this._lastSignature = this._lastRefs = null;
     if (this._hass) this.hass = this._hass;
   }
-  disconnectedCallback() {
+  _clearInteractions() {
     this._reset();
     clearTimeout(this._statusTimer);
     this._statusAsk = null;
@@ -643,8 +637,10 @@ class EveusCard extends HTMLElement {
     this._resetAsk = null;
     this._guardAsk = null;
     this._holdEnd();
+    this._held = false;
     Object.values(this._limitTimers || {}).forEach(clearTimeout);
     this._limitPending = {};
+    this._limitTimers = {};
     this._editingLimit = null;
     clearTimeout(this._timeTimer);
     this._editingTime = null;
@@ -654,6 +650,9 @@ class EveusCard extends HTMLElement {
     this._showError(false);
     clearTimeout(this._selectTimer);
     this._editingSelect = null;
+  }
+  disconnectedCallback() {
+    this._clearInteractions();
     this._resizeObserver?.disconnect();
     const unsubscribe = this._registryUnsub;
     this._registryUnsub = null;
@@ -2153,7 +2152,7 @@ class EveusCard extends HTMLElement {
       return false;
     };
     const ask = (offset) => this._hass.callWS({type: 'recorder/statistic_during_period', statistic_id: id,
-      calendar: offset ? {period: 'month', offset} : {period: 'month'}, types: ['change']});
+      calendar: offset ? {period: 'month', offset} : {period: 'month'}, types: ['change'], units: {energy: 'kWh'}});
     const change = (r) => Number.isFinite(r?.change) ? r.change : null;
     try {
       const [cur, prev] = await Promise.all([ask(0), ask(-1)]);

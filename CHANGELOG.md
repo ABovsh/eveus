@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### 🐛 Fixed
+
+- REVE saves an edited energy, time or cost limit before confirming the change while the limit is off. An abrupt Home Assistant restart could previously restore the old value.
+- Switching chargers in the card discards pending schedule edits and asks again before stopping a charge or resetting a counter on the newly selected charger.
+- Monthly energy totals on the card use kWh even when Home Assistant displays the Total Energy sensor in Wh or MWh.
+
 ## 4.31.0 - 2026-11-12
 
 ### ✨ New

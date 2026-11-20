@@ -471,13 +471,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         def written() -> dict[str, int | float]:
             # Called as the delayed save writes: nothing is pending after it.
-            self._limits_save_pending = False
+            if self._limits_saved is values:
+                self._limits_save_pending = False
             return values
 
         store.async_delay_save(written, 1)
 
-    async def _flush_reve_limits(self) -> None:
-        """Write unsaved limit values now, as the entry unloads. A delayed save
+    async def async_flush_reve_limits(self) -> None:
+        """Write unsaved limit values on a local-only edit or unload. A delayed save
         still pending is replaced too: removing the entry deletes the file
         through another ``Store``, which cannot cancel it, so it would land
         after the removal and leave the file behind."""
@@ -485,13 +486,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         values = self._reve.limit_values()
         if store is None or (values == self._limits_saved and not self._limits_save_pending):
             return
+        scheduled = self._limits_saved
         try:
             await store.async_save(values)
         except Exception as err:  # noqa: BLE001 - unloading must not fail on storage
             _LOGGER.debug("Could not save the REVE limit values: %s", type(err).__name__)
             return
-        self._limits_saved = values
-        self._limits_save_pending = False
+        # A poll may have scheduled a newer snapshot during the disk write.
+        if self._limits_saved is scheduled:
+            self._limits_saved = values
+            self._limits_save_pending = False
 
     async def _persist_meter_reset(self) -> None:
         """Write an accepted reset to storage now, before this poll publishes it.
@@ -914,7 +918,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
         await self._flush_meter_baseline()
-        await self._flush_reve_limits()
+        await self.async_flush_reve_limits()
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
         if self._init_fw_task is not None:

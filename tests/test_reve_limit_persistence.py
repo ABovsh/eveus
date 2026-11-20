@@ -100,6 +100,8 @@ def test_an_off_limit_value_survives_a_reload(monkeypatch, key, flag, field, fac
 
 @pytest.mark.parametrize(("key", "flag", "field", "factor", "chosen", "old"), LIMITS)
 def test_an_off_limit_value_survives_an_abrupt_restart(monkeypatch, key, flag, field, factor, chosen, old) -> None:
+    monkeypatch.setattr(common_network, "Store", _DeferredStore)
+    monkeypatch.setattr(_DeferredStore, "pending", {})
     charger, _ = _known_charging(monkeypatch)
     charger.station["session"][field] = None
     charger.main[key] = old
@@ -178,9 +180,8 @@ def test_unload_replaces_a_pending_delayed_save(monkeypatch) -> None:
     monkeypatch.setattr(common_network, "Store", _DeferredStore)
     monkeypatch.setattr(_DeferredStore, "pending", {})
     charger, _ = _known_charging(monkeypatch)
-    charger.station["session"]["energyLimit"] = None
+    charger.station["session"]["energyLimit"] = 20000
     updater = _started(monkeypatch, charger)
-    assert _send(updater, "energyLimit", 20000)
     assert "eveus_reve_limits_e1" in _DeferredStore.pending
     asyncio.run(updater.async_shutdown())
     assert "eveus_reve_limits_e1" not in _DeferredStore.pending
@@ -249,6 +250,36 @@ def test_a_second_flush_with_nothing_new_writes_nothing(monkeypatch) -> None:
     charger.station["session"]["energyLimit"] = None
     updater = _started(monkeypatch, charger)
     updater._reve._limit_values["energyLimit"] = 20
-    asyncio.run(updater._flush_reve_limits())
-    asyncio.run(updater._flush_reve_limits())
+    asyncio.run(updater.async_flush_reve_limits())
+    asyncio.run(updater.async_flush_reve_limits())
     assert _SharedStore.writes == [("eveus_reve_limits_e1", {"energyLimit": 20})]
+
+
+async def test_newer_poll_save_stays_pending_during_local_limit_flush(monkeypatch) -> None:
+    writing = asyncio.Event()
+    resume = asyncio.Event()
+
+    class _PausedStore(_DeferredStore):
+        async def async_save(self, data: Any) -> None:
+            await super().async_save(data)
+            writing.set()
+            await resume.wait()
+
+    monkeypatch.setattr(common_network, "Store", _PausedStore)
+    monkeypatch.setattr(_DeferredStore, "pending", {})
+    updater = _entry_updater(monkeypatch, None)
+    await updater.async_load_reve_limits()
+    updater._reve._keep_limit_value("energyLimit", 20)
+    save = asyncio.create_task(updater.async_flush_reve_limits())
+    await writing.wait()
+    updater._reve._keep_limit_value("timeLimit", 3600)
+    resume.set()
+    await save
+    # A second poll repeats the snapshot being saved. It should leave the
+    # newer delayed write alone until shutdown flushes it.
+    pending = _DeferredStore.pending["eveus_reve_limits_e1"]
+    updater._save_reve_limits()
+    assert _DeferredStore.pending["eveus_reve_limits_e1"] is pending
+    await updater.async_shutdown()
+    assert _SharedStore.files["eveus_reve_limits_e1"] == {"energyLimit": 20, "timeLimit": 3600}
+    assert _DeferredStore.pending == {}
