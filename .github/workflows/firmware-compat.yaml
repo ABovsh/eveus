@@ -1,0 +1,77 @@
+name: Firmware compatibility
+
+# Checks the integration against firmware simulation profiles kept in a private
+# repository. Runs on pushes to the release branches only; forks and Dependabot
+# never receive the key, so those runs report a skip. Logs show aggregate counts
+# only — details stay with the maintainer's local check.
+on:
+  push:
+    branches: ["main", "rc"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compat:
+    name: Firmware compatibility
+    runs-on: "ubuntu-latest"
+    env:
+      HAS_PROFILES: "${{ secrets.EVEUS_FW_DEPLOY_KEY != '' && vars.EVEUS_FW_REPO != '' }}"
+    steps:
+      - name: Skip without profile access
+        if: env.HAS_PROFILES != 'true'
+        run: echo "::notice::Firmware profiles are not available to this run; compatibility check skipped."
+
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        if: env.HAS_PROFILES == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Check out firmware profiles
+        if: env.HAS_PROFILES == 'true'
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          repository: "${{ vars.EVEUS_FW_REPO }}"
+          ssh-key: "${{ secrets.EVEUS_FW_DEPLOY_KEY }}"
+          path: ".fw"
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /eveus_fw/
+            /eveus-fw
+            /records/
+            /captures/
+            /sim/
+            /surface/
+            /semantics.json
+            /baseline.json
+            /manifest.json
+
+      - name: Set up Python
+        if: env.HAS_PROFILES == 'true'
+        uses: "actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0" # v7.1.0
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install test dependencies
+        if: env.HAS_PROFILES == 'true'
+        run: python -m pip install -r requirements_test.txt
+
+      - name: Compatibility check
+        if: env.HAS_PROFILES == 'true'
+        run: .fw/eveus-fw ci --integration . --python python --public
+
+      - name: Simulated firmware scenarios
+        if: env.HAS_PROFILES == 'true'
+        run: |
+          if [ -f tests_ha/test_firmware_profiles.py ]; then
+            EVEUS_FW_SIM_DIR=.fw/sim python -m pytest -q -o addopts='' -p no:cacheprovider tests_ha/test_firmware_profiles.py
+          else
+            echo "::notice::Scenario harness is not on this branch yet."
+          fi
