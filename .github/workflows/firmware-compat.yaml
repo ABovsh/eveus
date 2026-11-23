@@ -46,7 +46,6 @@ jobs:
             /eveus-fw
             /records/
             /captures/
-            /sim/
             /surface/
             /semantics.json
             /baseline.json
@@ -71,7 +70,9 @@ jobs:
         if: env.HAS_PROFILES == 'true'
         run: |
           if [ -f tests_ha/test_firmware_profiles.py ]; then
-            EVEUS_FW_SIM_DIR=.fw/sim python -m pytest -q -o addopts='' -p no:cacheprovider tests_ha/test_firmware_profiles.py
+            # Profiles depend on the integration revision under test.
+            .fw/eveus-fw simulate --all --out "$RUNNER_TEMP/sim" > /dev/null
+            EVEUS_FW_SIM_DIR="$RUNNER_TEMP/sim" python -m pytest -q -o addopts='' -p no:cacheprovider tests_ha/test_firmware_profiles.py
           else
             echo "::notice::Scenario harness is not on this branch yet."
           fi
