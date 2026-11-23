@@ -246,6 +246,27 @@ async def test_cold_boot(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     assert scenario.captures == snapshot
 
 
+async def test_turn_off_ocpp_on_classic_firmware(hass, aioclient_mock) -> None:
+    entry = _entry(hass, HOST_A)
+    aioclient_mock.post(f"http://{HOST_A}/main", json=dict(REAL_MAIN, ocppEnabled=1))
+    aioclient_mock.post(f"http://{HOST_A}/ocppEvent", text="ok")
+    aioclient_mock.post(f"http://{HOST_A}/pageEvent", status=405)
+    await _setup(hass, entry)
+    entity_id = "switch.eveus_ev_charger_connect_to_ocpp"
+    assert hass.states.get(entity_id).state == "on"
+
+    aioclient_mock.mock_calls.clear()
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": entity_id}, blocking=True
+    )
+
+    assert [(url.path, data) for _, url, data, _ in aioclient_mock.mock_calls] == [
+        ("/ocppEvent", "ocppEnabled=0"),
+        ("/pageEvent", "pageevent=ocppEnabled&ocppEnabled=0&ocppVendor=0"),
+    ]
+    assert hass.states.get(entity_id).state == "off"
+
+
 async def test_charge_session(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     """Standby -> Connected -> Charging -> Complete -> unplug.
 

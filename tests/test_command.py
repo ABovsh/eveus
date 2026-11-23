@@ -297,17 +297,122 @@ def test_command_manager_urlencodes_command_payload() -> None:
     assert session.calls[0]["data"] == "pageevent=profile+name&profile+name=eco+mode"
 
 
-def test_command_manager_includes_extra_form_fields() -> None:
+def test_classic_ocpp_sends_header_form_before_page_event() -> None:
+    session = _Session(_Response())
+    updater = _Updater(session)
+    manager = CommandManager(updater)
+
+    assert asyncio.run(
+        manager.send_command("ocppEnabled", 0, extra={"ocppVendor": 0})
+    ) is True
+
+    ocpp, page = session.calls
+    assert ocpp == {
+        "url": f"{TEST_BASE_URL}/ocppEvent",
+        "headers": {
+            "Content-type": "application/x-www-form-urlencoded",
+            "pageEvent": "ocppEnabled",
+        },
+        "data": "ocppEnabled=0",
+        "auth": updater.basic_auth,
+        "timeout": common_command._COMMAND_TIMEOUT_OBJ,
+        "allow_redirects": False,
+    }
+    assert page["url"] == f"{TEST_BASE_URL}/pageEvent"
+    assert page["headers"] == {"Content-type": "application/x-www-form-urlencoded"}
+    assert page["data"] == "pageevent=ocppEnabled&ocppEnabled=0&ocppVendor=0"
+
+
+@pytest.mark.parametrize(("ocpp_status", "page_status"), [(404, 200), (200, 503), (200, 401)])
+def test_classic_ocpp_succeeds_if_either_write_succeeds(
+    ocpp_status: int, page_status: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = _SequencedSession([
+        _Response(response_status=ocpp_status if ocpp_status != 200 else None),
+        _Response(response_status=page_status if page_status != 200 else None),
+    ])
+    manager = CommandManager(_Updater(session))
+    caplog.set_level(logging.DEBUG, logger=common_command.__name__)
+
+    assert asyncio.run(manager.send_command("ocppEnabled", 0)) is True
+    assert [call["url"] for call in session.calls] == [
+        f"{TEST_BASE_URL}/ocppEvent", f"{TEST_BASE_URL}/pageEvent",
+    ]
+    assert manager.consecutive_failures == 0
+    assert all(record.levelno <= logging.DEBUG for record in caplog.records)
+
+
+def test_classic_ocpp_timeout_still_sends_page_event() -> None:
+    class _TimeoutResponse(_Response):
+        async def __aenter__(self) -> _Response:
+            raise asyncio.TimeoutError
+
+    session = _SequencedSession([_TimeoutResponse(), _Response()])
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("ocppEnabled", 0, retry=False)) is True
+    assert [call["url"] for call in session.calls] == [
+        f"{TEST_BASE_URL}/ocppEvent", f"{TEST_BASE_URL}/pageEvent",
+    ]
+
+
+def test_classic_ocpp_retries_only_as_part_of_a_page_event_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(common_command.asyncio, "sleep", _no_sleep)
+    session = _SequencedSession([
+        _Response(response_status=404), _Response(response_status=503),
+    ] * 3)
+    manager = CommandManager(_Updater(session))
+
+    assert asyncio.run(manager.send_command("ocppEnabled", 0)) is False
+    assert [call["url"] for call in session.calls] == [
+        f"{TEST_BASE_URL}/ocppEvent", f"{TEST_BASE_URL}/pageEvent",
+    ] * 3
+    assert manager.consecutive_failures == 1
+
+
+def test_classic_ocpp_preserves_page_event_auth_failure_when_both_fail() -> None:
+    session = _SequencedSession([
+        _Response(response_status=404), _Response(response_status=401),
+    ])
+    manager = CommandManager(_Updater(session))
+
+    with pytest.raises(ConfigEntryAuthFailed) as exc:
+        asyncio.run(manager.send_command("ocppEnabled", 0))
+
+    assert isinstance(exc.value.__cause__, aiohttp.ClientResponseError)
+    assert exc.value.__cause__.status == 401
+    assert len(session.calls) == 2
+    assert manager.consecutive_failures == 1
+
+
+@pytest.mark.parametrize("ocpp_status", [None, 404])
+def test_classic_ocpp_skips_page_event_if_shutdown_begins(
+    ocpp_status: int | None,
+) -> None:
+    class _ShutdownResponse(_Response):
+        async def __aexit__(self, *exc_info: object) -> None:
+            updater._shutting_down = True
+
+    session = _Session(_ShutdownResponse(response_status=ocpp_status))
+    updater = _Updater(session)
+    manager = CommandManager(updater)
+
+    assert asyncio.run(manager.send_command("ocppEnabled", 0)) is (ocpp_status is None)
+    assert [call["url"] for call in session.calls] == [f"{TEST_BASE_URL}/ocppEvent"]
+    assert manager.consecutive_failures == 0
+
+
+def test_classic_one_charge_only_sends_page_event() -> None:
     session = _Session(_Response())
     manager = CommandManager(_Updater(session))
 
-    assert asyncio.run(
-        manager.send_command("ocppEnabled", 1, extra={"ocppVendor": 1})
-    ) is True
+    assert asyncio.run(manager.send_command("oneCharge", 1)) is True
 
-    assert session.calls[0]["data"] == (
-        "pageevent=ocppEnabled&ocppEnabled=1&ocppVendor=1"
-    )
+    call, = session.calls
+    assert call["url"] == f"{TEST_BASE_URL}/pageEvent"
+    assert call["data"] == "pageevent=oneCharge&oneCharge=1"
 
 
 async def _no_sleep(_seconds: float) -> None:

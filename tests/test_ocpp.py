@@ -31,8 +31,8 @@ def test_ocpp_switch_on_sends_enabled_and_vendor() -> None:
 
     asyncio.run(entity.async_turn_on())
 
-    # The firmware only honors the toggle when ocppVendor rides along in the
-    # same request, so the switch bundles both fields.
+    # The /pageEvent form verified on 1P R3.05.5 carries ocppVendor alongside
+    # ocppEnabled, so the switch bundles both fields.
     assert updater.commands == [("ocppEnabled", 1)]
     assert updater.command_extras == [{"ocppVendor": 1}]
     assert entity.is_on is True
