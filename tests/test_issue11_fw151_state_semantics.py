@@ -95,10 +95,13 @@ class _Hass:
     loop = None
 
 
-def _poll(payload: dict, monkeypatch: pytest.MonkeyPatch) -> tuple[EveusUpdater, dict]:
+def _poll(
+    payload: dict, monkeypatch: pytest.MonkeyPatch, *, confirmed: bool = True
+) -> tuple[EveusUpdater, dict]:
     session = _Session(_Response(payload))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._legacy_confirmed = confirmed  # /init reported 1.51
     data = asyncio.run(updater._async_update_data())
     return updater, data
 
@@ -152,11 +155,24 @@ def test_state_sensor_has_no_raw_attribute_for_plain_mapped_state() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_poll_translates_legacy_idle_state_to_standby(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("pilot", "state"),
+    [(2, 3), (3, 3), (1, DEVICE_STATE_STANDBY), (4, DEVICE_STATE_STANDBY), (None, DEVICE_STATE_STANDBY)],
+)
+def test_poll_translates_legacy_user_stop_by_car_presence(
+    pilot: int | None, state: int, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, data = _poll(_fw151_payload(), monkeypatch)
-    assert data["state"] == DEVICE_STATE_STANDBY
+    """1.x code 20 is the page's "Disabled by user": a user stop, not idle.
+
+    The #11 capture shows it with the Stop flag set (evseEnabled 1) and the
+    car connected (pilot 2, the page's "state B"). Newer firmware reports
+    that as Connected / Limited by User; without a car it stays Standby.
+    """
+    payload = _fw151_payload(pilot=pilot)
+    if pilot is None:
+        del payload["pilot"]
+    _, data = _poll(payload, monkeypatch)
+    assert (data["state"], data["subState"]) == (state, 1)
     assert data[LEGACY_RAW_STATE_KEY] == 20
 
 
@@ -181,6 +197,12 @@ def test_poll_keeps_legacy_state3_as_connected_without_power(
 @pytest.mark.parametrize(
     ("raw_state", "state", "substate"),
     [
+        (1, 2, 0),  # Ready (pilot A): no car
+        (2, 3, 0),  # Wait (pilot B): car connected
+        (4, 7, 7),  # D, E, F: pilot fault states
+        (5, 7, 7),
+        (6, 7, 7),
+        (7, 7, 2),  # Leakage (24 is the low-leak code)
         (8, 7, 1),
         (9, 7, 5),
         (10, 7, 6),
@@ -207,6 +229,21 @@ def test_poll_translates_legacy_errors_limits_and_adaptive_pause(
     assert data[LEGACY_RAW_STATE_KEY] == raw_state
 
 
+@pytest.mark.parametrize("raw_state", [1, 2, 4, 5, 6, 7])
+def test_low_codes_need_a_1x_init_version(
+    raw_state: int, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codes 1-7 exist on newer firmware too, with other meanings.
+
+    A newer charger whose reply happens to lack verFWMain must keep them, so
+    they translate only once /init has reported a 1.x version.
+    """
+    _, data = _poll(_fw151_payload(state=raw_state), monkeypatch, confirmed=False)
+    assert data["state"] == raw_state
+    assert LEGACY_RAW_STATE_KEY not in data
+    assert "subState" not in data
+
+
 @pytest.mark.parametrize("substate", [None, 0, 3])
 def test_poll_preserves_an_explicit_legacy_substate(
     substate: int | None, monkeypatch: pytest.MonkeyPatch,
@@ -221,6 +258,10 @@ def test_poll_preserves_an_explicit_legacy_substate(
     ("state", "label", "substate", "reason"),
     [
         (24, "Error", "Current Leak Low", "Error"),
+        (20, "Connected", "Limited by User", "Stopped by User"),
+        (2, "Connected", "No Limits", "Waiting for Car"),
+        (1, "Standby", "No Limits", "Cable Not Connected"),
+        (5, "Error", "Pilot Error", "Error"),
         (22, "Paused", "Paused by Adaptive Mode", "Paused by Adaptive Mode"),
         (30, "Unknown", None, "Unknown"),
     ],
@@ -422,13 +463,10 @@ def test_legacy_charging_latch_clears_on_other_states(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     charging = _fw151_payload(state=3, powerMeas=1590, curMeas1=7.3)
-    idle20 = _fw151_payload(state=20, powerMeas=0, curMeas1=0)
+    stopped = _fw151_payload(state=20, powerMeas=0, curMeas1=0)
     idle3 = _fw151_payload(state=3, powerMeas=0, curMeas1=0)
-    _, results = _poll_sequence([charging, idle20, idle3], monkeypatch)
-    # Once the charger reported its idle code, a later powerless 3 must not
-    # resurrect Charging from the stale latch.
-    assert [r["state"] for r in results] == [
-        DEVICE_STATE_CHARGING,
-        DEVICE_STATE_STANDBY,
-        3,
-    ]
+    _, results = _poll_sequence([charging, stopped, idle3], monkeypatch)
+    # Once the charger reported another code (here a user stop with the car
+    # plugged in, read as Connected), a later powerless 3 must not resurrect
+    # Charging from the stale latch.
+    assert [r["state"] for r in results] == [DEVICE_STATE_CHARGING, 3, 3]

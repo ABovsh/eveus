@@ -264,7 +264,11 @@ class CommandManager:
                     self._consecutive_failures = 0
                 return ocpp_saved
 
-        fields = {"pageevent": command, command: value}
+        # Firmware 1.x gets exactly what its own web page posts: the setting
+        # named in a pageEvent header and only <cmd>=<value> in the body. Newer
+        # firmware keeps the body form verified live on R3.05.5.
+        legacy = getattr(self._updater, "is_legacy_firmware", False) is True
+        fields = {command: value} if legacy else {"pageevent": command, command: value}
         if extra:
             fields.update(extra)
         # No on_unauthorized: a command has no reauth path of its own, so the
@@ -276,6 +280,7 @@ class CommandManager:
                 auth=self._updater.basic_auth,
                 timeout=_COMMAND_TIMEOUT_OBJ,
                 fields=fields,
+                selector_header=command if legacy else None,
             )
         except (aiohttp.ClientError, asyncio.TimeoutError):
             if not ocpp_saved:

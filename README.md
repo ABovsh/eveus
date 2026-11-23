@@ -613,9 +613,10 @@ The charger did not lower its packet size on a link with an MTU below 1500. When
 ### Older charger firmware
 
 R3.01.x and firmware 1.x (EnergyStar V-series) are supported with fewer
-readings; the ones the charger does not report stay unavailable. An unknown
-state shows `Unknown`, with its code in the **State** sensor's `raw_state`
-attribute.
+readings; the ones the charger does not report stay unavailable. On 1.x,
+**State** follows the charger's own status names, and controls are sent the
+way its web page sends them. An unknown state shows `Unknown`, with its code
+in the **State** sensor's `raw_state` attribute.
 
 For firmware updates, message **@energy_star** on Telegram; install the file
 through the charger's web interface.

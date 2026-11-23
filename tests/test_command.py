@@ -297,6 +297,43 @@ def test_command_manager_urlencodes_command_payload() -> None:
     assert session.calls[0]["data"] == "pageevent=profile+name&profile+name=eco+mode"
 
 
+@pytest.mark.parametrize(("command", "value"), [("currentSet", 16), ("evseEnabled", 1)])
+def test_firmware_1x_gets_the_form_its_own_web_page_sends(command, value) -> None:
+    """Firmware 1.x: selector in the pageEvent header, body only <cmd>=<value>.
+
+    That is byte for byte what the 1.x web page posts (js/scriptUA.js
+    postPageEvent), so it is the one form 1.x is known to accept.
+    """
+    session = _Session(_Response())
+    updater = _Updater(session)
+    updater.is_legacy_firmware = True
+    manager = CommandManager(updater)
+
+    assert asyncio.run(manager.send_command(command, value)) is True
+
+    (call,) = session.calls
+    assert call["url"] == f"{TEST_BASE_URL}/pageEvent"
+    assert call["data"] == f"{command}={value}"
+    assert call["headers"] == {
+        "Content-type": "application/x-www-form-urlencoded",
+        "pageEvent": command,
+    }
+
+
+def test_modern_firmware_keeps_the_body_selector_form() -> None:
+    """Newer firmware is untouched: the live-verified body form, no header."""
+    session = _Session(_Response())
+    updater = _Updater(session)
+    updater.is_legacy_firmware = False
+    manager = CommandManager(updater)
+
+    assert asyncio.run(manager.send_command("evseEnabled", 1)) is True
+
+    (call,) = session.calls
+    assert call["data"] == "pageevent=evseEnabled&evseEnabled=1"
+    assert call["headers"] == {"Content-type": "application/x-www-form-urlencoded"}
+
+
 def test_classic_ocpp_sends_header_form_before_page_event() -> None:
     session = _Session(_Response())
     updater = _Updater(session)

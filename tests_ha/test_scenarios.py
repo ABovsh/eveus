@@ -442,10 +442,11 @@ async def test_restart_restore(hass, aioclient_mock, monkeypatch, snapshot) -> N
 
 
 async def test_fw151(hass, aioclient_mock, monkeypatch, snapshot) -> None:
-    """Legacy firmware: state 20 -> Standby, state 3 (+power) -> Charging.
+    """Legacy firmware: user stop 20 -> Connected, state 3 (+power) -> Charging.
 
     /init resolves sw_version "1.51" from ESP_SW_version once, since fw 1.x
-    never sends verFWMain/firmware in /main.
+    never sends verFWMain/firmware in /main; that 1.x version also switches
+    commands to the form the 1.x web page posts.
     """
     entry = _entry(hass, HOST_A)
     aioclient_mock.post(f"http://{HOST_A}/main", json=FW151_MAIN)
@@ -454,10 +455,18 @@ async def test_fw151(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     await _setup(hass, entry)
     scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
 
-    assert hass.states.get(STATE_SENSOR).state == "Standby"
+    assert hass.states.get(STATE_SENSOR).state == "Connected"
+    assert hass.states.get(_entity_id(hass, entry, "substate")).state == "Limited by User"
     device_registry = dr.async_get(hass)
     device = next(iter(dr.async_entries_for_config_entry(device_registry, entry.entry_id)))
     assert device.sw_version == "1.51"
+
+    stop = _entity_id(hass, entry, "stop_charging")
+    aioclient_mock.mock_calls.clear()
+    await scenario.call("switch.turn_off", {"entity_id": stop})
+    ((_, _, data, headers),) = _calls(aioclient_mock, HOST_A, "/pageEvent")
+    assert data == "evseEnabled=0"
+    assert headers["pageEvent"] == "evseEnabled"
 
     await scenario.poll(base=FW151_MAIN, state=3, curMeas1=10.0)
     assert hass.states.get(STATE_SENSOR).state == "Charging"

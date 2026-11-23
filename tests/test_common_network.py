@@ -886,7 +886,9 @@ def test_module_level_tuning_constants_have_expected_values() -> None:
     assert common_network.POST_COMMAND_REFRESH_DELAYS == (3, 10, 20)
     assert common_network.TRANSITION_BURST_MIN_GAP == 30.0
     assert common_network._MAX_OFFLINE_BACKOFF == 30
-    assert common_network._LEGACY_IDLE_STATE == 20
+    assert common_network._LEGACY_USER_STOP_STATE == 20
+    assert common_network._LEGACY_INIT_VERSION_LIMIT == 200
+    assert common_network._LEGACY_CAR_CONNECTED_PILOTS == frozenset({2, 3})
     assert common_network._LEGACY_CHARGING_CANDIDATE_STATE == 3
     assert common_network._LEGACY_PAUSE_GRACE_POLLS == 2
 
@@ -998,6 +1000,63 @@ def test_legacy_firmware_is_not_falsely_marked_modern() -> None:
     data = updater._normalize_legacy_device_state({"state": 20})
     assert data["state"] == common_network.DEVICE_STATE_STANDBY
     assert updater.is_modern_firmware is False
+
+
+@pytest.mark.parametrize(
+    ("data", "confirmed", "reve", "expected"),
+    [
+        (None, True, False, False),  # nothing polled yet
+        ({}, True, False, False),
+        ({"state": 20, "pilot": 2}, True, False, True),  # 1.x, /init said 1.x
+        ({"state": 20, "pilot": 2}, False, False, False),  # marker absent alone is not proof
+        ({"verFWMain": "R3.05.5", "state": 2}, True, False, False),
+        ({"firmware": "1.23", "state": 2}, True, False, False),
+        ({"state": 2}, True, True, False),  # REVE never uses the 1.x form
+    ],
+)
+def test_legacy_firmware_needs_positive_1x_evidence(data, confirmed, reve, expected) -> None:
+    """Only a classic reply without the marker AND a 1.x /init version count."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater.data = data
+    updater._legacy_confirmed = confirmed
+    updater._reve_seen = reve
+
+    assert updater.is_legacy_firmware is expected
+
+
+def test_legacy_firmware_stays_off_once_modern_was_seen() -> None:
+    """A degraded reply from a modern charger must not switch the command form."""
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._normalize_legacy_device_state({"verFWMain": "R3.05.8", "state": 2})
+    updater.data = {"state": 2}
+    updater._legacy_confirmed = True
+
+    assert updater.is_legacy_firmware is False
+
+
+@pytest.mark.parametrize(
+    ("init", "confirmed"),
+    [
+        ({"ESP_SW_version": 151}, True),
+        ({"ESP_SW_version": 199}, True),
+        ({"ESP_SW_version": 200}, False),
+        ({"ESP_SW_version": 305}, False),
+        ({"MCU_SW_version": 151}, True),
+        ({"ESP_SW_version": "151"}, False),
+        ({}, False),
+    ],
+)
+def test_init_version_below_2_confirms_firmware_1x(
+    init: dict, confirmed: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _Session(_Response(payload=init))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    assert updater._legacy_confirmed is False
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._legacy_confirmed is confirmed
 
 
 def test_normalize_legacy_device_state_translates_idle_code() -> None:

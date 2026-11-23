@@ -120,19 +120,24 @@ async def post_page_event(
     auth: aiohttp.BasicAuth | None,
     timeout: aiohttp.ClientTimeout | None,
     fields: dict[str, Any],
+    selector_header: str | None = None,
 ) -> None:
     """Write a ``/pageEvent`` form; returns on success, raises otherwise.
 
-    The body is not read: the firmware answers a write with its web UI, and
-    nothing in it is worth the bytes.
+    ``selector_header`` names the setting in a ``pageEvent`` header, the form
+    the firmware 1.x web page posts. The body is not read: the firmware
+    answers a write with its web UI, and nothing in it is worth the bytes.
     """
+    headers = dict(_FORM_HEADERS)
+    if selector_header is not None:
+        headers["pageEvent"] = selector_header
     async with charger_post(
         session,
         url,
         auth=auth,
         timeout=timeout,
         data=urlencode(fields),
-        headers=dict(_FORM_HEADERS),
+        headers=headers,
     ):
         return
 

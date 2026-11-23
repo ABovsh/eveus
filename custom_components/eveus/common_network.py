@@ -179,13 +179,31 @@ def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
 
 
 # Firmware-1.x device-state codes with a different meaning than the modern
-# 0-7 map (GitHub issue #11): 20 is that firmware's idle/standby code, and 3
-# is reported during active charging (modern firmware: 3 = connected-idle,
-# 4 = charging). Verified against live captures from MCU_SW_version 151.
-_LEGACY_IDLE_STATE = 20
+# 0-7 map (GitHub issue #11). The 1.x web page names 1-6 after the pilot
+# states A-F (Ready, Wait, Charge, D, E, F); 3 is reported during active
+# charging (modern firmware: 3 = connected-idle, 4 = charging). 20 is the
+# page's "Disabled by user": the #11 capture shows it with the Stop flag set.
+_LEGACY_USER_STOP_STATE = 20
 _LEGACY_CHARGING_CANDIDATE_STATE = 3
+# `pilot` values the 1.x page shows as "car connected" (state B and C).
+_LEGACY_CAR_CONNECTED_PILOTS: Final = frozenset({2, 3})
+
+# 1.x codes 1-7 also exist on newer firmware with other meanings, so they
+# translate only after /init has reported a 1.x version (see
+# ``_legacy_confirmed``); a missing verFWMain alone does not prove 1.x.
+_LEGACY_LOW_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
+    1: (DEVICE_STATE_STANDBY, 0),  # Ready: no car
+    2: (3, 0),  # Wait: car connected
+    4: (DEVICE_STATE_ERROR, 7),  # D, E, F: pilot faults
+    5: (DEVICE_STATE_ERROR, 7),
+    6: (DEVICE_STATE_ERROR, 7),
+    7: (DEVICE_STATE_ERROR, 2),  # Leakage; 24 is the low-leak code
+}
+# /init versions below this are firmware 1.x (151 = 1.51, issue #11).
+_LEGACY_INIT_VERSION_LIMIT: Final = 200
 
 # Codes from the 1.x web interface mapped to canonical (state, subState) pairs.
+# None of them occurs on newer firmware, whose states are 0-7.
 _LEGACY_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
     8: (DEVICE_STATE_ERROR, 1),
     9: (DEVICE_STATE_ERROR, 5),
@@ -318,6 +336,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._init_fw_fallback: str | None = None
         self._init_fw_fetch_done = False
         self._init_fw_task: asyncio.Task | None = None
+        # True once /init reported a 1.x version: the positive proof the
+        # low-code translation and the 1.x command form need.
+        self._legacy_confirmed = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
         # Legacy-firmware charging latch (GitHub issue #11): fw-1.x reports
         # code 3 both plugged-idle and actively charging, distinguishable
         # only by the electrical measurements. Once a session is observed,
@@ -388,6 +409,21 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def is_modern_firmware(self) -> bool:
         """Whether this charger's codes follow the modern state/substate maps."""
         return self._modern_firmware_seen or is_modern_firmware_payload(self.data or {})
+
+    @property
+    def is_legacy_firmware(self) -> bool:
+        """Whether a polled reply identifies this charger as firmware 1.x.
+
+        Needs positive evidence: /init reported a 1.x version, the classic
+        reply lacks the version marker, and no modern reply was seen before. Before the first poll, on REVE and on
+        any newer firmware this is False, so those keep their current forms.
+        """
+        return (
+            self._legacy_confirmed
+            and bool(self.data)
+            and not self.is_modern_firmware
+            and self.firmware_family == FAMILY_CLASSIC
+        )
 
     @property
     def firmware_family(self) -> str:
@@ -685,7 +721,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         transition events) work on the canonical 0-7 domain with no
         per-call-site special cases.
 
-        Code 20 translates to Standby, and 3 translates to Charging while the
+        Code 20, a user stop, translates to Connected with a car plugged in
+        and Standby without one, both Limited by User; 3 translates to Charging while the
         electrical measurements confirm power is flowing (with a short
         zero-power grace window mid-session — see
         ``_LEGACY_PAUSE_GRACE_POLLS``). A powerless 3 with no session in
@@ -721,10 +758,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             data["state"] = DEVICE_STATE_CHARGING
             return data
         self._reset_legacy_charging_latch()
-        if state == _LEGACY_IDLE_STATE:
-            data[LEGACY_RAW_STATE_KEY] = state
-            data["state"] = DEVICE_STATE_STANDBY
-        elif (mapped := _LEGACY_STATE_MAP.get(state)) is not None:
+        if state == _LEGACY_USER_STOP_STATE:
+            car = get_safe_value(data, "pilot", int) in _LEGACY_CAR_CONNECTED_PILOTS
+            mapped = (3 if car else DEVICE_STATE_STANDBY, 1)  # Limited by User
+        elif self._legacy_confirmed and state in _LEGACY_LOW_STATE_MAP:
+            mapped = _LEGACY_LOW_STATE_MAP[state]
+        else:
+            mapped = _LEGACY_STATE_MAP.get(state)
+        if mapped is not None:
             data[LEGACY_RAW_STATE_KEY] = state
             data["state"], substate = mapped
             if "subState" not in data:
@@ -1479,6 +1520,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # unset -- device_info keeps showing "Unknown".
             return
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
+        self._legacy_confirmed = raw_version < _LEGACY_INIT_VERSION_LIMIT
 
     def _reject_credentials(self) -> None:
         """What a 401 means to the poll: reauth, not a connectivity failure.

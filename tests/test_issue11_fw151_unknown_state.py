@@ -107,10 +107,10 @@ def test_coordinator_poll_with_fw151_payload_succeeds(
 
     data = asyncio.run(updater._async_update_data())
 
-    # Legacy idle code 20 is translated to the modern Standby (2) right after
-    # validation — see test_issue11_fw151_state_semantics.py for the full
-    # translation contract.
-    assert data["state"] == 2
+    # Legacy code 20 (user stop) with the car connected (pilot 2) is
+    # translated to the modern Connected (3) right after validation — see
+    # test_issue11_fw151_state_semantics.py for the full translation contract.
+    assert data["state"] == 3
     assert data["_legacy_raw_state"] == 20
     assert updater.connection_quality["consecutive_failures"] == 0
 
