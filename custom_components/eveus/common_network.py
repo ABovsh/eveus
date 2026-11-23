@@ -1524,6 +1524,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
         self._legacy_confirmed = raw_version < _LEGACY_INIT_VERSION_LIMIT
+        if (
+            self._legacy_confirmed
+            and LEGACY_RAW_STATE_KEY not in data
+            and get_safe_value(data, "state", int) in _LEGACY_LOW_STATE_MAP
+        ):
+            # The last poll read a code (1, 2, 4-7) that means something else
+            # from the next poll on; a transition from it would be invented.
+            self._event_prev_state = None
+            self._event_prev_error_code = None
 
     def _reject_credentials(self) -> None:
         """What a 401 means to the poll: reauth, not a connectivity failure.

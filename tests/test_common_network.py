@@ -1035,6 +1035,40 @@ def test_legacy_firmware_stays_off_once_modern_was_seen() -> None:
 
 
 @pytest.mark.parametrize(
+    ("version", "last", "baseline_kept"),
+    [
+        (151, {"state": 2}, False),  # raw 2 read as Standby before the proof
+        (151, {"state": 7}, False),
+        (151, {"state": 3, common_network.LEGACY_RAW_STATE_KEY: 20}, True),  # already 1.x-read
+        (151, {"state": 5, common_network.LEGACY_RAW_STATE_KEY: 16}, True),
+        (151, {"state": 9}, True),  # not a code the proof re-reads
+        (305, {"state": 2}, True),  # not 1.x
+    ],
+)
+def test_confirming_1x_starts_a_fresh_event_baseline(
+    version: int, last: dict, baseline_kept: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codes 1, 2 and 4-7 change meaning once /init proves 1.x.
+
+    A raw 2 read before the proof (Standby) and after it (Connected) is the
+    same charger state; without a fresh baseline the next poll would fire an
+    invented car-connected event after every restart with the car plugged in.
+    A baseline already read the 1.x way stays, so a real start still fires.
+    """
+    session = _Session(_Response(payload={"ESP_SW_version": version}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater.data = last
+    updater._event_prev_state = 2
+    updater._event_prev_error_code = 7
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    expected = (2, 7) if baseline_kept else (None, None)
+    assert (updater._event_prev_state, updater._event_prev_error_code) == expected
+
+
+@pytest.mark.parametrize(
     ("init", "confirmed"),
     [
         ({"ESP_SW_version": 151}, True),

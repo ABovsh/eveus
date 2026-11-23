@@ -475,6 +475,31 @@ async def test_fw151(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     assert scenario.captures == snapshot
 
 
+async def test_fw151_restart_with_car_plugged_in_fires_no_event(
+    hass, aioclient_mock, monkeypatch
+) -> None:
+    """1.x code 2 reads Standby until /init proves 1.x, then Connected.
+
+    That is the same plugged-in charger, so the poll after setup must not
+    report a car being connected.
+    """
+    waiting = {**FW151_MAIN, "state": 2}
+    entry = _entry(hass, HOST_A)
+    aioclient_mock.post(f"http://{HOST_A}/main", json=waiting)
+    aioclient_mock.post(f"http://{HOST_A}/init", json=FW151_INIT)
+    await _setup(hass, entry)
+    scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
+    events: list[Event] = []
+    for event_type in (EVENT_CAR_CONNECTED, EVENT_CAR_DISCONNECTED):
+        hass.bus.async_listen(event_type, events.append)
+
+    await scenario.poll(base=waiting)
+    await scenario.poll(base=waiting)
+
+    assert hass.states.get(STATE_SENSOR).state == "Connected"
+    assert events == []
+
+
 async def test_fw151_limit_stop_and_leakage_fault(hass, aioclient_mock, monkeypatch) -> None:
     """Legacy limit stops and faults reach HA sensors, events and Repairs."""
     entry = _entry(hass, HOST_A)
