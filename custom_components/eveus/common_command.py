@@ -263,7 +263,7 @@ class CommandManager:
                 _LOGGER.debug("OCPP form write failed: %s", type(err).__name__)
             else:
                 ocpp_saved = True
-            if getattr(self._updater, "_shutting_down", False):
+            if getattr(self._updater, "_shutting_down", False):  # pragma: no mutate - a False or None default are both falsy
                 if ocpp_saved:
                     self._consecutive_failures = 0
                 return ocpp_saved
@@ -271,7 +271,7 @@ class CommandManager:
         # Firmware 1.x gets exactly what its own web page posts: the setting
         # named in a pageEvent header and only <cmd>=<value> in the body. Newer
         # firmware keeps the body form verified live on R3.05.5.
-        legacy = getattr(self._updater, "is_legacy_firmware", False) is True
+        legacy = getattr(self._updater, "is_legacy_firmware", False) is True  # pragma: no mutate - a False or None default both fail `is True`
         if legacy:
             command = _LEGACY_COMMAND_NAMES.get(command, command)
         fields = {command: value} if legacy else {"pageevent": command, command: value}

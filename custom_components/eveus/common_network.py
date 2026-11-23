@@ -762,7 +762,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return data
         self._reset_legacy_charging_latch()
         if state == _LEGACY_USER_STOP_STATE:
-            car = get_safe_value(data, "pilot", int) in _LEGACY_CAR_CONNECTED_PILOTS
+            car = get_safe_value(data, "pilot", int) in _LEGACY_CAR_CONNECTED_PILOTS  # pragma: no mutate - float and int pilot codes are equal set members for every whole-number code
             mapped = (3 if car else DEVICE_STATE_STANDBY, 1)  # Limited by User
         elif self._legacy_confirmed and state in _LEGACY_LOW_STATE_MAP:
             mapped = _LEGACY_LOW_STATE_MAP[state]
@@ -1527,7 +1527,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if (
             self._legacy_confirmed
             and LEGACY_RAW_STATE_KEY not in data
-            and get_safe_value(data, "state", int) in _LEGACY_LOW_STATE_MAP
+            and get_safe_value(data, "state", int) in _LEGACY_LOW_STATE_MAP  # pragma: no mutate - float and int state codes are equal keys for every whole-number code
         ):
             # The last poll read a code (1, 2, 4-7) that means something else
             # from the next poll on; a transition from it would be invented.
