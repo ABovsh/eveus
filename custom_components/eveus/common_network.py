@@ -185,8 +185,8 @@ def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
 # page's "Disabled by user": the #11 capture shows it with the Stop flag set.
 _LEGACY_USER_STOP_STATE = 20
 _LEGACY_CHARGING_CANDIDATE_STATE = 3
-# `pilot` values the 1.x page shows as "car connected" (state B and C).
-_LEGACY_CAR_CONNECTED_PILOTS: Final = frozenset({2, 3})
+# `pilot` values the 1.x page shows as "car connected" (states B, C and E).
+_LEGACY_CAR_CONNECTED_PILOTS: Final = frozenset({2, 3, 5})
 
 # 1.x codes 1-7 also exist on newer firmware with other meanings, so they
 # translate only after /init has reported a 1.x version (see

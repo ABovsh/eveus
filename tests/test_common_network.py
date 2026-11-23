@@ -888,7 +888,7 @@ def test_module_level_tuning_constants_have_expected_values() -> None:
     assert common_network._MAX_OFFLINE_BACKOFF == 30
     assert common_network._LEGACY_USER_STOP_STATE == 20
     assert common_network._LEGACY_INIT_VERSION_LIMIT == 200
-    assert common_network._LEGACY_CAR_CONNECTED_PILOTS == frozenset({2, 3})
+    assert common_network._LEGACY_CAR_CONNECTED_PILOTS == frozenset({2, 3, 5})
     assert common_network._LEGACY_CHARGING_CANDIDATE_STATE == 3
     assert common_network._LEGACY_PAUSE_GRACE_POLLS == 2
 

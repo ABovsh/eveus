@@ -157,7 +157,7 @@ def test_state_sensor_has_no_raw_attribute_for_plain_mapped_state() -> None:
 
 @pytest.mark.parametrize(
     ("pilot", "state"),
-    [(2, 3), (3, 3), (1, DEVICE_STATE_STANDBY), (4, DEVICE_STATE_STANDBY), (None, DEVICE_STATE_STANDBY)],
+    [(2, 3), (3, 3), (5, 3), (1, DEVICE_STATE_STANDBY), (4, DEVICE_STATE_STANDBY), (None, DEVICE_STATE_STANDBY)],
 )
 def test_poll_translates_legacy_user_stop_by_car_presence(
     pilot: int | None, state: int, monkeypatch: pytest.MonkeyPatch,
