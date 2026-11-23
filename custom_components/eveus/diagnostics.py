@@ -14,6 +14,7 @@ from .const import (
     CONF_FIRMWARE_FAMILY,
     CONF_FOLLOW_HA_TIME_ZONE,
     LEGACY_RAW_STATE_KEY,
+    LEGACY_SUBSTATE_MAPPED_KEY,
 )
 
 # Redacted on every diagnostics download — credentials, host, IDs, and any
@@ -206,7 +207,10 @@ async def async_get_config_entry_diagnostics(
     soc_calculator = getattr(runtime_data, "soc_calculator", None)
     data = updater.data or {}
     main_known, main_unknown, main_suppressed = _split_known(
-        {k: v for k, v in data.items() if k != LEGACY_RAW_STATE_KEY},
+        {
+            k: v for k, v in data.items()
+            if k not in (LEGACY_RAW_STATE_KEY, LEGACY_SUBSTATE_MAPPED_KEY)
+        },
         _KNOWN_MAIN_FIELDS,
     )
     quality = updater.connection_quality

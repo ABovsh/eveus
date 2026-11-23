@@ -149,9 +149,8 @@ def not_charging_reason(
     # only reason here that points at a setting the user has to change.
     if ocpp:
         return "Controlled by OCPP"
-    # Only modern firmware's subState follows these maps. Firmware 1.x (GitHub
-    # issue #11) has its own codes, so reading one there would name a confident
-    # but arbitrary reason; the state-derived answer is the honest one.
+    # Read subState with these maps only for modern firmware or a substate
+    # derived from a 1.x state code. Other 1.x replies use the state alone.
     if not modern:
         if state == DEVICE_STATE_COMPLETE:
             return _REASON_CHARGE_COMPLETE

@@ -6,18 +6,23 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 import heapq
-from typing import Any
+from typing import Any, Final
 
 import aiohttp
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import ERROR_LOG_RATE_LIMIT
-from .client import COMMAND_TIMEOUT_OBJ, post_page_event
+from .client import COMMAND_TIMEOUT_OBJ, post_ocpp_event, post_page_event
+from .reve import FAMILY_CLASSIC
 from .utils import RateLog
 
 _COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = COMMAND_TIMEOUT_OBJ
 
 _LOGGER = logging.getLogger(__name__)
+
+# Settings the firmware 1.x web page writes under another name than newer
+# firmware (js/scriptUA.js); 1.x also reports both names in /main.
+_LEGACY_COMMAND_NAMES: Final[dict[str, str]] = {"oneCharge": "one_charge"}
 
 # Retry transient command failures a couple of times before giving up.
 # Most failed-toggle reports are single-packet WiFi loss, not real device
@@ -213,7 +218,7 @@ class CommandManager:
     async def _post_command(
         self, command: str, value: Any, extra: dict[str, Any] | None = None
     ) -> bool:
-        """Issue a single HTTP request to the charger and return success."""
+        """Send one command attempt to the charger and return success."""
         # Re-check shutdown INSIDE the command lock, immediately before the POST.
         # The network layer's pre-lock check can pass while this command waits its
         # turn behind another (rate-limit spacing + retry backoff); shutdown can
@@ -229,8 +234,7 @@ class CommandManager:
         # rather than the moment the command was queued behind the lock.
         if callable(value):
             value = value()
-        # REVE keeps a few settings only in GraphQL; for every other firmware,
-        # and every other command, there is no route and /pageEvent is used.
+        # REVE keeps a few settings only in GraphQL.
         route = getattr(self._updater, "reve_command_route", None)
         write = route(command) if route is not None else None
         if write is not None:
@@ -238,17 +242,54 @@ class CommandManager:
             await write(value)
             self._consecutive_failures = 0
             return True
-        fields = {"pageevent": command, command: value}
+
+        ocpp_saved = False
+        if (
+            command == "ocppEnabled"
+            and getattr(self._updater, "firmware_family", FAMILY_CLASSIC) == FAMILY_CLASSIC
+        ):
+            # The web page of Wi-Fi firmware R3.05.6 saves OCPP through /ocppEvent
+            # (issue #24); /pageEvent below is the form verified on 1P R3.05.5.
+            # Both set the same value, so the order is safe.
+            try:
+                await post_ocpp_event(
+                    session,
+                    self._updater.url_for("/ocppEvent"),
+                    auth=self._updater.basic_auth,
+                    timeout=_COMMAND_TIMEOUT_OBJ,
+                    value=value,
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                _LOGGER.debug("OCPP form write failed: %s", type(err).__name__)
+            else:
+                ocpp_saved = True
+            if getattr(self._updater, "_shutting_down", False):
+                if ocpp_saved:
+                    self._consecutive_failures = 0
+                return ocpp_saved
+
+        # Firmware 1.x gets exactly what its own web page posts: the setting
+        # named in a pageEvent header and only <cmd>=<value> in the body. Newer
+        # firmware keeps the body form verified live on R3.05.5.
+        legacy = getattr(self._updater, "is_legacy_firmware", False) is True
+        if legacy:
+            command = _LEGACY_COMMAND_NAMES.get(command, command)
+        fields = {command: value} if legacy else {"pageevent": command, command: value}
         if extra:
             fields.update(extra)
         # No on_unauthorized: a command has no reauth path of its own, so the
-        # 401 surfaces as a ClientResponseError and send_command maps it.
-        await post_page_event(
-            session,
-            self._updater.url_for("/pageEvent"),
-            auth=self._updater.basic_auth,
-            timeout=_COMMAND_TIMEOUT_OBJ,
-            fields=fields,
-        )
+        # 401 surfaces for send_command to map if neither write succeeded.
+        try:
+            await post_page_event(
+                session,
+                self._updater.url_for("/pageEvent"),
+                auth=self._updater.basic_auth,
+                timeout=_COMMAND_TIMEOUT_OBJ,
+                fields=fields,
+                selector_header=command if legacy else None,
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            if not ocpp_saved:
+                raise
         self._consecutive_failures = 0
         return True

@@ -1,7 +1,7 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.31.0-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.31.1-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
@@ -168,7 +168,7 @@ browser or reset the app's frontend cache.
 | **Limits** | Energy, time, cost and SOC limits, **Disable all** (not on REVE) |
 | **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and, on Eveus firmware, energy limit. On REVE also their days of the week, which you can change, and the other schedules and the tariffs set in the charger's app, read-only |
 | **Charger clock** | Time Zone (its list starts with **Auto: follow Home Assistant**, the **Follow HA Time Zone** switch), the charger's time (Time Drift instead when the clock is 10 minutes or more off) and **Sync Time** |
-| **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy |
+| **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy in kWh |
 | **Safety** | Box and plug temperature, ground, leakage current, connection quality |
 
 In Basic mode the two SOC sections are hidden and Limits has no SOC limit.
@@ -579,7 +579,7 @@ The **Manual Mode** sensor shows the mode the charger reports, and the card show
 
 - **Time**, **Energy** and **Cost** limits can be set, changed, turned on or off only **while the car is charging or a limit has stopped the charge, and not in manual mode**. REVE drops a limit set before charging starts, and every limit when the connector is pulled out, so at other times the card locks the limits and says why, and Home Assistant refuses the change with the reason.
 - When a limit stops the charge, raise it or turn it off to charge on: the charger resumes by itself, and a raised limit stops it at the new value. **One Charge** charges on too, but puts the charger in manual mode, so no limit applies until manual mode ends.
-- Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value. A value set while its limit is off is kept by Home Assistant, also through a restart, because REVE has nowhere to store it.
+- Turning a limit on sends the value of its number; turning it off removes the limit, and the number keeps its value. A value set while its limit is off is kept by Home Assistant, before the edit completes, including across an abrupt restart, because REVE has nowhere to store it.
 - **Target SOC** can be changed at any time: Home Assistant does that stop.
 - REVE has no **Limit: disable all**: the charger drops that setting within seconds, so the switch is not created and the card does not show it.
 
@@ -613,9 +613,10 @@ The charger did not lower its packet size on a link with an MTU below 1500. When
 ### Older charger firmware
 
 R3.01.x and firmware 1.x (EnergyStar V-series) are supported with fewer
-readings; the ones the charger does not report stay unavailable. An unknown
-state shows `Unknown`, with its code in the **State** sensor's `raw_state`
-attribute.
+readings; the ones the charger does not report stay unavailable. On 1.x,
+**State** follows the charger's own status names, and controls are sent the
+way its web page sends them. An unknown state shows `Unknown`, with its code
+in the **State** sensor's `raw_state` attribute.
 
 For firmware updates, message **@energy_star** on Telegram; install the file
 through the charger's web interface.
@@ -667,8 +668,8 @@ no long-term statistics.
 | Entity ID | What it gives you |
 | --- | --- |
 | `sensor.eveus_ev_charger_state` | Main charger state; selectable values in automation triggers. The `since` attribute is when the charger entered this state; it is absent when that moment is not known |
-| `sensor.eveus_ev_charger_substate` | Detailed state or fault; selectable values in automation triggers |
-| `sensor.eveus_ev_charger_not_charging_reason` | Why charging is waiting; **Controlled by OCPP** while OCPP is on. Fault details: `error` attribute (modern firmware) |
+| `sensor.eveus_ev_charger_substate` | Detailed state or fault; selectable values in automation triggers. **Waiting for Activation**, shown as **External Limit** on the charger, means an external controller such as OCPP is keeping charging on hold. |
+| `sensor.eveus_ev_charger_not_charging_reason` | Why charging is waiting; **Controlled by OCPP** while OCPP is on. Fault details: `error` attribute when available |
 | `binary_sensor.eveus_ev_charger_car_connected` | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Reported OCPP connection state (diagnostic) |

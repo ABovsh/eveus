@@ -1,10 +1,9 @@
 """The one way this integration talks to an Eveus charger.
 
-Four call sites reach the firmware: the coordinator's ``/main`` poll, the
-one-shot ``/init`` firmware probe, every command's ``/pageEvent`` form, and the
-config flow's setup validation. REVE firmware adds a fifth, its local
-``/graphql`` endpoint, under the same transport rules. Each used to spell out the transport rules
-itself — opt out of redirects, reject a 3xx rather than follow it, raise on an
+The coordinator polls ``/main`` and probes firmware via ``/init``. The config flow
+validates setup, and commands use ``/pageEvent``, ``/ocppEvent`` or REVE's local
+``/graphql`` endpoint. The original call sites used to spell out the transport
+rules themselves — opt out of redirects, reject a 3xx rather than follow it, raise on an
 HTTP error, cap the body, decode it leniently, then JSON-decode — and that
 divergence is why setup once ran on a shorter timeout than steady-state
 polling, the one moment a struggling charger most needs patience.
@@ -121,19 +120,44 @@ async def post_page_event(
     auth: aiohttp.BasicAuth | None,
     timeout: aiohttp.ClientTimeout | None,
     fields: dict[str, Any],
+    selector_header: str | None = None,
 ) -> None:
     """Write a ``/pageEvent`` form; returns on success, raises otherwise.
 
-    The body is not read: the firmware answers a write with its web UI, and
-    nothing in it is worth the bytes.
+    ``selector_header`` names the setting in a ``pageEvent`` header, the form
+    the firmware 1.x web page posts. The body is not read: the firmware
+    answers a write with its web UI, and nothing in it is worth the bytes.
     """
+    headers = dict(_FORM_HEADERS)
+    if selector_header is not None:
+        headers["pageEvent"] = selector_header
     async with charger_post(
         session,
         url,
         auth=auth,
         timeout=timeout,
         data=urlencode(fields),
-        headers=dict(_FORM_HEADERS),
+        headers=headers,
+    ):
+        return
+
+
+async def post_ocpp_event(
+    session: Any,
+    url: str,
+    *,
+    auth: aiohttp.BasicAuth | None,
+    timeout: aiohttp.ClientTimeout | None,
+    value: Any,
+) -> None:
+    """Write the OCPP toggle in the form used by the charger's web UI."""
+    async with charger_post(
+        session,
+        url,
+        auth=auth,
+        timeout=timeout,
+        data=urlencode({"ocppEnabled": value}),
+        headers={**_FORM_HEADERS, "pageEvent": "ocppEnabled"},
     ):
         return
 

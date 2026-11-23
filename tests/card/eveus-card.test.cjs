@@ -2953,3 +2953,40 @@ test('power shown in kW, voltage in kV and energy in Wh read as the card units',
   assert.match(html,/227<small>V/);
   assert.match(html,/16<small>kWh|15\.6<small>kWh/);
 });
+
+test('changing charger discards a schedule edit before its debounce can write', async () => {
+  const key = 'schedule_1_start';
+  const x = setupAll({sections:['schedules'], over:SCHED});
+  x.card._startTimeEdit(key);
+  x.card._timeDraft(key, '19:23');
+  const entities = {...x.card._ids, [key]:'time.second_charger'};
+  x.states[entities[key]] = {state:'09:00:00', attributes:{}};
+  x.hass.callWS = async () => ({entities});
+  x.card.setConfig({sections:['schedules'], device_id:'second'});
+  await new Promise((resolve) => setImmediate(resolve));
+  for (const callback of [...x.timers.values()]) await callback();
+  assert.deepEqual(x.calls, []);
+  assert.equal(x.card._ids[key], 'time.second_charger');
+  assert.doesNotMatch(x.html(), /<input type="time"/);
+});
+
+test('a stop confirmation belongs to the charger on which it was requested', async () => {
+  const x = setupAll({sections:['actions'], over:{stop_charging:['switch.first_stop','off']}});
+  await x.card._statusToggle('stop_charging');
+  const entities = {...x.card._ids, stop_charging:'switch.second_stop'};
+  x.states[entities.stop_charging] = {state:'off', attributes:{}};
+  x.hass.callWS = async () => ({entities});
+  x.card.setConfig({sections:['actions'], device_id:'second'});
+  await new Promise((resolve) => setImmediate(resolve));
+  await x.card._statusToggle('stop_charging');
+  assert.deepEqual(x.calls, []);
+  await x.card._statusToggle('stop_charging');
+  assert.equal(x.calls[0][2].entity_id, 'switch.second_stop');
+});
+
+test('monthly energy is requested in the kWh shown on the card', async () => {
+  const x = setupAll({sections:['history'], over:{total_energy:['sensor.total',50000,{unit_of_measurement:'Wh'}]}});
+  x.hass.callWS = async (msg) => ({change:msg.units?.energy === 'kWh' ? 12 : 12000});
+  await x.card._fetchMonth();
+  assert.match(x.html(), /hist-month-cur[^]*?<b>12<small>kWh/);
+});

@@ -219,16 +219,20 @@ def test_an_unmapped_substate_in_state_5_is_unknown_and_finishes_as_complete():
 
 
 def test_legacy_firmware_state_5_is_still_charge_complete():
-    """Firmware 1.x substates are its own codes; none of this reads them."""
+    """Firmware 1.x substates are its own codes; none of this reads them.
+
+    16 is the 1.x page's "Limited by energy", read as Charge Complete; a raw
+    1.x 5 is the page's pilot fault "E", not Charge Complete.
+    """
     updater = _updater()
-    _feed(updater, {"state": 5, "subState": 5, "sessionTime": 1000}, modern=False)
+    _feed(updater, {"state": 16, "subState": 5, "sessionTime": 1000}, modern=False)
     assert _reason(updater) == "Charge Complete"
 
 
 def test_legacy_firmware_finish_reason_is_state_derived():
     updater = _updater()
     _feed(updater, {"state": 3, "subState": 0, "powerMeas": 1500, "curMeas1": 7}, modern=False)
-    _feed(updater, {"state": 5, "subState": 5}, modern=False)
+    _feed(updater, {"state": 16, "subState": 5}, modern=False)
     assert _finished(updater) == ["complete"]
 
 

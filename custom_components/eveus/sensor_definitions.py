@@ -45,6 +45,7 @@ from .const import (
     SESSION_ACTIVE_STATES,
     ERROR_LOG_RATE_LIMIT,
     LEGACY_RAW_STATE_KEY,
+    LEGACY_SUBSTATE_MAPPED_KEY,
     MAX_SCHEDULE_ENERGY_KWH,
     MAX_SESSION_TIME_SECONDS,
     METER_PUBLISH_BAND_KWH,
@@ -732,12 +733,15 @@ def get_charger_substate(updater, hass) -> Optional[str]:
 def _reads_modern_codes(updater) -> bool:
     """Whether this updater's subState follows the modern maps.
 
+    A substate synthesized from a 1.x state code already uses those maps.
     The real coordinator answers this itself: its `is_modern_firmware` already
     ORs its sticky verdict (set the first time the firmware marker is seen,
     never cleared) with the current payload, so one reply that omits verFWMain
     cannot downgrade the reason. The payload fallback below is only for the
     lightweight updater doubles in the tests, which have no such property.
     """
+    if updater.snapshot.raw.get(LEGACY_SUBSTATE_MAPPED_KEY) is True:
+        return True
     sticky = getattr(updater, "is_modern_firmware", None)
     if sticky is not None:
         return bool(sticky)
@@ -784,9 +788,8 @@ def get_not_charging_reason_attrs(updater, hass) -> dict:
     state = _read_int(updater, "state")
     substate = _read_int(updater, "subState")
     # subState 0 in the Error state is the contradictory "no fault code with an
-    # error" case get_charger_substate already blanks — no name to report. A
-    # firmware-1.x fault code is not an ERROR_STATES index at all, so it gets
-    # no name either; suspendErrors below is a raw word and stays either way.
+    # error" case get_charger_substate already blanks. Name faults only when
+    # their substate follows the modern error map.
     if (
         state == DEVICE_STATE_ERROR
         and substate not in (None, 0)

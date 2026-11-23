@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Final
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -33,6 +33,7 @@ from .const import (
     DEVICE_STATE_COMPLETE,
     DEVICE_STATE_STANDBY,
     LEGACY_RAW_STATE_KEY,
+    LEGACY_SUBSTATE_MAPPED_KEY,
     is_modern_firmware_payload,
     DEVICE_STATE_ERROR,
     ERROR_LOG_RATE_LIMIT,
@@ -178,17 +179,54 @@ def _looks_charging_from_measurements(data: dict[str, Any]) -> bool:
 
 
 # Firmware-1.x device-state codes with a different meaning than the modern
-# 0-7 map (GitHub issue #11): 20 is that firmware's idle/standby code, and 3
-# is reported during active charging (modern firmware: 3 = connected-idle,
-# 4 = charging). Verified against live captures from MCU_SW_version 151.
-_LEGACY_IDLE_STATE = 20
+# 0-7 map (GitHub issue #11). The 1.x web page names 1-6 after the pilot
+# states A-F (Ready, Wait, Charge, D, E, F); 3 is reported during active
+# charging (modern firmware: 3 = connected-idle, 4 = charging). 20 is the
+# page's "Disabled by user": the #11 capture shows it with the Stop flag set.
+_LEGACY_USER_STOP_STATE = 20
 _LEGACY_CHARGING_CANDIDATE_STATE = 3
+# `pilot` values the 1.x page shows as "car connected" (states B, C and E).
+_LEGACY_CAR_CONNECTED_PILOTS: Final = frozenset({2, 3, 5})
+
+# 1.x codes 1-7 also exist on newer firmware with other meanings, so they
+# translate only after /init has reported a 1.x version (see
+# ``_legacy_confirmed``); a missing verFWMain alone does not prove 1.x.
+_LEGACY_LOW_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
+    1: (DEVICE_STATE_STANDBY, 0),  # Ready: no car
+    2: (3, 0),  # Wait: car connected
+    4: (DEVICE_STATE_ERROR, 7),  # D, E, F: pilot faults
+    5: (DEVICE_STATE_ERROR, 7),
+    6: (DEVICE_STATE_ERROR, 7),
+    7: (DEVICE_STATE_ERROR, 2),  # Leakage; 24 is the low-leak code
+}
+# /init versions below this are firmware 1.x (151 = 1.51, issue #11).
+_LEGACY_INIT_VERSION_LIMIT: Final = 200
+
+# Codes from the 1.x web interface mapped to canonical (state, subState) pairs.
+# None of them occurs on newer firmware, whose states are 0-7.
+_LEGACY_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
+    8: (DEVICE_STATE_ERROR, 1),
+    9: (DEVICE_STATE_ERROR, 5),
+    10: (DEVICE_STATE_ERROR, 6),
+    11: (DEVICE_STATE_ERROR, 5),  # Relay overheat is inside the box.
+    12: (DEVICE_STATE_ERROR, 10),
+    13: (DEVICE_STATE_ERROR, 14),
+    14: (DEVICE_STATE_ERROR, 8),
+    15: (DEVICE_STATE_COMPLETE, 3),
+    16: (DEVICE_STATE_COMPLETE, 2),
+    17: (DEVICE_STATE_COMPLETE, 4),
+    18: (DEVICE_STATE_COMPLETE, 5),
+    19: (DEVICE_STATE_COMPLETE, 7),
+    21: (DEVICE_STATE_ERROR, 3),
+    22: (6, 10),  # Paused by Adaptive Mode
+    23: (DEVICE_STATE_ERROR, 9),
+    24: (DEVICE_STATE_ERROR, 4),
+}
 # Consecutive zero-power polls tolerated before a translated legacy Charging
-# state reverts to Connected. Firmware 1.x has no distinct "Paused" code — a
-# momentary zero-power sample mid-session (charge-current renegotiation, a
-# balancing tick) would otherwise flip the state for one poll and fire a
-# spurious charging_finished/charging_started event pair, corrupting the Last
-# Session sensors.
+# state reverts to Connected. A momentary zero-power sample mid-session
+# (charge-current renegotiation, a balancing tick) would otherwise flip the
+# state for one poll and fire a spurious charging_finished/charging_started
+# event pair, corrupting the Last Session sensors.
 _LEGACY_PAUSE_GRACE_POLLS = 2
 
 
@@ -298,6 +336,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._init_fw_fallback: str | None = None
         self._init_fw_fetch_done = False
         self._init_fw_task: asyncio.Task | None = None
+        # True once /init reported a 1.x version: the positive proof the
+        # low-code translation and the 1.x command form need.
+        self._legacy_confirmed = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
         # Legacy-firmware charging latch (GitHub issue #11): fw-1.x reports
         # code 3 both plugged-idle and actively charging, distinguishable
         # only by the electrical measurements. Once a session is observed,
@@ -368,6 +409,21 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
     def is_modern_firmware(self) -> bool:
         """Whether this charger's codes follow the modern state/substate maps."""
         return self._modern_firmware_seen or is_modern_firmware_payload(self.data or {})
+
+    @property
+    def is_legacy_firmware(self) -> bool:
+        """Whether a polled reply identifies this charger as firmware 1.x.
+
+        Needs positive evidence: /init reported a 1.x version, the classic
+        reply lacks the version marker, and no modern reply was seen before. Before the first poll, on REVE and on
+        any newer firmware this is False, so those keep their current forms.
+        """
+        return (
+            self._legacy_confirmed
+            and bool(self.data)
+            and not self.is_modern_firmware
+            and self.firmware_family == FAMILY_CLASSIC
+        )
 
     @property
     def firmware_family(self) -> str:
@@ -471,13 +527,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         def written() -> dict[str, int | float]:
             # Called as the delayed save writes: nothing is pending after it.
-            self._limits_save_pending = False
+            if self._limits_saved is values:
+                self._limits_save_pending = False
             return values
 
         store.async_delay_save(written, 1)
 
-    async def _flush_reve_limits(self) -> None:
-        """Write unsaved limit values now, as the entry unloads. A delayed save
+    async def async_flush_reve_limits(self) -> None:
+        """Write unsaved limit values on a local-only edit or unload. A delayed save
         still pending is replaced too: removing the entry deletes the file
         through another ``Store``, which cannot cancel it, so it would land
         after the removal and leave the file behind."""
@@ -485,13 +542,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         values = self._reve.limit_values()
         if store is None or (values == self._limits_saved and not self._limits_save_pending):
             return
+        scheduled = self._limits_saved
         try:
             await store.async_save(values)
         except Exception as err:  # noqa: BLE001 - unloading must not fail on storage
             _LOGGER.debug("Could not save the REVE limit values: %s", type(err).__name__)
             return
-        self._limits_saved = values
-        self._limits_save_pending = False
+        # A poll may have scheduled a newer snapshot during the disk write.
+        if self._limits_saved is scheduled:
+            self._limits_saved = values
+            self._limits_save_pending = False
 
     async def _persist_meter_reset(self) -> None:
         """Write an accepted reset to storage now, before this poll publishes it.
@@ -661,15 +721,17 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         transition events) work on the canonical 0-7 domain with no
         per-call-site special cases.
 
-        Only the two observed codes are translated: 20 -> Standby, and 3 ->
-        Charging while the electrical measurements confirm power is flowing
-        (with a short zero-power grace window mid-session — see
+        Code 20, a user stop, translates to Connected with a car plugged in
+        and Standby without one, both Limited by User; 3 translates to Charging while the
+        electrical measurements confirm power is flowing (with a short
+        zero-power grace window mid-session — see
         ``_LEGACY_PAUSE_GRACE_POLLS``). A powerless 3 with no session in
         progress keeps its modern "Connected" reading, which matches a
-        plugged-idle car on either firmware generation. The original code is
-        preserved under LEGACY_RAW_STATE_KEY for the State sensor's
-        `raw_state` diagnostic attribute. Codes this firmware may use that we
-        have not seen yet stay untranslated and render as "Unknown".
+        plugged-idle car on either firmware generation. Error, limit and
+        adaptive pause codes carry a substate unless the payload supplies one.
+        The original code is preserved under LEGACY_RAW_STATE_KEY for the
+        State sensor's `raw_state` diagnostic attribute. Unmapped codes
+        outside the 0–7 domain render as "Unknown".
         """
         if is_modern_firmware_payload(data):
             self._modern_firmware_seen = True
@@ -679,6 +741,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # the 1.x translation here would rewrite a Connected charger that
             # is drawing power into Charging, firing a bogus transition event.
             return data
+        if self._legacy_confirmed and isinstance(data.get("one_charge"), int):
+            # The 1.x page writes and shows one_charge; oneCharge may lag it.
+            data["oneCharge"] = data["one_charge"]
         state = get_safe_value(data, "state", int)
         if state == _LEGACY_CHARGING_CANDIDATE_STATE:
             if _looks_charging_from_measurements(data):
@@ -696,9 +761,19 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             data["state"] = DEVICE_STATE_CHARGING
             return data
         self._reset_legacy_charging_latch()
-        if state == _LEGACY_IDLE_STATE:
+        if state == _LEGACY_USER_STOP_STATE:
+            car = get_safe_value(data, "pilot", int) in _LEGACY_CAR_CONNECTED_PILOTS
+            mapped = (3 if car else DEVICE_STATE_STANDBY, 1)  # Limited by User
+        elif self._legacy_confirmed and state in _LEGACY_LOW_STATE_MAP:
+            mapped = _LEGACY_LOW_STATE_MAP[state]
+        else:
+            mapped = _LEGACY_STATE_MAP.get(state)
+        if mapped is not None:
             data[LEGACY_RAW_STATE_KEY] = state
-            data["state"] = DEVICE_STATE_STANDBY
+            data["state"], substate = mapped
+            if "subState" not in data:
+                data["subState"] = substate
+                data[LEGACY_SUBSTATE_MAPPED_KEY] = True
         return data
 
     @property
@@ -914,7 +989,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Cancel any pending delayed refreshes and shut down."""
         self._shutting_down = True
         await self._flush_meter_baseline()
-        await self._flush_reve_limits()
+        await self.async_flush_reve_limits()
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
         if self._init_fw_task is not None:
@@ -1217,7 +1292,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                         state,
                         get_safe_value(new_data, "subState", int),
                         modern=self._modern_firmware_seen
-                        or is_modern_firmware_payload(new_data),
+                        or is_modern_firmware_payload(new_data)
+                        or new_data.get(LEGACY_SUBSTATE_MAPPED_KEY) is True,
                         ocpp=bool(get_safe_value(new_data, "ocppEnabled", int)),
                         stopped=get_safe_value(new_data, "evseEnabled", int) == 1,
                         limit_reached=(
@@ -1447,6 +1523,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # unset -- device_info keeps showing "Unknown".
             return
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
+        self._legacy_confirmed = raw_version < _LEGACY_INIT_VERSION_LIMIT
 
     def _reject_credentials(self) -> None:
         """What a 401 means to the poll: reauth, not a connectivity failure.

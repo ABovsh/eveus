@@ -26,7 +26,7 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
 )
 from homeassistant.core import Event, HomeAssistant, State
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -51,9 +51,11 @@ from custom_components.eveus.const import (
     EVENT_CAR_DISCONNECTED,
     EVENT_CHARGING_FINISHED,
     EVENT_CHARGING_STARTED,
+    EVENT_ERROR,
     MODEL_16A,
     SOC_MODE_ADVANCED,
 )
+from custom_components.eveus.safety import safety_issue_id
 
 from .conftest import _entry, _mock_charger, _setup
 
@@ -246,6 +248,27 @@ async def test_cold_boot(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     assert scenario.captures == snapshot
 
 
+async def test_turn_off_ocpp_on_classic_firmware(hass, aioclient_mock) -> None:
+    entry = _entry(hass, HOST_A)
+    aioclient_mock.post(f"http://{HOST_A}/main", json=dict(REAL_MAIN, ocppEnabled=1))
+    aioclient_mock.post(f"http://{HOST_A}/ocppEvent", text="ok")
+    aioclient_mock.post(f"http://{HOST_A}/pageEvent", status=405)
+    await _setup(hass, entry)
+    entity_id = "switch.eveus_ev_charger_connect_to_ocpp"
+    assert hass.states.get(entity_id).state == "on"
+
+    aioclient_mock.mock_calls.clear()
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": entity_id}, blocking=True
+    )
+
+    assert [(url.path, data) for _, url, data, _ in aioclient_mock.mock_calls] == [
+        ("/ocppEvent", "ocppEnabled=0"),
+        ("/pageEvent", "pageevent=ocppEnabled&ocppEnabled=0&ocppVendor=0"),
+    ]
+    assert hass.states.get(entity_id).state == "off"
+
+
 async def test_charge_session(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     """Standby -> Connected -> Charging -> Complete -> unplug.
 
@@ -419,10 +442,11 @@ async def test_restart_restore(hass, aioclient_mock, monkeypatch, snapshot) -> N
 
 
 async def test_fw151(hass, aioclient_mock, monkeypatch, snapshot) -> None:
-    """Legacy firmware: state 20 -> Standby, state 3 (+power) -> Charging.
+    """Legacy firmware: user stop 20 -> Connected, state 3 (+power) -> Charging.
 
     /init resolves sw_version "1.51" from ESP_SW_version once, since fw 1.x
-    never sends verFWMain/firmware in /main.
+    never sends verFWMain/firmware in /main; that 1.x version also switches
+    commands to the form the 1.x web page posts.
     """
     entry = _entry(hass, HOST_A)
     aioclient_mock.post(f"http://{HOST_A}/main", json=FW151_MAIN)
@@ -431,16 +455,65 @@ async def test_fw151(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     await _setup(hass, entry)
     scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
 
-    assert hass.states.get(STATE_SENSOR).state == "Standby"
+    assert hass.states.get(STATE_SENSOR).state == "Connected"
+    assert hass.states.get(_entity_id(hass, entry, "substate")).state == "Limited by User"
     device_registry = dr.async_get(hass)
     device = next(iter(dr.async_entries_for_config_entry(device_registry, entry.entry_id)))
     assert device.sw_version == "1.51"
+
+    stop = _entity_id(hass, entry, "stop_charging")
+    aioclient_mock.mock_calls.clear()
+    await scenario.call("switch.turn_off", {"entity_id": stop})
+    ((_, _, data, headers),) = _calls(aioclient_mock, HOST_A, "/pageEvent")
+    assert data == "evseEnabled=0"
+    assert headers["pageEvent"] == "evseEnabled"
 
     await scenario.poll(base=FW151_MAIN, state=3, curMeas1=10.0)
     assert hass.states.get(STATE_SENSOR).state == "Charging"
     assert hass.states.get(STATE_SENSOR).attributes["raw_state"] == 3
 
     assert scenario.captures == snapshot
+
+
+async def test_fw151_limit_stop_and_leakage_fault(hass, aioclient_mock, monkeypatch) -> None:
+    """Legacy limit stops and faults reach HA sensors, events and Repairs."""
+    entry = _entry(hass, HOST_A)
+    aioclient_mock.post(f"http://{HOST_A}/main", json=FW151_MAIN)
+    aioclient_mock.post(f"http://{HOST_A}/pageEvent", text="ok")
+    aioclient_mock.post(f"http://{HOST_A}/init", json=FW151_INIT)
+    await _setup(hass, entry)
+    scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
+    substate = _entity_id(hass, entry, "substate")
+    reason = _entity_id(hass, entry, "not_charging_reason")
+    events: list[Event] = []
+    for event_type in (EVENT_CHARGING_STARTED, EVENT_CHARGING_FINISHED, EVENT_ERROR):
+        hass.bus.async_listen(event_type, events.append)
+
+    await scenario.poll(base=FW151_MAIN, state=3, curMeas1=10.0, evseEnabled=0)
+    assert hass.states.get(STATE_SENSOR).state == "Charging"
+
+    counts = _count_state_changes(hass)
+    await scenario.poll(base=FW151_MAIN, state=16, evseEnabled=0)
+    await scenario.poll(base=FW151_MAIN, state=16, evseEnabled=0)
+    assert hass.states.get(STATE_SENSOR).state == "Charge Complete"
+    assert hass.states.get(STATE_SENSOR).attributes["raw_state"] == 16
+    assert hass.states.get(substate).state == "Energy Limit"
+    assert hass.states.get(reason).state == "Energy Limit Reached"
+    assert {entity_id: counts.get(entity_id) for entity_id in (STATE_SENSOR, substate, reason)} == {
+        STATE_SENSOR: 1, substate: 1, reason: 1,
+    }
+    assert [event.event_type for event in events] == [
+        EVENT_CHARGING_STARTED, EVENT_CHARGING_FINISHED,
+    ]
+    assert events[-1].data["reason"] == "limit"
+
+    await scenario.poll(base=FW151_MAIN, state=24)
+    assert hass.states.get(STATE_SENSOR).state == "Error"
+    assert hass.states.get(substate).state == "Current Leak Low"
+    assert hass.states.get(reason).attributes["error"] == "Current Leak Low"
+    assert events[-1].event_type == EVENT_ERROR
+    assert events[-1].data["error_code"] == 4
+    assert (DOMAIN, safety_issue_id(entry, "leakage_detected")) in ir.async_get(hass).issues
 
 
 async def test_two_chargers(hass, aioclient_mock, monkeypatch, snapshot) -> None:

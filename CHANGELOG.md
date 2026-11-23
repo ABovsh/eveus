@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.31.1 - 2026-11-23
+
+### 🐛 Fixed
+
+- **Eveus: Connect to OCPP turns off on R3.05.x Wi-Fi firmware.** The setting is also saved the way the charger's web page saves it. Closes [#24](https://github.com/ABovsh/eveus/issues/24) reported by @duntor9055.
+- **Better compatibility with Eveus firmware 1.x: controls and every status code.** Controls, One Charge included, are sent the way the charger's web page sends them. State and Substate name faults, limit stops, adaptive pauses and pilot states; a stop by the user with the car plugged in shows Connected with Substate Limited by User instead of Standby.
+- **REVE keeps an edited energy, time or cost limit through an abrupt restart.** The limit is saved before the change is confirmed while it is off.
+- **Card: switching chargers discards pending schedule edits** and asks again before stopping a charge or resetting a counter on the newly selected charger.
+- **Card: monthly energy totals stay in kWh** even when Home Assistant displays the Total Energy sensor in Wh or MWh.
+
 ## 4.31.0 - 2026-11-12
 
 ### ✨ New

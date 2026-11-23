@@ -1340,9 +1340,13 @@ class ReveApi:
         for when it is switched on."""
         self._require_limit_window(key)
         written = _whole(value)
-        if self._updater.snapshot.get_int(flag) == 1:
+        enabled = self._updater.snapshot.get_int(flag) == 1
+        if enabled:
             await self._mutate({"session": {field: written}})
         self._keep_limit_value(key, written / factor if factor != 1 else written)
+        if not enabled:
+            # The station has no copy to recover after a process restart.
+            await self._updater.async_flush_reve_limits()
 
     def _keep_limit_value(self, key: str, value: int | float) -> None:
         if self._limit_values.get(key) == value:
