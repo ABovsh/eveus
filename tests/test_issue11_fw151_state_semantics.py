@@ -244,6 +244,16 @@ def test_low_codes_need_a_1x_init_version(
     assert "subState" not in data
 
 
+@pytest.mark.parametrize(("confirmed", "expected"), [(True, 1), (False, 0)])
+def test_1x_one_charge_reads_the_field_the_page_writes(
+    confirmed: bool, expected: int, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1.x reports oneCharge and one_charge; its page writes and shows one_charge."""
+    payload = _fw151_payload(oneCharge=0, one_charge=1)
+    _, data = _poll(payload, monkeypatch, confirmed=confirmed)
+    assert data["oneCharge"] == expected
+
+
 @pytest.mark.parametrize("substate", [None, 0, 3])
 def test_poll_preserves_an_explicit_legacy_substate(
     substate: int | None, monkeypatch: pytest.MonkeyPatch,

@@ -320,6 +320,20 @@ def test_firmware_1x_gets_the_form_its_own_web_page_sends(command, value) -> Non
     }
 
 
+def test_firmware_1x_one_charge_uses_the_page_setting_name() -> None:
+    """The 1.x page writes One Charge as one_charge (js/scriptUA.js)."""
+    session = _Session(_Response())
+    updater = _Updater(session)
+    updater.is_legacy_firmware = True
+    manager = CommandManager(updater)
+
+    assert asyncio.run(manager.send_command("oneCharge", 1)) is True
+
+    (call,) = session.calls
+    assert call["data"] == "one_charge=1"
+    assert call["headers"]["pageEvent"] == "one_charge"
+
+
 def test_modern_firmware_keeps_the_body_selector_form() -> None:
     """Newer firmware is untouched: the live-verified body form, no header."""
     session = _Session(_Response())

@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 import heapq
-from typing import Any
+from typing import Any, Final
 
 import aiohttp
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -19,6 +19,10 @@ from .utils import RateLog
 _COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = COMMAND_TIMEOUT_OBJ
 
 _LOGGER = logging.getLogger(__name__)
+
+# Settings the firmware 1.x web page writes under another name than newer
+# firmware (js/scriptUA.js); 1.x also reports both names in /main.
+_LEGACY_COMMAND_NAMES: Final[dict[str, str]] = {"oneCharge": "one_charge"}
 
 # Retry transient command failures a couple of times before giving up.
 # Most failed-toggle reports are single-packet WiFi loss, not real device
@@ -268,6 +272,8 @@ class CommandManager:
         # named in a pageEvent header and only <cmd>=<value> in the body. Newer
         # firmware keeps the body form verified live on R3.05.5.
         legacy = getattr(self._updater, "is_legacy_firmware", False) is True
+        if legacy:
+            command = _LEGACY_COMMAND_NAMES.get(command, command)
         fields = {command: value} if legacy else {"pageevent": command, command: value}
         if extra:
             fields.update(extra)

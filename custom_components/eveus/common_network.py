@@ -741,6 +741,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # the 1.x translation here would rewrite a Connected charger that
             # is drawing power into Charging, firing a bogus transition event.
             return data
+        if self._legacy_confirmed and isinstance(data.get("one_charge"), int):
+            # The 1.x page writes and shows one_charge; oneCharge may lag it.
+            data["oneCharge"] = data["one_charge"]
         state = get_safe_value(data, "state", int)
         if state == _LEGACY_CHARGING_CANDIDATE_STATE:
             if _looks_charging_from_measurements(data):
