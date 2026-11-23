@@ -26,7 +26,7 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
 )
 from homeassistant.core import Event, HomeAssistant, State
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -51,9 +51,11 @@ from custom_components.eveus.const import (
     EVENT_CAR_DISCONNECTED,
     EVENT_CHARGING_FINISHED,
     EVENT_CHARGING_STARTED,
+    EVENT_ERROR,
     MODEL_16A,
     SOC_MODE_ADVANCED,
 )
+from custom_components.eveus.safety import safety_issue_id
 
 from .conftest import _entry, _mock_charger, _setup
 
@@ -462,6 +464,47 @@ async def test_fw151(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     assert hass.states.get(STATE_SENSOR).attributes["raw_state"] == 3
 
     assert scenario.captures == snapshot
+
+
+async def test_fw151_limit_stop_and_leakage_fault(hass, aioclient_mock, monkeypatch) -> None:
+    """Legacy limit stops and faults reach HA sensors, events and Repairs."""
+    entry = _entry(hass, HOST_A)
+    aioclient_mock.post(f"http://{HOST_A}/main", json=FW151_MAIN)
+    aioclient_mock.post(f"http://{HOST_A}/pageEvent", text="ok")
+    aioclient_mock.post(f"http://{HOST_A}/init", json=FW151_INIT)
+    await _setup(hass, entry)
+    scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
+    substate = _entity_id(hass, entry, "substate")
+    reason = _entity_id(hass, entry, "not_charging_reason")
+    events: list[Event] = []
+    for event_type in (EVENT_CHARGING_STARTED, EVENT_CHARGING_FINISHED, EVENT_ERROR):
+        hass.bus.async_listen(event_type, events.append)
+
+    await scenario.poll(base=FW151_MAIN, state=3, curMeas1=10.0, evseEnabled=0)
+    assert hass.states.get(STATE_SENSOR).state == "Charging"
+
+    counts = _count_state_changes(hass)
+    await scenario.poll(base=FW151_MAIN, state=16, evseEnabled=0)
+    await scenario.poll(base=FW151_MAIN, state=16, evseEnabled=0)
+    assert hass.states.get(STATE_SENSOR).state == "Charge Complete"
+    assert hass.states.get(STATE_SENSOR).attributes["raw_state"] == 16
+    assert hass.states.get(substate).state == "Energy Limit"
+    assert hass.states.get(reason).state == "Energy Limit Reached"
+    assert {entity_id: counts.get(entity_id) for entity_id in (STATE_SENSOR, substate, reason)} == {
+        STATE_SENSOR: 1, substate: 1, reason: 1,
+    }
+    assert [event.event_type for event in events] == [
+        EVENT_CHARGING_STARTED, EVENT_CHARGING_FINISHED,
+    ]
+    assert events[-1].data["reason"] == "limit"
+
+    await scenario.poll(base=FW151_MAIN, state=24)
+    assert hass.states.get(STATE_SENSOR).state == "Error"
+    assert hass.states.get(substate).state == "Current Leak Low"
+    assert hass.states.get(reason).attributes["error"] == "Current Leak Low"
+    assert events[-1].event_type == EVENT_ERROR
+    assert events[-1].data["error_code"] == 4
+    assert (DOMAIN, safety_issue_id(entry, "leakage_detected")) in ir.async_get(hass).issues
 
 
 async def test_two_chargers(hass, aioclient_mock, monkeypatch, snapshot) -> None:

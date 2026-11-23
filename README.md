@@ -667,8 +667,8 @@ no long-term statistics.
 | Entity ID | What it gives you |
 | --- | --- |
 | `sensor.eveus_ev_charger_state` | Main charger state; selectable values in automation triggers. The `since` attribute is when the charger entered this state; it is absent when that moment is not known |
-| `sensor.eveus_ev_charger_substate` | Detailed state or fault; selectable values in automation triggers |
-| `sensor.eveus_ev_charger_not_charging_reason` | Why charging is waiting; **Controlled by OCPP** while OCPP is on. Fault details: `error` attribute (modern firmware) |
+| `sensor.eveus_ev_charger_substate` | Detailed state or fault; selectable values in automation triggers. **Waiting for Activation**, shown as **External Limit** on the charger, means an external controller such as OCPP is keeping charging on hold. |
+| `sensor.eveus_ev_charger_not_charging_reason` | Why charging is waiting; **Controlled by OCPP** while OCPP is on. Fault details: `error` attribute when available |
 | `binary_sensor.eveus_ev_charger_car_connected` | Vehicle is electrically connected |
 | `binary_sensor.eveus_ev_charger_session_active` | Charging session is active or paused |
 | `binary_sensor.eveus_ev_charger_ocpp_connected` | Reported OCPP connection state (diagnostic) |

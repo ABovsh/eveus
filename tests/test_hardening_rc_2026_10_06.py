@@ -271,7 +271,7 @@ def test_clock_repair_rekey_requires_the_same_new_classification(monkeypatch):
 
 
 @pytest.mark.parametrize("field", ["powerMeas", "curMeas1"])
-@pytest.mark.parametrize("state", [3, 21])
+@pytest.mark.parametrize("state", [3, 30])
 def test_legacy_activity_uses_the_same_measurement_bounds_as_sensors(monkeypatch, field, state):
     from datetime import timedelta
     from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME

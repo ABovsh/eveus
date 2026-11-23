@@ -5,6 +5,7 @@
 ### 🐛 Fixed
 
 - **Eveus: Connect to OCPP** also saves the setting the way the charger's web page does, so turning OCPP off takes effect on affected R3.05.x Wi-Fi firmware. ([#24](https://github.com/ABovsh/eveus/issues/24))
+- **On Eveus firmware 1.x, State and Substate identify faults, limit stops and adaptive pauses** (state codes 8–19 and 21–24).
 - REVE saves an edited energy, time or cost limit before confirming the change while the limit is off. An abrupt Home Assistant restart could previously restore the old value.
 - Switching chargers in the card discards pending schedule edits and asks again before stopping a charge or resetting a counter on the newly selected charger.
 - Monthly energy totals on the card use kWh even when Home Assistant displays the Total Energy sensor in Wh or MWh.
