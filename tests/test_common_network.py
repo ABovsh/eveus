@@ -2679,3 +2679,29 @@ def test_1x_unusable_limits_status_falls_back_to_the_stop_code(updater, word):
 
     assert data["evseEnabled"] == 1
     assert "sh1Enabled" not in data
+
+
+@pytest.mark.parametrize("code", [15, 16, 17, 18, 19])
+@pytest.mark.parametrize(
+    ("pilot", "expected_state"),
+    [(1, 2), (2, 5), (3, 5), (None, 5)],
+    ids=["no-car", "car-B", "car-C", "no-pilot-yet"],
+)
+def test_1x_limit_and_schedule_holds_follow_the_car(updater, code, pilot, expected_state):
+    """A 1.x schedule or limit hold happens with or without a car plugged in."""
+    payload = {"state": code}
+    if pilot is not None:
+        payload["pilot"] = pilot
+
+    data = updater._normalize_legacy_device_state(payload)
+
+    assert data["state"] == expected_state
+    assert data["subState"] == common_network._LEGACY_STATE_MAP[code][1]
+
+
+def test_1x_hold_keeps_the_car_through_an_unknown_pilot(updater):
+    updater._normalize_legacy_device_state({"state": 18, "pilot": 1})
+
+    data = updater._normalize_legacy_device_state({"state": 18, "pilot": 4})
+
+    assert data["state"] == 2

@@ -476,6 +476,25 @@ async def test_fw151(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     assert scenario.captures == snapshot
 
 
+async def test_fw1x_schedule_hold_without_a_car(hass, aioclient_mock, monkeypatch):
+    """1.x code 18 holds the charger for schedule 1 whether or not a car is in."""
+    charging = json.loads((_FIXTURES / "fw133_charging_main.json").read_text())
+    held = {**charging, "state": 18, "pilot": 1, "curMeas1": 0, "powerMeas": 0}
+    entry = _entry(hass, HOST_A)
+    _mock_charger(aioclient_mock, HOST_A, json=held)
+    aioclient_mock.post(f"http://{HOST_A}/init", json={"ESP_SW_version": 155})
+    await _setup(hass, entry)
+    scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
+    await scenario.poll(base=held)
+
+    assert hass.states.get("binary_sensor.eveus_ev_charger_car_connected").state == "off"
+    assert hass.states.get(STATE_SENSOR).state == "Standby"
+    assert hass.states.get(_entity_id(hass, entry, "schedule_1_enabled")).state == "on"
+
+    await scenario.poll(base={**held, "pilot": 2})
+    assert hass.states.get("binary_sensor.eveus_ev_charger_car_connected").state == "on"
+
+
 async def test_fw133_stop_and_resume(hass, aioclient_mock, monkeypatch):
     charging, stopped, resumed = (
         json.loads((_FIXTURES / f"fw133_{phase}_main.json").read_text())

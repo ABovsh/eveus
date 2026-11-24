@@ -774,7 +774,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         ``_LEGACY_PAUSE_GRACE_POLLS``). A powerless 3 with no session in
         progress keeps its modern "Connected" reading, which matches a
         plugged-idle car on either firmware generation. Error, limit and
-        adaptive pause codes carry a substate unless the payload supplies one.
+        adaptive pause codes carry a substate unless the payload supplies one;
+        a limit or schedule hold (15-19) with no car reads Standby.
         The original code is preserved under LEGACY_RAW_STATE_KEY for the
         State sensor's `raw_state` diagnostic attribute. Unmapped codes
         outside the 0–7 domain render as "Unknown".
@@ -820,6 +821,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             mapped = _LEGACY_LOW_STATE_MAP[state]
         else:
             mapped = _LEGACY_STATE_MAP.get(state)
+            if mapped is not None and mapped[0] == DEVICE_STATE_COMPLETE and self._legacy_car_present is False:
+                # Limit and schedule holds (15-19) also hold an empty charger.
+                mapped = (DEVICE_STATE_STANDBY, mapped[1])
         if mapped is not None:
             data[LEGACY_RAW_STATE_KEY] = state
             data["state"], substate = mapped
