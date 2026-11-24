@@ -206,6 +206,8 @@ TIME_ZONE_FOLLOW_RETRY_POLLS: Final[int] = 10
 # Current limits
 MIN_CURRENT: Final[int] = 7
 RESTRICTED_MODE_KEY: Final[str] = "restricted_mode"
+# Pre-R3 firmware: 16 while the 16 A adapter is fitted, 255 without one.
+ADAPTER_KEY: Final[str] = "adapter"
 MODEL_16A: Final[str] = "16A"
 MODEL_32A: Final[str] = "32A"
 MODEL_40A: Final[str] = "40A"

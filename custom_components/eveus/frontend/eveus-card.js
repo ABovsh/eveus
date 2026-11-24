@@ -173,7 +173,7 @@ const I18N = {
     total: 'Total', allTime: 'all time', counterA: 'Counter A', counterB: 'Counter B', reset: 'Reset',
     resetQ: (label) => `Reset ${label}?`, toZero: 'will be set to 0', cancel: 'Cancel',
     confirm: 'Confirm',
-    disableGroundQ: 'Disable ground protection?', socketFullQ: (amps) => `Allow ${amps} A? Only on a circuit rated for it.`, socketTitle: 'Household socket 16 A: tap to switch between 16 A and full current', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
+    disableGroundQ: 'Disable ground protection?', socketFullQ: (amps) => `${amps === null ? 'Allow the full charger current?' : `Allow ${amps} A?`} Only on a circuit rated for it.`, socketTitle: 'Household socket 16 A: tap to switch between 16 A and full current', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
     socFromCar: (detail) => `Initial SOC from the car: ${detail}`, socManual: 'Initial SOC set manually', socNotUsed: (detail) => `Car SOC not used (${detail}); the manual value applies`,
     safety: 'Safety', box: 'Box temperature', plug: 'Plug temperature', groundProt: 'Ground protection',
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
@@ -241,7 +241,7 @@ const I18N = {
     total: 'Загалом', allTime: 'за весь час', counterA: 'Лічильник A', counterB: 'Лічильник B', reset: 'Скинути',
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
     confirm: 'Підтвердити',
-    disableGroundQ: 'Вимкнути захист заземлення?', socketFullQ: (amps) => `Дозволити ${amps} А? Лише якщо лінія це витримує.`, socketTitle: 'Побутова розетка 16 А: натисніть, щоб перемкнути між 16 А і повним струмом', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
+    disableGroundQ: 'Вимкнути захист заземлення?', socketFullQ: (amps) => `${amps === null ? 'Дозволити повний струм зарядки?' : `Дозволити ${amps} А?`} Лише якщо лінія це витримує.`, socketTitle: 'Побутова розетка 16 А: натисніть, щоб перемкнути між 16 А і повним струмом', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
     socFromCar: (detail) => `Початковий SOC з авто: ${detail}`, socManual: 'Початковий SOC задано вручну', socNotUsed: (detail) => `SOC авто не використано (${detail}); діє значення, задане вручну`,
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
@@ -1075,15 +1075,18 @@ class EveusCard extends HTMLElement {
     const t = this._t;
     const known = ['on', 'off'].includes(this._state(key)?.state);
     const on = this._limitOn(key);
-    const amps = !known ? '—' : on ? 16 : this._socketFullAmps();
+    const amps = !known ? '—' : on ? 16 : this._socketFullAmps() ?? '—';
     return `<button class="safety-item safety-socket" data-limit-toggle="${key}" role="switch" aria-checked="${on}" aria-label="${t.socketTitle}" title="${t.socketTitle}" ${!this._online || !known ? 'disabled' : ''}><ha-icon icon="mdi:power-socket-eu"></ha-icon><span class="safety-value">${amps}<small>A</small></span></button>`;
   }
   // The current the charger allows with the socket mode off: Charging Current's
-  // maximum while the mode is off, remembered for the moment the mode flips.
+  // maximum while the mode is off, remembered per entity for the moment the mode
+  // flips. Null until seen: with the mode on, that maximum is the 16 A cap.
   _socketFullAmps() {
+    const id = this._ids?.charging_current;
     const max = this._state('charging_current')?.attributes?.max;
-    if (this._state('household_socket_16_a')?.state === 'off' && Number.isFinite(max)) this._socketMax = max;
-    return this._socketMax ?? (Number.isFinite(max) && max > 16 ? max : 32);
+    if (this._socketMax?.id !== id) this._socketMax = null;
+    if (this._state('household_socket_16_a')?.state === 'off' && Number.isFinite(max)) this._socketMax = {id, max};
+    return this._socketMax?.max ?? null;
   }
   // A reading or setting the charger's firmware does not provide at all: the
   // integration publishes it `unavailable` while the charger itself answers (REVE

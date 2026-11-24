@@ -32,6 +32,7 @@ from .const import (
     EVEUS_FIRMWARE_ONLY_ENTITIES,
     MODEL_MAX_CURRENT,
     MIN_CURRENT,
+    ADAPTER_KEY,
     RESTRICTED_MODE_KEY,
     MIN_VOLTAGE_OPTIONS,
     CONF_MODEL,
@@ -462,6 +463,14 @@ class EveusSetpointNumber(EveusNumberEntity):
         clamped = max(
             self._attr_native_min_value, min(self.native_max_value, raw)
         )
+        # The command queue is shared: the value waits behind other entities'
+        # commands, and a poll can meanwhile identify pre-R3 firmware (other
+        # units) or lower the maximum (socket mode). Such a write is not sent.
+        legacy = self._legacy_firmware
+
+        def still_valid() -> bool:
+            return self._legacy_firmware == legacy and clamped <= self.native_max_value
+
         await self._send_pinned_command(
             device_value=self._encode_write(clamped),
             pending=clamped,
@@ -470,6 +479,11 @@ class EveusSetpointNumber(EveusNumberEntity):
             rejected_message=f"Eveus charger did not accept {self._write_label(clamped)}",
             failure_prefix=f"Failed to set {self._write_label()}",
             preflight=lambda: self._latest_write is token,
+            still_valid=still_valid,
+            stale_message=(
+                f"{self._write_label(clamped)} not sent: the charger's firmware "
+                "or maximum changed while it waited. Try again."
+            ),
         )
 
     async def _async_restore_state(self, state: State) -> None:
@@ -489,8 +503,15 @@ class EveusSocketLimitedCurrentNumber(EveusSetpointNumber):
 
     @property
     def native_max_value(self) -> float:
-        """Apply the socket limit to writes while preserving stored setpoints."""
-        if self._updater.snapshot.get_int(RESTRICTED_MODE_KEY) == 1:
+        """Apply the socket limit to writes while preserving stored setpoints.
+
+        Pre-R3 firmware also limits these controls to 16 A while its 16 A
+        adapter is reported, as the charger's own page does.
+        """
+        snapshot = self._updater.snapshot
+        if snapshot.get_int(RESTRICTED_MODE_KEY) == 1 or (
+            self._legacy_firmware and snapshot.get_int(ADAPTER_KEY) == 16
+        ):
             return min(self._attr_native_max_value, 16)
         return self._attr_native_max_value
 

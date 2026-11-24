@@ -1199,6 +1199,7 @@ def test_emit_transition_events_first_poll_is_silent() -> None:
 def test_emit_transition_events_fires_charging_started() -> None:
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
+    updater._event_prev_plugged = False
 
     updater._emit_transition_events({"state": common_network.DEVICE_STATE_CHARGING})
 

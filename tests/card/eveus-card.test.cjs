@@ -3059,6 +3059,38 @@ test('socket 16 A to full current asks first; back to 16 A is immediate',async()
   assert.match(off.card.shadowRoot.innerHTML,/safety-value[^"]*">16<small>A/);
 });
 
+test('socket mode on from the start asks for the full charger current, not an invented amount',async()=>{
+  for (const lang of ['en','uk']) {
+    const on=setupSafety({socket:'on',currentMax:48});
+    on.card._config={...on.card._config,language:lang};
+    await on.card._toggleLimit('household_socket_16_a');
+    const html=on.card.shadowRoot.innerHTML;
+    assert.match(html,lang==='en'?/Allow the full charger current\?/:/Дозволити повний струм зарядки\?/);
+    assert.doesNotMatch(html,/32 A|32 А/);
+  }
+});
+
+test('socket full current seen with the mode off is named in the question',async()=>{
+  const off=setupSafety({socket:'off',currentMax:40});
+  off.states['switch.socket']={state:'on',attributes:{}};
+  off.states['number.current']={state:'16',attributes:{min:7,max:16,step:1,unit_of_measurement:'A'}};
+  off.card.hass={...off.hass,states:{...off.states}};
+  await off.card._toggleLimit('household_socket_16_a');
+  assert.match(off.card.shadowRoot.innerHTML,/Allow 40 A\?/);
+});
+
+test('a remembered full current belongs to its charger',async()=>{
+  const card=setupSafety({socket:'off',currentMax:16});
+  // The card is pointed at another charger whose socket mode is already on.
+  const next={...card.states,'switch.socket2':{state:'on',attributes:{}},'number.current2':{state:'16',attributes:{min:7,max:16,step:1,unit_of_measurement:'A'}}};
+  card.card._ids={...card.card._ids,household_socket_16_a:'switch.socket2',charging_current:'number.current2'};
+  card.card.hass={...card.hass,states:next};
+  await card.card._toggleLimit('household_socket_16_a');
+  const html=card.card.shadowRoot.innerHTML;
+  assert.match(html,/Allow the full charger current\?/);
+  assert.doesNotMatch(html,/Allow 16 A\?/);
+});
+
 test('socket full current follows the charger: a 16 A charger shows 16A, never an invented 32A',()=>{
   const small=setupSafety({socket:'off',currentMax:16});
   assert.match(small.card.shadowRoot.innerHTML,/safety-value[^"]*">16<small>A/);
