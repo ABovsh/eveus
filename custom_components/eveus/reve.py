@@ -348,8 +348,8 @@ LEAKAGE_RETRY_SECONDS: Final = 1800
 
 
 def _with_leakage(document: str) -> str:
-    end = document.rindex("\n    }")
-    return document[:end] + _LEAKAGE_ROOT + document[end:]
+    end = document.rindex("\n    }")  # pragma: no mutate - runs at import only; the documents' text is pinned by tests
+    return document[:end] + _LEAKAGE_ROOT + document[end:]  # pragma: no mutate - runs at import only; the documents' text is pinned by tests
 
 
 MEASUREMENTS_LEAK_QUERY: Final = _with_leakage(MEASUREMENTS_QUERY)
@@ -1093,9 +1093,9 @@ class ReveApi:
         self._started_at: int | None = None
         # Leakage (see _LEAKAGE_PAIR): whether the last good read came from the
         # known pair, when its root may be asked for again, and this poll's mA.
-        self._leakage_pair = False
+        self._leakage_pair = False  # pragma: no mutate - read only for truthiness, and every read sets it first
         self._leakage_retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
-        self._leakage: int | None = None
+        self._leakage: int | None = None  # pragma: no mutate - every poll sets it (read or /main) before the updater reads it
 
     @property
     def extras(self) -> ReveExtras | None:

@@ -85,7 +85,7 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         extra: dict[str, Any] | None = None,
         preflight: Callable[[], bool] | None = None,
         still_valid: Callable[[], bool] | None = None,
-        stale_message: str = "",
+        stale_message: str = "",  # pragma: no mutate - read only with still_valid, and its only caller passes both
     ) -> None:
         """Send one write while the display is pinned to the requested value.
 
@@ -113,10 +113,10 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             kwargs = {}
             if extra is not None:
                 kwargs["extra"] = extra
-            if still_valid is not None:
-                kwargs["preflight"] = lambda: (preflight is None or preflight()) and still_valid()
-            elif preflight is not None:
-                kwargs["preflight"] = preflight
+            if preflight is not None or still_valid is not None:  # pragma: no mutate - `and` is the same for every caller: the one passing either passes both
+                kwargs["preflight"] = lambda: (preflight is None or preflight()) and (
+                    still_valid is None or still_valid()
+                )
             success = await self._updater.send_command(  # type: ignore[attr-defined]
                 self._command, device_value, **kwargs
             )

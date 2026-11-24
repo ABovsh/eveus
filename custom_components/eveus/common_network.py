@@ -1690,7 +1690,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._legacy_min_voltage = min_voltage if str(min_voltage) in MIN_VOLTAGE_OPTIONS else None
         if reconnect:
             return
-        low_state = get_safe_value(data, "state", int)
+        low_state = get_safe_value(data, "state", int)  # pragma: no mutate - a whole-number float is the same key in the state map
         untranslated = (
             self._legacy_confirmed
             and LEGACY_RAW_STATE_KEY not in data

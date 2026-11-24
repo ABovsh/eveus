@@ -122,7 +122,9 @@ def test_the_verified_pair_shows_its_leakage(monkeypatch: pytest.MonkeyPatch) ->
 
     queries = _graphql_queries(charger)
     assert len(queries) == 1 and "serviceData" in queries[0]
+    assert charger.calls[0][1]["operationName"] == "StationData"
     assert data["leakValue"] == 2
+    assert updater.snapshot.informational == frozenset({"leakValue"})
     assert updater.snapshot.supports("leakValue")
     assert not updater.snapshot.supports("leakValueH")
 
@@ -176,7 +178,7 @@ def test_leakage_is_asked_again_after_the_back_off(monkeypatch: pytest.MonkeyPat
     updater = _known(monkeypatch, charger)
     asyncio.run(updater._async_update_data())
     charger.service_status = 200
-    later = reve.time.monotonic() + reve.LEAKAGE_RETRY_SECONDS + 1
+    later = updater._reve._leakage_retry_at
     monkeypatch.setattr(reve.time, "monotonic", lambda: later)
     charger.calls.clear()
 
@@ -186,7 +188,9 @@ def test_leakage_is_asked_again_after_the_back_off(monkeypatch: pytest.MonkeyPat
     assert data["leakValue"] == 0
 
 
-@pytest.mark.parametrize("service", [None, {}, {"adc_plug_temperature": None}, {"adc_plug_temperature": "33"}])
+@pytest.mark.parametrize(
+    "service", [None, {}, [33], "33", {"adc_plug_temperature": None}, {"adc_plug_temperature": "33"}]
+)
 def test_a_reply_without_a_usable_word_loses_only_leakage(monkeypatch: pytest.MonkeyPatch, service: Any) -> None:
     charger = _LeakCharger()
     charger.service = service
@@ -211,6 +215,14 @@ def test_a_main_fallback_poll_has_no_leakage(monkeypatch: pytest.MonkeyPatch) ->
     assert "/main" in charger.paths()
     assert "leakValue" not in data
     assert not updater.snapshot.supports("leakValue")
+
+
+def test_a_reve_leakage_above_30_ma_raises_no_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _LeakCharger(word=5000)
+    updater = _known(monkeypatch, charger)
+    data = asyncio.run(updater._async_update_data())
+    assert data["leakValue"] == 50
+    assert evaluate_policy_signals(_LEAK_POLICY, updater.snapshot) == (False, True)
 
 
 def test_a_firmware_change_stops_the_leakage_reads(monkeypatch: pytest.MonkeyPatch) -> None:

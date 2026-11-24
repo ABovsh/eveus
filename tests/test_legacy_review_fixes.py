@@ -8,6 +8,7 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.eveus import common_network
+from custom_components.eveus.const import LEGACY_RAW_STATE_KEY
 from custom_components.eveus.number import (
     GLOBAL_LIMIT_NUMBERS,
     SCHEDULE_LIMIT_NUMBERS,
@@ -74,8 +75,12 @@ async def test_queued_energy_limit_is_not_sent_in_the_wrong_units(monkeypatch):
         await asyncio.sleep(0)
         assert not task.done()
         await _confirm(updater, session)
-    with pytest.raises(HomeAssistantError, match="not sent"):
+    with pytest.raises(HomeAssistantError) as err:
         await task
+    assert "= 10" in str(err.value)
+    assert str(err.value).endswith(
+        "not sent: the charger's firmware or maximum changed while it waited. Try again."
+    )
     assert not any(call.get("data") == "energyLimit=10000" for call in session.calls)
     assert not any(call["url"].endswith("/pageEvent") for call in session.calls)
 
@@ -155,6 +160,8 @@ async def test_identification_maps_the_reply_it_follows(monkeypatch):
     assert updater.snapshot.state == 7
     assert updater.snapshot.session_active is None
     assert updater.data["subState"] == 7  # Pilot Error
+    assert updater.data[LEGACY_RAW_STATE_KEY] == 4
+    assert updater.snapshot.informational == frozenset()
     await _poll(updater, session, **fields)
     assert updater.snapshot.state == 7
 
@@ -189,6 +196,28 @@ async def test_car_leaving_during_a_hold_still_fires_disconnect(monkeypatch):
     assert [event for event, _ in bus.fired].count("eveus_car_disconnected") == 1
 
 
+async def test_identification_forgets_a_presence_read_in_the_r3_meaning(monkeypatch):
+    """Raw 2 read before /init is Standby in R3 terms; on 1.x it is a car waiting."""
+    updater, session, bus = _rig(monkeypatch)
+    await _poll(updater, session, state=2, pilot=2)
+    await _confirm(updater, session)
+    await _poll(updater, session, state=2, pilot=2)
+    assert "eveus_car_connected" not in [event for event, _ in bus.fired]
+
+
+async def test_no_plug_event_across_a_gap_with_an_unknown_pilot(monkeypatch):
+    updater, session, bus = _rig(monkeypatch)
+    await _poll(updater, session, state=2, pilot=2)
+    await _confirm(updater, session)
+    await _poll(updater, session, state=2, pilot=2)
+    updater._forget_poll_gap_state()
+    await _poll(updater, session, state=18, pilot=4, limitsStatus=8)
+    await _poll(updater, session, state=18, pilot=4, limitsStatus=8)
+    await _poll(updater, session, state=18, pilot=2, limitsStatus=8)
+    events = [event for event, _ in bus.fired]
+    assert "eveus_car_connected" not in events and "eveus_car_disconnected" not in events
+
+
 async def test_car_arriving_after_an_unknown_pilot_fires_connect(monkeypatch):
     updater, session, bus = _rig(monkeypatch)
     await _poll(updater, session, state=1, pilot=1)
@@ -219,7 +248,11 @@ async def test_minimum_voltage_changed_on_the_charger_page_is_read_back(monkeypa
     session.calls.clear()
     await _poll(updater, session)
     assert select.current_option == "175"  # not re-read on every poll
-    clock = time.monotonic() + common_network._LEGACY_INIT_REFRESH_SECONDS
+    clock = updater._legacy_init_read_at + common_network._LEGACY_INIT_REFRESH_SECONDS - 0.5
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock)
+    await _poll(updater, session)
+    assert select.current_option == "175"
+    clock = updater._legacy_init_read_at + common_network._LEGACY_INIT_REFRESH_SECONDS
     monkeypatch.setattr(common_network.time, "monotonic", lambda: clock)
     await _poll(updater, session)
     assert select.current_option == "180"
