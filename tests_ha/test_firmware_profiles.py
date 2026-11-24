@@ -480,9 +480,11 @@ async def test_1x_one_charge_uses_one_charge(hass, aioclient_mock, caplog, legac
     _assert_legacy_write(aioclient_mock, start, "one_charge", 0)
 
 
-@pytest.mark.parametrize("reported", [False, True], ids=["1.33-capture", "1.51-shaped"])
+@pytest.mark.parametrize(
+    "variant", ["1.33-capture", "1.33-without-flag-word", "1.51-shaped"]
+)
 async def test_1x_switch_states_and_restore(
-    hass, aioclient_mock, caplog, monkeypatch, legacy_profile, reported
+    hass, aioclient_mock, caplog, monkeypatch, legacy_profile, variant
 ):
     flags = {
         "schedule_1_enabled": "sh1Enabled",
@@ -497,9 +499,15 @@ async def test_1x_switch_states_and_restore(
         "limit_disable_all": "suspendLimits",
     }
     profile = legacy_profile
-    if not reported:
+    # The 1.33 capture reports its flags only inside limitsStatus (8: schedule 1
+    # on); without that word the switches can only remember their last command.
+    reported = variant != "1.33-without-flag-word"
+    device_on = {"sh1Enabled"} if variant == "1.33-capture" else set()
+    if variant != "1.51-shaped":
         path = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "fw133_charging_main.json"
         main = json.loads(path.read_text(encoding="utf-8"))
+        if not reported:
+            del main["limitsStatus"]
         profile = {
             "family": "classic",
             "main": {key: {"value": value} for key, value in main.items()},
@@ -514,7 +522,10 @@ async def test_1x_switch_states_and_restore(
     ids = {key: entities[key].entity_id for key in flags}
     for key, setting in flags.items():
         state = hass.states.get(ids[key])
-        assert state.state == ("off" if reported else "unknown")
+        if reported:
+            assert state.state == ("on" if setting in device_on else "off")
+        else:
+            assert state.state == "unknown"
         assert state.attributes.get("assumed_state", False) is (not reported)
         start = len(aioclient_mock.mock_calls)
         now += 1
@@ -528,7 +539,10 @@ async def test_1x_switch_states_and_restore(
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert not any(url.path == "/pageEvent" for _, url, _, _ in aioclient_mock.mock_calls[start:])
-    for entity_id in ids.values():
+    for key, entity_id in ids.items():
         state = hass.states.get(entity_id)
-        assert state.state == ("off" if reported else "on")
+        if reported:
+            assert state.state == ("on" if flags[key] in device_on else "off")
+        else:
+            assert state.state == "on"
         assert state.attributes.get("assumed_state", False) is (not reported)
