@@ -377,9 +377,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._init_fw_version: int | None = None
         self._init_fw_fetch_done = False
         self._init_fw_task: asyncio.Task | None = None
-        self._refresh_legacy_init = False
+        self._refresh_legacy_init = False  # pragma: no mutate - False vs None is not observable: only read for truthiness
         self._legacy_min_voltage: int | None = None
-        self._legacy_min_voltage_commands = 0
+        # Replaced on every accepted Minimum voltage write; /init compares identity.
+        self._legacy_min_voltage_write: object = object()  # pragma: no mutate - only identity against a later object() is compared
         # True once /init reported a 1.x version: the positive proof the
         # low-code translation and the 1.x command form need.
         self._legacy_confirmed = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
@@ -987,9 +988,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._connection_quality_cache = None
         if success and not self._shutting_down:
             if command == "minVoltage" and self.is_legacy_firmware:
-                # Counted even before /init has given a value, so a reply
+                # Marked even before /init has given a value, so a reply
                 # already in flight cannot overwrite this accepted write.
-                self._legacy_min_voltage_commands += 1
+                self._legacy_min_voltage_write = object()
                 if self._legacy_min_voltage is not None:
                     self._legacy_min_voltage = value
             self._meter_guard.expect_reset(command)
@@ -1601,7 +1602,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._init_fw_fetch_done = True
             return
         self._init_fw_fetch_done = True
-        min_voltage_commands = self._legacy_min_voltage_commands
+        min_voltage_write = self._legacy_min_voltage_write
         try:
             init_data = await fetch_json(
                 self.get_session(),
@@ -1648,7 +1649,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._legacy_confirmed = (
             "ESP_SW_version" in init_data or raw_version < _LEGACY_INIT_VERSION_LIMIT
         )
-        if self._legacy_confirmed and min_voltage_commands == self._legacy_min_voltage_commands:
+        if self._legacy_confirmed and min_voltage_write is self._legacy_min_voltage_write:
             min_voltage = get_safe_value(init_data, "minVoltage", int)
             self._legacy_min_voltage = min_voltage if str(min_voltage) in MIN_VOLTAGE_OPTIONS else None
         if reconnect:

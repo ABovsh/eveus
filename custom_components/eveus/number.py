@@ -238,7 +238,7 @@ def _schedule_energy(n: int) -> EveusSetpointNumberDescription:
         state_key=f"sh{n}EnergyValue",
         device_to_ha=1.0,
         ha_to_device=1.0,  # schedule energy is 1:1 — NOT ×1000
-        legacy_ha_to_device=1.0,
+        legacy_ha_to_device=1.0,  # pragma: no mutate - built at import, so a mutant never activates; the legacy round-trip tests cover the value
         native_min_value=0,
         native_max_value=100,
         native_step=1,

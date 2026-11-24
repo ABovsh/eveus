@@ -2977,3 +2977,118 @@ def test_1x_minimum_voltage_write_during_init_beats_the_stale_reply(updater, mon
     asyncio.run(updater.async_maybe_fetch_init_firmware())
 
     assert updater._legacy_min_voltage != 175
+
+
+def _gap_harness(monkeypatch):
+    """A confirmed 1.x charger with a scripted /main and /init, and its init calls."""
+    replies = {"/init": {"ESP_SW_version": 155}, "/main": {"state": 2, "currentSet": 16}}
+    init_calls = []
+
+    async def fetch(_session, url, **kwargs):
+        if url.endswith("/init"):
+            init_calls.append(url)
+            if isinstance(replies["/init"], Exception):
+                raise replies["/init"]
+            return replies["/init"]
+        if isinstance(replies["/main"], Exception):
+            raise replies["/main"]
+        return dict(replies["/main"])
+
+    import aiohttp
+
+    class _NoGraphQL:
+        def post(self, *args, **kwargs):
+            raise aiohttp.ClientConnectionError("no GraphQL in this test")
+
+    monkeypatch.setattr(common_network, "fetch_json", fetch)
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: _NoGraphQL())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _TaskHass())
+    return updater, replies, init_calls
+
+
+async def _confirm_then_gap(updater, replies):
+    updater.data = await updater._async_update_data()
+    await updater.async_maybe_fetch_init_firmware()
+    good = replies["/main"]
+    replies["/main"] = asyncio.TimeoutError()
+    with pytest.raises(UpdateFailed):
+        await updater._async_update_data()
+    replies["/main"] = good
+
+
+@pytest.mark.parametrize(
+    "marker", [{"manufacturer": "Reve"}, {"verFWMain": "R3.05.8"}], ids=["reve", "modern"]
+)
+def test_1x_gap_recovery_skips_init_for_a_non_1x_reply(monkeypatch, marker):
+    updater, replies, init_calls = _gap_harness(monkeypatch)
+
+    async def scenario():
+        await _confirm_then_gap(updater, replies)
+        replies["/main"] = {"state": 2, "currentSet": 16, **marker}
+        try:
+            await updater._async_update_data()
+        except UpdateFailed:
+            pass
+
+    asyncio.run(scenario())
+    assert len(init_calls) == 1
+
+
+def test_1x_gap_recovery_retries_a_failed_init_at_its_retry_time(monkeypatch):
+    updater, replies, init_calls = _gap_harness(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
+
+    async def scenario():
+        await _confirm_then_gap(updater, replies)
+        replies["/init"] = asyncio.TimeoutError()
+        await updater._async_update_data()
+        assert len(init_calls) == 2
+        replies["/init"] = {"ESP_SW_version": 155}
+        clock[0] = updater._init_fw_retry_at - 1
+        await updater._async_update_data()
+        assert len(init_calls) == 2
+        clock[0] = updater._init_fw_retry_at
+        await updater._async_update_data()
+        assert len(init_calls) == 3
+        await updater._async_update_data()
+        assert len(init_calls) == 3
+
+    asyncio.run(scenario())
+
+
+def test_1x_other_commands_leave_the_minimum_voltage_alone(updater, monkeypatch):
+    updater._legacy_confirmed = True
+    updater.data = {"state": 2, "currentSet": 16}
+    assert updater.is_legacy_firmware
+    updater._legacy_min_voltage = 175
+    monkeypatch.setattr(EveusUpdater, "_schedule_post_command_refresh", lambda self: None)
+
+    async def accept(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(updater._command_manager, "send_command", accept)
+    asyncio.run(updater.send_command("currentSet", 16))
+    assert updater._legacy_min_voltage == 175
+
+
+def test_1x_second_minimum_voltage_write_during_init_also_beats_the_stale_reply(updater, monkeypatch):
+    updater._legacy_confirmed = True
+    updater.data = {"state": 2, "currentSet": 16}
+    monkeypatch.setattr(EveusUpdater, "_schedule_post_command_refresh", lambda self: None)
+
+    async def accept(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(updater._command_manager, "send_command", accept)
+    asyncio.run(updater.send_command("minVoltage", 170))
+
+    async def slow_init(*args, **kwargs):
+        assert await updater.send_command("minVoltage", 180)
+        return {"ESP_SW_version": 155, "minVoltage": 175}
+
+    monkeypatch.setattr(common_network, "fetch_json", slow_init)
+    monkeypatch.setattr(updater, "get_session", lambda: None)
+    monkeypatch.setattr(updater, "async_update_listeners", lambda: None)
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+    assert updater._legacy_min_voltage != 175
