@@ -4,7 +4,7 @@
 
 ### ✨ New
 
-- **Eveus: Household Socket 16 A switch.** When enabled, Home Assistant caps the charging current and both schedule current limits at 16 A.
+- **Eveus: Household Socket 16 A switch.** When enabled, Home Assistant caps the charging current and both schedule current limits at 16 A. The switch appears when the charger reports this setting, as firmware 1.x and 2.x do.
 
 ### 🐛 Fixed
 

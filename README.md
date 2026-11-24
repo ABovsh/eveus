@@ -698,7 +698,7 @@ no long-term statistics.
 | `switch.eveus_ev_charger_stop_charging` | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Enable one-charge mode |
 | `switch.eveus_ev_charger_ground_protection` | Missing-ground shutdown protection |
-| `switch.eveus_ev_charger_household_socket_16_a` | **Household Socket 16 A** caps the charging current and both schedule current limits at 16 A when enabled (supported Eveus firmware) |
+| `switch.eveus_ev_charger_household_socket_16_a` | **Household Socket 16 A** caps the charging current and both schedule current limits at 16 A when enabled (shown when the charger reports it, as firmware 1.x and 2.x do) |
 | `switch.eveus_ev_charger_connect_to_ocpp` | OCPP connection; the server/app may override local controls |
 | `switch.eveus_ev_charger_limit_time_enabled` | **Limit: Time enabled** |
 | `switch.eveus_ev_charger_limit_energy_enabled` | **Limit: Energy enabled** |
