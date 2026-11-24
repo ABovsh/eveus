@@ -225,6 +225,9 @@ class EveusSnapshot:
     # availability from it, so nothing published for those firmwares changes.
     unsupported: frozenset[str] = frozenset()
     legacy_firmware: bool = False
+    # Readings shown for information only (REVE leakage): safety policies treat
+    # them as absent and fall back to the charger's own fault codes.
+    informational: frozenset[str] = frozenset()
 
     @classmethod
     def parse(
@@ -234,6 +237,7 @@ class EveusSnapshot:
         *,
         unsupported: frozenset[str] = frozenset(),
         legacy_firmware: bool = False,
+        informational: frozenset[str] = frozenset(),
     ) -> "EveusSnapshot":
         """Build a snapshot from a validated ``/main`` payload."""
         if not isinstance(payload, Mapping):
@@ -246,6 +250,7 @@ class EveusSnapshot:
             model=model,
             unsupported=frozenset(unsupported),
             legacy_firmware=legacy_firmware,
+            informational=frozenset(informational),
         )
 
     @classmethod

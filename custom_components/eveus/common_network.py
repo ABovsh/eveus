@@ -62,6 +62,8 @@ from .client import UPDATE_TIMEOUT_OBJ, basic_auth, fetch_json
 from .reve import (
     FAMILY_CLASSIC,
     FAMILY_REVE,
+    LEAKAGE_KEY,
+    REVE_INFORMATIONAL_FIELDS,
     REVE_LIMIT_STORE_VERSION,
     ReveApi,
     is_reve_payload,
@@ -1885,6 +1887,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 new_data, unsupported = normalize_reve_payload(
                     new_data, self._reve.extras
                 )
+                leakage = self._reve.leakage
+                if leakage is not None:
+                    new_data[LEAKAGE_KEY] = leakage
+                    unsupported = unsupported - {LEAKAGE_KEY}
                 self._reve.manual_mode.observe(new_data)
             new_data = self._meter_guard.apply(new_data)
             await self._persist_meter_reset()
@@ -1894,6 +1900,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # listeners that read the snapshot.
             self._snapshot = EveusSnapshot.parse(
                 new_data, self._model, unsupported=unsupported,
+                informational=REVE_INFORMATIONAL_FIELDS if self._reve_seen else frozenset(),
                 legacy_firmware=self._legacy_confirmed and not (
                     self._modern_firmware_seen or self._reve_seen
                 ),

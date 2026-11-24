@@ -594,7 +594,7 @@ The **Manual Mode** sensor shows the mode the charger reports, and the card show
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
 - During such an outage the session readings are the last ones read, for up to five minutes, and then left out; after an unplug and replug they are left out at once. Readings held this way never fill **Initial SOC** from the car or trigger the SOC limit.
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
-- REVE reports leakage only as raw values, not in mA, so **Leakage Current** and **Leakage Current Peak** stay unavailable, and so does **OCPP Connected**.
+- **Leakage Current** on REVE_PLUS 1.0.5 with controller GRM070A-R3.05.7 shows the leakage in whole mA, as the charger's display shows it. It is for information only: no notice or colour comes from it, and the charger's own leakage protection stays the alarm. On other REVE versions it stays unavailable. **Leakage Current Peak** and **OCPP Connected** stay unavailable on REVE.
 - Four diagnostic sensors, disabled by default: **REVE Free Memory**, **REVE Min Free Memory**, **REVE Largest Free Block** and **REVE Started** (when the charger last started). Most users do not need them; enable them on the device page when you need data on why the charger hangs or restarts.
 
 #### Older REVE versions
@@ -830,7 +830,7 @@ Each schedule has its own current and energy caps with separate enable switches.
 | `sensor.eveus_ev_charger_plug_temperature` | °C | Plug temperature |
 | `sensor.eveus_ev_charger_battery_voltage` | V | Charger backup battery voltage |
 | `sensor.eveus_ev_charger_leakage_current` | mA | Current leakage reading |
-| `sensor.eveus_ev_charger_leakage_current_peak` | mA | Peak leakage reading |
+| `sensor.eveus_ev_charger_leakage_current_peak` | mA | Fast leakage reading: the charger's quick estimate, not a stored maximum |
 | `sensor.eveus_ev_charger_wifi_signal` | dBm | Charger Wi-Fi signal |
 | `select.eveus_ev_charger_time_zone` | Select | Charger time-zone offset, `-12` to `+14` |
 | `button.eveus_ev_charger_sync_time` | Button | Push Home Assistant time to the charger |

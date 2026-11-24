@@ -270,7 +270,7 @@ test('offline cannot open the inline editor',()=>{
   assert.equal(card._editingLimit,null);
 });
 
-function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connected',protection='on',socket=null,currentMax=32}={}) {
+function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connected',protection='on',socket=null,currentMax=32,reve=false}={}) {
   const registry = {};
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
@@ -294,6 +294,7 @@ function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connecte
     leakage_current:'sensor.leak',connection_quality:'sensor.conn',ground:'sensor.ground',ground_protection:'switch.protection',
     charging_current:'number.current'};
   if (socket !== null) { states['switch.socket']=st(socket); entities.household_socket_16_a='switch.socket'; }
+  if (reve) { states['binary_sensor.reve']=st('on'); entities.reve_api='binary_sensor.reve'; }
   const calls=[];
   const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
   card._ids=entities;card._resolved=true;card.hass=hass;
@@ -3035,6 +3036,34 @@ test('adaptive voltage stepper uses the number entity range and step', async()=>
   }
 });
 
+
+test('REVE leakage is a plain reading: no colour and no part in the safety tint',()=>{
+  for (const leak of [0,3,45]) {
+    const {card}=setupSafety({reve:true,leak});
+    const html=card.shadowRoot.innerHTML;
+    assert.match(html,new RegExp(`data-more-info="leakage_current"[^>]*>[\\s\\S]*?<span class="safety-value ">${leak}<small>mA`));
+    assert.equal(card._safetyReadings().leakCls,'');
+  }
+  const high=setupSafety({reve:true,leak:45});
+  assert.equal(high.card._safetyStatus(),'good');
+  const onlyLeak=setupSafety({reve:true,leak:3,box:null,plug:null,ground:'unknown',protection:'unknown'});
+  assert.equal(onlyLeak.card._safetyReadings().anyKnown,false);
+});
+
+test('classic leakage keeps its colours',()=>{
+  assert.equal(setupSafety({leak:3}).card._safetyReadings().leakCls,'good');
+  const high=setupSafety({leak:45});
+  assert.equal(high.card._safetyReadings().leakCls,'bad');
+  assert.equal(high.card._safetyStatus(),'bad');
+});
+
+test('a REVE leak fault names no leakage reading, classic still does',()=>{
+  const reve=setupSafety({reve:true,leak:3});
+  assert.doesNotMatch(reve.card._faultDetail('Current Leak High'),/mA/);
+  assert.match(reve.card._faultDetail('Current Leak High'),/electrician|електрик/);
+  const classic=setupSafety({leak:3});
+  assert.match(classic.card._faultDetail('Current Leak High'),/3 mA/);
+});
 
 test('household socket 16 A shows only when the charger reports the setting',()=>{
   const without=setupSafety();

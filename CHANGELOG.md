@@ -8,6 +8,7 @@
 
 ### 🐛 Fixed
 
+- **REVE Leakage Current shows the leakage in whole mA, as the charger's display shows it,** on REVE_PLUS 1.0.5 with controller GRM070A-R3.05.7. It is for information only: no notice or colour comes from it, and the card's Safety row shows it without colour. Other REVE versions keep it unavailable; Leakage Current Peak stays unavailable because REVE reports no such reading.
 - **Eveus 2.x is supported like 1.x.** Chargers of the second hardware generation were treated as newer firmware, so their controls and states were read the wrong way.
 - **Eveus 1.x is recognized even when the charger does not answer at Home Assistant startup.** The firmware check is retried every 5 minutes; until then controls used the newer firmware form.
 - **Eveus 1.x schedule, limit and Stop Charging switches show the charger's real state.** Home Assistant reads them from the charger's combined status, also on 1.x versions that do not report each switch separately; the card offers Stop while charging and Resume after a user stop. Early 1.x versions accept these switches only from the charger's own page; update to the latest 1.x firmware to change them from Home Assistant.

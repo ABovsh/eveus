@@ -1030,11 +1030,14 @@ class EveusCard extends HTMLElement {
     const protectionKnown = ['on', 'off'].includes(this._state('ground_protection')?.state);
     const protectionOn = this._limitOn('ground_protection');
     const tempCls = (value) => value === null ? '' : value >= SAFETY_TEMP_HIGH_C ? 'bad' : 'good';
-    const leakCls = leak === null ? '' : leak >= SAFETY_LEAK_HIGH_MA ? 'bad' : 'good';
+    // REVE's leakage is shown as the charger's display shows it, for information:
+    // no colour, no part in the tint; the charger's own trip is the alarm.
+    const leakJudged = leak !== null && !this._ids?.reve_api;
+    const leakCls = !leakJudged ? '' : leak >= SAFETY_LEAK_HIGH_MA ? 'bad' : 'good';
     const connCls = conn === null ? '' : conn <= SAFETY_CONN_QUALITY_BAD_PCT ? 'bad' : 'good';
     const groundCls = groundKnown ? (groundOk ? 'good' : 'bad') : '';
     const protectionCls = protectionKnown ? (protectionOn ? 'good' : 'bad') : '';
-    const anyKnown = box !== null || plug !== null || leak !== null || groundKnown || protectionKnown;
+    const anyKnown = box !== null || plug !== null || leakJudged || groundKnown || protectionKnown;
     const anyBad = tempCls(box) === 'bad' || tempCls(plug) === 'bad' || leakCls === 'bad'
       || groundCls === 'bad' || protectionCls === 'bad';
     return {box, plug, leak, conn, groundKnown, groundOk, protectionKnown, protectionOn,
@@ -2108,7 +2111,9 @@ class EveusCard extends HTMLElement {
   _faultDetail(code) {
     const f = FAULTS[code];
     if (!f) return '';
-    const t = this._t, v = f.key && this._ids?.[f.key] ? this._num(f.key) : null;
+    // REVE's leakage reading is the slow estimate, not what tripped: it names none.
+    const named = f.key && this._ids?.[f.key] && !(f.key === 'leakage_current' && this._ids?.reve_api);
+    const t = this._t, v = named ? this._num(f.key) : null;
     const reading = v === null ? '' : `${t.faultLabels[f.key]} ${f.key === 'current' ? amps(v) : Math.round(v)}${f.unit}${f.limit ? ` · ${t.faultLimit} ${f.limit}${f.unit}` : ''}`;
     return [reading, t.faultHints[f.hint]].filter(Boolean).join(' · ');
   }

@@ -896,9 +896,7 @@ def test_configured_and_event_only_readings_carry_no_state_class() -> None:
     They are not measurements:
       * the three rate sensors are the prices the OWNER typed into the charger
         (`tarif`, `tarif_2`, `tarif_3`) — a 5-minute mean of a hand-set number;
-      * leakage is an EVENT, not a trend. Above 30 mA the charger trips and
-        says so, and `leakValueH` is the charger's own peak-ever counter, so
-        the worst value stays readable from the device itself.
+      * leakage is an EVENT, not a trend: the charger trips and says so.
 
     Both keep their state, their history and their tiles. Only the forever-kept
     aggregates go.
