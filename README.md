@@ -101,7 +101,8 @@ The integration is in the **HACS default store**; no custom repository is needed
 
 Or in HACS:
 
-1. Open **HACS** and search for **Eveus EV Charger**.
+1. Open **HACS** and search for **Eveus EV Charger**. From Home Assistant 2026.11, HACS is built in as
+   **Marketplace**: open **Settings → Marketplace**.
 2. Install it.
 3. Restart Home Assistant.
 

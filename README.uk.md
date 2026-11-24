@@ -103,7 +103,8 @@
 
 Або в HACS:
 
-1. Відкрийте **HACS** і знайдіть **Eveus EV Charger**.
+1. Відкрийте **HACS** і знайдіть **Eveus EV Charger**. З Home Assistant 2026.11 HACS вбудований
+   як **Marketplace**: відкрийте **Налаштування → Marketplace**.
 2. Встановіть інтеграцію.
 3. Перезапустіть Home Assistant.
 
