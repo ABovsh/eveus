@@ -161,9 +161,9 @@ async def test_identification_maps_the_reply_it_follows(monkeypatch):
     assert updater.snapshot.session_active is None
     assert updater.data["subState"] == 7  # Pilot Error
     assert updater.data[LEGACY_RAW_STATE_KEY] == 4
-    assert updater.snapshot.informational == frozenset()
     await _poll(updater, session, **fields)
     assert updater.snapshot.state == 7
+    assert updater.snapshot.informational == frozenset()
 
 
 async def test_identification_keeps_an_already_translated_code(monkeypatch):
@@ -213,7 +213,7 @@ async def test_no_plug_event_across_a_gap_with_an_unknown_pilot(monkeypatch):
     updater._forget_poll_gap_state()
     await _poll(updater, session, state=18, pilot=4, limitsStatus=8)
     await _poll(updater, session, state=18, pilot=4, limitsStatus=8)
-    await _poll(updater, session, state=18, pilot=2, limitsStatus=8)
+    await _poll(updater, session, state=2, pilot=2)
     events = [event for event, _ in bus.fired]
     assert "eveus_car_connected" not in events and "eveus_car_disconnected" not in events
 
