@@ -2705,3 +2705,45 @@ def test_1x_hold_keeps_the_car_through_an_unknown_pilot(updater):
     data = updater._normalize_legacy_device_state({"state": 18, "pilot": 4})
 
     assert data["state"] == 2
+
+
+def test_slow_init_confirmation_keeps_the_poll_that_arrived_meanwhile(updater, monkeypatch):
+    """/init returns after a newer /main: the newer reading must survive."""
+    updater.data = updater._normalize_legacy_device_state(
+        {"state": 18, "pilot": 1, "limitsStatus": 8}
+    )
+    newer = {"state": 18, "pilot": 2, "limitsStatus": 520}
+
+    async def slow_init(*args, **kwargs):
+        updater.data = updater._normalize_legacy_device_state(dict(newer))
+        return {"ESP_SW_version": 155}
+
+    monkeypatch.setattr(common_network, "fetch_json", slow_init)
+    monkeypatch.setattr(updater, "get_session", lambda: None)
+    monkeypatch.setattr(updater, "async_update_listeners", lambda: None)
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert (updater.data["pilot"], updater.data["evseEnabled"]) == (2, 1)
+    assert updater.snapshot.get_int("evseEnabled") == 1
+
+
+def test_1x_confirmation_forgets_a_charging_reading_taken_before_it(coordinator):
+    """Raw 4 is a pilot fault on 1.x but Charging on newer firmware.
+
+    Read before /init, it must not leave a session that a later plug-in
+    "finishes" with an invented charging_finished event.
+    """
+    updater, session = coordinator
+    fired = []
+    updater.hass.bus = SimpleNamespace(async_fire=lambda event, data=None: fired.append(event))
+    session.response.payload = {"state": 4, "currentSet": 16, "powerMeas": 0}
+    updater.data = asyncio.run(updater._async_update_data())
+
+    session.response.payload = {"ESP_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+    for state in (1, 2):
+        session.response.payload = {"state": state, "currentSet": 16, "pilot": 1 if state == 1 else 2}
+        updater.data = asyncio.run(updater._async_update_data())
+
+    assert common_network.EVENT_CHARGING_FINISHED not in fired

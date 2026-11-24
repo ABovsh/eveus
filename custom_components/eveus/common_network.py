@@ -1618,6 +1618,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
         if not isinstance(init_data, dict):
             return
+        # A poll can land while /init is in flight; work on the newest reading.
+        data = self.data if isinstance(self.data, dict) else {}
         raw_version = init_data.get("ESP_SW_version", init_data.get("MCU_SW_version"))
         if isinstance(raw_version, bool) or not isinstance(raw_version, int):
             return
@@ -1639,9 +1641,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             and get_safe_value(data, "state", int) in _LEGACY_LOW_STATE_MAP  # pragma: no mutate - float and int state codes are equal keys for every whole-number code
         ):
             # The last poll read a code (1, 2, 4-7) that means something else
-            # from the next poll on; a transition from it would be invented.
+            # from the next poll on; a transition from it would be invented,
+            # and a raw 4 read as Charging would leave a session to finish.
             self._event_prev_state = None
             self._event_prev_error_code = None
+            self._event_charging_payload = None
         if self.is_legacy_firmware:
             # /init follows the first /main. Resolve the controls as soon as
             # firmware is known, including when the first connection was late.

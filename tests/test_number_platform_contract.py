@@ -128,7 +128,8 @@ def test_current_bounds_follow_the_household_socket_mode(name, key):
     entity = entities[name]
     writes = []
     entity.async_write_ha_state = lambda: writes.append(
-        (entity.native_value, entity.capability_attributes["max"])
+        # native_max_value: newer HA needs a platform to convert units for "max".
+        (entity.native_value, entity.native_max_value)
     )
     assert entity.native_max_value == 16
     assert entity.native_value == 12
