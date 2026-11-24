@@ -270,7 +270,7 @@ test('offline cannot open the inline editor',()=>{
   assert.equal(card._editingLimit,null);
 });
 
-function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connected',protection='on'}={}) {
+function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connected',protection='on',socket=null,currentMax=32}={}) {
   const registry = {};
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
@@ -288,9 +288,12 @@ function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connecte
     'sensor.conn':st(conn,{unit_of_measurement:'%'}),
     'sensor.ground':st(ground),
     'switch.protection':st(protection),
+    'number.current':st(16,{min:7,max:socket==='on'?16:currentMax,step:1,unit_of_measurement:'A'}),
   };
   const entities = {state:'sensor.state',box_temperature:'sensor.box',plug_temperature:'sensor.plug',
-    leakage_current:'sensor.leak',connection_quality:'sensor.conn',ground:'sensor.ground',ground_protection:'switch.protection'};
+    leakage_current:'sensor.leak',connection_quality:'sensor.conn',ground:'sensor.ground',ground_protection:'switch.protection',
+    charging_current:'number.current'};
+  if (socket !== null) { states['switch.socket']=st(socket); entities.household_socket_16_a='switch.socket'; }
   const calls=[];
   const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
   card._ids=entities;card._resolved=true;card.hass=hass;
@@ -3030,4 +3033,28 @@ test('adaptive voltage stepper uses the number entity range and step', async()=>
     await high.card._stepLimit('undervoltage_threshold',1);
     assert.equal(low.calls.length+high.calls.length,0);
   }
+});
+
+
+test('household socket 16 A shows only when the charger reports the setting',()=>{
+  const without=setupSafety();
+  assert.doesNotMatch(without.card.shadowRoot.innerHTML,/household_socket_16_a/);
+  const on=setupSafety({socket:'on'});
+  assert.match(on.card.shadowRoot.innerHTML,/data-limit-toggle="household_socket_16_a"[^>]*>[\s\S]*?safety-value[^"]*">16<small>A/);
+  const off=setupSafety({socket:'off'});
+  assert.match(off.card.shadowRoot.innerHTML,/data-limit-toggle="household_socket_16_a"[^>]*>[\s\S]*?safety-value[^"]*">32<small>A/);
+});
+
+test('socket 16 A to full current asks first; back to 16 A is immediate',async()=>{
+  const on=setupSafety({socket:'on'});
+  await on.card._toggleLimit('household_socket_16_a');
+  assert.equal(on.calls.length,0);
+  assert.match(on.card.shadowRoot.innerHTML,/data-guard-confirm/);
+  await on.card._confirmGuard();
+  assert.deepEqual(on.calls.map(c=>c.slice(0,2)),[['switch','turn_off']]);
+  const off=setupSafety({socket:'off'});
+  await off.card._toggleLimit('household_socket_16_a');
+  assert.equal(JSON.stringify(off.calls.map(c=>c.slice(0,3))),JSON.stringify([['switch','turn_on',{entity_id:'switch.socket'}]]));
+  // The tap paints the new mode before the state comes back.
+  assert.match(off.card.shadowRoot.innerHTML,/safety-value[^"]*">16<small>A/);
 });

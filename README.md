@@ -170,7 +170,7 @@ browser or reset the app's frontend cache.
 | **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and, on Eveus firmware, energy limit. On REVE also their days of the week, which you can change, and the other schedules and the tariffs set in the charger's app, read-only |
 | **Charger clock** | Time Zone (its list starts with **Auto: follow Home Assistant**, the **Follow HA Time Zone** switch), the charger's time (Time Drift instead when the clock is 10 minutes or more off) and **Sync Time** |
 | **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy in kWh |
-| **Safety** | Box and plug temperature, ground, leakage current, connection quality |
+| **Safety** | Box and plug temperature, ground, leakage current, connection quality; on firmware 1.x and 2.x also the household socket mode (16A or full current, tap to switch) |
 
 In Basic mode the two SOC sections are hidden and Limits has no SOC limit.
 A reading the charger's firmware does not report is not shown.

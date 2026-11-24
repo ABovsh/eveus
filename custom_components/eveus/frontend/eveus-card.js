@@ -173,7 +173,7 @@ const I18N = {
     total: 'Total', allTime: 'all time', counterA: 'Counter A', counterB: 'Counter B', reset: 'Reset',
     resetQ: (label) => `Reset ${label}?`, toZero: 'will be set to 0', cancel: 'Cancel',
     confirm: 'Confirm',
-    disableGroundQ: 'Disable ground protection?', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
+    disableGroundQ: 'Disable ground protection?', socketFullQ: (amps) => `Allow ${amps} A? Only on a circuit rated for it.`, socketTitle: 'Household socket 16 A: tap to switch between 16 A and full current', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
     socFromCar: (detail) => `Initial SOC from the car: ${detail}`, socManual: 'Initial SOC set manually', socNotUsed: (detail) => `Car SOC not used (${detail}); the manual value applies`,
     safety: 'Safety', box: 'Box temperature', plug: 'Plug temperature', groundProt: 'Ground protection',
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
@@ -241,7 +241,7 @@ const I18N = {
     total: 'Загалом', allTime: 'за весь час', counterA: 'Лічильник A', counterB: 'Лічильник B', reset: 'Скинути',
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
     confirm: 'Підтвердити',
-    disableGroundQ: 'Вимкнути захист заземлення?', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
+    disableGroundQ: 'Вимкнути захист заземлення?', socketFullQ: (amps) => `Дозволити ${amps} А? Лише якщо лінія це витримує.`, socketTitle: 'Побутова розетка 16 А: натисніть, щоб перемкнути між 16 А і повним струмом', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
     socFromCar: (detail) => `Початковий SOC з авто: ${detail}`, socManual: 'Початковий SOC задано вручну', socNotUsed: (detail) => `SOC авто не використано (${detail}); діє значення, задане вручну`,
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
@@ -320,12 +320,13 @@ const ITEMS = {
   status: ['power'], actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
   basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time', 'rate', 'voltage'], limits: ['soc', 'energy', 'time', 'cost'],
   schedules: ['schedule_1', 'schedule_2', 'days', 'more', 'rates'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
-  safety: ['box', 'plug', 'ground', 'leak', 'connection'],
+  safety: ['box', 'plug', 'ground', 'leak', 'connection', 'socket'],
 };
 // A section keeps at least one item, except Status: its state always shows, so its one item can go too.
 const minItems = (section) => section === 'status' ? 0 : 1;
 // The entity behind each safety item, in ITEMS.safety order; null = always shown.
-const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_current', null];
+// Socket: drawn only where the charger reports Household Socket 16 A (firmware 1.x and 2.x).
+const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_current', null, 'household_socket_16_a'];
 const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
 // A grid whose stylesheet assumes `n` columns, re-spread when hidden items leave fewer.
 const columns = (count, n) => count === n ? '' : ` style="grid-template-columns:repeat(${count},minmax(0,1fr))"`;
@@ -357,7 +358,7 @@ const EDITOR_I18N = {
       session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate', voltage: 'Voltage range (REVE)'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
       schedules: {schedule_1: 'Schedule 1', schedule_2: 'Schedule 2', days: 'Days (REVE)', more: 'Schedules 3–8 (REVE)', rates: 'Tariffs (REVE)'}, time: {zone: 'Time zone', drift: 'Clock or drift', sync: 'Sync'},
       history: {month: 'This month', total: 'Total', counter_a: 'Counter A', counter_b: 'Counter B'},
-      safety: {box: 'Box', plug: 'Plug', ground: 'Ground', leak: 'Leakage', connection: 'Connection'},
+      safety: {box: 'Box', plug: 'Plug', ground: 'Ground', leak: 'Leakage', connection: 'Connection', socket: 'Socket 16 A'},
     },
     itemsTitle: 'Show or hide items',
     head: 'Sections', reset: 'Default order', advOnly: 'advanced mode only', up: 'Move up', down: 'Move down',
@@ -383,7 +384,7 @@ const EDITOR_I18N = {
       session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф', voltage: 'Діапазон напруги (REVE)'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
       schedules: {schedule_1: 'Розклад 1', schedule_2: 'Розклад 2', days: 'Дні (REVE)', more: 'Розклади 3–8 (REVE)', rates: 'Тарифи (REVE)'}, time: {zone: 'Часовий пояс', drift: 'Час або зміщення', sync: 'Синхронізація'},
       history: {month: 'Цей місяць', total: 'Загалом', counter_a: 'Лічильник A', counter_b: 'Лічильник B'},
-      safety: {box: 'Корпус', plug: 'Конектор', ground: 'Заземлення', leak: 'Витік', connection: "Зв'язок"},
+      safety: {box: 'Корпус', plug: 'Конектор', ground: 'Заземлення', leak: 'Витік', connection: "Зв'язок", socket: 'Розетка 16 А'},
     },
     itemsTitle: 'Показати чи сховати елементи',
     head: 'Розділи', reset: 'Типовий порядок', advOnly: 'лише розширений режим', up: 'Вище', down: 'Нижче',
@@ -852,7 +853,7 @@ class EveusCard extends HTMLElement {
     const t = this._t;
     const ask = this._guardAsk;
     const labels = {limit_soc_enabled: t.soc, limit_energy_enabled: t.energy, limit_time_enabled: t.time, limit_cost_enabled: t.cost};
-    const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
+    const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'household_socket_16_a' ? t.socketFullQ(this._socketFullAmps()) : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
     const error = this._commandError === 'timeout' ? t.commandTimeout
       : this._commandError === 'current' ? t.setFailed : t.commandFailed;
     return (ask ? `<div class="message guard-ask" popover="manual" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
@@ -867,6 +868,7 @@ class EveusCard extends HTMLElement {
     if (!this._online || !entity || (!['on', 'off'].includes(entity.state) && !this._assumedUnknown(key))) return;
     const value = !this._limitOn(key);
     const weakening = (key === 'ground_protection' && !value)
+      || (key === 'household_socket_16_a' && !value)
       || (key === 'limit_disable_all' && value)
       || (['limit_soc_enabled', 'limit_energy_enabled', 'limit_time_enabled', 'limit_cost_enabled'].includes(key) && !value);
     if (weakening && !confirmed) {
@@ -1062,8 +1064,26 @@ class EveusCard extends HTMLElement {
         </button>`,
         `<button class="safety-item" data-more-info="leakage_current" title="${t.leak} — ${d}"><ha-icon icon="mdi:current-dc"></ha-icon><span class="safety-value ${r.leakCls}">${r.leak === null ? '—' : Math.round(r.leak)}<small>mA</small></span></button>`,
         `<button class="safety-item" data-more-info="connection_quality" title="${t.conn} — ${d}"><ha-icon icon="${connectionIcon(r.conn)}"></ha-icon><span class="safety-value ${r.connCls}">${r.conn === null ? '—' : Math.round(r.conn)}<small>%</small></span></button>`,
-      ].filter((_, i) => this._shows('safety', ITEMS.safety[i]) && !this._unsupported(SAFETY_SOURCES[i])).join('')}</div>
+        this._socketItem(),
+      ].filter((html, i) => html && this._shows('safety', ITEMS.safety[i]) && !this._unsupported(SAFETY_SOURCES[i])).join('')}</div>
     </section>`;
+  }
+  // Household Socket 16 A as one compact item: the amps it allows now, tap to switch.
+  _socketItem() {
+    const key = 'household_socket_16_a';
+    if (!this._ids?.[key]) return '';
+    const t = this._t;
+    const known = ['on', 'off'].includes(this._state(key)?.state);
+    const on = this._limitOn(key);
+    const amps = !known ? '—' : on ? 16 : this._socketFullAmps();
+    return `<button class="safety-item safety-socket" data-limit-toggle="${key}" role="switch" aria-checked="${on}" aria-label="${t.socketTitle}" title="${t.socketTitle}" ${!this._online || !known ? 'disabled' : ''}><ha-icon icon="mdi:power-socket-eu"></ha-icon><span class="safety-value">${amps}<small>A</small></span></button>`;
+  }
+  // The current the charger allows with the socket mode off: Charging Current's
+  // maximum while it is not capped, remembered for the moment the mode flips.
+  _socketFullAmps() {
+    const max = this._state('charging_current')?.attributes?.max;
+    if (this._state('household_socket_16_a')?.state === 'off' && Number.isFinite(max) && max > 16) this._socketMax = max;
+    return this._socketMax ?? (Number.isFinite(max) && max > 16 ? max : 32);
   }
   // A reading or setting the charger's firmware does not provide at all: the
   // integration publishes it `unavailable` while the charger itself answers (REVE
@@ -2302,6 +2322,17 @@ class EveusCard extends HTMLElement {
         shareSize();
       }
     }
+    // A full safety row first drops its section label, then the socket item's icon
+    // (its "16A" stays), then a pixel of value size; re-measured from the full row each time.
+    for (const row of this.shadowRoot.querySelectorAll('.safety-row')) {
+      const section = row.parentElement;
+      if (!section?.classList) continue;
+      section.classList.remove('safety-tight', 'safety-tighter', 'safety-tightest');
+      for (const step of ['safety-tight', 'safety-tighter', 'safety-tightest']) {
+        if (row.scrollWidth <= row.clientWidth) break;
+        section.classList.add(step);
+      }
+    }
     // Both schedule rows read as one table: they share the smaller of their two sizes.
     const windows = [...this.shadowRoot.querySelectorAll('.sched-window')];
     const min = Math.min(...windows.map((el) => parseFloat(el.style.fontSize) || Infinity));
@@ -2601,6 +2632,7 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 .session-row .info-item{flex:0 1 auto}.session-row .info-item ha-icon{--mdc-icon-size:15px;color:color-mix(in srgb,var(--h) 80%,var(--secondary-text-color))}
 .sl.safety{gap:6px}.safety-label{flex:none}
 @container (max-width:350px){.safety-label{display:none}}
+.sl.safety.safety-tight .safety-label{display:none}.sl.safety.safety-tighter .safety-socket ha-icon{display:none}.sl.safety.safety-tightest .safety-value{font-size:12px}
 @container (max-width:370px){.session-row .info-item ha-icon{display:none}}
 .session-row .info-item.grow{flex:0 1 auto;min-width:0}
 .sl.session.session-wrap{flex-wrap:wrap}.session-wrap .session-row{flex-basis:100%}
