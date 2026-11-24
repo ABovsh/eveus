@@ -42,6 +42,8 @@ def _format_tz(offset: int) -> str:
 TIMEZONE_OPTIONS: tuple[str, ...] = tuple(_format_tz(i) for i in range(-12, 15))
 ADAPTIVE_OPTIONS = {0: "Off", 1: "Voltage", 2: "Auto", 3: "Power"}
 ADAPTIVE_TO_DEVICE = {option: value for value, option in ADAPTIVE_OPTIONS.items()}
+_LEGACY_ADAPTIVE_OPTIONS = {**ADAPTIVE_OPTIONS, 4: "Auto 2"}
+_LEGACY_ADAPTIVE_TO_DEVICE = {option: value for value, option in _LEGACY_ADAPTIVE_OPTIONS.items()}
 
 
 class _EveusIntegerSelect(
@@ -64,6 +66,10 @@ class _EveusIntegerSelect(
         self._init_optimistic_control()
         self._init_write_on_change()
         self._command_pending = False
+
+    @property
+    def _legacy_firmware(self) -> bool:
+        return getattr(self._updater, "is_legacy_firmware", False) is True
 
     def _source_keys(self) -> tuple[str, ...]:
         return (self.READ_KEY,)
@@ -198,11 +204,26 @@ class EveusAdaptiveModeSelect(_EveusIntegerSelect):
     ENTITY_NAME = "Adaptive Mode"
     READ_KEY = "aiStatus"
     WRITE_KEY = "aiMode"
-    DEVICE_TO_OPTION = ADAPTIVE_OPTIONS
-    OPTION_TO_DEVICE = ADAPTIVE_TO_DEVICE
     _attr_icon = "mdi:auto-mode"
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_options = ["Off", "Voltage", "Auto", "Power"]
+
+    @property
+    def DEVICE_TO_OPTION(self) -> dict[int, str]:
+        return _LEGACY_ADAPTIVE_OPTIONS if self._legacy_firmware else ADAPTIVE_OPTIONS
+
+    @property
+    def OPTION_TO_DEVICE(self) -> dict[str, int]:
+        return _LEGACY_ADAPTIVE_TO_DEVICE if self._legacy_firmware else ADAPTIVE_TO_DEVICE
+
+    @property
+    def options(self) -> list[str]:
+        return list(self.DEVICE_TO_OPTION.values())
+
+    def _write_if_changed(self, value: str | None) -> bool:
+        # Firmware can be confirmed after the select is added to HA.
+        if self._legacy_firmware:
+            return super()._write_if_changed((value, True))
+        return super()._write_if_changed(value)
 
 
 class EveusMinVoltageSelect(_EveusIntegerSelect):
@@ -220,10 +241,6 @@ class EveusMinVoltageSelect(_EveusIntegerSelect):
     def __init__(self, updater, device_number: int = 1) -> None:
         super().__init__(updater, device_number)
         self._last_legacy_command: int | None = None
-
-    @property
-    def _legacy_firmware(self) -> bool:
-        return getattr(self._updater, "is_legacy_firmware", False) is True
 
     @property
     def assumed_state(self) -> bool:

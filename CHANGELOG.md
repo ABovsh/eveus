@@ -15,7 +15,11 @@
 - **Eveus 1.x shows Standby while a schedule or limit holds the charger with no car plugged in.** It showed Charge Complete, and Car Connected stayed on after the car left.
 - **Eveus 1.x undervoltage threshold can be set from 150 to 220 V in 5 V steps.**
 - **Eveus 1.x tariff sensors show the configured prices and the active rate.** Tariff windows also apply to the estimated cost to reach the target SOC.
-- **Eveus 1.x Minimum voltage remembers the last successful setting when the charger omits it.** Home Assistant shows it as unknown until the first successful command.
+- **Eveus 1.x Minimum voltage shows the charger's setting.** Firmware 1.55 reports it; where the charger omits it, Home Assistant shows it as unknown until the first successful command and then remembers it.
+- **Eveus 1.x Adaptive Mode offers Auto 2,** as the charger's page does.
+- **Eveus 1.x limits match the charger's page.** Limit: Energy moves in 0.5 kWh steps, energy and cost limits keep fractions (10.5 kWh was sent as 10), and Limit: Time goes up to 96 hours in 1-minute steps.
+- **Eveus 1.x Car Connected is unknown while the charger cannot tell,** during a Stop or a schedule hold. It showed a guess.
+- **Eveus 1.x estimated cost to the target SOC ignores schedule windows while the charger's schedules are suspended.**
 - **Eveus 1.x Ground Protection shows and sets the real state.** It showed on while protection was off, and turning it on turned protection off.
 - **Eveus 1.x Limit: Energy is set in kWh as on the charger's page.** A limit set from Home Assistant was 1000 times too large.
 - **Eveus 1.x is recognized even when the charger does not answer at Home Assistant startup.** The firmware check is retried every 5 minutes; until then controls used the newer firmware form.

@@ -677,10 +677,13 @@ class CostToTargetSocSensor(EnergyToTargetSocSensor):
         """Before the charge: the energy placed in the schedule windows, or None.
 
         None whenever the charge would not wait for a schedule: none is on, One
-        Charge or REVE manual mode ignores them, or Stop holds the charger.
+        Charge or REVE manual mode ignores them, the schedules are suspended,
+        or Stop holds the charger.
         """
         snap = self._updater.snapshot
         if snap.session_active is not False or snap.get("oneCharge") == 1:
+            return None
+        if snap.legacy_firmware and snap.get("suspendSchedules") == 1:
             return None
         if snap.get("evseEnabled") == 1 or getattr(self._updater, "reve_manual_mode", None):
             return None

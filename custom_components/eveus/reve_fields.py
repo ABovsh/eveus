@@ -135,6 +135,7 @@ NO_GRAPHQL_SOURCE: Final[frozenset[str]] = frozenset(
         "aiMode",
         "ocppconnected",
         "restricted_mode",
+        "suspendSchedules",
     }
 )
 

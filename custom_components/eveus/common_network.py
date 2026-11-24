@@ -35,6 +35,8 @@ from .const import (
     DEVICE_STATE_STANDBY,
     LEGACY_RAW_STATE_KEY,
     LEGACY_SUBSTATE_MAPPED_KEY,
+    LEGACY_UNKNOWN_PILOTS,
+    MIN_VOLTAGE_OPTIONS,
     is_modern_firmware_payload,
     DEVICE_STATE_ERROR,
     ERROR_LOG_RATE_LIMIT,
@@ -188,9 +190,6 @@ _LEGACY_USER_STOP_STATE = 20
 _LEGACY_CHARGING_CANDIDATE_STATE = 3
 # `pilot` values the 1.x page shows as "car connected" (states B, C and E).
 _LEGACY_CAR_CONNECTED_PILOTS: Final = frozenset({2, 3, 5})
-# Values the page shows as "unknown" (0 and state F). 1.33 reports 4 after a
-# Stop with the car still plugged in; every other value reads "disconnected".
-_LEGACY_UNKNOWN_PILOTS: Final = frozenset({0, 4, 6})
 # The 1.x page shows Ground control on for 2 and off for 1; 3.x uses 1 and 0.
 _LEGACY_GROUND_CTRL: Final = {2: 1, 1: 0}
 # limitsStatus holds the Stop, schedule and limit flags as one word; every
@@ -208,6 +207,8 @@ _LEGACY_LIMITS_STATUS_BITS: Final = {
     "evseEnabled": 9,
     "suspendLimits": 10,
     "delayedLimit": 11,
+    "suspendErrors": 12,
+    "suspendSchedules": 13,
 }
 
 # 1.x codes 1-7 also exist on newer firmware with other meanings, so they
@@ -376,6 +377,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._init_fw_version: int | None = None
         self._init_fw_fetch_done = False
         self._init_fw_task: asyncio.Task | None = None
+        self._refresh_legacy_init = False
+        self._legacy_min_voltage: int | None = None
+        self._legacy_min_voltage_commands = 0
         # True once /init reported a 1.x version: the positive proof the
         # low-code translation and the 1.x command form need.
         self._legacy_confirmed = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
@@ -748,6 +752,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         auth rejection, which deliberately skips the connectivity accounting but
         is just as much a gap in the event stream.
         """
+        if self.is_legacy_firmware:
+            self._refresh_legacy_init = True
+            self._init_fw_retry_at = None
         self._reset_legacy_charging_latch()
         self._legacy_car_present = None  # pragma: no mutate - read only through `is True`, so any falsy reset is the same
         self._event_prev_state = None
@@ -790,7 +797,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return data
         state = get_safe_value(data, "state", int)
         pilot = get_safe_value(data, "pilot", int)  # pragma: no mutate - float and int pilot codes are equal set members for every whole-number code
-        if pilot is not None and pilot not in _LEGACY_UNKNOWN_PILOTS:
+        if pilot is not None and pilot not in LEGACY_UNKNOWN_PILOTS:
             self._legacy_car_present = pilot in _LEGACY_CAR_CONNECTED_PILOTS
         if self._legacy_confirmed and not (self._reve_seen or is_reve_payload(data)):
             self._normalize_legacy_controls(data, state)
@@ -979,6 +986,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # so the cached consecutive_command_failures can't go stale.
             self._connection_quality_cache = None
         if success and not self._shutting_down:
+            if command == "minVoltage" and self.is_legacy_firmware and self._legacy_min_voltage is not None:
+                self._legacy_min_voltage = value
+                self._legacy_min_voltage_commands += 1
             self._meter_guard.expect_reset(command)
             self._schedule_post_command_refresh()
         return success
@@ -1523,7 +1533,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self.update_interval = new_interval
 
     def _normalize_legacy_controls(self, data: dict[str, Any], raw_state: int | None) -> None:
-        """Expose 1.x Stop, schedule and tariff values under the canonical keys."""
+        """Expose the pre-R3 controls under their canonical keys."""
+        if self._legacy_min_voltage is not None:
+            data.setdefault("minVoltage", self._legacy_min_voltage)
         if isinstance(data.get("one_charge"), int):
             # The 1.x page writes and shows one_charge; oneCharge may lag it.
             data["oneCharge"] = data["one_charge"]
@@ -1566,8 +1578,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             if key not in data and legacy_name in data:
                 data[key] = data[legacy_name]
 
-    async def async_maybe_fetch_init_firmware(self) -> None:
-        """Resolve a firmware-version fallback from /init, at most once.
+    async def async_maybe_fetch_init_firmware(self, *, reconnect: bool = False) -> None:
+        """Resolve a firmware-version fallback from /init.
 
         Firmware 1.x drops verFWMain (and the legacy `firmware` alias) from
         /main entirely (GitHub issue #11), so device_info's sw_version would
@@ -1575,23 +1587,18 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         ESP_SW_version, falling back to MCU_SW_version -- e.g. 151, formatted
         here as "1.51".
 
-        Intended to be awaited once, right after the coordinator's first
-        successful refresh (see ``async_setup_entry``) -- not from the
-        regular poll path, so a slow or hanging /init can never delay or fail
-        the poll cycle every entity depends on. Gated by
-        ``_init_fw_fetch_done`` so a modern charger with a real verFWMain
-        never triggers a fetch at all, and a fw-1.x charger is only ever
-        asked once. Every failure mode (timeout, non-JSON, missing/bad keys,
-        HTTP error) degrades to leaving ``_init_fw_fallback`` unset (still
-        "Unknown" in device_info) -- never raises, never fails setup.
+        At startup the probe runs after the first successful /main. A confirmed
+        pre-R3 charger also probes on recovery, before interpreting the recovered
+        reply's tariff units. A failed probe leaves the previous profile in place.
         """
-        if self._init_fw_fetch_done:
+        if self._init_fw_fetch_done and not reconnect:
             return
         data = self.data if isinstance(self.data, dict) else {}
         if data.get("verFWMain") or data.get("firmware"):
             self._init_fw_fetch_done = True
             return
         self._init_fw_fetch_done = True
+        min_voltage_commands = self._legacy_min_voltage_commands
         try:
             init_data = await fetch_json(
                 self.get_session(),
@@ -1613,7 +1620,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # Transient: ask again on a later good poll.
                 self._init_fw_fetch_done = False
                 self._init_fw_retry_at = time.monotonic() + _INIT_RETRY_SECONDS
-                self._probe_fw_on_first_success = True
+                if not reconnect:
+                    self._probe_fw_on_first_success = True
             return
 
         if not isinstance(init_data, dict):
@@ -1628,6 +1636,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # format nonsense (or overflow float division). Leave the fallback
             # unset -- device_info keeps showing "Unknown".
             return
+        if reconnect and raw_version != self._init_fw_version:
+            self._legacy_fractional_tariff_seen = False  # pragma: no mutate - False vs None is equivalent in the tariff inference
         self._init_fw_version = raw_version
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
         # ESP_SW_version exists only on the pre-R3 Wi-Fi API: 1.x and 2.x, the
@@ -1635,6 +1645,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._legacy_confirmed = (
             "ESP_SW_version" in init_data or raw_version < _LEGACY_INIT_VERSION_LIMIT
         )
+        if self._legacy_confirmed and min_voltage_commands == self._legacy_min_voltage_commands:
+            min_voltage = get_safe_value(init_data, "minVoltage", int)
+            self._legacy_min_voltage = min_voltage if str(min_voltage) in MIN_VOLTAGE_OPTIONS else None
+        if reconnect:
+            return
         if (
             self._legacy_confirmed
             and LEGACY_RAW_STATE_KEY not in data
@@ -1656,7 +1671,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             )
             if normalized != self.data:
                 self.data = normalized
-                self._snapshot = EveusSnapshot.parse(normalized, self._model)
+            self._snapshot = EveusSnapshot.parse(self.data, self._model, legacy_firmware=True)
             self.async_update_listeners()
 
     def _reject_credentials(self) -> None:
@@ -1801,6 +1816,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # maximum, so a wrong-device or corrupt payload fails the poll
             # rather than being published as healthy.
             new_data = validate_main_payload(new_data, self._model)
+            if (
+                self._refresh_legacy_init
+                and not (from_graphql or is_reve_payload(new_data) or is_modern_firmware_payload(new_data))
+                and (self._init_fw_retry_at is None or time.monotonic() >= self._init_fw_retry_at)
+            ):
+                await self.async_maybe_fetch_init_firmware(reconnect=True)
+                self._refresh_legacy_init = not self._init_fw_fetch_done
             new_data = self._normalize_legacy_device_state(new_data)
             unsupported: frozenset[str] = frozenset()
             if from_graphql or self._reve_seen or is_reve_payload(new_data):
@@ -1824,7 +1846,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # fw-1.x latch), and BEFORE _record_success, which notifies the
             # listeners that read the snapshot.
             self._snapshot = EveusSnapshot.parse(
-                new_data, self._model, unsupported=unsupported
+                new_data, self._model, unsupported=unsupported,
+                legacy_firmware=self._legacy_confirmed and not (
+                    self._modern_firmware_seen or self._reve_seen
+                ),
             )
 
             self._record_success(response_time, new_data)

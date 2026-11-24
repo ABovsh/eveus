@@ -40,8 +40,8 @@ def _car_connected_is_on(snapshot: EveusSnapshot) -> bool | None:
     """Whether a car is connected, or None when the state cannot say.
 
     Unknown for an unmapped firmware code and for the Error state, where the
-    firmware cannot tell whether the plug is still seated. Both rules live on
-    the snapshot, so Session Active below cannot answer them differently.
+    firmware cannot tell whether the plug is still seated. A pre-R3 charger
+    can also report an indeterminate pilot during a hold.
     """
     return snapshot.plugged_in
 
@@ -50,7 +50,7 @@ def _session_active_is_on(snapshot: EveusSnapshot) -> bool | None:
     """Whether a charging session is running, or None when indeterminate.
 
     In the Error state a definite "off" would falsely trigger session-ended
-    automations. Mirrors Car Connected.
+    automations.
     """
     return snapshot.session_active
 

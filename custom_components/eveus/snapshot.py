@@ -27,6 +27,7 @@ from .const import (
     BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
     CHARGING_STATES,
     CONNECTED_STATES,
+    LEGACY_UNKNOWN_PILOTS,
     MAX_COST_VALUE,
     MAX_CURRENT_A,
     MAX_ENERGY_KWH,
@@ -139,6 +140,7 @@ _FIELDS: Final[dict[str, _Field]] = {
     "oneCharge": _i(),
     "suspendLimits": _i(),
     "suspendErrors": _i(),
+    "suspendSchedules": _i(),
     "ocppEnabled": _i(),
     "ocppconnected": _i(),
     "timeLimit": _f(),
@@ -220,6 +222,7 @@ class EveusSnapshot:
     # every firmware that reports its full ``/main``; an entity reads its own
     # availability from it, so nothing published for those firmwares changes.
     unsupported: frozenset[str] = frozenset()
+    legacy_firmware: bool = False
 
     @classmethod
     def parse(
@@ -228,6 +231,7 @@ class EveusSnapshot:
         model: str | None = None,
         *,
         unsupported: frozenset[str] = frozenset(),
+        legacy_firmware: bool = False,
     ) -> "EveusSnapshot":
         """Build a snapshot from a validated ``/main`` payload."""
         if not isinstance(payload, Mapping):
@@ -239,6 +243,7 @@ class EveusSnapshot:
             values=_parse_fields(payload, model_max_current(model)),
             model=model,
             unsupported=frozenset(unsupported),
+            legacy_firmware=legacy_firmware,
         )
 
     @classmethod
@@ -372,7 +377,9 @@ class EveusSnapshot:
 
     @property
     def plugged_in(self) -> bool | None:
-        """Whether a car is physically connected; ``None`` in the Error state."""
+        """Whether a car is physically connected, or None when indeterminate."""
+        if self.legacy_firmware and get_safe_value(self.raw, "pilot", int) in LEGACY_UNKNOWN_PILOTS:
+            return None
         return self._plug_view(CONNECTED_STATES)
 
     def _plug_view(self, states: frozenset[int]) -> bool | None:

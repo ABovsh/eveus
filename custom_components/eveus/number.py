@@ -94,8 +94,10 @@ class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=T
     # differ for the global energy limit (reads kWh 1:1, writes Wh-thousandths).
     device_to_ha: float = 1.0
     ha_to_device: float = 1.0
-    # Write scale on confirmed firmware 1.x when its page posts other units.
+    # Scale for controls that take fractional writes on confirmed pre-R3.
     legacy_ha_to_device: float | None = None
+    legacy_native_step: float | None = None
+    legacy_native_max_value: float | None = None
     # Decimals to round the displayed value to (None = no rounding). The charger
     # reports float noise (e.g. ``energyLimit`` 56.00899); this trims the tail so
     # HA shows what the charger's own web UI shows.
@@ -133,6 +135,8 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         state_key="timeLimit",
         device_to_ha=1 / 60,
         ha_to_device=60.0,
+        legacy_native_step=1,
+        legacy_native_max_value=5760,
         native_min_value=0,
         native_max_value=1440,
         native_step=5,
@@ -152,6 +156,7 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         ha_to_device=1000.0,
         # The 1.x page posts kWh (js/scriptUA.js: slider / 10).
         legacy_ha_to_device=1.0,
+        legacy_native_step=0.5,
         native_min_value=0,
         native_max_value=100,
         native_step=1,
@@ -167,6 +172,7 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="moneyLimit",
         state_key="moneyLimit",
+        legacy_ha_to_device=1.0,
         native_min_value=0,
         native_max_value=10000,
         native_step=1,
@@ -232,6 +238,7 @@ def _schedule_energy(n: int) -> EveusSetpointNumberDescription:
         state_key=f"sh{n}EnergyValue",
         device_to_ha=1.0,
         ha_to_device=1.0,  # schedule energy is 1:1 — NOT ×1000
+        legacy_ha_to_device=1.0,
         native_min_value=0,
         native_max_value=100,
         native_step=1,
@@ -329,6 +336,26 @@ class EveusSetpointNumber(EveusNumberEntity):
         return self._attr_native_value
 
     @property
+    def _legacy_firmware(self) -> bool:
+        return getattr(self._updater, "is_legacy_firmware", False) is True  # pragma: no mutate - only test doubles lack the property; any default that is not True reads the same
+
+    @property
+    def native_step(self) -> float:
+        step = self.entity_description.legacy_native_step
+        if step is not None and self._legacy_firmware:
+            return step
+        return self._attr_native_step
+
+    @property
+    def native_max_value(self) -> float:
+        return self._read_max()
+
+    def _write_if_changed(self, value: float | None) -> bool:
+        if self.entity_description.legacy_native_step is not None:
+            return super()._write_if_changed((value, self.native_step, self.native_max_value))
+        return super()._write_if_changed(value)
+
+    @property
     def _state_key(self) -> str:
         return self._state_key_value
 
@@ -350,12 +377,18 @@ class EveusSetpointNumber(EveusNumberEntity):
         value = raw * self._device_to_ha
         if self._display_precision is not None:
             value = round(value, self._display_precision)
-        if self._read_min <= value <= self._attr_native_max_value:
+        if self._read_min <= value <= self._read_max():
             return float(value)
         return None
 
+    def _read_max(self) -> float:
+        maximum = self.entity_description.legacy_native_max_value
+        if maximum is not None and self._legacy_firmware:
+            return maximum
+        return self._attr_native_max_value
+
     def _values_equal(self, optimistic: float, device: float) -> bool:
-        return abs(optimistic - device) < (self._attr_native_step / 2 or 0.5)
+        return abs(optimistic - device) < (self.native_step / 2 or 0.5)
 
     def _resolve_display_value(self) -> float | None:
         return self._resolve_value()
@@ -415,13 +448,11 @@ class EveusSetpointNumber(EveusNumberEntity):
                 "that was not applied"
             ) from outcome
 
-    def _write_scale(self) -> float:
-        if (
-            self._legacy_ha_to_device is not None
-            and getattr(self._updater, "is_legacy_firmware", False) is True  # pragma: no mutate - only test doubles lack the property; any default that is not True reads the same
-        ):
-            return self._legacy_ha_to_device
-        return self._ha_to_device
+    def _encode_write(self, value: float) -> int | float:
+        if self._legacy_ha_to_device is not None and self._legacy_firmware:
+            scaled = value * self._legacy_ha_to_device
+            return int(scaled) if scaled.is_integer() else scaled
+        return int(round(value * self._ha_to_device))
 
     async def _send_latest_write(self, raw: float, token: asyncio.Future) -> None:
         # Clamp INSIDE the lock against a freshly refreshed bound: a write
@@ -432,7 +463,7 @@ class EveusSetpointNumber(EveusNumberEntity):
             self._attr_native_min_value, min(self.native_max_value, raw)
         )
         await self._send_pinned_command(
-            device_value=int(round(clamped * self._write_scale())),
+            device_value=self._encode_write(clamped),
             pending=clamped,
             shown=clamped,
             accepted=clamped,
@@ -445,7 +476,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         try:
             if state and state.state not in UNUSABLE_RESTORED_STATES:
                 restored = float(state.state)
-                if self._read_min <= restored <= self._attr_native_max_value:
+                if self._read_min <= restored <= self._read_max():
                     self._last_device_value = restored
                     self._last_successful_read = time.monotonic()
                     self._attr_native_value = restored

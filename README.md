@@ -625,13 +625,16 @@ rate. The estimated cost to reach the target SOC uses the tariff windows.
 You can edit the times, current limits, and energy limits of both schedules.
 Schedule, limit and **Stop Charging** switches show the charger's own state.
 Early 1.x versions accept them only from the charger's page; update to the
-latest 1.x firmware to change them from Home Assistant. If the charger omits
-the **Minimum voltage** setting, Home Assistant shows it as unknown until the
-first successful command and remembers that setting across restarts. Set
-**Undervoltage threshold** from 150 to 220 V in 5 V steps, independently of
-**Minimum voltage**. **Ground Protection** and **Limit: Energy** use the values
-of the charger's own page. After a Stop the charger reports the car as
-unknown; Home Assistant keeps the last known car state until it is known again.
+latest 1.x firmware to change them from Home Assistant. **Minimum voltage**
+shows the charger's setting where the firmware reports it (1.55); otherwise it
+stays unknown until the first successful command and is remembered across
+restarts. Set **Undervoltage threshold** from 150 to 220 V in 5 V steps,
+independently of **Minimum voltage**. **Adaptive Mode** also offers **Auto 2**.
+**Ground Protection** and the limits use the values of the charger's own page:
+**Limit: Energy** in 0.5 kWh steps, **Limit: Time** up to 96 hours in 1-minute
+steps, fractional energy and cost limits. During a Stop or a schedule hold the
+charger cannot tell whether a car is plugged in: **Car Connected** is unknown,
+while **State** keeps the last known car state, so no plug events are invented.
 
 For firmware updates, message **@energy_star** on Telegram; install the file
 through the charger's web interface.

@@ -204,3 +204,38 @@ def test_minimum_voltage_non_1x_publishes_each_readback_change():
     updater.data = {"minVoltage": 175}
     select._handle_coordinator_update()
     assert select.async_write_ha_state.call_count == 2
+
+
+def test_legacy_adaptive_mode_offers_and_round_trips_auto_2() -> None:
+    updater = _Updater({"aiStatus": 2})
+    updater.is_legacy_firmware = False
+    entity = select_module.EveusAdaptiveModeSelect(updater)
+    entity.async_write_ha_state = Mock()
+    entity._handle_coordinator_update()
+    entity.async_write_ha_state.reset_mock()
+
+    updater.is_legacy_firmware = True
+    entity._handle_coordinator_update()
+    entity._handle_coordinator_update()
+    assert entity.options == ["Off", "Voltage", "Auto", "Power", "Auto 2"]
+    entity.async_write_ha_state.assert_called_once_with()
+
+    updater.data["aiStatus"] = 4
+    assert entity.current_option == "Auto 2"
+    asyncio.run(entity.async_select_option("Auto 2"))
+    assert updater.commands == [("aiMode", 4)]
+
+
+@pytest.mark.parametrize("legacy", [None, False, 1])
+def test_adaptive_mode_rejects_auto_2_without_confirmed_legacy(legacy) -> None:
+    updater = _Updater({"aiStatus": 4})
+    if legacy is not None:
+        updater.is_legacy_firmware = legacy
+    entity = select_module.EveusAdaptiveModeSelect(updater)
+    _disable_state_writes(entity)
+
+    assert entity.options == ["Off", "Voltage", "Auto", "Power"]
+    assert entity.current_option is None
+    with pytest.raises(HomeAssistantError, match="Unsupported Adaptive Mode: Auto 2"):
+        asyncio.run(entity.async_select_option("Auto 2"))
+    assert updater.commands == []

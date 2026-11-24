@@ -50,6 +50,8 @@ DEVICE_STATE_ERROR: Final[int] = 7
 LEGACY_RAW_STATE_KEY: Final[str] = "_legacy_raw_state"
 # Substate derived from the legacy state table and safe to read as a modern code.
 LEGACY_SUBSTATE_MAPPED_KEY: Final[str] = "_legacy_substate_mapped"
+# Pilot codes reported as unknown by the pre-R3 charger page.
+LEGACY_UNKNOWN_PILOTS: Final = frozenset({0, 4, 6})
 
 
 def is_modern_firmware_payload(data: dict) -> bool:

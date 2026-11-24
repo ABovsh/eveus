@@ -2629,7 +2629,7 @@ _LIMITS_STATUS_BITS = {
     "energyLimitS": 0, "timeLimitS": 1, "moneyLimitS": 2,
     "sh1Enabled": 3, "sh2Enabled": 4, "sh1EnergyEnable": 5, "sh1CurrentEnable": 6,
     "sh2EnergyEnable": 7, "sh2CurrentEnable": 8, "evseEnabled": 9,
-    "suspendLimits": 10, "delayedLimit": 11,
+    "suspendLimits": 10, "delayedLimit": 11, "suspendErrors": 12, "suspendSchedules": 13,
 }
 
 
@@ -2771,3 +2771,165 @@ def test_1x_limits_status_bounds_are_both_valid_words(updater, word, flag):
     )
 
     assert {k: data[k] for k in _LIMITS_STATUS_BITS} == dict.fromkeys(_LIMITS_STATUS_BITS, flag)
+
+
+@pytest.mark.parametrize("pilot", [0, 4, 6])
+@pytest.mark.parametrize(("previous_pilot", "canonical_state"), [(None, 5), (2, 5), (1, 2)])
+def test_legacy_hold_reports_unknown_current_pilot(coordinator, pilot, previous_pilot, canonical_state):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    if previous_pilot is not None:
+        session.response.payload = {"state": 18, "pilot": previous_pilot, "currentSet": 16}
+        updater.data = asyncio.run(updater._async_update_data())
+    session.response.payload = {"state": 18, "pilot": pilot, "currentSet": 16}
+    updater.data = asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.state == canonical_state
+    assert updater.snapshot.session_active is False
+    from custom_components.eveus.binary_sensor import BINARY_SENSORS
+
+    assert BINARY_SENSORS[0].is_on_fn(updater.snapshot) is None
+
+
+@pytest.mark.parametrize(("pilot", "connected"), [(1, False), (2, True), (3, True), (5, True), (None, True)])
+def test_legacy_hold_preserves_existing_presence_for_other_pilots(coordinator, pilot, connected):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = {"state": 18, "pilot": pilot, "currentSet": 16}
+    updater.data = asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.plugged_in is connected
+
+
+@pytest.mark.parametrize("firmware", [None, "R3.05.8"])
+def test_unconfirmed_and_modern_presence_still_uses_state(coordinator, firmware):
+    updater, session = coordinator
+    if firmware:
+        updater._legacy_confirmed = True
+    session.response.payload = {"state": 5, "pilot": 4, "currentSet": 16}
+    if firmware:
+        session.response.payload["verFWMain"] = firmware
+    updater.data = asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.plugged_in is True
+
+
+@pytest.mark.parametrize(
+    ("initial_version", "recovered_version", "recovered_tarif", "expected"),
+    [(133, 155, 432, 432), (133, 133, 4, 400), (140, 140, 4, 400), (155, 155, 464, 464)],
+)
+def test_legacy_tariff_units_on_first_poll_after_gap(
+    monkeypatch, initial_version, recovered_version, recovered_tarif, expected
+):
+    tariff = 432 if initial_version == 155 else 4.32
+    replies = {"/init": {"ESP_SW_version": initial_version}}
+
+    async def fetch(_session, url, **kwargs):
+        if url.endswith("/init"):
+            init_calls.append(url)
+            return replies["/init"]
+        if isinstance(replies["/main"], Exception):
+            raise replies["/main"]
+        return dict(replies["/main"])
+
+    init_calls = []
+    monkeypatch.setattr(common_network, "fetch_json", fetch)
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: object())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _TaskHass())
+
+    async def scenario():
+        replies["/main"] = {
+            "state": 2, "currentSet": 16, "tarif": tariff, "tarif_2": tariff, "tarif_3": tariff,
+        }
+        updater.data = await updater._async_update_data()
+        await updater.async_maybe_fetch_init_firmware()
+        assert updater.snapshot.get_int("tarif") == 432
+        first_main = replies["/main"]
+        replies["/main"] = asyncio.TimeoutError()
+        with pytest.raises(UpdateFailed):
+            await updater._async_update_data()
+        assert len(init_calls) == 1
+
+        replies["/init"] = {"ESP_SW_version": recovered_version}
+        replies["/main"] = {
+            **first_main, "tarif": recovered_tarif, "tarif_2": recovered_tarif,
+            "tarif_3": recovered_tarif,
+        }
+        for _ in range(2):
+            updater.data = await updater._async_update_data()
+            assert tuple(updater.snapshot.get_int(key) for key in ("tarif", "tarifAValue", "tarifBValue")) == (
+                expected, expected, expected,
+            )
+        assert len(init_calls) == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("init_voltage", "main_voltage", "expected"),
+    [(150, None, "150"), (175, None, "175"), (200, None, "200"),
+     (190, None, None), (175.5, None, None), (True, None, None), (None, None, None),
+     (175, 180, "180")],
+)
+def test_legacy_minimum_voltage_uses_valid_init_readback(coordinator, monkeypatch, init_voltage, main_voltage, expected):
+    from custom_components.eveus.select import EveusMinVoltageSelect
+
+    updater, session = coordinator
+    main = {"state": 2, "currentSet": 16}
+    if main_voltage is not None:
+        main["minVoltage"] = main_voltage
+
+    async def scenario():
+        session.response.payload = main
+        updater.data = await updater._async_update_data()
+        session.response.payload = {"ESP_SW_version": 155, "httpPassword": "fake-secret"}
+        if init_voltage is not None:
+            session.response.payload["minVoltage"] = init_voltage
+        await updater.async_maybe_fetch_init_firmware()
+        entity = EveusMinVoltageSelect(updater)
+        assert entity.assumed_state is (expected is None)
+        assert entity.current_option == expected
+        assert "httpPassword" not in updater.data
+
+    asyncio.run(scenario())
+
+
+def test_legacy_minimum_voltage_keeps_accepted_write_after_poll(coordinator, monkeypatch):
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.eveus.select import EveusMinVoltageSelect
+
+    updater, session = coordinator
+    schedule_refresh = Mock()
+    monkeypatch.setattr(EveusUpdater, "_schedule_post_command_refresh", lambda self: schedule_refresh())
+
+    async def scenario():
+        main = {"state": 2, "currentSet": 16}
+        session.response.payload = main
+        updater.data = await updater._async_update_data()
+        session.response.payload = {"ESP_SW_version": 155, "minVoltage": 175}
+        await updater.async_maybe_fetch_init_firmware()
+        entity = EveusMinVoltageSelect(updater)
+        entity.async_write_ha_state = Mock()
+
+        await entity.async_select_option("180")
+        schedule_refresh.assert_called_once_with()
+        session.response.payload = main
+        updater.data = await updater._async_update_data()
+        entity._optimistic_value_time -= 1000
+        entity._handle_coordinator_update()
+        assert updater.snapshot.get("minVoltage") == 180
+        assert entity.current_option == "180"
+        assert entity.assumed_state is False
+
+        async def reject(*args, **kwargs):
+            return False
+
+        monkeypatch.setattr(updater._command_manager, "send_command", reject)
+        with pytest.raises(HomeAssistantError):
+            await entity.async_select_option("155")
+        updater.data = await updater._async_update_data()
+        entity._handle_coordinator_update()
+        assert updater.snapshot.get("minVoltage") == 180
+        assert entity.current_option == "180"
+
+    asyncio.run(scenario())
