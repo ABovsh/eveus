@@ -788,9 +788,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # the 1.x translation here would rewrite a Connected charger that
             # is drawing power into Charging, firing a bogus transition event.
             return data
-        if self._legacy_confirmed and isinstance(data.get("one_charge"), int):
-            # The 1.x page writes and shows one_charge; oneCharge may lag it.
-            data["oneCharge"] = data["one_charge"]
         state = get_safe_value(data, "state", int)
         pilot = get_safe_value(data, "pilot", int)  # pragma: no mutate - float and int pilot codes are equal set members for every whole-number code
         if pilot is not None and pilot not in _LEGACY_UNKNOWN_PILOTS:
@@ -1527,6 +1524,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _normalize_legacy_controls(self, data: dict[str, Any], raw_state: int | None) -> None:
         """Expose 1.x Stop, schedule and tariff values under the canonical keys."""
+        if isinstance(data.get("one_charge"), int):
+            # The 1.x page writes and shows one_charge; oneCharge may lag it.
+            data["oneCharge"] = data["one_charge"]
         word = data.get("limitsStatus")
         if type(word) is int and 0 <= word <= 0xFFFF:
             for key, bit in _LEGACY_LIMITS_STATUS_BITS.items():

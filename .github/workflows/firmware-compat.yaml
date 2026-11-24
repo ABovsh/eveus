@@ -1,6 +1,6 @@
 name: Firmware compatibility
 
-# Checks the integration against firmware simulation profiles kept in a private
+# Checks the integration against firmware contracts and simulation profiles kept in a private
 # repository. Runs on pushes to the release branches only; forks and Dependabot
 # never receive the key, so those runs report a skip. Logs show aggregate counts
 # only — details stay with the maintainer's local check.
@@ -46,6 +46,8 @@ jobs:
             /eveus-fw
             /records/
             /captures/
+            /contracts/
+            /evidence/
             /surface/
             /semantics.json
             /baseline.json
@@ -62,7 +64,7 @@ jobs:
         if: env.HAS_PROFILES == 'true'
         run: python -m pip install -r requirements_test.txt
 
-      - name: Compatibility check
+      - name: Compatibility check and HA firmware contracts
         if: env.HAS_PROFILES == 'true'
         run: .fw/eveus-fw ci --integration . --python python --public
 
@@ -71,8 +73,16 @@ jobs:
         run: |
           if [ -f tests_ha/test_firmware_profiles.py ]; then
             # Profiles depend on the integration revision under test.
-            .fw/eveus-fw simulate --all --out "$RUNNER_TEMP/sim" > /dev/null
-            EVEUS_FW_SIM_DIR="$RUNNER_TEMP/sim" python -m pytest -q -o addopts='' -p no:cacheprovider tests_ha/test_firmware_profiles.py
+            if ! .fw/eveus-fw simulate --all --out "$RUNNER_TEMP/sim" > "$RUNNER_TEMP/firmware-sim.log" 2>&1; then
+              echo "::error::Firmware simulation generation failed."
+              exit 1
+            fi
+            status=0
+            EVEUS_FW_SIM_DIR="$RUNNER_TEMP/sim" python -m pytest -q --tb=no --disable-warnings -rN -o addopts='' \
+              -p no:cacheprovider -p no:pytest_github_actions_annotate_failures --disable-socket --allow-unix-socket \
+              tests_ha/test_firmware_profiles.py > "$RUNNER_TEMP/firmware-profiles.log" 2>&1 || status=$?
+            grep -Eo '[0-9]+ (passed|failed|skipped|xfailed|xpassed|errors?)' "$RUNNER_TEMP/firmware-profiles.log" || true
+            exit "$status"
           else
             echo "::notice::Scenario harness is not on this branch yet."
           fi

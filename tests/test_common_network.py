@@ -2747,3 +2747,15 @@ def test_1x_confirmation_forgets_a_charging_reading_taken_before_it(coordinator)
         updater.data = asyncio.run(updater._async_update_data())
 
     assert common_network.EVENT_CHARGING_FINISHED not in fired
+
+
+def test_1x_confirmation_applies_one_charge_to_the_first_reply(coordinator):
+    updater, session = coordinator
+    session.response.payload = {"state": 2, "currentSet": 16, "one_charge": 1, "oneCharge": 0}
+    updater.data = asyncio.run(updater._async_update_data())
+    assert updater.data["oneCharge"] == 0
+
+    session.response.payload = {"ESP_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater.snapshot.get_int("oneCharge") == 1
