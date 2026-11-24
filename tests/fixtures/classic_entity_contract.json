@@ -96,6 +96,10 @@
    "available": true,
    "value": null
   },
+  "eveus_household_socket_16_a": {
+   "available": true,
+   "value": false
+  },
   "eveus_initial_soc": {
    "available": true,
    "value": 20.0

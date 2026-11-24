@@ -504,18 +504,23 @@ def test_switch_setup_entry_adds_all_switches() -> None:
             "runtime_data": type(
                 "RuntimeData",
                 (),
-                {"updater": _Updater({}), "device_number": 3, "soc_limit": object()},
+                {
+                    "updater": _Updater({"restricted_mode": 0}),
+                    "device_number": 3,
+                    "soc_limit": object(),
+                },
             )()
         },
     )()
 
     asyncio.run(async_setup_switch_entry(None, entry, lambda entities: added.extend(entities)))
 
-    assert [entity.entity_description.key for entity in added[:-2]] == [
-        description.key for description in SWITCH_DESCRIPTIONS
-    ]
-    assert isinstance(added[-2], EveusSocLimitSwitch)
-    assert added[-1].unique_id == "eveus3_follow_ha_time_zone"
+    # Household Socket 16 A follows in its own batch once /main reports it.
+    assert [entity.entity_description.key for entity in added[:-3]] + [
+        added[-1].entity_description.key
+    ] == [description.key for description in SWITCH_DESCRIPTIONS]
+    assert isinstance(added[-3], EveusSocLimitSwitch)
+    assert added[-2].unique_id == "eveus3_follow_ha_time_zone"
     assert all(entity.unique_id.startswith("eveus3_") for entity in added)
 
 

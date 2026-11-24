@@ -613,8 +613,9 @@ The charger did not lower its packet size on a link with an MTU below 1500. When
 
 ### Older charger firmware
 
-R3.01.x and firmware 1.x (EnergyStar V-series) are supported with fewer
-readings; the ones the charger does not report stay unavailable. On 1.x,
+R3.01.x and firmware 1.x and 2.x (EnergyStar V-series, the first two
+hardware generations) are supported with fewer readings; the ones the charger
+does not report stay unavailable. Below, 1.x also covers 2.x. On 1.x,
 **State** follows the charger's own status names, and controls are sent the
 way its web page sends them. An unknown state shows `Unknown`, with its code
 in the **State** sensor's `raw_state` attribute.
@@ -622,8 +623,10 @@ in the **State** sensor's `raw_state` attribute.
 On 1.x, Home Assistant shows the configured tariff prices and the active
 rate. The estimated cost to reach the target SOC uses the tariff windows.
 You can edit the times, current limits, and energy limits of both schedules.
-If the charger omits the state of a schedule or limit switch or the
-**Minimum voltage** setting, Home Assistant shows it as unknown until the
+Schedule, limit and **Stop Charging** switches show the charger's own state.
+Early 1.x versions accept them only from the charger's page; update to the
+latest 1.x firmware to change them from Home Assistant. If the charger omits
+the **Minimum voltage** setting, Home Assistant shows it as unknown until the
 first successful command and remembers that setting across restarts. Set
 **Undervoltage threshold** from 150 to 220 V in 5 V steps, independently of
 **Minimum voltage**. **Ground Protection** and **Limit: Energy** use the values
@@ -695,6 +698,7 @@ no long-term statistics.
 | `switch.eveus_ev_charger_stop_charging` | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Enable one-charge mode |
 | `switch.eveus_ev_charger_ground_protection` | Missing-ground shutdown protection |
+| `switch.eveus_ev_charger_household_socket_16_a` | **Household Socket 16 A** caps the charging current and both schedule current limits at 16 A when enabled (supported Eveus firmware) |
 | `switch.eveus_ev_charger_connect_to_ocpp` | OCPP connection; the server/app may override local controls |
 | `switch.eveus_ev_charger_limit_time_enabled` | **Limit: Time enabled** |
 | `switch.eveus_ev_charger_limit_energy_enabled` | **Limit: Energy enabled** |

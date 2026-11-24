@@ -5492,6 +5492,13 @@
           'icon': 'mdi:shield-check',
         }),
       ),
+      'switch.eveus_ev_charger_household_socket_16_a': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Household Socket 16 A',
+          'icon': 'mdi:power-socket-eu',
+        }),
+      ),
       'switch.eveus_ev_charger_limit_cost_enabled': tuple(
         'off',
         dict({
@@ -6288,6 +6295,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Ground Protection',
           'icon': 'mdi:shield-check',
+        }),
+      ),
+      'switch.eveus_ev_charger_household_socket_16_a': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Household Socket 16 A',
+          'icon': 'mdi:power-socket-eu',
         }),
       ),
       'switch.eveus_ev_charger_limit_cost_enabled': tuple(
@@ -7087,6 +7101,13 @@
         dict({
           'friendly_name': 'Eveus EV Charger Ground Protection',
           'icon': 'mdi:shield-check',
+        }),
+      ),
+      'switch.eveus_ev_charger_household_socket_16_a': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Household Socket 16 A',
+          'icon': 'mdi:power-socket-eu',
         }),
       ),
       'switch.eveus_ev_charger_limit_cost_enabled': tuple(

@@ -32,6 +32,7 @@ from .const import (
     EVEUS_FIRMWARE_ONLY_ENTITIES,
     MODEL_MAX_CURRENT,
     MIN_CURRENT,
+    RESTRICTED_MODE_KEY,
     MIN_VOLTAGE_OPTIONS,
     CONF_MODEL,
     SOC_INPUT_LIMITS,
@@ -428,7 +429,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         # shifted while it waited, not the bound captured at enqueue time.
         self._pre_send_refresh()
         clamped = max(
-            self._attr_native_min_value, min(self._attr_native_max_value, raw)
+            self._attr_native_min_value, min(self.native_max_value, raw)
         )
         await self._send_pinned_command(
             device_value=int(round(clamped * self._write_scale())),
@@ -452,7 +453,21 @@ class EveusSetpointNumber(EveusNumberEntity):
             _LOGGER.debug("Could not restore %s: %s", self.ENTITY_NAME, type(err).__name__)
 
 
-class EveusCurrentNumber(EveusSetpointNumber):
+class EveusSocketLimitedCurrentNumber(EveusSetpointNumber):
+    """Current setpoint with a writable maximum that follows the socket mode."""
+
+    @property
+    def native_max_value(self) -> float:
+        """Apply the socket limit to writes while preserving stored setpoints."""
+        if self._updater.snapshot.get_int(RESTRICTED_MODE_KEY) == 1:
+            return min(self._attr_native_max_value, 16)
+        return self._attr_native_max_value
+
+    def _write_if_changed(self, value: float | None) -> bool:
+        return super()._write_if_changed((value, self.native_max_value))
+
+
+class EveusCurrentNumber(EveusSocketLimitedCurrentNumber):
     """Charging Current: a whole-amp setpoint bounded by the charger model.
 
     Reads accept any non-negative device-reported setpoint up to the model max;
@@ -983,12 +998,14 @@ async def async_setup_entry(
         for desc in SCHEDULE_LIMIT_NUMBERS:
             if desc.key in skipped:
                 continue
-            max_override = model_max if desc.native_unit_of_measurement == "A" else None
-            entities.append(
-                EveusSetpointNumber(
-                    updater, desc, device_number, max_value=max_override
+            if desc.native_unit_of_measurement == "A":
+                entities.append(
+                    EveusSocketLimitedCurrentNumber(
+                        updater, desc, device_number, max_value=model_max
+                    )
                 )
-            )
+            else:
+                entities.append(EveusSetpointNumber(updater, desc, device_number))
     else:
         _LOGGER.debug("No model specified in config")
 

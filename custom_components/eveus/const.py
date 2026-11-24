@@ -203,6 +203,7 @@ TIME_ZONE_FOLLOW_RETRY_POLLS: Final[int] = 10
 
 # Current limits
 MIN_CURRENT: Final[int] = 7
+RESTRICTED_MODE_KEY: Final[str] = "restricted_mode"
 MODEL_16A: Final[str] = "16A"
 MODEL_32A: Final[str] = "32A"
 MODEL_40A: Final[str] = "40A"
@@ -276,6 +277,7 @@ CONF_FIRMWARE_FAMILY: Final[str] = "firmware_family"
 # resets suspendLimits within seconds (hardware test 2026-10-18), so on REVE
 # these would read unavailable forever.
 EVEUS_FIRMWARE_ONLY_ENTITIES: Final[tuple[tuple[str, str], ...]] = (
+    ("switch", "household_socket_16_a"),
     ("switch", "limit_disable_all"),
     ("switch", "schedule_1_energy_limit_enabled"),
     ("switch", "schedule_2_energy_limit_enabled"),

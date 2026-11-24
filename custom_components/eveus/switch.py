@@ -22,6 +22,7 @@ from .const import (
     CONF_FIRMWARE_FAMILY,
     CONF_FOLLOW_HA_TIME_ZONE,
     EVEUS_FIRMWARE_ONLY_ENTITIES,
+    RESTRICTED_MODE_KEY,
     SOC_MODE_ADVANCED,
     get_soc_mode,
 )
@@ -42,6 +43,16 @@ class EveusSwitchEntityDescription(SwitchEntityDescription, frozen_or_thawed=Tru
     # only accepts as a bundled "save" form (e.g. OCPP needs ocppVendor).
     command_extra: tuple[str, ...] = ()
     legacy_write_only: bool = False
+
+
+_HOUSEHOLD_SOCKET = EveusSwitchEntityDescription(
+    key="household_socket_16_a",
+    name="Household Socket 16 A",
+    icon="mdi:power-socket-eu",
+    entity_category=EntityCategory.CONFIG,
+    command=RESTRICTED_MODE_KEY,
+    state_key=RESTRICTED_MODE_KEY,
+)
 
 
 SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
@@ -168,6 +179,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         state_key="sh2EnergyEnable",
         legacy_write_only=True,
     ),
+    _HOUSEHOLD_SOCKET,
 )
 
 
@@ -466,7 +478,7 @@ async def async_setup_entry(
     entities = [
         BaseSwitchEntity(updater, description, device_number)
         for description in SWITCH_DESCRIPTIONS
-        if description.key not in skipped
+        if description.key not in skipped and description is not _HOUSEHOLD_SOCKET
     ]
     if get_soc_mode(entry) == SOC_MODE_ADVANCED:
         entities.append(
@@ -474,3 +486,22 @@ async def async_setup_entry(
         )
     entities.append(EveusFollowTimeZoneSwitch(updater, entry, device_number))
     async_add_entities(entities)
+
+    if _HOUSEHOLD_SOCKET.key in skipped:
+        return
+
+    # The charger can be off at setup. Wait for a poll that reports the flag,
+    # using the same deferred setup as the REVE-specific sensors.
+    added = False  # pragma: no mutate - equivalent: only read for truthiness
+
+    @callback
+    def _add_household_socket_switch() -> None:
+        nonlocal added
+        if added or not updater.snapshot.has(RESTRICTED_MODE_KEY):
+            return
+        added = True
+        async_add_entities([BaseSwitchEntity(updater, _HOUSEHOLD_SOCKET, device_number)])
+
+    _add_household_socket_switch()
+    if not added:
+        entry.async_on_unload(updater.async_add_listener(_add_household_socket_switch))

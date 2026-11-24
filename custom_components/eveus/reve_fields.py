@@ -134,6 +134,7 @@ NO_GRAPHQL_SOURCE: Final[frozenset[str]] = frozenset(
         "sh1EnergyEnable", "sh1EnergyValue", "sh2EnergyEnable", "sh2EnergyValue",
         "aiMode",
         "ocppconnected",
+        "restricted_mode",
     }
 )
 

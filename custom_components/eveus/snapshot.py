@@ -44,6 +44,7 @@ from .const import (
     MIN_VALID_TEMPERATURE_C,
     MIN_VALID_TIMEZONE_H,
     MODEL_MAX_CURRENT,
+    RESTRICTED_MODE_KEY,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
     is_modern_firmware_payload,
@@ -127,6 +128,7 @@ _FIELDS: Final[dict[str, _Field]] = {
     "RSSI": _f(MIN_VALID_RSSI_DBM, MAX_VALID_RSSI_DBM),
     "ground": _i(),
     "groundCtrl": _i(),
+    RESTRICTED_MODE_KEY: _i(),
     # The charger's RTC, encoded as epoch seconds shifted by `timeZone`. A
     # zero or negative stamp is an unset/garbled clock, not midnight 1970.
     "systemTime": _Field(int, 0, MAX_VALID_SYSTEM_TIME, exclusive_min=True),
