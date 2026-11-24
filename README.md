@@ -3,13 +3,15 @@
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
 ![Version](https://img.shields.io/badge/version-4.31.1-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
+[![Chargers](https://img.shields.io/badge/chargers-gen%201%E2%80%933%20%C2%B7%20Eveus%20%2B%20REVE%20firmware-41BDF5?style=for-the-badge)](#supported-chargers)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
 **English** | [🇺🇦 Українська](README.uk.md)
 
 Home Assistant integration for **Eveus EV chargers** (Energy Star), such as
-**Eveus Pro**,
-including chargers on the new **REVE firmware**. Control the charging current, schedules and limits,
+**Eveus Pro**. It works with **all three hardware generations** and **both
+firmwares**: Eveus firmware 1.x, 2.x and R3.x, and the new **REVE firmware**.
+Control the charging current, schedules and limits,
 stop at a target battery level (SOC), and track energy and charging cost. The
 integration talks to the charger over your local network; no cloud account or
 internet access is needed. Install it from the **HACS default store**.
@@ -68,18 +70,19 @@ All SOC features require **Advanced mode**. [Set up SOC →](#battery-level-soc)
 - **Two charging schedules** with their own current limit and, on Eveus firmware, energy limit. They are stored on the charger and run without Home Assistant.
 - **Lower current when mains voltage drops:** the charger does this; the integration sets the mode and threshold and shows the current cap.
 
-### 🔄 REVE firmware
+### 🔄 All generations and firmwares
 
-- **Recognized automatically:** no setup change after the charger updates to REVE.
-- **Reads and writes through REVE's local interface,** the one the charger's app uses: current, schedules with their days of the week, tariffs and limits.
+- **All three hardware generations:** firmware 1.x on the first, 2.x on the second, R3.x on the third. The integration recognizes the firmware by itself and sends each control the way that firmware expects.
+- **REVE firmware is recognized automatically:** no setup change after the charger updates to REVE. The integration reads and writes through REVE's local interface, the one the charger's app uses: current, schedules with their days of the week, tariffs and limits.
 - **Manual Mode** sensor and card notes show when REVE ignores its schedules and limits. [More about REVE →](#reve-firmware)
+- **Older firmware reports fewer readings;** the ones it does not report stay unavailable. [Which charger supports what →](#supported-chargers)
 
 ### 🛡️ Faults and conflicting controls
 
 - **Repairs notices** explain ground faults, overheating, leakage and other problems, with what to do next.
 - **OCPP control and connection status** in Home Assistant. While OCPP is on, a notice warns that the server or app may change settings.
 
-Also supported: **several chargers**, **English and Ukrainian**, and older firmware with fewer readings.
+Also supported: **several chargers** and **English and Ukrainian**.
 
 ## Requirements
 
@@ -87,7 +90,7 @@ Also supported: **several chargers**, **English and Ukrainian**, and older firmw
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A or 48A, reachable from Home Assistant |
-| Charger firmware | [Eveus firmware](#charger-firmware) R3.05.x or [REVE firmware](#reve-firmware), both verified; Eveus firmware [R3.01.x and 1.x](#older-charger-firmware) has fewer readings |
+| Charger firmware | [Eveus firmware](#charger-firmware) 1.x, 2.x or R3.x, or [REVE firmware](#reve-firmware): any hardware generation, see [Supported chargers](#supported-chargers) |
 | Network | Local network access to the charger's web interface |
 | Setup details | Charger IP address, hostname or URL and model; username and password if the charger has them |
 
@@ -545,11 +548,21 @@ Ground notices clear after recovery. Serious fault notices also need
 
 ## Charger firmware
 
-Eveus chargers run one of two firmwares: **Eveus firmware** (R3.x and 1.x) or
-**REVE firmware**. The device page shows which one: a firmware version that
+Eveus chargers run one of two firmwares: **Eveus firmware** (1.x, 2.x and R3.x)
+or **REVE firmware**. The device page shows which one: a firmware version that
 starts with `REVE_PLUS` is REVE; anything else is Eveus firmware. In the
 CHANGELOG, `Eveus:` and `REVE:` mark a change for one firmware only; a change
 without either applies to both.
+
+### Supported chargers
+
+| Hardware generation | Firmware | Support |
+| --- | --- | --- |
+| First (EnergyStar V-series) | Eveus 1.x | Fewer readings; [details](#older-charger-firmware) |
+| Second (EnergyStar V-series) | Eveus 2.x | As on 1.x |
+| Third | Eveus R3.05.x | Everything in this README |
+| Third | Eveus R3.01.x | Fewer readings; [details](#older-charger-firmware) |
+| Third | REVE (`REVE_PLUS`) | Everything in this README, with the [REVE differences](#reve-firmware) |
 
 ### REVE firmware
 
