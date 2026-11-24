@@ -239,3 +239,17 @@ def test_adaptive_mode_rejects_auto_2_without_confirmed_legacy(legacy) -> None:
     with pytest.raises(HomeAssistantError, match="Unsupported Adaptive Mode: Auto 2"):
         asyncio.run(entity.async_select_option("Auto 2"))
     assert updater.commands == []
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_adaptive_mode_publishes_each_readback_change(legacy):
+    updater = _Updater({"aiStatus": 1})
+    updater.is_legacy_firmware = legacy
+    select = select_module.EveusAdaptiveModeSelect(updater)
+    select.async_write_ha_state = Mock()
+    select._handle_coordinator_update()
+    updater.data = {"aiStatus": 2}
+    select._handle_coordinator_update()
+    select._handle_coordinator_update()
+    assert select.async_write_ha_state.call_count == 2
+    assert select.current_option == "Auto"

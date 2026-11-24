@@ -1079,10 +1079,10 @@ class EveusCard extends HTMLElement {
     return `<button class="safety-item safety-socket" data-limit-toggle="${key}" role="switch" aria-checked="${on}" aria-label="${t.socketTitle}" title="${t.socketTitle}" ${!this._online || !known ? 'disabled' : ''}><ha-icon icon="mdi:power-socket-eu"></ha-icon><span class="safety-value">${amps}<small>A</small></span></button>`;
   }
   // The current the charger allows with the socket mode off: Charging Current's
-  // maximum while it is not capped, remembered for the moment the mode flips.
+  // maximum while the mode is off, remembered for the moment the mode flips.
   _socketFullAmps() {
     const max = this._state('charging_current')?.attributes?.max;
-    if (this._state('household_socket_16_a')?.state === 'off' && Number.isFinite(max) && max > 16) this._socketMax = max;
+    if (this._state('household_socket_16_a')?.state === 'off' && Number.isFinite(max)) this._socketMax = max;
     return this._socketMax ?? (Number.isFinite(max) && max > 16 ? max : 32);
   }
   // A reading or setting the charger's firmware does not provide at all: the

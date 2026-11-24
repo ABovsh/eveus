@@ -222,7 +222,7 @@ class EveusAdaptiveModeSelect(_EveusIntegerSelect):
     def _write_if_changed(self, value: str | None) -> bool:
         # Firmware can be confirmed after the select is added to HA.
         if self._legacy_firmware:
-            return super()._write_if_changed((value, True))
+            return super()._write_if_changed((value, True))  # pragma: no mutate - any marker that differs from the plain value republishes once when the options grow; True and False are the same here
         return super()._write_if_changed(value)
 
 

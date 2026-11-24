@@ -986,9 +986,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # so the cached consecutive_command_failures can't go stale.
             self._connection_quality_cache = None
         if success and not self._shutting_down:
-            if command == "minVoltage" and self.is_legacy_firmware and self._legacy_min_voltage is not None:
-                self._legacy_min_voltage = value
+            if command == "minVoltage" and self.is_legacy_firmware:
+                # Counted even before /init has given a value, so a reply
+                # already in flight cannot overwrite this accepted write.
                 self._legacy_min_voltage_commands += 1
+                if self._legacy_min_voltage is not None:
+                    self._legacy_min_voltage = value
             self._meter_guard.expect_reset(command)
             self._schedule_post_command_refresh()
         return success

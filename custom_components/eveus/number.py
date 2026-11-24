@@ -450,7 +450,7 @@ class EveusSetpointNumber(EveusNumberEntity):
 
     def _encode_write(self, value: float) -> int | float:
         if self._legacy_ha_to_device is not None and self._legacy_firmware:
-            scaled = value * self._legacy_ha_to_device
+            scaled = value * self._legacy_ha_to_device  # pragma: no mutate - every pre-R3 scale is 1.0, so multiplying and dividing are the same
             return int(scaled) if scaled.is_integer() else scaled
         return int(round(value * self._ha_to_device))
 

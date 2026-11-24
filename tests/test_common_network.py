@@ -2933,3 +2933,47 @@ def test_legacy_minimum_voltage_keeps_accepted_write_after_poll(coordinator, mon
         assert entity.current_option == "180"
 
     asyncio.run(scenario())
+
+
+def test_1x_confirmation_marks_car_unknown_on_the_first_reply(coordinator):
+    """The snapshot rebuilt by /init must already know it is reading 1.x."""
+    updater, session = coordinator
+    session.response.payload = {"state": 18, "pilot": 4, "currentSet": 16, "limitsStatus": 8}
+    updater.data = asyncio.run(updater._async_update_data())
+    assert updater.snapshot.plugged_in is not None
+
+    session.response.payload = {"ESP_SW_version": 155}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater.snapshot.plugged_in is None
+
+
+def test_non_1x_init_minimum_voltage_is_not_projected(coordinator):
+    updater, session = coordinator
+    session.response.payload = {"MCU_SW_version": 305, "minVoltage": 175}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+    assert updater._legacy_min_voltage is None
+
+
+def test_1x_minimum_voltage_write_during_init_beats_the_stale_reply(updater, monkeypatch):
+    """A write accepted while /init is in flight wins over that reply."""
+    updater._legacy_confirmed = True
+    updater.data = {"state": 2, "currentSet": 16}
+    monkeypatch.setattr(EveusUpdater, "_schedule_post_command_refresh", lambda self: None)
+
+    async def accept(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(updater._command_manager, "send_command", accept)
+
+    async def slow_init(*args, **kwargs):
+        assert await updater.send_command("minVoltage", 180)
+        return {"ESP_SW_version": 155, "minVoltage": 175}
+
+    monkeypatch.setattr(common_network, "fetch_json", slow_init)
+    monkeypatch.setattr(updater, "get_session", lambda: None)
+    monkeypatch.setattr(updater, "async_update_listeners", lambda: None)
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._legacy_min_voltage != 175

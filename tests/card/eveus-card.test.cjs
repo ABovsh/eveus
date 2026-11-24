@@ -3058,3 +3058,9 @@ test('socket 16 A to full current asks first; back to 16 A is immediate',async()
   // The tap paints the new mode before the state comes back.
   assert.match(off.card.shadowRoot.innerHTML,/safety-value[^"]*">16<small>A/);
 });
+
+test('socket full current follows the charger: a 16 A charger shows 16A, never an invented 32A',()=>{
+  const small=setupSafety({socket:'off',currentMax:16});
+  assert.match(small.card.shadowRoot.innerHTML,/safety-value[^"]*">16<small>A/);
+  assert.doesNotMatch(small.card.shadowRoot.innerHTML,/32<small>A/);
+});
