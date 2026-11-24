@@ -8,22 +8,16 @@
 
 ### 🐛 Fixed
 
-- **Eveus 1.x now shows the correct Stop Charging state.** The card offers Stop while charging and Resume after the charger reports a user stop.
-- **Eveus 1.x schedules can be viewed and edited in Home Assistant.** The integration reads and writes both schedules' times, current limits, and energy limits using the charger's settings.
-- **Eveus 1.x schedule, limit and Stop Charging switches show the charger's real state.** Home Assistant reads them from the charger's combined status, also on 1.x versions that do not report each switch separately. Early 1.x versions accept these switches only from the charger's own page; update to the latest 1.x firmware to change them from Home Assistant.
 - **Eveus 2.x is supported like 1.x.** Chargers of the second hardware generation were treated as newer firmware, so their controls and states were read the wrong way.
-- **Eveus 1.x shows Standby while a schedule or limit holds the charger with no car plugged in.** It showed Charge Complete, and Car Connected stayed on after the car left.
-- **Eveus 1.x undervoltage threshold can be set from 150 to 220 V in 5 V steps.**
-- **Eveus 1.x tariff sensors show the configured prices and the active rate.** Tariff windows also apply to the estimated cost to reach the target SOC.
-- **Eveus 1.x Minimum voltage shows the charger's setting.** Firmware 1.55 reports it; where the charger omits it, Home Assistant shows it as unknown until the first successful command and then remembers it.
-- **Eveus 1.x Adaptive Mode offers Auto 2,** as the charger's page does.
-- **Eveus 1.x limits match the charger's page.** Limit: Energy moves in 0.5 kWh steps, energy and cost limits keep fractions (10.5 kWh was sent as 10), and Limit: Time goes up to 96 hours in 1-minute steps.
-- **Eveus 1.x Car Connected is unknown while the charger cannot tell,** during a Stop or a schedule hold. It showed a guess.
-- **Eveus 1.x estimated cost to the target SOC ignores schedule windows while the charger's schedules are suspended.**
-- **Eveus 1.x Ground Protection shows and sets the real state.** It showed on while protection was off, and turning it on turned protection off.
-- **Eveus 1.x Limit: Energy is set in kWh as on the charger's page.** A limit set from Home Assistant was 1000 times too large.
 - **Eveus 1.x is recognized even when the charger does not answer at Home Assistant startup.** The firmware check is retried every 5 minutes; until then controls used the newer firmware form.
-- **Eveus 1.x Stop with the car plugged in shows Connected.** The charger reports the car as unknown after Stop; Home Assistant no longer reports a car disconnected on Stop and connected again on Resume.
+- **Eveus 1.x schedule, limit and Stop Charging switches show the charger's real state.** Home Assistant reads them from the charger's combined status, also on 1.x versions that do not report each switch separately; the card offers Stop while charging and Resume after a user stop. Early 1.x versions accept these switches only from the charger's own page; update to the latest 1.x firmware to change them from Home Assistant.
+- **Eveus 1.x schedules can be viewed and edited in Home Assistant.** The integration reads and writes both schedules' times, current limits, and energy limits using the charger's settings.
+- **Eveus 1.x limits match the charger's page.** Limit: Energy is set in kWh (a limit set from Home Assistant was 1000 times too large) and moves in 0.5 kWh steps, energy and cost limits keep fractions (10.5 kWh was sent as 10), and Limit: Time goes up to 96 hours in 1-minute steps.
+- **Eveus 1.x Car Connected follows the charger.** It is unknown while the charger cannot tell, during a Stop or a schedule or limit hold, and Stop and Resume no longer report the car disconnecting and reconnecting. A hold with no car plugged in shows Standby instead of Charge Complete.
+- **Eveus 1.x Adaptive Mode matches the charger's page.** It offers Auto 2, and Undervoltage threshold can be set from 150 to 220 V in 5 V steps.
+- **Eveus 1.x Minimum voltage shows the charger's setting.** Firmware 1.55 reports it; where the charger omits it, Home Assistant shows it as unknown until the first successful command and then remembers it.
+- **Eveus 1.x Ground Protection shows and sets the real state.** It showed on while protection was off, and turning it on turned protection off.
+- **Eveus 1.x tariff sensors show the configured prices and the active rate.** Tariff windows also apply to the estimated cost to reach the target SOC; schedule windows are left out of it while the charger's schedules are suspended.
 
 ## 4.31.1 - 2026-11-23
 
