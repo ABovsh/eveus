@@ -193,6 +193,22 @@ _LEGACY_CAR_CONNECTED_PILOTS: Final = frozenset({2, 3, 5})
 _LEGACY_UNKNOWN_PILOTS: Final = frozenset({0, 4, 6})
 # The 1.x page shows Ground control on for 2 and off for 1; 3.x uses 1 and 0.
 _LEGACY_GROUND_CTRL: Final = {2: 1, 1: 0}
+# limitsStatus holds the Stop, schedule and limit flags as one word; every
+# pre-R3 build reports it, while the separate keys are missing on older 1.x.
+_LEGACY_LIMITS_STATUS_BITS: Final = {
+    "energyLimitS": 0,
+    "timeLimitS": 1,
+    "moneyLimitS": 2,
+    "sh1Enabled": 3,
+    "sh2Enabled": 4,
+    "sh1EnergyEnable": 5,
+    "sh1CurrentEnable": 6,
+    "sh2EnergyEnable": 7,
+    "sh2CurrentEnable": 8,
+    "evseEnabled": 9,
+    "suspendLimits": 10,
+    "delayedLimit": 11,
+}
 
 # 1.x codes 1-7 also exist on newer firmware with other meanings, so they
 # translate only after /init has reported a 1.x version (see
@@ -205,7 +221,8 @@ _LEGACY_LOW_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
     6: (DEVICE_STATE_ERROR, 7),
     7: (DEVICE_STATE_ERROR, 2),  # Leakage; 24 is the low-leak code
 }
-# /init versions below this are firmware 1.x (151 = 1.51, issue #11).
+# An MCU_SW_version below this is firmware 1.x (151 = 1.51, issue #11); an
+# ESP_SW_version of any value proves 1.x or 2.x on its own.
 _LEGACY_INIT_VERSION_LIMIT: Final = 200
 # /init is the only proof of 1.x: a transient failure is retried this much later.
 _INIT_RETRY_SECONDS: Final = 300
@@ -1506,8 +1523,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _normalize_legacy_controls(self, data: dict[str, Any], raw_state: int | None) -> None:
         """Expose 1.x Stop, schedule and tariff values under the canonical keys."""
-        # On 1.33 the wire flag stays at 1 through charging, Stop and Resume.
-        data["evseEnabled"] = int(raw_state == _LEGACY_USER_STOP_STATE)
+        word = data.get("limitsStatus")
+        if type(word) is int and 0 <= word <= 0xFFFF:
+            for key, bit in _LEGACY_LIMITS_STATUS_BITS.items():
+                data[key] = word >> bit & 1
+        else:
+            # On 1.33 the evseEnabled key stays at 1 through charging, Stop and Resume.
+            data["evseEnabled"] = int(raw_state == _LEGACY_USER_STOP_STATE)
         if "groundCtrl" in data:
             ground = _LEGACY_GROUND_CTRL.get(get_safe_value(data, "groundCtrl", int))  # pragma: no mutate - float and int codes are equal keys for every whole-number code
             if ground is None:
@@ -1602,7 +1624,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._init_fw_version = raw_version
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
-        self._legacy_confirmed = raw_version < _LEGACY_INIT_VERSION_LIMIT
+        # ESP_SW_version exists only on the pre-R3 Wi-Fi API: 1.x and 2.x, the
+        # first two hardware generations. The MCU-only fallback keeps the bound.
+        self._legacy_confirmed = (
+            "ESP_SW_version" in init_data or raw_version < _LEGACY_INIT_VERSION_LIMIT
+        )
         if (
             self._legacy_confirmed
             and LEGACY_RAW_STATE_KEY not in data

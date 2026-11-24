@@ -1036,18 +1036,18 @@ def test_legacy_firmware_stays_off_once_modern_was_seen() -> None:
 
 
 @pytest.mark.parametrize(
-    ("version", "last", "baseline_kept"),
+    ("init", "last", "baseline_kept"),
     [
-        (151, {"state": 2}, False),  # raw 2 read as Standby before the proof
-        (151, {"state": 7}, False),
-        (151, {"state": 3, common_network.LEGACY_RAW_STATE_KEY: 20}, True),  # already 1.x-read
-        (151, {"state": 5, common_network.LEGACY_RAW_STATE_KEY: 16}, True),
-        (151, {"state": 9}, True),  # not a code the proof re-reads
-        (305, {"state": 2}, True),  # not 1.x
+        ({"ESP_SW_version": 151}, {"state": 2}, False),  # raw 2 read as Standby before the proof
+        ({"ESP_SW_version": 151}, {"state": 7}, False),
+        ({"ESP_SW_version": 151}, {"state": 3, common_network.LEGACY_RAW_STATE_KEY: 20}, True),  # already 1.x-read
+        ({"ESP_SW_version": 151}, {"state": 5, common_network.LEGACY_RAW_STATE_KEY: 16}, True),
+        ({"ESP_SW_version": 151}, {"state": 9}, True),  # not a code the proof re-reads
+        ({"MCU_SW_version": 305}, {"state": 2}, True),  # not 1.x
     ],
 )
 def test_confirming_1x_starts_a_fresh_event_baseline(
-    version: int, last: dict, baseline_kept: bool, monkeypatch: pytest.MonkeyPatch,
+    init: dict, last: dict, baseline_kept: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codes 1, 2 and 4-7 change meaning once /init proves 1.x.
 
@@ -1056,7 +1056,7 @@ def test_confirming_1x_starts_a_fresh_event_baseline(
     invented car-connected event after every restart with the car plugged in.
     A baseline already read the 1.x way stays, so a real start still fires.
     """
-    session = _Session(_Response(payload={"ESP_SW_version": version}))
+    session = _Session(_Response(payload=init))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater.data = last
@@ -1074,14 +1074,21 @@ def test_confirming_1x_starts_a_fresh_event_baseline(
     [
         ({"ESP_SW_version": 151}, True),
         ({"ESP_SW_version": 199}, True),
-        ({"ESP_SW_version": 200}, False),
-        ({"ESP_SW_version": 305}, False),
+        # ESP_SW_version exists only before R3: 2.x (2.54) is the second
+        # hardware generation with the same Wi-Fi API as 1.x.
+        ({"ESP_SW_version": 200}, True),
+        ({"ESP_SW_version": 254}, True),
+        ({"ESP_SW_version": 254, "MCU_SW_version": 254}, True),
         ({"MCU_SW_version": 151}, True),
+        ({"MCU_SW_version": 199}, True),
+        ({"MCU_SW_version": 200}, False),
+        ({"MCU_SW_version": 305}, False),
         ({"ESP_SW_version": "151"}, False),
+        ({"ESP_SW_version": "254", "MCU_SW_version": 254}, False),
         ({}, False),
     ],
 )
-def test_init_version_below_2_confirms_firmware_1x(
+def test_init_version_confirms_pre_r3_firmware(
     init: dict, confirmed: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _Session(_Response(payload=init))
@@ -2614,3 +2621,61 @@ def test_confirming_1x_rebuilds_the_snapshot_for_the_model(monkeypatch: pytest.M
     assert updater.is_legacy_firmware
     assert updater.data["sh1CurrentValue"] == 30  # the 1.x name is resolved
     assert "sh1CurrentValue" not in updater.snapshot.values  # above the 16 A model
+
+
+# limitsStatus bit map, shared by the old and new 1.x pages and every pre-R3 ESP
+# build (133, 155, 254): see the 1.x Wi-Fi app images in the firmware archive.
+_LIMITS_STATUS_BITS = {
+    "energyLimitS": 0, "timeLimitS": 1, "moneyLimitS": 2,
+    "sh1Enabled": 3, "sh2Enabled": 4, "sh1EnergyEnable": 5, "sh1CurrentEnable": 6,
+    "sh2EnergyEnable": 7, "sh2CurrentEnable": 8, "evseEnabled": 9,
+    "suspendLimits": 10, "delayedLimit": 11,
+}
+
+
+@pytest.mark.parametrize(("key", "bit"), sorted(_LIMITS_STATUS_BITS.items()))
+def test_1x_flags_come_from_limits_status_bits(updater, key, bit):
+    updater._legacy_confirmed = True
+    # Explicit keys disagree with the word; 1.33 holds evseEnabled at 1 for good.
+    payload = {"state": 2, "limitsStatus": 1 << bit, **dict.fromkeys(_LIMITS_STATUS_BITS, 0)}
+    payload["evseEnabled"] = 0 if key == "evseEnabled" else 1
+
+    data = updater._normalize_legacy_device_state(payload)
+
+    assert {k: data[k] for k in _LIMITS_STATUS_BITS} == {
+        k: int(k == key) for k in _LIMITS_STATUS_BITS
+    }
+
+
+def test_1x_stop_held_by_a_schedule_reads_the_stop_bit(updater):
+    """Stop pressed while schedule 1 holds the charger: code 18, not 20."""
+    updater._legacy_confirmed = True
+
+    data = updater._normalize_legacy_device_state(
+        {"state": 18, "pilot": 1, "limitsStatus": 520}
+    )
+
+    assert (data["evseEnabled"], data["sh1Enabled"]) == (1, 1)
+
+
+def test_fw133_schedule_flag_is_read_back(coordinator, fw133_main):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = fw133_main("charging")
+
+    asyncio.run(updater._async_update_data())
+
+    snapshot = updater.snapshot
+    assert (snapshot.get_int("sh1Enabled"), snapshot.get_int("timeLimitS")) == (1, 0)
+
+
+@pytest.mark.parametrize("word", [-1, 1 << 16, 8.5, "8", True])
+def test_1x_unusable_limits_status_falls_back_to_the_stop_code(updater, word):
+    updater._legacy_confirmed = True
+
+    data = updater._normalize_legacy_device_state(
+        {"state": 20, "pilot": 2, "limitsStatus": word}
+    )
+
+    assert data["evseEnabled"] == 1
+    assert "sh1Enabled" not in data
