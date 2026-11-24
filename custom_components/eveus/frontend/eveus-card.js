@@ -33,6 +33,8 @@ const FOLDABLE = ['advanced_controls', 'adaptive', 'limits', 'schedules', 'histo
 const LARGE = new Set(['advanced_info', 'basic_info', 'session', 'history']);
 const LARGE_MAX_ITEMS = 2;
 const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
+// The last session's figures sit between separators, a little smaller than the live row's 15.
+const LAST_SESSION_FIT = 13;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
 // How far back the recorder is asked when an outage or a Stop began.
@@ -1109,7 +1111,7 @@ class EveusCard extends HTMLElement {
   get _advanced() { return this._config.mode !== 'basic' && !!this._ids?.soc_percent; }
   // `fit`: this item absorbs a narrow row by shrinking its own text; its siblings keep their size.
   _infoItem(key, icon, value, cls = '', title = '', fit = false) {
-    return `<button class="info-item${fit ? ' grow' : ''}" data-more-info="${key}" title="${title} — ${this._t.details}"><ha-icon icon="${icon}"></ha-icon><span class="${['info-value', cls].filter(Boolean).join(' ')}"${fit ? ' data-fit="15"' : ''}>${value}</span></button>`;
+    return `<button class="info-item${fit ? ' grow' : ''}" data-more-info="${key}" title="${title} — ${this._t.details}"><ha-icon icon="${icon}"></ha-icon><span class="${['info-value', cls].filter(Boolean).join(' ')}"${fit ? ` data-fit="${fit === true ? 15 : fit}"` : ''}>${value}</span></button>`;
   }
   // The charger's own screen: three big live readings, voltage · power · current.
   _basic_infoSection() {
@@ -2063,10 +2065,10 @@ class EveusCard extends HTMLElement {
     const volts = lows.filter((v) => v !== null).map((v) => Math.round(v));
     const range = volts.length === 2 && volts[0] !== volts[1] ? `${volts[0]}–${volts[1]}` : volts.length ? String(volts[0]) : null;
     const items = [
-      shows('energy') ? this._infoItem('last_session_energy', 'mdi:lightning-bolt', `${this._int(e)}<small>kWh</small>`, '', t.lastSession, true) : '',
-      this._ids.last_session_cost && shows('cost') ? this._infoItem('last_session_cost', 'mdi:cash', c === null ? '—' : money(this._int(c), this._state('last_session_cost')?.attributes?.unit_of_measurement), '', t.lastSession, true) : '',
-      this._ids.last_session_duration && shows('time') ? this._infoItem('last_session_duration', 'mdi:timer-outline', s === null ? '—' : t.sessionDuration(hms(s)), '', t.lastSession, true) : '',
-      range !== null && shows('voltage') ? this._infoItem(this._ids.last_session_min_voltage && lows[0] !== null ? 'last_session_min_voltage' : 'last_session_max_voltage', 'mdi:sine-wave', `${range}<small>V</small>`, '', t.lastSessionVoltage, true) : '',
+      shows('energy') ? this._infoItem('last_session_energy', 'mdi:lightning-bolt', `${this._int(e)}<small>kWh</small>`, '', t.lastSession, LAST_SESSION_FIT) : '',
+      this._ids.last_session_cost && shows('cost') ? this._infoItem('last_session_cost', 'mdi:cash', c === null ? '—' : money(this._int(c), this._state('last_session_cost')?.attributes?.unit_of_measurement), '', t.lastSession, LAST_SESSION_FIT) : '',
+      this._ids.last_session_duration && shows('time') ? this._infoItem('last_session_duration', 'mdi:timer-outline', s === null ? '—' : t.sessionDuration(hms(s)), '', t.lastSession, LAST_SESSION_FIT) : '',
+      range !== null && shows('voltage') ? this._infoItem(this._ids.last_session_min_voltage && lows[0] !== null ? 'last_session_min_voltage' : 'last_session_max_voltage', 'mdi:sine-wave', `${range}<small>V</small>`, '', t.lastSessionVoltage, LAST_SESSION_FIT) : '',
     ].join('');
     return `<section class="sl session last" aria-label="${t.lastSession}">
       <ha-icon icon="mdi:history"></ha-icon><span class="label session-label">${t.lastSession}${when ? `<small>${when}</small>` : ''}</span><div class="info-row session-row">${items}</div>
@@ -2319,6 +2321,23 @@ class EveusCard extends HTMLElement {
     // Session figures share one size, including the last session's voltage range.
     for (const row of sessionRows) {
       const values = [...row.querySelectorAll('.info-value[data-fit]')];
+      if (row.parentElement?.classList?.contains?.('last')) {
+        // Between separators the figures do not shrink one by one: the row is fitted as a whole.
+        const start = Math.max(11, Math.min(...values.map((el) => Number(el.dataset.fit) || LAST_SESSION_FIT)));
+        const fitRow = () => {
+          let size = start;
+          const setSize = () => { for (const el of values) el.style.fontSize = `${size}px`; };
+          setSize();
+          while (size > 11 && row.scrollWidth > row.clientWidth) { size -= 1; setSize(); }
+        };
+        fitRow();
+        if (row.scrollWidth > row.clientWidth) {
+          // Too narrow even at the smallest size: the figures take their own line, fitted afresh.
+          row.parentElement.classList.add('session-wrap');
+          fitRow();
+        }
+        continue;
+      }
       const shareSize = () => {
         const size = Math.min(...values.map((el) => parseFloat(el.style.fontSize) || Infinity));
         if (Number.isFinite(size)) for (const el of values) el.style.fontSize = `${size}px`;
@@ -2644,6 +2663,11 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 @container (max-width:370px){.session-row .info-item ha-icon{display:none}}
 .session-row .info-item.grow{flex:0 1 auto;min-width:0}
 .sl.session.session-wrap{flex-wrap:wrap}.session-wrap .session-row{flex-basis:100%}
+.session.last .session-row{justify-content:flex-start;gap:0;min-width:0;overflow:hidden}
+.session.last .session-row .info-item,.session.last .session-row .info-item.grow{flex:none}
+.session.last .session-row .info-item:first-child{margin-left:auto}.session.last .session-row .info-item ha-icon{display:none}
+.session.last .session-row .info-item+.info-item{border-left:1px solid rgba(127,127,127,.35);margin-left:5px;padding-left:5px}
+.session.last .session-row .info-value small{font-weight:400;font-size:.62em;color:var(--secondary-text-color);margin-left:1px}
 [data-hold]{position:relative;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .soc-tile[data-hold]::before{content:"";position:absolute;right:5px;bottom:5px;width:4px;height:4px;border-radius:50%;background:var(--h);opacity:.6}
 /* Schedules: one row per schedule, one hue. Badge = on/off, the window is tap-to-pick, caps are chips

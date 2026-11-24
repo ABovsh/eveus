@@ -1285,6 +1285,13 @@ const unplugged = {state:['sensor.state','Standby'], car_connected:['binary_sens
   last_session_energy:['sensor.lse',15.56,{unit_of_measurement:'kWh',reason:'unplugged',finished_at:'2026-09-20T15:21:42+03:00'}],
   last_session_cost:['sensor.lsc',67.21,{unit_of_measurement:'UAH'}],
   last_session_duration:['sensor.lsd',19895,{unit_of_measurement:'s'}]};
+test('last session figures start 15% smaller than the live session',()=>{
+  const x=setupAll({sections:['session'],charging:false,over:unplugged});
+  const fits=[...x.html().matchAll(/data-more-info="last_session_[a-z_]+"[^>]*>[^]*?data-fit="(\d+)"/g)].map((m)=>m[1]);
+  assert.ok(fits.length>=3);
+  assert.ok(fits.every((f)=>f==='13'),fits.join());
+});
+
 test('unplugged, the Session row is the last session: its energy, cost, duration and when it ended',()=>{
   const x=setupAll({sections:['session'],charging:false,over:unplugged});
   assert.match(x.html(),/>Last session<small>[^<]+<\/small>/);
