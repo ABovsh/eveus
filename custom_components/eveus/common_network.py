@@ -188,6 +188,11 @@ _LEGACY_USER_STOP_STATE = 20
 _LEGACY_CHARGING_CANDIDATE_STATE = 3
 # `pilot` values the 1.x page shows as "car connected" (states B, C and E).
 _LEGACY_CAR_CONNECTED_PILOTS: Final = frozenset({2, 3, 5})
+# Values the page shows as "unknown" (0 and state F). 1.33 reports 4 after a
+# Stop with the car still plugged in; every other value reads "disconnected".
+_LEGACY_UNKNOWN_PILOTS: Final = frozenset({0, 4, 6})
+# The 1.x page shows Ground control on for 2 and off for 1; 3.x uses 1 and 0.
+_LEGACY_GROUND_CTRL: Final = {2: 1, 1: 0}
 
 # 1.x codes 1-7 also exist on newer firmware with other meanings, so they
 # translate only after /init has reported a 1.x version (see
@@ -202,6 +207,8 @@ _LEGACY_LOW_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
 }
 # /init versions below this are firmware 1.x (151 = 1.51, issue #11).
 _LEGACY_INIT_VERSION_LIMIT: Final = 200
+# /init is the only proof of 1.x: a transient failure is retried this much later.
+_INIT_RETRY_SECONDS: Final = 300
 
 _LEGACY_TARIFF_CURRENCY_VERSION_MAX: Final = 133
 _LEGACY_TARIFF_PRICE_KEYS: Final = ("tarif", "tarif_2", "tarif_3")
@@ -366,6 +373,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # a stale latch must not resurrect "Charging" after an outage.
         self._legacy_charging_latched = False
         self._legacy_zero_power_polls = 0
+        # Car presence from the last 1.x reply with a definite pilot, for a
+        # Stop whose pilot reads unknown. Forgotten across a poll gap.
+        self._legacy_car_present: bool | None = None
+        self._init_fw_retry_at: float | None = None
         # Sticky, never cleared: a charger does not change firmware generation
         # while the entry is loaded. verFWMain is not a required payload field,
         # so one degraded reply that omits it must not demote a modern charger
@@ -721,6 +732,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         is just as much a gap in the event stream.
         """
         self._reset_legacy_charging_latch()
+        self._legacy_car_present = None
         self._event_prev_state = None
         self._event_prev_error_code = None
         self._event_charging_payload = None
@@ -762,6 +774,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # The 1.x page writes and shows one_charge; oneCharge may lag it.
             data["oneCharge"] = data["one_charge"]
         state = get_safe_value(data, "state", int)
+        pilot = get_safe_value(data, "pilot", int)
+        if pilot is not None and pilot not in _LEGACY_UNKNOWN_PILOTS:
+            self._legacy_car_present = pilot in _LEGACY_CAR_CONNECTED_PILOTS
         if self._legacy_confirmed and not (self._reve_seen or is_reve_payload(data)):
             self._normalize_legacy_controls(data, state)
         if state == _LEGACY_CHARGING_CANDIDATE_STATE:
@@ -781,7 +796,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return data
         self._reset_legacy_charging_latch()
         if state == _LEGACY_USER_STOP_STATE:
-            car = get_safe_value(data, "pilot", int) in _LEGACY_CAR_CONNECTED_PILOTS  # pragma: no mutate - float and int pilot codes are equal set members for every whole-number code
+            car = (
+                self._legacy_car_present is True
+                if pilot in _LEGACY_UNKNOWN_PILOTS
+                else pilot in _LEGACY_CAR_CONNECTED_PILOTS  # pragma: no mutate - float and int pilot codes are equal set members for every whole-number code
+            )
             mapped = (3 if car else DEVICE_STATE_STANDBY, 1)  # Limited by User
         elif self._legacy_confirmed and state in _LEGACY_LOW_STATE_MAP:
             mapped = _LEGACY_LOW_STATE_MAP[state]
@@ -1050,7 +1069,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     def _record_success(self, response_time: float, new_data: dict[str, Any]) -> None:
         """Record a successful poll and tune the next interval."""
-        if self._probe_fw_on_first_success:
+        if self._probe_fw_on_first_success and (
+            self._init_fw_retry_at is None or time.monotonic() >= self._init_fw_retry_at
+        ):
             self._probe_fw_on_first_success = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
             self._start_init_firmware_probe()
         self._connection_quality_cache = None
@@ -1490,6 +1511,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Expose 1.x Stop, schedule and tariff values under the canonical keys."""
         # On 1.33 the wire flag stays at 1 through charging, Stop and Resume.
         data["evseEnabled"] = int(raw_state == _LEGACY_USER_STOP_STATE)
+        if "groundCtrl" in data:
+            ground = _LEGACY_GROUND_CTRL.get(get_safe_value(data, "groundCtrl", int))
+            if ground is None:
+                del data["groundCtrl"]
+            else:
+                data["groundCtrl"] = ground
         for key, legacy_name in LEGACY_SCHEDULE_NAMES.items():
             if legacy_name in data:
                 data[key] = data[legacy_name]
@@ -1559,6 +1586,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug(
                 "Eveus /init firmware fallback fetch failed: %s", type(err).__name__
             )
+            if not (isinstance(err, aiohttp.ClientResponseError) and err.status == 404):
+                # Transient: ask again on a later good poll.
+                self._init_fw_fetch_done = False
+                self._init_fw_retry_at = time.monotonic() + _INIT_RETRY_SECONDS
+                self._probe_fw_on_first_success = True
             return
 
         if not isinstance(init_data, dict):

@@ -1718,7 +1718,9 @@ def test_async_maybe_fetch_init_firmware_swallows_fetch_errors(
     asyncio.run(updater.async_maybe_fetch_init_firmware())  # must not raise
 
     assert updater._init_fw_fallback is None
-    assert updater._init_fw_fetch_done is True
+    # A transient failure re-arms the probe for a later poll (1.x proof).
+    assert updater._init_fw_fetch_done is False
+    assert updater._probe_fw_on_first_success is True
 
 
 def test_update_failed_carries_payload_rule_that_failed(
@@ -2445,3 +2447,111 @@ def test_fw133_rate_sensor_values_after_init(coordinator, fw133_main):
     assert get_active_rate_cost(updater, None) == 2.16
     assert updater.snapshot.get_int("tarifAStart") == 23 * 60
     assert updater.snapshot.get_int("tarifAStop") == 7 * 60
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(2, 1), (1, 0), (7, None)])
+def test_firmware_1x_ground_protection_reads_the_page_values(updater, raw, expected):
+    """1.x /main reports groundCtrl 2 = on and 1 = off (js/scriptUA.js)."""
+    updater._legacy_confirmed = True
+    data = updater._normalize_legacy_device_state({"state": 1, "pilot": 1, "groundCtrl": raw})
+    assert data.get("groundCtrl") == expected
+
+
+def test_ground_protection_reads_stay_raw_without_1x_proof(updater):
+    data = updater._normalize_legacy_device_state({"state": 1, "pilot": 1, "groundCtrl": 1})
+    assert data["groundCtrl"] == 1
+
+
+@pytest.mark.parametrize(("pilot", "expected"), [(4, 3), (0, 3), (6, 3), (1, 2), (2, 3)])
+def test_fw133_stop_keeps_the_car_while_the_pilot_is_unknown(
+    coordinator, fw133_main, pilot, expected
+):
+    """1.33 reports pilot 4 (state F, shown as unknown on its page) after Stop.
+
+    The car seen while charging is still there: the Stop must not read as
+    Standby and fire a car-disconnected event, then a car-connected one on Resume.
+    """
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = fw133_main("charging")
+    asyncio.run(updater._async_update_data())
+    stopped = {**fw133_main("after_stop"), "pilot": pilot}
+    session.response.payload = stopped
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["state"] == expected
+
+
+def test_stop_with_unknown_pilot_and_no_history_stays_standby(updater):
+    updater._legacy_confirmed = True
+    data = updater._normalize_legacy_device_state({"state": 20, "pilot": 4})
+    assert data["state"] == 2
+
+
+def test_init_probe_retries_after_a_transient_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One failed /init must not leave a 1.x charger on the modern contract.
+
+    /init is the only proof of 1.x; the command form, Stop and the field names
+    all depend on it. A timeout at startup is retried on a later poll.
+    """
+    clock = [1000.0]
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
+    main = {"state": 2, "currentSet": 16, "pilot": 2}
+    replies = {"/init": asyncio.TimeoutError()}
+
+    class _Routed(_Session):
+        def post(self, url: str, **kwargs: object) -> _Response:
+            self.calls.append({"url": url, **kwargs})
+            if url.endswith("/init"):
+                reply = replies["/init"]
+                if isinstance(reply, Exception):
+                    raise reply
+                return _Response(payload=reply)
+            return _Response(payload=main)
+
+    session = _Routed(_Response())
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+
+    async def poll() -> None:
+        updater.data = await updater._async_update_data()
+        await asyncio.gather(*hass.tasks)
+        hass.tasks.clear()
+
+    async def scenario() -> None:
+        await poll()
+        await updater.async_maybe_fetch_init_firmware()
+        assert not updater._legacy_confirmed
+        replies["/init"] = {"ESP_SW_version": 133}
+        await poll()  # too soon: no second request yet
+        assert sum(call["url"].endswith("/init") for call in session.calls) == 1
+        clock[0] += 301
+        await poll()
+
+    asyncio.run(scenario())
+
+    assert sum(call["url"].endswith("/init") for call in session.calls) == 2
+    assert updater._legacy_confirmed
+    assert updater.is_legacy_firmware
+
+
+def test_init_probe_does_not_retry_a_definite_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+
+    async def scenario() -> None:
+        updater.data = await updater._async_update_data()
+        await updater.async_maybe_fetch_init_firmware()  # /main reply, no version
+        clock[0] += 3600
+        updater.data = await updater._async_update_data()
+        await asyncio.gather(*hass.tasks)
+
+    asyncio.run(scenario())
+
+    assert hass.tasks == []

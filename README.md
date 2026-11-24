@@ -626,7 +626,9 @@ If the charger omits the state of a schedule or limit switch or the
 **Minimum voltage** setting, Home Assistant shows it as unknown until the
 first successful command and remembers that setting across restarts. Set
 **Undervoltage threshold** from 150 to 220 V in 5 V steps, independently of
-**Minimum voltage**.
+**Minimum voltage**. **Ground Protection** and **Limit: Energy** use the values
+of the charger's own page. After a Stop the charger reports the car as
+unknown; Home Assistant keeps the last known car state until it is known again.
 
 For firmware updates, message **@energy_star** on Telegram; install the file
 through the charger's web interface.

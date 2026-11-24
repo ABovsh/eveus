@@ -93,6 +93,8 @@ class EveusSetpointNumberDescription(NumberEntityDescription, frozen_or_thawed=T
     # differ for the global energy limit (reads kWh 1:1, writes Wh-thousandths).
     device_to_ha: float = 1.0
     ha_to_device: float = 1.0
+    # Write scale on confirmed firmware 1.x when its page posts other units.
+    legacy_ha_to_device: float | None = None
     # Decimals to round the displayed value to (None = no rounding). The charger
     # reports float noise (e.g. ``energyLimit`` 56.00899); this trims the tail so
     # HA shows what the charger's own web UI shows.
@@ -147,6 +149,8 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         state_key="energyLimit",
         device_to_ha=1.0,
         ha_to_device=1000.0,
+        # The 1.x page posts kWh (js/scriptUA.js: slider / 10).
+        legacy_ha_to_device=1.0,
         native_min_value=0,
         native_max_value=100,
         native_step=1,
@@ -303,6 +307,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         self._state_key_value = description.state_key
         self._device_to_ha = description.device_to_ha
         self._ha_to_device = description.ha_to_device
+        self._legacy_ha_to_device = description.legacy_ha_to_device
         self._display_precision = description.display_precision
         self._attr_native_min_value = (
             description.native_min_value if min_value is None else min_value
@@ -409,6 +414,14 @@ class EveusSetpointNumber(EveusNumberEntity):
                 "that was not applied"
             ) from outcome
 
+    def _write_scale(self) -> float:
+        if (
+            self._legacy_ha_to_device is not None
+            and getattr(self._updater, "is_legacy_firmware", False) is True
+        ):
+            return self._legacy_ha_to_device
+        return self._ha_to_device
+
     async def _send_latest_write(self, raw: float, token: asyncio.Future) -> None:
         # Clamp INSIDE the lock against a freshly refreshed bound: a write
         # queued behind another command must honour a dynamic min/max that
@@ -418,7 +431,7 @@ class EveusSetpointNumber(EveusNumberEntity):
             self._attr_native_min_value, min(self._attr_native_max_value, raw)
         )
         await self._send_pinned_command(
-            device_value=int(round(clamped * self._ha_to_device)),
+            device_value=int(round(clamped * self._write_scale())),
             pending=clamped,
             shown=clamped,
             accepted=clamped,

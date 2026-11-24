@@ -36,6 +36,11 @@ _LEGACY_COMMAND_NAMES: Final[dict[str, str]] = {
     **LEGACY_SCHEDULE_NAMES,
 }
 
+# The 1.x page posts groundCtrl 2 for on and 1 for off; 3.x uses 1 and 0.
+_LEGACY_COMMAND_VALUES: Final[dict[str, dict[int, int]]] = {
+    "groundCtrl": {1: 2, 0: 1},
+}
+
 # Retry transient command failures a couple of times before giving up.
 # Most failed-toggle reports are single-packet WiFi loss, not real device
 # rejections, so a tiny backoff window dramatically improves perceived
@@ -285,6 +290,7 @@ class CommandManager:
         # firmware keeps the body form verified live on R3.05.5.
         legacy = getattr(self._updater, "is_legacy_firmware", False) is True  # pragma: no mutate - a False or None default both fail `is True`
         if legacy:
+            value = _LEGACY_COMMAND_VALUES.get(command, {}).get(value, value)
             command = _LEGACY_COMMAND_NAMES.get(command, command)
         fields = {command: value} if legacy else {"pageevent": command, command: value}
         if extra:

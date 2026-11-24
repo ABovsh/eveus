@@ -5486,7 +5486,7 @@
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
-        'unknown',
+        'on',
         dict({
           'friendly_name': 'Eveus EV Charger Ground Protection',
           'icon': 'mdi:shield-check',
@@ -6284,7 +6284,7 @@
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
-        'unknown',
+        'on',
         dict({
           'friendly_name': 'Eveus EV Charger Ground Protection',
           'icon': 'mdi:shield-check',
@@ -7083,7 +7083,7 @@
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
-        'unknown',
+        'on',
         dict({
           'friendly_name': 'Eveus EV Charger Ground Protection',
           'icon': 'mdi:shield-check',

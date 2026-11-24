@@ -10,6 +10,10 @@
 - **Eveus 1.x undervoltage threshold can be set from 150 to 220 V in 5 V steps.**
 - **Eveus 1.x tariff sensors show the configured prices and the active rate.** Tariff windows also apply to the estimated cost to reach the target SOC.
 - **Eveus 1.x Minimum voltage remembers the last successful setting when the charger omits it.** Home Assistant shows it as unknown until the first successful command.
+- **Eveus 1.x Ground Protection shows and sets the real state.** It showed on while protection was off, and turning it on turned protection off.
+- **Eveus 1.x Limit: Energy is set in kWh as on the charger's page.** A limit set from Home Assistant was 1000 times too large.
+- **Eveus 1.x is recognized even when the charger does not answer at Home Assistant startup.** The firmware check is retried every 5 minutes; until then controls used the newer firmware form.
+- **Eveus 1.x Stop with the car plugged in shows Connected.** The charger reports the car as unknown after Stop; Home Assistant no longer reports a car disconnected on Stop and connected again on Resume.
 
 ## 4.31.1 - 2026-11-23
 

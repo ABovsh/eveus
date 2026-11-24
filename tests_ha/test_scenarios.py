@@ -488,6 +488,9 @@ async def test_fw133_stop_and_resume(hass, aioclient_mock, monkeypatch):
     scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
     stop = _entity_id(hass, entry, "stop_charging")
     counts = _count_state_changes(hass)
+    car_events: list[Event] = []
+    for event_type in (EVENT_CAR_CONNECTED, EVENT_CAR_DISCONNECTED):
+        hass.bus.async_listen(event_type, car_events.append)
 
     assert scenario.updater.is_legacy_firmware
     assert hass.states.get(STATE_SENSOR).state == "Charging"
@@ -511,10 +514,13 @@ async def test_fw133_stop_and_resume(hass, aioclient_mock, monkeypatch):
 
     await set_stop("turn_on", 1, stopped, "on")
     assert hass.states.get(STATE_SENSOR).attributes["raw_state"] == 20
+    # 1.33 reports pilot 4 (unknown) after Stop; the car is still plugged in.
+    assert hass.states.get(STATE_SENSOR).state == "Connected"
     await set_stop("turn_off", 0, resumed, "off")
     assert hass.states.get(STATE_SENSOR).state == "Charging"
     assert hass.states.get(STATE_SENSOR).attributes["raw_state"] == 3
     assert counts[stop] == 2
+    assert car_events == []
 
 
 async def test_fw151_restart_with_car_plugged_in_fires_no_event(

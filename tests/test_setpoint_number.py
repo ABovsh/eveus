@@ -563,3 +563,17 @@ async def test_modern_threshold_keeps_dynamic_floor_and_one_volt_step(family):
     assert (entity.native_min_value, entity.native_max_value, entity.native_step) == (210, 220, 1)
     await entity.async_set_native_value(185)
     updater.send_command.assert_awaited_once_with("aiVoltage", 210, preflight=ANY)
+
+
+@pytest.mark.parametrize(("legacy", "wire"), [(True, 40), (False, 40000)])
+def test_energy_limit_write_unit_follows_the_firmware(legacy, wire):
+    """1.x pages post energyLimit in kWh (js/scriptUA.js: slider / 10);
+    R3.05 pages post it in thousandths (EVSE.energyLimit * 1000)."""
+    from custom_components.eveus.number import GLOBAL_LIMIT_NUMBERS
+
+    energy = next(d for d in GLOBAL_LIMIT_NUMBERS if d.key == "limit_energy")
+    ent, updater = _make(energy)
+    updater.is_legacy_firmware = legacy
+    updater.data = {"energyLimit": 57}
+    asyncio.run(ent.async_set_native_value(40))
+    updater.send_command.assert_awaited_once_with("energyLimit", wire, preflight=ANY)
