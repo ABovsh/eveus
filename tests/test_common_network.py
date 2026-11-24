@@ -2759,3 +2759,15 @@ def test_1x_confirmation_applies_one_charge_to_the_first_reply(coordinator):
     asyncio.run(updater.async_maybe_fetch_init_firmware())
 
     assert updater.snapshot.get_int("oneCharge") == 1
+
+
+@pytest.mark.parametrize(("word", "flag"), [(0, 0), (0xFFFF, 1)])
+def test_1x_limits_status_bounds_are_both_valid_words(updater, word, flag):
+    """0 (nothing set) and 0xFFFF (every bit) are words, not missing ones."""
+    updater._legacy_confirmed = True
+
+    data = updater._normalize_legacy_device_state(
+        {"state": 20, "pilot": 2, "limitsStatus": word}
+    )
+
+    assert {k: data[k] for k in _LIMITS_STATUS_BITS} == dict.fromkeys(_LIMITS_STATUS_BITS, flag)
