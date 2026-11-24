@@ -2527,7 +2527,7 @@ def test_init_probe_retries_after_a_transient_failure(monkeypatch: pytest.Monkey
         replies["/init"] = {"ESP_SW_version": 133}
         await poll()  # too soon: no second request yet
         assert sum(call["url"].endswith("/init") for call in session.calls) == 1
-        clock[0] += 301
+        clock[0] += 300  # due exactly at the retry time
         await poll()
 
     asyncio.run(scenario())
@@ -2555,3 +2555,62 @@ def test_init_probe_does_not_retry_a_definite_answer(monkeypatch: pytest.MonkeyP
     asyncio.run(scenario())
 
     assert hass.tasks == []
+
+
+@pytest.mark.parametrize(("status", "retried"), [(404, False), (500, True), (503, True)])
+def test_init_probe_retry_depends_on_the_http_status(
+    monkeypatch: pytest.MonkeyPatch, status: int, retried: bool
+) -> None:
+    """A charger without /init answers 404 for good; a 5xx is transient."""
+    error = common_network.aiohttp.ClientResponseError(
+        request_info=None, history=(), status=status
+    )
+
+    class _Rejecting(_Session):
+        def post(self, url: str, **kwargs: object) -> _Response:
+            raise error
+
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: _Rejecting(_Response()))
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fetch_done is not retried
+    assert updater._probe_fw_on_first_success is retried
+
+
+def test_fw133_stop_without_a_pilot_keeps_the_car(coordinator, fw133_main):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = fw133_main("charging")
+    asyncio.run(updater._async_update_data())
+    stopped = fw133_main("after_stop")
+    del stopped["pilot"]
+    session.response.payload = stopped
+
+    assert asyncio.run(updater._async_update_data())["state"] == 3
+
+
+def test_confirming_1x_rebuilds_the_snapshot_for_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The snapshot rebuilt when /init confirms 1.x keeps the 16 A bounds."""
+    replies = {
+        "/main": {"state": 2, "currentSet": 16, "pilot": 1, "currentSchedule1": 30},
+        "/init": {"ESP_SW_version": 151},
+    }
+
+    class _Routed(_Session):
+        def post(self, url: str, **kwargs: object) -> _Response:
+            return _Response(payload=replies["/init" if url.endswith("/init") else "/main"])
+
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: _Routed(_Response()))
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A")
+
+    async def scenario() -> None:
+        updater.data = await updater._async_update_data()
+        await updater.async_maybe_fetch_init_firmware()
+
+    asyncio.run(scenario())
+
+    assert updater.is_legacy_firmware
+    assert updater.data["sh1CurrentValue"] == 30  # the 1.x name is resolved
+    assert "sh1CurrentValue" not in updater.snapshot.values  # above the 16 A model

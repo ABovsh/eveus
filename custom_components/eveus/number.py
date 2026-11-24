@@ -417,7 +417,7 @@ class EveusSetpointNumber(EveusNumberEntity):
     def _write_scale(self) -> float:
         if (
             self._legacy_ha_to_device is not None
-            and getattr(self._updater, "is_legacy_firmware", False) is True
+            and getattr(self._updater, "is_legacy_firmware", False) is True  # pragma: no mutate - only test doubles lack the property; any default that is not True reads the same
         ):
             return self._legacy_ha_to_device
         return self._ha_to_device
@@ -500,7 +500,7 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
 
     def _refresh_min_bound(self) -> None:
         """Refresh the firmware-specific lower bound and step."""
-        if getattr(self._updater, "is_legacy_firmware", False) is True:
+        if getattr(self._updater, "is_legacy_firmware", False) is True:  # pragma: no mutate - only test doubles lack the property; any default that is not True reads the same
             self._attr_native_min_value = 150
             self._attr_native_step = 5
             return

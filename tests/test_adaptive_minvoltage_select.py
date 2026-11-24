@@ -169,3 +169,38 @@ async def test_minimum_voltage_non_1x_preserves_readback_and_restore(family):
     assert select.extra_restore_state_data is None
     updater.data = {"minVoltage": 180}
     assert select.current_option == "180"
+
+
+async def test_minimum_voltage_non_1x_shows_an_accepted_choice_before_readback():
+    updater = _Updater({"minVoltage": 180})
+    updater.is_legacy_firmware = False
+    select = select_module.EveusMinVoltageSelect(updater)
+    select.async_write_ha_state = Mock()
+
+    await select.async_select_option("175")
+
+    assert updater.commands == [("minVoltage", 175)]
+    assert select.current_option == "175"
+    select.async_write_ha_state.assert_called()
+
+
+async def test_1x_minimum_voltage_restores_only_an_integer_command():
+    updater = _Updater()
+    updater.is_legacy_firmware = True
+    select = select_module.EveusMinVoltageSelect(updater)
+    select.async_get_last_extra_data = AsyncMock(
+        return_value=RestoredExtraData({"last_legacy_command": 175.0})
+    )
+    await select._async_restore_state(State("select.minimum_voltage", "unknown"))
+    assert select.current_option is None
+
+
+def test_minimum_voltage_non_1x_publishes_each_readback_change():
+    updater = _Updater({"minVoltage": 180})
+    updater.is_legacy_firmware = False
+    select = select_module.EveusMinVoltageSelect(updater)
+    select.async_write_ha_state = Mock()
+    select._handle_coordinator_update()
+    updater.data = {"minVoltage": 175}
+    select._handle_coordinator_update()
+    assert select.async_write_ha_state.call_count == 2

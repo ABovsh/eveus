@@ -362,7 +362,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # True once /init reported a 1.x version: the positive proof the
         # low-code translation and the 1.x command form need.
         self._legacy_confirmed = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
-        self._legacy_fractional_tariff_seen = False
+        self._legacy_fractional_tariff_seen = False  # pragma: no mutate - False vs None is not observable: it is only combined with `or`
         # Legacy-firmware charging latch (GitHub issue #11): fw-1.x reports
         # code 3 both plugged-idle and actively charging, distinguishable
         # only by the electrical measurements. Once a session is observed,
@@ -375,7 +375,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._legacy_zero_power_polls = 0
         # Car presence from the last 1.x reply with a definite pilot, for a
         # Stop whose pilot reads unknown. Forgotten across a poll gap.
-        self._legacy_car_present: bool | None = None
+        self._legacy_car_present: bool | None = None  # pragma: no mutate - read only through `is True`, so any falsy start is the same
         self._init_fw_retry_at: float | None = None
         # Sticky, never cleared: a charger does not change firmware generation
         # while the entry is loaded. verFWMain is not a required payload field,
@@ -732,7 +732,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         is just as much a gap in the event stream.
         """
         self._reset_legacy_charging_latch()
-        self._legacy_car_present = None
+        self._legacy_car_present = None  # pragma: no mutate - read only through `is True`, so any falsy reset is the same
         self._event_prev_state = None
         self._event_prev_error_code = None
         self._event_charging_payload = None
@@ -774,7 +774,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # The 1.x page writes and shows one_charge; oneCharge may lag it.
             data["oneCharge"] = data["one_charge"]
         state = get_safe_value(data, "state", int)
-        pilot = get_safe_value(data, "pilot", int)
+        pilot = get_safe_value(data, "pilot", int)  # pragma: no mutate - float and int pilot codes are equal set members for every whole-number code
         if pilot is not None and pilot not in _LEGACY_UNKNOWN_PILOTS:
             self._legacy_car_present = pilot in _LEGACY_CAR_CONNECTED_PILOTS
         if self._legacy_confirmed and not (self._reve_seen or is_reve_payload(data)):
@@ -796,11 +796,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return data
         self._reset_legacy_charging_latch()
         if state == _LEGACY_USER_STOP_STATE:
-            car = (
-                self._legacy_car_present is True
-                if pilot in _LEGACY_UNKNOWN_PILOTS
-                else pilot in _LEGACY_CAR_CONNECTED_PILOTS  # pragma: no mutate - float and int pilot codes are equal set members for every whole-number code
-            )
+            # A definite pilot in this reply has already updated the memory.
+            car = self._legacy_car_present is True
             mapped = (3 if car else DEVICE_STATE_STANDBY, 1)  # Limited by User
         elif self._legacy_confirmed and state in _LEGACY_LOW_STATE_MAP:
             mapped = _LEGACY_LOW_STATE_MAP[state]
@@ -1512,7 +1509,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # On 1.33 the wire flag stays at 1 through charging, Stop and Resume.
         data["evseEnabled"] = int(raw_state == _LEGACY_USER_STOP_STATE)
         if "groundCtrl" in data:
-            ground = _LEGACY_GROUND_CTRL.get(get_safe_value(data, "groundCtrl", int))
+            ground = _LEGACY_GROUND_CTRL.get(get_safe_value(data, "groundCtrl", int))  # pragma: no mutate - float and int codes are equal keys for every whole-number code
             if ground is None:
                 del data["groundCtrl"]
             else:
@@ -1619,8 +1616,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # /init follows the first /main. Resolve the controls as soon as
             # firmware is known, including when the first connection was late.
             normalized = dict(data)
-            state_key = LEGACY_RAW_STATE_KEY if LEGACY_RAW_STATE_KEY in data else "state"
-            self._normalize_legacy_controls(normalized, get_safe_value(data, state_key, int))
+            # A stop (20) always carries its raw code; any other reading is not a stop.
+            self._normalize_legacy_controls(
+                normalized, get_safe_value(data, LEGACY_RAW_STATE_KEY, int)  # pragma: no mutate - float and int codes compare equal to 20
+            )
             if normalized != self.data:
                 self.data = normalized
                 self._snapshot = EveusSnapshot.parse(normalized, self._model)
