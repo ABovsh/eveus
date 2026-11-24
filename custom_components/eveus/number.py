@@ -469,10 +469,9 @@ class EveusCurrentNumber(EveusSetpointNumber):
 class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
     """Voltage-mode threshold whose lower bound tracks Minimum voltage.
 
-    The charger constrains this setpoint to ``minVoltage + 10`` .. 220 (its web UI
-    derives the slider's lower bound the same way). Recompute the lower bound from
-    the live ``minVoltage`` on every poll so the picker mirrors the charger; fall
-    back to the static description minimum when ``minVoltage`` is unavailable.
+    The 1.x web page uses a fixed 150–220 V range in 5 V steps. On later
+    firmware the lower bound follows the live ``minVoltage`` + 10, with a
+    static fallback when the charger does not report it.
     """
 
     _MIN_VOLTAGE_KEY = "minVoltage"
@@ -487,7 +486,12 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
         self._attr_native_value = self._resolve_value()
 
     def _refresh_min_bound(self) -> None:
-        """Set the lower bound to ``minVoltage + 10`` when the charger reports it."""
+        """Refresh the firmware-specific lower bound and step."""
+        if getattr(self._updater, "is_legacy_firmware", False) is True:
+            self._attr_native_min_value = 150
+            self._attr_native_step = 5
+            return
+        self._attr_native_step = self.entity_description.native_step
         dynamic: float | None = None
         if self._updater.available:
             raw = self._updater.snapshot.get(self._MIN_VOLTAGE_KEY)
@@ -507,12 +511,13 @@ class EveusUndervoltageThresholdNumber(EveusSetpointNumber):
 
     def _handle_coordinator_update(self) -> None:
         previous_min = self._attr_native_min_value
+        previous_step = self._attr_native_step
         self._refresh_min_bound()
         super()._handle_coordinator_update()
         # The base handler only writes HA state when value/availability/attributes
-        # change; a shift in the lower bound alone (value unchanged) would leave the
-        # frontend showing a stale slider minimum, so push it explicitly.
-        if self._attr_native_min_value != previous_min:
+        # change. Publish changes to the slider range or step even when its
+        # value stays the same.
+        if (self._attr_native_min_value, self._attr_native_step) != (previous_min, previous_step):
             self.async_write_ha_state()
 
 

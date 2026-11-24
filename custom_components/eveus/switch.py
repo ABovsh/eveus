@@ -9,7 +9,7 @@ from homeassistant.components.switch import SwitchEntity, SwitchEntityDescriptio
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity, RestoredExtraData
 
 from . import EveusConfigEntry
 from .common_base import (
@@ -41,6 +41,7 @@ class EveusSwitchEntityDescription(SwitchEntityDescription, frozen_or_thawed=Tru
     # each set to the same on/off value. Required for settings the firmware
     # only accepts as a bundled "save" form (e.g. OCPP needs ocppVendor).
     command_extra: tuple[str, ...] = ()
+    legacy_write_only: bool = False
 
 
 SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
@@ -67,6 +68,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="sh1Enabled",
         state_key="sh1Enabled",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="schedule_2_enabled",
@@ -75,6 +77,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="sh2Enabled",
         state_key="sh2Enabled",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="ground_protection",
@@ -100,6 +103,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="suspendLimits",
         state_key="suspendLimits",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="limit_time_enabled",
@@ -108,6 +112,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="timeLimitS",
         state_key="timeLimitS",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="limit_energy_enabled",
@@ -116,6 +121,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="energyLimitS",
         state_key="energyLimitS",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="limit_cost_enabled",
@@ -124,6 +130,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="moneyLimitS",
         state_key="moneyLimitS",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="schedule_1_current_limit_enabled",
@@ -132,6 +139,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="sh1CurrentEnable",
         state_key="sh1CurrentEnable",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="schedule_1_energy_limit_enabled",
@@ -140,6 +148,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="sh1EnergyEnable",
         state_key="sh1EnergyEnable",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="schedule_2_current_limit_enabled",
@@ -148,6 +157,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="sh2CurrentEnable",
         state_key="sh2CurrentEnable",
+        legacy_write_only=True,
     ),
     EveusSwitchEntityDescription(
         key="schedule_2_energy_limit_enabled",
@@ -156,6 +166,7 @@ SWITCH_DESCRIPTIONS: tuple[EveusSwitchEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         command="sh2EnergyEnable",
         state_key="sh2EnergyEnable",
+        legacy_write_only=True,
     ),
 )
 
@@ -184,6 +195,7 @@ class BaseSwitchEntity(
         self._state_key = entity_description.state_key
         self._command_extra = entity_description.command_extra
         self._pending_command: bool | None = None
+        self._last_legacy_command: bool | None = None
         self._init_optimistic_control()
         self._attr_is_on = None
         self._init_write_on_change()
@@ -192,6 +204,27 @@ class BaseSwitchEntity(
     def is_on(self) -> bool | None:
         """Return cached switch state without side effects (None = unknown)."""
         return self._attr_is_on
+
+    @property
+    def _can_assume_legacy_state(self) -> bool:
+        return (
+            self.entity_description.legacy_write_only
+            and getattr(self._updater, "is_legacy_firmware", False) is True
+        )
+
+    @property
+    def assumed_state(self) -> bool:
+        """The 1.x page can write some flags that /main does not report."""
+        return self._can_assume_legacy_state and not self._updater.snapshot.has(self._state_key)
+
+    def _write_if_changed(self, value: bool | None) -> bool:
+        return super()._write_if_changed((value, self.assumed_state))
+
+    def _set_optimistic_value(self, value: bool) -> None:
+        """Remember accepted 1.x commands independently of device readings."""
+        if self._can_assume_legacy_state:
+            self._last_legacy_command = value
+        super()._set_optimistic_value(value)
 
     def _read_device_value(self) -> bool | None:
         """Return the latest valid switch state from coordinator data.
@@ -240,6 +273,8 @@ class BaseSwitchEntity(
         source is available, so a missing/invalid payload field is not exposed
         as a real ``off`` state that automations could act on.
         """
+        if self.assumed_state:
+            return self._last_legacy_command
         value = self._resolve_held_value(self._read_device_value())
         return None if value is None else bool(value)
 
@@ -262,7 +297,7 @@ class BaseSwitchEntity(
             await self._send_pinned_command(
                 device_value=command_value,
                 pending=bool(command_value),
-                shown=bool(command_value),
+                shown=self.is_on if self.assumed_state else bool(command_value),
                 accepted=bool(command_value),
                 rejected_message=(
                     f"Eveus charger did not accept '{self.name}' "
@@ -274,10 +309,22 @@ class BaseSwitchEntity(
 
     async def _async_restore_state(self, state: State) -> None:
         """Restore previous display state only; no commands sent on startup."""
+        if self.entity_description.legacy_write_only:
+            extra = await self.async_get_last_extra_data()
+            last_command = extra.as_dict().get("last_legacy_command") if extra else None
+            if isinstance(last_command, bool):
+                self._last_legacy_command = last_command
         if state and state.state in ("on", "off"):
             self._last_device_value = state.state == "on"
             self._last_successful_read = time.monotonic()
             self._attr_is_on = self._last_device_value
+
+    @property
+    def extra_restore_state_data(self) -> ExtraStoredData | None:
+        """Persist a command even if the switch is unavailable at shutdown."""
+        if self._last_legacy_command is None:
+            return None
+        return RestoredExtraData({"last_legacy_command": self._last_legacy_command})
 
 
 class EveusSocLimitSwitch(BaseEveusEntity, RestoreEntity, SwitchEntity):

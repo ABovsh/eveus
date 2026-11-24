@@ -5,6 +5,7 @@ import asyncio
 from collections import deque
 from datetime import datetime, timedelta, timezone
 import logging
+from math import isfinite
 import time
 from collections.abc import Callable
 from typing import Any, Final
@@ -20,7 +21,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .common_command import CommandManager
+from .common_command import LEGACY_SCHEDULE_NAMES, CommandManager
 from .const import (
     poll_failure_signal,
     CHARGING_STATES,
@@ -202,6 +203,20 @@ _LEGACY_LOW_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
 # /init versions below this are firmware 1.x (151 = 1.51, issue #11).
 _LEGACY_INIT_VERSION_LIMIT: Final = 200
 
+_LEGACY_TARIFF_CURRENCY_VERSION_MAX: Final = 133
+_LEGACY_TARIFF_PRICE_KEYS: Final = ("tarif", "tarif_2", "tarif_3")
+_LEGACY_TARIFF_NAMES: Final = {
+    "tarifAValue": "tarif_2",
+    "tarifBValue": "tarif_3",
+    "tarifAEnable": "tarif_2_status",
+    "tarifBEnable": "tarif_3_status",
+    "tarifAStart": "tarif_2_start",
+    "tarifAStop": "tarif_2_stop",
+    "tarifBStart": "tarif_3_start",
+    "tarifBStop": "tarif_3_stop",
+    "activeTarif": "current_tarif",
+}
+
 # Codes from the 1.x web interface mapped to canonical (state, subState) pairs.
 # None of them occurs on newer firmware, whose states are 0-7.
 _LEGACY_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
@@ -334,11 +349,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # the first successful poll that lacks a firmware field; None means
         # either "not needed" (modern firmware) or "fetch failed/pending".
         self._init_fw_fallback: str | None = None
+        self._init_fw_version: int | None = None
         self._init_fw_fetch_done = False
         self._init_fw_task: asyncio.Task | None = None
         # True once /init reported a 1.x version: the positive proof the
         # low-code translation and the 1.x command form need.
         self._legacy_confirmed = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
+        self._legacy_fractional_tariff_seen = False
         # Legacy-firmware charging latch (GitHub issue #11): fw-1.x reports
         # code 3 both plugged-idle and actively charging, distinguishable
         # only by the electrical measurements. Once a session is observed,
@@ -745,6 +762,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # The 1.x page writes and shows one_charge; oneCharge may lag it.
             data["oneCharge"] = data["one_charge"]
         state = get_safe_value(data, "state", int)
+        if self._legacy_confirmed and not (self._reve_seen or is_reve_payload(data)):
+            self._normalize_legacy_controls(data, state)
         if state == _LEGACY_CHARGING_CANDIDATE_STATE:
             if _looks_charging_from_measurements(data):
                 self._legacy_charging_latched = True
@@ -1467,6 +1486,36 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if self.update_interval != new_interval:
             self.update_interval = new_interval
 
+    def _normalize_legacy_controls(self, data: dict[str, Any], raw_state: int | None) -> None:
+        """Expose 1.x Stop, schedule and tariff values under the canonical keys."""
+        # On 1.33 the wire flag stays at 1 through charging, Stop and Resume.
+        data["evseEnabled"] = int(raw_state == _LEGACY_USER_STOP_STATE)
+        for key, legacy_name in LEGACY_SCHEDULE_NAMES.items():
+            if legacy_name in data:
+                data[key] = data[legacy_name]
+        # Older firmware sends currency units, including whole prices as ints.
+        # A fractional price also identifies currency units for future polls.
+        self._legacy_fractional_tariff_seen = self._legacy_fractional_tariff_seen or any(
+            isinstance(value := data.get(key), float)
+            and isfinite(value)
+            and not value.is_integer()
+            for key in _LEGACY_TARIFF_PRICE_KEYS
+        )
+        currency_units = self._legacy_fractional_tariff_seen or (
+            self._init_fw_version is not None
+            and self._init_fw_version <= _LEGACY_TARIFF_CURRENCY_VERSION_MAX
+        )
+        scale = 100 if currency_units else 1
+        for key in _LEGACY_TARIFF_PRICE_KEYS:
+            value = data.get(key)
+            if type(value) is int:
+                data[key] = value * scale
+            elif isinstance(value, float) and isfinite(scaled := value * scale):
+                data[key] = round(scaled)
+        for key, legacy_name in _LEGACY_TARIFF_NAMES.items():
+            if key not in data and legacy_name in data:
+                data[key] = data[legacy_name]
+
     async def async_maybe_fetch_init_firmware(self) -> None:
         """Resolve a firmware-version fallback from /init, at most once.
 
@@ -1522,6 +1571,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # format nonsense (or overflow float division). Leave the fallback
             # unset -- device_info keeps showing "Unknown".
             return
+        self._init_fw_version = raw_version
         self._init_fw_fallback = f"{raw_version / 100:.2f}"
         self._legacy_confirmed = raw_version < _LEGACY_INIT_VERSION_LIMIT
         if (
@@ -1533,6 +1583,16 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # from the next poll on; a transition from it would be invented.
             self._event_prev_state = None
             self._event_prev_error_code = None
+        if self.is_legacy_firmware:
+            # /init follows the first /main. Resolve the controls as soon as
+            # firmware is known, including when the first connection was late.
+            normalized = dict(data)
+            state_key = LEGACY_RAW_STATE_KEY if LEGACY_RAW_STATE_KEY in data else "state"
+            self._normalize_legacy_controls(normalized, get_safe_value(data, state_key, int))
+            if normalized != self.data:
+                self.data = normalized
+                self._snapshot = EveusSnapshot.parse(normalized, self._model)
+            self.async_update_listeners()
 
     def _reject_credentials(self) -> None:
         """What a 401 means to the poll: reauth, not a connectivity failure.

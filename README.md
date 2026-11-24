@@ -618,6 +618,15 @@ readings; the ones the charger does not report stay unavailable. On 1.x,
 way its web page sends them. An unknown state shows `Unknown`, with its code
 in the **State** sensor's `raw_state` attribute.
 
+On 1.x, Home Assistant shows the configured tariff prices and the active
+rate. The estimated cost to reach the target SOC uses the tariff windows.
+You can edit the times, current limits, and energy limits of both schedules.
+If the charger omits the state of a schedule or limit switch or the
+**Minimum voltage** setting, Home Assistant shows it as unknown until the
+first successful command and remembers that setting across restarts. Set
+**Undervoltage threshold** from 150 to 220 V in 5 V steps, independently of
+**Minimum voltage**.
+
 For firmware updates, message **@energy_star** on Telegram; install the file
 through the charger's web interface.
 

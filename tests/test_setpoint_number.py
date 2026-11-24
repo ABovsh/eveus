@@ -540,3 +540,26 @@ def test_absolute_setpoints_keep_only_latest_waiting_value():
 
     asyncio.run(scenario())
     updater.send_command.assert_awaited_once_with('energyLimit', 40000, preflight=ANY)
+
+
+async def test_1x_threshold_uses_web_page_bounds_and_steps():
+    entity, updater = _make_threshold({"aiVoltage": 190})
+    updater.is_legacy_firmware = True
+    entity._handle_coordinator_update()
+
+    assert (entity.native_min_value, entity.native_max_value, entity.native_step) == (150, 220, 5)
+    assert entity.native_value == 190
+    await entity.async_set_native_value(185)
+    updater.send_command.assert_awaited_once_with("aiVoltage", 185, preflight=ANY)
+
+
+@pytest.mark.parametrize("family", ["classic", "reve"])
+async def test_modern_threshold_keeps_dynamic_floor_and_one_volt_step(family):
+    entity, updater = _make_threshold({"aiVoltage": 215, "minVoltage": 200})
+    updater.is_legacy_firmware = False
+    updater.firmware_family = family
+    entity._handle_coordinator_update()
+
+    assert (entity.native_min_value, entity.native_max_value, entity.native_step) == (210, 220, 1)
+    await entity.async_set_native_value(185)
+    updater.send_command.assert_awaited_once_with("aiVoltage", 210, preflight=ANY)

@@ -858,9 +858,13 @@ class EveusCard extends HTMLElement {
     return (ask ? `<div class="message guard-ask" popover="manual" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
       + (this._commandError ? `<button class="message cmd-error" role="alert" data-dismiss-error title="${t.dismiss}">${error}</button>` : '');
   }
+  _assumedUnknown(key) {
+    const entity = this._state(key);
+    return entity?.attributes?.assumed_state === true && entity.state === 'unknown';
+  }
   async _toggleLimit(key, confirmed = false) {
     const entity = this._state(key);
-    if (!this._online || !entity || !['on', 'off'].includes(entity.state)) return;
+    if (!this._online || !entity || (!['on', 'off'].includes(entity.state) && !this._assumedUnknown(key))) return;
     const value = !this._limitOn(key);
     const weakening = (key === 'ground_protection' && !value)
       || (key === 'limit_disable_all' && value)
@@ -980,6 +984,7 @@ class EveusCard extends HTMLElement {
     );
     // With nothing on, "Disable all" has nothing to disable; suspended, it is how the limits come back.
     const anyOn = items.some((item) => this._limitOn(item.toggle));
+    const unknown = ['limit_disable_all', ...items.map((item) => item.toggle)].some((key) => this._assumedUnknown(key));
     // One charge and manual mode ignore the charger's own limits that are on: they read as suspended,
     // like Disable all. Target SOC is stopped by Home Assistant, which neither overrides, so it stays lit.
     const ignored = !suspended && this._ignoring && items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle));
@@ -993,13 +998,13 @@ class EveusCard extends HTMLElement {
       : closed && manualLock ? shortNote(t.lockedManual, t.manualOverrides.limits) + this._overrideFlag('limits')
       : closed && idleLock ? shortNote(t.lockedIdle, t.lockedIdleNote)
       : closed && ignored ? this._overrideFlag('limits')
-      : !anyOn ? `<small class="limits-note">${t.noneOn}</small>` : '';
+      : !anyOn ? `<small class="limits-note">${unknown ? '—' : t.noneOn}</small>` : '';
     const lockNote = manualLock || ignored ? this._override('limits')
       : idleLock ? `<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"></ha-icon><span>${t.lockedIdleNote}</span></div>` : '';
     const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
     const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
     // REVE has no Disable all: its switch is unavailable there, so there is no button.
-    const disable = (anyOn || suspended) && this._ids.limit_disable_all && !this._unsupported('limit_disable_all') ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
+    const disable = (anyOn || suspended || unknown) && this._ids.limit_disable_all && !this._unsupported('limit_disable_all') ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
     const held = suspended || ignored;
@@ -1998,8 +2003,10 @@ class EveusCard extends HTMLElement {
     if (section === 'schedules') {
       const ignored = this._schedulesIgnored;
       const rows = this._schedulesShown().map((n) => {
+        const key = `schedule_${n}_enabled`, enabled = this._limitOn(key);
+        if (!enabled && this._assumedUnknown(key)) return `${n} —`;
         const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
-        if (!this._limitOn(`schedule_${n}_enabled`) || !start || !stop) return `${n} ${t.off}`;
+        if (!enabled || !start || !stop) return `${n} ${t.off}`;
         return ignored ? `<s>${n} ${start}→${stop}</s>` : `${n} ${start}→${stop}`;
       });
       if (ignored) return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sumCls: 'overridden', sumTitle: this._overrideText('schedules'), flag: this._overrideFlag('schedules'), sum: rows.join(sep)};

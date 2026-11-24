@@ -2990,3 +2990,44 @@ test('monthly energy is requested in the kWh shown on the card', async () => {
   await x.card._fetchMonth();
   assert.match(x.html(), /hist-month-cur[^]*?<b>12<small>kWh/);
 });
+
+test('write-only schedules and limits start unknown and the card can send the first command', async()=>{
+  const setup = (attributes) => setupAll({sections:['schedules','limits'], mode:'basic', fold:true, over:{
+    schedule_1_enabled:['switch.s1','unknown',attributes],
+    schedule_1_start:['time.s1start','23:00:00'],
+    schedule_1_stop:['time.s1stop','07:00:00'],
+    limit_disable_all:['switch.dis','unknown',attributes],
+    limit_energy_enabled:['switch.lee','unknown',attributes],
+  }});
+  const legacy = setup({assumed_state:true});
+  assert.match(legacy.card._foldInfo('schedules').sum,/1 —/);
+  assert.match(legacy.html(),/class="limits-note">—</);
+  assert.doesNotMatch(legacy.html(),/none on/i);
+  assert.match(legacy.html(),/data-limit-toggle="limit_disable_all"/);
+  await legacy.card._toggleLimit('schedule_1_enabled');
+  assert.deepEqual(legacy.calls.map(([domain, service, data]) => [domain, service, data.entity_id]),
+    [['switch','turn_on','switch.s1']]);
+
+  const modern = setup({});
+  assert.match(modern.card._foldInfo('schedules').sum,/1 Off/);
+  assert.match(modern.html(),/none on/i);
+  await modern.card._toggleLimit('schedule_1_enabled');
+  assert.equal(modern.calls.length,0);
+});
+
+test('adaptive voltage stepper uses the number entity range and step', async()=>{
+  for (const [min, step, value] of [[150, 5, 190], [210, 1, 215]]) {
+    const setup = (state) => setupAll({sections:['adaptive'], over:{
+      undervoltage_threshold:['number.uv',state,{min,max:220,step,unit_of_measurement:'V'}],
+    }});
+    const mid = setup(value);
+    await mid.card._stepLimit('undervoltage_threshold',-1);
+    assert.equal(mid.calls.at(-1)[2].value,value-step);
+    await mid.card._stepLimit('undervoltage_threshold',1);
+    assert.equal(mid.calls.at(-1)[2].value,value);
+    const low = setup(min), high = setup(220);
+    await low.card._stepLimit('undervoltage_threshold',-1);
+    await high.card._stepLimit('undervoltage_threshold',1);
+    assert.equal(low.calls.length+high.calls.length,0);
+  }
+});

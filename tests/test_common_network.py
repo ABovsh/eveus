@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -2198,3 +2199,249 @@ def test_a_probe_armed_on_a_shutting_down_coordinator_is_dropped(
     asyncio.run(updater._async_update_data())
 
     assert hass.tasks == []
+
+
+@pytest.mark.parametrize(
+    ("confirmed", "leading_fields", "reve_seen", "aliases_expected"),
+    [
+        (True, {}, False, True),
+        (False, {}, False, False),
+        (True, {"verFWMain": "R3.05.5"}, False, False),
+        (True, {"manufacturer": "REVE"}, False, False),
+        (True, {}, True, False),
+    ],
+)
+def test_firmware_1x_schedule_reads(
+    updater, confirmed, leading_fields, reve_seen, aliases_expected
+):
+    updater._legacy_confirmed = confirmed
+    updater._reve_seen = reve_seen
+    payload = {
+        **leading_fields,
+        "startSchedule1": 1380, "stopSchedule1": 420,
+        "currentSchedule1": 16, "energySchedule1": 4.5,
+        "startSchedule2": 0, "stopSchedule2": 60,
+        "currentSchedule2": 12, "energySchedule2": 0,
+    }
+    expected = dict(payload)
+    if aliases_expected:
+        expected.update(
+            evseEnabled=0,
+            sh1Start=1380, sh1Stop=420, sh1CurrentValue=16, sh1EnergyValue=4.5,
+            sh2Start=0, sh2Stop=60, sh2CurrentValue=12, sh2EnergyValue=0,
+        )
+    assert updater._normalize_legacy_device_state(payload) == expected
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected"),
+    [("charging", 0), ("after_stop", 1), ("after_resume", 0)],
+)
+def test_fw133_stop_flag_follows_raw_state(coordinator, fw133_main, phase, expected):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = fw133_main(phase)
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["evseEnabled"] == expected
+    assert updater.snapshot.get_int("evseEnabled") == expected
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected"), [("charging", 0), ("after_stop", 1)]
+)
+def test_fw133_stop_flag_after_init_confirms_first_main(
+    coordinator, fw133_main, phase, expected
+):
+    updater, session = coordinator
+    session.response.payload = fw133_main(phase)
+    updater.data = asyncio.run(updater._async_update_data())
+    assert updater.data["evseEnabled"] == 1
+
+    session.response.payload = {"ESP_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater.data["evseEnabled"] == expected
+    assert updater.snapshot.get_int("evseEnabled") == expected
+
+
+@pytest.mark.parametrize("filename", ["real_main_response.json", "reve_main_response.json"])
+def test_stop_normalization_leaves_modern_main_byte_identical(updater, filename):
+    payload = json.loads((Path(__file__).parent / "fixtures" / filename).read_text())
+    # Make a legacy rewrite observable even though neither payload has state 20.
+    payload["evseEnabled"] = 1
+    before = json.dumps(payload).encode()
+    updater._legacy_confirmed = True
+
+    assert json.dumps(updater._normalize_legacy_device_state(payload)).encode() == before
+
+
+@pytest.mark.parametrize(
+    ("confirmed", "markers", "reve_seen", "modern_seen"),
+    [
+        (False, {}, False, False),
+        (True, {"manufacturer": "REVE"}, False, False),
+        (True, {}, True, False),
+        (True, {}, False, True),
+    ],
+    ids=["unconfirmed", "reve-marker", "known-reve", "known-modern"],
+)
+def test_stop_normalization_leaves_other_markerless_main_byte_identical(
+    updater, confirmed, markers, reve_seen, modern_seen
+):
+    payload = {"state": 3, "evseEnabled": 1, **markers}
+    before = json.dumps(payload).encode()
+    updater._legacy_confirmed = confirmed
+    updater._reve_seen = reve_seen
+    updater._modern_firmware_seen = modern_seen
+
+    assert json.dumps(updater._normalize_legacy_device_state(payload)).encode() == before
+
+
+@pytest.mark.parametrize(
+    ("version", "rates", "expected"),
+    [
+        (133, (4.32, 2.16, 1.236), (432, 216, 124)),
+        (151, (432, 216, 123), (432, 216, 123)),
+        (151, (432.0, 216, 123), (432, 216, 123)),
+    ],
+    ids=["currency-floats", "1.51-integers", "1.51-integral-float"],
+)
+def test_firmware_1x_tariff_reads(coordinator, version, rates, expected):
+    updater, session = coordinator
+    session.response.payload = {"ESP_SW_version": version}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+    session.response.payload = {
+        "state": 2, "currentSet": 16,
+        "tarif": rates[0], "tarif_2": rates[1], "tarif_3": rates[2],
+        "tarif_2_status": 1, "tarif_3_status": 0,
+        "tarif_2_start": 1380, "tarif_2_stop": 420,
+        "tarif_3_start": 600, "tarif_3_stop": 720, "current_tarif": 2,
+    }
+    canonical = {
+        "tarif": expected[0], "tarifAValue": expected[1], "tarifBValue": expected[2],
+        "tarifAEnable": 1, "tarifBEnable": 0,
+        "tarifAStart": 1380, "tarifAStop": 420,
+        "tarifBStart": 600, "tarifBStop": 720, "activeTarif": 2,
+    }
+
+    data = asyncio.run(updater._async_update_data())
+    assert {key: data.get(key) for key in canonical} == canonical
+    assert all(type(data[key]) is int for key in canonical)
+
+
+def test_fw133_all_integer_tariff_rates_from_mcu_version(coordinator, fw133_main):
+    updater, session = coordinator
+    session.response.payload = {
+        **fw133_main("charging"), "tarif": 5, "tarif_2": 3, "tarif_3": 1,
+    }
+    updater.data = asyncio.run(updater._async_update_data())
+    session.response.payload = {"MCU_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert [
+        updater.snapshot.get(key) for key in ("tarif", "tarifAValue", "tarifBValue")
+    ] == [500, 300, 100]
+
+
+@pytest.mark.parametrize("fractional_key", ["tarif", "tarif_2", "tarif_3"])
+def test_fw140_tariff_currency_units_persist_after_fractional_rate(
+    coordinator, fw133_main, fractional_key
+):
+    updater, session = coordinator
+    session.response.payload = {"ESP_SW_version": 140}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    whole_rates = {**fw133_main("charging"), "tarif": 5, "tarif_2": 3, "tarif_3": 1}
+    canonical_keys = ("tarif", "tarifAValue", "tarifBValue")
+    session.response.payload = dict(whole_rates)
+    data = asyncio.run(updater._async_update_data())
+    assert [data[key] for key in canonical_keys] == [5, 3, 1]
+
+    session.response.payload = {
+        **whole_rates, fractional_key: whole_rates[fractional_key] + 0.25,
+    }
+    data = asyncio.run(updater._async_update_data())
+    assert [data[key] for key in canonical_keys] == [
+        whole_rates[key] * 100 + (25 if key == fractional_key else 0)
+        for key in ("tarif", "tarif_2", "tarif_3")
+    ]
+
+    session.response.payload = whole_rates
+    data = asyncio.run(updater._async_update_data())
+    assert [data[key] for key in canonical_keys] == [500, 300, 100]
+
+
+def test_firmware_1x_tariff_aliases_keep_present_canonical_keys(updater):
+    updater._legacy_confirmed = True
+    existing = {"tarifAValue": 0, "tarifBEnable": None, "activeTarif": 0}
+    payload = {
+        **existing, "state": 2, "tarif_2": 2.16, "tarif_3_status": 1, "current_tarif": 1,
+    }
+
+    data = updater._normalize_legacy_device_state(payload)
+
+    assert {key: data[key] for key in existing} == existing
+    assert "tarifBValue" not in data
+
+
+def test_firmware_1x_invalid_float_rates_do_not_break_main(coordinator):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = {
+        "state": 2, "currentSet": 16,
+        "tarif": float("nan"), "tarif_2": float("inf"), "tarif_3": 1e308,
+    }
+
+    asyncio.run(updater._async_update_data())
+
+    assert all(updater.snapshot.get(key) is None for key in ("tarif", "tarifAValue", "tarifBValue"))
+
+
+@pytest.mark.parametrize(
+    ("marker", "confirmed", "modern_seen", "reve_seen"),
+    [
+        ({"verFWMain": "1PGRW001A-R3.05.8"}, True, False, False),
+        ({"manufacturer": "REVE"}, True, False, False),
+        ({}, True, True, False),
+        ({}, True, False, True),
+        ({}, False, False, False),
+    ],
+    ids=["3.x", "reve-marker", "known-3.x", "known-reve", "unconfirmed"],
+)
+def test_tariff_normalization_leaves_non_1x_main_byte_identical(
+    updater, marker, confirmed, modern_seen, reve_seen
+):
+    updater._legacy_confirmed = confirmed
+    updater._modern_firmware_seen = modern_seen
+    updater._reve_seen = reve_seen
+    payload = {
+        **marker, "state": 0, "tarif": 4.32, "tarif_2": 2.16, "tarif_3": 1.23,
+        "tarif_2_status": 1, "tarifAValue": 216, "current_tarif": 1,
+    }
+    before = json.dumps(payload).encode()
+
+    assert json.dumps(updater._normalize_legacy_device_state(payload)).encode() == before
+
+
+def test_fw133_rate_sensor_values_after_init(coordinator, fw133_main):
+    from custom_components.eveus.sensor_definitions import (
+        get_active_rate_cost,
+        get_primary_rate_cost,
+        get_rate2_cost,
+        get_rate3_cost,
+    )
+
+    updater, session = coordinator
+    session.response.payload = fw133_main("charging")
+    updater.data = asyncio.run(updater._async_update_data())
+    session.response.payload = {"ESP_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert get_primary_rate_cost(updater, None) == 4.32
+    assert get_rate2_cost(updater, None) == 2.16
+    assert get_rate3_cost(updater, None) == 1.00
+    assert get_active_rate_cost(updater, None) == 2.16
+    assert updater.snapshot.get_int("tarifAStart") == 23 * 60
+    assert updater.snapshot.get_int("tarifAStop") == 7 * 60

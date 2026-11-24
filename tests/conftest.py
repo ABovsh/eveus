@@ -290,6 +290,16 @@ def real_main() -> dict[str, Any]:
 
 
 @pytest.fixture
+def fw133_main() -> Callable[[str], dict[str, Any]]:
+    """Load a fresh /main reply reconstructed from the 1.33 diagnostics."""
+    def _load(phase: str) -> dict[str, Any]:
+        path = _REAL_MAIN_FIXTURE.with_name(f"fw133_{phase}_main.json")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    return _load
+
+
+@pytest.fixture
 def main_payload() -> Callable[..., dict[str, Any]]:
     """Factory: real-shaped /main dict with field overrides.
 

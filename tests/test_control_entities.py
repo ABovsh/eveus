@@ -1600,3 +1600,95 @@ def test_controls_read_the_typed_snapshot() -> None:
     # and keeps whatever it last held rather than snapping to a bogus number.
     stale = EveusCurrentNumber(_updater("16A", currentSet=32), "16A")
     assert stale._read_device_value() is None
+
+
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        ("schedule_1_enabled", "sh1Enabled"),
+        ("schedule_2_enabled", "sh2Enabled"),
+        ("schedule_1_current_limit_enabled", "sh1CurrentEnable"),
+        ("schedule_2_current_limit_enabled", "sh2CurrentEnable"),
+        ("schedule_1_energy_limit_enabled", "sh1EnergyEnable"),
+        ("schedule_2_energy_limit_enabled", "sh2EnergyEnable"),
+        ("limit_time_enabled", "timeLimitS"),
+        ("limit_energy_enabled", "energyLimitS"),
+        ("limit_cost_enabled", "moneyLimitS"),
+        ("limit_disable_all", "suspendLimits"),
+    ],
+)
+async def test_1x_write_only_switch_remembers_accepted_commands(key, field):
+    from unittest.mock import AsyncMock, Mock
+    from homeassistant.exceptions import HomeAssistantError
+
+    desc = next(d for d in SWITCH_DESCRIPTIONS if d.key == key)
+    updater = _Updater({"state": 2})
+    updater.is_legacy_firmware = True
+    entity = BaseSwitchEntity(updater, desc)
+    entity.async_write_ha_state = Mock()
+
+    assert entity.available and entity.assumed_state
+    assert entity.state is None
+    for service, expected in ((entity.async_turn_on, True), (entity.async_turn_off, False)):
+        await service()
+        assert updater.commands[-1] == (field, int(expected))
+        assert entity.is_on is expected
+        entity._optimistic_value_time -= 1000
+        entity._handle_coordinator_update()
+        assert entity.is_on is expected
+
+    entity.async_write_ha_state.reset_mock()
+    entity._handle_coordinator_update()
+    entity.async_write_ha_state.assert_not_called()
+    updater.command_result = False
+    with pytest.raises(HomeAssistantError):
+        await entity.async_turn_on()
+    assert entity.is_on is False
+    entity.async_write_ha_state.assert_not_called()
+
+    restored = BaseSwitchEntity(updater, desc)
+    restored.async_get_last_extra_data = AsyncMock(return_value=entity.extra_restore_state_data)
+    await restored._async_restore_state(State("switch.flag", "unavailable"))
+    assert restored._resolve_state() is False
+
+    # Old HA state alone proves no command was sent.
+    fresh = BaseSwitchEntity(updater, desc)
+    fresh.async_get_last_extra_data = AsyncMock(return_value=None)
+    await fresh._async_restore_state(State("switch.flag", "off"))
+    assert fresh._resolve_state() is None
+
+    # The same value becoming readable must publish the assumed-state transition.
+    updater.data = {"state": 2, field: 0}
+    entity._handle_coordinator_update()
+    assert not entity.assumed_state and entity.is_on is False
+    entity.async_write_ha_state.assert_called_once()
+
+    updater.data = {"state": 2, field: 1}
+    entity._handle_coordinator_update()
+    assert entity.is_on is True
+
+
+@pytest.mark.parametrize("family", ["classic", "reve"])
+async def test_write_only_switch_fallback_needs_confirmed_1x(family):
+    from unittest.mock import AsyncMock
+    from homeassistant.helpers.restore_state import RestoredExtraData
+
+    updater = _Updater({"state": 2})
+    updater.firmware_family = family
+    updater.is_legacy_firmware = False
+    desc = next(d for d in SWITCH_DESCRIPTIONS if d.key == "schedule_1_enabled")
+    entity = BaseSwitchEntity(updater, desc)
+    _disable_state_writes(entity)
+    assert entity.available and not entity.assumed_state and entity.state is None
+    await entity.async_turn_on()
+    assert updater.commands == [("sh1Enabled", 1)]
+    entity._optimistic_value_time -= 1000
+    entity._handle_coordinator_update()
+    assert entity.state is None and not entity.assumed_state
+    assert entity.extra_restore_state_data is None
+
+    entity.async_get_last_extra_data = AsyncMock(
+        return_value=RestoredExtraData({"last_legacy_command": True})
+    )
+    await entity._async_restore_state(State("switch.flag", "off"))
+    assert entity._resolve_state() is False

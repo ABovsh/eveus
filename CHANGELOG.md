@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### 🐛 Fixed
+
+- **Eveus 1.x now shows the correct Stop Charging state.** The card offers Stop while charging and Resume after the charger reports a user stop.
+- **Eveus 1.x schedules can be viewed and edited in Home Assistant.** The integration reads and writes both schedules' times, current limits, and energy limits using the charger's settings.
+- **Eveus 1.x schedule and limit switches work when the charger omits their state.** Home Assistant starts them as unknown and remembers the last command it sent successfully.
+- **Eveus 1.x undervoltage threshold can be set from 150 to 220 V in 5 V steps.**
+- **Eveus 1.x tariff sensors show the configured prices and the active rate.** Tariff windows also apply to the estimated cost to reach the target SOC.
+- **Eveus 1.x Minimum voltage remembers the last successful setting when the charger omits it.** Home Assistant shows it as unknown until the first successful command.
+
 ## 4.31.1 - 2026-11-23
 
 ### 🐛 Fixed
