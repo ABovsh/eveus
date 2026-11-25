@@ -209,10 +209,19 @@ async def test_unrelated_legacy_switch_command_does_not_cap_current(monkeypatch)
     assert _number(updater, "currentSet").native_max_value == 32
 
 
-async def test_socket_restriction_survives_an_older_in_flight_readback(monkeypatch):
+@pytest.mark.parametrize("previous_write", [False, True])
+async def test_socket_restriction_survives_an_older_in_flight_readback(monkeypatch, previous_write):
     updater, session, _ = _rig(monkeypatch)
     await _poll(updater, session, restricted_mode=0)
     await _confirm(updater, session)
+    clock = 1000.0
+    monkeypatch.setattr(common_command, "time", SimpleNamespace(monotonic=lambda: clock))
+    number = _number(updater, "currentSet")
+    if previous_write:
+        assert await updater.send_command("restricted_mode", 1)
+        await _poll(updater, session, restricted_mode=0)
+        assert number.native_max_value == 32
+        clock += 1
     read_started = asyncio.Event()
     finish_read = asyncio.Event()
     original = common_network.fetch_json
@@ -231,7 +240,6 @@ async def test_socket_restriction_survives_an_older_in_flight_readback(monkeypat
     finally:
         finish_read.set()
         await poll
-    number = _number(updater, "currentSet")
     assert number.native_max_value == 16
     await _poll(updater, session, restricted_mode=0)
     assert number.native_max_value == 32
@@ -465,6 +473,34 @@ async def test_classic_r3_plug_events_still_follow_state_and_keep_order(monkeypa
     ]
 
 
+async def test_initial_fault_is_remembered_until_the_code_changes(monkeypatch):
+    updater, session, bus = _rig(monkeypatch)
+    fault = {"state": common_network.DEVICE_STATE_ERROR}
+    await _poll(updater, session, **fault, subState=9)
+    await _poll(updater, session, **fault, subState=9)
+    assert not bus.fired
+
+    await _poll(updater, session, **fault, subState=5)
+    assert bus.fired == [
+        (common_network.EVENT_ERROR, {
+            "device_number": 1,
+            "error_code": 5,
+            "error_text": common_network.get_error_state(5),
+        }),
+    ]
+
+
+async def test_fractional_fault_code_is_missing_in_the_error_event(monkeypatch):
+    updater, session, bus = _rig(monkeypatch)
+    await _poll(updater, session, state=common_network.DEVICE_STATE_STANDBY)
+    await _poll(updater, session, state=common_network.DEVICE_STATE_ERROR, subState=5.5)
+    assert bus.fired == [
+        (common_network.EVENT_ERROR, {
+            "device_number": 1, "error_code": None, "error_text": None,
+        }),
+    ]
+
+
 def _init_reply(monkeypatch, value):
     original = common_network.fetch_json
 
@@ -553,6 +589,22 @@ async def test_init_retry_stops_after_positive_nonlegacy_identification(monkeypa
         if updater._init_fw_task is not None:
             await updater._init_fw_task
     assert attempts == [1000.0]
+
+
+async def test_initial_init_without_a_version_is_only_requested_once(monkeypatch):
+    updater, session, _ = _rig(monkeypatch)
+    await _poll(updater, session)
+    session.calls.clear()
+    session.response.payload = {}
+
+    await updater.async_maybe_fetch_init_firmware()
+    await updater.async_maybe_fetch_init_firmware()
+
+    (request,) = session.calls
+    assert request["url"].endswith("/init")
+    assert request["auth"] is updater._basic_auth
+    assert request["timeout"] is common_network._UPDATE_TIMEOUT_OBJ
+    assert not updater.is_legacy_firmware
 
 
 @pytest.mark.parametrize("reply", [

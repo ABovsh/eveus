@@ -8,6 +8,7 @@ than steady-state polling.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import aiohttp
 import pytest
@@ -93,6 +94,21 @@ def test_http_error_is_raised() -> None:
         asyncio.run(
             client.fetch_json(session, "http://charger/main", auth=_AUTH, timeout=None)
         )
+
+
+def test_graphql_error_exposes_the_reason_and_partial_response() -> None:
+    data = {"stationData": {"stationState": 4}}
+    errors = [{"path": ["serviceData"], "message": "Unavailable"}]
+    session = _Session(_Response(body=json.dumps({"data": data, "errors": errors}).encode()))
+
+    with pytest.raises(client.GraphQLError, match="GraphQL reply reports errors") as caught:
+        asyncio.run(client.post_graphql(
+            session, "http://charger/graphql", auth=_AUTH,
+            operation="StationData", document="query StationData { stationData { stationState } }",
+        ))
+
+    assert caught.value.data == data
+    assert caught.value.errors == errors
 
 
 def test_oversized_body_is_rejected_before_it_is_buffered() -> None:

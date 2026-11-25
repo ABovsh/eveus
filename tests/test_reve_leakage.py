@@ -257,6 +257,33 @@ def test_service_only_errors_do_not_hide_invalid_station_measurements(monkeypatc
     assert ["serviceData" in query for query in _graphql_queries(charger)] == [True, False]
 
 
+def test_successful_combined_reply_still_validates_station_measurements(monkeypatch):
+    charger = _LeakCharger()
+    updater = _known(monkeypatch, charger)
+    charger.station["stationCurrent"] = 10000
+    charger.main["currentSet"] = 7
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["currentSet"] == 7
+    assert "leakValue" not in data
+    assert charger.paths() == ["/graphql", "/main"]
+    assert "serviceData" in _graphql_queries(charger)[0]
+    assert not updater._reve.measurements_due()
+
+
+def test_combined_measurements_can_be_read_without_an_optional_validator(monkeypatch):
+    charger = _LeakCharger(word=250)
+    updater = _known(monkeypatch, charger)
+
+    data = asyncio.run(updater._reve.read_measurements())
+
+    assert data["currentSet"] == charger.station["stationCurrent"]
+    assert updater._reve.leakage == 2
+    (query,) = _graphql_queries(charger)
+    assert "serviceData" in query
+
+
 def test_service_only_errors_in_a_plain_reply_still_fail_measurements(monkeypatch):
     charger = _LeakCharger(pair=False)
     updater = _known(monkeypatch, charger)

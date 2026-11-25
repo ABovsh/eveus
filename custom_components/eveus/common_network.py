@@ -400,7 +400,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._legacy_min_voltage: int | None = None
         # Replaced on every accepted Minimum voltage write; /init compares identity.
         self._legacy_min_voltage_write: object = object()  # pragma: no mutate - only identity against a later object() is compared
-        self.legacy_socket_limited = False
+        self.legacy_socket_limited = False  # pragma: no mutate - False and None are read only for truthiness
         self._legacy_socket_write = object()  # pragma: no mutate - only identity against a later object() is compared
         # True once /init reported a 1.x version: the positive proof the
         # low-code translation and the 1.x command form need.
@@ -1670,12 +1670,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 self._init_fw_fetch_done = False
                 self._init_fw_retry_at = time.monotonic() + _INIT_RETRY_SECONDS
                 self._probe_fw_on_first_success = True
-            init_data = None
+            init_data = None  # pragma: no mutate - None and an empty string both fail the dict check below
 
         if reconnect:
             # Back off even if /init is absent or returns an unusable 200.
             # Keep the last good profile until a usable version arrives.
-            self._init_fw_fetch_done = False
+            self._init_fw_fetch_done = False  # pragma: no mutate - False and None drive the same retry checks
             self._init_fw_retry_at = time.monotonic() + _INIT_RETRY_SECONDS
         if not isinstance(init_data, dict):
             return
