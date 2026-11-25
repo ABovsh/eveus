@@ -49,6 +49,8 @@ jobs:
             /contracts/
             /evidence/
             /surface/
+            /sim/
+            /behavior/
             /semantics.json
             /baseline.json
             /manifest.json
@@ -64,7 +66,7 @@ jobs:
         if: env.HAS_PROFILES == 'true'
         run: python -m pip install -r requirements_test.txt
 
-      - name: Compatibility check and HA firmware contracts
+      - name: Compatibility check, HA contracts and firmware behavior
         if: env.HAS_PROFILES == 'true'
         run: .fw/eveus-fw ci --integration . --python python --public
 
