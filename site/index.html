@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Eveus EV Charger for Home Assistant (Eveus Pro, Energy Star, REVE) | HACS</title>
-  <meta name="description" content="Home Assistant integration for Eveus (Energy Star) EV chargers such as Eveus Pro, including REVE firmware: local control of charging current, schedules and limits, stop at a target SOC, energy and cost tracking. In the HACS default store.">
+  <title>Eveus EV Charger for Home Assistant (Eveus and REVE firmware) | HACS</title>
+  <meta name="description" content="Home Assistant integration for Eveus EV chargers of all three hardware generations, on Eveus or REVE firmware: charging state, current, schedules, limits, time settings and more; battery level (SOC) with stop at a target; energy, cost and safety readings.">
   <link rel="canonical" href="https://abovsh.github.io/eveus/">
   <link rel="alternate" hreflang="en" href="https://abovsh.github.io/eveus/">
   <link rel="alternate" hreflang="uk" href="https://abovsh.github.io/eveus/uk/">
@@ -12,12 +12,12 @@
   <link rel="stylesheet" href="assets/style.css">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Eveus EV Charger for Home Assistant">
-  <meta property="og:description" content="Local Home Assistant control of Eveus (Energy Star) EV chargers such as Eveus Pro, including REVE firmware. In the HACS default store.">
+  <meta property="og:description" content="Home Assistant integration for Eveus EV chargers of all three hardware generations, on Eveus or REVE firmware. In HACS.">
   <meta property="og:url" content="https://abovsh.github.io/eveus/">
   <meta property="og:image" content="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Eveus EV Charger for Home Assistant">
-  <meta name="twitter:description" content="Local Home Assistant control of Eveus (Energy Star) EV chargers such as Eveus Pro, including REVE firmware. In the HACS default store.">
+  <meta name="twitter:description" content="Home Assistant integration for Eveus EV chargers of all three hardware generations, on Eveus or REVE firmware. In HACS.">
   <meta name="twitter:image" content="https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039">
   <script type="application/ld+json">
   {
@@ -26,7 +26,7 @@
     "name": "Eveus EV Charger for Home Assistant",
     "applicationCategory": "HomeAutomationApplication",
     "operatingSystem": "Home Assistant",
-    "description": "Home Assistant integration that controls Eveus (Energy Star) EV chargers such as Eveus Pro, including REVE firmware, over the local network. Installable through HACS.",
+    "description": "Home Assistant integration for Eveus EV chargers of all three hardware generations, on Eveus or REVE firmware: charging state, current, schedules, limits, time settings and more; battery level (SOC) with stop at a target; energy, cost and safety readings.",
     "inLanguage": ["en", "uk"],
     "screenshot": "https://github.com/user-attachments/assets/064dd525-ecb9-4f7f-ac0c-2dc9a16b7039",
     "url": "https://abovsh.github.io/eveus/",
@@ -45,7 +45,15 @@
         "name": "Does the Eveus EV charger work with Home Assistant?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. The Eveus EV Charger integration connects Home Assistant to Eveus 16A, 32A, 40A, and 48A chargers over the local network and is installable through HACS."
+          "text": "Yes. The Eveus EV Charger integration connects Home Assistant to Eveus 16A, 32A, 40A and 48A chargers of all three hardware generations, on Eveus or REVE firmware, and is installable through HACS."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Which Eveus chargers and firmware are supported?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "All three hardware generations. Each has its own Eveus firmware line: 1.x, 2.x and R3.x; the third generation can also run REVE. The integration recognizes the firmware by itself. It is built for the latest version of each line; on older versions it may work only partly."
         }
       },
       {
@@ -77,7 +85,7 @@
         "name": "Why does setup fail while the charger's web page works?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Chargers on older firmware (R3.01.x has been reported) can answer their web page normally but reply to the integration's API request in a way setup can't use. Update the charger firmware: message @energy_star on Telegram to get added to the charger support channel with the firmware files and instructions — then update through the Grizzl-E app or flash the downloaded file from the charger's web interface. The setup dialog shows the concrete failure reason, and the troubleshooting guide explains what to report if the firmware can't be updated."
+          "text": "The integration is built for the latest firmware version of each line; an older version can answer its web page normally but reply to the integration's requests in a way setup can't use. Update the charger to the latest firmware of its line: message @energy_star on Telegram for the firmware files and instructions, then install the file through the charger's web interface. The setup dialog shows the concrete failure reason, and the troubleshooting guide explains what to report if the firmware can't be updated."
         }
       }
     ]
@@ -94,9 +102,9 @@
 
   <main>
     <section class="hero wrap">
-      <p class="eyebrow">Local-only Home Assistant integration</p>
+      <p class="eyebrow">Home Assistant integration · HACS</p>
       <h1>Control your Eveus EV charger from Home Assistant.</h1>
-      <p class="lead">The Eveus EV Charger integration runs in Home Assistant and communicates directly with your charger over the local network. Install the integration through HACS to control charging, monitor electrical measurements and charging costs, manage schedules, estimate EV battery SOC in Advanced mode, and receive actionable safety notices.</p>
+      <p class="lead">A Home Assistant integration for Eveus EV chargers of all three hardware generations, on Eveus or REVE firmware. It lets you control the charging state, current, schedules, limits, the charger's time settings and many other parameters. It also calculates your car's battery level (SOC) while charging and can end the charge at the level you choose. A ready-made dashboard card shows all of this together with energy, charging cost and safety readings: voltage, temperature, grounding and leakage current.</p>
       <div class="actions">
         <a class="button primary" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&amp;repository=eveus&amp;category=integration">Add to HACS</a>
         <a class="button" href="https://github.com/ABovsh/eveus#eveus-ev-charger-for-home-assistant">Full documentation</a>
@@ -109,8 +117,12 @@
       <h2>Built for useful EV charging automations</h2>
       <div class="grid">
         <article class="card">
-          <h3>Local control</h3>
-          <p>The integration sends charging-current, stop, schedule, adaptive-mode, and ground-protection commands directly to the charger. It also lets you manage the charger's optional OCPP connection.</p>
+          <h3>Charging control</h3>
+          <p>The integration controls the charging state, current, schedules, limits, adaptive mode, ground protection and the charger's clock (time zone and time sync). It also lets you manage the charger's optional OCPP connection.</p>
+        </article>
+        <article class="card">
+          <h3>All hardware generations</h3>
+          <p>The integration recognizes Eveus firmware 1.x, 2.x and R3.x and the REVE firmware by itself and sends each command the way that firmware expects. It is built for the latest version of each firmware line.</p>
         </article>
         <article class="card">
           <h3>Events and device triggers</h3>
@@ -121,8 +133,12 @@
           <p>The integration exposes the charger's current voltage, current, and power measurements, along with session energy, total energy, resettable counters, tariffs, and charging costs. Last Session sensors keep each finished session's energy, cost, and duration until the next session completes — and past sessions stay in their history.</p>
         </article>
         <article class="card">
-          <h3>SOC and ETA</h3>
-          <p>In Advanced mode, the integration estimates EV battery state of charge, time to target, finish time, remaining grid energy, and expected cost. These values are derived from charger data and your configured battery details.</p>
+          <h3>SOC and stop at a target</h3>
+          <p>In Advanced mode, the integration calculates your car's battery level (SOC), time to target, finish time, remaining grid energy and expected cost from charger data and your battery details, and can end the charge at the level you choose.</p>
+        </article>
+        <article class="card">
+          <h3>Ready-made dashboard card</h3>
+          <p>One card shows the charger's state and controls together with energy, charging cost and safety readings: voltage, temperature, grounding and leakage current. You pick and reorder its sections in the card editor.</p>
         </article>
         <article class="card">
           <h3>Safety notices</h3>
@@ -143,12 +159,12 @@
       <h2>Install the integration through HACS</h2>
       <div class="install">
         <ol>
-          <li>Open <strong>HACS</strong> and search for <strong>Eveus EV Charger</strong> — it is in the HACS default store, so no custom repository is needed.</li>
+          <li>Open <strong>HACS</strong> (from Home Assistant 2026.11, <strong>Settings → Marketplace</strong>) and search for <strong>Eveus EV Charger</strong> — it is in the HACS default store, so no custom repository is needed.</li>
           <li>Install it and restart Home Assistant.</li>
           <li>Open <strong>Settings → Devices &amp; Services → Add Integration</strong>, then search for <strong>Eveus EV Charger</strong>.</li>
-          <li>Enter the charger address and credentials, then choose the charger model, phase count, and integration mode.</li>
+          <li>Enter the charger address and, if the charger has them, the username and password of its web interface; then choose the charger model, phase count, and integration mode.</li>
         </ol>
-        <p class="note">Requirements: an Eveus 16A, 32A, 40A, or 48A charger whose local HTTP API is reachable from Home Assistant, plus the charger username and password.</p>
+        <p class="note">Requirements: an Eveus 16A, 32A, 40A or 48A charger on the latest firmware of its line (Eveus 1.x, 2.x or R3.x, or REVE), reachable from Home Assistant on your network.</p>
         <div class="actions">
           <a class="button primary" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=ABovsh&amp;repository=eveus&amp;category=integration">Open HACS repository</a>
           <a class="button" href="https://community.home-assistant.io/t/eveus-ev-charger-home-assistant-integration-local-only-hacs/1010628">Community discussion</a>
@@ -161,7 +177,9 @@
       <h2>Frequently asked questions</h2>
       <div class="install">
         <h3>Does the Eveus EV charger work with Home Assistant?</h3>
-        <p>Yes. The Eveus EV Charger integration connects Home Assistant to Eveus 16A, 32A, 40A, and 48A chargers over the local network and is installable through HACS.</p>
+        <p>Yes. The Eveus EV Charger integration connects Home Assistant to Eveus 16A, 32A, 40A and 48A chargers of all three hardware generations, on Eveus or REVE firmware, and is installable through HACS.</p>
+        <h3>Which Eveus chargers and firmware are supported?</h3>
+        <p>All three hardware generations. Each has its own Eveus firmware line: 1.x, 2.x and R3.x; the third generation can also run REVE. The integration recognizes the firmware by itself. It is built for the latest version of each line; on older versions it may work only partly.</p>
         <h3>Does the integration need a cloud account?</h3>
         <p>No. The integration communicates with the charger only over your local network — no cloud account and no telemetry. The charger's own optional OCPP connection is a separate feature and may use a remote backend.</p>
         <h3>Can Home Assistant estimate the EV battery state of charge?</h3>
@@ -169,7 +187,7 @@
         <h3>Does the integration work with the new REVE firmware?</h3>
         <p>Yes. The integration recognizes REVE firmware by itself and reads and writes its settings, schedules, tariffs and charging limits through REVE's own interface. Readings REVE does not report stay unavailable. In manual mode (the charger app's “ignore schedule”, One Charge or Stop) the charger ignores schedules and limits until the connector is pulled out of the car. See the REVE section of the documentation.</p>
         <h3>Why does setup fail while the charger's web page works?</h3>
-        <p>Chargers on older firmware (R3.01.x has been reported) can answer their web page normally but reply to the integration's API request in a way setup can't use. Update the charger firmware: message @energy_star on Telegram to get added to the charger support channel with the firmware files and instructions — then update through the Grizzl-E app or flash the downloaded file from the charger's web interface. The setup dialog shows the concrete failure reason, and the <a href="https://github.com/ABovsh/eveus#older-charger-firmware">troubleshooting guide</a> explains what to report if the firmware can't be updated.</p>
+        <p>The integration is built for the latest firmware version of each line; an older version can answer its web page normally but reply to the integration's requests in a way setup can't use. Update the charger to the latest firmware of its line: message @energy_star on Telegram for the firmware files and instructions, then install the file through the charger's web interface. The setup dialog shows the concrete failure reason, and the <a href="https://github.com/ABovsh/eveus#older-charger-firmware">troubleshooting guide</a> explains what to report if the firmware can't be updated.</p>
       </div>
     </section>
   </main>
