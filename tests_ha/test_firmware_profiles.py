@@ -340,8 +340,11 @@ async def test_command_shapes(hass, aioclient_mock, caplog, monkeypatch, profile
     failures = []
     binding_only = []
     checked = 0
+    legacy = entry.runtime_data.updater.is_legacy_firmware
     for entity in sorted(_entities(hass, entry), key=lambda entity: entity.entity_id):
         command = _command(entity)
+        if legacy:
+            command = common_command._LEGACY_COMMAND_NAMES.get(command, command)
         if command not in accepted:
             continue
         if isinstance(entity, button._EveusResetCounterButton) and (
@@ -390,3 +393,160 @@ async def test_command_shapes(hass, aioclient_mock, caplog, monkeypatch, profile
             f"{len(binding_only)} commands differ only in the /pageEvent selector "
             "binding (body vs header), whose acceptance is unknown for this firmware"
         )
+
+
+@pytest.fixture
+def legacy_profile():
+    """Use the captured /init and /main schema for 1.51."""
+    path = Path(_directory) / "1x-1.51.json"
+    if not path.is_file():
+        pytest.skip("no 1.51 profile")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _assert_legacy_write(http, start, setting, value):
+    assert [
+        (headers.get("pageEvent"), data)
+        for _, url, data, headers in http.mock_calls[start:]
+        if url.path == "/pageEvent"
+    ] == [(setting, f"{setting}={value}")]
+
+
+async def test_1x_schedules_and_cost_limit_read_and_write(
+    hass, aioclient_mock, caplog, monkeypatch, legacy_profile
+):
+    cases = [
+        ("schedule_1_start", "startSchedule1", 1380, "23:00:00", "22:30:00", 1350),
+        ("schedule_1_stop", "stopSchedule1", 420, "07:00:00", "08:00:00", 480),
+        ("schedule_1_current_limit", "currentSchedule1", 16, "16.0", 15, 15),
+        ("schedule_1_energy_limit", "energySchedule1", 4.5, "4.5", 10.5, 10.5),
+        ("schedule_2_start", "startSchedule2", 0, "00:00:00", "01:00:00", 60),
+        ("schedule_2_stop", "stopSchedule2", 60, "01:00:00", "02:00:00", 120),
+        ("schedule_2_current_limit", "currentSchedule2", 12, "12.0", 13, 13),
+        ("schedule_2_energy_limit", "energySchedule2", 0, "0.0", 10.5, 10.5),
+        ("limit_cost", "moneyLimit", 8.5, "8.5", 10.5, 10.5),
+    ]
+    now = real_time.monotonic()
+    monkeypatch.setattr(common_command, "time", SimpleNamespace(monotonic=lambda: now))
+    entry = await _start(
+        hass, aioclient_mock, legacy_profile, caplog,
+        overrides={setting: raw for _, setting, raw, *_ in cases}, allow_writes=True,
+    )
+    assert entry.runtime_data.updater.is_legacy_firmware
+    entities = {entity.translation_key: entity for entity in _entities(hass, entry)}
+    for key, setting, _, shown, value, wire in cases:
+        entity = entities[key]
+        state = hass.states.get(entity.entity_id)
+        assert state.state == shown
+        if key.endswith("_energy_limit") or key == "limit_cost":
+            assert state.attributes["step"] == 0.1
+        domain = entity.entity_id.partition(".")[0]
+        start = len(aioclient_mock.mock_calls)
+        now += 1
+        await hass.services.async_call(
+            domain, "set_value",
+            {"entity_id": entity.entity_id, "time" if domain == "time" else "value": value},
+            blocking=True,
+        )
+        _assert_legacy_write(aioclient_mock, start, setting, wire)
+
+
+async def test_1x_undervoltage_threshold(hass, aioclient_mock, caplog, legacy_profile):
+    entry = await _start(
+        hass, aioclient_mock, legacy_profile, caplog,
+        overrides={"aiVoltage": 190}, allow_writes=True,
+    )
+    entity = next(e for e in _entities(hass, entry) if e.translation_key == "undervoltage_threshold")
+    state = hass.states.get(entity.entity_id)
+    assert float(state.state) == 190
+    assert tuple(state.attributes[key] for key in ("min", "max", "step")) == (150, 220, 5)
+    start = len(aioclient_mock.mock_calls)
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": entity.entity_id, "value": 185}, blocking=True,
+    )
+    _assert_legacy_write(aioclient_mock, start, "aiVoltage", 185)
+
+
+async def test_1x_one_charge_uses_one_charge(hass, aioclient_mock, caplog, legacy_profile):
+    entry = await _start(
+        hass, aioclient_mock, legacy_profile, caplog,
+        overrides={"one_charge": 1, "oneCharge": 0}, allow_writes=True,
+    )
+    updater = entry.runtime_data.updater
+    assert updater.is_legacy_firmware
+    await updater.async_refresh()
+    entity = next(e for e in _entities(hass, entry) if e.translation_key == "one_charge")
+    assert hass.states.get(entity.entity_id).state == "on"
+    start = len(aioclient_mock.mock_calls)
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": entity.entity_id}, blocking=True,
+    )
+    _assert_legacy_write(aioclient_mock, start, "one_charge", 0)
+
+
+@pytest.mark.parametrize(
+    "variant", ["1.33-capture", "1.33-without-flag-word", "1.51-shaped"]
+)
+async def test_1x_switch_states_and_restore(
+    hass, aioclient_mock, caplog, monkeypatch, legacy_profile, variant
+):
+    flags = {
+        "schedule_1_enabled": "sh1Enabled",
+        "schedule_2_enabled": "sh2Enabled",
+        "schedule_1_current_limit_enabled": "sh1CurrentEnable",
+        "schedule_2_current_limit_enabled": "sh2CurrentEnable",
+        "schedule_1_energy_limit_enabled": "sh1EnergyEnable",
+        "schedule_2_energy_limit_enabled": "sh2EnergyEnable",
+        "limit_time_enabled": "timeLimitS",
+        "limit_energy_enabled": "energyLimitS",
+        "limit_cost_enabled": "moneyLimitS",
+        "limit_disable_all": "suspendLimits",
+    }
+    profile = legacy_profile
+    # The 1.33 capture reports its flags only inside limitsStatus (8: schedule 1
+    # on); without that word the switches can only remember their last command.
+    reported = variant != "1.33-without-flag-word"
+    device_on = {"sh1Enabled"} if variant == "1.33-capture" else set()
+    if variant != "1.51-shaped":
+        path = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "fw133_charging_main.json"
+        main = json.loads(path.read_text(encoding="utf-8"))
+        if not reported:
+            del main["limitsStatus"]
+        profile = {
+            "family": "classic",
+            "main": {key: {"value": value} for key, value in main.items()},
+            "init": {"ESP_SW_version": {"value": 133}},
+        }
+
+    now = real_time.monotonic()
+    monkeypatch.setattr(common_command, "time", SimpleNamespace(monotonic=lambda: now))
+    entry = await _start(hass, aioclient_mock, profile, caplog, allow_writes=True)
+    assert entry.runtime_data.updater.is_legacy_firmware
+    entities = {entity.translation_key: entity for entity in _entities(hass, entry)}
+    ids = {key: entities[key].entity_id for key in flags}
+    for key, setting in flags.items():
+        state = hass.states.get(ids[key])
+        if reported:
+            assert state.state == ("on" if setting in device_on else "off")
+        else:
+            assert state.state == "unknown"
+        assert state.attributes.get("assumed_state", False) is (not reported)
+        start = len(aioclient_mock.mock_calls)
+        now += 1
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": ids[key]}, blocking=True,
+        )
+        _assert_legacy_write(aioclient_mock, start, setting, 1)
+        assert hass.states.get(ids[key]).state == "on"
+
+    start = len(aioclient_mock.mock_calls)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert not any(url.path == "/pageEvent" for _, url, _, _ in aioclient_mock.mock_calls[start:])
+    for key, entity_id in ids.items():
+        state = hass.states.get(entity_id)
+        if reported:
+            assert state.state == ("on" if flags[key] in device_on else "off")
+        else:
+            assert state.state == "on"
+        assert state.attributes.get("assumed_state", False) is (not reported)

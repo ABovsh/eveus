@@ -605,6 +605,21 @@ def test_reve_schedule_energy_writes_are_refused_without_a_request(monkeypatch: 
     assert charger.calls == []
 
 
+def test_reve_schedule_time_still_writes_the_graphql_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
+    charger = _Charger(_reve_main())
+    updater = _updater(monkeypatch, charger)
+    asyncio.run(updater._async_update_data())
+    updater._legacy_confirmed = True  # Even stale /init evidence cannot override REVE.
+    before = copy.deepcopy(charger.schedules)
+    charger.calls.clear()
+
+    assert asyncio.run(updater._command_manager.send_command("sh1Start", 60))
+    assert charger.paths() == ["/graphql", "/graphql"]
+    write = charger.calls[-1][1]
+    assert write["operationName"] == "UpdateStationData"
+    assert write["variables"] == {"input": {"scheduleV2": [{**before[0], "start": 60}, before[1]]}}
+
+
 def test_reve_settings_not_yet_moved_to_graphql_still_use_page_event(monkeypatch: pytest.MonkeyPatch) -> None:
     # One Charge, adaptive mode and minimum voltage moved to GraphQL
     # (test_reve_graphql_writes); these wait for a decision.

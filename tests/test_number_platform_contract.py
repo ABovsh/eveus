@@ -19,13 +19,19 @@ from custom_components.eveus import number as number_module
 from custom_components.eveus.ev_sensors import CachedSOCCalculator
 
 
-def _set_up_numbers(soc_mode: str = "advanced") -> tuple[dict, CachedSOCCalculator]:
+def _set_up_numbers(
+    soc_mode: str = "advanced",
+    *,
+    updater: EveusTestUpdater | None = None,
+) -> tuple[dict, CachedSOCCalculator]:
+    if updater is None:
+        updater = EveusTestUpdater({}, model="16A")
     calculator = CachedSOCCalculator()
     entry = SimpleNamespace(
         entry_id="entry-id",
-        data={"model": "16A", "soc_mode": soc_mode},
+        data={"model": updater.model, "soc_mode": soc_mode},
         runtime_data=SimpleNamespace(
-            updater=EveusTestUpdater({}, model="16A"),
+            updater=updater,
             device_number=1,
             soc_calculator=calculator,
         ),
@@ -106,3 +112,69 @@ def test_a_soc_input_change_signals_this_entrys_soc_sensors(
     asyncio.run(capacity.async_set_native_value(70))
 
     assert sent == [(capacity.hass, "eveus_soc_update_entry-id")]
+
+
+class _SocketUpdater(EveusTestUpdater):
+    is_legacy_firmware = True
+
+    @property
+    def legacy_socket_limited(self):
+        return self.snapshot.get_int("restricted_mode") == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "key"),
+    [
+        ("Charging Current", "currentSet"),
+        ("Schedule 1 Current limit", "sh1CurrentValue"),
+        ("Schedule 2 Current limit", "sh2CurrentValue"),
+    ],
+)
+def test_current_bounds_follow_the_household_socket_mode(name, key):
+    updater = _SocketUpdater({key: 12, "restricted_mode": "1"}, model="32A")
+    entities, _ = _set_up_numbers("basic", updater=updater)
+    entity = entities[name]
+    writes = []
+    entity.async_write_ha_state = lambda: writes.append(
+        # native_max_value: newer HA needs a platform to convert units for "max".
+        (entity.native_value, entity.native_max_value)
+    )
+    assert entity.native_max_value == 16
+    assert entity.native_value == 12
+    entity._handle_coordinator_update()
+    entity._handle_coordinator_update()
+    assert writes == [(12, 16)]
+
+    # Publish a bound-only change and a simultaneous value/bound change once each.
+    updater.data = {key: 12, "restricted_mode": 0}
+    entity._handle_coordinator_update()
+    assert writes[-1] == (12, 32)
+    updater.data = {key: 14, "restricted_mode": 1}
+    entity._handle_coordinator_update()
+    entity._handle_coordinator_update()
+    assert writes == [(12, 16), (12, 32), (14, 16)]
+
+    # Even if the latest poll has not reached the entity listener yet, clamp
+    # against the current snapshot when sending a queued write.
+    updater.data = {key: 14, "restricted_mode": 0}
+    asyncio.run(entity.async_set_native_value(25))
+    updater.data = {key: 25, "restricted_mode": 1}
+    asyncio.run(entity.async_set_native_value(25))
+    assert updater.commands == [(key, 25), (key, 16)]
+
+
+@pytest.mark.parametrize("flag", [{}, {"restricted_mode": -1}, {"restricted_mode": 2}])
+def test_missing_or_invalid_household_socket_flag_uses_the_normal_maximum(flag):
+    updater = _SocketUpdater(flag, model="40A")
+    entities, _ = _set_up_numbers("basic", updater=updater)
+    assert entities["Charging Current"].native_max_value == 40
+
+
+def test_household_socket_mode_keeps_a_16a_models_bound_and_ignores_energy_limits():
+    updater = _SocketUpdater({"restricted_mode": 1}, model="16A")
+    entities, _ = _set_up_numbers("basic", updater=updater)
+    assert entities["Charging Current"].native_max_value == 16
+    assert entities["Schedule 1 Current limit"].native_max_value == 16
+    assert entities["Schedule 2 Current limit"].native_max_value == 16
+    assert entities["Schedule 1 Energy limit"].native_max_value == 100
+    assert entities["Schedule 2 Energy limit"].native_max_value == 100

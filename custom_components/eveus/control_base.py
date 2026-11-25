@@ -84,6 +84,8 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         failure_prefix: str,
         extra: dict[str, Any] | None = None,
         preflight: Callable[[], bool] | None = None,
+        still_valid: Callable[[], bool] | None = None,
+        stale_message: str = "",  # pragma: no mutate - read only with still_valid, and its only caller passes both
     ) -> None:
         """Send one write while the display is pinned to the requested value.
 
@@ -93,6 +95,9 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
         rejected, raised or cancelled — the pin is released and the display
         re-resolved, so an older write can never leave its value behind.
         ``extra`` rides along as sibling form fields (e.g. OCPP's `ocppVendor`).
+        ``still_valid`` is checked right before every attempt, like ``preflight``,
+        but a veto is an error (``stale_message``): the value was encoded for a
+        firmware profile or a maximum that changed while the write waited.
         """
         # A write the charger would ignore or drop is refused with its reason
         # before anything is shown or sent (REVE's session limits).
@@ -108,8 +113,10 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             kwargs = {}
             if extra is not None:
                 kwargs["extra"] = extra
-            if preflight is not None:
-                kwargs["preflight"] = preflight
+            if preflight is not None or still_valid is not None:  # pragma: no mutate - `and` is the same for every caller: the one passing either passes both
+                kwargs["preflight"] = lambda: (preflight is None or preflight()) and (
+                    still_valid is None or still_valid()
+                )
             success = await self._updater.send_command(  # type: ignore[attr-defined]
                 self._command, device_value, **kwargs
             )
@@ -118,6 +125,8 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             if preflight is not None and not preflight():
                 superseded = True
                 return
+            if not success and still_valid is not None and not still_valid():
+                raise HomeAssistantError(stale_message)
             if not success:
                 raise command_failure(self._updater, rejected_message)
             self._set_optimistic_value(accepted)

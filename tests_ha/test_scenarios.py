@@ -13,7 +13,7 @@ import asyncio
 import json
 import re
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +31,7 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
+    async_mock_restore_state_shutdown_restart,
     mock_restore_cache,
 )
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
@@ -475,6 +476,72 @@ async def test_fw151(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     assert scenario.captures == snapshot
 
 
+async def test_fw1x_schedule_hold_without_a_car(hass, aioclient_mock, monkeypatch):
+    """1.x code 18 holds the charger for schedule 1 whether or not a car is in."""
+    charging = json.loads((_FIXTURES / "fw133_charging_main.json").read_text())
+    held = {**charging, "state": 18, "pilot": 1, "curMeas1": 0, "powerMeas": 0}
+    entry = _entry(hass, HOST_A)
+    _mock_charger(aioclient_mock, HOST_A, json=held)
+    aioclient_mock.post(f"http://{HOST_A}/init", json={"ESP_SW_version": 155})
+    await _setup(hass, entry)
+    scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
+    await scenario.poll(base=held)
+
+    assert hass.states.get("binary_sensor.eveus_ev_charger_car_connected").state == "off"
+    assert hass.states.get(STATE_SENSOR).state == "Standby"
+    assert hass.states.get(_entity_id(hass, entry, "schedule_1_enabled")).state == "on"
+
+    await scenario.poll(base={**held, "pilot": 2})
+    assert hass.states.get("binary_sensor.eveus_ev_charger_car_connected").state == "on"
+
+
+async def test_fw133_stop_and_resume(hass, aioclient_mock, monkeypatch):
+    charging, stopped, resumed = (
+        json.loads((_FIXTURES / f"fw133_{phase}_main.json").read_text())
+        for phase in ("charging", "after_stop", "after_resume")
+    )
+    entry = _entry(hass, HOST_A)
+    _mock_charger(aioclient_mock, HOST_A, json=charging)
+    aioclient_mock.post(f"http://{HOST_A}/init", json={"ESP_SW_version": 133})
+    await _setup(hass, entry)
+    scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
+    stop = _entity_id(hass, entry, "stop_charging")
+    counts = _count_state_changes(hass)
+    car_events: list[Event] = []
+    for event_type in (EVENT_CAR_CONNECTED, EVENT_CAR_DISCONNECTED):
+        hass.bus.async_listen(event_type, car_events.append)
+
+    assert scenario.updater.is_legacy_firmware
+    assert hass.states.get(STATE_SENSOR).state == "Charging"
+    assert hass.states.get(stop).state == "off"
+    await scenario.poll(base=charging)
+    assert counts.get(stop, 0) == 0
+
+    async def set_stop(service, value, reply, expected):
+        aioclient_mock.mock_calls.clear()
+        await scenario.call(f"switch.{service}", {"entity_id": stop})
+        ((_, _, body, headers),) = _calls(aioclient_mock, HOST_A, "/pageEvent")
+        assert headers["pageEvent"] == "evseEnabled"
+        assert body == f"evseEnabled={value}"
+
+        await scenario.poll(base=reply)
+        assert scenario.updater.snapshot.get_int("evseEnabled") == value
+        assert hass.states.get(stop).state == expected
+        writes = counts[stop]
+        await scenario.poll(base=reply)
+        assert counts[stop] == writes
+
+    await set_stop("turn_on", 1, stopped, "on")
+    assert hass.states.get(STATE_SENSOR).attributes["raw_state"] == 20
+    # 1.33 reports pilot 4 (unknown) after Stop; the car is still plugged in.
+    assert hass.states.get(STATE_SENSOR).state == "Connected"
+    await set_stop("turn_off", 0, resumed, "off")
+    assert hass.states.get(STATE_SENSOR).state == "Charging"
+    assert hass.states.get(STATE_SENSOR).attributes["raw_state"] == 3
+    assert counts[stop] == 2
+    assert car_events == []
+
+
 async def test_fw151_restart_with_car_plugged_in_fires_no_event(
     hass, aioclient_mock, monkeypatch
 ) -> None:
@@ -613,3 +680,74 @@ async def test_soc_disabled(hass, aioclient_mock, monkeypatch, snapshot) -> None
     float(state.state)
 
     assert scenario.captures == snapshot
+
+
+async def test_fw133_tariffs(hass, aioclient_mock, monkeypatch):
+    payload = json.loads((_FIXTURES / "fw133_charging_main.json").read_text())
+    entry = _entry(hass, HOST_A)
+    _mock_charger(aioclient_mock, HOST_A, json=payload)
+    aioclient_mock.post(f"http://{HOST_A}/init", json={"ESP_SW_version": 133})
+    await _setup(hass, entry)
+    scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
+    entities = {
+        key: _entity_id(hass, entry, key)
+        for key in ("primary_rate_cost", "rate_2_cost", "active_rate_cost", "rate_2_status")
+    }
+
+    def state(key):
+        return hass.states.get(entities[key])
+
+    assert state("primary_rate_cost").state == "4.32"
+    assert state("rate_2_cost").state == "2.16"
+    assert state("rate_2_status").state == "Enabled"
+    assert state("active_rate_cost").state == "2.16"
+    assert state("active_rate_cost").attributes["rate_name"] == "Rate 2"
+    snapshot = scenario.updater.snapshot
+    clock = datetime.fromtimestamp(snapshot.charger_wall_clock_s, UTC)
+    minute = clock.hour * 60 + clock.minute
+    start = snapshot.get_int("tarifAStart")
+    stop = snapshot.get_int("tarifAStop")
+    assert (start, stop) == (23 * 60, 7 * 60)
+    assert minute >= start or minute < stop
+
+    counts = _count_state_changes(hass)
+    await scenario.poll(base=payload)
+    assert all(counts.get(entity_id, 0) == 0 for entity_id in entities.values())
+    await scenario.poll(base=payload, systemTime=payload["systemTime"] + 8 * 3600, current_tarif=0)
+    assert state("active_rate_cost").state == "4.32"
+    assert counts[entities["active_rate_cost"]] == 1
+    assert all(counts.get(entities[key], 0) == 0 for key in ("primary_rate_cost", "rate_2_cost"))
+
+
+async def test_fw133_minimum_voltage(hass, aioclient_mock, monkeypatch, hass_storage):
+    payload = json.loads((_FIXTURES / "fw133_charging_main.json").read_text())
+    entry = _entry(hass, HOST_A)
+    _mock_charger(aioclient_mock, HOST_A, json=payload)
+    aioclient_mock.post(f"http://{HOST_A}/init", json={"ESP_SW_version": 133})
+    await _setup(hass, entry)
+    scenario = Scenario(hass, aioclient_mock, monkeypatch, HOST_A, entry)
+    entity_id = _entity_id(hass, entry, "minimum_voltage")
+    counts = _count_state_changes(hass)
+
+    state = hass.states.get(entity_id)
+    assert state.state == "unknown"
+    assert state.attributes["assumed_state"] is True
+    assert set(state.attributes["options"]) == {"150", "155", "160", "165", "170", "175", "180", "200"}
+
+    await scenario.call("select.select_option", {"entity_id": entity_id, "option": "175"})
+    ((_, _, body, headers),) = _calls(aioclient_mock, HOST_A, "/pageEvent")
+    assert (body, headers["pageEvent"]) == ("minVoltage=175", "minVoltage")
+    assert hass.states.get(entity_id).state == "175"
+
+    await scenario.poll(base=payload)
+    assert counts[entity_id] == 1
+
+    restore = await async_mock_restore_state_shutdown_restart(hass)
+    assert restore.last_states[entity_id].extra_data.as_dict() == {"last_legacy_command": 175}
+    aioclient_mock.post(f"http://{HOST_A}/init", json={"ESP_SW_version": 133})
+    request_count = len(_calls(aioclient_mock, HOST_A, "/pageEvent"))
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "175"
+    assert hass.states.get(entity_id).attributes["assumed_state"] is True
+    assert len(_calls(aioclient_mock, HOST_A, "/pageEvent")) == request_count

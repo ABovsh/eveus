@@ -161,7 +161,7 @@ _ABSENT_RECOVERED = True
 
 def _at_least(key: str, threshold: float) -> Signal:
     def evaluate(snapshot: EveusSnapshot) -> bool | None:
-        if not snapshot.supports(key):
+        if not snapshot.supports(key) or key in snapshot.informational:  # pragma: no mutate - built at import with POLICIES (see above); pinned by the leakage policy tests
             return _ABSENT_TRIGGER
         value = snapshot.get(key)
         return None if value is None else value >= threshold
@@ -181,7 +181,7 @@ def _at_most(key: str, threshold: float) -> Signal:
 
 def _below(key: str, threshold: float) -> Signal:
     def evaluate(snapshot: EveusSnapshot) -> bool | None:
-        if not snapshot.supports(key):
+        if not snapshot.supports(key) or key in snapshot.informational:  # pragma: no mutate - built at import with POLICIES (see above); pinned by the leakage policy tests
             return _ABSENT_RECOVERED
         value = snapshot.get(key)
         return None if value is None else value < threshold

@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.32.0 - 2026-11-25
+
+### ✨ New
+
+- **Eveus 1.x and 2.x: Household Socket 16 A switch.** When enabled, Home Assistant caps the charging current and both schedule current limits at 16 A. Tap the household socket item in the card's Safety row to switch between 16 A and full current. The card asks for confirmation before allowing full current.
+
+### 🐛 Fixed
+
+- **Card: the time zone is no longer cut off on a phone.** The time zone is sized to the text it shows; when the Charger clock row is still short of space, it hides icons, the section label and the Sync text instead.
+- **Card: the last session's figures are separated and a little smaller,** so energy, cost, duration and voltage no longer run together.
+- **REVE Leakage Current shows the leakage in whole mA, as the charger's display shows it,** on REVE_PLUS 1.0.5 with controller GRM070A-R3.05.7. It is for information only: no notice or colour comes from it, and the card's Safety row shows it without colour. Other REVE versions keep it unavailable; Leakage Current Peak stays unavailable because REVE reports no such reading.
+- **Eveus 2.x is supported like 1.x.** Chargers of the second hardware generation were treated as newer firmware, so their controls and states were read the wrong way.
+- **Eveus 1.x is recognized even when the charger does not answer at Home Assistant startup.** The firmware check is retried every 5 minutes; until then controls used the newer firmware form.
+- **Eveus 1.x schedule, limit and Stop Charging switches show the charger's real state.** Home Assistant reads them from the charger's combined status, also on 1.x versions that do not report each switch separately; the card offers Stop while charging and Resume after a user stop. Early 1.x versions accept these switches only from the charger's own page; update to the latest 1.x firmware to change them from Home Assistant.
+- **Eveus 1.x schedules can be viewed and edited in Home Assistant.** The integration reads and writes both schedules' times, current limits, and energy limits using the charger's settings.
+- **Eveus 1.x limits match the charger's page.** Limit: Energy is set in kWh (a limit set from Home Assistant was 1000 times too large) and moves in 0.5 kWh steps, energy and cost limits keep fractions (10.5 kWh was sent as 10), and Limit: Time goes up to 96 hours in 1-minute steps.
+- **Eveus 1.x Car Connected follows the charger.** During a Stop or a schedule or limit hold, it is unknown if the pilot signal is indeterminate. Stop and Resume no longer report the car disconnecting and reconnecting. A hold with no car plugged in shows Standby instead of Charge Complete.
+- **Eveus 1.x Adaptive Mode matches the charger's page.** It offers Auto 2, and Undervoltage threshold can be set from 150 to 220 V in 5 V steps.
+- **Eveus 1.x Minimum voltage shows the charger's setting.** Firmware 1.55 reports it; where the charger omits it, Home Assistant shows it as unknown until the first successful command and then remembers it.
+- **Eveus 1.x Ground Protection shows and sets the real state.** It showed on while protection was off, and turning it on turned protection off.
+- **Eveus 1.x tariff sensors show the configured prices and the active rate.** Tariff windows also apply to the estimated cost to reach the target SOC; schedule windows are left out of it while the charger's schedules are suspended.
+
 ## 4.31.1 - 2026-11-23
 
 ### 🐛 Fixed

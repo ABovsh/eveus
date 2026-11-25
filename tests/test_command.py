@@ -759,3 +759,52 @@ def test_stop_overtakes_waiting_settings_without_interrupting_inflight(monkeypat
 
     asyncio.run(scenario())
     assert session.calls[0]['data'] == 'pageevent=evseEnabled&evseEnabled=1'
+
+
+@pytest.mark.parametrize(
+    ("command", "setting", "value"),
+    [
+        ("sh1Start", "startSchedule1", 1380),
+        ("sh1Stop", "stopSchedule1", 420),
+        ("sh1CurrentValue", "currentSchedule1", 16),
+        ("sh1EnergyValue", "energySchedule1", 4.5),
+        ("sh2Start", "startSchedule2", 0),
+        ("sh2Stop", "stopSchedule2", 60),
+        ("sh2CurrentValue", "currentSchedule2", 12),
+        ("sh2EnergyValue", "energySchedule2", 0),
+    ],
+)
+@pytest.mark.parametrize("legacy", [True, False])
+def test_firmware_1x_schedule_writes_use_page_names(command, setting, value, legacy):
+    session = _Session(_Response())
+    updater = _Updater(session)
+    updater.is_legacy_firmware = legacy
+
+    assert asyncio.run(CommandManager(updater).send_command(command, value))
+    headers = {"Content-type": "application/x-www-form-urlencoded"}
+    body = f"pageevent={command}&{command}={value}"
+    if legacy:
+        headers["pageEvent"] = setting
+        body = f"{setting}={value}"
+    assert len(session.calls) == 1
+    assert session.calls[0]["data"] == body
+    assert session.calls[0]["headers"] == headers
+
+
+@pytest.mark.parametrize(("legacy", "value", "wire"), [
+    (True, 1, "groundCtrl=2"),
+    (True, 0, "groundCtrl=1"),
+    (False, 1, "pageevent=groundCtrl&groundCtrl=1"),
+    (False, 0, "pageevent=groundCtrl&groundCtrl=0"),
+])
+def test_firmware_1x_ground_protection_uses_the_page_values(legacy, value, wire) -> None:
+    """The 1.x page posts groundCtrl 2 for on and 1 for off; 3.x posts 1 and 0."""
+    session = _Session(_Response())
+    updater = _Updater(session)
+    updater.is_legacy_firmware = legacy
+    manager = CommandManager(updater)
+
+    assert asyncio.run(manager.send_command("groundCtrl", value)) is True
+
+    (call,) = session.calls
+    assert call["data"] == wire

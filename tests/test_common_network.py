@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -1035,18 +1036,18 @@ def test_legacy_firmware_stays_off_once_modern_was_seen() -> None:
 
 
 @pytest.mark.parametrize(
-    ("version", "last", "baseline_kept"),
+    ("init", "last", "baseline_kept"),
     [
-        (151, {"state": 2}, False),  # raw 2 read as Standby before the proof
-        (151, {"state": 7}, False),
-        (151, {"state": 3, common_network.LEGACY_RAW_STATE_KEY: 20}, True),  # already 1.x-read
-        (151, {"state": 5, common_network.LEGACY_RAW_STATE_KEY: 16}, True),
-        (151, {"state": 9}, True),  # not a code the proof re-reads
-        (305, {"state": 2}, True),  # not 1.x
+        ({"ESP_SW_version": 151}, {"state": 2}, False),  # raw 2 read as Standby before the proof
+        ({"ESP_SW_version": 151}, {"state": 7}, False),
+        ({"ESP_SW_version": 151}, {"state": 3, common_network.LEGACY_RAW_STATE_KEY: 20}, True),  # already 1.x-read
+        ({"ESP_SW_version": 151}, {"state": 5, common_network.LEGACY_RAW_STATE_KEY: 16}, True),
+        ({"ESP_SW_version": 151}, {"state": 9}, True),  # not a code the proof re-reads
+        ({"MCU_SW_version": 305}, {"state": 2}, True),  # not 1.x
     ],
 )
 def test_confirming_1x_starts_a_fresh_event_baseline(
-    version: int, last: dict, baseline_kept: bool, monkeypatch: pytest.MonkeyPatch,
+    init: dict, last: dict, baseline_kept: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codes 1, 2 and 4-7 change meaning once /init proves 1.x.
 
@@ -1055,7 +1056,7 @@ def test_confirming_1x_starts_a_fresh_event_baseline(
     invented car-connected event after every restart with the car plugged in.
     A baseline already read the 1.x way stays, so a real start still fires.
     """
-    session = _Session(_Response(payload={"ESP_SW_version": version}))
+    session = _Session(_Response(payload=init))
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
     updater.data = last
@@ -1073,14 +1074,21 @@ def test_confirming_1x_starts_a_fresh_event_baseline(
     [
         ({"ESP_SW_version": 151}, True),
         ({"ESP_SW_version": 199}, True),
-        ({"ESP_SW_version": 200}, False),
-        ({"ESP_SW_version": 305}, False),
+        # ESP_SW_version exists only before R3: 2.x (2.54) is the second
+        # hardware generation with the same Wi-Fi API as 1.x.
+        ({"ESP_SW_version": 200}, True),
+        ({"ESP_SW_version": 254}, True),
+        ({"ESP_SW_version": 254, "MCU_SW_version": 254}, True),
         ({"MCU_SW_version": 151}, True),
+        ({"MCU_SW_version": 199}, True),
+        ({"MCU_SW_version": 200}, False),
+        ({"MCU_SW_version": 305}, False),
         ({"ESP_SW_version": "151"}, False),
+        ({"ESP_SW_version": "254", "MCU_SW_version": 254}, False),
         ({}, False),
     ],
 )
-def test_init_version_below_2_confirms_firmware_1x(
+def test_init_version_confirms_pre_r3_firmware(
     init: dict, confirmed: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _Session(_Response(payload=init))
@@ -1191,6 +1199,7 @@ def test_emit_transition_events_first_poll_is_silent() -> None:
 def test_emit_transition_events_fires_charging_started() -> None:
     updater, bus = _updater_with_bus()
     updater._event_prev_state = common_network.DEVICE_STATE_STANDBY
+    updater._event_prev_plugged = False
 
     updater._emit_transition_events({"state": common_network.DEVICE_STATE_CHARGING})
 
@@ -1717,7 +1726,9 @@ def test_async_maybe_fetch_init_firmware_swallows_fetch_errors(
     asyncio.run(updater.async_maybe_fetch_init_firmware())  # must not raise
 
     assert updater._init_fw_fallback is None
-    assert updater._init_fw_fetch_done is True
+    # A transient failure re-arms the probe for a later poll (1.x proof).
+    assert updater._init_fw_fetch_done is False
+    assert updater._probe_fw_on_first_success is True
 
 
 def test_update_failed_carries_payload_rule_that_failed(
@@ -2198,3 +2209,887 @@ def test_a_probe_armed_on_a_shutting_down_coordinator_is_dropped(
     asyncio.run(updater._async_update_data())
 
     assert hass.tasks == []
+
+
+@pytest.mark.parametrize(
+    ("confirmed", "leading_fields", "reve_seen", "aliases_expected"),
+    [
+        (True, {}, False, True),
+        (False, {}, False, False),
+        (True, {"verFWMain": "R3.05.5"}, False, False),
+        (True, {"manufacturer": "REVE"}, False, False),
+        (True, {}, True, False),
+    ],
+)
+def test_firmware_1x_schedule_reads(
+    updater, confirmed, leading_fields, reve_seen, aliases_expected
+):
+    updater._legacy_confirmed = confirmed
+    updater._reve_seen = reve_seen
+    payload = {
+        **leading_fields,
+        "startSchedule1": 1380, "stopSchedule1": 420,
+        "currentSchedule1": 16, "energySchedule1": 4.5,
+        "startSchedule2": 0, "stopSchedule2": 60,
+        "currentSchedule2": 12, "energySchedule2": 0,
+    }
+    expected = dict(payload)
+    if aliases_expected:
+        expected.update(
+            evseEnabled=0,
+            sh1Start=1380, sh1Stop=420, sh1CurrentValue=16, sh1EnergyValue=4.5,
+            sh2Start=0, sh2Stop=60, sh2CurrentValue=12, sh2EnergyValue=0,
+        )
+    assert updater._normalize_legacy_device_state(payload) == expected
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected"),
+    [("charging", 0), ("after_stop", 1), ("after_resume", 0)],
+)
+def test_fw133_stop_flag_follows_raw_state(coordinator, fw133_main, phase, expected):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = fw133_main(phase)
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["evseEnabled"] == expected
+    assert updater.snapshot.get_int("evseEnabled") == expected
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected"), [("charging", 0), ("after_stop", 1)]
+)
+def test_fw133_stop_flag_after_init_confirms_first_main(
+    coordinator, fw133_main, phase, expected
+):
+    updater, session = coordinator
+    session.response.payload = fw133_main(phase)
+    updater.data = asyncio.run(updater._async_update_data())
+    assert updater.data["evseEnabled"] == 1
+
+    session.response.payload = {"ESP_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater.data["evseEnabled"] == expected
+    assert updater.snapshot.get_int("evseEnabled") == expected
+
+
+@pytest.mark.parametrize("filename", ["real_main_response.json", "reve_main_response.json"])
+def test_stop_normalization_leaves_modern_main_byte_identical(updater, filename):
+    payload = json.loads((Path(__file__).parent / "fixtures" / filename).read_text())
+    # Make a legacy rewrite observable even though neither payload has state 20.
+    payload["evseEnabled"] = 1
+    before = json.dumps(payload).encode()
+    updater._legacy_confirmed = True
+
+    assert json.dumps(updater._normalize_legacy_device_state(payload)).encode() == before
+
+
+@pytest.mark.parametrize(
+    ("confirmed", "markers", "reve_seen", "modern_seen"),
+    [
+        (False, {}, False, False),
+        (True, {"manufacturer": "REVE"}, False, False),
+        (True, {}, True, False),
+        (True, {}, False, True),
+    ],
+    ids=["unconfirmed", "reve-marker", "known-reve", "known-modern"],
+)
+def test_stop_normalization_leaves_other_markerless_main_byte_identical(
+    updater, confirmed, markers, reve_seen, modern_seen
+):
+    payload = {"state": 3, "evseEnabled": 1, **markers}
+    before = json.dumps(payload).encode()
+    updater._legacy_confirmed = confirmed
+    updater._reve_seen = reve_seen
+    updater._modern_firmware_seen = modern_seen
+
+    assert json.dumps(updater._normalize_legacy_device_state(payload)).encode() == before
+
+
+@pytest.mark.parametrize(
+    ("version", "rates", "expected"),
+    [
+        (133, (4.32, 2.16, 1.236), (432, 216, 124)),
+        (151, (432, 216, 123), (432, 216, 123)),
+        (151, (432.0, 216, 123), (432, 216, 123)),
+    ],
+    ids=["currency-floats", "1.51-integers", "1.51-integral-float"],
+)
+def test_firmware_1x_tariff_reads(coordinator, version, rates, expected):
+    updater, session = coordinator
+    session.response.payload = {"ESP_SW_version": version}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+    session.response.payload = {
+        "state": 2, "currentSet": 16,
+        "tarif": rates[0], "tarif_2": rates[1], "tarif_3": rates[2],
+        "tarif_2_status": 1, "tarif_3_status": 0,
+        "tarif_2_start": 1380, "tarif_2_stop": 420,
+        "tarif_3_start": 600, "tarif_3_stop": 720, "current_tarif": 2,
+    }
+    canonical = {
+        "tarif": expected[0], "tarifAValue": expected[1], "tarifBValue": expected[2],
+        "tarifAEnable": 1, "tarifBEnable": 0,
+        "tarifAStart": 1380, "tarifAStop": 420,
+        "tarifBStart": 600, "tarifBStop": 720, "activeTarif": 2,
+    }
+
+    data = asyncio.run(updater._async_update_data())
+    assert {key: data.get(key) for key in canonical} == canonical
+    assert all(type(data[key]) is int for key in canonical)
+
+
+def test_fw133_all_integer_tariff_rates_from_mcu_version(coordinator, fw133_main):
+    updater, session = coordinator
+    session.response.payload = {
+        **fw133_main("charging"), "tarif": 5, "tarif_2": 3, "tarif_3": 1,
+    }
+    updater.data = asyncio.run(updater._async_update_data())
+    session.response.payload = {"MCU_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert [
+        updater.snapshot.get(key) for key in ("tarif", "tarifAValue", "tarifBValue")
+    ] == [500, 300, 100]
+
+
+@pytest.mark.parametrize("fractional_key", ["tarif", "tarif_2", "tarif_3"])
+def test_fw140_tariff_currency_units_persist_after_fractional_rate(
+    coordinator, fw133_main, fractional_key
+):
+    updater, session = coordinator
+    session.response.payload = {"ESP_SW_version": 140}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    whole_rates = {**fw133_main("charging"), "tarif": 5, "tarif_2": 3, "tarif_3": 1}
+    canonical_keys = ("tarif", "tarifAValue", "tarifBValue")
+    session.response.payload = dict(whole_rates)
+    data = asyncio.run(updater._async_update_data())
+    assert [data[key] for key in canonical_keys] == [5, 3, 1]
+
+    session.response.payload = {
+        **whole_rates, fractional_key: whole_rates[fractional_key] + 0.25,
+    }
+    data = asyncio.run(updater._async_update_data())
+    assert [data[key] for key in canonical_keys] == [
+        whole_rates[key] * 100 + (25 if key == fractional_key else 0)
+        for key in ("tarif", "tarif_2", "tarif_3")
+    ]
+
+    session.response.payload = whole_rates
+    data = asyncio.run(updater._async_update_data())
+    assert [data[key] for key in canonical_keys] == [500, 300, 100]
+
+
+def test_firmware_1x_tariff_aliases_keep_present_canonical_keys(updater):
+    updater._legacy_confirmed = True
+    existing = {"tarifAValue": 0, "tarifBEnable": None, "activeTarif": 0}
+    payload = {
+        **existing, "state": 2, "tarif_2": 2.16, "tarif_3_status": 1, "current_tarif": 1,
+    }
+
+    data = updater._normalize_legacy_device_state(payload)
+
+    assert {key: data[key] for key in existing} == existing
+    assert "tarifBValue" not in data
+
+
+def test_firmware_1x_invalid_float_rates_do_not_break_main(coordinator):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = {
+        "state": 2, "currentSet": 16,
+        "tarif": float("nan"), "tarif_2": float("inf"), "tarif_3": 1e308,
+    }
+
+    asyncio.run(updater._async_update_data())
+
+    assert all(updater.snapshot.get(key) is None for key in ("tarif", "tarifAValue", "tarifBValue"))
+
+
+@pytest.mark.parametrize(
+    ("marker", "confirmed", "modern_seen", "reve_seen"),
+    [
+        ({"verFWMain": "1PGRW001A-R3.05.8"}, True, False, False),
+        ({"manufacturer": "REVE"}, True, False, False),
+        ({}, True, True, False),
+        ({}, True, False, True),
+        ({}, False, False, False),
+    ],
+    ids=["3.x", "reve-marker", "known-3.x", "known-reve", "unconfirmed"],
+)
+def test_tariff_normalization_leaves_non_1x_main_byte_identical(
+    updater, marker, confirmed, modern_seen, reve_seen
+):
+    updater._legacy_confirmed = confirmed
+    updater._modern_firmware_seen = modern_seen
+    updater._reve_seen = reve_seen
+    payload = {
+        **marker, "state": 0, "tarif": 4.32, "tarif_2": 2.16, "tarif_3": 1.23,
+        "tarif_2_status": 1, "tarifAValue": 216, "current_tarif": 1,
+    }
+    before = json.dumps(payload).encode()
+
+    assert json.dumps(updater._normalize_legacy_device_state(payload)).encode() == before
+
+
+def test_fw133_rate_sensor_values_after_init(coordinator, fw133_main):
+    from custom_components.eveus.sensor_definitions import (
+        get_active_rate_cost,
+        get_primary_rate_cost,
+        get_rate2_cost,
+        get_rate3_cost,
+    )
+
+    updater, session = coordinator
+    session.response.payload = fw133_main("charging")
+    updater.data = asyncio.run(updater._async_update_data())
+    session.response.payload = {"ESP_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert get_primary_rate_cost(updater, None) == 4.32
+    assert get_rate2_cost(updater, None) == 2.16
+    assert get_rate3_cost(updater, None) == 1.00
+    assert get_active_rate_cost(updater, None) == 2.16
+    assert updater.snapshot.get_int("tarifAStart") == 23 * 60
+    assert updater.snapshot.get_int("tarifAStop") == 7 * 60
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(2, 1), (1, 0), (7, None)])
+def test_firmware_1x_ground_protection_reads_the_page_values(updater, raw, expected):
+    """1.x /main reports groundCtrl 2 = on and 1 = off (js/scriptUA.js)."""
+    updater._legacy_confirmed = True
+    data = updater._normalize_legacy_device_state({"state": 1, "pilot": 1, "groundCtrl": raw})
+    assert data.get("groundCtrl") == expected
+
+
+def test_ground_protection_reads_stay_raw_without_1x_proof(updater):
+    data = updater._normalize_legacy_device_state({"state": 1, "pilot": 1, "groundCtrl": 1})
+    assert data["groundCtrl"] == 1
+
+
+@pytest.mark.parametrize(("pilot", "expected"), [(4, 3), (0, 3), (6, 3), (1, 2), (2, 3)])
+def test_fw133_stop_keeps_the_car_while_the_pilot_is_unknown(
+    coordinator, fw133_main, pilot, expected
+):
+    """1.33 reports pilot 4 (state F, shown as unknown on its page) after Stop.
+
+    The car seen while charging is still there: the Stop must not read as
+    Standby and fire a car-disconnected event, then a car-connected one on Resume.
+    """
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = fw133_main("charging")
+    asyncio.run(updater._async_update_data())
+    stopped = {**fw133_main("after_stop"), "pilot": pilot}
+    session.response.payload = stopped
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["state"] == expected
+
+
+def test_stop_with_unknown_pilot_and_no_history_stays_standby(updater):
+    updater._legacy_confirmed = True
+    data = updater._normalize_legacy_device_state({"state": 20, "pilot": 4})
+    assert data["state"] == 2
+
+
+def test_init_probe_retries_after_a_transient_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One failed /init must not leave a 1.x charger on the modern contract.
+
+    /init is the only proof of 1.x; the command form, Stop and the field names
+    all depend on it. A timeout at startup is retried on a later poll.
+    """
+    clock = [1000.0]
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
+    main = {"state": 2, "currentSet": 16, "pilot": 2}
+    replies = {"/init": asyncio.TimeoutError()}
+
+    class _Routed(_Session):
+        def post(self, url: str, **kwargs: object) -> _Response:
+            self.calls.append({"url": url, **kwargs})
+            if url.endswith("/init"):
+                reply = replies["/init"]
+                if isinstance(reply, Exception):
+                    raise reply
+                return _Response(payload=reply)
+            return _Response(payload=main)
+
+    session = _Routed(_Response())
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+
+    async def poll() -> None:
+        updater.data = await updater._async_update_data()
+        await asyncio.gather(*hass.tasks)
+        hass.tasks.clear()
+
+    async def scenario() -> None:
+        await poll()
+        await updater.async_maybe_fetch_init_firmware()
+        assert not updater._legacy_confirmed
+        replies["/init"] = {"ESP_SW_version": 133}
+        await poll()  # too soon: no second request yet
+        assert sum(call["url"].endswith("/init") for call in session.calls) == 1
+        clock[0] += 300  # due exactly at the retry time
+        await poll()
+
+    asyncio.run(scenario())
+
+    assert sum(call["url"].endswith("/init") for call in session.calls) == 2
+    assert updater._legacy_confirmed
+    assert updater.is_legacy_firmware
+
+
+def test_init_probe_does_not_retry_a_definite_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
+    session = _Session(_Response(payload={"state": 2, "currentSet": 16}))
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
+    hass = _TaskHass()
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass)
+
+    async def scenario() -> None:
+        updater.data = await updater._async_update_data()
+        await updater.async_maybe_fetch_init_firmware()  # /main reply, no version
+        clock[0] += 3600
+        updater.data = await updater._async_update_data()
+        await asyncio.gather(*hass.tasks)
+
+    asyncio.run(scenario())
+
+    assert hass.tasks == []
+
+
+@pytest.mark.parametrize(("status", "retried"), [(404, False), (500, True), (503, True)])
+def test_init_probe_retry_depends_on_the_http_status(
+    monkeypatch: pytest.MonkeyPatch, status: int, retried: bool
+) -> None:
+    """A charger without /init answers 404 for good; a 5xx is transient."""
+    error = common_network.aiohttp.ClientResponseError(
+        request_info=None, history=(), status=status
+    )
+
+    class _Rejecting(_Session):
+        def post(self, url: str, **kwargs: object) -> _Response:
+            raise error
+
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: _Rejecting(_Response()))
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._init_fw_fetch_done is not retried
+    assert updater._probe_fw_on_first_success is retried
+
+
+def test_fw133_stop_without_a_pilot_keeps_the_car(coordinator, fw133_main):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = fw133_main("charging")
+    asyncio.run(updater._async_update_data())
+    stopped = fw133_main("after_stop")
+    del stopped["pilot"]
+    session.response.payload = stopped
+
+    assert asyncio.run(updater._async_update_data())["state"] == 3
+
+
+def test_confirming_1x_rebuilds_the_snapshot_for_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The snapshot rebuilt when /init confirms 1.x keeps the 16 A bounds."""
+    replies = {
+        "/main": {"state": 2, "currentSet": 16, "pilot": 1, "currentSchedule1": 30},
+        "/init": {"ESP_SW_version": 151},
+    }
+
+    class _Routed(_Session):
+        def post(self, url: str, **kwargs: object) -> _Response:
+            return _Response(payload=replies["/init" if url.endswith("/init") else "/main"])
+
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: _Routed(_Response()))
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass(), model="16A")
+
+    async def scenario() -> None:
+        updater.data = await updater._async_update_data()
+        await updater.async_maybe_fetch_init_firmware()
+
+    asyncio.run(scenario())
+
+    assert updater.is_legacy_firmware
+    assert updater.data["sh1CurrentValue"] == 30  # the 1.x name is resolved
+    assert "sh1CurrentValue" not in updater.snapshot.values  # above the 16 A model
+
+
+# limitsStatus bit map, shared by the old and new 1.x pages and every pre-R3 ESP
+# build (133, 155, 254): see the 1.x Wi-Fi app images in the firmware archive.
+_LIMITS_STATUS_BITS = {
+    "energyLimitS": 0, "timeLimitS": 1, "moneyLimitS": 2,
+    "sh1Enabled": 3, "sh2Enabled": 4, "sh1EnergyEnable": 5, "sh1CurrentEnable": 6,
+    "sh2EnergyEnable": 7, "sh2CurrentEnable": 8, "evseEnabled": 9,
+    "suspendLimits": 10, "delayedLimit": 11, "suspendErrors": 12, "suspendSchedules": 13,
+}
+
+
+@pytest.mark.parametrize(("key", "bit"), sorted(_LIMITS_STATUS_BITS.items()))
+def test_1x_flags_come_from_limits_status_bits(updater, key, bit):
+    updater._legacy_confirmed = True
+    # Explicit keys disagree with the word; 1.33 holds evseEnabled at 1 for good.
+    payload = {"state": 2, "limitsStatus": 1 << bit, **dict.fromkeys(_LIMITS_STATUS_BITS, 0)}
+    payload["evseEnabled"] = 0 if key == "evseEnabled" else 1
+
+    data = updater._normalize_legacy_device_state(payload)
+
+    assert {k: data[k] for k in _LIMITS_STATUS_BITS} == {
+        k: int(k == key) for k in _LIMITS_STATUS_BITS
+    }
+
+
+def test_1x_stop_held_by_a_schedule_reads_the_stop_bit(updater):
+    """Stop pressed while schedule 1 holds the charger: code 18, not 20."""
+    updater._legacy_confirmed = True
+
+    data = updater._normalize_legacy_device_state(
+        {"state": 18, "pilot": 1, "limitsStatus": 520}
+    )
+
+    assert (data["evseEnabled"], data["sh1Enabled"]) == (1, 1)
+
+
+def test_fw133_schedule_flag_is_read_back(coordinator, fw133_main):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = fw133_main("charging")
+
+    asyncio.run(updater._async_update_data())
+
+    snapshot = updater.snapshot
+    assert (snapshot.get_int("sh1Enabled"), snapshot.get_int("timeLimitS")) == (1, 0)
+
+
+@pytest.mark.parametrize("word", [-1, 1 << 16, 8.5, "8", True])
+def test_1x_unusable_limits_status_falls_back_to_the_stop_code(updater, word):
+    updater._legacy_confirmed = True
+
+    data = updater._normalize_legacy_device_state(
+        {"state": 20, "pilot": 2, "limitsStatus": word}
+    )
+
+    assert data["evseEnabled"] == 1
+    assert "sh1Enabled" not in data
+
+
+@pytest.mark.parametrize("code", [15, 16, 17, 18, 19])
+@pytest.mark.parametrize(
+    ("pilot", "expected_state"),
+    [(1, 2), (2, 5), (3, 5), (None, 5)],
+    ids=["no-car", "car-B", "car-C", "no-pilot-yet"],
+)
+def test_1x_limit_and_schedule_holds_follow_the_car(updater, code, pilot, expected_state):
+    """A 1.x schedule or limit hold happens with or without a car plugged in."""
+    payload = {"state": code}
+    if pilot is not None:
+        payload["pilot"] = pilot
+
+    data = updater._normalize_legacy_device_state(payload)
+
+    assert data["state"] == expected_state
+    assert data["subState"] == common_network._LEGACY_STATE_MAP[code][1]
+
+
+def test_1x_hold_keeps_the_car_through_an_unknown_pilot(updater):
+    updater._normalize_legacy_device_state({"state": 18, "pilot": 1})
+
+    data = updater._normalize_legacy_device_state({"state": 18, "pilot": 4})
+
+    assert data["state"] == 2
+
+
+def test_slow_init_confirmation_keeps_the_poll_that_arrived_meanwhile(updater, monkeypatch):
+    """/init returns after a newer /main: the newer reading must survive."""
+    updater.data = updater._normalize_legacy_device_state(
+        {"state": 18, "pilot": 1, "limitsStatus": 8}
+    )
+    newer = {"state": 18, "pilot": 2, "limitsStatus": 520}
+
+    async def slow_init(*args, **kwargs):
+        updater.data = updater._normalize_legacy_device_state(dict(newer))
+        return {"ESP_SW_version": 155}
+
+    monkeypatch.setattr(common_network, "fetch_json", slow_init)
+    monkeypatch.setattr(updater, "get_session", lambda: None)
+    monkeypatch.setattr(updater, "async_update_listeners", lambda: None)
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert (updater.data["pilot"], updater.data["evseEnabled"]) == (2, 1)
+    assert updater.snapshot.get_int("evseEnabled") == 1
+
+
+def test_1x_confirmation_forgets_a_charging_reading_taken_before_it(coordinator):
+    """Raw 4 is a pilot fault on 1.x but Charging on newer firmware.
+
+    Read before /init, it must not leave a session that a later plug-in
+    "finishes" with an invented charging_finished event.
+    """
+    updater, session = coordinator
+    fired = []
+    updater.hass.bus = SimpleNamespace(async_fire=lambda event, data=None: fired.append(event))
+    session.response.payload = {"state": 4, "currentSet": 16, "powerMeas": 0}
+    updater.data = asyncio.run(updater._async_update_data())
+
+    session.response.payload = {"ESP_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+    for state in (1, 2):
+        session.response.payload = {"state": state, "currentSet": 16, "pilot": 1 if state == 1 else 2}
+        updater.data = asyncio.run(updater._async_update_data())
+
+    assert common_network.EVENT_CHARGING_FINISHED not in fired
+
+
+def test_1x_confirmation_applies_one_charge_to_the_first_reply(coordinator):
+    updater, session = coordinator
+    session.response.payload = {"state": 2, "currentSet": 16, "one_charge": 1, "oneCharge": 0}
+    updater.data = asyncio.run(updater._async_update_data())
+    assert updater.data["oneCharge"] == 0
+
+    session.response.payload = {"ESP_SW_version": 133}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater.snapshot.get_int("oneCharge") == 1
+
+
+@pytest.mark.parametrize(("word", "flag"), [(0, 0), (0xFFFF, 1)])
+def test_1x_limits_status_bounds_are_both_valid_words(updater, word, flag):
+    """0 (nothing set) and 0xFFFF (every bit) are words, not missing ones."""
+    updater._legacy_confirmed = True
+
+    data = updater._normalize_legacy_device_state(
+        {"state": 20, "pilot": 2, "limitsStatus": word}
+    )
+
+    assert {k: data[k] for k in _LIMITS_STATUS_BITS} == dict.fromkeys(_LIMITS_STATUS_BITS, flag)
+
+
+@pytest.mark.parametrize("pilot", [0, 4, 6])
+@pytest.mark.parametrize(("previous_pilot", "canonical_state"), [(None, 5), (2, 5), (1, 2)])
+def test_legacy_hold_reports_unknown_current_pilot(coordinator, pilot, previous_pilot, canonical_state):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    if previous_pilot is not None:
+        session.response.payload = {"state": 18, "pilot": previous_pilot, "currentSet": 16}
+        updater.data = asyncio.run(updater._async_update_data())
+    session.response.payload = {"state": 18, "pilot": pilot, "currentSet": 16}
+    updater.data = asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.state == canonical_state
+    assert updater.snapshot.session_active is False
+    from custom_components.eveus.binary_sensor import BINARY_SENSORS
+
+    assert BINARY_SENSORS[0].is_on_fn(updater.snapshot) is None
+
+
+@pytest.mark.parametrize(("pilot", "connected"), [(1, False), (2, True), (3, True), (5, True), (None, True)])
+def test_legacy_hold_preserves_existing_presence_for_other_pilots(coordinator, pilot, connected):
+    updater, session = coordinator
+    updater._legacy_confirmed = True
+    session.response.payload = {"state": 18, "pilot": pilot, "currentSet": 16}
+    updater.data = asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.plugged_in is connected
+
+
+@pytest.mark.parametrize("firmware", [None, "R3.05.8"])
+def test_unconfirmed_and_modern_presence_still_uses_state(coordinator, firmware):
+    updater, session = coordinator
+    if firmware:
+        updater._legacy_confirmed = True
+    session.response.payload = {"state": 5, "pilot": 4, "currentSet": 16}
+    if firmware:
+        session.response.payload["verFWMain"] = firmware
+    updater.data = asyncio.run(updater._async_update_data())
+
+    assert updater.snapshot.plugged_in is True
+
+
+@pytest.mark.parametrize(
+    ("initial_version", "recovered_version", "recovered_tarif", "expected"),
+    [(133, 155, 432, 432), (133, 133, 4, 400), (140, 140, 4, 400), (155, 155, 464, 464)],
+)
+def test_legacy_tariff_units_on_first_poll_after_gap(
+    monkeypatch, initial_version, recovered_version, recovered_tarif, expected
+):
+    tariff = 432 if initial_version == 155 else 4.32
+    replies = {"/init": {"ESP_SW_version": initial_version}}
+
+    async def fetch(_session, url, **kwargs):
+        if url.endswith("/init"):
+            init_calls.append(url)
+            return replies["/init"]
+        if isinstance(replies["/main"], Exception):
+            raise replies["/main"]
+        return dict(replies["/main"])
+
+    init_calls = []
+    monkeypatch.setattr(common_network, "fetch_json", fetch)
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: object())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _TaskHass())
+
+    async def scenario():
+        replies["/main"] = {
+            "state": 2, "currentSet": 16, "tarif": tariff, "tarif_2": tariff, "tarif_3": tariff,
+        }
+        updater.data = await updater._async_update_data()
+        await updater.async_maybe_fetch_init_firmware()
+        assert updater.snapshot.get_int("tarif") == 432
+        first_main = replies["/main"]
+        replies["/main"] = asyncio.TimeoutError()
+        with pytest.raises(UpdateFailed):
+            await updater._async_update_data()
+        assert len(init_calls) == 1
+
+        replies["/init"] = {"ESP_SW_version": recovered_version}
+        replies["/main"] = {
+            **first_main, "tarif": recovered_tarif, "tarif_2": recovered_tarif,
+            "tarif_3": recovered_tarif,
+        }
+        for _ in range(2):
+            updater.data = await updater._async_update_data()
+            assert tuple(updater.snapshot.get_int(key) for key in ("tarif", "tarifAValue", "tarifBValue")) == (
+                expected, expected, expected,
+            )
+        assert len(init_calls) == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("init_voltage", "main_voltage", "expected"),
+    [(150, None, "150"), (175, None, "175"), (200, None, "200"),
+     (190, None, None), (175.5, None, None), (True, None, None), (None, None, None),
+     (175, 180, "180")],
+)
+def test_legacy_minimum_voltage_uses_valid_init_readback(coordinator, monkeypatch, init_voltage, main_voltage, expected):
+    from custom_components.eveus.select import EveusMinVoltageSelect
+
+    updater, session = coordinator
+    main = {"state": 2, "currentSet": 16}
+    if main_voltage is not None:
+        main["minVoltage"] = main_voltage
+
+    async def scenario():
+        session.response.payload = main
+        updater.data = await updater._async_update_data()
+        session.response.payload = {"ESP_SW_version": 155, "httpPassword": "fake-secret"}
+        if init_voltage is not None:
+            session.response.payload["minVoltage"] = init_voltage
+        await updater.async_maybe_fetch_init_firmware()
+        entity = EveusMinVoltageSelect(updater)
+        assert entity.assumed_state is (expected is None)
+        assert entity.current_option == expected
+        assert "httpPassword" not in updater.data
+
+    asyncio.run(scenario())
+
+
+def test_legacy_minimum_voltage_keeps_accepted_write_after_poll(coordinator, monkeypatch):
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.eveus.select import EveusMinVoltageSelect
+
+    updater, session = coordinator
+    schedule_refresh = Mock()
+    monkeypatch.setattr(EveusUpdater, "_schedule_post_command_refresh", lambda self: schedule_refresh())
+
+    async def scenario():
+        main = {"state": 2, "currentSet": 16}
+        session.response.payload = main
+        updater.data = await updater._async_update_data()
+        session.response.payload = {"ESP_SW_version": 155, "minVoltage": 175}
+        await updater.async_maybe_fetch_init_firmware()
+        entity = EveusMinVoltageSelect(updater)
+        entity.async_write_ha_state = Mock()
+
+        await entity.async_select_option("180")
+        schedule_refresh.assert_called_once_with()
+        session.response.payload = main
+        updater.data = await updater._async_update_data()
+        entity._optimistic_value_time -= 1000
+        entity._handle_coordinator_update()
+        assert updater.snapshot.get("minVoltage") == 180
+        assert entity.current_option == "180"
+        assert entity.assumed_state is False
+
+        async def reject(*args, **kwargs):
+            return False
+
+        monkeypatch.setattr(updater._command_manager, "send_command", reject)
+        with pytest.raises(HomeAssistantError):
+            await entity.async_select_option("155")
+        updater.data = await updater._async_update_data()
+        entity._handle_coordinator_update()
+        assert updater.snapshot.get("minVoltage") == 180
+        assert entity.current_option == "180"
+
+    asyncio.run(scenario())
+
+
+def test_1x_confirmation_marks_car_unknown_on_the_first_reply(coordinator):
+    """The snapshot rebuilt by /init must already know it is reading 1.x."""
+    updater, session = coordinator
+    session.response.payload = {"state": 18, "pilot": 4, "currentSet": 16, "limitsStatus": 8}
+    updater.data = asyncio.run(updater._async_update_data())
+    assert updater.snapshot.plugged_in is not None
+
+    session.response.payload = {"ESP_SW_version": 155}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater.snapshot.plugged_in is None
+
+
+def test_non_1x_init_minimum_voltage_is_not_projected(coordinator):
+    updater, session = coordinator
+    session.response.payload = {"MCU_SW_version": 305, "minVoltage": 175}
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+    assert updater._legacy_min_voltage is None
+
+
+def test_1x_minimum_voltage_write_during_init_beats_the_stale_reply(updater, monkeypatch):
+    """A write accepted while /init is in flight wins over that reply."""
+    updater._legacy_confirmed = True
+    updater.data = {"state": 2, "currentSet": 16}
+    monkeypatch.setattr(EveusUpdater, "_schedule_post_command_refresh", lambda self: None)
+
+    async def accept(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(updater._command_manager, "send_command", accept)
+
+    async def slow_init(*args, **kwargs):
+        assert await updater.send_command("minVoltage", 180)
+        return {"ESP_SW_version": 155, "minVoltage": 175}
+
+    monkeypatch.setattr(common_network, "fetch_json", slow_init)
+    monkeypatch.setattr(updater, "get_session", lambda: None)
+    monkeypatch.setattr(updater, "async_update_listeners", lambda: None)
+
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+
+    assert updater._legacy_min_voltage != 175
+
+
+def _gap_harness(monkeypatch):
+    """A confirmed 1.x charger with a scripted /main and /init, and its init calls."""
+    replies = {"/init": {"ESP_SW_version": 155}, "/main": {"state": 2, "currentSet": 16}}
+    init_calls = []
+
+    async def fetch(_session, url, **kwargs):
+        if url.endswith("/init"):
+            init_calls.append(url)
+            if isinstance(replies["/init"], Exception):
+                raise replies["/init"]
+            return replies["/init"]
+        if isinstance(replies["/main"], Exception):
+            raise replies["/main"]
+        return dict(replies["/main"])
+
+    import aiohttp
+
+    class _NoGraphQL:
+        def post(self, *args, **kwargs):
+            raise aiohttp.ClientConnectionError("no GraphQL in this test")
+
+    monkeypatch.setattr(common_network, "fetch_json", fetch)
+    monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: _NoGraphQL())
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _TaskHass())
+    return updater, replies, init_calls
+
+
+async def _confirm_then_gap(updater, replies):
+    updater.data = await updater._async_update_data()
+    await updater.async_maybe_fetch_init_firmware()
+    good = replies["/main"]
+    replies["/main"] = asyncio.TimeoutError()
+    with pytest.raises(UpdateFailed):
+        await updater._async_update_data()
+    replies["/main"] = good
+
+
+@pytest.mark.parametrize(
+    "marker", [{"manufacturer": "Reve"}, {"verFWMain": "R3.05.8"}], ids=["reve", "modern"]
+)
+def test_1x_gap_recovery_skips_init_for_a_non_1x_reply(monkeypatch, marker):
+    updater, replies, init_calls = _gap_harness(monkeypatch)
+
+    async def scenario():
+        await _confirm_then_gap(updater, replies)
+        replies["/main"] = {"state": 2, "currentSet": 16, **marker}
+        try:
+            await updater._async_update_data()
+        except UpdateFailed:
+            pass
+
+    asyncio.run(scenario())
+    assert len(init_calls) == 1
+
+
+def test_1x_gap_recovery_retries_a_failed_init_at_its_retry_time(monkeypatch):
+    updater, replies, init_calls = _gap_harness(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
+
+    async def scenario():
+        await _confirm_then_gap(updater, replies)
+        replies["/init"] = asyncio.TimeoutError()
+        await updater._async_update_data()
+        assert len(init_calls) == 2
+        replies["/init"] = {"ESP_SW_version": 155}
+        clock[0] = updater._init_fw_retry_at - 1
+        await updater._async_update_data()
+        assert len(init_calls) == 2
+        clock[0] = updater._init_fw_retry_at
+        await updater._async_update_data()
+        assert len(init_calls) == 3
+        await updater._async_update_data()
+        assert len(init_calls) == 3
+
+    asyncio.run(scenario())
+
+
+def test_1x_other_commands_leave_the_minimum_voltage_alone(updater, monkeypatch):
+    updater._legacy_confirmed = True
+    updater.data = {"state": 2, "currentSet": 16}
+    assert updater.is_legacy_firmware
+    updater._legacy_min_voltage = 175
+    monkeypatch.setattr(EveusUpdater, "_schedule_post_command_refresh", lambda self: None)
+
+    async def accept(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(updater._command_manager, "send_command", accept)
+    asyncio.run(updater.send_command("currentSet", 16))
+    assert updater._legacy_min_voltage == 175
+
+
+def test_1x_second_minimum_voltage_write_during_init_also_beats_the_stale_reply(updater, monkeypatch):
+    updater._legacy_confirmed = True
+    updater.data = {"state": 2, "currentSet": 16}
+    monkeypatch.setattr(EveusUpdater, "_schedule_post_command_refresh", lambda self: None)
+
+    async def accept(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(updater._command_manager, "send_command", accept)
+    asyncio.run(updater.send_command("minVoltage", 170))
+
+    async def slow_init(*args, **kwargs):
+        assert await updater.send_command("minVoltage", 180)
+        return {"ESP_SW_version": 155, "minVoltage": 175}
+
+    monkeypatch.setattr(common_network, "fetch_json", slow_init)
+    monkeypatch.setattr(updater, "get_session", lambda: None)
+    monkeypatch.setattr(updater, "async_update_listeners", lambda: None)
+    asyncio.run(updater.async_maybe_fetch_init_firmware())
+    assert updater._legacy_min_voltage != 175

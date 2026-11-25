@@ -94,6 +94,8 @@ class _Entry:
 
 
 class _Updater(OutageClock):
+    is_legacy_firmware = False
+
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.args = args
         self.kwargs = kwargs

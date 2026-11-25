@@ -2,7 +2,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from conftest import SnapshotBackedMock as _MockUpdater
+from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 from conftest import snapshot_of as _snapshot_of
+from custom_components.eveus.common_network import EveusUpdater
 from custom_components.eveus.ev_sensors import CachedSOCCalculator
 from custom_components.eveus.snapshot import EveusSnapshot
 from custom_components.eveus.soc_limit import EVENT_SOC_LIMIT_REACHED, SocLimitController
@@ -100,6 +102,32 @@ def test_fires_ha_event_only_after_evse_disabled_confirmed():
     assert data["device_number"] == 1
     assert data["soc"] == 80
     assert data["target_soc"] == 80
+
+
+def test_fw133_soc_limit_confirms_stop_from_raw_state_20(fw133_main):
+    normalizer = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, MagicMock())
+    normalizer._legacy_confirmed = True
+    updater = _updater()
+    ctrl, _, events = _make(_calc(target=20), updater)
+    ctrl.set_enabled(True)
+
+    # Supply the controller's master-limit precondition, absent from this capture.
+    updater.data = normalizer._normalize_legacy_device_state(
+        dict(fw133_main("charging"), suspendLimits=0)
+    )
+    ctrl.process()
+    updater.send_command.assert_awaited_once()
+    assert updater.send_command.await_args.args == ("evseEnabled", 1)
+    assert events == []
+
+    updater.data = normalizer._normalize_legacy_device_state(
+        dict(fw133_main("after_stop"), suspendLimits=0)
+    )
+    ctrl.process()
+    ctrl.process()
+
+    updater.send_command.assert_awaited_once()
+    assert [event_type for event_type, _ in events] == [EVENT_SOC_LIMIT_REACHED]
 
 
 def test_no_event_and_keeps_enforcing_while_charging_continues():

@@ -20,9 +20,26 @@ _COMMAND_TIMEOUT_OBJ: aiohttp.ClientTimeout = COMMAND_TIMEOUT_OBJ
 
 _LOGGER = logging.getLogger(__name__)
 
-# Settings the firmware 1.x web page writes under another name than newer
-# firmware (js/scriptUA.js); 1.x also reports both names in /main.
-_LEGACY_COMMAND_NAMES: Final[dict[str, str]] = {"oneCharge": "one_charge"}
+# Both firmware generations use minutes since midnight, amps, and kWh.
+LEGACY_SCHEDULE_NAMES: Final[dict[str, str]] = {
+    "sh1Start": "startSchedule1",
+    "sh1Stop": "stopSchedule1",
+    "sh1CurrentValue": "currentSchedule1",
+    "sh1EnergyValue": "energySchedule1",
+    "sh2Start": "startSchedule2",
+    "sh2Stop": "stopSchedule2",
+    "sh2CurrentValue": "currentSchedule2",
+    "sh2EnergyValue": "energySchedule2",
+}
+_LEGACY_COMMAND_NAMES: Final[dict[str, str]] = {
+    "oneCharge": "one_charge",
+    **LEGACY_SCHEDULE_NAMES,
+}
+
+# The 1.x page posts groundCtrl 2 for on and 1 for off; 3.x uses 1 and 0.
+_LEGACY_COMMAND_VALUES: Final[dict[str, dict[int, int]]] = {
+    "groundCtrl": {1: 2, 0: 1},
+}
 
 # Retry transient command failures a couple of times before giving up.
 # Most failed-toggle reports are single-packet WiFi loss, not real device
@@ -273,6 +290,7 @@ class CommandManager:
         # firmware keeps the body form verified live on R3.05.5.
         legacy = getattr(self._updater, "is_legacy_firmware", False) is True  # pragma: no mutate - a False or None default both fail `is True`
         if legacy:
+            value = _LEGACY_COMMAND_VALUES.get(command, {}).get(value, value)
             command = _LEGACY_COMMAND_NAMES.get(command, command)
         fields = {command: value} if legacy else {"pageevent": command, command: value}
         if extra:

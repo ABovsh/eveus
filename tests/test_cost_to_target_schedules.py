@@ -12,6 +12,8 @@ estimate stays at the tariff in effect now.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from conftest import EveusTestUpdater, EV_HELPERS
@@ -264,3 +266,17 @@ def test_a_night_rate_on_the_second_tariff_alone_is_still_priced() -> None:
         "tarifBValue": 216, "tarifBStart": 1380, "tarifBStop": 420,
     }
     assert _cost(fields) == pytest.approx(_REMAINING * 2.16, abs=0.02)
+
+
+@pytest.mark.parametrize(
+    ("legacy", "suspended", "errors_only", "rate"),
+    [(True, 1, 0, 4.32), (True, 0, 1, 2.16), (True, 2, 0, 2.16), (False, 1, 0, 2.16)],
+)
+def test_schedule_suspension_prices_charge_as_if_no_window(monkeypatch, legacy, suspended, errors_only, rate):
+    original = EveusTestUpdater.snapshot.fget
+    monkeypatch.setattr(
+        EveusTestUpdater, "snapshot",
+        property(lambda self: replace(original(self), legacy_firmware=legacy)),
+    )
+    fields = {**_ANTON, "suspendSchedules": suspended, "suspendErrors": errors_only}
+    assert _cost(fields) == pytest.approx(_REMAINING * rate, abs=0.02)

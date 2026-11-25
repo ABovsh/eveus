@@ -134,6 +134,10 @@ NO_GRAPHQL_SOURCE: Final[frozenset[str]] = frozenset(
         "sh1EnergyEnable", "sh1EnergyValue", "sh2EnergyEnable", "sh2EnergyValue",
         "aiMode",
         "ocppconnected",
+        "restricted_mode",
+        "suspendSchedules",
+        # Read only to cap pre-R3 currents; REVE's GraphQL value is not fetched.
+        "adapter",
     }
 )
 

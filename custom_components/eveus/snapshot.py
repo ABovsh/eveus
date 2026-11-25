@@ -27,6 +27,7 @@ from .const import (
     BATTERY_VBAT_MAX_PLAUSIBLE_VOLTS,
     CHARGING_STATES,
     CONNECTED_STATES,
+    LEGACY_UNKNOWN_PILOTS,
     MAX_COST_VALUE,
     MAX_CURRENT_A,
     MAX_ENERGY_KWH,
@@ -44,6 +45,8 @@ from .const import (
     MIN_VALID_TEMPERATURE_C,
     MIN_VALID_TIMEZONE_H,
     MODEL_MAX_CURRENT,
+    ADAPTER_KEY,
+    RESTRICTED_MODE_KEY,
     PLUG_UNKNOWN_STATES,
     SESSION_ACTIVE_STATES,
     is_modern_firmware_payload,
@@ -127,6 +130,8 @@ _FIELDS: Final[dict[str, _Field]] = {
     "RSSI": _f(MIN_VALID_RSSI_DBM, MAX_VALID_RSSI_DBM),
     "ground": _i(),
     "groundCtrl": _i(),
+    RESTRICTED_MODE_KEY: _i(),
+    ADAPTER_KEY: _i(0, 255),
     # The charger's RTC, encoded as epoch seconds shifted by `timeZone`. A
     # zero or negative stamp is an unset/garbled clock, not midnight 1970.
     "systemTime": _Field(int, 0, MAX_VALID_SYSTEM_TIME, exclusive_min=True),
@@ -137,6 +142,7 @@ _FIELDS: Final[dict[str, _Field]] = {
     "oneCharge": _i(),
     "suspendLimits": _i(),
     "suspendErrors": _i(),
+    "suspendSchedules": _i(),
     "ocppEnabled": _i(),
     "ocppconnected": _i(),
     "timeLimit": _f(),
@@ -218,6 +224,10 @@ class EveusSnapshot:
     # every firmware that reports its full ``/main``; an entity reads its own
     # availability from it, so nothing published for those firmwares changes.
     unsupported: frozenset[str] = frozenset()
+    legacy_firmware: bool = False
+    # Readings shown for information only (REVE leakage): safety policies treat
+    # them as absent and fall back to the charger's own fault codes.
+    informational: frozenset[str] = frozenset()
 
     @classmethod
     def parse(
@@ -226,6 +236,8 @@ class EveusSnapshot:
         model: str | None = None,
         *,
         unsupported: frozenset[str] = frozenset(),
+        legacy_firmware: bool = False,
+        informational: frozenset[str] = frozenset(),
     ) -> "EveusSnapshot":
         """Build a snapshot from a validated ``/main`` payload."""
         if not isinstance(payload, Mapping):
@@ -237,6 +249,8 @@ class EveusSnapshot:
             values=_parse_fields(payload, model_max_current(model)),
             model=model,
             unsupported=frozenset(unsupported),
+            legacy_firmware=legacy_firmware,
+            informational=frozenset(informational),
         )
 
     @classmethod
@@ -370,7 +384,9 @@ class EveusSnapshot:
 
     @property
     def plugged_in(self) -> bool | None:
-        """Whether a car is physically connected; ``None`` in the Error state."""
+        """Whether a car is physically connected, or None when indeterminate."""
+        if self.legacy_firmware and get_safe_value(self.raw, "pilot", int) in LEGACY_UNKNOWN_PILOTS:
+            return None
         return self._plug_view(CONNECTED_STATES)
 
     def _plug_view(self, states: frozenset[int]) -> bool | None:

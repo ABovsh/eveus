@@ -540,3 +540,128 @@ def test_absolute_setpoints_keep_only_latest_waiting_value():
 
     asyncio.run(scenario())
     updater.send_command.assert_awaited_once_with('energyLimit', 40000, preflight=ANY)
+
+
+async def test_1x_threshold_uses_web_page_bounds_and_steps():
+    entity, updater = _make_threshold({"aiVoltage": 190})
+    updater.is_legacy_firmware = True
+    entity._handle_coordinator_update()
+
+    assert (entity.native_min_value, entity.native_max_value, entity.native_step) == (150, 220, 5)
+    assert entity.native_value == 190
+    await entity.async_set_native_value(185)
+    updater.send_command.assert_awaited_once_with("aiVoltage", 185, preflight=ANY)
+
+
+@pytest.mark.parametrize("family", ["classic", "reve"])
+async def test_modern_threshold_keeps_dynamic_floor_and_one_volt_step(family):
+    entity, updater = _make_threshold({"aiVoltage": 215, "minVoltage": 200})
+    updater.is_legacy_firmware = False
+    updater.firmware_family = family
+    entity._handle_coordinator_update()
+
+    assert (entity.native_min_value, entity.native_max_value, entity.native_step) == (210, 220, 1)
+    await entity.async_set_native_value(185)
+    updater.send_command.assert_awaited_once_with("aiVoltage", 210, preflight=ANY)
+
+
+@pytest.mark.parametrize(("legacy", "wire"), [(True, 40), (False, 40000)])
+def test_energy_limit_write_unit_follows_the_firmware(legacy, wire):
+    """1.x pages post energyLimit in kWh (js/scriptUA.js: slider / 10);
+    R3.05 pages post it in thousandths (EVSE.energyLimit * 1000)."""
+    from custom_components.eveus.number import GLOBAL_LIMIT_NUMBERS
+
+    energy = next(d for d in GLOBAL_LIMIT_NUMBERS if d.key == "limit_energy")
+    ent, updater = _make(energy)
+    updater.is_legacy_firmware = legacy
+    updater.data = {"energyLimit": 57}
+    asyncio.run(ent.async_set_native_value(40))
+    updater.send_command.assert_awaited_once_with("energyLimit", wire, preflight=ANY)
+
+
+@pytest.mark.parametrize(
+    ("key", "command", "modern_value"),
+    [
+        ("limit_energy", "energyLimit", 10500),
+        ("limit_cost", "moneyLimit", 10),
+        ("schedule_1_energy_limit", "sh1EnergyValue", 10),
+        ("schedule_2_energy_limit", "sh2EnergyValue", 10),
+    ],
+)
+@pytest.mark.parametrize("legacy", [True, False])
+async def test_limit_numbers_round_trip_fractional_legacy_values(key, command, modern_value, legacy):
+    descriptions = number_mod.GLOBAL_LIMIT_NUMBERS + number_mod.SCHEDULE_LIMIT_NUMBERS
+    entity, updater = _make(next(d for d in descriptions if d.key == key))
+    updater.is_legacy_firmware = legacy
+    await entity.async_set_native_value(10.5)
+
+    expected = 10.5 if legacy else modern_value
+    updater.send_command.assert_awaited_once_with(command, expected, preflight=ANY)
+    assert type(updater.send_command.await_args.args[1]) is type(expected)
+    updater.data[command] = 10.5
+    entity._handle_coordinator_update()
+    assert entity.native_value == 10.5
+    assert entity._read_device_value() == 10.5
+
+    if legacy:
+        await entity.async_set_native_value(12)
+        assert type(updater.send_command.await_args.args[1]) is int
+        assert updater.send_command.await_args.args[1] == 12
+
+
+def test_legacy_energy_limit_publishes_half_kwh_step_once():
+    energy = next(d for d in number_mod.GLOBAL_LIMIT_NUMBERS if d.key == "limit_energy")
+    entity, updater = _make(energy)
+    entity._handle_coordinator_update()
+    assert entity.native_step == 1
+    entity.async_write_ha_state.reset_mock()
+
+    updater.is_legacy_firmware = True
+    entity._handle_coordinator_update()
+    entity._handle_coordinator_update()
+
+    assert entity.native_step == 0.5
+    entity.async_write_ha_state.assert_called_once_with()
+    assert not entity._values_equal(10.5, 10.25)
+
+
+@pytest.mark.parametrize(
+    ("legacy", "maximum", "step"), [(True, 5760, 1), (False, 1440, 5)]
+)
+async def test_time_limit_uses_firmware_specific_minute_range(legacy, maximum, step):
+    time_limit = next(d for d in number_mod.GLOBAL_LIMIT_NUMBERS if d.key == "limit_time")
+    entity, updater = _make(time_limit)
+    updater.is_legacy_firmware = legacy
+
+    assert (entity.native_min_value, entity.native_max_value, entity.native_step) == (0, maximum, step)
+    for minutes, expected in [(0, 0), (61, 61), (2160, min(2160, maximum)), (5761, maximum), (-1, 0)]:
+        await entity.async_set_native_value(minutes)
+        assert updater.send_command.await_args.args == ("timeLimit", expected * 60)
+        assert type(updater.send_command.await_args.args[1]) is int
+    for minutes, expected in [(0, 0), (61, 61), (maximum, maximum), (maximum + 1, None)]:
+        updater.data["timeLimit"] = minutes * 60
+        assert entity._read_device_value() == expected
+
+
+def test_legacy_time_limit_publishes_range_once_on_late_detection():
+    time_limit = next(d for d in number_mod.GLOBAL_LIMIT_NUMBERS if d.key == "limit_time")
+    entity, updater = _make(time_limit)
+    entity._handle_coordinator_update()
+    entity.async_write_ha_state.reset_mock()
+
+    updater.is_legacy_firmware = True
+    entity._handle_coordinator_update()
+    entity._handle_coordinator_update()
+
+    entity.async_write_ha_state.assert_called_once_with()
+    assert entity.native_value == 0
+    assert (entity.native_max_value, entity.native_step) == (5760, 1)
+
+
+async def test_legacy_time_limit_restores_long_limit():
+    time_limit = next(d for d in number_mod.GLOBAL_LIMIT_NUMBERS if d.key == "limit_time")
+    entity, updater = _make(time_limit)
+    updater.is_legacy_firmware = True
+    await entity._async_restore_state(State("number.eveus_limit_time", "5760"))
+
+    assert entity.native_value == 5760

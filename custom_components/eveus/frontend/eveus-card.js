@@ -33,6 +33,8 @@ const FOLDABLE = ['advanced_controls', 'adaptive', 'limits', 'schedules', 'histo
 const LARGE = new Set(['advanced_info', 'basic_info', 'session', 'history']);
 const LARGE_MAX_ITEMS = 2;
 const LARGE_SCALE = 1.4, LARGE_SUB_SCALE = 1.15;
+// The last session's figures sit between separators, a little smaller than the live row's 15.
+const LAST_SESSION_FIT = 13;
 // Month energy comes from Home Assistant's long-term statistics, asked again at most this often.
 const MONTH_REFRESH_MS = 15 * 60000;
 // How far back the recorder is asked when an outage or a Stop began.
@@ -173,7 +175,7 @@ const I18N = {
     total: 'Total', allTime: 'all time', counterA: 'Counter A', counterB: 'Counter B', reset: 'Reset',
     resetQ: (label) => `Reset ${label}?`, toZero: 'will be set to 0', cancel: 'Cancel',
     confirm: 'Confirm',
-    disableGroundQ: 'Disable ground protection?', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
+    disableGroundQ: 'Disable ground protection?', socketFullQ: 'Allow the full charger current? Only on a circuit rated for it.', socketTitle: 'Household socket 16 A: tap to switch between 16 A and full current', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
     socFromCar: (detail) => `Initial SOC from the car: ${detail}`, socManual: 'Initial SOC set manually', socNotUsed: (detail) => `Car SOC not used (${detail}); the manual value applies`,
     safety: 'Safety', box: 'Box temperature', plug: 'Plug temperature', groundProt: 'Ground protection',
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
@@ -241,7 +243,7 @@ const I18N = {
     total: 'Загалом', allTime: 'за весь час', counterA: 'Лічильник A', counterB: 'Лічильник B', reset: 'Скинути',
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
     confirm: 'Підтвердити',
-    disableGroundQ: 'Вимкнути захист заземлення?', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
+    disableGroundQ: 'Вимкнути захист заземлення?', socketFullQ: 'Дозволити повний струм зарядки? Лише якщо лінія це витримує.', socketTitle: 'Побутова розетка 16 А: натисніть, щоб перемкнути між 16 А і повним струмом', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
     socFromCar: (detail) => `Початковий SOC з авто: ${detail}`, socManual: 'Початковий SOC задано вручну', socNotUsed: (detail) => `SOC авто не використано (${detail}); діє значення, задане вручну`,
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
@@ -320,12 +322,13 @@ const ITEMS = {
   status: ['power'], actions: ['ocpp', 'one_charge', 'stop'], advanced_controls: ['initial', 'target', 'capacity', 'loss'],
   basic_info: ['voltage', 'power', 'current'], session: ['energy', 'cost', 'time', 'rate', 'voltage'], limits: ['soc', 'energy', 'time', 'cost'],
   schedules: ['schedule_1', 'schedule_2', 'days', 'more', 'rates'], time: ['zone', 'drift', 'sync'], history: ['month', 'total', 'counter_a', 'counter_b'],
-  safety: ['box', 'plug', 'ground', 'leak', 'connection'],
+  safety: ['box', 'plug', 'ground', 'leak', 'connection', 'socket'],
 };
 // A section keeps at least one item, except Status: its state always shows, so its one item can go too.
 const minItems = (section) => section === 'status' ? 0 : 1;
 // The entity behind each safety item, in ITEMS.safety order; null = always shown.
-const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_current', null];
+// Socket: drawn only where the charger reports Household Socket 16 A (firmware 1.x and 2.x).
+const SAFETY_SOURCES = ['box_temperature', 'plug_temperature', null, 'leakage_current', null, 'household_socket_16_a'];
 const GRID = {1: 'one', 2: 'two', 3: 'three', 4: 'four'};
 // A grid whose stylesheet assumes `n` columns, re-spread when hidden items leave fewer.
 const columns = (count, n) => count === n ? '' : ` style="grid-template-columns:repeat(${count},minmax(0,1fr))"`;
@@ -357,7 +360,7 @@ const EDITOR_I18N = {
       session: {energy: 'Energy', cost: 'Cost', time: 'Time', rate: 'Rate', voltage: 'Voltage range (REVE)'}, limits: {soc: 'SOC', energy: 'Energy', time: 'Time', cost: 'Cost'},
       schedules: {schedule_1: 'Schedule 1', schedule_2: 'Schedule 2', days: 'Days (REVE)', more: 'Schedules 3–8 (REVE)', rates: 'Tariffs (REVE)'}, time: {zone: 'Time zone', drift: 'Clock or drift', sync: 'Sync'},
       history: {month: 'This month', total: 'Total', counter_a: 'Counter A', counter_b: 'Counter B'},
-      safety: {box: 'Box', plug: 'Plug', ground: 'Ground', leak: 'Leakage', connection: 'Connection'},
+      safety: {box: 'Box', plug: 'Plug', ground: 'Ground', leak: 'Leakage', connection: 'Connection', socket: 'Socket 16 A'},
     },
     itemsTitle: 'Show or hide items',
     head: 'Sections', reset: 'Default order', advOnly: 'advanced mode only', up: 'Move up', down: 'Move down',
@@ -383,7 +386,7 @@ const EDITOR_I18N = {
       session: {energy: 'Енергія', cost: 'Вартість', time: 'Час', rate: 'Тариф', voltage: 'Діапазон напруги (REVE)'}, limits: {soc: 'SOC', energy: 'Енергія', time: 'Час', cost: 'Вартість'},
       schedules: {schedule_1: 'Розклад 1', schedule_2: 'Розклад 2', days: 'Дні (REVE)', more: 'Розклади 3–8 (REVE)', rates: 'Тарифи (REVE)'}, time: {zone: 'Часовий пояс', drift: 'Час або зміщення', sync: 'Синхронізація'},
       history: {month: 'Цей місяць', total: 'Загалом', counter_a: 'Лічильник A', counter_b: 'Лічильник B'},
-      safety: {box: 'Корпус', plug: 'Конектор', ground: 'Заземлення', leak: 'Витік', connection: "Зв'язок"},
+      safety: {box: 'Корпус', plug: 'Конектор', ground: 'Заземлення', leak: 'Витік', connection: "Зв'язок", socket: 'Розетка 16 А'},
     },
     itemsTitle: 'Показати чи сховати елементи',
     head: 'Розділи', reset: 'Типовий порядок', advOnly: 'лише розширений режим', up: 'Вище', down: 'Нижче',
@@ -425,6 +428,7 @@ class EveusCard extends HTMLElement {
     this._clearInteractions();
     this._config = {...config, sections: [...new Set(sections)]};
     this._ids = null;
+    this._reveFirmware = undefined;
     this._resolved = false;
     this._lastSignature = this._lastRefs = null;
     this._generation = (this._generation || 0) + 1;
@@ -578,8 +582,8 @@ class EveusCard extends HTMLElement {
     // asked again on a later update, throttled, rather than showing "no charger"
     // until the page is reloaded.
     const retry = this._resolved && this._ids === null && Date.now() >= (this._retryAt || 0);
+    this._watchRegistry();
     if ((!this._resolved || retry) && !this._resolving) void this._resolve();
-    if (this._resolved) this._watchRegistry();
     if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
     if (this._resolved && typeof this._hass?.callWS === 'function' && this._runKey !== (this._runKeyAsked ?? null)) {
       if (this._runKey === null) { this._runKeyAsked = null; this._runAt = null; } else void this._fetchRunSince();
@@ -616,13 +620,13 @@ class EveusCard extends HTMLElement {
   // This charger's state objects, plus what else a render reads, compared by identity.
   _stateRefs() {
     const states = this._hass.states;
-    return [...Object.values(this._ids || {}).map((id) => states[id]), this._resolved, this._nowHM(), this._scheduleHM(),
+    return [...Object.values(this._ids || {}).map((id) => states[id]), this._resolved, this._reveFirmware, this._nowHM(), this._scheduleHM(),
       this._hass.locale?.language, this._hass.themes?.darkMode];
   }
   _signature() {
     const states = this._hass.states;
     return JSON.stringify([Object.values(this._ids || {}).map((id) => { const e = states[id]; return e ? [e.state, e.attributes, e.last_changed] : null; }),
-      this._resolved, this._nowHM(), this._scheduleHM(), this._hass.locale?.language, this._hass.themes?.darkMode]);
+      this._resolved, this._reveFirmware, this._nowHM(), this._scheduleHM(), this._hass.locale?.language, this._hass.themes?.darkMode]);
   }
   connectedCallback() {
     this._resizeObserver?.observe(this);
@@ -674,9 +678,11 @@ class EveusCard extends HTMLElement {
       if (generation !== this._generation) return;
       this._ids = result.entities;
       this._deviceId = result.device_id;
+      this._reveFirmware = result.reve;
     } catch {
       if (generation !== this._generation) return;
       this._ids = null;
+      this._reveFirmware = undefined;
       this._retryAt = Date.now() + RESOLVE_RETRY_MS;
     }
     if (generation !== this._generation) return;
@@ -685,19 +691,20 @@ class EveusCard extends HTMLElement {
     if (this._resolveAgain) { this._resolveAgain = false; void this._resolve(); return; }
     this.hass = this._hass;
   }
-  // Renaming an entity_id leaves the resolved map pointing at a name that no longer exists:
-  // look the charger up again when one of its entities is renamed (the lookup is by unique_id).
+  // Look up deferred entities on creation and re-find known entities after a rename.
   _watchRegistry() {
     if (this._registryUnsub || this.isConnected === false || typeof this._hass?.connection?.subscribeEvents !== 'function') return;
     const subscription = this._registryUnsub = this._hass.connection.subscribeEvents((event) => {
-      const old = event?.data?.old_entity_id;
-      if (!old || !Object.values(this._ids || {}).includes(old)) return;
+      const data = event?.data;
+      const old = data?.old_entity_id;
+      if (data?.action !== 'create' && (!old || !Object.values(this._ids || {}).includes(old))) return;
       if (this._resolving) this._resolveAgain = true;
       else void this._resolve();
     }, 'entity_registry_updated');
     subscription.catch(() => { if (this._registryUnsub === subscription) this._registryUnsub = null; });
   }
   _state(key) { return this._hass?.states[this._ids?.[key]]; }
+  get _isReveFirmware() { return this._reveFirmware ?? Boolean(this._ids?.reve_api); }
   // A reading in the integration's own unit (see NATIVE_UNITS), or null.
   _num(key) {
     const entity = this._state(key);
@@ -852,17 +859,22 @@ class EveusCard extends HTMLElement {
     const t = this._t;
     const ask = this._guardAsk;
     const labels = {limit_soc_enabled: t.soc, limit_energy_enabled: t.energy, limit_time_enabled: t.time, limit_cost_enabled: t.cost};
-    const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
+    const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'household_socket_16_a' ? t.socketFullQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
     const error = this._commandError === 'timeout' ? t.commandTimeout
       : this._commandError === 'current' ? t.setFailed : t.commandFailed;
     return (ask ? `<div class="message guard-ask" popover="manual" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
       + (this._commandError ? `<button class="message cmd-error" role="alert" data-dismiss-error title="${t.dismiss}">${error}</button>` : '');
   }
+  _assumedUnknown(key) {
+    const entity = this._state(key);
+    return entity?.attributes?.assumed_state === true && entity.state === 'unknown';
+  }
   async _toggleLimit(key, confirmed = false) {
     const entity = this._state(key);
-    if (!this._online || !entity || !['on', 'off'].includes(entity.state)) return;
+    if (!this._online || !entity || (!['on', 'off'].includes(entity.state) && !this._assumedUnknown(key))) return;
     const value = !this._limitOn(key);
     const weakening = (key === 'ground_protection' && !value)
+      || (key === 'household_socket_16_a' && !value)
       || (key === 'limit_disable_all' && value)
       || (['limit_soc_enabled', 'limit_energy_enabled', 'limit_time_enabled', 'limit_cost_enabled'].includes(key) && !value);
     if (weakening && !confirmed) {
@@ -980,6 +992,7 @@ class EveusCard extends HTMLElement {
     );
     // With nothing on, "Disable all" has nothing to disable; suspended, it is how the limits come back.
     const anyOn = items.some((item) => this._limitOn(item.toggle));
+    const unknown = ['limit_disable_all', ...items.map((item) => item.toggle)].some((key) => this._assumedUnknown(key));
     // One charge and manual mode ignore the charger's own limits that are on: they read as suspended,
     // like Disable all. Target SOC is stopped by Home Assistant, which neither overrides, so it stays lit.
     const ignored = !suspended && this._ignoring && items.some((item) => item.key !== 'target_soc' && this._limitOn(item.toggle));
@@ -993,13 +1006,13 @@ class EveusCard extends HTMLElement {
       : closed && manualLock ? shortNote(t.lockedManual, t.manualOverrides.limits) + this._overrideFlag('limits')
       : closed && idleLock ? shortNote(t.lockedIdle, t.lockedIdleNote)
       : closed && ignored ? this._overrideFlag('limits')
-      : !anyOn ? `<small class="limits-note">${t.noneOn}</small>` : '';
+      : !anyOn ? `<small class="limits-note">${unknown ? '—' : t.noneOn}</small>` : '';
     const lockNote = manualLock || ignored ? this._override('limits')
       : idleLock ? `<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"></ha-icon><span>${t.lockedIdleNote}</span></div>` : '';
     const title = `<ha-icon icon="mdi:speedometer"></ha-icon><b>${t.limits}</b>${note}`;
     const head = fold ? this._foldTitle('limits', title, fold.open) : `<span>${title}</span>`;
     // REVE has no Disable all: its switch is unavailable there, so there is no button.
-    const disable = (anyOn || suspended) && this._ids.limit_disable_all && !this._unsupported('limit_disable_all') ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
+    const disable = (anyOn || suspended || unknown) && this._ids.limit_disable_all && !this._unsupported('limit_disable_all') ? `<button class="disable-all ${suspended ? 'active' : ''}" data-limit-toggle="limit_disable_all" role="switch" aria-checked="${suspended}" ${!this._online ? 'disabled' : ''}>
           <ha-icon icon="mdi:cancel"></ha-icon><span>${t.disableAll}</span><i></i>
         </button>` : '';
     const held = suspended || ignored;
@@ -1023,11 +1036,14 @@ class EveusCard extends HTMLElement {
     const protectionKnown = ['on', 'off'].includes(this._state('ground_protection')?.state);
     const protectionOn = this._limitOn('ground_protection');
     const tempCls = (value) => value === null ? '' : value >= SAFETY_TEMP_HIGH_C ? 'bad' : 'good';
-    const leakCls = leak === null ? '' : leak >= SAFETY_LEAK_HIGH_MA ? 'bad' : 'good';
+    // REVE's leakage is shown as the charger's display shows it, for information:
+    // no colour, no part in the tint; the charger's own trip is the alarm.
+    const leakJudged = leak !== null && !this._isReveFirmware;
+    const leakCls = !leakJudged ? '' : leak >= SAFETY_LEAK_HIGH_MA ? 'bad' : 'good';
     const connCls = conn === null ? '' : conn <= SAFETY_CONN_QUALITY_BAD_PCT ? 'bad' : 'good';
     const groundCls = groundKnown ? (groundOk ? 'good' : 'bad') : '';
     const protectionCls = protectionKnown ? (protectionOn ? 'good' : 'bad') : '';
-    const anyKnown = box !== null || plug !== null || leak !== null || groundKnown || protectionKnown;
+    const anyKnown = box !== null || plug !== null || leakJudged || groundKnown || protectionKnown;
     const anyBad = tempCls(box) === 'bad' || tempCls(plug) === 'bad' || leakCls === 'bad'
       || groundCls === 'bad' || protectionCls === 'bad';
     return {box, plug, leak, conn, groundKnown, groundOk, protectionKnown, protectionOn,
@@ -1057,8 +1073,22 @@ class EveusCard extends HTMLElement {
         </button>`,
         `<button class="safety-item" data-more-info="leakage_current" title="${t.leak} — ${d}"><ha-icon icon="mdi:current-dc"></ha-icon><span class="safety-value ${r.leakCls}">${r.leak === null ? '—' : Math.round(r.leak)}<small>mA</small></span></button>`,
         `<button class="safety-item" data-more-info="connection_quality" title="${t.conn} — ${d}"><ha-icon icon="${connectionIcon(r.conn)}"></ha-icon><span class="safety-value ${r.connCls}">${r.conn === null ? '—' : Math.round(r.conn)}<small>%</small></span></button>`,
-      ].filter((_, i) => this._shows('safety', ITEMS.safety[i]) && !this._unsupported(SAFETY_SOURCES[i])).join('')}</div>
+        this._socketItem(),
+      ].filter((html, i) => html && this._shows('safety', ITEMS.safety[i]) && !this._unsupported(SAFETY_SOURCES[i])).join('')}</div>
     </section>`;
+  }
+  // Household Socket 16 A as one compact item: the amps it allows now, tap to switch.
+  _socketItem() {
+    const key = 'household_socket_16_a';
+    if (!this._ids?.[key]) return '';
+    const t = this._t;
+    const state = this._state(key)?.state;
+    const known = ['on', 'off'].includes(state);
+    const on = this._limitOn(key);
+    // The charger reports the full bound only once socket mode is off.
+    const max = this._state('charging_current')?.attributes?.max;
+    const amps = !known ? '—' : on ? 16 : state === 'off' && Number.isFinite(max) ? max : '—';
+    return `<button class="safety-item safety-socket" data-limit-toggle="${key}" role="switch" aria-checked="${on}" aria-label="${t.socketTitle}" title="${t.socketTitle}" ${!this._online || !known ? 'disabled' : ''}><ha-icon icon="mdi:power-socket-eu"></ha-icon><span class="safety-value">${amps}<small>A</small></span></button>`;
   }
   // A reading or setting the charger's firmware does not provide at all: the
   // integration publishes it `unavailable` while the charger itself answers (REVE
@@ -1078,7 +1108,7 @@ class EveusCard extends HTMLElement {
   get _advanced() { return this._config.mode !== 'basic' && !!this._ids?.soc_percent; }
   // `fit`: this item absorbs a narrow row by shrinking its own text; its siblings keep their size.
   _infoItem(key, icon, value, cls = '', title = '', fit = false) {
-    return `<button class="info-item${fit ? ' grow' : ''}" data-more-info="${key}" title="${title} — ${this._t.details}"><ha-icon icon="${icon}"></ha-icon><span class="${['info-value', cls].filter(Boolean).join(' ')}"${fit ? ' data-fit="15"' : ''}>${value}</span></button>`;
+    return `<button class="info-item${fit ? ' grow' : ''}" data-more-info="${key}" title="${title} — ${this._t.details}"><ha-icon icon="${icon}"></ha-icon><span class="${['info-value', cls].filter(Boolean).join(' ')}"${fit ? ` data-fit="${fit === true ? 15 : fit}"` : ''}>${value}</span></button>`;
   }
   // The charger's own screen: three big live readings, voltage · power · current.
   _basic_infoSection() {
@@ -1703,7 +1733,7 @@ class EveusCard extends HTMLElement {
         const selected = o === zone && !following ? ' selected' : '';
         return `<option value="${o}"${selected}>${zoneLabel(o)}</option>`;
       };
-      zoneEl = `<label class="time-zone-wrap" title="${zoneTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${disabled ? ' disabled' : ''}>
+      zoneEl = `<label class="time-zone-wrap" title="${zoneTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><span class="time-zone-sizer" aria-hidden="true"></span><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${disabled ? ' disabled' : ''}>
       ${placeholder}${autoEl}${options.map(zoneOption).join('')}</select></label>`;
     }
     const drift = on ? this._num('time_drift') : null;
@@ -1998,8 +2028,10 @@ class EveusCard extends HTMLElement {
     if (section === 'schedules') {
       const ignored = this._schedulesIgnored;
       const rows = this._schedulesShown().map((n) => {
+        const key = `schedule_${n}_enabled`, enabled = this._limitOn(key);
+        if (!enabled && this._assumedUnknown(key)) return `${n} —`;
         const start = this._timeShown(`schedule_${n}_start`), stop = this._timeShown(`schedule_${n}_stop`);
-        if (!this._limitOn(`schedule_${n}_enabled`) || !start || !stop) return `${n} ${t.off}`;
+        if (!enabled || !start || !stop) return `${n} ${t.off}`;
         return ignored ? `<s>${n} ${start}→${stop}</s>` : `${n} ${start}→${stop}`;
       });
       if (ignored) return {label: t.schedules, icon: 'mdi:calendar-clock', cls: '', sumCls: 'overridden', sumTitle: this._overrideText('schedules'), flag: this._overrideFlag('schedules'), sum: rows.join(sep)};
@@ -2030,10 +2062,10 @@ class EveusCard extends HTMLElement {
     const volts = lows.filter((v) => v !== null).map((v) => Math.round(v));
     const range = volts.length === 2 && volts[0] !== volts[1] ? `${volts[0]}–${volts[1]}` : volts.length ? String(volts[0]) : null;
     const items = [
-      shows('energy') ? this._infoItem('last_session_energy', 'mdi:lightning-bolt', `${this._int(e)}<small>kWh</small>`, '', t.lastSession, true) : '',
-      this._ids.last_session_cost && shows('cost') ? this._infoItem('last_session_cost', 'mdi:cash', c === null ? '—' : money(this._int(c), this._state('last_session_cost')?.attributes?.unit_of_measurement), '', t.lastSession, true) : '',
-      this._ids.last_session_duration && shows('time') ? this._infoItem('last_session_duration', 'mdi:timer-outline', s === null ? '—' : t.sessionDuration(hms(s)), '', t.lastSession, true) : '',
-      range !== null && shows('voltage') ? this._infoItem(this._ids.last_session_min_voltage && lows[0] !== null ? 'last_session_min_voltage' : 'last_session_max_voltage', 'mdi:sine-wave', `${range}<small>V</small>`, '', t.lastSessionVoltage, true) : '',
+      shows('energy') ? this._infoItem('last_session_energy', 'mdi:lightning-bolt', `${this._int(e)}<small>kWh</small>`, '', t.lastSession, LAST_SESSION_FIT) : '',
+      this._ids.last_session_cost && shows('cost') ? this._infoItem('last_session_cost', 'mdi:cash', c === null ? '—' : money(this._int(c), this._state('last_session_cost')?.attributes?.unit_of_measurement), '', t.lastSession, LAST_SESSION_FIT) : '',
+      this._ids.last_session_duration && shows('time') ? this._infoItem('last_session_duration', 'mdi:timer-outline', s === null ? '—' : t.sessionDuration(hms(s)), '', t.lastSession, LAST_SESSION_FIT) : '',
+      range !== null && shows('voltage') ? this._infoItem(this._ids.last_session_min_voltage && lows[0] !== null ? 'last_session_min_voltage' : 'last_session_max_voltage', 'mdi:sine-wave', `${range}<small>V</small>`, '', t.lastSessionVoltage, LAST_SESSION_FIT) : '',
     ].join('');
     return `<section class="sl session last" aria-label="${t.lastSession}">
       <ha-icon icon="mdi:history"></ha-icon><span class="label session-label">${t.lastSession}${when ? `<small>${when}</small>` : ''}</span><div class="info-row session-row">${items}</div>
@@ -2078,7 +2110,9 @@ class EveusCard extends HTMLElement {
   _faultDetail(code) {
     const f = FAULTS[code];
     if (!f) return '';
-    const t = this._t, v = f.key && this._ids?.[f.key] ? this._num(f.key) : null;
+    // REVE's leakage reading is the slow estimate, not what tripped: it names none.
+    const named = f.key && this._ids?.[f.key] && !(f.key === 'leakage_current' && this._isReveFirmware);
+    const t = this._t, v = named ? this._num(f.key) : null;
     const reading = v === null ? '' : `${t.faultLabels[f.key]} ${f.key === 'current' ? amps(v) : Math.round(v)}${f.unit}${f.limit ? ` · ${t.faultLimit} ${f.limit}${f.unit}` : ''}`;
     return [reading, t.faultHints[f.hint]].filter(Boolean).join(' · ');
   }
@@ -2284,6 +2318,23 @@ class EveusCard extends HTMLElement {
     // Session figures share one size, including the last session's voltage range.
     for (const row of sessionRows) {
       const values = [...row.querySelectorAll('.info-value[data-fit]')];
+      if (row.parentElement?.classList?.contains?.('last')) {
+        // Between separators the figures do not shrink one by one: the row is fitted as a whole.
+        const start = Math.max(11, Math.min(...values.map((el) => Number(el.dataset.fit) || LAST_SESSION_FIT)));
+        const fitRow = () => {
+          let size = start;
+          const setSize = () => { for (const el of values) el.style.fontSize = `${size}px`; };
+          setSize();
+          while (size > 11 && row.scrollWidth > row.clientWidth) { size -= 1; setSize(); }
+        };
+        fitRow();
+        if (row.scrollWidth > row.clientWidth) {
+          // Too narrow even at the smallest size: the figures take their own line, fitted afresh.
+          row.parentElement.classList.add('session-wrap');
+          fitRow();
+        }
+        continue;
+      }
       const shareSize = () => {
         const size = Math.min(...values.map((el) => parseFloat(el.style.fontSize) || Infinity));
         if (Number.isFinite(size)) for (const el of values) el.style.fontSize = `${size}px`;
@@ -2293,6 +2344,45 @@ class EveusCard extends HTMLElement {
         row.parentElement?.classList.add('session-wrap');
         for (const el of values) fit(el);
         shareSize();
+      }
+    }
+    // A full safety row first drops its section label, then the socket item's icon
+    // (its "16A" stays), then a pixel of value size; re-measured from the full row each time.
+    for (const row of this.shadowRoot.querySelectorAll('.safety-row')) {
+      const section = row.parentElement;
+      if (!section?.classList) continue;
+      section.classList.remove('safety-tight', 'safety-tighter', 'safety-tightest');
+      for (const step of ['safety-tight', 'safety-tighter', 'safety-tightest']) {
+        if (row.scrollWidth <= row.clientWidth) break;
+        section.classList.add(step);
+      }
+    }
+    // A native select is as wide as its longest option ("Auto: follow Home Assistant") whatever it
+    // shows: size it to the text it shows (the list still opens full width), and never squeeze it.
+    // The room beyond the text (padding, border, this platform's arrow) is what the select adds to
+    // its longest option, measured in a hidden sizer with the select's font.
+    for (const select of this.shadowRoot.querySelectorAll('.time-zone')) {
+      const options = [...(select.options ?? [])].map((option) => option.textContent);
+      const text = options[select.selectedIndex];
+      const sizer = select.parentElement?.querySelector?.('.time-zone-sizer');
+      if (!text || !sizer) continue;
+      // Layout widths, not rendered ones: a dashboard may scale the card with a transform.
+      // Both are whole pixels, so 2 px covers the rounding.
+      const textWidth = (value) => { sizer.textContent = value; return sizer.offsetWidth; };
+      select.style.width = '';
+      const chrome = select.offsetWidth - Math.max(...options.map(textWidth));
+      select.style.width = `${textWidth(text) + chrome + 2}px`;
+    }
+    // A full time row then drops the zone's icon, the section label, the Sync text (its icon
+    // stays; a time zone fix keeps its text) and last the clock and fix icons; re-measured from
+    // the full row each time.
+    for (const row of this.shadowRoot.querySelectorAll('.time-row')) {
+      const section = row.parentElement;
+      if (!section?.classList) continue;
+      section.classList.remove('time-tight', 'time-tighter', 'time-tightest', 'time-narrowest');
+      for (const step of ['time-tight', 'time-tighter', 'time-tightest', 'time-narrowest']) {
+        if (row.scrollWidth <= row.clientWidth) break;
+        section.classList.add(step);
       }
     }
     // Both schedule rows read as one table: they share the smaller of their two sizes.
@@ -2594,9 +2684,15 @@ button.limit-toggle>span{box-sizing:border-box;padding-right:9px}
 .session-row .info-item{flex:0 1 auto}.session-row .info-item ha-icon{--mdc-icon-size:15px;color:color-mix(in srgb,var(--h) 80%,var(--secondary-text-color))}
 .sl.safety{gap:6px}.safety-label{flex:none}
 @container (max-width:350px){.safety-label{display:none}}
+.sl.safety.safety-tight .safety-label{display:none}.sl.safety.safety-tighter .safety-socket ha-icon{display:none}.sl.safety.safety-tightest .safety-value{font-size:12px}
 @container (max-width:370px){.session-row .info-item ha-icon{display:none}}
 .session-row .info-item.grow{flex:0 1 auto;min-width:0}
 .sl.session.session-wrap{flex-wrap:wrap}.session-wrap .session-row{flex-basis:100%}
+.session.last .session-row{justify-content:flex-start;gap:0;min-width:0;overflow:hidden}
+.session.last .session-row .info-item,.session.last .session-row .info-item.grow{flex:none}
+.session.last .session-row .info-item:first-child{margin-left:auto}.session.last .session-row .info-item ha-icon{display:none}
+.session.last .session-row .info-item+.info-item{border-left:1px solid rgba(127,127,127,.35);margin-left:5px;padding-left:5px}
+.session.last .session-row .info-value small{font-weight:400;font-size:.62em;color:var(--secondary-text-color);margin-left:1px}
 [data-hold]{position:relative;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .soc-tile[data-hold]::before{content:"";position:absolute;right:5px;bottom:5px;width:4px;height:4px;border-radius:50%;background:var(--h);opacity:.6}
 /* Schedules: one row per schedule, one hue. Badge = on/off, the window is tap-to-pick, caps are chips
@@ -2657,9 +2753,10 @@ ha-card[data-theme=light] .sched-time-input{color-scheme:light}
 .sl.time{--h:#7c83fd;gap:6px;min-height:40px}.sl.time.time-bad{--h:#e74c3c;background:rgba(231,76,60,.14);border-color:rgba(231,76,60,.45)}
 .time-label{flex:none}
 .time-row{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:1;min-width:0}
-.time-zone-wrap{display:flex;align-items:center;gap:3px;min-width:0}
+.time-zone-wrap{position:relative;display:flex;align-items:center;gap:3px;flex:none}
+.time-zone-sizer{position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;white-space:pre;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
 .time-zone-wrap ha-icon{--mdc-icon-size:15px;color:color-mix(in srgb,var(--h) 80%,var(--secondary-text-color))}
-.time-zone{box-sizing:border-box;height:36px;min-width:0;padding:0 6px;border:1px solid color-mix(in srgb,var(--h) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--h) 14%,transparent);color:var(--primary-text-color);font-family:inherit;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
+.time-zone{box-sizing:border-box;height:36px;padding:0 6px;border:1px solid color-mix(in srgb,var(--h) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--h) 14%,transparent);color:var(--primary-text-color);font-family:inherit;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
 .time-zone option{color:#000}
 .time-item{display:flex;align-items:center;gap:3px;height:36px;padding:0;margin:0;border:0;background:transparent;font-family:inherit;color:inherit;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
 .time-item ha-icon{--mdc-icon-size:15px}
@@ -2671,6 +2768,7 @@ ha-card[data-theme=light] .sched-time-input{color-scheme:light}
 .time-sync:active{transform:scale(.96)}
 .time-sync.done{background:var(--h);color:#fff}.time-sync.done ha-icon{color:#fff}
 @container (max-width:350px){.time-label{display:none}}
+.sl.time.time-tight .time-zone-wrap ha-icon{display:none}.sl.time.time-tighter .time-label{display:none}.sl.time.time-tightest .time-sync:not(.time-fix) span{display:none}.sl.time.time-tightest .time-sync:not(.time-fix){padding:0 8px}.sl.time.time-narrowest .time-item ha-icon,.sl.time.time-narrowest .time-fix ha-icon{display:none}
 /* Light theme: yellow and cyan text lose contrast on white; darker hues there, dark mode untouched. */
 ha-card[data-theme=light] .panel.meter{--h:#b7860b}ha-card[data-theme=light] .panel.adaptive{--h:#0f9496}
 /* ---- Folding: a long card shows its settings as one-line summaries; tap to open. ---- */

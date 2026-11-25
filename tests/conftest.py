@@ -176,6 +176,7 @@ class EveusTestUpdater(OutageClock):
     state_since = None
     host = TEST_HOST
     last_update_success = True
+    is_legacy_firmware = False
     scheme = "http"
 
     def __init__(
@@ -287,6 +288,16 @@ STATE_VARIANTS: dict[str, dict[str, Any]] = {
 def real_main() -> dict[str, Any]:
     """Verbatim live /main capture. Treat as read-only (copy before mutating)."""
     return _load_real_main()
+
+
+@pytest.fixture
+def fw133_main() -> Callable[[str], dict[str, Any]]:
+    """Load a fresh /main reply reconstructed from the 1.33 diagnostics."""
+    def _load(phase: str) -> dict[str, Any]:
+        path = _REAL_MAIN_FIXTURE.with_name(f"fw133_{phase}_main.json")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    return _load
 
 
 @pytest.fixture

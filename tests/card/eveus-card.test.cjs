@@ -270,7 +270,7 @@ test('offline cannot open the inline editor',()=>{
   assert.equal(card._editingLimit,null);
 });
 
-function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connected',protection='on'}={}) {
+function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connected',protection='on',socket=null,currentMax=32,reve=false}={}) {
   const registry = {};
   class HTMLElement extends EventTarget {
     attachShadow() { return this.shadowRoot = {innerHTML:'', addEventListener(){}, querySelector(){return null;}}; }
@@ -288,9 +288,13 @@ function setupSafety({online=true,box=20,plug=12,leak=0,conn=98,ground='Connecte
     'sensor.conn':st(conn,{unit_of_measurement:'%'}),
     'sensor.ground':st(ground),
     'switch.protection':st(protection),
+    'number.current':st(16,{min:7,max:socket==='on'?16:currentMax,step:1,unit_of_measurement:'A'}),
   };
   const entities = {state:'sensor.state',box_temperature:'sensor.box',plug_temperature:'sensor.plug',
-    leakage_current:'sensor.leak',connection_quality:'sensor.conn',ground:'sensor.ground',ground_protection:'switch.protection'};
+    leakage_current:'sensor.leak',connection_quality:'sensor.conn',ground:'sensor.ground',ground_protection:'switch.protection',
+    charging_current:'number.current'};
+  if (socket !== null) { states['switch.socket']=st(socket); entities.household_socket_16_a='switch.socket'; }
+  if (reve) { states['binary_sensor.reve']=st('on'); entities.reve_api='binary_sensor.reve'; }
   const calls=[];
   const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
   card._ids=entities;card._resolved=true;card.hass=hass;
@@ -457,7 +461,7 @@ function setupStatus({state='Charging',reason='Charging',substate='No Limits',st
   const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
   card._ids=entities;card._resolved=true;card.hass=hass;
   const html=()=>card.shadowRoot.innerHTML.replace(/<style>[\s\S]*?<\/style>/,'');
-  return {card,states,calls,hass,timers,html};
+  return {card,states,calls,hass,timers,html,sandbox};
 }
 
 test('REVE has no OCPP button: the card offers One charge and Stop only, and Eveus firmware keeps all three',()=>{
@@ -1281,6 +1285,13 @@ const unplugged = {state:['sensor.state','Standby'], car_connected:['binary_sens
   last_session_energy:['sensor.lse',15.56,{unit_of_measurement:'kWh',reason:'unplugged',finished_at:'2026-09-20T15:21:42+03:00'}],
   last_session_cost:['sensor.lsc',67.21,{unit_of_measurement:'UAH'}],
   last_session_duration:['sensor.lsd',19895,{unit_of_measurement:'s'}]};
+test('last session figures start 15% smaller than the live session',()=>{
+  const x=setupAll({sections:['session'],charging:false,over:unplugged});
+  const fits=[...x.html().matchAll(/data-more-info="last_session_[a-z_]+"[^>]*>[^]*?data-fit="(\d+)"/g)].map((m)=>m[1]);
+  assert.ok(fits.length>=3);
+  assert.ok(fits.every((f)=>f==='13'),fits.join());
+});
+
 test('unplugged, the Session row is the last session: its energy, cost, duration and when it ended',()=>{
   const x=setupAll({sections:['session'],charging:false,over:unplugged});
   assert.match(x.html(),/>Last session<small>[^<]+<\/small>/);
@@ -1792,6 +1803,31 @@ test('renaming an entity re-finds the charger entities without a page reload', a
   x.card.disconnectedCallback();
   await new Promise((r) => setImmediate(r));
   assert.equal(unsubscribed, 1);
+});
+test('registry creates discover deferred charger entities and coalesce during a lookup', async () => {
+  const x = setupSafety();
+  const original = {...x.card._ids};
+  const withSocket = {...original, household_socket_16_a:'switch.socket'};
+  const withReve = {...withSocket, reve_api:'binary_sensor.reve'};
+  x.states['switch.socket'] = {state:'off', attributes:{}};
+  x.states['binary_sensor.reve'] = {state:'on', attributes:{}};
+  let registryEvent, lookups = 0;
+  x.hass.connection = {subscribeEvents:async (cb) => { registryEvent = cb; return () => {}; }};
+  const pending = deferred();
+  x.hass.callWS = () => ++lookups === 1 ? pending.promise : Promise.resolve({entities:withReve});
+  x.card.hass = x.hass;
+  assert.doesNotMatch(x.card.shadowRoot.innerHTML, /data-limit-toggle="household_socket_16_a"/);
+
+  registryEvent({data:{action:'create', entity_id:'switch.socket'}});
+  assert.equal(lookups, 1, 'the socket create starts a lookup');
+  registryEvent({data:{action:'create', entity_id:'binary_sensor.reve'}});
+  registryEvent({data:{action:'create', entity_id:'sensor.other'}});
+  assert.equal(lookups, 1, 'creates during the lookup queue a single follow-up');
+  pending.resolve({entities:withSocket});
+  await new Promise((r) => setImmediate(r));
+  assert.equal(lookups, 2);
+  assert.equal(x.card._ids.reve_api, 'binary_sensor.reve');
+  assert.match(x.card.shadowRoot.innerHTML, /data-limit-toggle="household_socket_16_a"/);
 });
 test('reduced-motion preference stops animations and transitions', () => {
   const x = setupAll({sections:['status']});
@@ -2989,4 +3025,229 @@ test('monthly energy is requested in the kWh shown on the card', async () => {
   x.hass.callWS = async (msg) => ({change:msg.units?.energy === 'kWh' ? 12 : 12000});
   await x.card._fetchMonth();
   assert.match(x.html(), /hist-month-cur[^]*?<b>12<small>kWh/);
+});
+
+test('write-only schedules and limits start unknown and the card can send the first command', async()=>{
+  const setup = (attributes) => setupAll({sections:['schedules','limits'], mode:'basic', fold:true, over:{
+    schedule_1_enabled:['switch.s1','unknown',attributes],
+    schedule_1_start:['time.s1start','23:00:00'],
+    schedule_1_stop:['time.s1stop','07:00:00'],
+    limit_disable_all:['switch.dis','unknown',attributes],
+    limit_energy_enabled:['switch.lee','unknown',attributes],
+  }});
+  const legacy = setup({assumed_state:true});
+  assert.match(legacy.card._foldInfo('schedules').sum,/1 —/);
+  assert.match(legacy.html(),/class="limits-note">—</);
+  assert.doesNotMatch(legacy.html(),/none on/i);
+  assert.match(legacy.html(),/data-limit-toggle="limit_disable_all"/);
+  await legacy.card._toggleLimit('schedule_1_enabled');
+  assert.deepEqual(legacy.calls.map(([domain, service, data]) => [domain, service, data.entity_id]),
+    [['switch','turn_on','switch.s1']]);
+
+  const modern = setup({});
+  assert.match(modern.card._foldInfo('schedules').sum,/1 Off/);
+  assert.match(modern.html(),/none on/i);
+  await modern.card._toggleLimit('schedule_1_enabled');
+  assert.equal(modern.calls.length,0);
+});
+
+test('adaptive voltage stepper uses the number entity range and step', async()=>{
+  for (const [min, step, value] of [[150, 5, 190], [210, 1, 215]]) {
+    const setup = (state) => setupAll({sections:['adaptive'], over:{
+      undervoltage_threshold:['number.uv',state,{min,max:220,step,unit_of_measurement:'V'}],
+    }});
+    const mid = setup(value);
+    await mid.card._stepLimit('undervoltage_threshold',-1);
+    assert.equal(mid.calls.at(-1)[2].value,value-step);
+    await mid.card._stepLimit('undervoltage_threshold',1);
+    assert.equal(mid.calls.at(-1)[2].value,value);
+    const low = setup(min), high = setup(220);
+    await low.card._stepLimit('undervoltage_threshold',-1);
+    await high.card._stepLimit('undervoltage_threshold',1);
+    assert.equal(low.calls.length+high.calls.length,0);
+  }
+});
+
+
+test('REVE leakage is a plain reading: no colour and no part in the safety tint',()=>{
+  for (const leak of [0,3,45]) {
+    const {card}=setupSafety({reve:true,leak});
+    const html=card.shadowRoot.innerHTML;
+    assert.match(html,new RegExp(`data-more-info="leakage_current"[^>]*>[\\s\\S]*?<span class="safety-value ">${leak}<small>mA`));
+    assert.equal(card._safetyReadings().leakCls,'');
+  }
+  const high=setupSafety({reve:true,leak:45});
+  assert.equal(high.card._safetyStatus(),'good');
+  const onlyLeak=setupSafety({reve:true,leak:3,box:null,plug:null,ground:'unknown',protection:'unknown'});
+  assert.equal(onlyLeak.card._safetyReadings().anyKnown,false);
+});
+
+test('classic leakage keeps its colours',()=>{
+  assert.equal(setupSafety({leak:3}).card._safetyReadings().leakCls,'good');
+  const high=setupSafety({leak:45});
+  assert.equal(high.card._safetyReadings().leakCls,'bad');
+  assert.equal(high.card._safetyStatus(),'bad');
+});
+
+test('a REVE leak fault names no leakage reading, classic still does',()=>{
+  const reve=setupSafety({reve:true,leak:3});
+  assert.doesNotMatch(reve.card._faultDetail('Current Leak High'),/mA/);
+  assert.match(reve.card._faultDetail('Current Leak High'),/electrician|електрик/);
+  const classic=setupSafety({leak:3});
+  assert.match(classic.card._faultDetail('Current Leak High'),/3 mA/);
+});
+
+test('REVE firmware from the entity lookup keeps a 50 mA reading informational without reve_api access',async()=>{
+  const x=setupSafety({leak:50});
+  const entities={...x.card._ids};
+  x.hass.callWS=async()=>({entities,reve:true});
+  await x.card._resolve();
+  assert.equal(x.card._ids.reve_api,undefined);
+  const detail=x.card._faultDetail('Current Leak High');
+  assert.deepEqual({
+    reading:x.card.shadowRoot.innerHTML.match(/class="safety-value [^"]*">50<small>mA/)?.[0],
+    tint:x.card._safetyStatus(),
+    faultNamesLeak:/mA/.test(detail),
+  },{
+    reading:'class="safety-value ">50<small>mA',
+    tint:'good',
+    faultNamesLeak:false,
+  });
+  assert.match(detail,/electrician/);
+});
+
+test('classic 3.x firmware from the entity lookup keeps leakage tint and fault detail',async()=>{
+  const x=setupSafety({leak:30});
+  const entities={...x.card._ids};
+  x.hass.callWS=async()=>({entities,reve:false});
+  x.card.setConfig({sections:['safety']});
+  x.card.hass=x.hass;
+  await new Promise((r)=>setImmediate(r));
+  assert.match(x.card.shadowRoot.innerHTML,/class="safety-value bad">30<small>mA/);
+  assert.equal(x.card._safetyStatus(),'bad');
+  assert.match(x.card._faultDetail('Current Leak High'),/30 mA/);
+});
+
+test('household socket 16 A shows only when the charger reports the setting',()=>{
+  const without=setupSafety();
+  assert.doesNotMatch(without.card.shadowRoot.innerHTML,/household_socket_16_a/);
+  const on=setupSafety({socket:'on'});
+  assert.match(on.card.shadowRoot.innerHTML,/data-limit-toggle="household_socket_16_a"[^>]*>[\s\S]*?safety-value[^"]*">16<small>A/);
+  const off=setupSafety({socket:'off'});
+  assert.match(off.card.shadowRoot.innerHTML,/data-limit-toggle="household_socket_16_a"[^>]*>[\s\S]*?safety-value[^"]*">32<small>A/);
+});
+
+test('socket 16 A to full current asks first; back to 16 A is immediate',async()=>{
+  const on=setupSafety({socket:'on'});
+  await on.card._toggleLimit('household_socket_16_a');
+  assert.equal(on.calls.length,0);
+  assert.match(on.card.shadowRoot.innerHTML,/data-guard-confirm/);
+  await on.card._confirmGuard();
+  assert.deepEqual(on.calls.map(c=>c.slice(0,2)),[['switch','turn_off']]);
+  const off=setupSafety({socket:'off'});
+  await off.card._toggleLimit('household_socket_16_a');
+  assert.equal(JSON.stringify(off.calls.map(c=>c.slice(0,3))),JSON.stringify([['switch','turn_on',{entity_id:'switch.socket'}]]));
+  // The tap paints the new mode before the state comes back.
+  assert.match(off.card.shadowRoot.innerHTML,/safety-value[^"]*">16<small>A/);
+});
+
+test('socket mode on from the start asks for the full charger current, not an invented amount',async()=>{
+  for (const lang of ['en','uk']) {
+    const on=setupSafety({socket:'on',currentMax:48});
+    on.card._config={...on.card._config,language:lang};
+    await on.card._toggleLimit('household_socket_16_a');
+    const html=on.card.shadowRoot.innerHTML;
+    assert.match(html,lang==='en'?/Allow the full charger current\?/:/Дозволити повний струм зарядки\?/);
+    assert.doesNotMatch(html,/32 A|32 А/);
+  }
+});
+
+test('socket confirmation uses full current after a 16 A adapter is removed while socket mode is on',async()=>{
+  const off=setupSafety({socket:'off',currentMax:16});
+  assert.match(off.card.shadowRoot.innerHTML,/data-limit-toggle="household_socket_16_a"[^>]*>[\s\S]*?safety-value[^"]*">16<small>A/);
+  off.states['switch.socket']={state:'on',attributes:{}};
+  // Removing the adapter leaves Charging Current capped at 16 A by socket mode.
+  off.card.hass={...off.hass,states:{...off.states}};
+  await off.card._toggleLimit('household_socket_16_a');
+  const question=off.card.shadowRoot.innerHTML.match(/role="alertdialog" aria-label="([^"]*)"/)?.[1];
+  assert.match(question,/Allow the full charger current\?/);
+  await off.card._confirmGuard();
+  off.states['switch.socket']={state:'off',attributes:{}};
+  off.states['number.current']={...off.states['number.current'],attributes:{...off.states['number.current'].attributes,max:32}};
+  off.card.hass={...off.hass,states:{...off.states}};
+  assert.match(off.card.shadowRoot.innerHTML,/data-limit-toggle="household_socket_16_a"[^>]*>[\s\S]*?safety-value[^"]*">32<small>A/);
+});
+
+test('a remembered full current belongs to its charger',async()=>{
+  const card=setupSafety({socket:'off',currentMax:16});
+  // The card is pointed at another charger whose socket mode is already on.
+  const next={...card.states,'switch.socket2':{state:'on',attributes:{}},'number.current2':{state:'16',attributes:{min:7,max:16,step:1,unit_of_measurement:'A'}}};
+  card.card._ids={...card.card._ids,household_socket_16_a:'switch.socket2',charging_current:'number.current2'};
+  card.card.hass={...card.hass,states:next};
+  await card.card._toggleLimit('household_socket_16_a');
+  const html=card.card.shadowRoot.innerHTML;
+  assert.match(html,/Allow the full charger current\?/);
+  assert.doesNotMatch(html,/Allow 16 A\?/);
+});
+
+test('socket full current follows the charger: a 16 A charger shows 16A, never an invented 32A',()=>{
+  const small=setupSafety({socket:'off',currentMax:16});
+  assert.match(small.card.shadowRoot.innerHTML,/safety-value[^"]*">16<small>A/);
+  assert.doesNotMatch(small.card.shadowRoot.innerHTML,/32<small>A/);
+});
+
+// ---- Time row: the time zone stays whole; the row gives up its extras first ----
+// On a phone the zone select shrank and clipped "Auto · UTC+2" (2026-11-25).
+function fitTimeRow(widths) {
+  const x=setupStatus({sections:['time']});
+  const classes=new Set();
+  const section={classList:{add:(c)=>classes.add(c),remove:(...cs)=>cs.forEach((c)=>classes.delete(c)),contains:(c)=>classes.has(c)}};
+  const saved={'time-tight':widths.icon,'time-tighter':widths.label,'time-tightest':widths.sync,'time-narrowest':widths.icons||0};
+  const row={parentElement:section,get clientWidth(){return widths.box;},
+    get scrollWidth(){return widths.full-[...classes].reduce((s,c)=>s+(saved[c]||0),0);}};
+  x.card.shadowRoot={innerHTML:'',querySelector:()=>null,querySelectorAll:(q)=>q==='.time-row'?[row]:[]};
+  return {x,classes,widths};
+}
+
+test('a time row too narrow for the zone drops the zone icon, then the label, then the Sync text',()=>{
+  const r=fitTimeRow({full:330,box:300,icon:18,label:40,sync:36});
+  r.x.card._fitLimitValues();
+  assert.deepEqual([...r.classes].sort(),['time-tight','time-tighter']);
+  r.widths.box=320;
+  r.x.card._fitLimitValues();
+  assert.deepEqual([...r.classes],['time-tight'],'re-measured from the full row');
+  r.widths.box=400;
+  r.x.card._fitLimitValues();
+  assert.deepEqual([...r.classes],[],'a wide card keeps everything');
+});
+
+test('the time zone select is as wide as the text it shows and its row never squeezes it',()=>{
+  // A native select is as wide as its longest option ("Auto: follow Home Assistant") even while it
+  // shows "UTC+3"; squeezed, it clipped "Auto · UTC+2" on a phone. The room beyond the text (padding,
+  // border, the platform's arrow) is what the select itself adds to its longest option.
+  const r=fitTimeRow({full:200,box:300,icon:0,label:0,sync:0});
+  // Layout widths (offsetWidth): a dashboard that scales the card (transform) shrinks only the
+  // rendered rectangles, which would make the select too narrow for its text.
+  const em=(t)=>t.length*8, chrome=38, scaled=(w)=>({width:w*0.75});
+  const sizer={textContent:'',get offsetWidth(){return em(this.textContent);},getBoundingClientRect(){return scaled(em(this.textContent));}};
+  const options=[{textContent:'Auto: follow Home Assistant'},{textContent:'UTC+3'}];
+  const select={style:{width:'99px'},selectedIndex:1,options,parentElement:{querySelector:(q)=>q==='.time-zone-sizer'?sizer:null},
+    get offsetWidth(){return this.style.width?parseFloat(this.style.width):em(options[0].textContent)+chrome;},
+    getBoundingClientRect(){return scaled(this.offsetWidth);}};
+  r.x.card.shadowRoot.querySelectorAll=(q)=>q==='.time-row'?[]:q==='.time-zone'?[select]:[];
+  r.x.card._fitLimitValues();
+  assert.equal(select.style.width,`${em('UTC+3')+chrome+2}px`);
+  assert.equal(sizer.textContent,'UTC+3','the sizer ends on the shown text, within the select');
+  assert.match(source,/\.time-zone-wrap\{[^}]*flex:none/);
+});
+
+test('a row still too narrow drops the clock and fix icons last, keeping every text',()=>{
+  const r=fitTimeRow({full:380,box:300,icon:18,label:30,sync:20,icons:36});
+  r.x.card._fitLimitValues();
+  assert.deepEqual([...r.classes].sort(),['time-narrowest','time-tight','time-tighter','time-tightest']);
+  assert.match(source,/\.sl\.time\.time-narrowest \.time-item ha-icon,\.sl\.time\.time-narrowest \.time-fix ha-icon\{display:none\}/);
+});
+
+test('the time zone fix keeps its text when the row hides Sync text',()=>{
+  assert.match(source,/\.sl\.time\.time-tightest \.time-sync:not\(\.time-fix\) span\{display:none\}/);
 });

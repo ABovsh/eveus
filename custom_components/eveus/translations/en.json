@@ -349,6 +349,9 @@
       "ground_protection": {
         "name": "Ground Protection"
       },
+      "household_socket_16_a": {
+        "name": "Household Socket 16 A"
+      },
       "connect_to_ocpp": {
         "name": "Connect to OCPP"
       },

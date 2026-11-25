@@ -1,18 +1,20 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.31.1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.32.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
+[![Chargers](https://img.shields.io/badge/chargers-gen%201%E2%80%933%20%C2%B7%20Eveus%20%2B%20REVE%20firmware-41BDF5?style=for-the-badge)](#supported-chargers)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)
 
 **English** | [🇺🇦 Українська](README.uk.md)
 
-Home Assistant integration for **Eveus EV chargers** (Energy Star), such as
-**Eveus Pro**,
-including chargers on the new **REVE firmware**. Control the charging current, schedules and limits,
-stop at a target battery level (SOC), and track energy and charging cost. The
-integration talks to the charger over your local network; no cloud account or
-internet access is needed. Install it from the **HACS default store**.
+A Home Assistant integration for Eveus EV chargers of all three hardware
+generations, on Eveus or REVE firmware. It lets you control the charging state,
+current, schedules, limits, the charger's time settings and many other
+parameters. It also calculates your car's battery level (SOC) while charging and
+can end the charge at the level you choose. A ready-made dashboard card shows all
+of this together with energy, charging cost and safety readings: voltage,
+temperature, grounding and leakage current.
 
 <p align="center">
   <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
@@ -26,7 +28,7 @@ internet access is needed. Install it from the **HACS default store**.
 
 ## Features
 
-### 🎛️ Local charging control
+### 🎛️ Charging control
 
 - Adjust current, allow or stop charging from dashboards and automations.
 - Enable one-charge mode and set time, energy and cost limits.
@@ -67,19 +69,21 @@ All SOC features require **Advanced mode**. [Set up SOC →](#battery-level-soc)
 
 - **Two charging schedules** with their own current limit and, on Eveus firmware, energy limit. They are stored on the charger and run without Home Assistant.
 - **Lower current when mains voltage drops:** the charger does this; the integration sets the mode and threshold and shows the current cap.
+- **The charger's clock:** set its time zone by hand or with **Follow HA Time Zone**, and correct the time with **Sync Time**; schedules run on this clock.
 
-### 🔄 REVE firmware
+### 🔄 All generations and firmwares
 
-- **Recognized automatically:** no setup change after the charger updates to REVE.
-- **Reads and writes through REVE's local interface,** the one the charger's app uses: current, schedules with their days of the week, tariffs and limits.
+- **All three hardware generations:** firmware 1.x on the first, 2.x on the second, R3.x on the third. The integration recognizes the firmware by itself and sends each control the way that firmware expects.
+- **REVE firmware is recognized automatically:** no setup change after the charger updates to REVE. The integration reads and writes through REVE's local interface, the one the charger's app uses: current, schedules with their days of the week, tariffs and limits.
 - **Manual Mode** sensor and card notes show when REVE ignores its schedules and limits. [More about REVE →](#reve-firmware)
+- **Built for the latest firmware of each line;** on older versions some features may be missing, and readings the charger does not report stay unavailable. [Which charger supports what →](#supported-chargers)
 
 ### 🛡️ Faults and conflicting controls
 
 - **Repairs notices** explain ground faults, overheating, leakage and other problems, with what to do next.
 - **OCPP control and connection status** in Home Assistant. While OCPP is on, a notice warns that the server or app may change settings.
 
-Also supported: **several chargers**, **English and Ukrainian**, and older firmware with fewer readings.
+Also supported: **several chargers** and **English and Ukrainian**.
 
 ## Requirements
 
@@ -87,7 +91,7 @@ Also supported: **several chargers**, **English and Ukrainian**, and older firmw
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A or 48A, reachable from Home Assistant |
-| Charger firmware | [Eveus firmware](#charger-firmware) R3.05.x or [REVE firmware](#reve-firmware), both verified; Eveus firmware [R3.01.x and 1.x](#older-charger-firmware) has fewer readings |
+| Charger firmware | [Eveus firmware](#charger-firmware) 1.x, 2.x or R3.x (latest version of its line), or [REVE firmware](#reve-firmware) on the third hardware generation; see [Supported chargers](#supported-chargers) |
 | Network | Local network access to the charger's web interface |
 | Setup details | Charger IP address, hostname or URL and model; username and password if the charger has them |
 
@@ -101,7 +105,8 @@ The integration is in the **HACS default store**; no custom repository is needed
 
 Or in HACS:
 
-1. Open **HACS** and search for **Eveus EV Charger**.
+1. Open **HACS** and search for **Eveus EV Charger**. From Home Assistant 2026.11, HACS is built in as
+   **Marketplace**: open **Settings → Marketplace**.
 2. Install it.
 3. Restart Home Assistant.
 
@@ -169,15 +174,15 @@ browser or reset the app's frontend cache.
 | **Schedules** | Schedule 1 and Schedule 2, one row each: on/off, start → stop, current limit and, on Eveus firmware, energy limit. On REVE also their days of the week, which you can change, and the other schedules and the tariffs set in the charger's app, read-only |
 | **Charger clock** | Time Zone (its list starts with **Auto: follow Home Assistant**, the **Follow HA Time Zone** switch), the charger's time (Time Drift instead when the clock is 10 minutes or more off) and **Sync Time** |
 | **Counters** | Total Energy, Counter A and Counter B with resets; this month's and last month's energy in kWh |
-| **Safety** | Box and plug temperature, ground, leakage current, connection quality |
+| **Safety** | Box and plug temperature, ground, leakage current, connection quality; on firmware 1.x and 2.x also the household socket mode (16A or full current, tap to switch) |
 
 In Basic mode the two SOC sections are hidden and Limits has no SOC limit.
 A reading the charger's firmware does not report is not shown.
 
-- **Red values:** voltage below 205 V or above 253 V; temperature from 80 °C and leakage from 30 mA, where the charger's own protection trips; Time Drift from 10 minutes.
+- **Red values:** voltage below 205 V or above 253 V; temperature from 80 °C and, on Eveus firmware, leakage from 30 mA, where the charger's own protection trips; Time Drift from 10 minutes. On REVE, leakage is shown without colour.
 - **Offline:** a card with Status shows only the status and the last session: `Offline · since 14:02 | 3h ago`. The time comes from Home Assistant's recorder, so a restart does not reset it. A card without Status keeps its sections and disables the controls.
 - **Standby and Stopped:** a card with **Status** uses the same compact layout in both states: it hides **Battery SOC** and **Meter**, while **Charger clock**, **Safety**, the session and section order stay. Set `adapt: false` or turn off **Fit to the charger's state** in the editor to keep every section in every state.
-- **Compact readings:** energy and cost totals show whole kWh and whole currency amounts; session values share one font size that fits the row. On narrow cards, the readings move below the session label when needed.
+- **Compact readings:** energy and cost totals show whole kWh and whole currency amounts; session values share one font size that fits the row. On narrow cards, the readings move below the session label when needed, and **Charger clock** keeps the time zone whole by first hiding its icons, its label and the **Sync** text.
 - **Folding:** a card with six or more sections shows SOC settings, Adaptive charging, Limits, Schedules and Counters as one-line rows; tap a row to open it. A section's size **Small** always folds it, **Normal** keeps it open, **Large** shows bigger readings in a section with two items or fewer.
 - **Hints:** a fault shows the reading behind it and what to do. **Status** says why the charge runs below the set current. While **One charge** is on, Schedules and Limits say it ignores them, with a **Turn off** button. The SOC limit stays on: Home Assistant stops the charge at Target SOC even then. On REVE, while **Stop** is on they say Stop ignores them, also with **Turn off**, and manual mode started in the charger's app shows a manual-mode note with **Turn off**; before REVE_PLUS 1.0.3 see [Older REVE versions](#older-reve-versions).
 - **Taps:** tap a reading to open its entity. Long-press the battery tile to set Initial SOC, the target tile for Target SOC. Stopping a charge, raising the current, resetting a counter, turning off ground protection or a limit ask you to confirm. A refused change shows a message for 30 seconds.
@@ -544,11 +549,25 @@ Ground notices clear after recovery. Serious fault notices also need
 
 ## Charger firmware
 
-Eveus chargers run one of two firmwares: **Eveus firmware** (R3.x and 1.x) or
-**REVE firmware**. The device page shows which one: a firmware version that
+Eveus chargers run one of two firmwares: **Eveus firmware** (1.x, 2.x and R3.x)
+or **REVE firmware**. The device page shows which one: a firmware version that
 starts with `REVE_PLUS` is REVE; anything else is Eveus firmware. In the
 CHANGELOG, `Eveus:` and `REVE:` mark a change for one firmware only; a change
 without either applies to both.
+
+### Supported chargers
+
+| Hardware generation | Firmware | Support |
+| --- | --- | --- |
+| First (EnergyStar V-series) | Eveus 1.x | Fewer readings; [details](#older-charger-firmware) |
+| Second (EnergyStar V-series) | Eveus 2.x | As on 1.x |
+| Third | Eveus R3.05.x | Everything in this README |
+| Third | Eveus R3.01.x | Fewer readings; [details](#older-charger-firmware) |
+| Third | REVE (`REVE_PLUS`) | Everything in this README, with the [REVE differences](#reve-firmware) |
+
+Each hardware generation has its own Eveus firmware line: 1.x, 2.x and R3.x. The
+third generation can also run REVE. The integration is built for the latest
+version of each line; on older versions it may work only partly.
 
 ### REVE firmware
 
@@ -593,7 +612,7 @@ The **Manual Mode** sensor shows the mode the charger reports, and the card show
 - **REVE API** (diagnostic) shows whether REVE's interface answers; it turns off after two failed reads in a row. The interface sometimes stops answering for a few minutes. Meanwhile readings come from the older `/main` page, schedules and tariffs keep their last values, and changing a setting fails with "REVE interface is not answering".
 - During such an outage the session readings are the last ones read, for up to five minutes, and then left out; after an unplug and replug they are left out at once. Readings held this way never fill **Initial SOC** from the car or trigger the SOC limit.
 - REVE schedules have no energy limit, so **Schedule 1 Energy limit**, **Schedule 2 Energy limit** and their switches are not created.
-- REVE reports leakage only as raw values, not in mA, so **Leakage Current** and **Leakage Current Peak** stay unavailable, and so does **OCPP Connected**.
+- **Leakage Current** on REVE_PLUS 1.0.5 with controller GRM070A-R3.05.7 shows the leakage in whole mA, as the charger's display shows it. It is for information only: no notice or colour comes from it, and the charger's own leakage protection stays the alarm. On other REVE versions it stays unavailable. **Leakage Current Peak** and **OCPP Connected** stay unavailable on REVE.
 - Four diagnostic sensors, disabled by default: **REVE Free Memory**, **REVE Min Free Memory**, **REVE Largest Free Block** and **REVE Started** (when the charger last started). Most users do not need them; enable them on the device page when you need data on why the charger hangs or restarts.
 
 #### Older REVE versions
@@ -612,11 +631,28 @@ The charger did not lower its packet size on a link with an MTU below 1500. When
 
 ### Older charger firmware
 
-R3.01.x and firmware 1.x (EnergyStar V-series) are supported with fewer
-readings; the ones the charger does not report stay unavailable. On 1.x,
+R3.01.x and firmware 1.x and 2.x (EnergyStar V-series, the first two
+hardware generations) are supported with fewer readings; the ones the charger
+does not report stay unavailable. Below, 1.x also covers 2.x. On 1.x,
 **State** follows the charger's own status names, and controls are sent the
 way its web page sends them. An unknown state shows `Unknown`, with its code
 in the **State** sensor's `raw_state` attribute.
+
+On 1.x, Home Assistant shows the configured tariff prices and the active
+rate. The estimated cost to reach the target SOC uses the tariff windows.
+You can edit the times, current limits, and energy limits of both schedules.
+Schedule, limit and **Stop Charging** switches show the charger's own state.
+Early 1.x versions accept them only from the charger's page; update to the
+latest 1.x firmware to change them from Home Assistant. **Minimum voltage**
+shows the charger's setting where the firmware reports it (1.55); otherwise it
+stays unknown until the first successful command and is remembered across
+restarts. Set **Undervoltage threshold** from 150 to 220 V in 5 V steps,
+independently of **Minimum voltage**. **Adaptive Mode** also offers **Auto 2**.
+**Ground Protection** and the limits use the values of the charger's own page:
+**Limit: Energy** in 0.5 kWh steps, **Limit: Time** up to 96 hours in 1-minute
+steps, fractional energy and cost limits. During a Stop or a schedule hold,
+**Car Connected** follows the charger's pilot signal. If the pilot is
+indeterminate (unknown or F), **Car Connected** is unknown.
 
 For firmware updates, message **@energy_star** on Telegram; install the file
 through the charger's web interface.
@@ -683,6 +719,7 @@ no long-term statistics.
 | `switch.eveus_ev_charger_stop_charging` | Stop/allow charging from the charger side |
 | `switch.eveus_ev_charger_one_charge` | Enable one-charge mode |
 | `switch.eveus_ev_charger_ground_protection` | Missing-ground shutdown protection |
+| `switch.eveus_ev_charger_household_socket_16_a` | **Household Socket 16 A** caps the charging current and both schedule current limits at 16 A when enabled (shown when the charger reports it, as firmware 1.x and 2.x do) |
 | `switch.eveus_ev_charger_connect_to_ocpp` | OCPP connection; the server/app may override local controls |
 | `switch.eveus_ev_charger_limit_time_enabled` | **Limit: Time enabled** |
 | `switch.eveus_ev_charger_limit_energy_enabled` | **Limit: Energy enabled** |
@@ -811,7 +848,7 @@ Each schedule has its own current and energy caps with separate enable switches.
 | `sensor.eveus_ev_charger_plug_temperature` | °C | Plug temperature |
 | `sensor.eveus_ev_charger_battery_voltage` | V | Charger backup battery voltage |
 | `sensor.eveus_ev_charger_leakage_current` | mA | Current leakage reading |
-| `sensor.eveus_ev_charger_leakage_current_peak` | mA | Peak leakage reading |
+| `sensor.eveus_ev_charger_leakage_current_peak` | mA | Fast leakage reading: the charger's quick estimate, not a stored maximum |
 | `sensor.eveus_ev_charger_wifi_signal` | dBm | Charger Wi-Fi signal |
 | `select.eveus_ev_charger_time_zone` | Select | Charger time-zone offset, `-12` to `+14` |
 | `button.eveus_ev_charger_sync_time` | Button | Push Home Assistant time to the charger |

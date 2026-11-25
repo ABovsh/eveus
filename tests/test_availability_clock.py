@@ -389,6 +389,7 @@ def test_failure_during_probation_resets_counter() -> None:
     updater._last_success_time = 0.0
     updater._last_success_monotonic = 0.0
     updater._availability_log = SimpleNamespace(should_log=lambda *_: False)
+    updater._legacy_confirmed = False
     updater._offline_probation = 1
     updater._first_failure_monotonic = None
     updater._grace_timer_unsubs = []

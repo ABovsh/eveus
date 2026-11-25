@@ -306,6 +306,28 @@ _MEASUREMENT_FIELDS: Final = """
 )
 
 
+def _station_of(data: Mapping[str, Any]) -> dict[str, Any]:
+    station = data.get("stationData")
+    if not isinstance(station, dict):
+        raise ValueError("no stationData")  # pragma: no mutate - message text; only the exception type is ever logged
+    return station
+
+
+def _service_error_station(err: GraphQLError) -> dict[str, Any] | None:
+    """Recover the exact leakage pair's station from a service-only failure."""
+    errors = err.errors
+    if not isinstance(err.data, dict) or not isinstance(errors, list):
+        return None
+    for error in errors:
+        path = error.get("path") if isinstance(error, dict) else None
+        if not isinstance(path, list) or path[:1] != ["serviceData"]:
+            return None
+    station = err.data.get("stationData")
+    if isinstance(station, dict) and leakage_pair(station):
+        return station
+    return None
+
+
 def _station_query(fields: str) -> str:
     """A ``StationData`` read of fixed fields; every document is built once,
     at import, from the constants above."""
@@ -319,6 +341,57 @@ MEASUREMENTS_QUERY: Final = _station_query(_MEASUREMENT_FIELDS + _ACTIVE_RATE_FI
 MEASUREMENTS_AND_SETTINGS_QUERY: Final = _station_query(
     _MEASUREMENT_FIELDS + _SCHEDULE_FIELDS + _RATE_FIELDS
 )
+# Leakage current. REVE's /main leakValue/leakValueH are the controller's
+# startup ADC sample and a constant 650. On REVE_PLUS 1.0.5 with controller
+# GRM070A-R3.05.7 the processed (slow, RMS) leakage word the classic Eveus
+# display prints as ``word / 100`` mA is served as serviceData's
+# adc_plug_temperature (firmware trace 2026-11-24). Other versions may lay that
+# word out differently, so only this pair asks for it, through a second root in
+# the same request. It is shown as the display would show it; no warning or
+# colour is derived from it, the charger's own leakage trip stays the alarm.
+_LEAKAGE_PAIR: Final = ("REVE_PLUS_1.0.5", "GRM070A-R3.05.7")
+LEAKAGE_KEY: Final = "leakValue"
+# Readings REVE reports for display only: no Home Assistant warning uses them.
+REVE_INFORMATIONAL_FIELDS: Final[frozenset[str]] = frozenset({LEAKAGE_KEY})
+_LEAKAGE_ROOT: Final = """
+        serviceData {
+            adc_plug_temperature
+        }"""
+# After a failed read with the leakage root, the plain document serves the polls
+# for this long; telemetry never waits on the optional reading.
+LEAKAGE_RETRY_SECONDS: Final = 1800
+
+
+def _with_leakage(document: str) -> str:
+    end = document.rindex("\n    }")  # pragma: no mutate - runs at import only; the documents' text is pinned by tests
+    return document[:end] + _LEAKAGE_ROOT + document[end:]  # pragma: no mutate - runs at import only; the documents' text is pinned by tests
+
+
+MEASUREMENTS_LEAK_QUERY: Final = _with_leakage(MEASUREMENTS_QUERY)
+MEASUREMENTS_AND_SETTINGS_LEAK_QUERY: Final = _with_leakage(MEASUREMENTS_AND_SETTINGS_QUERY)
+_LEAKAGE_DOCUMENTS: Final = {
+    MEASUREMENTS_QUERY: MEASUREMENTS_LEAK_QUERY,
+    MEASUREMENTS_AND_SETTINGS_QUERY: MEASUREMENTS_AND_SETTINGS_LEAK_QUERY,
+}
+
+
+def leakage_pair(station: Mapping[str, Any]) -> bool:
+    """Whether this reply comes from the firmware pair whose leakage word is known."""
+    wifi, main = station.get("wifiFWVersion"), station.get("mainFWVersion")
+    return (
+        isinstance(wifi, str)
+        and isinstance(main, str)
+        and (wifi.strip(), main.strip()) == _LEAKAGE_PAIR
+    )
+
+
+def leakage_ma(word: Any) -> int | None:
+    """The leakage word in whole mA, truncated as the charger's display prints it."""
+    if type(word) is not int or not 0 <= word <= 0xFFFF:
+        return None
+    return word // 100
+
+
 # The settings alone: read while /main serves the polls, or before a schedule
 # write when nothing has been read yet. Splitting the request into one
 # document per setting changed nothing about the server's HTTP 500 windows
@@ -1033,6 +1106,11 @@ class ReveApi:
         self.manual_mode = ManualMode()
         self._station_system: dict[str, Any] = {}
         self._started_at: int | None = None
+        # Leakage (see _LEAKAGE_PAIR): whether the last good read came from the
+        # known pair, when its root may be asked for again, and this poll's mA.
+        self._leakage_pair = False  # pragma: no mutate - read only for truthiness, and every read sets it first
+        self._leakage_retry_at = 0.0  # pragma: no mutate - any start below the monotonic clock is equivalent
+        self._leakage: int | None = None  # pragma: no mutate - every poll sets it (read or /main) before the updater reads it
 
     @property
     def extras(self) -> ReveExtras | None:
@@ -1111,20 +1189,10 @@ class ReveApi:
         did not fail."""
         with_settings = self._settings_streak == 0 and self._settings_due(time.monotonic())
         mark = self._measure_mark = self._read_mark()
+        self._leakage = None
+        document = MEASUREMENTS_AND_SETTINGS_QUERY if with_settings else MEASUREMENTS_QUERY
         try:
-            station = await self._station(
-                MEASUREMENTS_AND_SETTINGS_QUERY if with_settings else MEASUREMENTS_QUERY
-            )
-            main = station_to_main(station)
-            adaptive_current = main.get("aiModecurrent")
-            if adaptive_current is not None and not (
-                0 <= adaptive_current <= model_max_current(self._updater._model)
-            ):
-                del main["aiModecurrent"]
-            if "state" not in main:
-                raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
-            if validate is not None:
-                main = validate(main)
+            station, main, service = await self._station_with_leakage(document, validate)
             extras = parse_extras({"stationData": station}) if with_settings else None
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             self._measurement_failures += 1
@@ -1138,6 +1206,9 @@ class ReveApi:
         self._measurement_reads += 1
         self._failure_streak = 0
         self._answered = True
+        self._leakage_pair = leakage_pair(station)
+        if service is not None and self._leakage_pair:
+            self._leakage = leakage_ma(service.get("adc_plug_temperature"))
         self._check_fields(station)
         self._last_error = None
         self._last_source = "graphql"
@@ -1249,6 +1320,7 @@ class ReveApi:
         replaced by the last GraphQL one while that is recent, else left out."""
         self.keep_main_residue(main)
         self._last_source = "main"
+        self._leakage = None
         self._session_measured = False
         self.manual_mode.report(None)
         # A /main poll says nothing of the memory or the price now; the start
@@ -1538,11 +1610,54 @@ class ReveApi:
         return parse_extras({"stationData": await self._station(SETTINGS_QUERY)})
 
     async def _station(self, document: str) -> dict[str, Any]:
-        data = await self._post("StationData", document)
-        station = data.get("stationData")
-        if not isinstance(station, dict):
-            raise ValueError("no stationData")  # pragma: no mutate - message text; only the exception type is ever logged
-        return station
+        return _station_of(await self._post("StationData", document))
+
+    def _measurement_data(
+        self, station: dict[str, Any], validate: Callable[[dict[str, Any]], dict[str, Any]] | None
+    ) -> dict[str, Any]:
+        main = station_to_main(station)
+        adaptive_current = main.get("aiModecurrent")
+        if adaptive_current is not None and not (
+            0 <= adaptive_current <= model_max_current(self._updater._model)
+        ):
+            del main["aiModecurrent"]
+        if "state" not in main:
+            raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
+        return validate(main) if validate is not None else main
+
+    async def _station_with_leakage(
+        self, document: str, validate: Callable[[dict[str, Any]], dict[str, Any]] | None
+    ) -> tuple[dict[str, Any], dict[str, Any], Mapping[str, Any] | None]:
+        """Read station measurements, backing off the optional root on failure.
+
+        Retry with the plain document if the combined reply has no usable
+        station data or reports an error outside the optional root.
+        """
+        if self._leakage_pair and time.monotonic() >= self._leakage_retry_at:
+            try:
+                data = await self._post("StationData", _LEAKAGE_DOCUMENTS[document])
+                station = _station_of(data)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+                self._leakage_retry_at = time.monotonic() + LEAKAGE_RETRY_SECONDS
+                _LOGGER.debug("REVE leakage read failed: %s", type(err).__name__)
+                if isinstance(err, GraphQLError) and (station := _service_error_station(err)) is not None:
+                    try:
+                        return station, self._measurement_data(station, validate), None
+                    except ValueError:
+                        pass  # Invalid station measurements still need the plain retry.
+            else:
+                service = data.get("serviceData")
+                return (
+                    station, self._measurement_data(station, validate),
+                    service if isinstance(service, Mapping) else {},
+                )
+        station = await self._station(document)
+        return station, self._measurement_data(station, validate), None
+
+    @property
+    def leakage(self) -> int | None:
+        """This poll's leakage in mA, when its GraphQL read carried one."""
+        return self._leakage
 
     async def read_last_session(self) -> dict[str, Any] | None:
         """The newest finished session's voltages from the station, ``NO_SESSION``

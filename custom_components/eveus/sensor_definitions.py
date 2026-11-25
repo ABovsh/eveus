@@ -1322,11 +1322,10 @@ def create_sensor_specifications(phases: int = 1) -> tuple[EveusSensorEntityDesc
                 ("battery_voltage", "Battery Voltage", get_battery_voltage,
                  "mdi:battery", SensorDeviceClass.VOLTAGE,
                  UnitOfElectricPotential.VOLT, 2, SensorStateClass.MEASUREMENT, None),
-                # Leakage is an EVENT, not a trend: above the charger's 30 mA
-                # threshold it trips and reports the fault itself, and
-                # `leakValueH` is the charger's own peak-ever counter, so the
-                # worst value stays readable from the device. Averaging a
-                # healthy 0 mA every five minutes forever buys nothing.
+                # Leakage is an EVENT, not a trend: the charger trips and
+                # reports the fault itself. `leakValueH` is its fast leakage
+                # estimate (firmware trace 2026-11-24), not a stored peak.
+                # Averaging a healthy 0 mA every five minutes forever buys nothing.
                 ("leak_current", "Leakage Current", get_leak_current,
                  "mdi:current-dc", SensorDeviceClass.CURRENT,
                  UnitOfElectricCurrent.MILLIAMPERE, 0, None, None),

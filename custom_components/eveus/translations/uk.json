@@ -349,6 +349,9 @@
       "ground_protection": {
         "name": "Захист заземлення"
       },
+      "household_socket_16_a": {
+        "name": "Побутова розетка 16 А"
+      },
       "connect_to_ocpp": {
         "name": "Підключення до OCPP"
       },

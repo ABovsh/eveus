@@ -44,6 +44,11 @@ class GraphQLError(ValueError):
     malformed ``/main`` body.
     """
 
+    def __init__(self, message: str, *, data: Any = None, errors: Any = None) -> None:
+        super().__init__(message)
+        self.data = data
+        self.errors = errors
+
 
 def basic_auth(username: str, password: str) -> aiohttp.BasicAuth | None:
     """The charger's Basic Auth, or ``None`` to send no credentials at all:
@@ -194,9 +199,13 @@ async def post_graphql(
         result = await read_json_capped(response)
     if not isinstance(result, dict):
         raise GraphQLError("GraphQL reply is not an object")  # pragma: no mutate - message text; only the exception type is ever logged
-    if result.get("errors"):
-        raise GraphQLError("GraphQL reply reports errors")  # pragma: no mutate - message text; only the exception type is ever logged
     data = result.get("data")
+    if errors := result.get("errors"):
+        raise GraphQLError(
+            "GraphQL reply reports errors",  # pragma: no mutate - message text; only the exception type is ever logged
+            data=data,
+            errors=errors,
+        )
     if not isinstance(data, dict):
         raise GraphQLError("GraphQL reply has no data")  # pragma: no mutate - message text; only the exception type is ever logged
     return data

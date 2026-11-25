@@ -50,6 +50,8 @@ DEVICE_STATE_ERROR: Final[int] = 7
 LEGACY_RAW_STATE_KEY: Final[str] = "_legacy_raw_state"
 # Substate derived from the legacy state table and safe to read as a modern code.
 LEGACY_SUBSTATE_MAPPED_KEY: Final[str] = "_legacy_substate_mapped"
+# Pilot codes reported as unknown by the pre-R3 charger page.
+LEGACY_UNKNOWN_PILOTS: Final = frozenset({0, 4, 6})
 
 
 def is_modern_firmware_payload(data: dict) -> bool:
@@ -203,6 +205,9 @@ TIME_ZONE_FOLLOW_RETRY_POLLS: Final[int] = 10
 
 # Current limits
 MIN_CURRENT: Final[int] = 7
+RESTRICTED_MODE_KEY: Final[str] = "restricted_mode"
+# Pre-R3 firmware: 16 while the 16 A adapter is fitted, 255 without one.
+ADAPTER_KEY: Final[str] = "adapter"
 MODEL_16A: Final[str] = "16A"
 MODEL_32A: Final[str] = "32A"
 MODEL_40A: Final[str] = "40A"
@@ -276,6 +281,7 @@ CONF_FIRMWARE_FAMILY: Final[str] = "firmware_family"
 # resets suspendLimits within seconds (hardware test 2026-10-18), so on REVE
 # these would read unavailable forever.
 EVEUS_FIRMWARE_ONLY_ENTITIES: Final[tuple[tuple[str, str], ...]] = (
+    ("switch", "household_socket_16_a"),
     ("switch", "limit_disable_all"),
     ("switch", "schedule_1_energy_limit_enabled"),
     ("switch", "schedule_2_energy_limit_enabled"),

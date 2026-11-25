@@ -4881,7 +4881,7 @@
           'max': 10000,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'UAH',
         }),
       ),
@@ -4894,7 +4894,7 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.5,
           'unit_of_measurement': 'kWh',
         }),
       ),
@@ -4904,15 +4904,15 @@
           'device_class': 'duration',
           'friendly_name': 'Eveus EV Charger Limit: Time',
           'icon': 'mdi:timer-sand',
-          'max': 1440,
+          'max': 5760,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 5,
+          'step': 1,
           'unit_of_measurement': 'min',
         }),
       ),
       'number.eveus_ev_charger_schedule_1_current_limit': tuple(
-        'unknown',
+        '13.0',
         dict({
           'device_class': 'current',
           'friendly_name': 'Eveus EV Charger Schedule 1 Current limit',
@@ -4925,7 +4925,7 @@
         }),
       ),
       'number.eveus_ev_charger_schedule_1_energy_limit': tuple(
-        'unknown',
+        '54.0',
         dict({
           'device_class': 'energy',
           'friendly_name': 'Eveus EV Charger Schedule 1 Energy limit',
@@ -4933,12 +4933,12 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'kWh',
         }),
       ),
       'number.eveus_ev_charger_schedule_2_current_limit': tuple(
-        'unknown',
+        '13.0',
         dict({
           'device_class': 'current',
           'friendly_name': 'Eveus EV Charger Schedule 2 Current limit',
@@ -4951,7 +4951,7 @@
         }),
       ),
       'number.eveus_ev_charger_schedule_2_energy_limit': tuple(
-        'unknown',
+        '16.0',
         dict({
           'device_class': 'energy',
           'friendly_name': 'Eveus EV Charger Schedule 2 Energy limit',
@@ -4959,7 +4959,7 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'kWh',
         }),
       ),
@@ -4970,9 +4970,9 @@
           'friendly_name': 'Eveus EV Charger Undervoltage threshold',
           'icon': 'mdi:flash-alert',
           'max': 220,
-          'min': 210,
+          'min': 150,
           'mode': <NumberMode.SLIDER: 'slider'>,
-          'step': 1,
+          'step': 5,
           'unit_of_measurement': 'V',
         }),
       ),
@@ -4986,11 +4986,12 @@
             'Voltage',
             'Auto',
             'Power',
+            'Auto 2',
           ]),
         }),
       ),
       'select.eveus_ev_charger_minimum_voltage': tuple(
-        'unknown',
+        '150',
         dict({
           'friendly_name': 'Eveus EV Charger Minimum voltage',
           'icon': 'mdi:sine-wave',
@@ -5043,10 +5044,11 @@
         }),
       ),
       'sensor.eveus_ev_charger_active_rate_cost': tuple(
-        'unknown',
+        '2.16',
         dict({
           'friendly_name': 'Eveus EV Charger Active Rate Cost',
           'icon': 'mdi:currency-uah',
+          'rate_name': 'Rate 2',
           'unit_of_measurement': '₴/kWh',
         }),
       ),
@@ -5278,7 +5280,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_2_cost': tuple(
-        'unknown',
+        '2.16',
         dict({
           'friendly_name': 'Eveus EV Charger Rate 2 Cost',
           'icon': 'mdi:currency-uah',
@@ -5286,7 +5288,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_2_status': tuple(
-        'unknown',
+        'Enabled',
         dict({
           'device_class': 'enum',
           'friendly_name': 'Eveus EV Charger Rate 2 Status',
@@ -5298,7 +5300,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_3_cost': tuple(
-        'unknown',
+        '1.0',
         dict({
           'friendly_name': 'Eveus EV Charger Rate 3 Cost',
           'icon': 'mdi:currency-uah',
@@ -5306,7 +5308,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_3_status': tuple(
-        'unknown',
+        'Disabled',
         dict({
           'device_class': 'enum',
           'friendly_name': 'Eveus EV Charger Rate 3 Status',
@@ -5327,6 +5329,9 @@
             'Enabled',
             'Disabled',
           ]),
+          'start': '05:30',
+          'stop': '06:30',
+          'window': '05:30–06:30',
         }),
       ),
       'sensor.eveus_ev_charger_schedule_2': tuple(
@@ -5339,6 +5344,9 @@
             'Enabled',
             'Disabled',
           ]),
+          'start': '00:00',
+          'stop': '08:15',
+          'window': '00:00–08:15',
         }),
       ),
       'sensor.eveus_ev_charger_session_cost': tuple(
@@ -5478,10 +5486,17 @@
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
-        'unknown',
+        'on',
         dict({
           'friendly_name': 'Eveus EV Charger Ground Protection',
           'icon': 'mdi:shield-check',
+        }),
+      ),
+      'switch.eveus_ev_charger_household_socket_16_a': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Household Socket 16 A',
+          'icon': 'mdi:power-socket-eu',
         }),
       ),
       'switch.eveus_ev_charger_limit_cost_enabled': tuple(
@@ -5569,28 +5584,28 @@
         }),
       ),
       'time.eveus_ev_charger_schedule_1_start': tuple(
-        'unknown',
+        '05:30:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 1 Start',
           'icon': 'mdi:clock-start',
         }),
       ),
       'time.eveus_ev_charger_schedule_1_stop': tuple(
-        'unknown',
+        '06:30:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 1 Stop',
           'icon': 'mdi:clock-end',
         }),
       ),
       'time.eveus_ev_charger_schedule_2_start': tuple(
-        'unknown',
+        '00:00:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 2 Start',
           'icon': 'mdi:clock-start',
         }),
       ),
       'time.eveus_ev_charger_schedule_2_stop': tuple(
-        'unknown',
+        '08:15:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 2 Stop',
           'icon': 'mdi:clock-end',
@@ -5671,7 +5686,7 @@
           'max': 10000,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'UAH',
         }),
       ),
@@ -5684,7 +5699,7 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.5,
           'unit_of_measurement': 'kWh',
         }),
       ),
@@ -5694,15 +5709,15 @@
           'device_class': 'duration',
           'friendly_name': 'Eveus EV Charger Limit: Time',
           'icon': 'mdi:timer-sand',
-          'max': 1440,
+          'max': 5760,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 5,
+          'step': 1,
           'unit_of_measurement': 'min',
         }),
       ),
       'number.eveus_ev_charger_schedule_1_current_limit': tuple(
-        'unknown',
+        '13.0',
         dict({
           'device_class': 'current',
           'friendly_name': 'Eveus EV Charger Schedule 1 Current limit',
@@ -5715,7 +5730,7 @@
         }),
       ),
       'number.eveus_ev_charger_schedule_1_energy_limit': tuple(
-        'unknown',
+        '54.0',
         dict({
           'device_class': 'energy',
           'friendly_name': 'Eveus EV Charger Schedule 1 Energy limit',
@@ -5723,12 +5738,12 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'kWh',
         }),
       ),
       'number.eveus_ev_charger_schedule_2_current_limit': tuple(
-        'unknown',
+        '13.0',
         dict({
           'device_class': 'current',
           'friendly_name': 'Eveus EV Charger Schedule 2 Current limit',
@@ -5741,7 +5756,7 @@
         }),
       ),
       'number.eveus_ev_charger_schedule_2_energy_limit': tuple(
-        'unknown',
+        '16.0',
         dict({
           'device_class': 'energy',
           'friendly_name': 'Eveus EV Charger Schedule 2 Energy limit',
@@ -5749,7 +5764,7 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'kWh',
         }),
       ),
@@ -5760,9 +5775,9 @@
           'friendly_name': 'Eveus EV Charger Undervoltage threshold',
           'icon': 'mdi:flash-alert',
           'max': 220,
-          'min': 210,
+          'min': 150,
           'mode': <NumberMode.SLIDER: 'slider'>,
-          'step': 1,
+          'step': 5,
           'unit_of_measurement': 'V',
         }),
       ),
@@ -5776,11 +5791,12 @@
             'Voltage',
             'Auto',
             'Power',
+            'Auto 2',
           ]),
         }),
       ),
       'select.eveus_ev_charger_minimum_voltage': tuple(
-        'unknown',
+        '150',
         dict({
           'friendly_name': 'Eveus EV Charger Minimum voltage',
           'icon': 'mdi:sine-wave',
@@ -5833,10 +5849,11 @@
         }),
       ),
       'sensor.eveus_ev_charger_active_rate_cost': tuple(
-        'unknown',
+        '2.16',
         dict({
           'friendly_name': 'Eveus EV Charger Active Rate Cost',
           'icon': 'mdi:currency-uah',
+          'rate_name': 'Rate 2',
           'unit_of_measurement': '₴/kWh',
         }),
       ),
@@ -6068,7 +6085,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_2_cost': tuple(
-        'unknown',
+        '2.16',
         dict({
           'friendly_name': 'Eveus EV Charger Rate 2 Cost',
           'icon': 'mdi:currency-uah',
@@ -6076,7 +6093,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_2_status': tuple(
-        'unknown',
+        'Enabled',
         dict({
           'device_class': 'enum',
           'friendly_name': 'Eveus EV Charger Rate 2 Status',
@@ -6088,7 +6105,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_3_cost': tuple(
-        'unknown',
+        '1.0',
         dict({
           'friendly_name': 'Eveus EV Charger Rate 3 Cost',
           'icon': 'mdi:currency-uah',
@@ -6096,7 +6113,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_3_status': tuple(
-        'unknown',
+        'Disabled',
         dict({
           'device_class': 'enum',
           'friendly_name': 'Eveus EV Charger Rate 3 Status',
@@ -6117,6 +6134,9 @@
             'Enabled',
             'Disabled',
           ]),
+          'start': '05:30',
+          'stop': '06:30',
+          'window': '05:30–06:30',
         }),
       ),
       'sensor.eveus_ev_charger_schedule_2': tuple(
@@ -6129,6 +6149,9 @@
             'Enabled',
             'Disabled',
           ]),
+          'start': '00:00',
+          'stop': '08:15',
+          'window': '00:00–08:15',
         }),
       ),
       'sensor.eveus_ev_charger_session_cost': tuple(
@@ -6268,10 +6291,17 @@
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
-        'unknown',
+        'on',
         dict({
           'friendly_name': 'Eveus EV Charger Ground Protection',
           'icon': 'mdi:shield-check',
+        }),
+      ),
+      'switch.eveus_ev_charger_household_socket_16_a': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Household Socket 16 A',
+          'icon': 'mdi:power-socket-eu',
         }),
       ),
       'switch.eveus_ev_charger_limit_cost_enabled': tuple(
@@ -6359,28 +6389,28 @@
         }),
       ),
       'time.eveus_ev_charger_schedule_1_start': tuple(
-        'unknown',
+        '05:30:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 1 Start',
           'icon': 'mdi:clock-start',
         }),
       ),
       'time.eveus_ev_charger_schedule_1_stop': tuple(
-        'unknown',
+        '06:30:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 1 Stop',
           'icon': 'mdi:clock-end',
         }),
       ),
       'time.eveus_ev_charger_schedule_2_start': tuple(
-        'unknown',
+        '00:00:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 2 Start',
           'icon': 'mdi:clock-start',
         }),
       ),
       'time.eveus_ev_charger_schedule_2_stop': tuple(
-        'unknown',
+        '08:15:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 2 Stop',
           'icon': 'mdi:clock-end',
@@ -6461,7 +6491,7 @@
           'max': 10000,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'UAH',
         }),
       ),
@@ -6474,7 +6504,7 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.5,
           'unit_of_measurement': 'kWh',
         }),
       ),
@@ -6484,15 +6514,15 @@
           'device_class': 'duration',
           'friendly_name': 'Eveus EV Charger Limit: Time',
           'icon': 'mdi:timer-sand',
-          'max': 1440,
+          'max': 5760,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 5,
+          'step': 1,
           'unit_of_measurement': 'min',
         }),
       ),
       'number.eveus_ev_charger_schedule_1_current_limit': tuple(
-        'unknown',
+        '13.0',
         dict({
           'device_class': 'current',
           'friendly_name': 'Eveus EV Charger Schedule 1 Current limit',
@@ -6505,7 +6535,7 @@
         }),
       ),
       'number.eveus_ev_charger_schedule_1_energy_limit': tuple(
-        'unknown',
+        '54.0',
         dict({
           'device_class': 'energy',
           'friendly_name': 'Eveus EV Charger Schedule 1 Energy limit',
@@ -6513,12 +6543,12 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'kWh',
         }),
       ),
       'number.eveus_ev_charger_schedule_2_current_limit': tuple(
-        'unknown',
+        '13.0',
         dict({
           'device_class': 'current',
           'friendly_name': 'Eveus EV Charger Schedule 2 Current limit',
@@ -6531,7 +6561,7 @@
         }),
       ),
       'number.eveus_ev_charger_schedule_2_energy_limit': tuple(
-        'unknown',
+        '16.0',
         dict({
           'device_class': 'energy',
           'friendly_name': 'Eveus EV Charger Schedule 2 Energy limit',
@@ -6539,7 +6569,7 @@
           'max': 100,
           'min': 0,
           'mode': <NumberMode.BOX: 'box'>,
-          'step': 1,
+          'step': 0.1,
           'unit_of_measurement': 'kWh',
         }),
       ),
@@ -6550,9 +6580,9 @@
           'friendly_name': 'Eveus EV Charger Undervoltage threshold',
           'icon': 'mdi:flash-alert',
           'max': 220,
-          'min': 210,
+          'min': 150,
           'mode': <NumberMode.SLIDER: 'slider'>,
-          'step': 1,
+          'step': 5,
           'unit_of_measurement': 'V',
         }),
       ),
@@ -6566,11 +6596,12 @@
             'Voltage',
             'Auto',
             'Power',
+            'Auto 2',
           ]),
         }),
       ),
       'select.eveus_ev_charger_minimum_voltage': tuple(
-        'unknown',
+        '150',
         dict({
           'friendly_name': 'Eveus EV Charger Minimum voltage',
           'icon': 'mdi:sine-wave',
@@ -6623,10 +6654,11 @@
         }),
       ),
       'sensor.eveus_ev_charger_active_rate_cost': tuple(
-        'unknown',
+        '2.16',
         dict({
           'friendly_name': 'Eveus EV Charger Active Rate Cost',
           'icon': 'mdi:currency-uah',
+          'rate_name': 'Rate 2',
           'unit_of_measurement': '₴/kWh',
         }),
       ),
@@ -6858,7 +6890,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_2_cost': tuple(
-        'unknown',
+        '2.16',
         dict({
           'friendly_name': 'Eveus EV Charger Rate 2 Cost',
           'icon': 'mdi:currency-uah',
@@ -6866,7 +6898,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_2_status': tuple(
-        'unknown',
+        'Enabled',
         dict({
           'device_class': 'enum',
           'friendly_name': 'Eveus EV Charger Rate 2 Status',
@@ -6878,7 +6910,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_3_cost': tuple(
-        'unknown',
+        '1.0',
         dict({
           'friendly_name': 'Eveus EV Charger Rate 3 Cost',
           'icon': 'mdi:currency-uah',
@@ -6886,7 +6918,7 @@
         }),
       ),
       'sensor.eveus_ev_charger_rate_3_status': tuple(
-        'unknown',
+        'Disabled',
         dict({
           'device_class': 'enum',
           'friendly_name': 'Eveus EV Charger Rate 3 Status',
@@ -6907,6 +6939,9 @@
             'Enabled',
             'Disabled',
           ]),
+          'start': '05:30',
+          'stop': '06:30',
+          'window': '05:30–06:30',
         }),
       ),
       'sensor.eveus_ev_charger_schedule_2': tuple(
@@ -6919,6 +6954,9 @@
             'Enabled',
             'Disabled',
           ]),
+          'start': '00:00',
+          'stop': '08:15',
+          'window': '00:00–08:15',
         }),
       ),
       'sensor.eveus_ev_charger_session_cost': tuple(
@@ -7059,10 +7097,17 @@
         }),
       ),
       'switch.eveus_ev_charger_ground_protection': tuple(
-        'unknown',
+        'on',
         dict({
           'friendly_name': 'Eveus EV Charger Ground Protection',
           'icon': 'mdi:shield-check',
+        }),
+      ),
+      'switch.eveus_ev_charger_household_socket_16_a': tuple(
+        'off',
+        dict({
+          'friendly_name': 'Eveus EV Charger Household Socket 16 A',
+          'icon': 'mdi:power-socket-eu',
         }),
       ),
       'switch.eveus_ev_charger_limit_cost_enabled': tuple(
@@ -7150,28 +7195,28 @@
         }),
       ),
       'time.eveus_ev_charger_schedule_1_start': tuple(
-        'unknown',
+        '05:30:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 1 Start',
           'icon': 'mdi:clock-start',
         }),
       ),
       'time.eveus_ev_charger_schedule_1_stop': tuple(
-        'unknown',
+        '06:30:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 1 Stop',
           'icon': 'mdi:clock-end',
         }),
       ),
       'time.eveus_ev_charger_schedule_2_start': tuple(
-        'unknown',
+        '00:00:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 2 Start',
           'icon': 'mdi:clock-start',
         }),
       ),
       'time.eveus_ev_charger_schedule_2_stop': tuple(
-        'unknown',
+        '08:15:00',
         dict({
           'friendly_name': 'Eveus EV Charger Schedule 2 Stop',
           'icon': 'mdi:clock-end',
