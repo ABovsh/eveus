@@ -1,7 +1,7 @@
 # Eveus EV Charger for Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Version](https://img.shields.io/badge/version-4.31.1-blue?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-4.32.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Chargers](https://img.shields.io/badge/chargers-gen%201%E2%80%933%20%C2%B7%20Eveus%20%2B%20REVE%20firmware-41BDF5?style=for-the-badge)](#supported-chargers)
 [![Downloads](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=downloads)](https://github.com/ABovsh/eveus/releases)

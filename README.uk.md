@@ -1,7 +1,7 @@
 # Eveus EV Charger для Home Assistant
 
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Версія](https://img.shields.io/badge/version-4.31.1-blue?style=for-the-badge)
+![Версія](https://img.shields.io/badge/version-4.32.0-blue?style=for-the-badge)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1%2B-41BDF5?style=for-the-badge&logo=home-assistant)
 [![Станції](https://img.shields.io/badge/%D1%81%D1%82%D0%B0%D0%BD%D1%86%D1%96%D1%97-%D0%BF%D0%BE%D0%BA%D0%BE%D0%BB%D1%96%D0%BD%D0%BD%D1%8F%201%E2%80%933%20%C2%B7%20%D0%BF%D1%80%D0%BE%D1%88%D0%B8%D0%B2%D0%BA%D0%B8%20Eveus%20%D1%96%20REVE-41BDF5?style=for-the-badge)](#які-станції-підтримуються)
 [![Завантажень](https://img.shields.io/github/downloads/ABovsh/eveus/total?style=for-the-badge&color=41BDF5&label=%D0%B7%D0%B0%D0%B2%D0%B0%D0%BD%D1%82%D0%B0%D0%B6%D0%B5%D0%BD%D1%8C)](https://github.com/ABovsh/eveus/releases)
