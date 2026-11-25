@@ -178,7 +178,7 @@ browser or reset the app's frontend cache.
 In Basic mode the two SOC sections are hidden and Limits has no SOC limit.
 A reading the charger's firmware does not report is not shown.
 
-- **Red values:** voltage below 205 V or above 253 V; temperature from 80 °C and leakage from 30 mA, where the charger's own protection trips; Time Drift from 10 minutes.
+- **Red values:** voltage below 205 V or above 253 V; temperature from 80 °C and, on Eveus firmware, leakage from 30 mA, where the charger's own protection trips; Time Drift from 10 minutes. On REVE, leakage is shown without colour.
 - **Offline:** a card with Status shows only the status and the last session: `Offline · since 14:02 | 3h ago`. The time comes from Home Assistant's recorder, so a restart does not reset it. A card without Status keeps its sections and disables the controls.
 - **Standby and Stopped:** a card with **Status** uses the same compact layout in both states: it hides **Battery SOC** and **Meter**, while **Charger clock**, **Safety**, the session and section order stay. Set `adapt: false` or turn off **Fit to the charger's state** in the editor to keep every section in every state.
 - **Compact readings:** energy and cost totals show whole kWh and whole currency amounts; session values share one font size that fits the row. On narrow cards, the readings move below the session label when needed.
@@ -645,9 +645,9 @@ restarts. Set **Undervoltage threshold** from 150 to 220 V in 5 V steps,
 independently of **Minimum voltage**. **Adaptive Mode** also offers **Auto 2**.
 **Ground Protection** and the limits use the values of the charger's own page:
 **Limit: Energy** in 0.5 kWh steps, **Limit: Time** up to 96 hours in 1-minute
-steps, fractional energy and cost limits. During a Stop or a schedule hold the
-charger cannot tell whether a car is plugged in: **Car Connected** is unknown,
-while **State** keeps the last known car state, so no plug events are invented.
+steps, fractional energy and cost limits. During a Stop or a schedule hold,
+**Car Connected** follows the charger's pilot signal. If the pilot is
+indeterminate (unknown or F), **Car Connected** is unknown.
 
 For firmware updates, message **@energy_star** on Telegram; install the file
 through the charger's web interface.

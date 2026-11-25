@@ -175,7 +175,7 @@ const I18N = {
     total: 'Total', allTime: 'all time', counterA: 'Counter A', counterB: 'Counter B', reset: 'Reset',
     resetQ: (label) => `Reset ${label}?`, toZero: 'will be set to 0', cancel: 'Cancel',
     confirm: 'Confirm',
-    disableGroundQ: 'Disable ground protection?', socketFullQ: (amps) => `${amps === null ? 'Allow the full charger current?' : `Allow ${amps} A?`} Only on a circuit rated for it.`, socketTitle: 'Household socket 16 A: tap to switch between 16 A and full current', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
+    disableGroundQ: 'Disable ground protection?', socketFullQ: 'Allow the full charger current? Only on a circuit rated for it.', socketTitle: 'Household socket 16 A: tap to switch between 16 A and full current', disableAllQ: 'Disable all charging limits?', disableLimitQ: (label) => `Disable the ${label} limit?`, commandFailed: 'Command failed. Check the connection and try again.', commandTimeout: 'Change not confirmed. Check the setting before trying again.', dismiss: 'Tap to dismiss',
     socFromCar: (detail) => `Initial SOC from the car: ${detail}`, socManual: 'Initial SOC set manually', socNotUsed: (detail) => `Car SOC not used (${detail}); the manual value applies`,
     safety: 'Safety', box: 'Box temperature', plug: 'Plug temperature', groundProt: 'Ground protection',
     groundTitle: 'Ground: tap to arm/disarm protection', leak: 'Leakage current', conn: 'Connection quality', ok: 'OK', bad: 'Bad',
@@ -243,7 +243,7 @@ const I18N = {
     total: 'Загалом', allTime: 'за весь час', counterA: 'Лічильник A', counterB: 'Лічильник B', reset: 'Скинути',
     resetQ: (label) => `Скинути ${label[0].toLowerCase()}${label.slice(1)}?`, toZero: 'буде обнулено', cancel: 'Скасувати',
     confirm: 'Підтвердити',
-    disableGroundQ: 'Вимкнути захист заземлення?', socketFullQ: (amps) => `${amps === null ? 'Дозволити повний струм зарядки?' : `Дозволити ${amps} А?`} Лише якщо лінія це витримує.`, socketTitle: 'Побутова розетка 16 А: натисніть, щоб перемкнути між 16 А і повним струмом', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
+    disableGroundQ: 'Вимкнути захист заземлення?', socketFullQ: 'Дозволити повний струм зарядки? Лише якщо лінія це витримує.', socketTitle: 'Побутова розетка 16 А: натисніть, щоб перемкнути між 16 А і повним струмом', disableAllQ: 'Вимкнути всі ліміти заряджання?', disableLimitQ: (label) => `Вимкнути ліміт «${label}»?`, commandFailed: 'Команда не виконана. Перевірте зв’язок і повторіть.', commandTimeout: 'Зміну не підтверджено. Перевірте налаштування перед повтором.', dismiss: 'Натисніть, щоб закрити',
     socFromCar: (detail) => `Початковий SOC з авто: ${detail}`, socManual: 'Початковий SOC задано вручну', socNotUsed: (detail) => `SOC авто не використано (${detail}); діє значення, задане вручну`,
     safety: 'Безпека', box: 'Температура корпусу', plug: 'Температура конектора', groundProt: 'Захист заземлення',
     groundTitle: 'Заземлення: натисніть, щоб увімкнути чи вимкнути захист', leak: 'Струм витоку', conn: "Якість зв'язку", ok: 'OK', bad: 'Немає',
@@ -428,6 +428,7 @@ class EveusCard extends HTMLElement {
     this._clearInteractions();
     this._config = {...config, sections: [...new Set(sections)]};
     this._ids = null;
+    this._reveFirmware = undefined;
     this._resolved = false;
     this._lastSignature = this._lastRefs = null;
     this._generation = (this._generation || 0) + 1;
@@ -581,8 +582,8 @@ class EveusCard extends HTMLElement {
     // asked again on a later update, throttled, rather than showing "no charger"
     // until the page is reloaded.
     const retry = this._resolved && this._ids === null && Date.now() >= (this._retryAt || 0);
+    this._watchRegistry();
     if ((!this._resolved || retry) && !this._resolving) void this._resolve();
-    if (this._resolved) this._watchRegistry();
     if (this._resolved && this._wantsMonth && !this._monthBusy && Date.now() - (this._monthAt || 0) > MONTH_REFRESH_MS) void this._fetchMonth();
     if (this._resolved && typeof this._hass?.callWS === 'function' && this._runKey !== (this._runKeyAsked ?? null)) {
       if (this._runKey === null) { this._runKeyAsked = null; this._runAt = null; } else void this._fetchRunSince();
@@ -619,13 +620,13 @@ class EveusCard extends HTMLElement {
   // This charger's state objects, plus what else a render reads, compared by identity.
   _stateRefs() {
     const states = this._hass.states;
-    return [...Object.values(this._ids || {}).map((id) => states[id]), this._resolved, this._nowHM(), this._scheduleHM(),
+    return [...Object.values(this._ids || {}).map((id) => states[id]), this._resolved, this._reveFirmware, this._nowHM(), this._scheduleHM(),
       this._hass.locale?.language, this._hass.themes?.darkMode];
   }
   _signature() {
     const states = this._hass.states;
     return JSON.stringify([Object.values(this._ids || {}).map((id) => { const e = states[id]; return e ? [e.state, e.attributes, e.last_changed] : null; }),
-      this._resolved, this._nowHM(), this._scheduleHM(), this._hass.locale?.language, this._hass.themes?.darkMode]);
+      this._resolved, this._reveFirmware, this._nowHM(), this._scheduleHM(), this._hass.locale?.language, this._hass.themes?.darkMode]);
   }
   connectedCallback() {
     this._resizeObserver?.observe(this);
@@ -677,9 +678,11 @@ class EveusCard extends HTMLElement {
       if (generation !== this._generation) return;
       this._ids = result.entities;
       this._deviceId = result.device_id;
+      this._reveFirmware = result.reve;
     } catch {
       if (generation !== this._generation) return;
       this._ids = null;
+      this._reveFirmware = undefined;
       this._retryAt = Date.now() + RESOLVE_RETRY_MS;
     }
     if (generation !== this._generation) return;
@@ -688,19 +691,20 @@ class EveusCard extends HTMLElement {
     if (this._resolveAgain) { this._resolveAgain = false; void this._resolve(); return; }
     this.hass = this._hass;
   }
-  // Renaming an entity_id leaves the resolved map pointing at a name that no longer exists:
-  // look the charger up again when one of its entities is renamed (the lookup is by unique_id).
+  // Look up deferred entities on creation and re-find known entities after a rename.
   _watchRegistry() {
     if (this._registryUnsub || this.isConnected === false || typeof this._hass?.connection?.subscribeEvents !== 'function') return;
     const subscription = this._registryUnsub = this._hass.connection.subscribeEvents((event) => {
-      const old = event?.data?.old_entity_id;
-      if (!old || !Object.values(this._ids || {}).includes(old)) return;
+      const data = event?.data;
+      const old = data?.old_entity_id;
+      if (data?.action !== 'create' && (!old || !Object.values(this._ids || {}).includes(old))) return;
       if (this._resolving) this._resolveAgain = true;
       else void this._resolve();
     }, 'entity_registry_updated');
     subscription.catch(() => { if (this._registryUnsub === subscription) this._registryUnsub = null; });
   }
   _state(key) { return this._hass?.states[this._ids?.[key]]; }
+  get _isReveFirmware() { return this._reveFirmware ?? Boolean(this._ids?.reve_api); }
   // A reading in the integration's own unit (see NATIVE_UNITS), or null.
   _num(key) {
     const entity = this._state(key);
@@ -855,7 +859,7 @@ class EveusCard extends HTMLElement {
     const t = this._t;
     const ask = this._guardAsk;
     const labels = {limit_soc_enabled: t.soc, limit_energy_enabled: t.energy, limit_time_enabled: t.time, limit_cost_enabled: t.cost};
-    const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'household_socket_16_a' ? t.socketFullQ(this._socketFullAmps()) : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
+    const question = !ask ? '' : ask.key === 'ground_protection' ? t.disableGroundQ : ask.key === 'household_socket_16_a' ? t.socketFullQ : ask.key === 'limit_disable_all' ? t.disableAllQ : t.disableLimitQ(labels[ask.key]);
     const error = this._commandError === 'timeout' ? t.commandTimeout
       : this._commandError === 'current' ? t.setFailed : t.commandFailed;
     return (ask ? `<div class="message guard-ask" popover="manual" role="alertdialog" aria-label="${question}"><span>${question}</span><button data-guard-confirm>${t.confirm}</button><button data-guard-cancel>${t.cancel}</button></div>` : '')
@@ -1034,7 +1038,7 @@ class EveusCard extends HTMLElement {
     const tempCls = (value) => value === null ? '' : value >= SAFETY_TEMP_HIGH_C ? 'bad' : 'good';
     // REVE's leakage is shown as the charger's display shows it, for information:
     // no colour, no part in the tint; the charger's own trip is the alarm.
-    const leakJudged = leak !== null && !this._ids?.reve_api;
+    const leakJudged = leak !== null && !this._isReveFirmware;
     const leakCls = !leakJudged ? '' : leak >= SAFETY_LEAK_HIGH_MA ? 'bad' : 'good';
     const connCls = conn === null ? '' : conn <= SAFETY_CONN_QUALITY_BAD_PCT ? 'bad' : 'good';
     const groundCls = groundKnown ? (groundOk ? 'good' : 'bad') : '';
@@ -1078,20 +1082,13 @@ class EveusCard extends HTMLElement {
     const key = 'household_socket_16_a';
     if (!this._ids?.[key]) return '';
     const t = this._t;
-    const known = ['on', 'off'].includes(this._state(key)?.state);
+    const state = this._state(key)?.state;
+    const known = ['on', 'off'].includes(state);
     const on = this._limitOn(key);
-    const amps = !known ? '—' : on ? 16 : this._socketFullAmps() ?? '—';
-    return `<button class="safety-item safety-socket" data-limit-toggle="${key}" role="switch" aria-checked="${on}" aria-label="${t.socketTitle}" title="${t.socketTitle}" ${!this._online || !known ? 'disabled' : ''}><ha-icon icon="mdi:power-socket-eu"></ha-icon><span class="safety-value">${amps}<small>A</small></span></button>`;
-  }
-  // The current the charger allows with the socket mode off: Charging Current's
-  // maximum while the mode is off, remembered per entity for the moment the mode
-  // flips. Null until seen: with the mode on, that maximum is the 16 A cap.
-  _socketFullAmps() {
-    const id = this._ids?.charging_current;
+    // The charger reports the full bound only once socket mode is off.
     const max = this._state('charging_current')?.attributes?.max;
-    if (this._socketMax?.id !== id) this._socketMax = null;
-    if (this._state('household_socket_16_a')?.state === 'off' && Number.isFinite(max)) this._socketMax = {id, max};
-    return this._socketMax?.max ?? null;
+    const amps = !known ? '—' : on ? 16 : state === 'off' && Number.isFinite(max) ? max : '—';
+    return `<button class="safety-item safety-socket" data-limit-toggle="${key}" role="switch" aria-checked="${on}" aria-label="${t.socketTitle}" title="${t.socketTitle}" ${!this._online || !known ? 'disabled' : ''}><ha-icon icon="mdi:power-socket-eu"></ha-icon><span class="safety-value">${amps}<small>A</small></span></button>`;
   }
   // A reading or setting the charger's firmware does not provide at all: the
   // integration publishes it `unavailable` while the charger itself answers (REVE
@@ -2114,7 +2111,7 @@ class EveusCard extends HTMLElement {
     const f = FAULTS[code];
     if (!f) return '';
     // REVE's leakage reading is the slow estimate, not what tripped: it names none.
-    const named = f.key && this._ids?.[f.key] && !(f.key === 'leakage_current' && this._ids?.reve_api);
+    const named = f.key && this._ids?.[f.key] && !(f.key === 'leakage_current' && this._isReveFirmware);
     const t = this._t, v = named ? this._num(f.key) : null;
     const reading = v === null ? '' : `${t.faultLabels[f.key]} ${f.key === 'current' ? amps(v) : Math.round(v)}${f.unit}${f.limit ? ` · ${t.faultLimit} ${f.limit}${f.unit}` : ''}`;
     return [reading, t.faultHints[f.hint]].filter(Boolean).join(' · ');

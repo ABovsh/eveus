@@ -176,6 +176,7 @@ class EveusTestUpdater(OutageClock):
     state_since = None
     host = TEST_HOST
     last_update_success = True
+    is_legacy_firmware = False
     scheme = "http"
 
     def __init__(

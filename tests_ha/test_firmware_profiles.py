@@ -412,18 +412,19 @@ def _assert_legacy_write(http, start, setting, value):
     ] == [(setting, f"{setting}={value}")]
 
 
-async def test_1x_schedules_read_and_write(
+async def test_1x_schedules_and_cost_limit_read_and_write(
     hass, aioclient_mock, caplog, monkeypatch, legacy_profile
 ):
     cases = [
         ("schedule_1_start", "startSchedule1", 1380, "23:00:00", "22:30:00", 1350),
         ("schedule_1_stop", "stopSchedule1", 420, "07:00:00", "08:00:00", 480),
         ("schedule_1_current_limit", "currentSchedule1", 16, "16.0", 15, 15),
-        ("schedule_1_energy_limit", "energySchedule1", 4.5, "4.5", 6, 6),
+        ("schedule_1_energy_limit", "energySchedule1", 4.5, "4.5", 10.5, 10.5),
         ("schedule_2_start", "startSchedule2", 0, "00:00:00", "01:00:00", 60),
         ("schedule_2_stop", "stopSchedule2", 60, "01:00:00", "02:00:00", 120),
         ("schedule_2_current_limit", "currentSchedule2", 12, "12.0", 13, 13),
-        ("schedule_2_energy_limit", "energySchedule2", 0, "0.0", 7, 7),
+        ("schedule_2_energy_limit", "energySchedule2", 0, "0.0", 10.5, 10.5),
+        ("limit_cost", "moneyLimit", 8.5, "8.5", 10.5, 10.5),
     ]
     now = real_time.monotonic()
     monkeypatch.setattr(common_command, "time", SimpleNamespace(monotonic=lambda: now))
@@ -435,7 +436,10 @@ async def test_1x_schedules_read_and_write(
     entities = {entity.translation_key: entity for entity in _entities(hass, entry)}
     for key, setting, _, shown, value, wire in cases:
         entity = entities[key]
-        assert hass.states.get(entity.entity_id).state == shown
+        state = hass.states.get(entity.entity_id)
+        assert state.state == shown
+        if key.endswith("_energy_limit") or key == "limit_cost":
+            assert state.attributes["step"] == 0.1
         domain = entity.entity_id.partition(".")[0]
         start = len(aioclient_mock.mock_calls)
         now += 1

@@ -496,6 +496,8 @@ def test_switch_restore_ignores_invalid_state() -> None:
 
 def test_switch_setup_entry_adds_all_switches() -> None:
     added = []
+    updater = _Updater({"restricted_mode": 0})
+    updater.is_legacy_firmware = True
     entry = type(
         "Entry",
         (),
@@ -505,7 +507,7 @@ def test_switch_setup_entry_adds_all_switches() -> None:
                 "RuntimeData",
                 (),
                 {
-                    "updater": _Updater({"restricted_mode": 0}),
+                    "updater": updater,
                     "device_number": 3,
                     "soc_limit": object(),
                 },

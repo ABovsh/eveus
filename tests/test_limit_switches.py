@@ -81,6 +81,8 @@ def test_icon_energy_constant_value():
 
 
 class _SocketUpdater(EveusTestUpdater):
+    is_legacy_firmware = True
+
     def __init__(self, data):
         super().__init__(data)
         self.listeners = []

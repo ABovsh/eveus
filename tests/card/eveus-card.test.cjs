@@ -1804,6 +1804,31 @@ test('renaming an entity re-finds the charger entities without a page reload', a
   await new Promise((r) => setImmediate(r));
   assert.equal(unsubscribed, 1);
 });
+test('registry creates discover deferred charger entities and coalesce during a lookup', async () => {
+  const x = setupSafety();
+  const original = {...x.card._ids};
+  const withSocket = {...original, household_socket_16_a:'switch.socket'};
+  const withReve = {...withSocket, reve_api:'binary_sensor.reve'};
+  x.states['switch.socket'] = {state:'off', attributes:{}};
+  x.states['binary_sensor.reve'] = {state:'on', attributes:{}};
+  let registryEvent, lookups = 0;
+  x.hass.connection = {subscribeEvents:async (cb) => { registryEvent = cb; return () => {}; }};
+  const pending = deferred();
+  x.hass.callWS = () => ++lookups === 1 ? pending.promise : Promise.resolve({entities:withReve});
+  x.card.hass = x.hass;
+  assert.doesNotMatch(x.card.shadowRoot.innerHTML, /data-limit-toggle="household_socket_16_a"/);
+
+  registryEvent({data:{action:'create', entity_id:'switch.socket'}});
+  assert.equal(lookups, 1, 'the socket create starts a lookup');
+  registryEvent({data:{action:'create', entity_id:'binary_sensor.reve'}});
+  registryEvent({data:{action:'create', entity_id:'sensor.other'}});
+  assert.equal(lookups, 1, 'creates during the lookup queue a single follow-up');
+  pending.resolve({entities:withSocket});
+  await new Promise((r) => setImmediate(r));
+  assert.equal(lookups, 2);
+  assert.equal(x.card._ids.reve_api, 'binary_sensor.reve');
+  assert.match(x.card.shadowRoot.innerHTML, /data-limit-toggle="household_socket_16_a"/);
+});
 test('reduced-motion preference stops animations and transitions', () => {
   const x = setupAll({sections:['status']});
   assert.match(x.card.shadowRoot.innerHTML, /@media \(prefers-reduced-motion: ?reduce\)\{[^}]*animation:none !important[^}]*transition:none !important/);
@@ -3072,6 +3097,37 @@ test('a REVE leak fault names no leakage reading, classic still does',()=>{
   assert.match(classic.card._faultDetail('Current Leak High'),/3 mA/);
 });
 
+test('REVE firmware from the entity lookup keeps a 50 mA reading informational without reve_api access',async()=>{
+  const x=setupSafety({leak:50});
+  const entities={...x.card._ids};
+  x.hass.callWS=async()=>({entities,reve:true});
+  await x.card._resolve();
+  assert.equal(x.card._ids.reve_api,undefined);
+  const detail=x.card._faultDetail('Current Leak High');
+  assert.deepEqual({
+    reading:x.card.shadowRoot.innerHTML.match(/class="safety-value [^"]*">50<small>mA/)?.[0],
+    tint:x.card._safetyStatus(),
+    faultNamesLeak:/mA/.test(detail),
+  },{
+    reading:'class="safety-value ">50<small>mA',
+    tint:'good',
+    faultNamesLeak:false,
+  });
+  assert.match(detail,/electrician/);
+});
+
+test('classic 3.x firmware from the entity lookup keeps leakage tint and fault detail',async()=>{
+  const x=setupSafety({leak:30});
+  const entities={...x.card._ids};
+  x.hass.callWS=async()=>({entities,reve:false});
+  x.card.setConfig({sections:['safety']});
+  x.card.hass=x.hass;
+  await new Promise((r)=>setImmediate(r));
+  assert.match(x.card.shadowRoot.innerHTML,/class="safety-value bad">30<small>mA/);
+  assert.equal(x.card._safetyStatus(),'bad');
+  assert.match(x.card._faultDetail('Current Leak High'),/30 mA/);
+});
+
 test('household socket 16 A shows only when the charger reports the setting',()=>{
   const without=setupSafety();
   assert.doesNotMatch(without.card.shadowRoot.innerHTML,/household_socket_16_a/);
@@ -3106,13 +3162,20 @@ test('socket mode on from the start asks for the full charger current, not an in
   }
 });
 
-test('socket full current seen with the mode off is named in the question',async()=>{
-  const off=setupSafety({socket:'off',currentMax:40});
+test('socket confirmation uses full current after a 16 A adapter is removed while socket mode is on',async()=>{
+  const off=setupSafety({socket:'off',currentMax:16});
+  assert.match(off.card.shadowRoot.innerHTML,/data-limit-toggle="household_socket_16_a"[^>]*>[\s\S]*?safety-value[^"]*">16<small>A/);
   off.states['switch.socket']={state:'on',attributes:{}};
-  off.states['number.current']={state:'16',attributes:{min:7,max:16,step:1,unit_of_measurement:'A'}};
+  // Removing the adapter leaves Charging Current capped at 16 A by socket mode.
   off.card.hass={...off.hass,states:{...off.states}};
   await off.card._toggleLimit('household_socket_16_a');
-  assert.match(off.card.shadowRoot.innerHTML,/Allow 40 A\?/);
+  const question=off.card.shadowRoot.innerHTML.match(/role="alertdialog" aria-label="([^"]*)"/)?.[1];
+  assert.match(question,/Allow the full charger current\?/);
+  await off.card._confirmGuard();
+  off.states['switch.socket']={state:'off',attributes:{}};
+  off.states['number.current']={...off.states['number.current'],attributes:{...off.states['number.current'].attributes,max:32}};
+  off.card.hass={...off.hass,states:{...off.states}};
+  assert.match(off.card.shadowRoot.innerHTML,/data-limit-toggle="household_socket_16_a"[^>]*>[\s\S]*?safety-value[^"]*">32<small>A/);
 });
 
 test('a remembered full current belongs to its charger',async()=>{

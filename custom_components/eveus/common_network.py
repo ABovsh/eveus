@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 import logging
 from math import isfinite
+import re
 import time
 from collections.abc import Callable
 from typing import Any, Final
@@ -54,6 +55,7 @@ from .const import (
     IDLE_UPDATE_INTERVAL,
     OFFLINE_UPDATE_INTERVAL,
     PLUG_UNKNOWN_STATES,
+    RESTRICTED_MODE_KEY,
     SESSION_ACTIVE_STATES,
 )
 from ._payload import PayloadError, validate_main_payload
@@ -398,6 +400,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._legacy_min_voltage: int | None = None
         # Replaced on every accepted Minimum voltage write; /init compares identity.
         self._legacy_min_voltage_write: object = object()  # pragma: no mutate - only identity against a later object() is compared
+        self.legacy_socket_limited = False
+        self._legacy_socket_write = object()  # pragma: no mutate - only identity against a later object() is compared
         # True once /init reported a 1.x version: the positive proof the
         # low-code translation and the 1.x command form need.
         self._legacy_confirmed = False  # pragma: no mutate - False vs None is not observable: every read is a truthiness test
@@ -1001,6 +1005,13 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # so the cached consecutive_command_failures can't go stale.
             self._connection_quality_cache = None
         if success and not self._shutting_down:
+            if command == RESTRICTED_MODE_KEY and value == 1 and self.is_legacy_firmware:
+                # Share the accepted command with the three current controls.
+                # Only a subsequent definite read can lift the restriction.
+                self._legacy_socket_write = object()
+                if not self.legacy_socket_limited:
+                    self.legacy_socket_limited = True
+                    self.async_update_listeners()
             if command == "minVoltage" and self.is_legacy_firmware:
                 # Marked even before /init has given a value, so a reply
                 # already in flight cannot overwrite this accepted write.
@@ -1351,74 +1362,60 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         base = {"device_number": self.device_number or 1}
 
-        if previous == state:
-            # The charger can stay in Error while firmware reports a NEW fault
-            # code; that escalation must reach HA even without a state change.
-            if state == DEVICE_STATE_ERROR:
-                code = get_safe_value(new_data, "subState", int)
-                if code != self._event_prev_error_code:
-                    self._event_prev_error_code = code
-                    bus.async_fire(
-                        EVENT_ERROR,
-                        {
-                            **base,
-                            "error_code": code,
-                            "error_text": get_error_state(code) if code is not None else None,
-                        },
-                    )
-            return
-
-        if state == DEVICE_STATE_CHARGING:
-            bus.async_fire(EVENT_CHARGING_STARTED, dict(base))
-        elif state != DEVICE_STATE_ERROR and self._event_charging_payload is not None:
-            # Firmware resets session counters at the START of the next session,
-            # not at charge end; snapshotting the last charging poll keeps the
-            # numbers stable regardless of when the next session begins — and
-            # also carries them across a fault that ended the session, where
-            # Charging is no longer the immediately preceding state.
-            snapshot = self._event_charging_payload
-            self._event_charging_payload = None
-            bus.async_fire(
-                EVENT_CHARGING_FINISHED,
-                {
-                    **base,
-                    "reason": finish_reason(
-                        state,
-                        get_safe_value(new_data, "subState", int),
-                        modern=self._modern_firmware_seen
-                        or is_modern_firmware_payload(new_data)
-                        or new_data.get(LEGACY_SUBSTATE_MAPPED_KEY) is True,
-                        ocpp=bool(get_safe_value(new_data, "ocppEnabled", int)),
-                        stopped=get_safe_value(new_data, "evseEnabled", int) == 1,
-                        limit_reached=(
-                            reached_limit(lambda key: get_safe_value(new_data, key, float))
-                            if self._reve_seen or is_reve_payload(new_data)
-                            else None
+        if previous != state:
+            if state == DEVICE_STATE_CHARGING:
+                bus.async_fire(EVENT_CHARGING_STARTED, dict(base))
+            elif state != DEVICE_STATE_ERROR and self._event_charging_payload is not None:
+                # Firmware resets session counters at the START of the next session,
+                # not at charge end; snapshotting the last charging poll keeps the
+                # numbers stable regardless of when the next session begins — and
+                # also carries them across a fault that ended the session, where
+                # Charging is no longer the immediately preceding state.
+                snapshot = self._event_charging_payload
+                self._event_charging_payload = None
+                bus.async_fire(
+                    EVENT_CHARGING_FINISHED,
+                    {
+                        **base,
+                        "reason": finish_reason(
+                            state,
+                            get_safe_value(new_data, "subState", int),
+                            modern=self._modern_firmware_seen
+                            or is_modern_firmware_payload(new_data)
+                            or new_data.get(LEGACY_SUBSTATE_MAPPED_KEY) is True,
+                            ocpp=bool(get_safe_value(new_data, "ocppEnabled", int)),
+                            stopped=get_safe_value(new_data, "evseEnabled", int) == 1,
+                            limit_reached=(
+                                reached_limit(lambda key: get_safe_value(new_data, key, float))
+                                if self._reve_seen or is_reve_payload(new_data)
+                                else None
+                            ),
                         ),
-                    ),
-                    "session_energy_kwh": _final(
-                        snapshot, new_data, "sessionEnergy", float, MAX_ENERGY_KWH
-                    ),
-                    "session_cost": _final(
-                        snapshot, new_data, "sessionMoney", float, MAX_COST_VALUE
-                    ),
-                    "session_duration_s": _final(
-                        snapshot, new_data, "sessionTime", int, MAX_SESSION_TIME_SECONDS,
-                    ),
-                },
-            )
+                        "session_energy_kwh": _final(
+                            snapshot, new_data, "sessionEnergy", float, MAX_ENERGY_KWH
+                        ),
+                        "session_cost": _final(
+                            snapshot, new_data, "sessionMoney", float, MAX_COST_VALUE
+                        ),
+                        "session_duration_s": _final(
+                            snapshot, new_data, "sessionTime", int, MAX_SESSION_TIME_SECONDS,
+                        ),
+                    },
+                )
 
         if state == DEVICE_STATE_ERROR:
+            # A new fault code can arrive while the station stays in Error.
             code = get_safe_value(new_data, "subState", int)
-            self._event_prev_error_code = code
-            bus.async_fire(
-                EVENT_ERROR,
-                {
-                    **base,
-                    "error_code": code,
-                    "error_text": get_error_state(code) if code is not None else None,
-                },
-            )
+            if previous != state or code != self._event_prev_error_code:
+                self._event_prev_error_code = code
+                bus.async_fire(
+                    EVENT_ERROR,
+                    {
+                        **base,
+                        "error_code": code,
+                        "error_text": get_error_state(code) if code is not None else None,
+                    },
+                )
 
         # Plugged-in status is indeterminate in the Error state and on an
         # unknown pre-R3 pilot; only fire when both sides are definite.
@@ -1436,6 +1433,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             and read_at is not None
             and time.monotonic() - read_at >= _LEGACY_INIT_REFRESH_SECONDS
         )
+
+    def _observe_legacy_socket_mode(self) -> None:
+        """Remember the last definite reading across polls that omit the flag."""
+        mode = self._snapshot.get_int(RESTRICTED_MODE_KEY)
+        if mode in (0, 1):
+            self.legacy_socket_limited = mode == 1
 
     def _pilot_unknown(self, data: dict[str, Any]) -> bool:
         """Whether a pre-R3 reply's pilot leaves car presence unknown."""
@@ -1633,7 +1636,12 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if self._init_fw_fetch_done and not reconnect:
             return
         data = self.data if isinstance(self.data, dict) else {}
-        if data.get("verFWMain") or data.get("firmware"):
+        wifi = data.get("verFWWifi")
+        if (
+            self.is_modern_firmware
+            or self._reve_seen
+            or (isinstance(wifi, str) and re.search(r"(?:^|-)R3\.\d+\.\d+$", wifi.strip()))
+        ):
             self._init_fw_fetch_done = True
             return
         self._init_fw_fetch_done = True
@@ -1655,14 +1663,20 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug(
                 "Eveus /init firmware fallback fetch failed: %s", type(err).__name__
             )
-            if not (isinstance(err, aiohttp.ClientResponseError) and err.status == 404):
+            if not reconnect and not (
+                isinstance(err, aiohttp.ClientResponseError) and err.status == 404
+            ):
                 # Transient: ask again on a later good poll.
                 self._init_fw_fetch_done = False
                 self._init_fw_retry_at = time.monotonic() + _INIT_RETRY_SECONDS
-                if not reconnect:
-                    self._probe_fw_on_first_success = True
-            return
+                self._probe_fw_on_first_success = True
+            init_data = None
 
+        if reconnect:
+            # Back off even if /init is absent or returns an unusable 200.
+            # Keep the last good profile until a usable version arrives.
+            self._init_fw_fetch_done = False
+            self._init_fw_retry_at = time.monotonic() + _INIT_RETRY_SECONDS
         if not isinstance(init_data, dict):
             return
         # A poll can land while /init is in flight; work on the newest reading.
@@ -1675,6 +1689,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # format nonsense (or overflow float division). Leave the fallback
             # unset -- device_info keeps showing "Unknown".
             return
+        self._init_fw_fetch_done = True
+        self._init_fw_retry_at = None
         if reconnect and raw_version != self._init_fw_version:
             self._legacy_fractional_tariff_seen = False  # pragma: no mutate - False vs None is equivalent in the tariff inference
         self._init_fw_version = raw_version
@@ -1721,6 +1737,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             if normalized != self.data:
                 self.data = normalized
             self._snapshot = EveusSnapshot.parse(self.data, self._model, legacy_firmware=True)
+            self._observe_legacy_socket_mode()
             self.async_update_listeners()
 
     def _reject_credentials(self) -> None:
@@ -1825,6 +1842,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         """Read the charger, validate the reply and record the outcome (one poll
         at a time): ``/main``, or GraphQL first once the charger is known to be
         REVE."""
+        socket_write = self._legacy_socket_write
         try:
             measured = await self._read_reve_measurements()
             from_graphql = measured is not None
@@ -1898,13 +1916,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # Parse AFTER the legacy translation (this coordinator owns the
             # fw-1.x latch), and BEFORE _record_success, which notifies the
             # listeners that read the snapshot.
+            legacy = self._legacy_confirmed and not (self._modern_firmware_seen or self._reve_seen)
             self._snapshot = EveusSnapshot.parse(
                 new_data, self._model, unsupported=unsupported,
                 informational=REVE_INFORMATIONAL_FIELDS if self._reve_seen else frozenset(),
-                legacy_firmware=self._legacy_confirmed and not (
-                    self._modern_firmware_seen or self._reve_seen
-                ),
+                legacy_firmware=legacy,
             )
+            if legacy and socket_write is self._legacy_socket_write:
+                self._observe_legacy_socket_mode()
 
             self._record_success(response_time, new_data)
             return new_data

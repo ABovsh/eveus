@@ -33,7 +33,6 @@ from .const import (
     MODEL_MAX_CURRENT,
     MIN_CURRENT,
     ADAPTER_KEY,
-    RESTRICTED_MODE_KEY,
     MIN_VOLTAGE_OPTIONS,
     CONF_MODEL,
     SOC_INPUT_LIMITS,
@@ -174,6 +173,8 @@ GLOBAL_LIMIT_NUMBERS: tuple[EveusSetpointNumberDescription, ...] = (
         command="moneyLimit",
         state_key="moneyLimit",
         legacy_ha_to_device=1.0,
+        # Keep fractional edits available where the legacy form posts value / 10.
+        legacy_native_step=0.1,
         native_min_value=0,
         native_max_value=10000,
         native_step=1,
@@ -240,6 +241,7 @@ def _schedule_energy(n: int) -> EveusSetpointNumberDescription:
         device_to_ha=1.0,
         ha_to_device=1.0,  # schedule energy is 1:1 — NOT ×1000
         legacy_ha_to_device=1.0,  # pragma: no mutate - built at import, so a mutant never activates; the legacy round-trip tests cover the value
+        legacy_native_step=0.1,
         native_min_value=0,
         native_max_value=100,
         native_step=1,
@@ -508,9 +510,9 @@ class EveusSocketLimitedCurrentNumber(EveusSetpointNumber):
         Pre-R3 firmware also limits these controls to 16 A while its 16 A
         adapter is reported, as the charger's own page does.
         """
-        snapshot = self._updater.snapshot
-        if snapshot.get_int(RESTRICTED_MODE_KEY) == 1 or (
-            self._legacy_firmware and snapshot.get_int(ADAPTER_KEY) == 16
+        if self._legacy_firmware and (
+            self._updater.legacy_socket_limited
+            or self._updater.snapshot.get_int(ADAPTER_KEY) == 16
         ):
             return min(self._attr_native_max_value, 16)
         return self._attr_native_max_value

@@ -9,6 +9,7 @@ warning or colour is derived from it.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -30,10 +31,11 @@ class _LeakCharger(_Charger):
             self.station.update(_PAIR)
         self.service: dict[str, Any] | None = {"adc_plug_temperature": word}
         self.service_status = service_status
+        self.service_errors: Any = None
+        self.plain_errors: Any = None
+        self.service_reply_override: dict[str, Any] = {}
 
     def post(self, url: str, **kwargs: Any) -> _Response:
-        import json
-
         body = json.loads(kwargs["data"]) if url.endswith("/graphql") else None
         if body is not None and "serviceData" in body["query"]:
             self.calls.append(("/graphql", body))
@@ -44,7 +46,12 @@ class _LeakCharger(_Charger):
             data = dict(json.loads(reply._body)["data"])
             if self.service is not None:
                 data["serviceData"] = self.service
-            return _Response(200, {"data": data})
+            return _Response(200, {
+                "data": data, "errors": self.service_errors, **self.service_reply_override,
+            })
+        if body is not None and "measurements {" in body["query"] and self.plain_errors:
+            reply = super().post(url, **kwargs)
+            return _Response(200, {**json.loads(reply._body), "errors": self.plain_errors})
         return super().post(url, **kwargs)
 
 
@@ -171,6 +178,103 @@ def test_a_failed_leakage_read_keeps_the_poll_and_backs_off(monkeypatch: pytest.
     charger.service_status = 200
     asyncio.run(updater._async_update_data())
     assert all("serviceData" not in query for query in _graphql_queries(charger))
+
+
+_SERVICE_ERRORS = [
+    {"message": "optional field unavailable", "path": ["serviceData", "adc_plug_temperature"]},
+    {"message": "optional root failed", "path": ["serviceData"]},
+]
+
+
+@pytest.mark.parametrize("with_settings", [False, True])
+def test_service_only_errors_preserve_station_data_and_back_off_leakage(monkeypatch, with_settings):
+    charger = _LeakCharger(word=250)
+    updater = _known(monkeypatch, charger)
+    assert asyncio.run(updater._async_update_data())["leakValue"] == 2
+    charger.calls.clear()
+    charger.service_errors = _SERVICE_ERRORS
+    charger.plain_errors = _SERVICE_ERRORS  # even a failed plain retry must be avoidable
+    charger.station["stationCurrent"] = 15
+    charger.main["currentSet"] = 7
+    if with_settings:
+        updater._reve._fetched_at = None
+
+    data = asyncio.run(updater._async_update_data())
+
+    assert data["currentSet"] == 15
+    assert "leakValue" not in data
+    assert charger.paths() == ["/graphql"]
+    (query,) = _graphql_queries(charger)
+    assert "serviceData" in query
+    assert ("scheduleV2" in query) is with_settings
+    assert updater._reve.measurements_due()
+
+    charger.calls.clear()
+    charger.plain_errors = None
+    data = asyncio.run(updater._async_update_data())
+    assert data["currentSet"] == 15
+    assert "leakValue" not in data
+    assert len(_graphql_queries(charger)) == 1
+    assert "serviceData" not in _graphql_queries(charger)[0]
+
+
+@pytest.mark.parametrize("errors", [
+    _SERVICE_ERRORS + [{"path": ["stationData", "stationCurrent"]}],
+    [{}],
+    [{"path": []}],
+    [{"path": "serviceData"}],
+    [{"path": 1}],
+    {"path": ["serviceData"]},
+    [None],
+    1,
+])
+def test_errors_outside_service_data_keep_the_plain_retry(monkeypatch, errors):
+    charger = _LeakCharger()
+    updater = _known(monkeypatch, charger)
+    charger.service_errors = errors
+    assert asyncio.run(updater._async_update_data())["currentSet"] == charger.station["stationCurrent"]
+    assert ["serviceData" in query for query in _graphql_queries(charger)] == [True, False]
+
+
+@pytest.mark.parametrize("bad_data", [None, [], {}, {"stationData": []}])
+def test_service_only_errors_without_station_data_keep_the_plain_retry(monkeypatch, bad_data):
+    charger = _LeakCharger()
+    updater = _known(monkeypatch, charger)
+    charger.service_errors = _SERVICE_ERRORS
+    charger.service_reply_override = {"data": bad_data}
+    assert asyncio.run(updater._async_update_data())["currentSet"] == charger.station["stationCurrent"]
+    assert ["serviceData" in query for query in _graphql_queries(charger)] == [True, False]
+
+
+def test_service_only_errors_do_not_hide_invalid_station_measurements(monkeypatch):
+    charger = _LeakCharger()
+    updater = _known(monkeypatch, charger)
+    charger.service_errors = _SERVICE_ERRORS
+    charger.service_reply_override = {
+        "data": {"stationData": {**charger.station, "stationCurrent": 10000}},
+    }
+    assert asyncio.run(updater._async_update_data())["currentSet"] == charger.station["stationCurrent"]
+    assert ["serviceData" in query for query in _graphql_queries(charger)] == [True, False]
+
+
+def test_service_only_errors_in_a_plain_reply_still_fail_measurements(monkeypatch):
+    charger = _LeakCharger(pair=False)
+    updater = _known(monkeypatch, charger)
+    charger.plain_errors = _SERVICE_ERRORS
+    charger.station["stationCurrent"] = 15
+    charger.main["currentSet"] = 7
+    assert asyncio.run(updater._async_update_data())["currentSet"] == 7
+    assert charger.paths() == ["/graphql", "/main"]
+    assert not updater._reve.measurements_due()
+
+
+def test_partial_reply_from_a_different_firmware_pair_keeps_the_plain_retry(monkeypatch):
+    charger = _LeakCharger()
+    updater = _known(monkeypatch, charger)
+    charger.station["wifiFWVersion"] = "REVE_PLUS_1.0.6"
+    charger.service_errors = _SERVICE_ERRORS
+    assert asyncio.run(updater._async_update_data())["currentSet"] == charger.station["stationCurrent"]
+    assert ["serviceData" in query for query in _graphql_queries(charger)] == [True, False]
 
 
 def test_leakage_is_asked_again_after_the_back_off(monkeypatch: pytest.MonkeyPatch) -> None:

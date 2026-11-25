@@ -307,7 +307,8 @@ def _ws_card_entities(
     """Map a charger's entity keys to entity_ids through the entity registry.
 
     Keyed by unique_id, so the card keeps working after a user renames an
-    entity_id. Without a device_id the first charger is used.
+    entity_id. Without a device_id the first readable charger is used.
+    The loaded charger's firmware family is independent of entity permissions.
     """
     registry = er.async_get(hass)
     wanted = msg.get("device_id")
@@ -328,7 +329,11 @@ def _ws_card_entities(
             device_id = device_id or ent.device_id
             entities[match.group(1)] = ent.entity_id
         if entities:
-            connection.send_result(msg["id"], {"device_id": device_id, "entities": entities})
+            result: dict[str, Any] = {"device_id": device_id, "entities": entities}
+            runtime_data = getattr(entry, "runtime_data", None)
+            if runtime_data is not None:
+                result["reve"] = runtime_data.updater.firmware_family == FAMILY_REVE
+            connection.send_result(msg["id"], result)
             return
     connection.send_error(msg["id"], "not_found", "No Eveus charger found")
 

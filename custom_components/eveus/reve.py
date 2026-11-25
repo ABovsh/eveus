@@ -313,6 +313,21 @@ def _station_of(data: Mapping[str, Any]) -> dict[str, Any]:
     return station
 
 
+def _service_error_station(err: GraphQLError) -> dict[str, Any] | None:
+    """Recover the exact leakage pair's station from a service-only failure."""
+    errors = err.errors
+    if not isinstance(err.data, dict) or not isinstance(errors, list):
+        return None
+    for error in errors:
+        path = error.get("path") if isinstance(error, dict) else None
+        if not isinstance(path, list) or path[:1] != ["serviceData"]:
+            return None
+    station = err.data.get("stationData")
+    if isinstance(station, dict) and leakage_pair(station):
+        return station
+    return None
+
+
 def _station_query(fields: str) -> str:
     """A ``StationData`` read of fixed fields; every document is built once,
     at import, from the constants above."""
@@ -1177,17 +1192,7 @@ class ReveApi:
         self._leakage = None
         document = MEASUREMENTS_AND_SETTINGS_QUERY if with_settings else MEASUREMENTS_QUERY
         try:
-            station, service = await self._station_with_leakage(document)
-            main = station_to_main(station)
-            adaptive_current = main.get("aiModecurrent")
-            if adaptive_current is not None and not (
-                0 <= adaptive_current <= model_max_current(self._updater._model)
-            ):
-                del main["aiModecurrent"]
-            if "state" not in main:
-                raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
-            if validate is not None:
-                main = validate(main)
+            station, main, service = await self._station_with_leakage(document, validate)
             extras = parse_extras({"stationData": station}) if with_settings else None
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             self._measurement_failures += 1
@@ -1607,23 +1612,47 @@ class ReveApi:
     async def _station(self, document: str) -> dict[str, Any]:
         return _station_of(await self._post("StationData", document))
 
-    async def _station_with_leakage(
-        self, document: str
-    ) -> tuple[dict[str, Any], Mapping[str, Any] | None]:
-        """The station, and the leakage root when this charger is asked for it.
+    def _measurement_data(
+        self, station: dict[str, Any], validate: Callable[[dict[str, Any]], dict[str, Any]] | None
+    ) -> dict[str, Any]:
+        main = station_to_main(station)
+        adaptive_current = main.get("aiModecurrent")
+        if adaptive_current is not None and not (
+            0 <= adaptive_current <= model_max_current(self._updater._model)
+        ):
+            del main["aiModecurrent"]
+        if "state" not in main:
+            raise ValueError("no stationState")  # pragma: no mutate - message text; only the exception type is ever logged
+        return validate(main) if validate is not None else main
 
-        A failed read with that root is retried at once without it, and the
-        root rests for LEAKAGE_RETRY_SECONDS: the optional reading never costs
-        the measurements."""
+    async def _station_with_leakage(
+        self, document: str, validate: Callable[[dict[str, Any]], dict[str, Any]] | None
+    ) -> tuple[dict[str, Any], dict[str, Any], Mapping[str, Any] | None]:
+        """Read station measurements, backing off the optional root on failure.
+
+        Retry with the plain document if the combined reply has no usable
+        station data or reports an error outside the optional root.
+        """
         if self._leakage_pair and time.monotonic() >= self._leakage_retry_at:
             try:
                 data = await self._post("StationData", _LEAKAGE_DOCUMENTS[document])
-                service = data.get("serviceData")
-                return _station_of(data), service if isinstance(service, Mapping) else {}
+                station = _station_of(data)
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
                 self._leakage_retry_at = time.monotonic() + LEAKAGE_RETRY_SECONDS
                 _LOGGER.debug("REVE leakage read failed: %s", type(err).__name__)
-        return await self._station(document), None
+                if isinstance(err, GraphQLError) and (station := _service_error_station(err)) is not None:
+                    try:
+                        return station, self._measurement_data(station, validate), None
+                    except ValueError:
+                        pass  # Invalid station measurements still need the plain retry.
+            else:
+                service = data.get("serviceData")
+                return (
+                    station, self._measurement_data(station, validate),
+                    service if isinstance(service, Mapping) else {},
+                )
+        station = await self._station(document)
+        return station, self._measurement_data(station, validate), None
 
     @property
     def leakage(self) -> int | None:

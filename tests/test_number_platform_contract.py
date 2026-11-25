@@ -114,6 +114,14 @@ def test_a_soc_input_change_signals_this_entrys_soc_sensors(
     assert sent == [(capacity.hass, "eveus_soc_update_entry-id")]
 
 
+class _SocketUpdater(EveusTestUpdater):
+    is_legacy_firmware = True
+
+    @property
+    def legacy_socket_limited(self):
+        return self.snapshot.get_int("restricted_mode") == 1
+
+
 @pytest.mark.parametrize(
     ("name", "key"),
     [
@@ -123,7 +131,7 @@ def test_a_soc_input_change_signals_this_entrys_soc_sensors(
     ],
 )
 def test_current_bounds_follow_the_household_socket_mode(name, key):
-    updater = EveusTestUpdater({key: 12, "restricted_mode": "1"}, model="32A")
+    updater = _SocketUpdater({key: 12, "restricted_mode": "1"}, model="32A")
     entities, _ = _set_up_numbers("basic", updater=updater)
     entity = entities[name]
     writes = []
@@ -157,13 +165,13 @@ def test_current_bounds_follow_the_household_socket_mode(name, key):
 
 @pytest.mark.parametrize("flag", [{}, {"restricted_mode": -1}, {"restricted_mode": 2}])
 def test_missing_or_invalid_household_socket_flag_uses_the_normal_maximum(flag):
-    updater = EveusTestUpdater(flag, model="40A")
+    updater = _SocketUpdater(flag, model="40A")
     entities, _ = _set_up_numbers("basic", updater=updater)
     assert entities["Charging Current"].native_max_value == 40
 
 
 def test_household_socket_mode_keeps_a_16a_models_bound_and_ignores_energy_limits():
-    updater = EveusTestUpdater({"restricted_mode": 1}, model="16A")
+    updater = _SocketUpdater({"restricted_mode": 1}, model="16A")
     entities, _ = _set_up_numbers("basic", updater=updater)
     assert entities["Charging Current"].native_max_value == 16
     assert entities["Schedule 1 Current limit"].native_max_value == 16

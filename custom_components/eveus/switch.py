@@ -490,14 +490,13 @@ async def async_setup_entry(
     if _HOUSEHOLD_SOCKET.key in skipped:
         return
 
-    # The charger can be off at setup. Wait for a poll that reports the flag,
-    # using the same deferred setup as the REVE-specific sensors.
+    # Either /main or the legacy identification from /init can arrive late.
     added = False  # pragma: no mutate - equivalent: only read for truthiness
 
     @callback
     def _add_household_socket_switch() -> None:
         nonlocal added
-        if added or not updater.snapshot.has(RESTRICTED_MODE_KEY):
+        if added or not updater.is_legacy_firmware or not updater.snapshot.has(RESTRICTED_MODE_KEY):
             return
         added = True
         async_add_entities([BaseSwitchEntity(updater, _HOUSEHOLD_SOCKET, device_number)])

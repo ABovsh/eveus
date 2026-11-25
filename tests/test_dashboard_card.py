@@ -154,9 +154,15 @@ def _reg_entry(unique_id, entity_id, device_id="dev1", platform="eveus"):
     return SimpleNamespace(unique_id=unique_id, entity_id=entity_id, device_id=device_id, platform=platform)
 
 
-def _ws_hass(entries):
+def _ws_hass(entries, *, families=None):
+    config_entries = [SimpleNamespace(entry_id=entry_id) for entry_id in entries]
+    for entry in config_entries:
+        if families and entry.entry_id in families:
+            entry.runtime_data = SimpleNamespace(
+                updater=SimpleNamespace(firmware_family=families[entry.entry_id])
+            )
     return SimpleNamespace(
-        config_entries=SimpleNamespace(async_entries=lambda domain: [SimpleNamespace(entry_id=e) for e in entries]),
+        config_entries=SimpleNamespace(async_entries=lambda domain: config_entries),
     )
 
 
@@ -210,8 +216,10 @@ def test_without_device_id_the_first_charger_is_used():
         "e1": [_reg_entry("eveus_state", "sensor.first_state", device_id="dev1")],
         "e2": [_reg_entry("eveus2_state", "sensor.second_state", device_id="dev2")],
     }
-    _, result = _run_ws(_ws_hass(["e1", "e2"]), registry).send_result.call_args[0]
+    hass = _ws_hass(["e1", "e2"], families={"e1": eveus.FAMILY_CLASSIC, "e2": eveus.FAMILY_REVE})
+    _, result = _run_ws(hass, registry).send_result.call_args[0]
     assert result["device_id"] == "dev1"
+    assert result["reve"] is False
 
 
 def test_unknown_device_is_reported_as_not_found():
@@ -311,7 +319,7 @@ def test_card_entities_hide_entities_the_user_cannot_read():
         "e1": [_reg_entry("eveus_state", "sensor.hidden_state", device_id="dev1")],
         "e2": [
             _reg_entry("eveus2_state", "sensor.second_state", device_id="dev2"),
-            _reg_entry("eveus2_soc_percent", "sensor.second_soc", device_id="dev2"),
+            _reg_entry("eveus2_reve_api", "binary_sensor.second_reve_api", device_id="dev2"),
         ],
     }
     connection = MagicMock()
@@ -319,11 +327,13 @@ def test_card_entities_hide_entities_the_user_cannot_read():
     connection.user.permissions.check_entity.side_effect = (
         lambda entity_id, policy: policy == POLICY_READ and entity_id == "sensor.second_state"
     )
+    hass = _ws_hass(["e1", "e2"], families={"e1": eveus.FAMILY_CLASSIC, "e2": eveus.FAMILY_REVE})
     with patch.object(eveus.er, "async_get", return_value=object()), patch.object(
         eveus.er, "async_entries_for_config_entry", side_effect=lambda _reg, entry_id: registry.get(entry_id, [])
     ):
-        eveus._ws_card_entities(_ws_hass(["e1", "e2"]), connection, {"id": 7, "type": "eveus/card_entities"})
+        eveus._ws_card_entities(hass, connection, {"id": 7, "type": "eveus/card_entities"})
     connection.send_result.assert_called_once()
     result = connection.send_result.call_args[0][1]
     assert result["device_id"] == "dev2"
     assert set(result["entities"].values()) == {"sensor.second_state"}
+    assert result["reve"] is True
