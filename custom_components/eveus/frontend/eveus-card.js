@@ -1733,7 +1733,7 @@ class EveusCard extends HTMLElement {
         const selected = o === zone && !following ? ' selected' : '';
         return `<option value="${o}"${selected}>${zoneLabel(o)}</option>`;
       };
-      zoneEl = `<label class="time-zone-wrap" title="${zoneTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${disabled ? ' disabled' : ''}>
+      zoneEl = `<label class="time-zone-wrap" title="${zoneTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><span class="time-zone-sizer" aria-hidden="true"></span><select class="time-zone" data-select="time_zone" aria-label="${t.zone}"${disabled ? ' disabled' : ''}>
       ${placeholder}${autoEl}${options.map(zoneOption).join('')}</select></label>`;
     }
     const drift = on ? this._num('time_drift') : null;
@@ -2357,6 +2357,34 @@ class EveusCard extends HTMLElement {
         section.classList.add(step);
       }
     }
+    // A native select is as wide as its longest option ("Auto: follow Home Assistant") whatever it
+    // shows: size it to the text it shows (the list still opens full width), and never squeeze it.
+    // The room beyond the text (padding, border, this platform's arrow) is what the select adds to
+    // its longest option, measured in a hidden sizer with the select's font.
+    for (const select of this.shadowRoot.querySelectorAll('.time-zone')) {
+      const options = [...(select.options ?? [])].map((option) => option.textContent);
+      const text = options[select.selectedIndex];
+      const sizer = select.parentElement?.querySelector?.('.time-zone-sizer');
+      if (!text || !sizer) continue;
+      // Layout widths, not rendered ones: a dashboard may scale the card with a transform.
+      // Both are whole pixels, so 2 px covers the rounding.
+      const textWidth = (value) => { sizer.textContent = value; return sizer.offsetWidth; };
+      select.style.width = '';
+      const chrome = select.offsetWidth - Math.max(...options.map(textWidth));
+      select.style.width = `${textWidth(text) + chrome + 2}px`;
+    }
+    // A full time row then drops the zone's icon, the section label, the Sync text (its icon
+    // stays; a time zone fix keeps its text) and last the clock and fix icons; re-measured from
+    // the full row each time.
+    for (const row of this.shadowRoot.querySelectorAll('.time-row')) {
+      const section = row.parentElement;
+      if (!section?.classList) continue;
+      section.classList.remove('time-tight', 'time-tighter', 'time-tightest', 'time-narrowest');
+      for (const step of ['time-tight', 'time-tighter', 'time-tightest', 'time-narrowest']) {
+        if (row.scrollWidth <= row.clientWidth) break;
+        section.classList.add(step);
+      }
+    }
     // Both schedule rows read as one table: they share the smaller of their two sizes.
     const windows = [...this.shadowRoot.querySelectorAll('.sched-window')];
     const min = Math.min(...windows.map((el) => parseFloat(el.style.fontSize) || Infinity));
@@ -2725,9 +2753,10 @@ ha-card[data-theme=light] .sched-time-input{color-scheme:light}
 .sl.time{--h:#7c83fd;gap:6px;min-height:40px}.sl.time.time-bad{--h:#e74c3c;background:rgba(231,76,60,.14);border-color:rgba(231,76,60,.45)}
 .time-label{flex:none}
 .time-row{display:flex;align-items:center;justify-content:space-between;gap:6px;flex:1;min-width:0}
-.time-zone-wrap{display:flex;align-items:center;gap:3px;min-width:0}
+.time-zone-wrap{position:relative;display:flex;align-items:center;gap:3px;flex:none}
+.time-zone-sizer{position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;white-space:pre;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
 .time-zone-wrap ha-icon{--mdc-icon-size:15px;color:color-mix(in srgb,var(--h) 80%,var(--secondary-text-color))}
-.time-zone{box-sizing:border-box;height:36px;min-width:0;padding:0 6px;border:1px solid color-mix(in srgb,var(--h) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--h) 14%,transparent);color:var(--primary-text-color);font-family:inherit;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
+.time-zone{box-sizing:border-box;height:36px;padding:0 6px;border:1px solid color-mix(in srgb,var(--h) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--h) 14%,transparent);color:var(--primary-text-color);font-family:inherit;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
 .time-zone option{color:#000}
 .time-item{display:flex;align-items:center;gap:3px;height:36px;padding:0;margin:0;border:0;background:transparent;font-family:inherit;color:inherit;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
 .time-item ha-icon{--mdc-icon-size:15px}
@@ -2739,6 +2768,7 @@ ha-card[data-theme=light] .sched-time-input{color-scheme:light}
 .time-sync:active{transform:scale(.96)}
 .time-sync.done{background:var(--h);color:#fff}.time-sync.done ha-icon{color:#fff}
 @container (max-width:350px){.time-label{display:none}}
+.sl.time.time-tight .time-zone-wrap ha-icon{display:none}.sl.time.time-tighter .time-label{display:none}.sl.time.time-tightest .time-sync:not(.time-fix) span{display:none}.sl.time.time-tightest .time-sync:not(.time-fix){padding:0 8px}.sl.time.time-narrowest .time-item ha-icon,.sl.time.time-narrowest .time-fix ha-icon{display:none}
 /* Light theme: yellow and cyan text lose contrast on white; darker hues there, dark mode untouched. */
 ha-card[data-theme=light] .panel.meter{--h:#b7860b}ha-card[data-theme=light] .panel.adaptive{--h:#0f9496}
 /* ---- Folding: a long card shows its settings as one-line summaries; tap to open. ---- */

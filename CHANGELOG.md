@@ -8,6 +8,7 @@
 
 ### 🐛 Fixed
 
+- **Card: the time zone is no longer cut off on a phone.** The time zone is sized to the text it shows; when the Charger clock row is still short of space, it hides icons, the section label and the Sync text instead.
 - **Card: the last session's figures are separated and a little smaller,** so energy, cost, duration and voltage no longer run together.
 - **REVE Leakage Current shows the leakage in whole mA, as the charger's display shows it,** on REVE_PLUS 1.0.5 with controller GRM070A-R3.05.7. It is for information only: no notice or colour comes from it, and the card's Safety row shows it without colour. Other REVE versions keep it unavailable; Leakage Current Peak stays unavailable because REVE reports no such reading.
 - **Eveus 2.x is supported like 1.x.** Chargers of the second hardware generation were treated as newer firmware, so their controls and states were read the wrong way.

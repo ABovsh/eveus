@@ -461,7 +461,7 @@ function setupStatus({state='Charging',reason='Charging',substate='No Limits',st
   const hass={states,callWS:async()=>({entities}),callService:async(...args)=>{calls.push(args);}};
   card._ids=entities;card._resolved=true;card.hass=hass;
   const html=()=>card.shadowRoot.innerHTML.replace(/<style>[\s\S]*?<\/style>/,'');
-  return {card,states,calls,hass,timers,html};
+  return {card,states,calls,hass,timers,html,sandbox};
 }
 
 test('REVE has no OCPP button: the card offers One charge and Stop only, and Eveus firmware keeps all three',()=>{
@@ -3194,4 +3194,60 @@ test('socket full current follows the charger: a 16 A charger shows 16A, never a
   const small=setupSafety({socket:'off',currentMax:16});
   assert.match(small.card.shadowRoot.innerHTML,/safety-value[^"]*">16<small>A/);
   assert.doesNotMatch(small.card.shadowRoot.innerHTML,/32<small>A/);
+});
+
+// ---- Time row: the time zone stays whole; the row gives up its extras first ----
+// On a phone the zone select shrank and clipped "Auto · UTC+2" (2026-11-25).
+function fitTimeRow(widths) {
+  const x=setupStatus({sections:['time']});
+  const classes=new Set();
+  const section={classList:{add:(c)=>classes.add(c),remove:(...cs)=>cs.forEach((c)=>classes.delete(c)),contains:(c)=>classes.has(c)}};
+  const saved={'time-tight':widths.icon,'time-tighter':widths.label,'time-tightest':widths.sync,'time-narrowest':widths.icons||0};
+  const row={parentElement:section,get clientWidth(){return widths.box;},
+    get scrollWidth(){return widths.full-[...classes].reduce((s,c)=>s+(saved[c]||0),0);}};
+  x.card.shadowRoot={innerHTML:'',querySelector:()=>null,querySelectorAll:(q)=>q==='.time-row'?[row]:[]};
+  return {x,classes,widths};
+}
+
+test('a time row too narrow for the zone drops the zone icon, then the label, then the Sync text',()=>{
+  const r=fitTimeRow({full:330,box:300,icon:18,label:40,sync:36});
+  r.x.card._fitLimitValues();
+  assert.deepEqual([...r.classes].sort(),['time-tight','time-tighter']);
+  r.widths.box=320;
+  r.x.card._fitLimitValues();
+  assert.deepEqual([...r.classes],['time-tight'],'re-measured from the full row');
+  r.widths.box=400;
+  r.x.card._fitLimitValues();
+  assert.deepEqual([...r.classes],[],'a wide card keeps everything');
+});
+
+test('the time zone select is as wide as the text it shows and its row never squeezes it',()=>{
+  // A native select is as wide as its longest option ("Auto: follow Home Assistant") even while it
+  // shows "UTC+3"; squeezed, it clipped "Auto · UTC+2" on a phone. The room beyond the text (padding,
+  // border, the platform's arrow) is what the select itself adds to its longest option.
+  const r=fitTimeRow({full:200,box:300,icon:0,label:0,sync:0});
+  // Layout widths (offsetWidth): a dashboard that scales the card (transform) shrinks only the
+  // rendered rectangles, which would make the select too narrow for its text.
+  const em=(t)=>t.length*8, chrome=38, scaled=(w)=>({width:w*0.75});
+  const sizer={textContent:'',get offsetWidth(){return em(this.textContent);},getBoundingClientRect(){return scaled(em(this.textContent));}};
+  const options=[{textContent:'Auto: follow Home Assistant'},{textContent:'UTC+3'}];
+  const select={style:{width:'99px'},selectedIndex:1,options,parentElement:{querySelector:(q)=>q==='.time-zone-sizer'?sizer:null},
+    get offsetWidth(){return this.style.width?parseFloat(this.style.width):em(options[0].textContent)+chrome;},
+    getBoundingClientRect(){return scaled(this.offsetWidth);}};
+  r.x.card.shadowRoot.querySelectorAll=(q)=>q==='.time-row'?[]:q==='.time-zone'?[select]:[];
+  r.x.card._fitLimitValues();
+  assert.equal(select.style.width,`${em('UTC+3')+chrome+2}px`);
+  assert.equal(sizer.textContent,'UTC+3','the sizer ends on the shown text, within the select');
+  assert.match(source,/\.time-zone-wrap\{[^}]*flex:none/);
+});
+
+test('a row still too narrow drops the clock and fix icons last, keeping every text',()=>{
+  const r=fitTimeRow({full:380,box:300,icon:18,label:30,sync:20,icons:36});
+  r.x.card._fitLimitValues();
+  assert.deepEqual([...r.classes].sort(),['time-narrowest','time-tight','time-tighter','time-tightest']);
+  assert.match(source,/\.sl\.time\.time-narrowest \.time-item ha-icon,\.sl\.time\.time-narrowest \.time-fix ha-icon\{display:none\}/);
+});
+
+test('the time zone fix keeps its text when the row hides Sync text',()=>{
+  assert.match(source,/\.sl\.time\.time-tightest \.time-sync:not\(\.time-fix\) span\{display:none\}/);
 });
