@@ -8,13 +8,13 @@
 
 **English** | [🇺🇦 Українська](README.uk.md)
 
-Home Assistant integration for **Eveus EV chargers** (Energy Star), such as
-**Eveus Pro**. It works with **all three hardware generations** and **both
-firmwares**: Eveus firmware 1.x, 2.x and R3.x, and the new **REVE firmware**.
-Control the charging current, schedules and limits,
-stop at a target battery level (SOC), and track energy and charging cost. The
-integration talks to the charger over your local network; no cloud account or
-internet access is needed. Install it from the **HACS default store**.
+A Home Assistant integration for Eveus EV chargers of all three hardware
+generations, on Eveus or REVE firmware. It lets you control the charging state,
+current, schedules, limits, the charger's time settings and many other
+parameters. It also calculates your car's battery level (SOC) while charging and
+can end the charge at the level you choose. A ready-made dashboard card shows all
+of this together with energy, charging cost and safety readings: voltage,
+temperature, grounding and leakage current.
 
 <p align="center">
   <img alt="Eveus card — Advanced mode" src="docs/images/card-advanced-en.jpg" width="49%">
@@ -90,7 +90,7 @@ Also supported: **several chargers** and **English and Ukrainian**.
 | --- | --- |
 | Home Assistant | 2025.1 or newer |
 | Charger | Eveus 16A, 32A, 40A or 48A, reachable from Home Assistant |
-| Charger firmware | [Eveus firmware](#charger-firmware) 1.x, 2.x or R3.x, or [REVE firmware](#reve-firmware): any hardware generation, see [Supported chargers](#supported-chargers) |
+| Charger firmware | [Eveus firmware](#charger-firmware) 1.x, 2.x or R3.x (latest version of its line), or [REVE firmware](#reve-firmware) on the third hardware generation; see [Supported chargers](#supported-chargers) |
 | Network | Local network access to the charger's web interface |
 | Setup details | Charger IP address, hostname or URL and model; username and password if the charger has them |
 
@@ -563,6 +563,10 @@ without either applies to both.
 | Third | Eveus R3.05.x | Everything in this README |
 | Third | Eveus R3.01.x | Fewer readings; [details](#older-charger-firmware) |
 | Third | REVE (`REVE_PLUS`) | Everything in this README, with the [REVE differences](#reve-firmware) |
+
+Each hardware generation has its own Eveus firmware line: 1.x, 2.x and R3.x. The
+third generation can also run REVE. The integration is built for the latest
+version of each line; on older versions it may work only partly.
 
 ### REVE firmware
 
