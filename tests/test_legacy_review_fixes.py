@@ -521,12 +521,13 @@ async def test_minimum_voltage_changed_on_the_charger_page_is_read_back(monkeypa
     session.calls.clear()
     await _poll(updater, session)
     assert select.current_option == "175"  # not re-read on every poll
-    clock = updater._legacy_init_read_at + common_network._LEGACY_INIT_REFRESH_SECONDS - 0.5
-    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock)
+    # Exact literals: read_at + 900 - read_at on a real clock can round below 900.
+    updater._legacy_init_read_at = 1000.0
+    refresh = common_network._LEGACY_INIT_REFRESH_SECONDS
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0 + refresh - 0.5)
     await _poll(updater, session)
     assert select.current_option == "175"
-    clock = updater._legacy_init_read_at + common_network._LEGACY_INIT_REFRESH_SECONDS
-    monkeypatch.setattr(common_network.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0 + refresh)
     await _poll(updater, session)
     assert select.current_option == "180"
     await _poll(updater, session)
