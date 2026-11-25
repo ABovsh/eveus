@@ -28,7 +28,7 @@ temperature, grounding and leakage current.
 
 ## Features
 
-### 🎛️ Local charging control
+### 🎛️ Charging control
 
 - Adjust current, allow or stop charging from dashboards and automations.
 - Enable one-charge mode and set time, energy and cost limits.
@@ -69,13 +69,14 @@ All SOC features require **Advanced mode**. [Set up SOC →](#battery-level-soc)
 
 - **Two charging schedules** with their own current limit and, on Eveus firmware, energy limit. They are stored on the charger and run without Home Assistant.
 - **Lower current when mains voltage drops:** the charger does this; the integration sets the mode and threshold and shows the current cap.
+- **The charger's clock:** set its time zone by hand or with **Follow HA Time Zone**, and correct the time with **Sync Time**; schedules run on this clock.
 
 ### 🔄 All generations and firmwares
 
 - **All three hardware generations:** firmware 1.x on the first, 2.x on the second, R3.x on the third. The integration recognizes the firmware by itself and sends each control the way that firmware expects.
 - **REVE firmware is recognized automatically:** no setup change after the charger updates to REVE. The integration reads and writes through REVE's local interface, the one the charger's app uses: current, schedules with their days of the week, tariffs and limits.
 - **Manual Mode** sensor and card notes show when REVE ignores its schedules and limits. [More about REVE →](#reve-firmware)
-- **Older firmware reports fewer readings;** the ones it does not report stay unavailable. [Which charger supports what →](#supported-chargers)
+- **Built for the latest firmware of each line;** on older versions some features may be missing, and readings the charger does not report stay unavailable. [Which charger supports what →](#supported-chargers)
 
 ### 🛡️ Faults and conflicting controls
 
