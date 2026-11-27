@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from homeassistant.components.number import async_set_value
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.eveus.binary_sensor import (
@@ -155,7 +154,7 @@ async def test_stale_time_limit_read_does_not_confirm_a_nearby_setpoint(monkeypa
     entity, updater = _make(GLOBAL_LIMIT_NUMBERS[0])
     updater.data = {"timeLimit": 3600}
     entity._handle_coordinator_update()
-    await async_set_value(entity, SimpleNamespace(data={"value": 61}))
+    await entity.async_set_native_value(61)
     assert updater.send_command.await_args.args == ("timeLimit", 3660)
     assert entity.native_value == 61
     entity.async_write_ha_state.reset_mock()
@@ -173,7 +172,7 @@ async def test_stale_time_limit_read_does_not_confirm_a_nearby_setpoint(monkeypa
 async def test_number_displays_the_encoded_value(monkeypatch):
     monkeypatch.setattr("custom_components.eveus.number.time.monotonic", lambda: 1000.0)
     entity, updater = _make(GLOBAL_LIMIT_NUMBERS[2])
-    await async_set_value(entity, SimpleNamespace(data={"value": 10.5}))
+    await entity.async_set_native_value(10.5)
 
     assert updater.send_command.await_args.args == ("moneyLimit", 10)
     assert entity.native_value == 10

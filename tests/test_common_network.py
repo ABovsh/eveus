@@ -670,15 +670,11 @@ async def test_a_poll_cannot_start_reauth_after_unload(monkeypatch, tmp_path):
         entry_id="charger", async_on_unload=on_unload.append, async_start_reauth=Mock(),
     )
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass, config_entry=entry)
-    entered, release, cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    entered, release = asyncio.Event(), asyncio.Event()
 
     async def delayed_unauthorized(_session, _url, *, on_unauthorized, **_kwargs):
         entered.set()
-        try:
-            await release.wait()
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
+        await release.wait()
         on_unauthorized()
 
     monkeypatch.setattr(updater, "get_session", lambda: None)
@@ -693,7 +689,6 @@ async def test_a_poll_cannot_start_reauth_after_unload(monkeypatch, tmp_path):
 
     assert not entry.async_start_reauth.called, "an unloaded coordinator started reauth"
     assert not updater._grace_timer_unsubs
-    assert cancelled.is_set()
 
 
 def test_updater_caches_basic_auth_object() -> None:

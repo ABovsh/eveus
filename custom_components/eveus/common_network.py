@@ -388,7 +388,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._event_charging_payload: dict[str, Any] | None = None
         self._force_refresh_requests = 0
         self._poll_lock = asyncio.Lock()
-        self._poll_task: asyncio.Task[_PollReading] | None = None
         self._pending_refresh_unsubs: list = []
         # The one outage clock. Anchored to the FIRST failed poll and cleared by
         # the next good one; every entity reads its visibility from here instead
@@ -1114,17 +1113,15 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             unsub()
 
     async def async_shutdown(self) -> None:
-        """Stop new refreshes, cancel active requests, then flush storage."""
+        """Stop new refreshes, cancel the /init probe, then flush storage."""
         self._shutting_down = True
         await super().async_shutdown()
         self._cancel_pending_refreshes()
         self._stop_outage_clock()
-        active = [task for task in (self._poll_task, self._init_fw_task) if task is not None]
-        for task in active:
-            task.cancel()
-        if active:
-            await asyncio.gather(*active, return_exceptions=True)
-        self._init_fw_task = None
+        if self._init_fw_task is not None:
+            self._init_fw_task.cancel()
+            await asyncio.gather(self._init_fw_task, return_exceptions=True)
+            self._init_fw_task = None
         await self._flush_meter_baseline()
         await self.async_flush_reve_limits()
 
@@ -1902,13 +1899,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         async with self._poll_lock:
             if self._shutting_down:
                 raise asyncio.CancelledError
-            # A manual or already-fired timer refresh belongs to its caller,
-            # not to the config entry. Own the poll separately so unload can
-            # cancel the request without cancelling an unrelated HA task.
             socket_write = self._legacy_socket_write
-            self._poll_task = asyncio.create_task(self._poll_charger())
             try:
-                new_data, response_time, unsupported, state_ambiguous = await self._poll_task
+                new_data, response_time, unsupported, state_ambiguous = await self._poll_charger()
+                # A poll still waiting for the charger when the entry unloads
+                # must not publish or start reauth on the old coordinator.
                 if self._shutting_down:
                     raise asyncio.CancelledError
                 # Publish the typed snapshot and transition events in the
@@ -1957,8 +1952,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 # Assistant logs the message, which names only the error type.
                 self._record_failure(err)
                 raise UpdateFailed(f"Unexpected Eveus poll error: {type(err).__name__}") from err
-            finally:
-                self._poll_task = None
 
     def _validate(self, payload: dict[str, Any]) -> dict[str, Any]:
         return validate_main_payload(payload, self._model)
