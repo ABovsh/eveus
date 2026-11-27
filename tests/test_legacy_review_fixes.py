@@ -42,6 +42,7 @@ def _main_fixture(filename="real_main_response.json"):
 
 def _rig(monkeypatch):
     updater, bus = _updater_with_bus()
+    updater.hass.async_create_background_task = lambda coro, _name: asyncio.create_task(coro)
     updater._model = "32A"
     session = _Session(_Response())
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda _: session)
@@ -424,6 +425,7 @@ async def test_no_plug_event_across_a_gap_with_an_unknown_pilot(monkeypatch):
     await _poll(updater, session, state=2, pilot=2)
     updater._forget_poll_gap_state()
     await _poll(updater, session, state=18, pilot=4, limitsStatus=8)
+    await updater._init_fw_task
     await _poll(updater, session, state=18, pilot=4, limitsStatus=8)
     await _poll(updater, session, state=2, pilot=2)
     events = [event for event, _ in bus.fired]
@@ -450,6 +452,8 @@ async def test_definite_legacy_plug_transition_with_same_canonical_state(monkeyp
     if outage:
         updater._forget_poll_gap_state()
     await _poll(updater, session, state=3, pilot=4)
+    if outage:
+        await updater._init_fw_task
     assert updater.snapshot.plugged_in is None
     assert not bus.fired
     canonical = updater.snapshot.state
@@ -475,7 +479,7 @@ async def test_classic_r3_plug_events_still_follow_state_and_keep_order(monkeypa
 
 async def test_initial_fault_is_remembered_until_the_code_changes(monkeypatch):
     updater, session, bus = _rig(monkeypatch)
-    fault = {"state": common_network.DEVICE_STATE_ERROR}
+    fault = {"state": common_network.DEVICE_STATE_ERROR, "verFWMain": "R3.05.8"}
     await _poll(updater, session, **fault, subState=9)
     await _poll(updater, session, **fault, subState=9)
     assert not bus.fired
@@ -492,7 +496,7 @@ async def test_initial_fault_is_remembered_until_the_code_changes(monkeypatch):
 
 async def test_fractional_fault_code_is_missing_in_the_error_event(monkeypatch):
     updater, session, bus = _rig(monkeypatch)
-    await _poll(updater, session, state=common_network.DEVICE_STATE_STANDBY)
+    await _poll(updater, session, state=common_network.DEVICE_STATE_STANDBY, verFWMain="R3.05.8")
     await _poll(updater, session, state=common_network.DEVICE_STATE_ERROR, subState=5.5)
     assert bus.fired == [
         (common_network.EVENT_ERROR, {
@@ -529,7 +533,7 @@ async def test_minimum_voltage_changed_on_the_charger_page_is_read_back(monkeypa
     assert select.current_option == "175"
     monkeypatch.setattr(common_network.time, "monotonic", lambda: 1000.0 + refresh)
     await _poll(updater, session)
-    assert select.current_option == "180"
+    await updater._init_fw_task
     await _poll(updater, session)
     assert select.current_option == "180"
 
@@ -637,6 +641,7 @@ async def test_unusable_legacy_init_refresh_keeps_profile_and_backs_off(monkeypa
     clock += common_network._LEGACY_INIT_REFRESH_SECONDS
     first_refresh = clock
     await _poll(updater, session)
+    await updater._init_fw_task
     await _poll(updater, session)
     clock += common_network._INIT_RETRY_SECONDS - 1
     await _poll(updater, session)
@@ -648,6 +653,7 @@ async def test_unusable_legacy_init_refresh_keeps_profile_and_backs_off(monkeypa
     reply = {"ESP_SW_version": 151, "minVoltage": 180}
     clock += 1
     await _poll(updater, session)
+    await updater._init_fw_task
     await _poll(updater, session)
     assert attempts == [first_refresh, clock]
     assert updater._init_fw_fallback == "1.51"

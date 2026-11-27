@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### 🐛 Fixed
+
+- **The SOC limit stops a charge once per plug-in.** A charge you resume by hand after the stop is no longer stopped again; raising Target SOC applies the new target.
+- **Total Energy and the energy meters are not reset by readings of 0 after power-ups.** A meter is reset only after three zero readings in a row, without a lost connection in between.
+- **Number controls no longer jump back after a change.** They show the value sent to the charger, and an older reading no longer brings back the previous one.
+- **Disabling or reloading the integration no longer asks for the password again** because of a request that was still waiting for the charger.
+- **Ignore on a repeated fault notice stays in effect** while the fault continues.
+- **Eveus 1.x and 2.x: fresh readings no longer wait for a slow firmware check** after a lost connection.
+- **Eveus 1.x and 2.x: a fault before the firmware is recognized no longer shows as Charging** or fires a charging started event.
+- **Eveus R3.01.8: Limit: Energy is sent the way the charger's page sends it;** a limit set from Home Assistant was 100 times too large.
+- **REVE: turning One Charge off no longer resumes a charge paused in the REVE app.**
+- **REVE: a limit changed right after turning it on or off keeps that on/off state.** The new value is applied when the limit is on and kept for later when it is off.
+- **REVE: releasing Stop sends it once.** If the charger then does not leave manual mode, Home Assistant reports that instead of an error for the whole command.
+- **REVE: Manual Mode stays on after a Home Assistant restart during a lost connection** when the same charge continues.
+- **Card: turning a limit off waits until the charger reports it off.** A reading that is unavailable no longer counts as confirmation.
+- **Card: Sync Time waits for the charger.** The button is disabled while the time is sent, shows Sent afterwards and ignores a second tap.
+
 ## 4.32.0 - 2026-11-25
 
 ### ✨ New

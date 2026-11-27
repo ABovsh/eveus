@@ -64,8 +64,9 @@ class _Response:
 
 
 class _TraceSession:
-    def __init__(self) -> None:
+    def __init__(self, init_reply: dict[str, Any] | None) -> None:
         self.main: dict[str, Any] | None = None
+        self.init_reply = init_reply
         self.fail = False
         self.commands: list[dict[str, list[str]]] = []
 
@@ -75,7 +76,8 @@ class _TraceSession:
             return _Response(200)
         if self.fail:
             raise asyncio.TimeoutError()
-        return _Response(200, json.dumps(self.main).encode())
+        data = self.init_reply if url.endswith("/init") else self.main
+        return _Response(200, json.dumps(data).encode())
 
 
 @dataclass
@@ -92,7 +94,10 @@ class Replay:
     sensors: dict[str, Any] = field(default_factory=dict)
 
 
-def replay(trace: dict[str, Any], monkeypatch, *, sensors: bool = False) -> Replay:
+def replay(
+    trace: dict[str, Any], monkeypatch, *, sensors: bool = False,
+    init_reply: dict[str, Any] | None = None,
+) -> Replay:
     """Run every step and record entity values after each one.
 
     With ``sensors`` the standard single-phase sensor set rides along and every
@@ -102,10 +107,12 @@ def replay(trace: dict[str, Any], monkeypatch, *, sensors: bool = False) -> Repl
     fake_time = SimpleNamespace(monotonic=lambda: clock["t"], time=lambda: 1.7e9 + clock["t"])
     for module in (common_base, common_network, control_base, number):
         monkeypatch.setattr(module, "time", fake_time)
-    session = _TraceSession()
+    session = _TraceSession(init_reply)
     monkeypatch.setattr(common_network, "async_get_clientsession", lambda hass: session)
 
-    updater = EveusUpdater("192.168.1.50", "u", "p", MagicMock(loop=None))  # NOSONAR(python:S1313) - RFC 1918 test fixture
+    hass = MagicMock(loop=None)
+    hass.async_create_background_task.side_effect = lambda coro, _name: asyncio.create_task(coro)
+    updater = EveusUpdater("192.168.1.50", "u", "p", hass)  # NOSONAR(python:S1313) - RFC 1918 test fixture
     result = Replay(updater, {}, session, clock)
 
     def count_refresh() -> None:
@@ -143,6 +150,8 @@ def replay(trace: dict[str, Any], monkeypatch, *, sensors: bool = False) -> Repl
                     payload.pop(key, None)
                 session.main, session.fail = payload, False
                 updater.data = await updater._async_update_data()
+                if init_reply is not None and not updater.is_legacy_firmware:
+                    await updater.async_maybe_fetch_init_firmware()
                 updater.last_update_success = True
                 _notify(result)
             else:
@@ -161,6 +170,8 @@ def replay(trace: dict[str, Any], monkeypatch, *, sensors: bool = False) -> Repl
                     **{name: e.native_value for name, e in result.entities.items()},
                 }
             )
+        if updater._init_fw_task is not None:
+            await updater._init_fw_task
 
     asyncio.run(run())
     return result

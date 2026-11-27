@@ -155,7 +155,10 @@ def test_legacy_fw151_trace_keeps_state_translation_and_setpoint_behavior(monkey
     from custom_components.eveus.const import DEVICE_STATE_CHARGING
     from trace_replay import load_trace, replay
 
-    result = replay(load_trace("legacy_fw151_setpoint_and_charge.json"), monkeypatch)
+    result = replay(
+        load_trace("legacy_fw151_setpoint_and_charge.json"), monkeypatch,
+        init_reply={"ESP_SW_version": 151},
+    )
 
     assert [(s["device_state"], s["available"], s["charging_current"]) for s in result.observed] == [
         (3, True, 7.0),  # legacy user stop 20, car connected -> Connected; 7 A read as-is
@@ -166,7 +169,7 @@ def test_legacy_fw151_trace_keeps_state_translation_and_setpoint_behavior(monkey
         (DEVICE_STATE_CHARGING, False, 10.0),  # missed poll: held through grace
         (3, True, 10.0),  # back to the user stop
     ]
-    assert result.session.commands == [{"pageevent": ["currentSet"], "currentSet": ["10"]}]
+    assert result.session.commands == [{"currentSet": ["10"]}]
 
 
 def test_idle_soak_trace_stays_within_its_recorder_write_budget(monkeypatch) -> None:

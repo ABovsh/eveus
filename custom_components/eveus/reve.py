@@ -400,6 +400,7 @@ SETTINGS_QUERY: Final = _station_query(_SCHEDULE_FIELDS + _RATE_FIELDS + """
             chargingCommand""")
 # The schedules alone, re-read right before a schedule write.
 SCHEDULES_QUERY: Final = _station_query(_SCHEDULE_FIELDS)
+CHARGING_COMMAND_QUERY: Final = _station_query("chargingCommand")
 
 MEASUREMENTS_RETRY_SECONDS: Final = 60
 
@@ -940,7 +941,8 @@ class ManualMode:
     """
 
     def __init__(self) -> None:
-        self._on = False
+        self._started_at: float | None = None
+        self._restore_age_pending = False
         self._session_time: float | None = None
         self._unplugged = False
         self._reported: bool | None = None
@@ -962,17 +964,28 @@ class ManualMode:
     def left(self) -> None:
         """Home Assistant told the station to leave manual mode; the next read
         says whether it did."""
-        self._on = False
+        self._started_at = None
+        self._restore_age_pending = False
         self._reported = None
 
     @property
     def on(self) -> bool:
-        return self._on
+        return self._started_at is not None
+
+    @property
+    def started_at(self) -> float | None:
+        """When the latch became active, as a Unix time for restore."""
+        return self._started_at
+
+    def _start(self) -> None:
+        if self._started_at is None or self._restore_age_pending:
+            self._started_at = time.time()
+        self._restore_age_pending = False
 
     def command(self, command: int) -> None:
         """A chargingCommand just written from Home Assistant."""
         if command != _COMMAND_START:
-            self._on = True
+            self._start()
             # Shown at once; the next read says whether the station agrees.
             self._reported = None
 
@@ -986,7 +999,13 @@ class ManualMode:
         session = self._session_time
         if on_for is not None and session is not None and session + _RESTORE_SLACK_SECONDS < on_for:
             return
-        self._on = True
+        if on_for is None:
+            self._start()
+            return
+        started_at = time.time() - max(0.0, on_for)
+        if self._started_at is None or started_at < self._started_at:
+            self._started_at = started_at
+            self._restore_age_pending = session is None
 
     def observe(self, payload: Mapping[str, Any]) -> None:
         """One poll's normalized payload (Stop and One Charge read the command)."""
@@ -995,18 +1014,31 @@ class ManualMode:
             type(state) is int and state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES
         )
         if self._unplugged:
-            self._on = False
+            self._started_at = None
+            self._restore_age_pending = False
             self._session_time = None
             return
         elapsed = payload.get("sessionTime")
         if type(elapsed) in (int, float):
             if self._session_time is not None and elapsed < self._session_time:
-                self._on = False
+                self._started_at = None
+            if self._restore_age_pending:
+                self._restore_age_pending = False
+                if (
+                    self._started_at is not None
+                    and elapsed + _RESTORE_SLACK_SECONDS < time.time() - self._started_at
+                ):
+                    self._started_at = None
             self._session_time = elapsed
-        if payload.get(ONE_CHARGE_COMMAND) == 1 or payload.get(STOP_COMMAND) == 1:
-            self._on = True
-        if self._reported is not None:
-            self._on = self._reported
+        if self._reported is False:
+            self._started_at = None
+            self._restore_age_pending = False
+        elif (
+            self._reported is True
+            or payload.get(ONE_CHARGE_COMMAND) == 1
+            or payload.get(STOP_COMMAND) == 1
+        ):
+            self._start()
 
 
 # REVE's subState while it holds a charge for an outside start: after a limit
@@ -1092,6 +1124,7 @@ class ReveApi:
         # (REVE then reports null) so its number shows what switching it back
         # on would apply.
         self._limit_values: dict[str, int | float] = {}
+        self._written_limit_flags: dict[str, bool] = {}
         # Polls and commands hold different locks, so a read can start before
         # a write and land after it. Every write moves the epoch on as it
         # starts and as it ends; a read that saw the epoch move (or began
@@ -1258,7 +1291,9 @@ class ReveApi:
         # A read that overlapped a write shows what it read, but the values
         # kept for switching a limit back on stay the written ones.
         current = self._read_current(self._measure_mark)
-        for key, _flag, _field, _factor in _LIMIT_WRITES:
+        for key, flag, _field, _factor in _LIMIT_WRITES:
+            if current and (flag in payload or payload.get("state") == DEVICE_STATE_STANDBY):
+                self._written_limit_flags.pop(flag, None)
             if key in payload:
                 if current:
                     self._keep_limit_value(key, payload[key])
@@ -1356,7 +1391,9 @@ class ReveApi:
             return
         self._extras = replace(extras, charging_command=command)
 
-    def route(self, command: str) -> Callable[[Any], Awaitable[None]] | None:
+    def route(
+        self, command: str
+    ) -> Callable[[Any], Awaitable[Callable[[], Awaitable[None]] | None]] | None:
         """The GraphQL write for a command, or ``None`` to keep ``/pageEvent``."""
         if command == CURRENT_COMMAND:
             return self.set_station_current
@@ -1412,7 +1449,7 @@ class ReveApi:
         for when it is switched on."""
         self._require_limit_window(key)
         written = _whole(value)
-        enabled = self._updater.snapshot.get_int(flag) == 1
+        enabled = self._written_limit_flags.get(flag, self._updater.snapshot.get_int(flag) == 1)
         if enabled:
             await self._mutate({"session": {field: written}})
         self._keep_limit_value(key, written / factor if factor != 1 else written)
@@ -1457,6 +1494,10 @@ class ReveApi:
             # The value stays shown: every GraphQL read of a limit that is on
             # keeps it (``with_main_residue``), and /main carries it meanwhile.
             await self._clear_limit(field)
+            # A limit clear can be acknowledged by a separate verification
+            # read. Polls started while it was pending are older than this.
+            self._write_epoch += 1
+            self._written_limit_flags[flag] = False
             return
         read = self._limit_values.get(key)
         if read is None:
@@ -1464,6 +1505,7 @@ class ReveApi:
         if read is None or read <= 0:
             raise ReveCommandUnsupported(f"{key} has no value to switch on with")  # pragma: no mutate - message text; only the exception type is ever logged
         await self._mutate({"session": {field: round(read * factor)}})
+        self._written_limit_flags[flag] = True
 
     async def _clear_limit(self, field: str) -> None:
         """Clear a session limit with ``null``.
@@ -1487,27 +1529,32 @@ class ReveApi:
     async def set_station_current(self, value: Any) -> None:
         await self._mutate({"stationCurrent": _whole(value)})
 
-    async def set_stop(self, value: Any) -> None:
+    async def set_stop(self, value: Any) -> Callable[[], Awaitable[None]] | None:
         """Stop (1) or release (0) charging the way the vendor app does; a
         release also leaves manual mode where the station can be told to."""
         stop = _bool(value)
         await self._write_charging_command(_COMMAND_STOP if stop else _COMMAND_START)
-        if not stop:
-            await self._leave_manual_mode()
+        return None if stop else self._leave_manual_mode
 
-    async def set_one_charge(self, value: Any) -> None:
+    async def set_one_charge(self, value: Any) -> Callable[[], Awaitable[None]] | None:
         """Charge now, ignoring the schedules, the way the vendor app's Start
         does (0); off releases it (1). Stop shares the command, so off leaves
         a stopped charge stopped and writes nothing unless it is known to be 0."""
         if _bool(value):
             await self._write_charging_command(_COMMAND_CHARGE_NOW)
-            return
-        extras = self._extras
-        if extras is not None and extras.charging_command == _COMMAND_CHARGE_NOW:
+            return None
+        # An app Pause between polls takes precedence over turning One Charge off.
+        station = await self._station(CHARGING_COMMAND_QUERY)
+        command = station.get("chargingCommand")
+        if type(command) is not int or command not in _CHARGING_COMMANDS:
+            raise GraphQLError("REVE did not report the current charging command")
+        self._note_charging_command(command)
+        if command == _COMMAND_CHARGE_NOW:
             await self._write_charging_command(_COMMAND_START)
-        extras = self._extras
-        if extras is not None and extras.charging_command == _COMMAND_START:
+            return self._leave_manual_mode
+        if command == _COMMAND_START:
             await self._leave_manual_mode()
+        return None
 
     async def _leave_manual_mode(self) -> None:
         """With Stop and One Charge both off, back to the schedules and limits

@@ -1312,11 +1312,11 @@ def test_current_number_read_device_value_max_boundary_inclusive() -> None:
     assert entity._read_device_value() is None
 
 
-def test_current_number_values_equal_boundary() -> None:
+def test_current_number_requires_a_matching_readback() -> None:
     entity = EveusCurrentNumber(_Updater({}), "16A")
-    assert entity._values_equal(10.0, 10.5) is False  # diff == 0.5 boundary: strictly NOT confirmed
-    assert entity._values_equal(10.0, 10.4) is True
-    assert entity._values_equal(10.0, 11.4) is False  # would wrongly pass under a widened (1.5) threshold
+    assert entity._values_equal(10.0, 10.5) is False
+    assert entity._values_equal(10.0, 10.4) is False
+    assert entity._values_equal(10.0, 10.0) is True
 
 
 def test_current_number_resolve_value_requires_available_for_device_read() -> None:

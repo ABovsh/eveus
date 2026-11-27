@@ -373,31 +373,11 @@ def test_fires_after_three_polls_above_ten_minutes() -> None:
 
 
 def test_failure_during_probation_resets_counter() -> None:
-    from datetime import timedelta
-    from types import SimpleNamespace
     from custom_components.eveus.common_network import EveusUpdater
+    from conftest import TEST_HOST, TEST_PASSWORD, TEST_USERNAME
 
-    updater = EveusUpdater.__new__(EveusUpdater)
-    updater._connection_quality_cache = None
-    updater._poll_results = []
-    updater._consecutive_failures = 0
-    updater._device_available = True
-    updater._last_error = None
-    updater._silent_mode = False
-    updater._offline_announced = False
-    updater._next_poll_attempt = 0.0
-    updater._last_success_time = 0.0
-    updater._last_success_monotonic = 0.0
-    updater._availability_log = SimpleNamespace(should_log=lambda *_: False)
-    updater._legacy_confirmed = False
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, object())
     updater._offline_probation = 1
-    updater._first_failure_monotonic = None
-    updater._grace_timer_unsubs = []
-    updater._interval_before_retry = None
-    updater._state_since_state = None
-    updater._state_since = None
-    updater._state_since_seed = None
-    updater.update_interval = timedelta(seconds=60)
     updater.hass = None
 
     updater._record_failure(ValueError("boom"))

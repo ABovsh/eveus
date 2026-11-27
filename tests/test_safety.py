@@ -18,6 +18,7 @@ from custom_components.eveus import safety
 from custom_components.eveus.const import (
     DOMAIN,
     ERROR_STATES,
+    FAULT_RECOVERY_POLLS,
     GROUND_CLEAR_POLLS,
     GROUND_CONTROL_CLEAR_POLLS,
     GROUND_CONTROL_TRIGGER_POLLS,
@@ -601,6 +602,29 @@ def test_recreated_issue_stops_being_sticky_after_immediate_retrigger() -> None:
     issue = _issue(hass, entry, "box_overheat")
     assert issue is not None
     assert issue.dismissed_version is not None
+
+
+def test_ignoring_a_visible_recurrent_fault_survives_the_next_poll(monkeypatch) -> None:
+    fault = {"state": 7, "subState": 3}
+    hass, entry, updater, manager = _manager(fault)
+    saved = []
+    monkeypatch.setattr(manager, "_persist", lambda: saved.append(manager._persisted_snapshot()))
+    manager.process()
+    updater.data = {"state": 2, "subState": 0}
+    for _ in range(FAULT_RECOVERY_POLLS):
+        manager.process()
+
+    updater.data = fault
+    manager.process()  # Recurs while the earlier notice is still visible.
+    issue = _issue(hass, entry, "relay_fault")
+    assert issue is not None and issue.dismissed_version is None
+    ir.async_ignore_issue(hass, DOMAIN, safety_issue_id(entry, "relay_fault"), True)
+    manager.process()
+
+    issue = _issue(hass, entry, "relay_fault")
+    assert issue is not None
+    assert issue.dismissed_version is not None, "a repeated fault poll must preserve Ignore"
+    assert [snapshot["relay_fault"]["recovered_since_raised"] for snapshot in saved] == [True, False]
 
 
 def test_recovered_then_acknowledged_issue_realerts_through_hysteresis_band() -> None:

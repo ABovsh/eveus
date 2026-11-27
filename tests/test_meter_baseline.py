@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.eveus import common_network
 from custom_components.eveus.common_network import EveusUpdater
@@ -157,9 +158,8 @@ def test_the_latest_readings_are_saved_when_the_updater_shuts_down(monkeypatch: 
     assert store.saves[-1]["totalEnergy"] == 10.4
 
 
-def test_a_poll_finishing_during_unload_schedules_no_delayed_save(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Only the unload's own save may write: a delayed one could land after
-    removing the entry deleted the file."""
+def test_a_poll_started_during_unload_schedules_no_delayed_save(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Polling must not schedule a save that could land after entry removal."""
     clock = [1000.0]
     monkeypatch.setattr(common_network.time, "monotonic", lambda: clock[0])
     charger = _Charger({**_classic_main(), "totalEnergy": 10.0})
@@ -171,7 +171,8 @@ def test_a_poll_finishing_during_unload_schedules_no_delayed_save(monkeypatch: p
     updater._shutting_down = True
     charger.main = {**charger.main, "totalEnergy": 10.4}
     clock[0] += METER_SAVE_INTERVAL_SECONDS
-    asyncio.run(updater._async_update_data())
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(updater._async_update_data())
 
     assert [save["totalEnergy"] for save in store.saves] == [10.0]
 
@@ -303,6 +304,51 @@ def test_a_confirmed_app_reset_is_written_at_once(monkeypatch: pytest.MonkeyPatc
         asyncio.run(updater._async_update_data())
     assert updater.snapshot.get("IEM1") == 0
     assert _durable(store).get("IEM1") == 0
+
+
+@pytest.mark.parametrize("gap", ["timeout", "missing", "invalid", "negative"])
+async def test_meter_drop_evidence_does_not_cross_poll_gaps(monkeypatch, gap):
+    monkeypatch.setattr(_FakeStore, "loaded", dict(_SAVED))
+    monkeypatch.setattr(common_network, "time", SimpleNamespace(
+        monotonic=lambda: 1000.0, time=lambda: 1000.0,
+    ))
+    monkeypatch.setattr(common_network, "async_call_later", lambda *_: lambda: None)
+    monkeypatch.setattr(common_network, "async_dispatcher_send", lambda *_: None)
+    charger = _Charger({**_classic_main(), **_SAVED})
+    updater = _updater(monkeypatch, charger)
+    await updater.async_load_meter_baseline()
+    store = _FakeStore.instances[-1]
+    fetch_json = common_network.fetch_json
+    timed_out = False
+
+    async def fetch(session, url, **kwargs):
+        if timed_out:
+            raise TimeoutError
+        return await fetch_json(session, url, **kwargs)
+
+    monkeypatch.setattr(common_network, "fetch_json", fetch)
+    for _ in range(2):
+        charger.main["totalEnergy"] = 0
+        await updater._async_update_data()
+        if gap == "timeout":
+            timed_out = True
+            with pytest.raises(UpdateFailed):
+                await updater._async_update_data()
+            timed_out = False
+        else:
+            del charger.main["totalEnergy"]
+            if gap == "invalid":
+                charger.main["totalEnergy"] = "bad reading"
+            elif gap == "negative":
+                charger.main["totalEnergy"] = -1
+            await updater._async_update_data()
+
+    charger.main["totalEnergy"] = 0
+    await updater._async_update_data()
+    assert updater.snapshot.get("totalEnergy") == _SAVED["totalEnergy"], (
+        "isolated meter dips were accepted as a consecutive drop"
+    )
+    assert store.saves == []
 
 
 def test_growth_still_waits_for_the_save_interval(monkeypatch: pytest.MonkeyPatch, _crash_store: None) -> None:

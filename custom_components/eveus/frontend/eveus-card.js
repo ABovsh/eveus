@@ -592,8 +592,9 @@ class EveusCard extends HTMLElement {
       && (Date.now() - (this._reveAt || 0) > REVE_SCHEDULES_REFRESH_MS || this._reveKey !== this._reveScheduleKey())) void this._fetchReveSchedules();
     for (const [key, pending] of Object.entries(this._limitPending || {})) {
       const entity = this._state(key);
-      const actual = typeof pending === 'boolean' ? entity?.state === 'on' : typeof pending === 'string' ? entity?.state : currentNumber(entity);
-      if (actual === pending) {
+      const expected = typeof pending === 'boolean' ? (pending ? 'on' : 'off') : pending;
+      const actual = typeof pending === 'number' ? currentNumber(entity) : entity?.state;
+      if (actual === expected) {
         clearTimeout(this._limitTimers[key]);
         delete this._limitPending[key];
       }
@@ -650,6 +651,7 @@ class EveusCard extends HTMLElement {
     this._editingTime = null;
     this._timeValue = null;
     clearTimeout(this._syncTimer);
+    this._syncPending = null;
     this._syncDone = false;
     this._showError(false);
     clearTimeout(this._selectTimer);
@@ -1692,20 +1694,29 @@ class EveusCard extends HTMLElement {
   }
   async _syncTime() {
     const entity = this._state('sync_time');
-    if (!this._online || !entity || entity.state === 'unavailable') return;
-    this._syncDone = true;
-    haptic('success');
+    if (this._syncPending || !this._online || !entity || entity.state === 'unavailable') return;
+    const request = {};
+    this._syncPending = request;
+    this._syncDone = false;
     clearTimeout(this._syncTimer);
-    this._syncTimer = setTimeout(() => { this._syncDone = false; this._render(); }, 3000);
     this._render();
+    let sent;
     try {
       await this._hass.callService('button', 'press', {entity_id: this._ids.sync_time});
+      sent = true;
     } catch {
-      clearTimeout(this._syncTimer);
-      this._syncDone = false;
-      this._showError(true);
-      this._render();
+      sent = false;
     }
+    if (this._syncPending !== request) return;
+    this._syncPending = null;
+    if (sent) {
+      this._syncDone = true;
+      haptic('success');
+      this._syncTimer = setTimeout(() => { this._syncDone = false; this._render(); }, 3000);
+    } else {
+      this._showError(true);
+    }
+    this._render();
   }
   _timeSection() {
     const t = this._t, on = this._online;
@@ -1741,7 +1752,7 @@ class EveusCard extends HTMLElement {
     // A right clock shows the charger's own time; a wrong one how far it is off, next to Sync.
     const clock = this._scheduleHM();
     const driftEl = this._ids.time_drift && this._shows('time', 'drift') ? `<button class="time-item" data-more-info="time_drift" title="${clock ? t.clock : t.drift} — ${t.details}"><ha-icon icon="${clock ? 'mdi:alarm' : 'mdi:clock-alert-outline'}"></ha-icon><span class="${['time-drift', driftCls].filter(Boolean).join(' ')}">${clock ?? this._driftText(drift)}</span></button>` : '';
-    const syncOk = on && this._state('sync_time') && this._state('sync_time').state !== 'unavailable';
+    const syncOk = on && !this._syncPending && this._state('sync_time') && this._state('sync_time').state !== 'unavailable';
     const fix = known && !following ? this._zoneFix(zone, drift, options) : null;
     const syncEl = fix && this._shows('time', 'zone')
       ? `<button class="time-sync time-fix" data-zone-fix="${fix}" title="${t.zoneFixTitle}"><ha-icon icon="mdi:map-clock-outline"></ha-icon><span>${t.setZone(fix === '0' ? 'UTC' : `UTC${fix}`)}</span></button>`

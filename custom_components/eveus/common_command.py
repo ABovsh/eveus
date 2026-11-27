@@ -3,7 +3,7 @@ import logging
 import asyncio
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 import heapq
 from typing import Any, Final
@@ -48,6 +48,7 @@ _LEGACY_COMMAND_VALUES: Final[dict[str, dict[int, int]]] = {
 _COMMAND_RETRY_ATTEMPTS = 2
 # CommandManager.last_failure for a REVE GraphQL write that got no reply.
 REVE_NOT_ANSWERING = "reve_not_answering"
+REVE_RELEASE_PARTIAL = "reve_release_partial"
 _COMMAND_RETRY_BACKOFF: tuple[float, ...] = (0.5, 1.5)
 _COMMAND_RETRY_JITTER = 0.25
 
@@ -169,6 +170,7 @@ class CommandManager:
             attempted = False
             self._last_failure = None
             self._graphql_write = False
+            follow_up: Callable[[], Awaitable[None]] | None = None
             try:
                 last_error: Exception | None = None
                 retry_attempts = _COMMAND_RETRY_ATTEMPTS if retry else 0
@@ -177,7 +179,17 @@ class CommandManager:
                         return False
                     attempted = True
                     try:
-                        return await self._post_command(command, value, extra)
+                        if follow_up is None:
+                            result = await self._post_command(command, value, extra)
+                            if isinstance(result, bool):
+                                return result
+                            # The first write was acknowledged. Any retry
+                            # belongs to the follow-up alone.
+                            follow_up = result
+                        await follow_up()
+                        follow_up = None
+                        self._consecutive_failures = 0
+                        return True
                     except aiohttp.ClientResponseError as err:
                         if err.status == 401:
                             self._consecutive_failures += 1
@@ -231,11 +243,15 @@ class CommandManager:
             finally:
                 if attempted:
                     self._last_command_time = time.monotonic()
+                if follow_up is not None:
+                    self._last_failure = REVE_RELEASE_PARTIAL
+                    if not self._updater._shutting_down:
+                        self._updater._schedule_post_command_refresh()
 
     async def _post_command(
         self, command: str, value: Any, extra: dict[str, Any] | None = None
-    ) -> bool:
-        """Send one command attempt to the charger and return success."""
+    ) -> bool | Callable[[], Awaitable[None]]:
+        """Send one attempt and return success or a pending REVE follow-up."""
         # Re-check shutdown INSIDE the command lock, immediately before the POST.
         # The network layer's pre-lock check can pass while this command waits its
         # turn behind another (rate-limit spacing + retry backoff); shutdown can
@@ -256,7 +272,9 @@ class CommandManager:
         write = route(command) if route is not None else None
         if write is not None:
             self._graphql_write = True
-            await write(value)
+            follow_up = await write(value)
+            if follow_up is not None:
+                return follow_up
             self._consecutive_failures = 0
             return True
 

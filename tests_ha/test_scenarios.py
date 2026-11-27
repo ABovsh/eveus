@@ -216,7 +216,8 @@ class Scenario:
         async_fire_time_changed(
             self.hass, dt_util.utcnow() + timedelta(seconds=self._elapsed)
         )
-        await self.hass.async_block_till_done()
+        # Scheduled coordinator refreshes run in HA background tasks.
+        await self.hass.async_block_till_done(wait_background_tasks=True)
         self.capture()
 
     async def call(self, service: str, data: dict) -> None:
@@ -333,7 +334,7 @@ async def test_charge_session(hass, aioclient_mock, monkeypatch, snapshot) -> No
 
 
 async def test_outage(hass, aioclient_mock, monkeypatch, snapshot) -> None:
-    """3 failed polls: held through grace, then unavailable, then recovery.
+    """Three explicit failures and two scheduled failures, then recovery.
 
     This is the P3 regression gate: P3 replaces the per-entity grace timer
     with one clock owned by the coordinator, and this snapshot must not move.
@@ -349,6 +350,7 @@ async def test_outage(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     await scenario.fail()  # failure 1 (edge): held
     assert hass.states.get(VOLTAGE).state == "226.0"
     await scenario.advance(third)
+    assert hass.states.get(QUALITY).state == "33"  # scheduled failure 2
     await scenario.fail()  # failure 3 (repeated, no re-notify): still held
     assert hass.states.get(VOLTAGE).state == "226.0"
     # The quick retry FIRST_FAILURE_RETRY_INTERVAL after failure 1 failed too
@@ -358,10 +360,10 @@ async def test_outage(hass, aioclient_mock, monkeypatch, snapshot) -> None:
     # 2026-09-19: froze at 95 "Good" through a five-minute outage).
     assert hass.states.get(QUALITY).state == "25"
     await scenario.advance(third)
-    await scenario.fail()  # failure 3: still held (< grace so far)
+    await scenario.fail()  # failure 4: still held (< grace so far)
     assert hass.states.get(VOLTAGE).state == "226.0"
 
-    await scenario.advance(AVAILABILITY_GRACE_PERIOD - 2 * third + 5)  # crosses the grace window
+    await scenario.advance(AVAILABILITY_GRACE_PERIOD - 2 * third + 5)  # failure 5 and grace expiry
     assert hass.states.get(VOLTAGE).state == STATE_UNAVAILABLE
 
     scenario.updater._next_poll_attempt = 0  # skip the offline backoff wait

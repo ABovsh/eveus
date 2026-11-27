@@ -12,9 +12,8 @@ The first round of fixes made setup succeed on firmware 1.x (MCU_SW_version
    "Connected", never gets the fast poll cadence, and never fires the
    charging-started/finished events.
 
-Firmware 1.x payloads are recognizable by the complete absence of the
-verFWMain/firmware fields; modern payloads always carry verFWMain and must
-pass through byte-for-byte unchanged.
+An /init version identifies the legacy meaning of ambiguous codes. A modern
+firmware marker identifies modern replies, which pass through unchanged.
 """
 from __future__ import annotations
 
@@ -387,7 +386,7 @@ def test_modern_state_map_is_unchanged() -> None:
 
 
 def _poll_sequence(
-    payloads: list[dict], monkeypatch: pytest.MonkeyPatch
+    payloads: list[dict], monkeypatch: pytest.MonkeyPatch, *, legacy_confirmed: bool = False,
 ) -> tuple[EveusUpdater, list[dict]]:
     responses = [_Response(p) for p in payloads]
     it = iter(responses)
@@ -406,6 +405,7 @@ def _poll_sequence(
         common_network, "async_call_later", lambda hass, delay, action: (lambda: None)
     )
     updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, _Hass())
+    updater._legacy_confirmed = legacy_confirmed
     return updater, [asyncio.run(updater._async_update_data()) for _ in payloads]
 
 
@@ -417,7 +417,7 @@ def test_legacy_energy_limit_finishes_charging_once(
     charging = _fw151_payload(state=3, powerMeas=1590, curMeas1=7.3, evseEnabled=0)
     limit_stop = _fw151_payload(state=16, evseEnabled=0)
     updater, _ = _poll_sequence(
-        [_fw151_payload(), charging, limit_stop, limit_stop], monkeypatch,
+        [_fw151_payload(), charging, limit_stop, limit_stop], monkeypatch, legacy_confirmed=True,
     )
 
     assert sd.get_charger_state(updater, None) == "Charge Complete"
@@ -438,7 +438,7 @@ def test_legacy_charging_survives_single_zero_power_poll(
 ) -> None:
     charging = _fw151_payload(state=3, powerMeas=1590, curMeas1=7.3)
     blip = _fw151_payload(state=3, powerMeas=0, curMeas1=0)
-    _, results = _poll_sequence([charging, blip, charging], monkeypatch)
+    _, results = _poll_sequence([charging, blip, charging], monkeypatch, legacy_confirmed=True)
     assert [r["state"] for r in results] == [
         DEVICE_STATE_CHARGING,
         DEVICE_STATE_CHARGING,
@@ -451,7 +451,7 @@ def test_legacy_charging_reverts_after_persistent_zero_power(
 ) -> None:
     charging = _fw151_payload(state=3, powerMeas=1590, curMeas1=7.3)
     idle3 = _fw151_payload(state=3, powerMeas=0, curMeas1=0)
-    _, results = _poll_sequence([charging, idle3, idle3, idle3], monkeypatch)
+    _, results = _poll_sequence([charging, idle3, idle3, idle3], monkeypatch, legacy_confirmed=True)
     # Two zero-power polls are tolerated; the third reverts to Connected.
     assert [r["state"] for r in results] == [
         DEVICE_STATE_CHARGING,
@@ -475,7 +475,7 @@ def test_legacy_charging_latch_clears_on_other_states(
     charging = _fw151_payload(state=3, powerMeas=1590, curMeas1=7.3)
     stopped = _fw151_payload(state=20, powerMeas=0, curMeas1=0)
     idle3 = _fw151_payload(state=3, powerMeas=0, curMeas1=0)
-    _, results = _poll_sequence([charging, stopped, idle3], monkeypatch)
+    _, results = _poll_sequence([charging, stopped, idle3], monkeypatch, legacy_confirmed=True)
     # Once the charger reported another code (here a user stop with the car
     # plugged in, read as Connected), a later powerless 3 must not resurrect
     # Charging from the stale latch.

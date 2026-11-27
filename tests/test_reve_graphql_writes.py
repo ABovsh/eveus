@@ -137,7 +137,8 @@ def test_one_charge_is_the_apps_start_command_that_ignores_the_schedule(
     assert _send(updater, "oneCharge", 1) is True
     assert _send(updater, "oneCharge", 0) is True
 
-    assert charger.paths() == ["/graphql", "/graphql"]
+    assert charger.paths() == ["/graphql", "/graphql", "/graphql"]
+    assert charger.calls[1][1]["query"] == reve.CHARGING_COMMAND_QUERY
     assert _inputs(charger) == [{"chargingCommand": 0}, {"chargingCommand": 1}]
 
 
@@ -150,7 +151,7 @@ def test_one_charge_off_does_not_release_a_stop(monkeypatch: pytest.MonkeyPatch)
 
     assert _send(updater, "oneCharge", 0) is True
 
-    assert charger.calls == []
+    assert [body["query"] for _, body in charger.calls] == [reve.CHARGING_COMMAND_QUERY]
 
 
 def test_one_charge_off_writes_nothing_when_the_command_is_unknown_to_be_0(
@@ -160,7 +161,7 @@ def test_one_charge_off_writes_nothing_when_the_command_is_unknown_to_be_0(
 
     assert _send(updater, "oneCharge", 0) is True
 
-    assert charger.calls == []
+    assert [body["query"] for _, body in charger.calls] == [reve.CHARGING_COMMAND_QUERY]
 
 
 def test_one_charge_shows_at_once_after_it_is_written(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -161,6 +161,37 @@ test('limit toggles and thresholds use their existing switch and number entities
   assert.equal(JSON.stringify(calls[1]),JSON.stringify(['number','set_value',{entity_id:'number.time',value:125}]));
 });
 
+test('a switch OFF command needs explicit off feedback', async () => {
+  for (const feedback of ['unavailable', 'unknown', null]) {
+    const {card, hass, states, calls, timers} = setupAll({
+      sections: ['limits'], over: {limit_energy_enabled: ['switch.lee', 'on']},
+    });
+    await card._toggleLimit('limit_energy_enabled');
+    await card._confirmGuard();
+    assert.equal(calls[0]?.[1], 'turn_off');
+    const timer = card._limitTimers.limit_energy_enabled;
+
+    if (feedback === null) delete states['switch.lee'];
+    else states['switch.lee'] = {state: feedback, attributes: {}};
+    card.hass = hass;
+    assert.equal(card._limitPending.limit_energy_enabled, false, `${feedback} cannot confirm off`);
+    assert.ok(timers.has(timer));
+
+    states['switch.lee'] = {state: 'on', attributes: {}};
+    card.hass = hass;
+    assert.ok(timers.has(timer));
+    if (feedback === 'unavailable') {
+      timers.get(timer)();
+      assert.equal(card._commandError, 'timeout');
+    } else {
+      states['switch.lee'] = {state: 'off', attributes: {}};
+      card.hass = hass;
+      assert.equal(card._limitPending.limit_energy_enabled, undefined);
+      assert.ok(!timers.has(timer));
+    }
+  }
+});
+
 test('reconfiguring clears pending limit feedback timers',()=>{
   const {card,timers}=setupAll({sections:['limits']});
   card._setLimitPending('limit_time',61);
@@ -1058,6 +1089,46 @@ test('time: zone picker, clock drift coloured by the Repairs threshold, and a sy
   assert.equal(JSON.stringify(calls), JSON.stringify([['select','select_option',{entity_id:'select.tz',option:'+2'}], ['button','press',{entity_id:'button.sync'}]]));
   assert.match(html(), /class="time-sync done"/, 'the tap is acknowledged');
 });
+test('Sync Time waits for the service and suppresses duplicate presses', async () => {
+  const {card, hass, html, calls, timers} = setupAll({sections: ['time'], over: TIME});
+  let resolve;
+  const reply = new Promise((done) => { resolve = done; });
+  hass.callService = (...args) => { calls.push(args); return reply; };
+
+  const first = card._syncTime();
+  assert.ok(/data-sync[^>]* disabled/.test(html()), 'Sync Time should be disabled while pending');
+  assert.doesNotMatch(html(), />Sent<\/span>/);
+  void card._syncTime();
+  assert.equal(calls.length, 1);
+
+  resolve();
+  await first;
+  assert.match(html(), />Sent<\/span>/);
+  assert.doesNotMatch(html(), /data-sync[^>]* disabled/);
+  for (const fn of [...timers.values()]) fn();
+  assert.doesNotMatch(html(), />Sent<\/span>/);
+});
+
+test('Sync Time ignores a rejected request from before disconnect', async () => {
+  const {card, hass, html} = setupAll({sections: ['time'], over: TIME});
+  const reject = [];
+  hass.callService = () => new Promise((_, fail) => reject.push(fail));
+
+  const first = card._syncTime();
+  card.disconnectedCallback();
+  card.connectedCallback();
+  const second = card._syncTime();
+  reject[0](Error('old sync failed'));
+  await first;
+  assert.ok(!html().includes('Command failed'), 'the old request must not show an error');
+  assert.match(html(), /data-sync[^>]* disabled/);
+
+  reject[1](Error('current sync failed'));
+  await second;
+  assert.match(html(), /Command failed/);
+  assert.doesNotMatch(html(), /data-sync[^>]* disabled|>Sent<\/span>/);
+});
+
 test('time: a correct charger clock shows its own time, a wrong one its drift in red, an unknown one a dash', () => {
   // The charger's clock is Home Assistant's shifted by the drift; HA reads 16:03 here.
   const clock = {0:'16:03', 120:'16:05', [-599]:'15:53'};

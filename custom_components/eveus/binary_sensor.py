@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
@@ -13,6 +14,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoredExtraData
 from homeassistant.util import dt as dt_util
 
 from . import EveusConfigEntry
@@ -196,9 +198,24 @@ class EveusManualModeBinarySensor(WriteOnChangeMixin, BaseEveusEntity, BinarySen
         mode (REVE_PLUS 1.0.3), so the card can offer Turn off."""
         return {"can_turn_off": True} if self._updater.reve_manual_mode_can_turn_off else {}
 
+    @property
+    def extra_restore_state_data(self) -> ExtraStoredData | None:
+        """Save the latch even when an outage makes the entity unavailable."""
+        started_at = self._updater._reve.manual_mode.started_at
+        if started_at is None:
+            return None
+        return RestoredExtraData({"manual_mode_started_at": started_at})
+
     async def _async_restore_state(self, state) -> None:
         """A restart must not end manual mode while the connector stays
         plugged in; the station's state and session age settle the rest."""
+        extra = await self.async_get_last_extra_data()
+        if extra is not None:
+            started_at = extra.as_dict().get("manual_mode_started_at")
+            now = time.time()
+            if type(started_at) in (int, float) and 0 < started_at <= now:
+                self._updater.reve_restore_manual_mode(now - started_at)
+                return
         if state.state == "on":
             since = getattr(state, "last_changed", None)
             on_for = None if since is None else (dt_util.utcnow() - since).total_seconds()

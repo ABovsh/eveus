@@ -6,7 +6,11 @@ import json
 
 import pytest
 
-from custom_components.eveus.reve import MEASUREMENTS_QUERY, MEASUREMENTS_AND_SETTINGS_QUERY
+from custom_components.eveus.reve import (
+    CHARGING_COMMAND_QUERY,
+    MEASUREMENTS_QUERY,
+    MEASUREMENTS_AND_SETTINGS_QUERY,
+)
 from .conftest import _entry, _setup
 from .test_reve_smoke import HOST, REVE_MAIN, REVE_GRAPHQL
 
@@ -32,10 +36,13 @@ async def test_one_charge_off_does_not_release_a_stop_after_an_older_poll(
     original = api._station
     entered = asyncio.Event()
     release = asyncio.Event()
+    station_command = 0
 
     async def delayed(document):
         reply = deepcopy(await original(document))
-        if document in (MEASUREMENTS_QUERY, MEASUREMENTS_AND_SETTINGS_QUERY):
+        if document == CHARGING_COMMAND_QUERY:
+            reply["chargingCommand"] = station_command
+        elif document in (MEASUREMENTS_QUERY, MEASUREMENTS_AND_SETTINGS_QUERY):
             entered.set()
             await release.wait()
         return reply
@@ -50,6 +57,7 @@ async def test_one_charge_off_does_not_release_a_stop_after_an_older_poll(
         "entity_id": "switch.eveus_ev_charger_stop_charging",
     }, blocking=True)
     assert api._extras.charging_command == 2
+    station_command = 2
     release.set()
     await asyncio.wait_for(poll, 2)
     await hass.services.async_call("switch", "turn_off", {

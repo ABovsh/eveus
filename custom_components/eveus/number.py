@@ -391,7 +391,9 @@ class EveusSetpointNumber(EveusNumberEntity):
         return self._attr_native_max_value
 
     def _values_equal(self, optimistic: float, device: float) -> bool:
-        return abs(optimistic - device) < (self.native_step / 2 or 0.5)
+        # The slider step is a UI increment. A device read within that step
+        # can still be the old setting. Allow only floating-point read noise.
+        return math.isclose(optimistic, device, rel_tol=1e-7)
 
     def _resolve_display_value(self) -> float | None:
         return self._resolve_value()
@@ -451,11 +453,21 @@ class EveusSetpointNumber(EveusNumberEntity):
                 "that was not applied"
             ) from outcome
 
-    def _encode_write(self, value: float) -> int | float:
+    def _write_scale(self) -> float:
         if self._legacy_ha_to_device is not None and self._legacy_firmware:
-            scaled = value * self._legacy_ha_to_device  # pragma: no mutate - every pre-R3 scale is 1.0, so multiplying and dividing are the same
+            return self._legacy_ha_to_device
+        if self._command == "energyLimit":
+            wifi = self._updater.snapshot.raw.get("verFWWifi")
+            if isinstance(wifi, str) and wifi.strip().rsplit("-", 1)[-1].upper() == "R3.01.8":
+                # This Wi-Fi build's web UI posts tenths of a kWh.
+                return 10.0
+        return self._ha_to_device
+
+    def _encode_write(self, value: float, scale: float) -> int | float:
+        scaled = value * scale
+        if self._legacy_ha_to_device is not None and self._legacy_firmware:
             return int(scaled) if scaled.is_integer() else scaled
-        return int(round(value * self._ha_to_device))
+        return round(scaled)
 
     async def _send_latest_write(self, raw: float, token: asyncio.Future) -> None:
         # Clamp INSIDE the lock against a freshly refreshed bound: a write
@@ -469,15 +481,24 @@ class EveusSetpointNumber(EveusNumberEntity):
         # commands, and a poll can meanwhile identify pre-R3 firmware (other
         # units) or lower the maximum (socket mode). Such a write is not sent.
         legacy = self._legacy_firmware
+        scale = self._write_scale()
+        encoded = self._encode_write(clamped, scale)
+        shown = encoded / scale
+        if self._display_precision is not None:
+            shown = round(shown, self._display_precision)
 
         def still_valid() -> bool:
-            return self._legacy_firmware == legacy and clamped <= self.native_max_value
+            return (
+                self._legacy_firmware == legacy
+                and self._write_scale() == scale
+                and clamped <= self.native_max_value
+            )
 
         await self._send_pinned_command(
-            device_value=self._encode_write(clamped),
-            pending=clamped,
-            shown=clamped,
-            accepted=clamped,
+            device_value=encoded,
+            pending=shown,
+            shown=shown,
+            accepted=shown,
             rejected_message=f"Eveus charger did not accept {self._write_label(clamped)}",
             failure_prefix=f"Failed to set {self._write_label()}",
             preflight=lambda: self._latest_write is token,

@@ -225,11 +225,11 @@ def test_setpoint_number_read_device_value_range_boundaries():
     ("native_step", "optimistic", "device", "expected"),
     [
         (10, 100.0, 100.0, True),    # diff 0 -> always equal
-        (10, 100.0, 95.0, False),    # diff == step/2 boundary: strictly NOT confirmed
-        (10, 100.0, 90.0, False),    # diff 10: would wrongly pass under a step*2/step widening
-        (10, 100.0, 96.0, True),     # diff 4: would wrongly fail under a step/3 narrowing
-        (0, 100.0, 99.8, True),      # zero-step fallback threshold is 0.5, diff 0.2 confirms
-        (0, 100.0, 99.0, False),     # diff 1.0 must NOT confirm under the 0.5 fallback
+        (10, 100.0, 95.0, False),
+        (10, 100.0, 99.9, False),
+        (10, 100.0, 99.999999, True),  # floating-point read noise
+        (0, 100.0, 99.8, False),     # even a zero UI step does not widen confirmation
+        (0, 0.0, 0.0, True),
     ],
 )
 def test_setpoint_number_values_equal_matrix(native_step, optimistic, device, expected):
@@ -598,10 +598,11 @@ async def test_limit_numbers_round_trip_fractional_legacy_values(key, command, m
     expected = 10.5 if legacy else modern_value
     updater.send_command.assert_awaited_once_with(command, expected, preflight=ANY)
     assert type(updater.send_command.await_args.args[1]) is type(expected)
-    updater.data[command] = 10.5
+    readback = 10.5 if legacy or command == "energyLimit" else modern_value
+    updater.data[command] = readback
     entity._handle_coordinator_update()
-    assert entity.native_value == 10.5
-    assert entity._read_device_value() == 10.5
+    assert entity.native_value == readback
+    assert entity._read_device_value() == readback
 
     if legacy:
         await entity.async_set_native_value(12)

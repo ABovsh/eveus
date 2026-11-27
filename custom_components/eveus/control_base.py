@@ -10,7 +10,7 @@ from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 
 from .common_base import BaseEveusEntity, OptimisticControlMixin
-from .common_command import REVE_NOT_ANSWERING
+from .common_command import REVE_NOT_ANSWERING, REVE_RELEASE_PARTIAL
 from .const import OPTIMISTIC_CONTROL_TTL
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,8 +25,13 @@ REVE_NOT_ANSWERING_MESSAGE = (
 def command_failure(updater: Any, rejected_message: str) -> HomeAssistantError:
     """The error for a command ``send_command`` reported failed: REVE's
     interface not answering when that is why, else ``rejected_message``."""
-    if getattr(updater, "last_command_failure", None) == REVE_NOT_ANSWERING:
+    failure = getattr(updater, "last_command_failure", None)
+    if failure == REVE_NOT_ANSWERING:
         return HomeAssistantError(REVE_NOT_ANSWERING_MESSAGE)
+    if failure == REVE_RELEASE_PARTIAL:
+        return HomeAssistantError(
+            "The charger released Stop or One Charge. Could not confirm exit from REVE manual mode."
+        )
     return HomeAssistantError(rejected_message)
 
 T = TypeVar("T")

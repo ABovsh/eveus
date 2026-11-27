@@ -238,15 +238,20 @@ class EveusSnapshot:
         unsupported: frozenset[str] = frozenset(),
         legacy_firmware: bool = False,
         informational: frozenset[str] = frozenset(),
+        state_ambiguous: bool = False,
     ) -> "EveusSnapshot":
         """Build a snapshot from a validated ``/main`` payload."""
         if not isinstance(payload, Mapping):
             # Never raised in production (the payload validator runs first),
             # but a snapshot must not be the thing that breaks a poll.
             return EMPTY_SNAPSHOT
+        values = _parse_fields(payload, model_max_current(model))
+        if state_ambiguous:
+            values.pop("state", None)
+            values.pop("subState", None)
         return cls(
             raw=payload,
-            values=_parse_fields(payload, model_max_current(model)),
+            values=values,
             model=model,
             unsupported=frozenset(unsupported),
             legacy_firmware=legacy_firmware,

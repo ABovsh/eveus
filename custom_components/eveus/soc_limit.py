@@ -63,17 +63,17 @@ class SocLimitController:
         self._updater = updater
         self._calc = soc_calculator
         self._enabled = False
-        # ``_fired`` latches once the stop is CONFIRMED — the charger itself
+        # The target latches once the stop is CONFIRMED — the charger itself
         # reports ``evseEnabled == 1`` — not merely once the command POST
         # returned 2xx. (Firmware polarity: ``evseEnabled`` 0 = charging, 1 =
         # stopped; the Stop command sends 1, matching the Stop Charging switch.)
-        self._fired = False
+        self._confirmed_target: float | None = None
         # Set (soc, target) once a Stop POST is accepted; the attempt then awaits
         # the charger reporting ``evseEnabled == 1``. Confirmation is attributable
         # to our command (an unrelated unplug leaves ``evseEnabled == 0``), and is
         # held across retries so an end-of-session poll can't lose it. While it is
         # set and the charger is still charging, each active poll re-sends the Stop.
-        self._pending: tuple[int, int] | None = None
+        self._pending: tuple[int, float] | None = None
         self._stop_attempted = False
         # ``sessionEnergy`` observed when the pending Stop was issued. It only
         # grows within a session and resets at a new one, so a later poll showing
@@ -120,17 +120,22 @@ class SocLimitController:
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
 
-    def _rearm(self) -> None:
-        """Reset the latch and invalidate (and cancel) any in-flight stop."""
-        self._fired = False
-        self._pending = None
+    def _rearm(self, *, keep_confirmed: bool = False) -> None:
+        """Invalidate any in-flight Stop and optionally keep the confirmed target."""
+        if not keep_confirmed:
+            self._confirmed_target = None
+        self._clear_pending()
         self._stop_attempted = False
-        self._pending_energy = None
-        self._pending_session_time = None
         self._generation += 1
         if self._stop_task is not None and not self._stop_task.done():
             self._stop_task.cancel()
         self._stop_task = None
+
+    def _clear_pending(self) -> None:
+        self._pending = None
+        if self._confirmed_target is None:
+            self._pending_energy = None
+            self._pending_session_time = None
 
     @property
     def enabled(self) -> bool:
@@ -166,26 +171,17 @@ class SocLimitController:
         # SESSION_ACTIVE_STATES`: the Error state and an unmapped firmware code
         # both answer None there, which is not an active session either.
         active = snapshot.session_active is True
+        plugged = snapshot.plugged_in
         evse_enabled = snapshot.get_int("evseEnabled")
         energy = snapshot.session_energy_kwh
         session_time = snapshot.session_time_s
-        # Session-identity guard for an UNCONFIRMED attempt whose boundary was
-        # HIDDEN by failed polls: a pending token belongs to the session whose
-        # counters we recorded. Both ``sessionEnergy`` and ``sessionTime`` only
-        # grow within a session and reset at a new one, so a later ACTIVE poll
-        # reporting a smaller value for EITHER proves a NEW session is running —
-        # discard the stale token before an unrelated 0 there confirms it. The
-        # clock check catches a new session whose energy dropped by less than the
-        # kWh epsilon. Gated on an active state so the current session's own end
-        # still confirms normally below.
-        #
-        # A CONFIRMED stop (``_fired``) re-arms the same way (Anton,
-        # 2026-10-30): a session that began entirely between polls (connector
-        # replugged, or the charger power-cycled within one poll) is still a new
-        # session, and Initial SOC refills on the same restarted clock. Within
-        # one session the counters only run on, so the stop stays once per
-        # session.
-        if active and (self._pending is not None or self._fired):
+        measured = getattr(self._updater, "session_energy_measured", True)
+        # A counter reset while plugged in identifies a new session even
+        # when the unplug was missed. REVE's /main fallback can carry old
+        # counters, so only measured samples can re-arm the latch this way.
+        if plugged is True and measured and (
+            self._pending is not None or self._confirmed_target is not None
+        ):
             energy_reset = (
                 self._pending_energy is not None
                 and energy is not None
@@ -198,29 +194,33 @@ class SocLimitController:
             )
             if energy_reset or time_reset:
                 self._rearm()
+        target = self._calc.target_soc
+        if self._pending is not None and target is not None and target > self._pending[1]:
+            # A late reply for the old target cannot confirm the new one.
+            self._rearm(keep_confirmed=True)
         # Attributable, causal confirmation: we issue Stop only while the charger
         # reports ``evseEnabled == 0`` (below), so a later 1 IS the 0->1 transition
         # our command caused — not a pre-existing/stale 1 and not an unplug (which
         # leaves it 0). Checked before the session-over return so a stop that ends
         # the session in the same poll is still confirmed.
-        if (self._pending is not None and self._stop_attempted
-                and not self._fired and evse_enabled == 1):
+        if self._pending is not None and self._stop_attempted and evse_enabled == 1:
             self._emit_reached(*self._pending)
-        if not active:
-            # Session boundary — derived from ``state`` alone, so a payload missing
-            # the optional ``evseEnabled`` still re-arms here. Confirmation above
-            # only fires on a present 1; an unconfirmable attempt is DISCARDED at
-            # the boundary rather than carried into the next session (which would
-            # let a later unrelated 1 falsely confirm it).
-            if self._fired or self._pending is not None or self._stop_task is not None:
+        if plugged is False:
+            if (
+                self._confirmed_target is not None
+                or self._pending is not None
+                or self._stop_task is not None
+            ):
                 self._rearm()
+            return
+        if not active:
+            # Stop, Charge Complete and a temporary fault can all interrupt
+            # charging while the same plug-in cycle continues.
             return
         # Active session from here. SOC enforcement needs a known charge state.
         if evse_enabled is None:
             # No boundary to handle in an active poll, so skipping loses nothing;
             # ``_pending`` (if any) stays armed for a later complete poll.
-            return
-        if self._fired:
             return
         if self._stop_task is not None and not self._stop_task.done():
             # A Stop is mid-flight; wait for it before deciding anything.
@@ -233,17 +233,18 @@ class SocLimitController:
         # ``_pending`` is intentionally NOT cleared here: it is the confirmation
         # token and is held across retries. While it is set and the charger is
         # still charging (no evseEnabled==1 yet), we fall through and re-send Stop.
-        target = self._calc.target_soc
         # A 0% target has no useful meaning as a stop point (every real SOC
         # reading is already "at or above" it) — treat it the same as unset
         # rather than stopping the charge the instant the session starts.
         if target is None or target <= 0:
             return
+        if self._confirmed_target is not None and target <= self._confirmed_target:
+            return
         if energy is None:
             # The snapshot already rejected a negative or impossible reading,
             # so "absent" and "unusable" are the same answer here.
             return
-        if not getattr(self._updater, "session_energy_measured", True):
+        if not measured:
             # REVE's /main fallback shows the last GraphQL session for a while;
             # after a replug the integration did not see, that is the previous
             # session's energy. Stop only on a counter this poll measured.
@@ -258,7 +259,7 @@ class SocLimitController:
         # session's energy so the token can be bound to this session.
         generation = self._generation
         self._stop_task = self._hass.async_create_task(
-            self._stop(generation, round(current), round(target), energy, session_time)
+            self._stop(generation, round(current), target, energy, session_time)
         )
 
     def _stop_still_due(self, generation: int) -> bool:
@@ -289,6 +290,7 @@ class SocLimitController:
             or energy is None
             or target is None
             or target <= 0
+            or (self._confirmed_target is not None and target <= self._confirmed_target)
             or (self._pending_energy is not None
                 and energy < self._pending_energy - _SESSION_RESET_EPS_KWH)
             or (self._pending_session_time is not None and clock is not None
@@ -300,23 +302,23 @@ class SocLimitController:
             return False
         # The decision uses live inputs; the eventual event must describe that
         # same decision rather than the target/SOC captured before queueing.
-        self._pending = (round(current), round(target))
+        self._pending = (round(current), target)
         # This synchronous preflight is called immediately before the HTTP
         # attempt, after queueing and pacing. A provisional queued token alone
         # cannot attribute an external Stop to SOC enforcement.
         self._stop_attempted = True
         return True
 
-    def _emit_reached(self, soc: int, target: int) -> None:
-        """Latch and fire the reached event exactly once for this session."""
-        self._fired = True
-        self._pending = None  # pragma: no mutate - every reader of _pending also checks _fired, set on the line above
+    def _emit_reached(self, soc: int, target: float) -> None:
+        """Latch the exact target and report the confirmed Stop."""
+        self._confirmed_target = target
+        self._pending = None
         self._hass.bus.async_fire(
             EVENT_SOC_LIMIT_REACHED,
             {
                 "device_number": getattr(self._updater, "device_number", 1),
                 "soc": soc,
-                "target_soc": target,
+                "target_soc": round(target),
             },
         )
         _LOGGER.debug("SOC limit confirmed stopped (%s%% >= %s%%)", soc, target)
@@ -325,7 +327,7 @@ class SocLimitController:
         self,
         generation: int,
         soc: int,
-        target: int,
+        target: float,
         energy: float,
         session_time: float | None = None,
     ) -> None:
@@ -354,17 +356,15 @@ class SocLimitController:
             self._stop_attempted = False
             self._pending = (soc, target)
             self._pending_energy = energy
-            self._pending_session_time = session_time
+            if session_time is not None or self._confirmed_target is None:
+                self._pending_session_time = session_time
         # process() only checked suspendLimits when it scheduled this task; a
         # poll that toggled "Disable limits" on while this task was queued
         # would otherwise never be re-consulted, and the command below would
         # violate the same stand-down contract process() enforces on every
         # other poll. Re-read the latest data right before POSTing.
         if _limits_suspended(self._updater.snapshot, no_master=self._no_master) is True:
-            if not self._fired:
-                self._pending = None
-                self._pending_energy = None
-                self._pending_session_time = None
+            self._clear_pending()
             _LOGGER.debug("SOC-limit Stop aborted: suspendLimits enabled mid-flight")
             return
         try:
@@ -381,10 +381,8 @@ class SocLimitController:
             # the reauth flow would never start and charging could continue past
             # target until a later poll also 401s. Withdraw the provisional token
             # and start reauth explicitly through the config entry.
-            if not self._fired and generation == self._generation:
-                self._pending = None
-                self._pending_energy = None
-                self._pending_session_time = None
+            if generation == self._generation:
+                self._clear_pending()
             entry = getattr(self._updater, "config_entry", None)
             if entry is not None:
                 entry.async_start_reauth(self._hass)
@@ -400,10 +398,7 @@ class SocLimitController:
             # POST rejected: withdraw the provisional token (unless a poll already
             # confirmed it while the command was in flight) so a later unrelated 1
             # can't confirm a stop that never happened; the next poll retries.
-            if not self._fired:
-                self._pending = None
-                self._pending_energy = None
-                self._pending_session_time = None
+            self._clear_pending()
             _LOGGER.debug("SOC-limit Stop not accepted; will retry")
             return
         self._stop_attempted = True

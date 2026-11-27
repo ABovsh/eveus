@@ -19,8 +19,9 @@ poll itself.
 from __future__ import annotations
 
 from collections.abc import Mapping
-import math
 from typing import Any, Final
+
+from .const import MAX_COST_VALUE, MAX_ENERGY_KWH
 
 METER_DROP_CONFIRM_POLLS: Final = 3
 METER_STORE_VERSION: Final = 1
@@ -34,7 +35,13 @@ def meter_store_key(entry_id: str) -> str:
     return f"eveus_meters_{entry_id}"
 
 
-_METER_KEYS: Final = ("totalEnergy", "IEM1", "IEM2", "IEM1_money", "IEM2_money")
+_METER_MAXIMUMS: Final = {
+    "totalEnergy": MAX_ENERGY_KWH,
+    "IEM1": MAX_ENERGY_KWH,
+    "IEM2": MAX_ENERGY_KWH,
+    "IEM1_money": MAX_COST_VALUE,
+    "IEM2_money": MAX_COST_VALUE,
+}
 # The counter reset commands and the meters each one zeroes.
 _RESETS: Final[dict[str, tuple[str, ...]]] = {
     "rstEM1": ("IEM1", "IEM1_money"),
@@ -42,8 +49,8 @@ _RESETS: Final[dict[str, tuple[str, ...]]] = {
 }
 
 
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+def _number(value: Any, maximum: int) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= maximum:
         return None
     return value
 
@@ -68,10 +75,14 @@ class MeterGuard:
         """
         if not isinstance(saved, Mapping):
             return
-        for key in _METER_KEYS:
-            value = _number(saved.get(key))
-            if value is not None and value >= 0:
+        for key, maximum in _METER_MAXIMUMS.items():
+            value = _number(saved.get(key), maximum)
+            if value is not None:
                 self._accepted.setdefault(key, value)
+
+    def forget_pending_drops(self) -> None:
+        """A missed poll breaks the streak but keeps accepted readings and resets."""
+        self._drops.clear()
 
     def expect_reset(self, command: str) -> None:
         """Home Assistant just reset a counter: take its next drop at once."""
@@ -80,9 +91,10 @@ class MeterGuard:
     def apply(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         """The payload with every unconfirmed meter drop held back."""
         out = dict(payload)
-        for key in _METER_KEYS:
-            value = _number(out.get(key))
+        for key, maximum in _METER_MAXIMUMS.items():
+            value = _number(out.get(key), maximum)
             if value is None:
+                self._drops.pop(key, None)
                 continue
             last = self._accepted.get(key)
             if last is not None and value < last and key not in self._resets:

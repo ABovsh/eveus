@@ -359,11 +359,9 @@ class SafetyPolicyState:
     trigger_streak: int = 0
     recovery_streak: int = 0
     recovered: bool = False
-    # Sticky memory: the current issue was confirmed recovered at some point
-    # since it was raised. Unlike ``recovered`` (which a hysteresis-band reading
-    # resets), this survives until the issue is deleted, so a fresh trigger after
-    # a genuine recovery can re-alert even when the user has already dismissed
-    # the now-stale notice.
+    # Confirmed recovery since the last active occurrence. This survives a
+    # hysteresis-band reading and is consumed when the next occurrence is
+    # confirmed, so a dismissal of the recovered notice can re-alert once.
     recovered_since_raised: bool = False
 
 
@@ -474,9 +472,11 @@ class EveusSafetyManager:
                     issue = None
                 if issue is None:
                     _create_issue(self._hass, self._entry, policy)
-                    if state.recovered_since_raised:
-                        state.recovered_since_raised = False
-                        self._persist()
+                # A recurrence starts a new incident even if its notice is
+                # already visible. A later Ignore then applies to this incident.
+                if state.recovered_since_raised:
+                    state.recovered_since_raised = False
+                    self._persist()
             return
 
         # trigger is False -> condition absent; None -> unknown, leave streak.

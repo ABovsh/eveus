@@ -420,7 +420,7 @@ def test_inflight_stop_superseded_by_toggle_fires_nothing():
         await asyncio.gather(attempt_a, return_exceptions=True)
         assert attempt_a.cancelled()
         assert events == []         # the superseded attempt fired nothing
-        assert ctrl._fired is False  # new epoch's latch is clean
+        assert ctrl._confirmed_target is None  # new epoch's latch is clean
 
     asyncio.run(scenario())
 
@@ -442,7 +442,7 @@ def test_new_controller_initial_state_is_clean():
     ever runs. Guards against a mis-initialized latch or token being masked by
     the fact that _rearm() always resets this same state on first enable."""
     ctrl, _scheduled, _events = _make(_calc(), _updater())
-    assert ctrl._fired is False
+    assert ctrl._confirmed_target is None
     assert ctrl._pending is None
     assert ctrl._pending_energy is None
     assert ctrl._pending_session_time is None
@@ -1375,3 +1375,69 @@ def test_a_stop_is_due_on_an_updater_that_does_not_report_measured_energy():
     ctrl, _scheduled, _events = _make(calc, updater)
     ctrl.set_enabled(True)
     assert ctrl._stop_still_due(ctrl._generation) is True
+
+
+@pytest.mark.parametrize("target", [90, 80, 70], ids=["raised", "same", "lowered"])
+@pytest.mark.parametrize("confirmed", [True, False], ids=["confirmed", "pending"])
+def test_only_a_higher_target_rearms_the_soc_stop_in_the_same_plug_cycle(target, confirmed):
+    calc, updater = _calc(), _updater()
+    ctrl, _, events = _make(calc, updater)
+    ctrl.set_enabled(True)
+    updater.data["sessionTime"] = 400
+    ctrl.process()
+    updater.send_command.assert_awaited_once()
+
+    if confirmed:
+        _confirm(updater, state=3)
+        ctrl.process()
+    calc.set_value("target_soc", target)
+    _confirm(updater, state=3)
+    ctrl.process()
+
+    raised = target > 80
+    first_events = [80] if confirmed or not raised else []
+    assert [data["target_soc"] for _, data in events] == first_events
+    updater.data.update(state=4, evseEnabled=0, sessionEnergy=34.5, sessionTime=410)
+    ctrl.process()
+    updater.send_command.assert_awaited_once()
+
+    updater.data.update(sessionEnergy=35, sessionTime=420)
+    ctrl.process()
+    assert updater.send_command.await_count == (2 if raised else 1)
+    _confirm(updater, state=3)
+    ctrl.process()
+    updater.data.update(state=4, evseEnabled=0, sessionEnergy=36, sessionTime=430)
+    ctrl.process()
+
+    assert updater.send_command.await_count == (2 if raised else 1)
+    assert [event for event, _ in events] == [EVENT_SOC_LIMIT_REACHED] * len(events)
+    assert [data["target_soc"] for _, data in events] == first_events + ([90] if raised else [])
+
+
+def test_failed_higher_stop_keeps_the_confirmed_target_bound_to_its_plug_cycle():
+    calc, updater = _calc(), _updater()
+    ctrl, _, events = _make(calc, updater)
+    ctrl.set_enabled(True)
+    updater.data["sessionTime"] = 400
+    ctrl.process()
+    _confirm(updater, state=3)
+    ctrl.process()
+
+    calc.set_value("target_soc", 90)
+    updater.send_command.return_value = False
+    updater.data.update(state=4, evseEnabled=0, sessionEnergy=35, sessionTime=420)
+    ctrl.process()
+    assert updater.send_command.await_count == 2
+
+    calc.set_value("target_soc", 80)
+    updater.send_command.return_value = True
+    ctrl.process()
+    assert updater.send_command.await_count == 2
+
+    # The replug happened between polls. The younger session is already at 80%.
+    updater.data.update(sessionEnergy=30, sessionTime=300)
+    ctrl.process()
+    assert updater.send_command.await_count == 3
+    _confirm(updater, state=3)
+    ctrl.process()
+    assert [data["target_soc"] for _, data in events] == [80, 80]
