@@ -2116,6 +2116,18 @@ test('REVE idle: the charger limits are locked, Target SOC is not, and a note sa
   assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled|data-limit-step="target_soc"[^>]*disabled/, 'Target SOC is stopped by Home Assistant');
   assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /REVE зберігає ліміти енергії, часу й вартості лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт. Target SOC діє завжди/);
 });
+test('Target SOC in Limits and Advanced controls: a tap opens only the editor that was tapped', () => {
+  for (const [scope, before] of [['limits', true], ['controls', false]]) {
+    const {html, card} = setupAll({sections:['limits','advanced_controls']});
+    const trigger = html().match(new RegExp(`data-limit-edit-trigger="target_soc"[^>]*data-limit-scope="${scope}"`));
+    assert.ok(trigger, `${scope} trigger names its section`);
+    card._startLimitEdit('target_soc', scope);
+    const h = html(), split = h.indexOf('aria-label="Advanced controls"');
+    const inputs = [...h.matchAll(/data-limit-edit="target_soc"/g)].map((m) => m.index);
+    assert.equal(inputs.length, 1, `${scope}: one input`);
+    assert.equal(inputs[0] < split, before, `${scope}: the input is in the tapped section`);
+  }
+});
 test('REVE idle with only Target SOC shown: nothing is locked, so no lock note', () => {
   const h = setupAll({sections:['limits'], charging:false, hide:['limits.energy','limits.time','limits.cost'], over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
   assert.doesNotMatch(h, /mdi:lock-clock/);

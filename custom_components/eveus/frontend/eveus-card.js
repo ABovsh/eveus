@@ -550,7 +550,7 @@ class EveusCard extends HTMLElement {
     else if (e.target.closest('[data-manual-off]')) void this._leaveManualMode();
     else if (step) void this._stepLimit(step.dataset.limitStep, Number(step.dataset.dir));
     else if (toggle) void this._toggleLimit(toggle.dataset.limitToggle);
-    else if (editTrigger) this._startLimitEdit(editTrigger.dataset.limitEditTrigger);
+    else if (editTrigger) this._startLimitEdit(editTrigger.dataset.limitEditTrigger, editTrigger.dataset.limitScope);
     else if (timeTrigger) this._startTimeEdit(timeTrigger.dataset.timeEditTrigger);
     else if (e.target.closest('[data-sync]')) void this._syncTime();
     else if (moreInfo) this._moreInfo(moreInfo.dataset.moreInfo);
@@ -928,9 +928,11 @@ class EveusCard extends HTMLElement {
       this._rejectLimitPending(key, timer);
     }
   }
-  _startLimitEdit(key) {
+  // Target SOC can show in Limits and Advanced controls at once: `scope` opens only the tapped one.
+  _startLimitEdit(key, scope = null) {
     if (!this._online) return;
     this._editingLimit = key;
+    this._editingScope = scope || null;
     this._render();
   }
   // The stepper + tap-to-edit value shared by Limits, Advanced controls and Adaptive.
@@ -941,17 +943,18 @@ class EveusCard extends HTMLElement {
     // Time units have words in the card's language; kWh, V, A and currencies stay symbols.
     return CURRENCY[rawUnit] || this._t.units[rawUnit] || rawUnit;
   }
-  _numberValue({key, label, fallbackUnit, readonly = false, unit: showUnit = true}, locked = false) {
+  _numberValue({key, label, fallbackUnit, readonly = false, unit: showUnit = true, scope = null}, locked = false) {
     const entity = this._state(key), attrs = entity?.attributes || {};
     const value = this._limitValue(key);
     const unit = showUnit ? `<small>${this._unit(key, fallbackUnit)}</small>` : '';
     const disabled = !this._online || locked || value === null || ![attrs.min, attrs.max, attrs.step].every(Number.isFinite);
     const shown = value === null ? '—' : Number(value.toFixed(attrs.step < 1 ? 1 : 0));
     if (readonly) return `<div class="limit-value readonly"><b data-fit>${shown}${unit}</b></div>`;
-    const editing = this._editingLimit === key;
+    const editing = this._editingLimit === key && (!this._editingScope || this._editingScope === scope);
+    const scopeAttr = scope ? ` data-limit-scope="${scope}"` : '';
     const display = editing
-      ? this._numberInput(key, label, value, attrs, disabled)
-      : `<button class="limit-value-btn" data-limit-edit-trigger="${key}" aria-label="${this._t.set}: ${label}" ${disabled ? 'disabled' : ''}>
+      ? this._numberInput(key, label, value, attrs, disabled, scope)
+      : `<button class="limit-value-btn" data-limit-edit-trigger="${key}"${scopeAttr} aria-label="${this._t.set}: ${label}" ${disabled ? 'disabled' : ''}>
         <b data-fit>${shown}${unit}</b>
       </button>`;
     return `<div class="limit-value">
@@ -960,8 +963,8 @@ class EveusCard extends HTMLElement {
         <button data-limit-step="${key}" data-dir="1" aria-label="${this._t.increase}: ${label}" ${disabled ? 'disabled' : ''}>+</button>
       </div>`;
   }
-  _numberInput(key, label, value, attrs, disabled) {
-    return `<input type="number" class="limit-edit-input" data-limit-edit="${key}" value="${value ?? ''}" min="${attrs.min ?? ''}" max="${attrs.max ?? ''}" step="${attrs.step ?? 1}" inputmode="decimal" aria-label="${this._t.set}: ${label}" ${disabled ? 'disabled' : ''}>`;
+  _numberInput(key, label, value, attrs, disabled, scope = null) {
+    return `<input type="number" class="limit-edit-input" data-limit-edit="${key}"${scope ? ` data-limit-scope="${scope}"` : ''} value="${value ?? ''}" min="${attrs.min ?? ''}" max="${attrs.max ?? ''}" step="${attrs.step ?? 1}" inputmode="decimal" aria-label="${this._t.set}: ${label}" ${disabled ? 'disabled' : ''}>`;
   }
   _limitTile({key, toggle, label, fallbackUnit, readonly = false}, suspended, locked = false) {
     const enabled = this._limitOn(toggle);
@@ -970,7 +973,7 @@ class EveusCard extends HTMLElement {
       <button class="limit-toggle" data-limit-toggle="${toggle}" role="switch" aria-checked="${enabled}" aria-label="${label}: ${this._t.limit}" ${!this._online || locked ? 'disabled' : ''}>
         <span data-fit="10.5">${label}<small class="tile-unit">${this._unit(key, fallbackUnit)}</small></span><i></i>
       </button>
-      ${this._numberValue({key, label, fallbackUnit, readonly, unit: false}, locked)}
+      ${this._numberValue({key, label, fallbackUnit, readonly, unit: false, scope: 'limits'}, locked)}
     </div>`;
   }
   _limitsSection(fold = null) {
@@ -1312,7 +1315,7 @@ class EveusCard extends HTMLElement {
       {key: 'battery_capacity', item: 'capacity', label: t.capacity, fallbackUnit: 'kWh', title: t.capacityTitle},
       {key: 'soc_correction', item: 'loss', label: t.loss, fallbackUnit: '%', title: t.lossTitle},
     ].filter((item) => this._ids[item.key] && this._shows('advanced_controls', item.item));
-    const tiles = items.map((item) => `<div class="limit-tile" title="${item.title}"><div class="limit-toggle"><span data-fit="10.5">${item.label}<small class="tile-unit">${this._unit(item.key, item.fallbackUnit)}</small></span></div>${this._numberValue({...item, unit: false})}</div>`).join('');
+    const tiles = items.map((item) => `<div class="limit-tile" title="${item.title}"><div class="limit-toggle"><span data-fit="10.5">${item.label}<small class="tile-unit">${this._unit(item.key, item.fallbackUnit)}</small></span></div>${this._numberValue({...item, unit: false, scope: 'controls'})}</div>`).join('');
     // Battery settings wear the battery section's colour, so the pair reads as one group.
     return `<section class="${['limits controls', `soc-${this._socColor}`, this._online ? '' : 'off'].filter(Boolean).join(' ')}" aria-label="${t.aria.controls}">
       <div class="limits-grid ${GRID[items.length] || 'four'}">${tiles}</div>
@@ -2235,7 +2238,7 @@ class EveusCard extends HTMLElement {
   _render() {
     if (!this.shadowRoot || !this._hass) return;
     const focus = this.shadowRoot.activeElement;
-    const selector = this._guardAsk ? '[data-guard-confirm]' : this._editingLimit ? `[data-limit-edit="${this._editingLimit}"]`
+    const selector = this._guardAsk ? '[data-guard-confirm]' : this._editingLimit ? `[data-limit-edit="${this._editingLimit}"]${this._editingScope ? `[data-limit-scope="${this._editingScope}"]` : ''}`
       : this._editingTime ? `[data-time-edit="${this._editingTime}"]`
       : focus?.dataset?.slide ? 'input'
       : focus?.hasAttribute('data-confirm') ? '[data-confirm]'
