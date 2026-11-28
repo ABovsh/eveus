@@ -274,3 +274,139 @@ def test_reve_manual_mode_checks_age_when_the_first_session_counter_arrives(
     manual.observe({"state": 4, "sessionTime": elapsed})
 
     assert manual.on is expected
+
+
+def test_reve_soc_stop_requires_a_fresh_charging_command(monkeypatch):
+    monkeypatch.setattr("custom_components.eveus.reve.time.monotonic", lambda: 1000.0)
+    charger, updater = _known_charging(monkeypatch)
+    charger.main["state"] = 4
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    events = []
+    bus = SimpleNamespace(async_fire=lambda name, payload: events.append(name))
+    controller = SocLimitController(
+        SimpleNamespace(async_create_task=asyncio.create_task, bus=bus),
+        updater,
+        _calc(target=20),
+    )
+    controller.set_enabled(True)
+
+    async def scenario():
+        controller.process()
+        await controller._stop_task
+        # The accepted Stop did not stick. Only the cached command says Stop.
+        charger.charging_command = 1
+        charger.measurements_status = 503
+        await updater._async_update_data()
+        assert updater.snapshot.get_int("evseEnabled") == 1
+        controller.process()
+        assert events == [], "the cached write confirmed its own Stop"
+
+        charger.measurements_status = 200
+        updater._reve._measurements_retry_at = 0
+        await updater._async_update_data()
+        controller.process()
+        await controller._stop_task
+        assert _inputs(charger) == [{"chargingCommand": 2}] * 2
+        await updater._async_update_data()
+        controller.process()
+        assert events == [EVENT_SOC_LIMIT_REACHED]
+
+    asyncio.run(scenario())
+
+
+def test_reve_limit_edit_during_readback_keeps_the_limit_off(monkeypatch):
+    monkeypatch.setattr("custom_components.eveus.reve.time.monotonic", lambda: 1000.0)
+    charger = _WritableCharger(_reve_main())
+    charger.station["session"]["energyLimit"] = 20000
+    charger, updater = _known_charging(monkeypatch, charger)
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+
+    async def scenario():
+        assert await updater.send_command("energyLimitS", 0)
+        entered, release = asyncio.Event(), asyncio.Event()
+        read_extras = updater._reve._read_extras
+
+        async def delayed_settings():
+            entered.set()
+            await release.wait()
+            return await read_extras()
+
+        updater._reve._settings_streak = 1
+        updater._reve._fetched_at = 0
+        monkeypatch.setattr(updater._reve, "_read_extras", delayed_settings)
+        poll = asyncio.create_task(updater._async_update_data())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            assert updater.snapshot.get_int("energyLimitS") == 1
+            assert await updater.send_command("energyLimit", 30000)
+        finally:
+            release.set()
+            await poll
+
+        assert _inputs(charger) == [{"session": {"energyLimit": None}}]
+        assert charger.station["session"]["energyLimit"] is None
+        await updater._async_update_data()
+        assert updater.snapshot.get_int("energyLimitS") == 0
+        assert updater.snapshot.get("energyLimit") == 30
+
+    asyncio.run(scenario())
+
+
+async def test_energy_limit_keeps_known_wifi_scale_across_a_missing_field(monkeypatch):
+    now = 1000.0
+    monkeypatch.setattr("custom_components.eveus.number.time.monotonic", lambda: now)
+    updater, session, _ = _rig(monkeypatch)
+    number = _number(updater, "energyLimit")
+    await _poll(updater, session, verFWMain="GRM070A-R3.01.8", verFWWifi="GRW001A-R3.01.8")
+    await _poll(updater, session, verFWMain="GRM070A-R3.01.8")
+    await number.async_set_native_value(10)
+    assert session.calls[-1]["data"] == "pageevent=energyLimit&energyLimit=100"
+
+    now += 10
+    await _poll(updater, session, verFWMain="GRM070A-R3.01.8", verFWWifi="GRW001A-R3.05.8")
+    await number.async_set_native_value(12)
+    assert session.calls[-1]["data"] == "pageevent=energyLimit&energyLimit=12000"
+
+
+def test_reve_stop_off_preserves_one_charge_started_in_the_app(monkeypatch):
+    monkeypatch.setattr("custom_components.eveus.reve.time.monotonic", lambda: 1000.0)
+    charger, updater = _known_charging(monkeypatch)
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    # The app enabled One Charge between polls.
+    charger.charging_command = 0
+    assert updater.snapshot.get_int("oneCharge") == 0
+
+    assert asyncio.run(updater.send_command("evseEnabled", 0))
+
+    assert _inputs(charger) == []
+    assert charger.charging_command == 0
+
+
+def test_reve_stop_release_reports_partial_success_on_auth_failure(monkeypatch):
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    class Charger(_WritableCharger):
+        def post(self, url, **kwargs):
+            if url.endswith("/graphql"):
+                body = json.loads(kwargs["data"])
+                if body["variables"].get("input") == {"chargingManualControl": False}:
+                    self.calls.append(("/graphql", body))
+                    return _Response(401, {})
+            return super().post(url, **kwargs)
+
+    monkeypatch.setattr("custom_components.eveus.reve.time.monotonic", lambda: 1000.0)
+    charger = Charger(_reve_main())
+    charger.charging_command = 2
+    charger.station["chargingManualControl"] = True
+    charger, updater = _known_charging(monkeypatch, charger)
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    stop = BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[0])
+    monkeypatch.setattr(stop, "async_write_ha_state", lambda: None)
+
+    with pytest.raises(ConfigEntryAuthFailed) as error:
+        asyncio.run(stop.async_turn_off())
+
+    assert _inputs(charger) == [{"chargingCommand": 1}, {"chargingManualControl": False}]
+    assert charger.charging_command == 1
+    assert "released Stop" in str(error.value)
+    assert "credentials" in str(error.value)

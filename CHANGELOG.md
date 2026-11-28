@@ -9,15 +9,30 @@
 - **Number controls no longer jump back after a change.** They show the value sent to the charger, and an older reading no longer brings back the previous one.
 - **Disabling or reloading the integration no longer asks for the password again** because of a request that was still waiting for the charger.
 - **Ignore on a repeated fault notice stays in effect** while the fault continues.
+- **The SOC limit re-arms when the car is unplugged**, even if the charger omits the Disable Limits setting.
+- **A cancelled refresh breaks the run of meter readings required to confirm a reset.**
+- **Reset Counter A and B show the first confirmed reset reading**, even if an older reading arrives after you press the button.
+- **A late charger reply during Home Assistant shutdown leaves the last reading intact** and does not ask for your password again.
 - **Eveus 1.x and 2.x: fresh readings no longer wait for a slow firmware check** after a lost connection.
 - **Eveus 1.x and 2.x: a fault before the firmware is recognized no longer shows as Charging** or fires a charging started event.
+- **Eveus 1.x and 2.x keep a possible pilot fault from showing as Charging** even after the firmware check times out repeatedly.
+- **Eveus 1.x and 2.x keep the last tariff while firmware identification retries** after a connection loss.
+- **Eveus 1.x and 2.x count each temperature measurement once** when checking for overheating.
 - **Eveus R3.01.8: Limit: Energy is sent the way the charger's page sends it;** a limit set from Home Assistant was 100 times too large.
+- **Eveus R3.01.8 keeps the correct energy limit units** when a charger reading omits its Wi-Fi version.
 - **REVE: turning One Charge off no longer resumes a charge paused in the REVE app.**
 - **REVE: a limit changed right after turning it on or off keeps that on/off state.** The new value is applied when the limit is on and kept for later when it is off.
+- **REVE confirms an SOC Stop only when the charger reports it.** Home Assistant retries if charging continues.
+- **REVE keeps a disabled limit off** when you edit its value as the off reading arrives.
+- **REVE asks for updated credentials** when a charger that uses only GraphQL rejects the saved password.
+- **REVE keeps One Charge on** when an automation turns off Stop Charging while Stop Charging is already off.
 - **REVE: releasing Stop sends it once.** If the charger then does not leave manual mode, Home Assistant reports that instead of an error for the whole command.
+- **REVE reports when Stop Charging was released** even if leaving Manual Mode then fails because the charger rejected the password.
 - **REVE: Manual Mode stays on after a Home Assistant restart during a lost connection** when the same charge continues.
+- **REVE restores Manual Mode for the same plug-in after a restart** even when its binary sensor is disabled.
 - **Card: turning a limit off waits until the charger reports it off.** A reading that is unavailable no longer counts as confirmation.
 - **Card: Sync Time waits for the charger.** The button is disabled while the time is sent, shows Sent afterwards and ignores a second tap.
+- **The card clears the previous Sync Time error** when you try again.
 
 ## 4.32.0 - 2026-11-25
 

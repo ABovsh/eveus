@@ -17,6 +17,7 @@ from typing import Any
 
 import aiohttp
 import pytest
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from conftest import TEST_HOST
 from custom_components.eveus import config_flow, reve
@@ -180,6 +181,22 @@ def test_a_charger_without_main_keeps_polling_through_graphql(monkeypatch: pytes
 
     assert charger.paths() == ["/graphql"]
     assert data["state"] == 2
+
+
+async def test_a_known_graphql_only_charger_requests_reauth_on_401(monkeypatch):
+    charger = _NoMainCharger()
+    updater = _updater(monkeypatch, charger)
+    await updater._async_update_data()
+    history = tuple(updater._poll_results)
+    charger.calls.clear()
+    charger.graphql_status = 401
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        await updater._async_update_data()
+
+    assert charger.paths() == ["/graphql"]
+    assert tuple(updater._poll_results) == history
+    assert not updater.available
 
 
 def test_an_unreachable_charger_costs_no_graphql_request(monkeypatch: pytest.MonkeyPatch) -> None:

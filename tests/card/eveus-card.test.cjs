@@ -3322,3 +3322,15 @@ test('a row still too narrow drops the clock and fix icons last, keeping every t
 test('the time zone fix keeps its text when the row hides Sync text',()=>{
   assert.match(source,/\.sl\.time\.time-tightest \.time-sync:not\(\.time-fix\) span\{display:none\}/);
 });
+
+test('Sync Time retry clears the previous error', async () => {
+  const {card, hass, html} = setupAll({sections: ['time'], over: TIME});
+  hass.callService = async () => { throw Error('sync failed'); };
+  await card._syncTime();
+  assert.match(html(), /Command failed/);
+
+  hass.callService = async () => {};
+  await card._syncTime();
+  assert.match(html(), />Sent<\/span>/);
+  assert.doesNotMatch(html(), /Command failed/);
+});

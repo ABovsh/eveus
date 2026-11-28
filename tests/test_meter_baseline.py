@@ -306,7 +306,7 @@ def test_a_confirmed_app_reset_is_written_at_once(monkeypatch: pytest.MonkeyPatc
     assert _durable(store).get("IEM1") == 0
 
 
-@pytest.mark.parametrize("gap", ["timeout", "missing", "invalid", "negative"])
+@pytest.mark.parametrize("gap", ["timeout", "cancelled", "missing", "invalid", "negative"])
 async def test_meter_drop_evidence_does_not_cross_poll_gaps(monkeypatch, gap):
     monkeypatch.setattr(_FakeStore, "loaded", dict(_SAVED))
     monkeypatch.setattr(common_network, "time", SimpleNamespace(
@@ -320,10 +320,15 @@ async def test_meter_drop_evidence_does_not_cross_poll_gaps(monkeypatch, gap):
     store = _FakeStore.instances[-1]
     fetch_json = common_network.fetch_json
     timed_out = False
+    entered = asyncio.Event()
+    blocked = False
 
     async def fetch(session, url, **kwargs):
         if timed_out:
             raise TimeoutError
+        if blocked:
+            entered.set()
+            await asyncio.Future()
         return await fetch_json(session, url, **kwargs)
 
     monkeypatch.setattr(common_network, "fetch_json", fetch)
@@ -335,6 +340,15 @@ async def test_meter_drop_evidence_does_not_cross_poll_gaps(monkeypatch, gap):
             with pytest.raises(UpdateFailed):
                 await updater._async_update_data()
             timed_out = False
+        elif gap == "cancelled":
+            blocked = True
+            entered.clear()
+            poll = asyncio.create_task(updater._async_update_data())
+            await asyncio.wait_for(entered.wait(), 1)
+            poll.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await poll
+            blocked = False
         else:
             del charger.main["totalEnergy"]
             if gap == "invalid":
@@ -389,3 +403,22 @@ def test_a_reset_seen_while_shutting_down_is_not_written(monkeypatch) -> None:
     updater._shutting_down = False
     asyncio.run(updater._persist_meter_reset())
     assert saved == [{"totalEnergy": 1.0}]
+
+
+async def test_acknowledged_reset_survives_a_stale_meter_poll(monkeypatch):
+    monkeypatch.setattr(_FakeStore, "loaded", {"IEM1": 100, "IEM1_money": 20})
+    charger = _Charger({**_classic_main(), "IEM1": 100, "IEM1_money": 20})
+    updater = _updater(monkeypatch, charger)
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    await updater.async_load_meter_baseline()
+    await updater._async_update_data()
+
+    assert await updater.send_command("rstEM1", 0, retry=False)
+    await updater._async_update_data()
+    assert updater.snapshot.get("IEM1") == 100
+
+    charger.main.update(IEM1=0, IEM1_money=0)
+    await updater._async_update_data()
+    assert updater.snapshot.get("IEM1") == 0
+    assert updater.snapshot.get("IEM1_money") == 0
+    assert _FakeStore.instances[-1].saves[-1]["IEM1"] == 0

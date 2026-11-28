@@ -165,13 +165,14 @@ class SocLimitController:
         # suspendLimits means the master state is unknown, and the conservative
         # safety contract is to stand down rather than risk stopping while the
         # master may actually be active.
-        if _limits_suspended(snapshot, no_master=self._no_master) is not False:
+        plugged = snapshot.plugged_in
+        limits_active = _limits_suspended(snapshot, no_master=self._no_master) is False
+        if not limits_active and plugged is not False:
             return
         # `session_active is True` is exactly the old `state in
         # SESSION_ACTIVE_STATES`: the Error state and an unmapped firmware code
         # both answer None there, which is not an active session either.
         active = snapshot.session_active is True
-        plugged = snapshot.plugged_in
         evse_enabled = snapshot.get_int("evseEnabled")
         energy = snapshot.session_energy_kwh
         session_time = snapshot.session_time_s
@@ -203,7 +204,13 @@ class SocLimitController:
         # our command caused — not a pre-existing/stale 1 and not an unplug (which
         # leaves it 0). Checked before the session-over return so a stop that ends
         # the session in the same poll is still confirmed.
-        if self._pending is not None and self._stop_attempted and evse_enabled == 1:
+        if (
+            limits_active
+            and self._pending is not None
+            and self._stop_attempted
+            and evse_enabled == 1
+            and getattr(self._updater, "stop_readback", True)
+        ):
             self._emit_reached(*self._pending)
         if plugged is False:
             if (

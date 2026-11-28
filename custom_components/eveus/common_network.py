@@ -240,6 +240,7 @@ _LEGACY_LOW_STATE_MAP: Final[dict[int, tuple[int, int]]] = {
 _LEGACY_INIT_VERSION_LIMIT: Final = 200
 # /init is the only proof of 1.x: a transient failure is retried this much later.
 _INIT_RETRY_SECONDS: Final = 300
+_MANUAL_MODE_STORAGE_KEY: Final = "manual_mode_started_at"
 # Stop deferring state interpretation after this many failed discovery attempts.
 _INIT_STATE_DEFER_ATTEMPTS: Final = 3
 # Pre-R3 Minimum voltage is readable only from /init; a change made on the
@@ -299,6 +300,12 @@ def _state_needs_firmware(data: dict[str, Any]) -> bool:
     )
 
 
+def _possible_legacy_pilot_fault(data: dict[str, Any]) -> bool:
+    """A matching D, E or F pilot corroborates the legacy fault code."""
+    state = get_safe_value(data, "state", int)
+    return state in (4, 5, 6) and get_safe_value(data, "pilot", int) == state
+
+
 def _modern_payload(data: dict[str, Any]) -> bool:
     """An R3 Wi-Fi version identifies the state map even without verFWMain."""
     wifi = data.get("verFWWifi")
@@ -348,6 +355,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._command_manager = CommandManager(self)
 
         self._poll_results: deque[bool] = deque(maxlen=20)
+        self.poll_sequence = 0
         self._consecutive_failures = 0
         # 0.0 until the first successful poll, so connection_quality does not
         # report "healthy" before the charger has ever answered.
@@ -449,6 +457,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         # so one degraded reply that omits it must not demote a modern charger
         # to the 1.x code translation for that poll.
         self._modern_firmware_seen = False
+        self.wifi_firmware: str | None = None
         # Sticky like the marker above, for the same reason: one reply that
         # omits the REVE markers must not hand that poll the unreliable
         # tariff/schedule/leak fields REVE reports.
@@ -464,12 +473,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._limit_store: Store | None = None
         self._limits_saved: dict[str, int | float] = {}  # pragma: no mutate - async_load_reve_limits sets it before any save or flush can pass the store check
         self._limits_save_pending = False
+        self._manual_mode_loaded = False
         self._last_session_lock = asyncio.Lock()
         self._last_session_read: tuple[float, dict[str, Any]] | None = None
         # Typed view of the last SUCCESSFUL payload. Held (not cleared) across a
         # failed poll, exactly like `self.data`, so an entity inside its
         # availability grace window keeps republishing the reading behind it.
         self._snapshot = EveusSnapshot.empty()
+        self._reve_stop_readback = False
         # Whether the current stretch of state 5 has shown subState 0 — the
         # car ended the charge itself (see `_track_charge_completion`). Held
         # across a failed poll: an outage says nothing about the session, and a
@@ -614,13 +625,28 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._reve.seed_limit_values(saved)
         self._limits_saved = self._reve.limit_values()
+        started_at = saved.get(_MANUAL_MODE_STORAGE_KEY) if isinstance(saved, dict) else None
+        now = time.time()
+        if type(started_at) in (int, float) and 0 <= started_at <= now:
+            self._manual_mode_loaded = True
+            self._limits_saved[_MANUAL_MODE_STORAGE_KEY] = started_at
+            if started_at > 0:
+                self._reve.manual_mode.restore(now - started_at)
+
+    def _reve_storage_values(self) -> dict[str, int | float]:
+        values = self._reve.limit_values()
+        started_at = self._reve.manual_mode.started_at
+        if started_at is not None or _MANUAL_MODE_STORAGE_KEY in self._limits_saved:
+            values[_MANUAL_MODE_STORAGE_KEY] = started_at or 0
+        return values
 
     def _save_reve_limits(self) -> None:
-        """Save the kept limit values when they changed (rare: a user's edit or
-        a new limit read from the charger)."""
+        """Save changed limit values or a changed Manual Mode latch."""
         store = self._limit_store
-        values = self._reve.limit_values()
-        if store is None or self._shutting_down or values == self._limits_saved:
+        if store is None or self._shutting_down:
+            return
+        values = self._reve_storage_values()
+        if values == self._limits_saved:
             return
         self._limits_saved = values
         self._limits_save_pending = True
@@ -639,7 +665,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         through another ``Store``, which cannot cancel it, so it would land
         after the removal and leave the file behind."""
         store = self._limit_store
-        values = self._reve.limit_values()
+        values = self._reve_storage_values()
         if store is None or (values == self._limits_saved and not self._limits_save_pending):
             return
         scheduled = self._limits_saved
@@ -714,8 +740,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._meter_saved, self._meter_saved_at = baseline, time.monotonic()
 
     def reve_restore_manual_mode(self, on_for: float | None = None) -> None:
-        """Take manual mode over from before a Home Assistant restart."""
-        self._reve.manual_mode.restore(on_for)
+        """Migrate a previous entity restore value to the config entry store."""
+        if not self._manual_mode_loaded:
+            self._reve.manual_mode.restore(on_for)
+            self._save_reve_limits()
 
     def reve_schedules(self) -> tuple[dict[str, Any], ...] | None:
         """Every REVE schedule as last read, while that read stands; ``None``
@@ -731,6 +759,11 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         ``/main`` fallback shows the last GraphQL session for a while; that is
         fine to display, but must not anchor a new calculation."""
         return not self._reve_seen or self._reve.session_measured
+
+    @property
+    def stop_readback(self) -> bool:
+        """Whether a reported Stop came from the current device reading."""
+        return not self._reve_seen or self._reve_stop_readback
 
     def reve_card_schedules(self) -> dict[str, Any]:
         """The schedules and rates as the card shows them, and how old the read
@@ -1039,6 +1072,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             # Invalidate even on the raising path (401 -> ConfigEntryAuthFailed)
             # so the cached consecutive_command_failures can't go stale.
             self._connection_quality_cache = None
+            if self._reve_seen:
+                self._save_reve_limits()
         if success and not self._shutting_down:
             if command == RESTRICTED_MODE_KEY and value == 1 and self.is_legacy_firmware:
                 # Share the accepted command with the three current controls.
@@ -1176,6 +1211,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._connection_quality_cache = None
         was_likely_offline = self.is_likely_offline
         self._poll_results.append(True)
+        self.poll_sequence += 1
         self._consecutive_failures = 0
         self._interval_before_retry = None
         self._device_available = True
@@ -1835,7 +1871,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 self._normalize_legacy_controls(data, raw_state)
             self.data = data
-        elif not (state_needs_map and self._snapshot.raw is data and previous_state is None):
+        elif _possible_legacy_pilot_fault(data) or not (
+            state_needs_map and self._snapshot.raw is data and previous_state is None
+        ):
             return
 
         self._snapshot = EveusSnapshot.parse(data, self._model, legacy_firmware=legacy)
@@ -1854,6 +1892,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._track_state_since(self._snapshot)
         self._emit_transition_events(data)
 
+    @property
+    def _poll_stopping(self) -> bool:
+        return self._shutting_down or getattr(self.hass, "is_stopping", False) is True
+
     def _reject_credentials(self) -> None:
         """What a 401 means to the poll: reauth, not a connectivity failure.
 
@@ -1861,7 +1903,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         stats, or reauth recovery gets misattributed/deferred as "device
         offline". Just mark unavailable and hand off to HA's reauth flow.
         """
-        if self._shutting_down:
+        if self._poll_stopping:
             raise asyncio.CancelledError
         self._connection_quality_cache = None
         self._device_available = False
@@ -1877,7 +1919,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch current device data."""
-        if self._shutting_down:
+        if self._poll_stopping:
             raise asyncio.CancelledError
         # Every deadline here is on the monotonic clock, so a wall-clock step
         # during the request can't record a negative or absurd latency sample
@@ -1897,32 +1939,47 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         if self._poll_lock.locked() and self.data is not None:
             return self.data
         async with self._poll_lock:
-            if self._shutting_down:
+            if self._poll_stopping:
                 raise asyncio.CancelledError
             socket_write = self._legacy_socket_write
             try:
                 new_data, response_time, unsupported, state_ambiguous = await self._poll_charger()
                 # A poll still waiting for the charger when the entry unloads
                 # must not publish or start reauth on the old coordinator.
-                if self._shutting_down:
+                if self._poll_stopping:
                     raise asyncio.CancelledError
                 # Publish the typed snapshot and transition events in the
                 # refresh caller, on the same turn as HA receives the raw data.
                 legacy = self._legacy_confirmed and not (self._modern_firmware_seen or self._reve_seen)
+                wifi = new_data.get("verFWWifi")
+                if self._reve_seen:
+                    self.wifi_firmware = None
+                elif isinstance(wifi, str):
+                    version = wifi.strip().rsplit("-", 1)[-1].upper()
+                    if re.fullmatch(r"R3\.\d+\.\d+", version):
+                        self.wifi_firmware = version
                 self._snapshot = EveusSnapshot.parse(
                     new_data, self._model, unsupported=unsupported,
                     informational=REVE_INFORMATIONAL_FIELDS if self._reve_seen else frozenset(),
                     legacy_firmware=legacy,
                     state_ambiguous=state_ambiguous,
                 )
+                if self._reve_seen:
+                    self._reve_stop_readback = self._reve.measured_stop
+                    self._reve.publish_limit_readback(new_data)
+                    self._save_reve_limits()
                 if legacy and socket_write is self._legacy_socket_write:
                     self._observe_legacy_socket_mode()
 
                 self._record_success(response_time, new_data, state_ambiguous=state_ambiguous)
                 return new_data
 
+            except asyncio.CancelledError:
+                if not self._poll_stopping:
+                    self._forget_poll_gap_state()
+                raise
             except ConfigEntryAuthFailed:
-                if self._shutting_down:
+                if self._poll_stopping:
                     raise asyncio.CancelledError from None
                 raise
             except ValueError as err:
@@ -1965,7 +2022,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         start = time.monotonic()
         try:
             measurements = await self._reve.read_measurements(self._validate)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            if isinstance(err, aiohttp.ClientResponseError) and err.status == 401:
+                self._reject_credentials()
             return None
         latency = time.monotonic() - start
         if self._reve.main_residue_due(measurements):
@@ -2063,7 +2122,10 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._start_init_firmware_probe(reconnect=True)
         state_ambiguous = (
             legacy_reply and not self._legacy_confirmed
-            and self._firmware_state_pending and _state_needs_firmware(new_data)
+            and (
+                (self._firmware_state_pending and _state_needs_firmware(new_data))
+                or _possible_legacy_pilot_fault(new_data)
+            )
         )
         raw_legacy_main = None
         if legacy_reply:
@@ -2074,12 +2136,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         new_data = self._normalize_legacy_device_state(
             new_data, state_ambiguous=state_ambiguous,
         )
-        if (
-            legacy_reply and self._refresh_legacy_init
-            and self._init_fw_task is not None and not self._init_fw_task.done()
-        ):
+        if legacy_reply and self._refresh_legacy_init and self.data is not None:
             # A firmware update during the gap can change the price units.
-            # Keep the previous prices while the new profile is in flight.
+            # Keep the previous prices until the recovery probe resolves the units.
             for key in (*_LEGACY_TARIFF_PRICE_KEYS, "tarifAValue", "tarifBValue"):
                 if key in self.data:
                     new_data[key] = self.data[key]

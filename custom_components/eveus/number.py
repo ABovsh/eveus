@@ -457,8 +457,7 @@ class EveusSetpointNumber(EveusNumberEntity):
         if self._legacy_ha_to_device is not None and self._legacy_firmware:
             return self._legacy_ha_to_device
         if self._command == "energyLimit":
-            wifi = self._updater.snapshot.raw.get("verFWWifi")
-            if isinstance(wifi, str) and wifi.strip().rsplit("-", 1)[-1].upper() == "R3.01.8":
+            if getattr(self._updater, "wifi_firmware", None) == "R3.01.8":
                 # This Wi-Fi build's web UI posts tenths of a kWh.
                 return 10.0
         return self._ha_to_device

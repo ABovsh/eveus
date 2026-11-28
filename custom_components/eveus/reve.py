@@ -1136,6 +1136,7 @@ class ReveApi:
         self._write_epoch = 0  # pragma: no mutate - any start is equivalent: the epoch is only compared with itself
         self._writes_in_flight = 0
         self._measure_mark: int | None = None  # pragma: no mutate - any non-int start fails _read_current alike
+        self._measured_stop = False
         self.manual_mode = ManualMode()
         self._station_system: dict[str, Any] = {}
         self._started_at: int | None = None
@@ -1246,6 +1247,8 @@ class ReveApi:
         self._last_error = None
         self._last_source = "graphql"
         current = self._read_current(mark)
+        command = station.get("chargingCommand")
+        self._measured_stop = type(command) is int and command == _COMMAND_STOP
         if extras is not None:
             self._store(extras if current else self._keep_written(extras))
         self._session = (
@@ -1255,7 +1258,7 @@ class ReveApi:
         self._session_measured = True
         self._session_unplugged = main.get("state") == DEVICE_STATE_STANDBY
         if current:
-            self._note_charging_command(station.get("chargingCommand"))
+            self._note_charging_command(command)
             self.manual_mode.report(station.get(_MANUAL_CONTROL))
         rates = station.get("ratesV2")
         self._note_active_rate(_price(rates.get("activeRate")) if isinstance(rates, dict) else None)
@@ -1291,9 +1294,7 @@ class ReveApi:
         # A read that overlapped a write shows what it read, but the values
         # kept for switching a limit back on stay the written ones.
         current = self._read_current(self._measure_mark)
-        for key, flag, _field, _factor in _LIMIT_WRITES:
-            if current and (flag in payload or payload.get("state") == DEVICE_STATE_STANDBY):
-                self._written_limit_flags.pop(flag, None)
+        for key, _flag, _field, _factor in _LIMIT_WRITES:
             if key in payload:
                 if current:
                     self._keep_limit_value(key, payload[key])
@@ -1305,6 +1306,14 @@ class ReveApi:
                 payload.setdefault(key, value)
         return payload
 
+    def publish_limit_readback(self, payload: Mapping[str, Any]) -> None:
+        """Retire acknowledged flags when their replacement becomes visible."""
+        if self._last_source != "graphql" or not self._read_current(self._measure_mark):
+            return
+        for flag in tuple(self._written_limit_flags):
+            if flag in payload or payload.get("state") == DEVICE_STATE_STANDBY:
+                self._written_limit_flags.pop(flag)
+
     @property
     def session_measured(self) -> bool:
         """False while the session fields are the held GraphQL ones (or left
@@ -1315,6 +1324,15 @@ class ReveApi:
     def last_source(self) -> str | None:
         """Which API answered the last poll: ``graphql`` or ``main``."""
         return self._last_source
+
+    @property
+    def measured_stop(self) -> bool:
+        """Whether the current measurement read actually observed Stop."""
+        return (
+            self._last_source == "graphql"
+            and self._measured_stop
+            and self._read_current(self._measure_mark)
+        )
 
     def main_residue_due(self, measurements: Mapping[str, Any] | None = None) -> bool:
         """Whether a GraphQL poll should also read ``/main`` for its own fields:
@@ -1532,9 +1550,13 @@ class ReveApi:
     async def set_stop(self, value: Any) -> Callable[[], Awaitable[None]] | None:
         """Stop (1) or release (0) charging the way the vendor app does; a
         release also leaves manual mode where the station can be told to."""
-        stop = _bool(value)
-        await self._write_charging_command(_COMMAND_STOP if stop else _COMMAND_START)
-        return None if stop else self._leave_manual_mode
+        if _bool(value):
+            await self._write_charging_command(_COMMAND_STOP)
+            return None
+        if await self._read_charging_command() == _COMMAND_CHARGE_NOW:
+            return None
+        await self._write_charging_command(_COMMAND_START)
+        return self._leave_manual_mode
 
     async def set_one_charge(self, value: Any) -> Callable[[], Awaitable[None]] | None:
         """Charge now, ignoring the schedules, the way the vendor app's Start
@@ -1544,17 +1566,21 @@ class ReveApi:
             await self._write_charging_command(_COMMAND_CHARGE_NOW)
             return None
         # An app Pause between polls takes precedence over turning One Charge off.
-        station = await self._station(CHARGING_COMMAND_QUERY)
-        command = station.get("chargingCommand")
-        if type(command) is not int or command not in _CHARGING_COMMANDS:
-            raise GraphQLError("REVE did not report the current charging command")
-        self._note_charging_command(command)
+        command = await self._read_charging_command()
         if command == _COMMAND_CHARGE_NOW:
             await self._write_charging_command(_COMMAND_START)
             return self._leave_manual_mode
         if command == _COMMAND_START:
             await self._leave_manual_mode()
         return None
+
+    async def _read_charging_command(self) -> int:
+        station = await self._station(CHARGING_COMMAND_QUERY)
+        command = station.get("chargingCommand")
+        if type(command) is not int or command not in _CHARGING_COMMANDS:
+            raise GraphQLError("REVE did not report the current charging command")
+        self._note_charging_command(command)
+        return command
 
     async def _leave_manual_mode(self) -> None:
         """With Stop and One Charge both off, back to the schedules and limits

@@ -19,11 +19,13 @@ poll itself.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import time
 from typing import Any, Final
 
 from .const import MAX_COST_VALUE, MAX_ENERGY_KWH
 
 METER_DROP_CONFIRM_POLLS: Final = 3
+_RESET_CONFIRM_SECONDS: Final = 60
 METER_STORE_VERSION: Final = 1
 # The readings are saved when they changed and this long has passed since the
 # last save: a baseline a little behind is as good against a dip to zero.
@@ -61,7 +63,7 @@ class MeterGuard:
     def __init__(self) -> None:
         self._accepted: dict[str, float] = {}
         self._drops: dict[str, int] = {}
-        self._resets: set[str] = set()
+        self._resets: dict[str, float] = {}
 
     def baseline(self) -> dict[str, float]:
         """The last accepted reading of each meter seen so far."""
@@ -86,18 +88,26 @@ class MeterGuard:
 
     def expect_reset(self, command: str) -> None:
         """Home Assistant just reset a counter: take its next drop at once."""
-        self._resets.update(_RESETS.get(command, ()))
+        if meters := _RESETS.get(command):
+            deadline = time.monotonic() + _RESET_CONFIRM_SECONDS
+            self._resets.update(dict.fromkeys(meters, deadline))
 
     def apply(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         """The payload with every unconfirmed meter drop held back."""
         out = dict(payload)
+        now = time.monotonic() if self._resets else 0.0
         for key, maximum in _METER_MAXIMUMS.items():
+            deadline = self._resets.get(key)
+            if deadline is not None and now >= deadline:
+                self._resets.pop(key)
+                deadline = None
             value = _number(out.get(key), maximum)
             if value is None:
                 self._drops.pop(key, None)
                 continue
             last = self._accepted.get(key)
-            if last is not None and value < last and key not in self._resets:
+            dropped = last is not None and value < last
+            if dropped and deadline is None:
                 drops = self._drops.get(key, 0) + 1
                 if drops < METER_DROP_CONFIRM_POLLS:
                     self._drops[key] = drops
@@ -105,5 +115,6 @@ class MeterGuard:
                     continue
             self._accepted[key] = value
             self._drops.pop(key, None)
-            self._resets.discard(key)
+            if dropped or value == 0:
+                self._resets.pop(key, None)
         return out

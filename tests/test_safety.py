@@ -1012,3 +1012,38 @@ def test_counters_stay_well_formed_through_every_transition() -> None:
     poll(_COOL)
     assert _issue(hass, entry, "box_overheat") is None
     poll(_COOL, 2)
+
+
+async def test_legacy_init_publication_does_not_repeat_a_temperature_sample(monkeypatch):
+    from custom_components.eveus import common_network
+    from test_common_network import _gap_harness
+
+    updater, replies, _ = _gap_harness(monkeypatch)
+    now = 1000.0
+    monkeypatch.setattr(common_network, "time", SimpleNamespace(
+        monotonic=lambda: now, time=lambda: now,
+    ))
+    entry = SimpleNamespace(entry_id="legacy", title="Legacy", data={})
+    manager = EveusSafetyManager(updater.hass, entry, updater)
+    monkeypatch.setattr(updater, "async_update_listeners", manager.process)
+    replies["/init"]["minVoltage"] = 180
+    replies["/main"]["temperature1"] = 20
+    updater.data = await updater._async_update_data()
+    await updater.async_maybe_fetch_init_firmware()
+
+    now = 1901.0
+    replies["/init"]["minVoltage"] = 170
+    replies["/main"]["temperature1"] = 85
+    issue_id = safety_issue_id(entry, "box_overheat")
+    updater.data = await updater._async_update_data()
+    manager.process()
+    registry = ir.async_get(updater.hass)
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+    await updater._init_fw_task
+    assert updater.snapshot.get_int("minVoltage") == 170
+    assert registry.async_get_issue(DOMAIN, issue_id) is None, "one measurement raised an issue"
+
+    updater.data = await updater._async_update_data()
+    manager.process()
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None

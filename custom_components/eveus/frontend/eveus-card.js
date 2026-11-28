@@ -1698,6 +1698,7 @@ class EveusCard extends HTMLElement {
     const request = {};
     this._syncPending = request;
     this._syncDone = false;
+    this._showError(false);
     clearTimeout(this._syncTimer);
     this._render();
     let sent;

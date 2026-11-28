@@ -283,3 +283,36 @@ async def test_newer_poll_save_stays_pending_during_local_limit_flush(monkeypatc
     await updater.async_shutdown()
     assert _SharedStore.files["eveus_reve_limits_e1"] == {"energyLimit": 20, "timeLimit": 3600}
     assert _DeferredStore.pending == {}
+
+
+@pytest.mark.parametrize("session_time", [2400, 120], ids=["same-session", "replugged"])
+def test_manual_mode_restores_without_adding_the_sensor(monkeypatch, session_time):
+    from test_reve_manual_mode import _plugged
+
+    now = 1000.0
+    monkeypatch.setattr("custom_components.eveus.reve.time.time", lambda: now)
+    charger, _ = _known_charging(monkeypatch)
+    charger.station.pop("chargingManualControl", None)
+    _plugged(charger, session_time=1800)
+    updater = _started(monkeypatch, charger)
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    assert asyncio.run(updater.send_command("evseEnabled", 1))
+    charger.charging_command = 1  # The older app resumes while keeping manual mode.
+    asyncio.run(updater._async_update_data())
+    assert updater.reve_manual_mode
+    asyncio.run(updater.async_shutdown())
+
+    now = 1600.0
+    _plugged(charger, session_time=session_time)
+    # Config entry setup loads the store and polls. No binary sensor is added.
+    restarted = _started(monkeypatch, charger)
+    if session_time == 2400:
+        assert restarted.reve_manual_mode, "the latch depended on restoring the binary sensor"
+        assert restarted.command_refusal("energyLimit") is not None
+    else:
+        assert restarted.reve_manual_mode is False
+        assert restarted.command_refusal("energyLimit") is None
+
+    _SharedStore.writes.clear()
+    asyncio.run(restarted._async_update_data())
+    assert _SharedStore.writes == [], "an unchanged latch was written again"

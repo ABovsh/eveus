@@ -378,6 +378,7 @@ class EveusSafetyManager:
         self._entry = entry
         self._updater = updater
         self._states = {policy.key: SafetyPolicyState() for policy in POLICIES}
+        self._last_poll_sequence: int | None = None
         self._store: Store | None = None
 
     async def async_load(self) -> None:
@@ -432,7 +433,13 @@ class EveusSafetyManager:
         if not self._updater.available or not self._updater.last_update_success:
             return
         snapshot = self._updater.snapshot
+        sequence = getattr(self._updater, "poll_sequence", None)
+        repeated = sequence is not None and sequence == self._last_poll_sequence
+        self._last_poll_sequence = sequence
         for policy in POLICIES:
+            # Firmware discovery can resolve a fault on an already seen sample.
+            if repeated and not matching_firmware_fault(policy, snapshot):
+                continue
             self._process_policy(policy, self._states[policy.key], snapshot)
 
     def _process_policy(

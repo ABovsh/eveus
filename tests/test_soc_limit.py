@@ -1441,3 +1441,24 @@ def test_failed_higher_stop_keeps_the_confirmed_target_bound_to_its_plug_cycle()
     _confirm(updater, state=3)
     ctrl.process()
     assert [data["target_soc"] for _, data in events] == [80, 80]
+
+
+def test_soc_latch_rearms_on_unplug_without_a_master_reading():
+    updater = _updater(session_energy=30.0)
+    updater.data["sessionTime"] = 400
+    controller, _, events = _make(_calc(), updater)
+    controller.set_enabled(True)
+    controller.process()
+    _confirm(updater)
+    controller.process()
+    assert len(events) == 1
+
+    updater.data = {"state": 2, "sessionEnergy": 0, "sessionTime": 0, "evseEnabled": 0}
+    controller.process()
+    # The counters of the first active poll are already above the old anchors.
+    updater.data = {
+        "state": 4, "sessionEnergy": 31.0, "sessionTime": 500,
+        "evseEnabled": 0, "suspendLimits": 0,
+    }
+    controller.process()
+    assert updater.send_command.await_count == 2

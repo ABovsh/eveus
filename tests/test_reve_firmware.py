@@ -1067,8 +1067,9 @@ def test_reve_stop_and_resume_go_through_the_charging_command(monkeypatch: pytes
     assert asyncio.run(updater._command_manager.send_command("evseEnabled", 1)) is True
     assert asyncio.run(updater._command_manager.send_command("evseEnabled", 0)) is True
 
-    assert charger.paths() == ["/graphql", "/graphql"]
-    stop, resume = (body["variables"] for _, body in charger.calls)
+    assert charger.paths() == ["/graphql", "/graphql", "/graphql"]
+    assert charger.calls[1][1]["query"] == reve.CHARGING_COMMAND_QUERY
+    stop, resume = (charger.calls[i][1]["variables"] for i in (0, 2))
     assert stop == {"input": {"chargingCommand": 2}}
     assert resume == {"input": {"chargingCommand": 1}}
 

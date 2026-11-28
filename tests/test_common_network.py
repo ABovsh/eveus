@@ -2662,7 +2662,8 @@ async def test_definitive_init_restores_modern_state_and_events(monkeypatch, ini
     assert [event for event, _ in bus.fired].count(common_network.EVENT_CHARGING_STARTED) == 1
 
 
-async def test_three_init_timeouts_restore_modern_state_until_positive_legacy_proof(monkeypatch):
+@pytest.mark.parametrize("pilot", [3, 4], ids=["charging-pilot", "legacy-fault-pilot"])
+async def test_three_init_timeouts_restore_only_uncontradicted_modern_state(monkeypatch, pilot):
     from custom_components.eveus.sensor_definitions import get_charger_state
 
     hass = _TaskHass()
@@ -2697,10 +2698,14 @@ async def test_three_init_timeouts_restore_modern_state_until_positive_legacy_pr
     assert get_charger_state(updater, None) == "Standby", "three /init timeouts left the State unknown"
     assert not hass.bus.fired
 
-    main.update(state=4, pilot=4)
+    main.update(state=4, pilot=pilot)
     updater.data = await updater._async_update_data()
-    assert get_charger_state(updater, None) == "Charging"
-    assert (common_network.EVENT_CHARGING_STARTED, {"device_number": 1}) in hass.bus.fired
+    if pilot == 4:
+        assert get_charger_state(updater, None) is None, "a possible pilot fault was published"
+        assert not hass.bus.fired
+    else:
+        assert get_charger_state(updater, None) == "Charging"
+        assert (common_network.EVENT_CHARGING_STARTED, {"device_number": 1}) in hass.bus.fired
     hass.bus.fired.clear()
 
     clock = 1900.0
@@ -2710,6 +2715,14 @@ async def test_three_init_timeouts_restore_modern_state_until_positive_legacy_pr
     assert attempts == [1000.0, 1300.0, 1600.0, 1900.0]
     assert get_charger_state(updater, None) == "Error"
     assert not hass.bus.fired
+
+    main.update(state=3, verFWMain="R3.05.8")
+    updater.data = await updater._async_update_data()
+    hass.bus.fired.clear()
+    main.update(state=4, pilot=4)
+    updater.data = await updater._async_update_data()
+    assert get_charger_state(updater, None) == "Charging"
+    assert (common_network.EVENT_CHARGING_STARTED, {"device_number": 1}) in hass.bus.fired
 
 
 def test_fw133_stop_without_a_pilot_keeps_the_car(coordinator, fw133_main):
@@ -3392,3 +3405,66 @@ def test_1x_second_minimum_voltage_write_during_init_also_beats_the_stale_reply(
     monkeypatch.setattr(updater, "async_update_listeners", lambda: None)
     asyncio.run(updater.async_maybe_fetch_init_firmware())
     assert updater._legacy_min_voltage != 175
+
+
+async def test_legacy_tariff_stays_held_during_recovery_probe_backoff(monkeypatch):
+    updater, replies, _ = _gap_harness(monkeypatch)
+    now = 1000.0
+    monkeypatch.setattr(common_network, "time", SimpleNamespace(
+        monotonic=lambda: now, time=lambda: now,
+    ))
+    replies["/init"]["ESP_SW_version"] = 133
+    replies["/main"]["tarif"] = 4.32
+    await _confirm_then_gap(updater, replies)
+
+    now = 1060.0
+    replies["/init"] = TimeoutError()
+    replies["/main"]["tarif"] = 464  # 1.55 reports cents.
+    updater.data = await updater._async_update_data()
+    await updater._init_fw_task
+    assert updater.snapshot.get("tarif") == 432
+
+    now = 1120.0
+    updater.data = await updater._async_update_data()
+    assert updater.snapshot.get("tarif") == 432, "the new tariff used the old firmware scale"
+
+    now = 1360.0
+    replies["/init"] = {"ESP_SW_version": 155}
+    updater.data = await updater._async_update_data()
+    await updater._init_fw_task
+    assert updater.snapshot.get("tarif") == 464
+
+
+@pytest.mark.parametrize("unauthorized", [True, False], ids=["401", "success"])
+async def test_force_refresh_discards_a_reply_during_ha_shutdown(monkeypatch, tmp_path, unauthorized):
+    from homeassistant.core import CoreState
+
+    hass = HomeAssistant(str(tmp_path))
+    hass.set_state(CoreState.running)
+    entry = SimpleNamespace(
+        entry_id="charger", async_on_unload=Mock(), async_start_reauth=Mock(),
+    )
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass, config_entry=entry)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_reply(_session, _url, *, on_unauthorized, **_kwargs):
+        entered.set()
+        await release.wait()
+        if unauthorized:
+            on_unauthorized()
+        return {"state": 2, "currentSet": 16, "verFWMain": "R3.05.8"}
+
+    monkeypatch.setattr(updater, "get_session", lambda: None)
+    monkeypatch.setattr(common_network, "fetch_json", delayed_reply)
+    refresh = asyncio.create_task(updater.async_force_refresh())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        hass.set_state(CoreState.stopping)
+    finally:
+        release.set()
+        await asyncio.gather(refresh, return_exceptions=True)
+
+    entry.async_start_reauth.assert_not_called()
+    assert updater.data is None
+    assert updater.snapshot.known_state is None
+    assert not updater._grace_timer_unsubs
