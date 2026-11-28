@@ -2657,6 +2657,8 @@ async def test_definitive_init_restores_modern_state_and_events(monkeypatch, ini
     updater.data = await updater._async_update_data()
     assert get_charger_state(updater, None) == "Connected"
     main["state"] = 4
+    if init_reply == {"MCU_SW_version": 300}:
+        main["pilot"] = 4
     updater.data = await updater._async_update_data()
     assert get_charger_state(updater, None) == "Charging"
     assert [event for event, _ in bus.fired].count(common_network.EVENT_CHARGING_STARTED) == 1
@@ -3468,3 +3470,33 @@ async def test_force_refresh_discards_a_reply_during_ha_shutdown(monkeypatch, tm
     assert updater.data is None
     assert updater.snapshot.known_state is None
     assert not updater._grace_timer_unsubs
+
+
+async def test_legacy_tariff_hold_expires_when_init_keeps_returning_404(monkeypatch):
+    updater, replies, calls = _gap_harness(monkeypatch)
+    now = 1000.0
+    monkeypatch.setattr(common_network, "time", SimpleNamespace(
+        monotonic=lambda: now, time=lambda: now,
+    ))
+    replies["/init"]["ESP_SW_version"] = 133
+    replies["/main"]["tarif"] = 4.32
+    await _confirm_then_gap(updater, replies)
+
+    now = 1001.0
+    replies["/init"] = common_network.aiohttp.ClientResponseError(None, (), status=404)
+    replies["/main"]["tarif"] = 5
+    updater.data = await updater._async_update_data()
+    await updater._init_fw_task
+    assert updater.snapshot.get("tarif") == 432
+
+    now = 1301.0
+    replies["/main"]["tarif"] = 6
+    updater.data = await updater._async_update_data()
+    await updater._init_fw_task
+    assert len(calls) == 3
+    assert updater.available
+    assert updater.snapshot.get("tarif") is None, "the pre-outage tariff stayed current"
+
+    replies["/main"]["tarif"] = 6.25  # Fractional currency units identify their own scale.
+    updater.data = await updater._async_update_data()
+    assert updater.snapshot.get("tarif") == 625

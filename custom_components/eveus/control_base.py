@@ -133,6 +133,8 @@ class CommandBackedEntity(OptimisticControlMixin[T], BaseEveusEntity, Generic[T]
             if not success and still_valid is not None and not still_valid():
                 raise HomeAssistantError(stale_message)
             if not success:
+                if getattr(self._updater, "last_command_failure", None) == REVE_RELEASE_PARTIAL:
+                    self._set_optimistic_value(accepted)
                 raise command_failure(self._updater, rejected_message)
             self._set_optimistic_value(accepted)
         except (HomeAssistantError, ConfigEntryAuthFailed):

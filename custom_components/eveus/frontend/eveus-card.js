@@ -193,7 +193,7 @@ const I18N = {
     faultHints: {cool: 'wait for it to cool', voltage: 'wait for the mains voltage to return to normal',
       leak: 'unplug the car and plug it in again; if it repeats, call an electrician', ground: 'check the earthing',
       overcurrent: 'lower the charging current', pilot: 'check the cable and the plug', service: 'restart the charger; if it repeats, contact service'},
-    noneOn: 'none on', lockedIdle: 'change while charging', lockedIdleNote: 'REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it', lockedManual: 'manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
+    noneOn: 'none on', lockedIdle: 'change while charging', lockedIdleNote: 'REVE keeps the Energy, Time and Cost limits only for the current charge: change them while the car is charging or a limit has stopped it. Target SOC works at any time', lockedManual: 'manual mode', of: (a, b) => `${a} of ${b} A`, slowAdaptive: 'adaptive mode', slowSchedule: (n) => `Schedule ${n} limit`,
     slowCar: 'the car takes less', until: 'until', since: 'since', at: 'at', yesterday: 'yesterday',
     planUpTo: (n) => `Schedule ${n}: up to`, planEnough: (n) => `Schedule ${n}: enough for`,
     planTitle: 'What the next schedule can add at the set current and today\'s voltage (adaptive mode may slow it down)',
@@ -265,7 +265,7 @@ const I18N = {
     faultHints: {cool: 'зачекайте, поки охолоне', voltage: 'зачекайте, поки напруга мережі повернеться в норму',
       leak: 'відключіть і знову підключіть авто; якщо повторюється — зверніться до електрика', ground: 'перевірте заземлення',
       overcurrent: 'зменште струм заряджання', pilot: 'перевірте кабель і конектор', service: 'перезапустіть станцію; якщо повторюється — зверніться до сервісу'},
-    noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedIdleNote: 'REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт', lockedManual: 'ручний режим', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
+    noneOn: 'усі вимкнено', lockedIdle: 'змінюються під час заряджання', lockedIdleNote: 'REVE зберігає ліміти енергії, часу й вартості лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт. Target SOC діє завжди', lockedManual: 'ручний режим', of: (a, b) => `${a} з ${b} A`, slowAdaptive: 'адаптивний режим', slowSchedule: (n) => `ліміт розкладу ${n}`,
     slowCar: 'авто приймає менше', until: 'до', since: 'з', at: 'о', yesterday: 'вчора',
     planUpTo: (n) => `Розклад ${n}: до`, planEnough: (n) => `Розклад ${n}: достатньо для`,
     planTitle: 'Скільки може додати наступний розклад за заданого струму й поточної напруги (адаптивний режим може сповільнити)',
@@ -979,12 +979,10 @@ class EveusCard extends HTMLElement {
     if (!['limit_disable_all', 'limit_energy_enabled', 'limit_time_enabled', 'limit_cost_enabled', 'limit_soc_enabled'].some((key) => this._ids?.[key])) return `<div class="message">${t.none.limits}</div>`;
     const suspended = this._limitOn('limit_disable_all');
     const items = [];
-    // One Target SOC editor per card: when Advanced controls shows it, this tile keeps only the stop switch.
-    const targetOwned = this._advanced && this._config.sections.includes('advanced_controls');
-    // SOC is an Advanced-mode feature: Basic keeps Energy, Time and Cost only.
-    if (this._advanced && this._ids.limit_soc_enabled && this._ids.target_soc && this._shows('limits', 'soc')) items.push(targetOwned
-      ? {key:'target_soc',toggle:'limit_soc_enabled',label:t.soc,fallbackUnit:'%',readonly:true}
-      : {key:'target_soc',toggle:'limit_soc_enabled',label:t.soc,fallbackUnit:'%'});
+    // SOC is an Advanced-mode feature: Basic keeps Energy, Time and Cost only. Target SOC is the
+    // integration's own limit, so it stays editable here even when Advanced controls shows it too.
+    if (this._advanced && this._ids.limit_soc_enabled && this._ids.target_soc && this._shows('limits', 'soc')) items.push(
+      {key:'target_soc',toggle:'limit_soc_enabled',label:t.soc,fallbackUnit:'%'});
     items.push(
       ...[
         {key:'limit_energy',toggle:'limit_energy_enabled',label:t.energy,fallbackUnit:'kWh',item:'energy'},
@@ -1002,7 +1000,8 @@ class EveusCard extends HTMLElement {
     // REVE takes a limit only while charging outside manual mode, so its limits are locked otherwise and a
     // note under the title says why and until when; a folded row keeps a short form with the full text as a tooltip.
     const manualLock = !suspended && this._manualMode;
-    const idleLock = !suspended && !this._ignoring && this._limitsLocked;
+    // Target SOC is never locked, so the idle lock (and its note) concerns only the charger's own limits.
+    const idleLock = !suspended && !this._ignoring && this._limitsLocked && items.some((item) => item.key !== 'target_soc');
     const shortNote = (text, title) => `<small class="limits-note" title="${title}">${text}</small>`;
     const note = suspended ? ''
       : closed && manualLock ? shortNote(t.lockedManual, t.manualOverrides.limits) + this._overrideFlag('limits')

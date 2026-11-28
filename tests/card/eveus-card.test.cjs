@@ -741,11 +741,11 @@ test('SOC settings: four number tiles with steppers and tap-to-edit, using entit
   await card._stepLimit('target_soc',1);
   assert.equal(calls.at(-1)[2].value,80);
 });
-test('Limits SOC tile turns read-only "To target" when SOC settings own the Target SOC editor',()=>{
+test('Limits SOC tile stays editable next to SOC settings: Target SOC is the integration\'s own limit',()=>{
   const both=setupAll({sections:['limits','advanced_controls']}).html();
   const limits=both.slice(0,both.indexOf('aria-label="Advanced controls"'));
-  assert.match(limits,/limit-value readonly/);
-  assert.doesNotMatch(limits,/data-limit-step="target_soc"/);
+  assert.doesNotMatch(limits,/limit-value readonly/);
+  assert.match(limits,/data-limit-step="target_soc"/);
   assert.match(limits,/data-limit-toggle="limit_soc_enabled"/);
   const alone=setupAll({sections:['limits']}).html();
   assert.match(alone,/data-limit-step="target_soc"/);
@@ -2107,18 +2107,23 @@ const ENERGY_OFF = {limit_energy_enabled:['switch.lee','off']};
 const LOCKED = (h, key) => /disabled/.test(h.match(new RegExp(`data-limit-toggle="${key}_enabled"[^>]*>`))[0])
   && [`data-limit-step="${key}" data-dir="-1"`, `data-limit-edit-trigger="${key}"`, `data-limit-step="${key}" data-dir="1"`]
     .every((attr) => /disabled/.test(h.match(new RegExp(`${attr}[^>]*>`))[0]));
-const IDLE_NOTE = /<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"><\/ha-icon><span>REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it<\/span><\/div>/;
+const IDLE_NOTE = /<div class="override quiet" role="note"><ha-icon icon="mdi:lock-clock"><\/ha-icon><span>REVE keeps the Energy, Time and Cost limits only for the current charge: change them while the car is charging or a limit has stopped it. Target SOC works at any time<\/span><\/div>/;
 const MANUAL_NOTE = /<div class="override" role="note"><ha-icon icon="mdi:hand-back-right"><\/ha-icon><span>REVE manual mode ignores the limits until the connector is replugged; they can be changed after that<\/span><\/div>/;
 test('REVE idle: the charger limits are locked, Target SOC is not, and a note says why and when they work', () => {
   const h = setupAll({sections:['limits'], charging:false, over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
   assert.match(h, IDLE_NOTE);
   for (const key of ['limit_energy', 'limit_time', 'limit_cost']) assert.ok(LOCKED(h, key), key);
   assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled|data-limit-step="target_soc"[^>]*disabled/, 'Target SOC is stopped by Home Assistant');
-  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /REVE зберігає ліміти лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт/);
+  assert.match(setupAll({sections:['limits'], charging:false, locale:'uk', over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html(), /REVE зберігає ліміти енергії, часу й вартості лише для поточного заряджання: змінюйте їх, поки авто заряджається або коли заряджання зупинив ліміт. Target SOC діє завжди/);
+});
+test('REVE idle with only Target SOC shown: nothing is locked, so no lock note', () => {
+  const h = setupAll({sections:['limits'], charging:false, hide:['limits.energy','limits.time','limits.cost'], over:{...MANUAL('off'), ...ENERGY_OFF, limit_soc_enabled:['switch.socen','off']}}).html();
+  assert.doesNotMatch(h, /mdi:lock-clock/);
+  assert.doesNotMatch(h, /data-limit-toggle="limit_soc_enabled"[^>]*disabled|data-limit-step="target_soc"[^>]*disabled/);
 });
 test('REVE idle, folded: the row says briefly when the limits work', () => {
   const h = setupAll({sections:['limits'], fold:true, charging:false, over:{...MANUAL('off'), ...ENERGY_OFF}}).html();
-  assert.match(h, /<small class="limits-note" title="REVE keeps limits only for the current charge: change them while the car is charging or a limit has stopped it">change while charging<\/small>/);
+  assert.match(h, /<small class="limits-note" title="REVE keeps the Energy, Time and Cost limits only for the current charge: change them while the car is charging or a limit has stopped it. Target SOC works at any time">change while charging<\/small>/);
   assert.doesNotMatch(h, /class="override/);
 });
 test('REVE: a limit that is on is locked outside a charge too, and the note says why', () => {

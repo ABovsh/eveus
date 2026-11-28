@@ -241,6 +241,7 @@ _LEGACY_INIT_VERSION_LIMIT: Final = 200
 # /init is the only proof of 1.x: a transient failure is retried this much later.
 _INIT_RETRY_SECONDS: Final = 300
 _MANUAL_MODE_STORAGE_KEY: Final = "manual_mode_started_at"
+_R3018_WIFI_STORAGE_KEY: Final = "r3018_wifi_host"
 # Stop deferring state interpretation after this many failed discovery attempts.
 _INIT_STATE_DEFER_ATTEMPTS: Final = 3
 # Pre-R3 Minimum voltage is readable only from /init; a change made on the
@@ -304,6 +305,15 @@ def _possible_legacy_pilot_fault(data: dict[str, Any]) -> bool:
     """A matching D, E or F pilot corroborates the legacy fault code."""
     state = get_safe_value(data, "state", int)
     return state in (4, 5, 6) and get_safe_value(data, "pilot", int) == state
+
+
+def _has_fractional_legacy_tariff(data: dict[str, Any]) -> bool:
+    return any(
+        isinstance(value := data.get(key), float)
+        and isfinite(value)
+        and not value.is_integer()
+        for key in _LEGACY_TARIFF_PRICE_KEYS
+    )
 
 
 def _modern_payload(data: dict[str, Any]) -> bool:
@@ -426,7 +436,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._init_fw_lock = asyncio.Lock()
         self._init_fw_failures = 0
         self._init_fw_task: asyncio.Task | None = None
-        self._refresh_legacy_init = False  # pragma: no mutate - False vs None is not observable: only read for truthiness
+        self._legacy_tariff_hold_until: float | None = None
         self._legacy_init_read_at: float | None = None
         self._legacy_min_voltage: int | None = None
         self._legacy_raw_main: dict[str, Any] | None = None
@@ -471,7 +481,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._reve = ReveApi(self)
         self._reve.on_limit_values_changed = self._save_reve_limits
         self._limit_store: Store | None = None
-        self._limits_saved: dict[str, int | float] = {}  # pragma: no mutate - async_load_reve_limits sets it before any save or flush can pass the store check
+        self._limits_saved: dict[str, int | float | str] = {}  # pragma: no mutate - async_load_reve_limits sets it before any save or flush can pass the store check
         self._limits_save_pending = False
         self._manual_mode_loaded = False
         self._last_session_lock = asyncio.Lock()
@@ -625,23 +635,28 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._reve.seed_limit_values(saved)
         self._limits_saved = self._reve.limit_values()
+        if isinstance(saved, dict) and saved.get(_R3018_WIFI_STORAGE_KEY) == self.host:
+            self.wifi_firmware = "R3.01.8"
+            self._limits_saved[_R3018_WIFI_STORAGE_KEY] = self.host
         started_at = saved.get(_MANUAL_MODE_STORAGE_KEY) if isinstance(saved, dict) else None
         now = time.time()
         if type(started_at) in (int, float) and 0 <= started_at <= now:
             self._manual_mode_loaded = True
             self._limits_saved[_MANUAL_MODE_STORAGE_KEY] = started_at
             if started_at > 0:
-                self._reve.manual_mode.restore(now - started_at)
+                self._reve.manual_mode.restore_started_at(started_at, now=now)
 
-    def _reve_storage_values(self) -> dict[str, int | float]:
-        values = self._reve.limit_values()
+    def _reve_storage_values(self) -> dict[str, int | float | str]:
+        values: dict[str, int | float | str] = dict(self._reve.limit_values())
+        if self.wifi_firmware == "R3.01.8":
+            values[_R3018_WIFI_STORAGE_KEY] = self.host
         started_at = self._reve.manual_mode.started_at
         if started_at is not None or _MANUAL_MODE_STORAGE_KEY in self._limits_saved:
             values[_MANUAL_MODE_STORAGE_KEY] = started_at or 0
         return values
 
     def _save_reve_limits(self) -> None:
-        """Save changed limit values or a changed Manual Mode latch."""
+        """Save changed charger settings or the Wi-Fi write profile."""
         store = self._limit_store
         if store is None or self._shutting_down:
             return
@@ -651,7 +666,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._limits_saved = values
         self._limits_save_pending = True
 
-        def written() -> dict[str, int | float]:
+        def written() -> dict[str, int | float | str]:
             # Called as the delayed save writes: nothing is pending after it.
             if self._limits_saved is values:
                 self._limits_save_pending = False
@@ -679,7 +694,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             self._limits_saved = values
             self._limits_save_pending = False
 
-    async def _persist_meter_reset(self) -> None:
+    async def _persist_meter_reset(self, baseline: dict[str, float]) -> None:
         """Write an accepted reset to storage now, before this poll publishes it.
 
         A meter lower than its saved reading is a reset (from Home Assistant
@@ -691,7 +706,6 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         store = self._meter_store
         if store is None or self._shutting_down:
             return
-        baseline = self._meter_guard.baseline()
         saved = self._meter_saved
         if not any(key in saved and value < saved[key] for key, value in baseline.items()):
             return
@@ -836,8 +850,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         auth rejection, which deliberately skips the connectivity accounting but
         is just as much a gap in the event stream.
         """
-        if self.is_legacy_firmware:
-            self._refresh_legacy_init = True
+        if self.is_legacy_firmware and self._legacy_tariff_hold_until is None:
+            self._legacy_tariff_hold_until = time.monotonic() + _INIT_RETRY_SECONDS
         self._meter_guard.forget_pending_drops()
         self._reset_legacy_charging_latch()
         self._legacy_car_present = None  # pragma: no mutate - read only through `is True`, so any falsy reset is the same
@@ -1693,11 +1707,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             data.pop("minVoltage", None)
         # Older firmware sends currency units, including whole prices as ints.
         # A fractional price also identifies currency units for future polls.
-        self._legacy_fractional_tariff_seen = self._legacy_fractional_tariff_seen or any(
-            isinstance(value := raw.get(key), float)
-            and isfinite(value)
-            and not value.is_integer()
-            for key in _LEGACY_TARIFF_PRICE_KEYS
+        self._legacy_fractional_tariff_seen = (
+            self._legacy_fractional_tariff_seen or _has_fractional_legacy_tariff(raw)
         )
         currency_units = self._legacy_fractional_tariff_seen or (
             self._init_fw_version is not None
@@ -1821,11 +1832,14 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         self._legacy_confirmed = (
             "ESP_SW_version" in init_data or raw_version < _LEGACY_INIT_VERSION_LIMIT
         )
+        if not self._legacy_confirmed and raw_version >= 300:
+            # An MCU-only 3.x version also identifies the modern state map.
+            self._modern_firmware_seen = True
         if self._legacy_confirmed and min_voltage_write is self._legacy_min_voltage_write:
             min_voltage = get_safe_value(init_data, "minVoltage", int)
             self._legacy_min_voltage = min_voltage if str(min_voltage) in MIN_VOLTAGE_OPTIONS else None
         if reconnect:
-            self._refresh_legacy_init = False
+            self._legacy_tariff_hold_until = None
             self._publish_refreshed_legacy_state(previous_profile)
             return
         self._publish_resolved_init_state()
@@ -1871,7 +1885,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 self._normalize_legacy_controls(data, raw_state)
             self.data = data
-        elif _possible_legacy_pilot_fault(data) or not (
+        elif (not self._modern_firmware_seen and _possible_legacy_pilot_fault(data)) or not (
             state_needs_map and self._snapshot.raw is data and previous_state is None
         ):
             return
@@ -1956,8 +1970,9 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                     self.wifi_firmware = None
                 elif isinstance(wifi, str):
                     version = wifi.strip().rsplit("-", 1)[-1].upper()
-                    if re.fullmatch(r"R3\.\d+\.\d+", version):
+                    if re.fullmatch(r"R3\.\d+\.\d+", version) and version != self.wifi_firmware:
                         self.wifi_firmware = version
+                        self._save_reve_limits()
                 self._snapshot = EveusSnapshot.parse(
                     new_data, self._model, unsupported=unsupported,
                     informational=REVE_INFORMATIONAL_FIELDS if self._reve_seen else frozenset(),
@@ -2022,9 +2037,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         start = time.monotonic()
         try:
             measurements = await self._reve.read_measurements(self._validate)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
-            if isinstance(err, aiohttp.ClientResponseError) and err.status == 401:
-                self._reject_credentials()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             return None
         latency = time.monotonic() - start
         if self._reve.main_residue_due(measurements):
@@ -2116,7 +2129,7 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
         )
         if (
             legacy_reply and self._legacy_confirmed
-            and (self._refresh_legacy_init or self._legacy_init_due())
+            and (self._legacy_tariff_hold_until is not None or self._legacy_init_due())
             and (self._init_fw_retry_at is None or time.monotonic() >= self._init_fw_retry_at)
         ):
             self._start_init_firmware_probe(reconnect=True)
@@ -2127,23 +2140,8 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
                 or _possible_legacy_pilot_fault(new_data)
             )
         )
-        raw_legacy_main = None
-        if legacy_reply:
-            # Keep the inputs to legacy normalisation, with the meter guard's
-            # readings already applied so /init cannot replay a meter sample.
-            new_data = self._meter_guard.apply(new_data)
-            raw_legacy_main = dict(new_data)
-        new_data = self._normalize_legacy_device_state(
-            new_data, state_ambiguous=state_ambiguous,
-        )
-        if legacy_reply and self._refresh_legacy_init and self.data is not None:
-            # A firmware update during the gap can change the price units.
-            # Keep the previous prices until the recovery probe resolves the units.
-            for key in (*_LEGACY_TARIFF_PRICE_KEYS, "tarifAValue", "tarifBValue"):
-                if key in self.data:
-                    new_data[key] = self.data[key]
-                else:
-                    new_data.pop(key, None)
+        if not legacy_reply:
+            new_data = self._normalize_legacy_device_state(new_data)
         unsupported: frozenset[str] = frozenset()
         if from_graphql or self._reve_seen or is_reve_payload(new_data):
             if not from_graphql:
@@ -2162,10 +2160,34 @@ class EveusUpdater(DataUpdateCoordinator[dict[str, Any]]):
             if leakage is not None:
                 new_data[LEAKAGE_KEY] = leakage
                 unsupported = unsupported - {LEAKAGE_KEY}
-            self._reve.manual_mode.observe(new_data)
-        if not legacy_reply:
-            new_data = self._meter_guard.apply(new_data)
-        await self._persist_meter_reset()
+            self._reve.manual_mode.observe(
+                new_data, charging_command=self._reve.measured_charging_command,
+            )
+        if self._poll_stopping:
+            raise asyncio.CancelledError
+        raw_legacy_main = None
+        with self._meter_guard.stage() as meters:
+            new_data = meters.apply(new_data)
+            if legacy_reply:
+                # Keep the guarded readings so /init cannot replay a meter sample.
+                raw_legacy_main = dict(new_data)
+                new_data = self._normalize_legacy_device_state(
+                    new_data, state_ambiguous=state_ambiguous,
+                )
+                if (
+                    self._legacy_tariff_hold_until is not None
+                    and not _has_fractional_legacy_tariff(raw_legacy_main)
+                ):
+                    # A firmware update during the gap can change the price units.
+                    fresh_enough = time.monotonic() < self._legacy_tariff_hold_until
+                    for key in (*_LEGACY_TARIFF_PRICE_KEYS, "tarifAValue", "tarifBValue"):
+                        if fresh_enough and self.data is not None and key in self.data:
+                            new_data[key] = self.data[key]
+                        else:
+                            new_data.pop(key, None)
+            await self._persist_meter_reset(meters.baseline())
+            if self._poll_stopping:
+                raise asyncio.CancelledError
         self._save_meter_baseline()
         self._legacy_raw_main = raw_legacy_main
         return new_data, response_time, unsupported, state_ambiguous

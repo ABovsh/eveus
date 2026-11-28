@@ -18,14 +18,16 @@ poll itself.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 import time
 from typing import Any, Final
 
-from .const import MAX_COST_VALUE, MAX_ENERGY_KWH
+from .const import MAX_COST_VALUE, MAX_ENERGY_KWH, OFFLINE_UPDATE_INTERVAL
 
 METER_DROP_CONFIRM_POLLS: Final = 3
-_RESET_CONFIRM_SECONDS: Final = 60
+# Allow a missed offline refresh and its next retry, with a hard expiry.
+_RESET_CONFIRM_SECONDS: Final = 2 * OFFLINE_UPDATE_INTERVAL
 METER_STORE_VERSION: Final = 1
 # The readings are saved when they changed and this long has passed since the
 # last save: a baseline a little behind is as good against a dip to zero.
@@ -68,6 +70,24 @@ class MeterGuard:
     def baseline(self) -> dict[str, float]:
         """The last accepted reading of each meter seen so far."""
         return dict(self._accepted)
+
+    @contextmanager
+    def stage(self) -> Iterator[MeterGuard]:
+        """Keep the published readings until the poll can commit."""
+        staged = MeterGuard()
+        staged._accepted = self._accepted.copy()
+        staged._drops = self._drops.copy()
+        previous_resets = self._resets.copy()
+        staged._resets = previous_resets.copy()
+        yield staged
+
+        self._accepted = staged._accepted
+        self._drops = staged._drops
+        # Keep commands acknowledged while the poll waited for storage.
+        self._resets = staged._resets | {
+            key: deadline for key, deadline in self._resets.items()
+            if previous_resets.get(key) is not deadline
+        }
 
     def seed(self, saved: Any) -> None:
         """Take the readings a previous run saved, for the meters not yet seen.

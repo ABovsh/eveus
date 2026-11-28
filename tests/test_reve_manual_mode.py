@@ -17,7 +17,7 @@ from test_reve_graphql_writes import _WritableCharger, _known, _send
 
 
 def _payload(**fields: Any) -> dict[str, Any]:
-    return {"state": 4, "sessionTime": 100, "oneCharge": 0, "evseEnabled": 0, **fields}
+    return {"state": 4, "sessionTime": 100, **fields}
 
 
 def test_a_session_starts_in_normal_mode() -> None:
@@ -26,16 +26,16 @@ def test_a_session_starts_in_normal_mode() -> None:
     assert manual.on is False
 
 
-@pytest.mark.parametrize("field", ["oneCharge", "evseEnabled"])
-def test_charge_now_or_stop_latches_manual_mode(field: str) -> None:
+@pytest.mark.parametrize("command", [reve._COMMAND_CHARGE_NOW, reve._COMMAND_STOP])
+def test_charge_now_or_stop_latches_manual_mode(command: int) -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(**{field: 1}))
+    manual.observe(_payload(), charging_command=command)
     assert manual.on is True
 
 
 def test_releasing_the_command_does_not_leave_manual_mode() -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(oneCharge=1))
+    manual.observe(_payload(), charging_command=reve._COMMAND_CHARGE_NOW)
     manual.observe(_payload(sessionTime=160))
     assert manual.on is True
 
@@ -43,7 +43,7 @@ def test_releasing_the_command_does_not_leave_manual_mode() -> None:
 @pytest.mark.parametrize("state", [3, 4, 5, 6, 7])
 def test_manual_mode_lasts_through_every_state_with_the_car_plugged_in(state: int) -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(oneCharge=1))
+    manual.observe(_payload(), charging_command=reve._COMMAND_CHARGE_NOW)
     manual.observe(_payload(state=state, sessionTime=160))
     assert manual.on is True
 
@@ -51,14 +51,14 @@ def test_manual_mode_lasts_through_every_state_with_the_car_plugged_in(state: in
 @pytest.mark.parametrize("state", [0, 1, 2])
 def test_unplugging_the_car_ends_manual_mode(state: int) -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(oneCharge=1))
+    manual.observe(_payload(), charging_command=reve._COMMAND_CHARGE_NOW)
     manual.observe(_payload(state=state, sessionTime=0))
     assert manual.on is False
 
 
 def test_a_command_seen_while_unplugged_does_not_latch() -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(state=2, evseEnabled=1))
+    manual.observe(_payload(state=2), charging_command=reve._COMMAND_STOP)
     assert manual.on is False
 
 
@@ -66,14 +66,14 @@ def test_session_counters_starting_over_end_manual_mode() -> None:
     # A station restart under a plugged-in car: sessionTime goes back to 0
     # and chargingCommand to 1; the station is in normal mode again.
     manual = reve.ManualMode()
-    manual.observe(_payload(oneCharge=1, sessionTime=2000))
+    manual.observe(_payload(sessionTime=2000), charging_command=reve._COMMAND_CHARGE_NOW)
     manual.observe(_payload(sessionTime=5))
     assert manual.on is False
 
 
 def test_a_missing_session_time_or_state_changes_nothing() -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(oneCharge=1))
+    manual.observe(_payload(), charging_command=reve._COMMAND_CHARGE_NOW)
     manual.observe({})
     manual.observe({"sessionTime": None, "state": None})
     assert manual.on is True
@@ -81,7 +81,7 @@ def test_a_missing_session_time_or_state_changes_nothing() -> None:
 
 def test_the_next_session_starts_clean_after_an_unplug() -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(evseEnabled=1, sessionTime=900))
+    manual.observe(_payload(sessionTime=900), charging_command=reve._COMMAND_STOP)
     manual.observe(_payload(state=2, sessionTime=0))
     manual.observe(_payload(state=3, sessionTime=0))
     manual.observe(_payload(sessionTime=30))
@@ -255,9 +255,9 @@ def test_a_restore_exactly_at_the_slack_is_kept() -> None:
 
 def test_the_station_flag_overrides_the_latch_both_ways() -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(evseEnabled=1))
+    manual.observe(_payload(), charging_command=reve._COMMAND_STOP)
     manual.report(False)
-    manual.observe(_payload(evseEnabled=1))
+    manual.observe(_payload(), charging_command=reve._COMMAND_STOP)
     assert manual.on is False, "the station says it left manual mode"
     manual.report(True)
     manual.observe(_payload())
@@ -267,7 +267,7 @@ def test_the_station_flag_overrides_the_latch_both_ways() -> None:
 def test_without_the_flag_the_latch_carries_on_from_the_last_flag() -> None:
     manual = reve.ManualMode()
     manual.report(False)
-    manual.observe(_payload(evseEnabled=1))
+    manual.observe(_payload(), charging_command=reve._COMMAND_STOP)
     manual.report(None)
     manual.observe(_payload(sessionTime=160))
     assert manual.on is False, "a /main poll keeps the station's last word"
@@ -276,7 +276,7 @@ def test_without_the_flag_the_latch_carries_on_from_the_last_flag() -> None:
 @pytest.mark.parametrize("value", [None, 0, 1, "true"])
 def test_anything_but_a_boolean_is_no_flag(value: Any) -> None:
     manual = reve.ManualMode()
-    manual.observe(_payload(oneCharge=1))
+    manual.observe(_payload(), charging_command=reve._COMMAND_CHARGE_NOW)
     manual.report(value)
     manual.observe(_payload(sessionTime=160))
     assert manual.on is True
@@ -436,3 +436,30 @@ def test_the_manual_mode_sensor_says_when_it_can_be_turned_off(monkeypatch: pyte
     sensor._handle_coordinator_update()
     assert sensor.extra_state_attributes == {"can_turn_off": True}
     assert writes[-1] == {"can_turn_off": True}, "the new attribute is written though the state stayed on"
+
+
+async def test_cached_stop_cannot_latch_manual_mode_after_main_replug(monkeypatch):
+    now = 1000.0
+    monkeypatch.setattr(reve.time, "monotonic", lambda: now)
+    charger = _WritableCharger(_reve_main())
+    charger.station.pop("chargingManualControl", None)
+    updater = _updater(monkeypatch, charger)
+    _plugged(charger)
+    charger.charging_command = 2
+    await updater._async_update_data()
+    assert updater.reve_manual_mode
+
+    charger.measurements_status = 503
+    charger.main["state"] = 2
+    await updater._async_update_data()
+    assert not updater.reve_manual_mode
+    charger.main["state"] = 4
+    await updater._async_update_data()
+
+    now += reve.MEASUREMENTS_RETRY_SECONDS
+    charger.measurements_status = 200
+    charger.charging_command = 1
+    _plugged(charger, session_time=60)
+    await updater._async_update_data()
+    assert not updater.reve_manual_mode, "the previous session's Stop latched Manual Mode again"
+    assert updater.command_refusal("energyLimit") is None

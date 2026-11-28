@@ -91,7 +91,9 @@ def test_reve_stop_release_retries_only_manual_mode_exit(monkeypatch, failures):
         )
         assert refreshes == [True]
         assert charger.charging_command == 1
+        assert stop.is_on is False
         assert charger.station["chargingManualControl"] is (failures == 3)
+        assert updater.reve_manual_mode is (failures == 3)
         if failures == 3:
             assert "released Stop" in str(error.value)
 
@@ -382,31 +384,121 @@ def test_reve_stop_off_preserves_one_charge_started_in_the_app(monkeypatch):
     assert charger.charging_command == 0
 
 
-def test_reve_stop_release_reports_partial_success_on_auth_failure(monkeypatch):
-    from homeassistant.exceptions import ConfigEntryAuthFailed
+def test_reve_soc_stop_retries_when_measurements_omit_the_command(monkeypatch):
+    from custom_components.eveus.reve import CHARGING_COMMAND_QUERY
 
     class Charger(_WritableCharger):
-        def post(self, url, **kwargs):
-            if url.endswith("/graphql"):
-                body = json.loads(kwargs["data"])
-                if body["variables"].get("input") == {"chargingManualControl": False}:
-                    self.calls.append(("/graphql", body))
-                    return _Response(401, {})
-            return super().post(url, **kwargs)
+        omit_command = False
+        command_reads = 0
 
-    monkeypatch.setattr("custom_components.eveus.reve.time.monotonic", lambda: 1000.0)
-    charger = Charger(_reve_main())
-    charger.charging_command = 2
-    charger.station["chargingManualControl"] = True
+        def post(self, url, **kwargs):
+            reply = super().post(url, **kwargs)
+            if not self.omit_command or not url.endswith("/graphql"):
+                return reply
+            query = json.loads(kwargs["data"])["query"]
+            if "measurements {" in query or query == CHARGING_COMMAND_QUERY:
+                data = json.loads(reply._body)
+                if query == CHARGING_COMMAND_QUERY:
+                    self.command_reads += 1
+                    if self.command_reads > 1:
+                        return reply
+                data["data"]["stationData"].pop("chargingCommand", None)
+                return _Response(200, data)
+            return reply
+
+    charger, updater = _known_charging(monkeypatch, Charger(_reve_main()))
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    events = []
+    controller = SocLimitController(
+        SimpleNamespace(async_create_task=asyncio.create_task, bus=SimpleNamespace(
+            async_fire=lambda name, payload: events.append(name),
+        )),
+        updater, _calc(target=20),
+    )
+    controller.set_enabled(True)
+
+    async def scenario():
+        controller.process()
+        await controller._stop_task
+        charger.charging_command = 1  # The station is still charging.
+        charger.omit_command = True
+        for _ in range(2):
+            await updater._async_update_data()
+            controller.process()
+            await controller._stop_task
+        assert _inputs(charger) == [{"chargingCommand": 2}] * 2
+        assert charger.command_reads == 2
+        assert events == []
+
+    asyncio.run(scenario())
+
+
+def test_reve_limit_acknowledgement_ends_on_a_main_unplug(monkeypatch):
+    charger = _WritableCharger(_reve_main())
+    charger.station["session"]["energyLimit"] = None
     charger, updater = _known_charging(monkeypatch, charger)
     monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
-    stop = BaseSwitchEntity(updater, SWITCH_DESCRIPTIONS[0])
-    monkeypatch.setattr(stop, "async_write_ha_state", lambda: None)
 
-    with pytest.raises(ConfigEntryAuthFailed) as error:
-        asyncio.run(stop.async_turn_off())
+    async def scenario():
+        assert await updater.send_command("energyLimit", 4000)
+        assert await updater.send_command("energyLimitS", 1)
+        assert _inputs(charger) == [{"session": {"energyLimit": 4000}}]
+        charger.station["session"]["energyLimit"] = None
+        charger.measurements_status = 503
+        charger.main.update(state=2, energyLimitS=0)
+        await updater._async_update_data()
+        charger.main["state"] = 4
+        await updater._async_update_data()
+        assert updater.snapshot.get_int("energyLimitS") == 0
 
-    assert _inputs(charger) == [{"chargingCommand": 1}, {"chargingManualControl": False}]
-    assert charger.charging_command == 1
-    assert "released Stop" in str(error.value)
-    assert "credentials" in str(error.value)
+        assert await updater.send_command("energyLimit", 30000)
+        assert _inputs(charger) == [{"session": {"energyLimit": 4000}}]
+
+    asyncio.run(scenario())
+
+
+def test_reve_soc_stop_confirmation_survives_an_unrelated_write(monkeypatch):
+    monkeypatch.setattr("custom_components.eveus.reve.time.monotonic", lambda: 1000.0)
+    charger, updater = _known_charging(monkeypatch)
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    events = []
+    controller = SocLimitController(
+        SimpleNamespace(async_create_task=asyncio.create_task, bus=SimpleNamespace(
+            async_fire=lambda name, payload: events.append(name),
+        )),
+        updater, _calc(target=20),
+    )
+    controller.set_enabled(True)
+
+    async def scenario():
+        controller.process()
+        await controller._stop_task
+        _plugged(charger, state=5, session_time=1)
+        entered, release = asyncio.Event(), asyncio.Event()
+        read_extras = updater._reve._read_extras
+
+        async def delayed_settings():
+            entered.set()
+            await release.wait()
+            return await read_extras()
+
+        updater._reve._settings_streak = 1
+        updater._reve._fetched_at = 0
+        monkeypatch.setattr(updater._reve, "_read_extras", delayed_settings)
+        poll = asyncio.create_task(updater._async_update_data())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            assert await updater.send_command("currentSet", 12)
+        finally:
+            release.set()
+            await poll
+        assert updater.snapshot.get_int("evseEnabled") == 1
+        controller.process()
+
+        charger.charging_command = 1
+        _plugged(charger, state=2, session_time=0)
+        await updater._async_update_data()
+        controller.process()
+        assert events == [EVENT_SOC_LIMIT_REACHED]
+
+    asyncio.run(scenario())

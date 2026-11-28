@@ -990,25 +990,27 @@ class ManualMode:
             self._reported = None
 
     def restore(self, on_for: float | None = None) -> None:
-        """Manual mode as it stood before Home Assistant restarted, ``on_for``
-        seconds ago, unless the station already shows it ended: the connector
-        is out, or the session is younger than manual mode (replugged while
-        Home Assistant was down)."""
+        """Restore the relative age from an older binary sensor state."""
+        if on_for is None:
+            if not self._unplugged and self._reported is None:
+                self._start()
+            return
+        now = time.time()
+        self.restore_started_at(now - max(0.0, on_for), now=now)
+
+    def restore_started_at(self, started_at: float, *, now: float) -> None:
+        """Keep the saved start time when it still belongs to this plug-in."""
         if self._unplugged or self._reported is not None:
             return
         session = self._session_time
-        if on_for is not None and session is not None and session + _RESTORE_SLACK_SECONDS < on_for:
+        if session is not None and session + _RESTORE_SLACK_SECONDS < now - started_at:
             return
-        if on_for is None:
-            self._start()
-            return
-        started_at = time.time() - max(0.0, on_for)
         if self._started_at is None or started_at < self._started_at:
             self._started_at = started_at
             self._restore_age_pending = session is None
 
-    def observe(self, payload: Mapping[str, Any]) -> None:
-        """One poll's normalized payload (Stop and One Charge read the command)."""
+    def observe(self, payload: Mapping[str, Any], *, charging_command: int | None = None) -> None:
+        """Reconcile the session and the charging command measured in this poll."""
         state = payload.get("state")
         self._unplugged = (
             type(state) is int and state not in CONNECTED_STATES and state not in PLUG_UNKNOWN_STATES
@@ -1033,11 +1035,7 @@ class ManualMode:
         if self._reported is False:
             self._started_at = None
             self._restore_age_pending = False
-        elif (
-            self._reported is True
-            or payload.get(ONE_CHARGE_COMMAND) == 1
-            or payload.get(STOP_COMMAND) == 1
-        ):
+        elif self._reported is True or charging_command in (_COMMAND_CHARGE_NOW, _COMMAND_STOP):
             self._start()
 
 
@@ -1136,7 +1134,9 @@ class ReveApi:
         self._write_epoch = 0  # pragma: no mutate - any start is equivalent: the epoch is only compared with itself
         self._writes_in_flight = 0
         self._measure_mark: int | None = None  # pragma: no mutate - any non-int start fails _read_current alike
-        self._measured_stop = False
+        self._charging_write: object | None = object()
+        self._measured_command_mark: object | None = None
+        self._measured_command: int | None = None
         self.manual_mode = ManualMode()
         self._station_system: dict[str, Any] = {}
         self._started_at: int | None = None
@@ -1223,6 +1223,7 @@ class ReveApi:
         did not fail."""
         with_settings = self._settings_streak == 0 and self._settings_due(time.monotonic())
         mark = self._measure_mark = self._read_mark()
+        self._measured_command_mark = self._charging_write
         self._leakage = None
         document = MEASUREMENTS_AND_SETTINGS_QUERY if with_settings else MEASUREMENTS_QUERY
         try:
@@ -1248,7 +1249,21 @@ class ReveApi:
         self._last_source = "graphql"
         current = self._read_current(mark)
         command = station.get("chargingCommand")
-        self._measured_stop = type(command) is int and command == _COMMAND_STOP
+        if type(command) is not int or command not in _CHARGING_COMMANDS:
+            command = None
+            # A cached Stop can outlive an accepted write that did not take
+            # effect. Ask for the missing flag when measurements show charging.
+            if (
+                main.get("state") in SESSION_ACTIVE_STATES
+                and self._extras is not None
+                and self._extras.charging_command == _COMMAND_STOP
+            ):
+                try:
+                    command = await self._fetch_charging_command()
+                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                    pass  # The measurements are still usable.
+                current = self._read_current(mark)
+        self._measured_command = command
         if extras is not None:
             self._store(extras if current else self._keep_written(extras))
         self._session = (
@@ -1308,10 +1323,13 @@ class ReveApi:
 
     def publish_limit_readback(self, payload: Mapping[str, Any]) -> None:
         """Retire acknowledged flags when their replacement becomes visible."""
+        if payload.get("state") == DEVICE_STATE_STANDBY:
+            self._written_limit_flags.clear()
+            return
         if self._last_source != "graphql" or not self._read_current(self._measure_mark):
             return
         for flag in tuple(self._written_limit_flags):
-            if flag in payload or payload.get("state") == DEVICE_STATE_STANDBY:
+            if flag in payload:
                 self._written_limit_flags.pop(flag)
 
     @property
@@ -1326,13 +1344,19 @@ class ReveApi:
         return self._last_source
 
     @property
-    def measured_stop(self) -> bool:
-        """Whether the current measurement read actually observed Stop."""
-        return (
+    def measured_charging_command(self) -> int | None:
+        """The command observed in this poll, while no charging write superseded it."""
+        if (
             self._last_source == "graphql"
-            and self._measured_stop
-            and self._read_current(self._measure_mark)
-        )
+            and self._measured_command_mark is not None
+            and self._measured_command_mark is self._charging_write
+        ):
+            return self._measured_command
+        return None
+
+    @property
+    def measured_stop(self) -> bool:
+        return self.measured_charging_command == _COMMAND_STOP
 
     def main_residue_due(self, measurements: Mapping[str, Any] | None = None) -> bool:
         """Whether a GraphQL poll should also read ``/main`` for its own fields:
@@ -1575,11 +1599,15 @@ class ReveApi:
         return None
 
     async def _read_charging_command(self) -> int:
+        command = await self._fetch_charging_command()
+        self._note_charging_command(command)
+        return command
+
+    async def _fetch_charging_command(self) -> int:
         station = await self._station(CHARGING_COMMAND_QUERY)
         command = station.get("chargingCommand")
         if type(command) is not int or command not in _CHARGING_COMMANDS:
             raise GraphQLError("REVE did not report the current charging command")
-        self._note_charging_command(command)
         return command
 
     async def _leave_manual_mode(self) -> None:
@@ -1594,7 +1622,11 @@ class ReveApi:
         self.manual_mode.left()
 
     async def _write_charging_command(self, command: int) -> None:
-        await self._mutate({"chargingCommand": command})
+        self._charging_write = None
+        try:
+            await self._mutate({"chargingCommand": command})
+        finally:
+            self._charging_write = object()
         self.manual_mode.command(command)
         extras = self._extras
         if extras is not None:

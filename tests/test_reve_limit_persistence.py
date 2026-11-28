@@ -316,3 +316,55 @@ def test_manual_mode_restores_without_adding_the_sensor(monkeypatch, session_tim
     _SharedStore.writes.clear()
     asyncio.run(restarted._async_update_data())
     assert _SharedStore.writes == [], "an unchanged latch was written again"
+
+
+async def test_r3018_write_scale_survives_entry_reload(monkeypatch):
+    from test_legacy_review_fixes import _number
+    from test_reve_firmware import _Charger, _classic_main
+
+    charger = _Charger({
+        **_classic_main(),
+        "verFWWifi": "GRW001A-R3.01.8",
+        "verFWMain": "GRM070A-R3.01.8",
+    })
+    updater = _entry_updater(monkeypatch, charger)
+    await updater.async_load_reve_limits()
+    await updater._async_update_data()
+    await updater.async_shutdown()
+
+    charger.main.pop("verFWWifi")
+    restarted = _entry_updater(monkeypatch, charger)
+    monkeypatch.setattr(restarted, "_schedule_post_command_refresh", lambda: None)
+    await restarted.async_load_reve_limits()
+    await restarted._async_update_data()
+    number = _number(restarted, "energyLimit")
+    await number.async_set_native_value(10)
+    assert charger.calls[-1] == ("/pageEvent", "pageevent=energyLimit&energyLimit=100")
+
+    charger.main["verFWWifi"] = "GRW001A-R3.05.8"
+    await restarted._async_update_data()
+    await number.async_set_native_value(12)
+    assert charger.calls[-1] == ("/pageEvent", "pageevent=energyLimit&energyLimit=12000")
+
+
+def test_restoring_the_manual_mode_timestamp_does_not_write_it_again(monkeypatch):
+    from test_reve_manual_mode import _plugged
+
+    charger, _ = _known_charging(monkeypatch)
+    charger.station.pop("chargingManualControl", None)
+    _plugged(charger, session_time=2400)
+    now = 1600.0
+
+    def advancing_wall_clock():
+        nonlocal now
+        now += 0.25
+        return now
+
+    monkeypatch.setattr("custom_components.eveus.reve.time.time", advancing_wall_clock)
+    store_key = "eveus_reve_limits_e1"
+    _SharedStore.files[store_key] = {"manual_mode_started_at": 1000.0}
+    restarted = _started(monkeypatch, charger)
+
+    assert restarted.reve_manual_mode
+    assert restarted._reve.manual_mode.started_at == 1000.0
+    assert _SharedStore.writes == []

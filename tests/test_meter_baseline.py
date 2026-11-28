@@ -382,9 +382,6 @@ def test_growth_still_waits_for_the_save_interval(monkeypatch: pytest.MonkeyPatc
 def test_a_reset_seen_while_shutting_down_is_not_written(monkeypatch) -> None:
     """Mutation round 4.31.0: an unloading entry writes no meter file; the
     reset is saved by the run that sees it next."""
-    import asyncio
-    from types import SimpleNamespace
-
     from custom_components.eveus.common_network import EveusUpdater
 
     saved: list[dict] = []
@@ -395,13 +392,12 @@ def test_a_reset_seen_while_shutting_down_is_not_written(monkeypatch) -> None:
 
     updater = EveusUpdater.__new__(EveusUpdater)
     updater._meter_store = _Store()
-    updater._meter_guard = SimpleNamespace(baseline=lambda: {"totalEnergy": 1.0})
     updater._meter_saved = {"totalEnergy": 500.0}
     updater._shutting_down = True
-    asyncio.run(updater._persist_meter_reset())
+    asyncio.run(updater._persist_meter_reset({"totalEnergy": 1.0}))
     assert saved == []
     updater._shutting_down = False
-    asyncio.run(updater._persist_meter_reset())
+    asyncio.run(updater._persist_meter_reset({"totalEnergy": 1.0}))
     assert saved == [{"totalEnergy": 1.0}]
 
 
@@ -422,3 +418,109 @@ async def test_acknowledged_reset_survives_a_stale_meter_poll(monkeypatch):
     assert updater.snapshot.get("IEM1") == 0
     assert updater.snapshot.get("IEM1_money") == 0
     assert _FakeStore.instances[-1].saves[-1]["IEM1"] == 0
+
+
+async def test_cancelled_reset_save_does_not_accept_the_meter_drop(monkeypatch):
+    monkeypatch.setattr(_FakeStore, "loaded", {"IEM1": 100})
+    charger = _Charger({**_classic_main(), "IEM1": 0})
+    updater = _updater(monkeypatch, charger)
+    await updater.async_load_meter_baseline()
+    for _ in range(2):
+        await updater._async_update_data()
+
+    store = _FakeStore.instances[-1]
+    entered = asyncio.Event()
+    save = store.async_save
+
+    async def wait_to_save(data):
+        entered.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(store, "async_save", wait_to_save)
+    poll = asyncio.create_task(updater._async_update_data())
+    await asyncio.wait_for(entered.wait(), 1)
+    poll.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await poll
+
+    assert updater.snapshot.get("IEM1") == 100
+    assert updater._meter_guard.baseline()["IEM1"] == 100
+    monkeypatch.setattr(store, "async_save", save)
+    for _ in range(2):
+        await updater._async_update_data()
+        assert updater.snapshot.get("IEM1") == 100
+    await updater._async_update_data()
+    assert updater.snapshot.get("IEM1") == 0
+
+
+async def test_shutdown_discards_a_late_meter_reset_before_storage(monkeypatch, tmp_path):
+    from homeassistant.core import CoreState, HomeAssistant
+
+    hass = HomeAssistant(str(tmp_path))
+    hass.set_state(CoreState.running)
+    entry = SimpleNamespace(entry_id="entry", async_on_unload=lambda callback: None)
+    updater = EveusUpdater(TEST_HOST, TEST_USERNAME, TEST_PASSWORD, hass, config_entry=entry)
+    monkeypatch.setattr(updater, "get_session", lambda: None)
+    monkeypatch.setattr(_FakeStore, "loaded", {"IEM1": 100})
+    await updater.async_load_meter_baseline()
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    wait = False
+
+    async def fetch(_session, _url, **_kwargs):
+        if wait:
+            entered.set()
+            await release.wait()
+        return {"state": 2, "currentSet": 16, "verFWMain": "R3.05.8", "IEM1": 0}
+
+    monkeypatch.setattr(common_network, "fetch_json", fetch)
+    for _ in range(2):
+        await updater._async_update_data()
+    wait = True
+    poll = asyncio.create_task(updater._async_update_data())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        hass.set_state(CoreState.stopping)
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await poll
+
+    assert updater.snapshot.get("IEM1") == 100
+    assert updater._meter_guard.baseline()["IEM1"] == 100
+    assert _FakeStore.instances[-1].saves == []
+
+
+@pytest.mark.parametrize(("elapsed", "expected"), [(61, 0), (121, 100)], ids=["brief-outage", "stale"])
+async def test_reset_acknowledgement_allows_a_brief_outage(monkeypatch, elapsed, expected):
+    from custom_components.eveus import meter_guard
+
+    now = 1000.0
+    monkeypatch.setattr(meter_guard, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(common_network, "time", SimpleNamespace(
+        monotonic=lambda: now, time=lambda: now,
+    ))
+    monkeypatch.setattr(common_network, "async_dispatcher_send", lambda *_: None)
+    charger = _Charger({**_classic_main(), "IEM1": 100})
+    updater = _updater(monkeypatch, charger)
+    monkeypatch.setattr(updater, "_schedule_post_command_refresh", lambda: None)
+    await updater._async_update_data()
+    assert await updater.send_command("rstEM1", 0, retry=False)
+
+    fetch_json = common_network.fetch_json
+    offline = True
+
+    async def fetch(*args, **kwargs):
+        if offline:
+            raise TimeoutError
+        return await fetch_json(*args, **kwargs)
+
+    monkeypatch.setattr(common_network, "fetch_json", fetch)
+    for now in (1030.0, 1050.0):
+        with pytest.raises(UpdateFailed):
+            await updater._async_update_data()
+    offline = False
+    now = 1000.0 + elapsed
+    charger.main["IEM1"] = 0
+    await updater._async_update_data()
+    assert updater.snapshot.get("IEM1") == expected

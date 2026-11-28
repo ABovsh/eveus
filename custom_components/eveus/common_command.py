@@ -193,12 +193,6 @@ class CommandManager:
                     except aiohttp.ClientResponseError as err:
                         if err.status == 401:
                             self._consecutive_failures += 1
-                            if follow_up is not None:
-                                released = "Stop Charging" if command == "evseEnabled" else "One Charge"
-                                raise ConfigEntryAuthFailed(
-                                    f"The charger released {released}. It rejected credentials "
-                                    "while leaving REVE manual mode."
-                                ) from err
                             raise ConfigEntryAuthFailed(
                                 "Eveus charger rejected credentials"  # pragma: no mutate - pure exception-message text, no code observes the wording
                             ) from err
