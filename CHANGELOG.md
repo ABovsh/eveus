@@ -14,7 +14,7 @@
 - **Eveus 1.x and 2.x: Readings could stall after the charger reconnected.** New readings now appear while the firmware check runs.
 - **Eveus 1.x and 2.x: A charger fault could appear as Charging and trigger charging-started automations.** Home Assistant now checks the firmware before interpreting ambiguous readings.
 - **Eveus 1.x and 2.x: The tariff could show the wrong price after a firmware update during an outage.** Home Assistant now shows the new price once it can read the price units reliably.
-- **Eveus R3.01.8: A charging energy limit set in Home Assistant could be 100 times too large.** Home Assistant now uses the same units as the charger's own page.
+- **Eveus: an energy limit set in Home Assistant was 100 times too large on chargers with the older R3.01.8 firmware.** Home Assistant now sends it in the units that firmware expects.
 - **REVE: Turning off One Charge could resume charging after an app pause, and turning off Stop Charging could cancel One Charge.** Turning either switch off now preserves the other setting.
 - **REVE: Editing a limit just after switching it on or off could undo that choice.** Changing the value now preserves whether the limit is on or off.
 - **REVE: Home Assistant could report that the SOC target was reached while the car kept charging.** It now checks the charger's Stop status and retries if charging continues.
